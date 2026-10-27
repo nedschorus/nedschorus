@@ -5,7 +5,7 @@ Merged from the proposed-improvements-or-changes-files of the two agents that wr
 ## E2 — possible problem: the handoff-supervisor's refresh-due rule misses most of this system's code
 
 Goes wrong when: a commit changes only a component outside `nc-systems/handoff/`, such as either launcher, the three hooks, the extractor or the recovery programs. The handoff-supervisor counts only non-Markdown commits under `nc-systems/<system>/`; the how-to page also makes a refresh due for a change to any path the overview lists as a component, the hooks in `.claude/settings.json`, `nc-systems/general-tools/scheduled-jobs-on-each-machine.json`, or the page itself. More than half of this system's programs are in `scripts/`, so the overview can fall behind with no reminder. Gain from aligning the two rules: an overview refreshed whenever its system changes. GHI [Rationalize the repository layout: group components by owning system under nc-systems/, and a hook dispatcher](https://github.com/nedschorus/nedschorus/issues/224) plans to move these programs under `nc-systems/`, which would shrink the gap to the shared scripts; that move must plan for running handoff-supervisors, which resolve the extractor's path when they start.
-Rests on: `nc-systems/handoff/handoff-supervisor.py:890` (`pathspecs = [f"nc-systems/{system}/", f":(exclude)nc-systems/{system}/*.md"]`), `:166-167` (`# Live supervisors resolve this path at import; moving the extractor would break those processes.`, `EXTRACTOR_PATH = SCRIPTS_DIRECTORY / "handoff-extract-conversation.py"`); `nc-systems/handoff/handoff-census-user-record-shapes.py:8`; `.claude/settings.json:21,42,157` (the hook paths); the how-to page, "A refresh is due when a commit ... changes a file under `nc-systems/<system>/`, a path the overview lists as a component, ...".
+Rests on: `nc-systems/handoff/handoff-supervisor.py:890` (`pathspecs = [f"nc-systems/{system}/", f":(exclude)nc-systems/{system}/*.md"]`), `:166-167` (`# Live supervisors resolve this path at import; moving the extractor would break those processes.`, `EXTRACTOR_PATH = SCRIPTS_DIRECTORY / "handoff-extract-conversation.py"`); `.claude/settings.json:21,42,157` (the hook paths); the how-to page, "A refresh is due when a commit ... changes a file under `nc-systems/<system>/`, a path the overview lists as a component, ...".
 State: open
 
 ## E3 — possible problem: on the Mac, `resupervise-seat.py` and a by-hand `launch-claude-mac` start the handoff-supervisor from whatever checkout they run in
@@ -24,12 +24,6 @@ State: open
 
 Gain: less code on the lock path. `refuse_old_code_supervisor` carries its own removal condition: "Delete this check once no supervisor started before this change is running." A `ps` for `handoff-supervisor.py` on both machines, compared with each process's start time, settles whether the condition holds. The legacy state-key migration is a similar candidate, once no `-supervisor-state.json` still holds `session_id`.
 Rests on: `nc-systems/handoff/handoff-supervisor.py:1331-1356` (`refuse_old_code_supervisor`; the condition at `:1332`), `:352` and `:367-369` (`LEGACY_SESSION_ID_STATE_KEY` and its migration).
-State: open
-
-## E6 — improvement: give `handoff-census-user-record-shapes.py` a home that runs, or archive it
-
-Gain: the census is the only check that no new kind of injected text slips into a conversation-tail, but it has no test, no caller and no schedule, and its work runs at module level, so nothing tells anyone when a new kind appears. Run it from the extractor's test against a fixture, or from a scheduled job, or archive it.
-Rests on: `nc-systems/handoff/handoff-census-user-record-shapes.py:32` (`for jsonl in sorted(root.glob("*/*.jsonl")):`, a module-level loop with no `__main__` guard); the only other mentions in `scripts/` and `nc-systems/` are comments in `scripts/handoff-extract-conversation-test.py:162` and `:261`.
 State: open
 
 ## E7 — improvement: one definition of the session-handoff's field names

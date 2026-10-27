@@ -96,8 +96,8 @@ def module_loaded_by_path(name, path):
     return module
 
 
-mark = module_loaded_by_path("daily_memory_review_mark",
-                             SYSTEM_DIRECTORY / "daily-memory-review-mark.py")
+mark = module_loaded_by_path("handoff_user_review_of_agent_memory_stores_mark",
+                             SYSTEM_DIRECTORY / "handoff-user-review-of-agent-memory-stores-mark.py")
 runner = module_loaded_by_path("run_all_test_suites",
                                REPOSITORY_ROOT / "scripts" / "run-all-test-suites.py")
 snapshots = module_loaded_by_path("uncommitted_work_snapshots",

@@ -16,12 +16,18 @@ mode first makes a worktree named mac-claude-pr7-mutation, as a reviewer does.
 The stand-in gh answers the author lookup with ned-review-merge, the pull
 request's files with a diff of scripts/thing.py lines 1 to 3, the post with
 review id 42, and the read-back as posted, unless FAKE_GH_FAILS names the post, or
-FAKE_GH_HANGS names it, when it writes gh-post-started and sleeps.
+FAKE_GH_HANGS names it, when it writes its pid to gh-post-started and sleeps.
+A case that sets FAKE_POSTING_SCRIPT_EXIT_STALLS puts a sitecustomize.py on
+PYTHONPATH that makes the posting script, as it exits, write
+posting-script-exiting and sleep 3 s, so a second signal can be sent while the
+program waits for it.
 
 Run: python3 scripts/merge-lane-pull-request-claude-reviewer-headless-run-and-review-post-test.py
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -114,7 +120,7 @@ with open(state / "gh-calls.jsonl", "a") as log:
 path = next(argument for argument in arguments if argument.startswith("repos/"))
 if "POST" in arguments:
     if os.environ.get("FAKE_GH_HANGS") == "post":
-        (state / "gh-post-started").write_text("")
+        (state / "gh-post-started").write_text(str(os.getpid()))
         time.sleep(60)
     if os.environ.get("FAKE_GH_FAILS") == "post":
         print("gh: HTTP 502: Bad Gateway", file=sys.stderr)
@@ -131,12 +137,30 @@ else:
     print(json.dumps({"user": {"login": "ned-review-merge"}}))
 '''
 
+# Gated at exit, not at import, because site imports this before sys.argv is set.
+STALLING_SITECUSTOMIZE = r'''
+import atexit, os, sys, time
+from pathlib import Path
+def stall():
+    if (os.environ.get("FAKE_POSTING_SCRIPT_EXIT_STALLS")
+            and Path(sys.argv[0]).name == "merge-lane-pull-request-reviewer-review-post-and-read-back.py"):
+        (Path(os.environ["FAKE_CLAUDE_STATE"]) / "posting-script-exiting").write_text("1")
+        time.sleep(3)
+atexit.register(stall)
+'''
+
 failures = []
 
 
 def check(name, condition, detail=""):
-    print(("PASS  " if condition else "FAIL  ") + name)
-    if not condition:
+    """Report one case; condition is a callable, so an error in it fails only this case."""
+    try:
+        passed = condition()
+    except Exception as error:
+        passed = False
+        detail = f"the check raised {type(error).__name__}: {error}\n{detail}"
+    print(("PASS  " if passed else "FAIL  ") + name)
+    if not passed:
         failures.append(name)
         if detail:
             print("      " + detail.replace("\n", "\n      "))
@@ -158,6 +182,18 @@ def running(pid):
 
 def read_lines(path):
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+# Harsher than the review program's run_step, whose subprocess.run waits 0.25 s first.
+KILLING_PARENT = r'''
+import signal, subprocess, sys
+child = subprocess.Popen(sys.argv[1:], stdin=subprocess.DEVNULL)
+def kill_child(signal_number, frame):
+    child.kill()
+    sys.exit(130)
+signal.signal(signal.SIGINT, kill_child)
+child.wait()
+'''
 
 
 class Case:
@@ -189,6 +225,9 @@ class Case:
         for name, text in (("claude", FAKE_CLAUDE), ("gh", FAKE_GH)):
             (bin_directory / name).write_text(text)
             (bin_directory / name).chmod(0o755)
+        self.site_directory = root / "site"
+        self.site_directory.mkdir()
+        (self.site_directory / "sitecustomize.py").write_text(STALLING_SITECUSTOMIZE)
         self.environment = {**GIT_ENVIRONMENT, "HOME": str(home),
                             "FAKE_CLAUDE_STATE": str(self.state),
                             "GH_TOKEN": "a-token-the-reviewer-must-not-see",
@@ -207,16 +246,29 @@ class Case:
         self.code, self.stdout = completed.returncode, completed.stdout + completed.stderr
         return self.read_calls()
 
-    def interrupt(self, signal_number, mode="hang", started="child.pid", **environment):
-        """Run in mode and send the program signal_number once the state file started exists."""
+    def wait_for(self, name):
+        deadline = time.monotonic() + 20
+        path = self.state / name
+        # gh-post-started holds the stand-in gh's pid, which a case reads after the signal.
+        while not (path.exists() and path.read_text()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+
+    def interrupt(self, signal_number, mode="hang", started="child.pid", sigint_ignored=False,
+                  then=None, **environment):
+        """Run in mode and send the program signal_number once the state file started exists.
+        sigint_ignored starts it ignoring SIGINT, as a non-interactive shell's & job does.
+        then, a (state file, signal) pair, sends a second signal once that file exists."""
         process = subprocess.Popen(
             self.command("7a", None, ("--time-limit-seconds", "60")), stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True,
-            env={**self.environment, "FAKE_CLAUDE_MODE": mode, **environment})
-        deadline = time.monotonic() + 20
-        while not (self.state / started).exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
+            env={**self.environment, "FAKE_CLAUDE_MODE": mode, **environment},
+            preexec_fn=(lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
+            if sigint_ignored else None)
+        self.wait_for(started)
         process.send_signal(signal_number)
+        if then:
+            self.wait_for(then[0])
+            process.send_signal(then[1])
         try:
             self.stdout = process.communicate(timeout=30)[0]
             self.code = process.returncode
@@ -224,6 +276,24 @@ class Case:
             process.kill()
             self.stdout = process.communicate()[0] + "\n(the program was still running 30 s after the signal)"
             self.code = 0
+        return self.read_calls()
+
+    def interrupt_parent_group(self, **environment):
+        """Run under a parent that SIGKILLs this program the moment it gets SIGINT, and send
+        SIGINT to the parent's process group, as a terminal's Ctrl-C does, once the stand-in
+        gh has started its post."""
+        parent = subprocess.Popen(
+            [sys.executable, "-c", KILLING_PARENT, *self.command("7a", None, ())],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True,
+            env={**self.environment, "FAKE_CLAUDE_MODE": "valid", **environment})
+        deadline = time.monotonic() + 20
+        started = self.state / "gh-post-started"
+        while (not (started.exists() and started.read_text())
+               and time.monotonic() < deadline):
+            time.sleep(0.05)
+        os.killpg(parent.pid, signal.SIGINT)
+        self.stdout = parent.communicate(timeout=30)[0]
+        self.code = parent.returncode
         return self.read_calls()
 
     def read_calls(self):
@@ -249,50 +319,65 @@ class Case:
 def main():
     scratch = Path(tempfile.mkdtemp(prefix="claude-reviewer-headless-run-test-")).resolve()
     try:
+        reported = io.StringIO()
+        with contextlib.redirect_stdout(reported):
+            check("a check that raises", lambda: (scratch / "posted.json").read_text())
+        raised_case_failed = failures[-1:] == ["a check that raises"]
+        del failures[len(failures) - raised_case_failed:]
+        check("a case whose check raises, as reading a posted.json no post wrote does, fails with "
+              "the error, and the cases after it still run",
+              lambda: raised_case_failed and "FAIL  a check that raises" in reported.getvalue()
+              and "the check raised FileNotFoundError" in reported.getvalue(),
+              reported.getvalue())
+
         case = Case(scratch).run("valid")
         call = case.claude_calls[0] if case.claude_calls else {}
         check("a valid answer is posted as mac-claude, and the step exits 0",
-              case.code == 0 and case.posted()
+              lambda: case.code == 0 and case.posted()
               and "PR 7: Claude review posted, verdict APPROVE." in case.stdout, case.detail)
         check("claude runs headless with the schema, JSON output, dontAsk and the six tools, "
               "and no prompt argument after them",
-              call.get("argv") == ["-p", "--json-schema", SCHEMA.read_text(), "--output-format",
-                                   "json", "--permission-mode", "dontAsk", "--allowedTools",
-                                   "Read", "Grep", "Glob", "Bash", "WebFetch", "WebSearch"],
+              lambda: call.get("argv") == ["-p", "--json-schema", SCHEMA.read_text(),
+                                           "--output-format", "json", "--permission-mode",
+                                           "dontAsk", "--allowedTools", "Read", "Grep", "Glob",
+                                           "Bash", "WebFetch", "WebSearch"],
               case.detail)
         check("the brief is the reviewer's standard input, and it runs in the head worktree",
-              call.get("stdin") == BRIEF and call.get("cwd") == str(case.head_worktree),
+              lambda: call.get("stdin") == BRIEF and call.get("cwd") == str(case.head_worktree),
               case.detail)
         gh_config = call.get("env", {}).get("GH_CONFIG_DIR")
         check("the reviewer gets no GitHub token and an empty gh config directory",
-              call.get("env", {}).get("GH_TOKEN") is None
+              lambda: call.get("env", {}).get("GH_TOKEN") is None
               and call.get("env", {}).get("GITHUB_TOKEN") is None
               and gh_config == str(case.record() / "gh-config-empty")
               and not any(Path(gh_config).iterdir()), case.detail)
-        posted = json.loads((case.state / "posted.json").read_text())
+
+        def posted_as_answered():
+            posted = json.loads((case.state / "posted.json").read_text())
+            return (posted["event"] == "APPROVE" and posted["commit_id"] == case.head
+                    and posted["body"] == "APPROVE\n\nLooks right."
+                    and posted["comments"] == [
+                        {"path": "scripts/thing.py", "line": 2, "body": "A remark."}])
         check("the review posted is the reviewer's answer, as the review event on a pull "
-              "request ned-review-merge opened",
-              posted["event"] == "APPROVE" and posted["commit_id"] == case.head
-              and posted["body"] == "APPROVE\n\nLooks right."
-              and posted["comments"] == [
-                  {"path": "scripts/thing.py", "line": 2, "body": "A remark."}], case.detail)
+              "request ned-review-merge opened", posted_as_answered, case.detail)
         check("the records hold the run's output, its stderr, the answer, what posting printed "
               "and the session to resume",
-              json.loads((case.record() / "run.json").read_text())["session_id"] == "session-77"
+              lambda: json.loads((case.record() / "run.json").read_text())["session_id"]
+              == "session-77"
               and (case.record() / "run-stderr.txt").exists()
               and json.loads((case.record() / "review.json").read_text())["verdict"] == "APPROVE"
               and "review 42 posted" in (case.record() / "posted.txt").read_text()
               and (case.record() / "resume.txt").read_text()
               == f"session-77\n{case.head_worktree}\n", case.detail)
         check("the follow-up command is printed whole, with where to run it",
-              f"run from {case.head_worktree}" in case.stdout
+              lambda: f"run from {case.head_worktree}" in case.stdout
               and "claude -p --resume session-77 --permission-mode dontAsk --allowedTools Read "
                   "Grep Glob Bash WebFetch WebSearch" in case.stdout, case.detail)
         check("each refused tool call is printed",
-              "the reviewer was refused a Bash call it asked for: rm -rf /tmp/x" in case.stdout,
-              case.detail)
+              lambda: "the reviewer was refused a Bash call it asked for: rm -rf /tmp/x"
+              in case.stdout, case.detail)
         check("the reviewer's own worktree is removed after the run",
-              not case.reviewer_worktree_left(), case.detail)
+              lambda: not case.reviewer_worktree_left(), case.detail)
 
         case = Case(scratch)
         others = [case.helpers / "wt" / name for name in
@@ -302,21 +387,21 @@ def main():
         case.run("valid")
         listed = git(case.head_worktree, "worktree", "list")
         check("another pull request's reviewer worktrees, pr70 and pr8, survive the cleanup",
-              case.code == 0 and not case.reviewer_worktree_left()
+              lambda: case.code == 0 and not case.reviewer_worktree_left()
               and all(str(other) in listed for other in others), case.detail + "\n" + listed)
         check("an answer with an empty note says there was none, and note.txt is empty",
-              "PR 7: the reviewer left no note for merge-lane-2." in case.stdout
+              lambda: "PR 7: the reviewer left no note for merge-lane-2." in case.stdout
               and (case.record() / "note.txt").read_text() == "", case.detail)
         case.run("valid")
         check("a second run on the same head keeps the first run's records and writes -2",
-              case.code == 0 and (case.record() / "review.json").exists()
+              lambda: case.code == 0 and (case.record() / "review.json").exists()
               and (case.record("-2") / "review.json").exists(), case.detail)
 
         note = "The retry loop in thing.py hides a design question for the user."
         case = Case(scratch).run("valid", FAKE_CLAUDE_NOTE=note)
         check("the reviewer's note is printed for merge-lane-2 and saved, and reaches neither "
               "review.json nor any gh call",
-              case.code == 0 and case.posted()
+              lambda: case.code == 0 and case.posted()
               and f"PR 7: the reviewer's note for merge-lane-2, which is private and never posted "
                   f"to the pull request; also saved in {case.record() / 'note.txt'}:\n{note}\n"
                   in case.stdout
@@ -338,30 +423,30 @@ def main():
             case = Case(scratch).run(mode)
             check(f"a {mode} run posts nothing, exits 1, says why, and removes the reviewer's "
                   f"worktree",
-                  case.code == 1 and not case.posted() and expected in case.stdout
+                  lambda: case.code == 1 and not case.posted() and expected in case.stdout
                   and "PR 7: Claude review not posted: " in case.stdout
                   and "Nothing was posted on GitHub." in case.stdout
                   and not case.reviewer_worktree_left(), case.detail)
         case = Case(scratch).run("could-not-review", FAKE_CLAUDE_NOTE="Bash needs allowing.")
         check("a COULD_NOT_REVIEW answer's note is still printed and saved, and nothing is posted",
-              case.code == 1 and not case.posted()
-              and "which is private and never posted to the pull request; also saved in" in case.stdout
+              lambda: case.code == 1 and not case.posted()
+              and "which is private and never posted to the pull request; also saved in"
+              in case.stdout
               and (case.record() / "note.txt").read_text() == "Bash needs allowing.\n",
               case.detail)
+        case = Case(scratch).run("could-not-review")
         check("a COULD_NOT_REVIEW answer's reason is printed",
-              Case(scratch).run("could-not-review").stdout.count(
-                  "Bash was refused, so nothing ran.") == 1, "")
+              lambda: case.stdout.count("Bash was refused, so nothing ran.") == 1, case.detail)
 
         case = Case(scratch)
         started = time.monotonic()
         case.run("hang", "--time-limit-seconds", "2")
         took = time.monotonic() - started
-        child = int((case.state / "child.pid").read_text()) if (case.state / "child.pid").exists() else None
         time.sleep(0.2)
-        child_alive = child is not None and running(child)
         check("a reviewer past its time limit is killed with its children, posts nothing, "
               "and exits 1",
-              case.code == 1 and not case.posted() and took < 30 and not child_alive
+              lambda: case.code == 1 and not case.posted() and took < 30
+              and not running(int((case.state / "child.pid").read_text()))
               and "ran past its 2-second limit and was killed" in case.stdout, case.detail)
 
         for signal_number in (signal.SIGTERM, signal.SIGINT):
@@ -369,54 +454,100 @@ def main():
             time.sleep(0.2)
             check(f"{signal.Signals(signal_number).name} during the wait kills the reviewer and "
                   f"its children, removes its worktree, posts nothing, and exits nonzero",
-                  case.code != 0 and not case.posted() and not case.reviewer_processes_alive()
+                  lambda: case.code != 0 and not case.posted()
+                  and not case.reviewer_processes_alive()
                   and not case.reviewer_worktree_left(), case.detail)
 
         case = Case(scratch).run("leave-child")
         time.sleep(0.2)
         check("a process the reviewer leaves running after it exits normally is killed",
-              case.code == 0 and (case.state / "child.pid").exists()
+              lambda: case.code == 0
               and not running(int((case.state / "child.pid").read_text())), case.detail)
 
         case = Case(scratch).interrupt(signal.SIGTERM, "valid", "gh-post-started",
                                        FAKE_GH_HANGS="post")
+        time.sleep(0.2)
         check("SIGTERM during the posting step says the review may or may not have been posted, "
               "gives the command that shows it, removes the reviewer's worktree and exits nonzero",
-              case.code != 0
+              lambda: case.code != 0
               and "the posting step was interrupted, so the review in" in case.stdout
               and "may or may not have been posted" in case.stdout
               and "gh api --paginate 'repos/nedschorus/nedschorus/pulls/7/reviews' --jq "
                   "'.[] | select(.user.login == \"mac-claude\" and .commit_id == "
                   f"\"{case.head}\") | [.id, .state, .html_url] | @tsv'" in case.stdout
               and not case.reviewer_worktree_left(), case.detail)
+        check("SIGTERM during the posting step kills the posting script's gh, so it cannot post "
+              "after the message",
+              lambda: not running(int((case.state / "gh-post-started").read_text())),
+              case.detail)
+
+        case = Case(scratch).interrupt(signal.SIGTERM, "valid", "gh-post-started",
+                                       sigint_ignored=True, FAKE_GH_HANGS="post")
+        check("SIGTERM during the posting step of a run started ignoring SIGINT, as a "
+              "background job of a non-interactive shell is, kills the posting script's gh "
+              "before the message, and passes on what the posting script printed",
+              lambda: case.code != 0
+              and not running(int((case.state / "gh-post-started").read_text()))
+              and "may or may not have been posted" in case.stdout
+              and "review may or may not be posted: posting the review failed: this command "
+                  "was interrupted" in case.stdout
+              and "this command was interrupted" in (case.record() / "posted.txt").read_text(),
+              case.detail)
+
+        for second in (signal.SIGTERM, signal.SIGINT):
+            case = Case(scratch)
+            case.interrupt(signal.SIGTERM, "valid", "gh-post-started",
+                           then=("posting-script-exiting", second), FAKE_GH_HANGS="post",
+                           FAKE_POSTING_SCRIPT_EXIT_STALLS="1",
+                           PYTHONPATH=str(case.site_directory))
+            check(f"a {signal.Signals(second).name} sent while the program waits for the "
+                  "posting script it sent SIGTERM does not cut the wait short: no gh is left "
+                  "running, and what the posting script printed and the message that the "
+                  "review may or may not have been posted are printed",
+                  lambda: case.code != 0
+                  and (case.state / "posting-script-exiting").exists()
+                  and not running(int((case.state / "gh-post-started").read_text()))
+                  and "this command was interrupted" in case.stdout
+                  and "this command was interrupted" in (case.record() / "posted.txt").read_text()
+                  and "may or may not have been posted" in case.stdout, case.detail)
+
+        case = Case(scratch).interrupt_parent_group(FAKE_GH_HANGS="post")
+        time.sleep(0.5)
+        check("a Ctrl-C to the group of a parent that kills this program at once still stops "
+              "the posting script's gh, so no review can be posted after the run ends",
+              lambda: not running(int((case.state / "gh-post-started").read_text())),
+              case.detail)
 
         case = Case(scratch).run("valid", FAKE_GH_FAILS="post")
         check("a failed post exits 1 and passes the posting script's message through",
-              case.code == 1 and "review may or may not be posted" in case.stdout
+              lambda: case.code == 1 and "review may or may not be posted" in case.stdout
               and "the posting script exited 2" in case.stdout, case.detail)
 
         case = Case(scratch)
         (case.helpers / "briefs" / "brief-7a-mac-claude.md").unlink()
         case.run("valid")
         check("a missing brief refuses with exit 2 before the reviewer runs",
-              case.code == 2 and not case.claude_calls
+              lambda: case.code == 2 and not case.claude_calls
               and "PR 7: Claude review not run: could not read" in case.stdout, case.detail)
         case = Case(scratch).run("valid", tag="7b")
-        check("a tag with no brief refuses with exit 2", case.code == 2 and not case.claude_calls,
-              case.detail)
+        check("a tag with no brief refuses with exit 2",
+              lambda: case.code == 2 and not case.claude_calls, case.detail)
         case = Case(scratch)
         case.run("valid", head="0" * 40)
         check("a head worktree not at the head commit refuses with exit 2 before the reviewer runs",
-              case.code == 2 and not case.claude_calls
+              lambda: case.code == 2 and not case.claude_calls
               and "is not at the head commit" in case.stdout, case.detail)
 
-        schema = json.loads(SCHEMA.read_text())
+        def schema_matches_the_step():
+            schema = json.loads(SCHEMA.read_text())
+            return (schema["properties"]["verdict"]["enum"] == ["APPROVE", "REQUEST_CHANGES",
+                                                                "COULD_NOT_REVIEW"]
+                    and schema["required"] == ["verdict", "body", "comments", "note"]
+                    and schema["properties"]["note"] == {"type": "string"}
+                    and schema["properties"]["comments"]["items"]["required"]
+                    == ["path", "line", "body"])
         check("the schema file's verdicts and fields are the ones the step checks",
-              schema["properties"]["verdict"]["enum"] == ["APPROVE", "REQUEST_CHANGES",
-                                                          "COULD_NOT_REVIEW"]
-              and schema["required"] == ["verdict", "body", "comments", "note"]
-              and schema["properties"]["note"] == {"type": "string"}
-              and schema["properties"]["comments"]["items"]["required"] == ["path", "line", "body"])
+              schema_matches_the_step)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 

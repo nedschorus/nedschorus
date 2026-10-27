@@ -82,3 +82,8 @@ ghi-mirror/
 # class nedschorus#50 (worktree file hygiene) closed a ruling on.
 .ghi-mirror-throwaway-*/
 .ghi-guide-agent-state.json.tmp
+
+# fix-round answers files: written at a worktree's root by the fix-round's forked subagent and read
+# by scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py --check;
+# never part of the fix commit
+fix-round-answers-pull-request-*.md

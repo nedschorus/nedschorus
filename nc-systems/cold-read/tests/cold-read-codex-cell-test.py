@@ -72,6 +72,11 @@ import tempfile
 from pathlib import Path
 
 CELL_SCRIPT = Path(__file__).resolve().parent.parent / "cold-read-codex-cell.py"
+# The shared cell module, whose own suite pins its wording; the cases here take that wording from it.
+_cell_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common", CELL_SCRIPT.with_name("cold-read-cell-common.py"))
+cell_common = importlib.util.module_from_spec(_cell_common_spec)
+_cell_common_spec.loader.exec_module(cell_common)
 
 # The Codex logged-out line, captured 2026-09-18 on ned-box (codex-cli
 # 0.153.4) from a scratch directory outside any checkout with an empty
@@ -407,8 +412,9 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a codex that exits 0 without a report leaves the cell exiting 1",
           result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("its cause line carries the reviewer's last line",
-          "cause: no-report — no report written; the reviewer's last line: "
-          + refused_write_line in result.stderr, repr(result.stderr[-600:]))
+          cell_common.cause_line("cold-read-codex-cell", *cell_common.classify_failed_attempt(
+              stdout=refused_write_line + "\n", stderr="", exit_code=0, recognised_texts=()))
+          in result.stderr, repr(result.stderr[-600:]))
 
     # --- A refusal leaves no staging directory behind ----------------------
     # The last refusal a cell can make is a missing prompt template. A copy of
@@ -419,7 +425,7 @@ with tempfile.TemporaryDirectory() as scratch:
     for relative_path in (
             "nc-systems/cold-read/cold-read-codex-cell.py",
             "nc-systems/cold-read/cold-read-cell-common.py",
-            "nc-systems/cold-read/cold-read-record-names.py",
+            "nc-systems/cold-read/cold-read-record-names-common.py",
             "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py"):
         (copied_checkout / relative_path).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(CELL_SCRIPT.parents[2] / relative_path, copied_checkout / relative_path)

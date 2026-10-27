@@ -5,7 +5,8 @@ ends.
 A handoff that arrives as a session's exit; the stops with no terminal to ask
 on or to seat a successor on; the exit record a stop writes; the worktree
 cleanup between a retiring session's stop and its successor's launch; and
-resuming a session that ended without a handoff, after a death or by hand.
+resuming a session that ended without a handoff, after a death or by hand;
+and a supervisor killed while it rewrites its state file.
 The supervisor's other cases are in
 handoff-supervisor-successor-prompt-test.py and
 handoff-supervisor-session-launch-and-seat-lock-test.py, beside this file.
@@ -273,7 +274,7 @@ def run_agent_exit_record_cases(workspace: Path):
             return sessions.pop(0)
         return launch
 
-    no_branch_sync = lambda working_directory: "branch sync: not a git checkout, nothing to sync"
+    no_launch_time_git_sync = lambda working_directory: "launch-time-git-sync: not a git checkout, nothing to sync"
 
     # Cleared at launch: a record left by an earlier stop is gone from the state
     # file before the next session starts, and the stop after that session
@@ -292,7 +293,7 @@ def run_agent_exit_record_cases(workspace: Path):
     # exhausting the one-session list below.
     with supervisor_names_replaced(
             launch_agent_session=launch_recording([StubLaunchedSession(9)], snapshots, settings),
-            sync_working_branch_with_main=no_branch_sync, stdin_isatty=False), \
+            launch_time_git_sync=no_launch_time_git_sync, stdin_isatty=False), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
     state = supervisor.read_supervisor_state(settings.state_path)
@@ -350,7 +351,7 @@ def run_agent_exit_record_cases(workspace: Path):
             launch_agent_session=launch_writing_a_handoff(
                 settings, StubLaunchedSession(-15, ended=False),
                 "restart-counter: 2\nnext-step: stand down\ndont-restart: closing\n"),
-            sync_working_branch_with_main=no_branch_sync,
+            launch_time_git_sync=no_launch_time_git_sync,
             input=lambda prompt: "n", stdin_isatty=True), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
@@ -371,7 +372,7 @@ def run_agent_exit_record_cases(workspace: Path):
     launched = []
     with supervisor_names_replaced(
             launch_agent_session=lambda *arguments, **keywords: launched.append(1),
-            sync_working_branch_with_main=no_branch_sync,
+            launch_time_git_sync=no_launch_time_git_sync,
             input=lambda prompt: "n", stdin_isatty=True), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
@@ -391,7 +392,7 @@ def run_agent_exit_record_cases(workspace: Path):
             launch_agent_session=launch_writing_a_handoff(
                 settings, StubLaunchedSession(-15, ended=False),
                 "restart-counter: 2\nnext-step: carry on\n"),
-            sync_working_branch_with_main=no_branch_sync,
+            launch_time_git_sync=no_launch_time_git_sync,
             extract_dialog=lambda session_id, working_directory, output_path: False,
             stdin_isatty=True), \
             contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -436,7 +437,7 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
             launch_agent_session=launch,
             stop_session=lambda process: process.terminate(),
             extract_dialog=failing_extract_dialog,
-            sync_working_branch_with_main=lambda working_directory: "branch sync: stubbed",
+            launch_time_git_sync=lambda working_directory: "launch-time-git-sync: stubbed",
             stdin_isatty=True), \
             contextlib.redirect_stdout(console), contextlib.redirect_stderr(errors):
         exit_code = supervisor.supervise_sessions(settings)
@@ -884,7 +885,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
     with supervisor_names_replaced(
             launch_agent_session=launch, stop_session=stop,
             remove_finished_worktrees_at_handoff=cleanup,
-            sync_working_branch_with_main=lambda working_directory: "branch sync: stubbed",
+            launch_time_git_sync=lambda working_directory: "launch-time-git-sync: stubbed",
             carry_over_to_successor=lambda settings, retiring, fields, generation: (
                 f"successor-{generation}", None),
             stdin_isatty=True), \
@@ -908,7 +909,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
             launch_agent_session=lambda *arguments, **_: (
                 events.append("launch") or StubLaunchedSession(0)),
             remove_finished_worktrees_at_handoff=cleanup,
-            sync_working_branch_with_main=lambda working_directory: "branch sync: stubbed",
+            launch_time_git_sync=lambda working_directory: "launch-time-git-sync: stubbed",
             stdin_isatty=False), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
@@ -984,8 +985,8 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     # --- The loop: what the supervisor actually does at a death -----------
     directory = workspace / "death-resume"
     directory.mkdir(parents=True, exist_ok=True)
-    no_branch_sync = lambda working_directory: (
-        "branch sync: not a git checkout, nothing to sync")
+    no_launch_time_git_sync = lambda working_directory: (
+        "launch-time-git-sync: not a git checkout, nothing to sync")
     first_prompt = "You are the seat. Do the work."
 
     def supervise_a_seat_whose_sessions_die(case: str, deaths, stdin_isatty=True,
@@ -1057,7 +1058,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
         with supervisor_names_replaced(
                 launch_agent_session=launch,
                 project_directory_for_working_directory=lambda _: case_projects,
-                sync_working_branch_with_main=no_branch_sync,
+                launch_time_git_sync=no_launch_time_git_sync,
                 wait_for_handoff=wait_for_handoff,
                 stop_session=lambda process: None,
                 carry_over_to_successor=lambda settings, retiring, fields, generation: (
@@ -1300,8 +1301,8 @@ def run_by_hand_resume_cases(workspace: Path):
             handoff_directory=case_directory, agent_command="unused-stub-agent",
             first_prompt="")
 
-    no_branch_sync = lambda working_directory: (
-        "branch sync: not a git checkout, nothing to sync")
+    no_launch_time_git_sync = lambda working_directory: (
+        "launch-time-git-sync: not a git checkout, nothing to sync")
 
     def launch_once(settings):
         """(session_id, prompt, resume) of the one launch, which then ends."""
@@ -1314,7 +1315,7 @@ def run_by_hand_resume_cases(workspace: Path):
         with supervisor_names_replaced(
                 launch_agent_session=launch,
                 project_directory_for_working_directory=lambda _: projects,
-                sync_working_branch_with_main=no_branch_sync), \
+                launch_time_git_sync=no_launch_time_git_sync), \
                 contextlib.redirect_stdout(io.StringIO()):
             supervisor.supervise_sessions(settings)
         return launched[0] if launched else (None, None, None)
@@ -1370,7 +1371,7 @@ def run_by_hand_resume_cases(workspace: Path):
     with supervisor_names_replaced(
             launch_agent_session=launch_empty,
             project_directory_for_working_directory=lambda _: empty_projects,
-            sync_working_branch_with_main=no_branch_sync), \
+            launch_time_git_sync=no_launch_time_git_sync), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
     check("BY HAND: a seat whose every transcript is an empty successor starts fresh",
@@ -1402,7 +1403,7 @@ def run_by_hand_resume_cases(workspace: Path):
         with supervisor_names_replaced(
                 launch_agent_session=launch,
                 project_directory_for_working_directory=lambda _: project_directory,
-                sync_working_branch_with_main=no_branch_sync), \
+                launch_time_git_sync=no_launch_time_git_sync), \
                 contextlib.redirect_stdout(console):
             supervisor.supervise_sessions(settings)
         return (launched[0] if launched else (None, None, None)), console.getvalue()
@@ -1474,7 +1475,7 @@ def run_by_hand_resume_cases(workspace: Path):
             with supervisor_names_replaced(
                     launch_agent_session=launch,
                     project_directory_for_working_directory=lambda _: projects,
-                    sync_working_branch_with_main=no_branch_sync), \
+                    launch_time_git_sync=no_launch_time_git_sync), \
                     contextlib.redirect_stdout(console):
                 exit_code = supervisor.main(argv)
         finally:
@@ -1555,6 +1556,95 @@ def run_by_hand_resume_cases(workspace: Path):
           str(supervisor.read_supervisor_state(settings.state_path)))
 
 
+class WriterKilledMidWrite(Exception):
+    pass
+
+
+def run_state_file_write_killed_midway_case(workspace: Path):
+    """A supervisor killed while it rewrites its state file must leave the
+    file it had readable: the agent-crash-watcher and the next supervisor's
+    startup read consumed_counter from it, and a cut-off file reads as fresh
+    state, which takes an already-consumed handoff for a waiting one.
+
+    The kill is injected: every file opened for writing in the state file's
+    directory gets the first half of what is written to it, then the write
+    raises, as a process killed mid-write would stop."""
+    state_path = workspace / "killed-midway" / "seat-supervisor-state.json"
+    old_state = {"consumed_counter": 27, supervisor.LAUNCHED_SESSION_ID_STATE_KEY: "session-27",
+                 "generation": 3}
+    supervisor.write_supervisor_state(state_path, old_state)
+    real_open = io.open
+
+    class HalfWrittenFile:
+        def __init__(self, file):
+            self.file = file
+
+        def write(self, text):
+            self.file.write(text[:len(text) // 2])
+            self.file.flush()
+            raise WriterKilledMidWrite()
+
+        def __getattr__(self, name):
+            return getattr(self.file, name)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exception):
+            self.file.close()
+
+    def open_killed_midway(file, mode="r", *arguments, **keywords):
+        opened = real_open(file, mode, *arguments, **keywords)
+        if "w" in mode and Path(file).parent == state_path.parent:
+            return HalfWrittenFile(opened)
+        return opened
+
+    new_state = dict(old_state, last_poll_at=datetime.now(timezone.utc).isoformat())
+    killed = False
+    builtin_module = sys.modules["builtins"]
+    builtin_module.open, io.open = open_killed_midway, open_killed_midway
+    try:
+        supervisor.write_supervisor_state(state_path, new_state)
+    except WriterKilledMidWrite:
+        killed = True
+    finally:
+        builtin_module.open, io.open = real_open, real_open
+    with contextlib.redirect_stderr(io.StringIO()) as stderr:
+        read_back = supervisor.read_supervisor_state(state_path)
+    check("KILLED-MID-WRITE: the injected kill stopped the write", killed)
+    check("KILLED-MID-WRITE: the state file still holds the state written before the kill",
+          read_back == old_state and not stderr.getvalue(),
+          (read_back, stderr.getvalue()))
+
+
+def run_state_file_written_to_disk_before_rename_case(workspace: Path):
+    """The new state must reach the disk before it replaces the old one: a
+    rename without the fsync can survive a machine crash that loses the
+    data it points to, leaving the state file empty."""
+    state_path = workspace / "fsynced-before-rename" / "seat-supervisor-state.json"
+    supervisor.write_supervisor_state(state_path, {"generation": 1})
+    new_state = {"generation": 2, "consumed_counter": 5}
+    synced = []
+    real_fsync = os.fsync
+
+    def recording_fsync(descriptor):
+        synced.append((os.fstat(descriptor), state_path.read_text(encoding="utf-8")))
+        real_fsync(descriptor)
+
+    os.fsync = recording_fsync
+    try:
+        supervisor.write_supervisor_state(state_path, new_state)
+    finally:
+        os.fsync = real_fsync
+    check("FSYNC BEFORE RENAME: the file that becomes the state file is fsynced whole, "
+          "while the old state file is still in place",
+          len(synced) == 1
+          and synced[0][0].st_size == len(json.dumps(new_state, indent=2))
+          and synced[0][1] == json.dumps({"generation": 1}, indent=2)
+          and os.path.samestat(synced[0][0], state_path.stat()),
+          synced)
+
+
 with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_exit_handoff_cases(workspace)
     run_dont_restart_without_a_terminal_case(workspace)
@@ -1564,5 +1654,7 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_handoff_worktree_cleanup_cases(workspace)
     run_resume_after_a_death_without_a_handoff_cases(workspace)
     run_by_hand_resume_cases(workspace)
+    run_state_file_write_killed_midway_case(workspace)
+    run_state_file_written_to_disk_before_rename_case(workspace)
 
 fixture.print_summary_and_exit_nonzero_if_any_case_failed()

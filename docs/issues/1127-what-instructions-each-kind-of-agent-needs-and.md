@@ -23,7 +23,7 @@ Checked on ned-box and on main, 2026-10-09. Agent-seats on the Mac, and their `C
 | Every agent-session of an agent-seat | `docs/agents/seat-session-appended-system-prompt.md`; and `CLAUDE.local.md` in the agent-home, where one exists. On ned-box two exist: merge-lane-2's 365 lines, and the 23 lines of agent-instructions-editor, the agent-seat that makes the edits the instruction-file guard refuses other agent-seats. cold-read-improvement, fleet-restart-at-login, ghi-guide-agent and ned-box-helper have none. |
 | ghi-guide-agent | `COLD_START_PROMPT_TEMPLATE` in `scripts/ghi-guide-agent-ask.py`, composed into its first prompt; its agent-home `~/agents/ghi-guide-agent` is a checkout with `AGENTS.md`. |
 | Pull request reviewers | `docs/agents/pr-reviewer-instructions.md`, pasted into every Claude reviewer's prompt; its review-scope section is copied word for word in `CLAUDE.md` and checked by `scripts/pr-reviewer-instructions-copies-test.py`. |
-| Cold-read-cells | `.claude/skills/cold-read/prompts/` (`defect-hunt.md`, `fast-clarify.md`, `restate.md`, `terminology.md`); `nc-systems/cold-read/cold-read-fast-read.py` carries its own verbatim copy of `fast-clarify.md`. |
+| Cold-read-cells | `.claude/skills/cold-read/prompts/` (`defect-hunt-prompt.md`, `fast-clarify-prompt.md`, `restate-prompt.md`, `terminology-prompt.md`); `nc-systems/cold-read/cold-read-fast-read.py` carries its own verbatim copy of `fast-clarify-prompt.md`. |
 | Sanity-check-cells | `docs/agents/sanity-checker-cut-attack-prompt.md`, `-fresh-eyes-attack-prompt.md`, `-mechanization-attack-prompt.md`. |
 | Builder subagents | The prompt the commissioning agent writes, plus `CLAUDE.md`. The design-to-main workflow's agent-instructions wait in `docs/agents/queue/`. |
 

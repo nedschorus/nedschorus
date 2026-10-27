@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Tests for scripts/hand-typed-codex-exec-redirect-hook.py.
+"""Tests for scripts/hand-typed-codex-exec-command-refusal-hook.py.
 
 Each case drives main() with the JSON payload the harness sends, and one case
 pipes a payload into the hook as a real process.
 
-Run: python3 scripts/hand-typed-codex-exec-redirect-hook-test.py
+Run: python3 scripts/hand-typed-codex-exec-command-refusal-hook-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-HOOK_SCRIPT = Path(__file__).with_name("hand-typed-codex-exec-redirect-hook.py")
+HOOK_SCRIPT = Path(__file__).with_name("hand-typed-codex-exec-command-refusal-hook.py")
 _spec = importlib.util.spec_from_file_location("codex_exec_redirect", HOOK_SCRIPT)
 hook = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(hook)
@@ -249,7 +249,7 @@ program_help = subprocess.run(
     capture_output=True, text=True, check=False)
 for flag in ("-C", "--brief", "-o", "--sandbox", "-m", "--effort", "--network",
              "--writable-root", "--outside-git-checkout", "--web-search",
-             "--deadline-minutes", "--run-log", "--prefetch-github"):
+             "--deadline-minutes", "--run-log", "--prefetch-github", "--resume"):
     check(f"the usage line's flag {flag} is one the program accepts",
           flag in hook.USAGE_LINE and flag in program_help.stdout,
           program_help.stdout[:200])

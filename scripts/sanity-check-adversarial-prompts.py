@@ -45,8 +45,7 @@ Operating rules:
   such as `cut-adversarial-prompt-claude.md`. The claude CLI runs with
   `--setting-sources user`, so this repository's hooks, CLAUDE.md and skills
   are never loaded into a claude agent (nedschorus#397).
-- Run it only by deliberate decision — never wire it into automation. A
-  revision of an already-sanity-checked document earns no automatic rerun. Run it after the cold read has passed, not before. It
+- Run it after the cold read has passed, not before. It
   applies only to actionable (work-directing) MDs — designs, specs, skills,
   plans — never records (documents that only report what happened).
   "the cold read passed" is the natural moment to ask

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for ghi-issue-write-redirect.py, the guard that refuses hand-typed
+"""Tests for ghi-issue-write-hand-typed-gh-command-refusal.py, the guard that refuses hand-typed
 `gh issue` writes on this project's repository.
 
 No case runs `gh`: the guard never calls it, and every case drives the guard
@@ -7,7 +7,7 @@ in-process through `main` with a payload, the way the harness does. One case
 runs the file end to end as a subprocess, so the shared shell reader's import
 is exercised as the harness loads it.
 
-Run: python3 .claude/hooks/ghi-issue-write-redirect-test.py
+Run: python3 .claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -31,7 +31,7 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
-HOOK_SCRIPT = Path(__file__).with_name("ghi-issue-write-redirect.py")
+HOOK_SCRIPT = Path(__file__).with_name("ghi-issue-write-hand-typed-gh-command-refusal.py")
 
 _spec = importlib.util.spec_from_file_location("ghi_issue_write_redirect", HOOK_SCRIPT)
 guard = importlib.util.module_from_spec(_spec)

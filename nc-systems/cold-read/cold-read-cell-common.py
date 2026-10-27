@@ -20,7 +20,7 @@ import importlib.util
 
 _record_names_spec = importlib.util.spec_from_file_location(
     "cold_read_record_names",
-    pathlib.Path(__file__).with_name("cold-read-record-names.py"))
+    pathlib.Path(__file__).with_name("cold-read-record-names-common.py"))
 record_names = importlib.util.module_from_spec(_record_names_spec)
 _record_names_spec.loader.exec_module(record_names)
 
@@ -191,7 +191,7 @@ def build_argument_parser(
     parser.add_argument(
         "--prompt-file", metavar="PATH",
         help="read the prompt template from this file instead of the "
-             "cell's own, .claude/skills/cold-read/prompts/<cell>.md, "
+             "cell's own, .claude/skills/cold-read/prompts/<cell>-prompt.md, "
              "with the same "
              "{TARGET_PATH} and {REPORT_PATH} substitution; relative to the "
              "current directory unless absolute. --cell is still required and "
@@ -271,7 +271,7 @@ def target_origin_paragraph(target: pathlib.Path, target_origin: pathlib.Path) -
 
 def prompt_template_path(cell: str, prompt_file=None) -> pathlib.Path:
     template_path = (prompt_file if prompt_file is not None
-                     else PROMPTS_DIR / f"{cell}.md")
+                     else PROMPTS_DIR / f"{cell}-prompt.md")
     if not template_path.is_file():
         raise CellRefusal(f"prompt template missing: {template_path}")
     return template_path
@@ -597,7 +597,7 @@ def run_model_chain(
     prompt: str, report: pathlib.Path, cell: str, tier: str, target_argument: str,
     baseline, cell_started_at: float, prompt_file_argument: str = "",
     recover_report_from_stdout=None, model_to_effort=None,
-    recognised_failure_texts_for_model=None,
+    recognised_failure_texts_for_model=None, child_environment=None,
 ) -> int:
     """Try models until one produces a report, then stamp the report."""
     # build_invocation must apply the same per-model effort mapping used by the stamp.
@@ -622,6 +622,7 @@ def run_model_chain(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=REPO_ROOT,
+                env=child_environment,
                 text=True,
                 check=False,
                 **stdin_arguments,
@@ -712,7 +713,7 @@ def run_cell(
     *, program: str, runtime: str, description: str, model_help: str,
     tier_to_model_chain: dict, tier_to_effort: dict, invocation_builder,
     recover_report_from_stdout=None, recognised_failure_texts_for_model=None,
-    stage_report_outside_checkout: bool = False,
+    stage_report_outside_checkout: bool = False, child_environment=None,
 ) -> int:
     # Include failed attempts in the cell's total cost.
     cell_started_at = time.time()
@@ -775,6 +776,7 @@ def run_cell(
             prompt_file_argument=args.prompt_file or "",
             recover_report_from_stdout=recover_report_from_stdout,
             recognised_failure_texts_for_model=recognised_failure_texts_for_model,
+            child_environment=child_environment,
         )
         if exit_code == 0 and staging_directory is not None:
             exit_code = move_staged_report(program, reviewer_report, report)

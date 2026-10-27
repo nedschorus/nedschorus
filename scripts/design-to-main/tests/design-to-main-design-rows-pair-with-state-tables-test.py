@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Sections 3.1 and 3.2 of the design-to-main state-machine design, read
 from the design file in the checkout this test runs in, paired with
-STATE_TABLE and TRANSITION_TABLE in design-to-main-state-tables.py.
+STATE_TABLE and TRANSITION_TABLE in design-to-main-state-tables-common.py.
 
 User-ruled 2026-09-16, the eleventh design walk
 (design-state-tables-source-of-truth-and-checker), item 2.2: both copies
@@ -49,7 +49,7 @@ DESIGN_PATH = REPOSITORY_ROOT / "docs" / "design-to-main" / "design-to-main-stat
 
 def load_state_tables_module():
     spec = importlib.util.spec_from_file_location(
-        "design_to_main_state_tables", MACHINE_DIRECTORY / "design-to-main-state-tables.py")
+        "design_to_main_state_tables", MACHINE_DIRECTORY / "design-to-main-state-tables-common.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

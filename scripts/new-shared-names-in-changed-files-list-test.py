@@ -531,10 +531,42 @@ def run_hook_in_process(hook, root: Path, clone: Path, payload: dict, planted_fa
     return code, context
 
 
+def case_hook_git_path_line_count_other_than_two_exits_1_and_says_so(root):
+    # A path holding a newline, or git printing less than asked, cannot be made for real here,
+    # so git's output gains one line or loses one.
+    for count, change in ((3, lambda out: out.replace(b"\n", b"\nsplit\n", 1)),
+                          (1, lambda out: out.split(b"\n", 1)[1])):
+        case_root = root / f"lines_{count}"
+        case_root.mkdir()
+        clone = make_clone(case_root, BASE_MAIN_FILES)
+        write(clone, "alpha.md", "A `name-not-listed-when-a-path-splits` here.\n")
+        hook = load_module(f"hook_for_{count}_location_lines", HOOK_PATH)
+        real_run = subprocess.run
+
+        def run_with_changed_output(arguments, **options):
+            result = real_run(arguments, **options)
+            if "--absolute-git-dir" in arguments:
+                result.stdout = change(result.stdout)
+            return result
+        subprocess.run = run_with_changed_output
+        stderr = io.StringIO()
+        try:
+            code, context = run_hook_in_process(hook, case_root, clone, {"tool_name": "Write",
+                                                "tool_input": {"file_path": "alpha.md"}}, {}, stderr)
+        except ValueError as error:
+            code, context = f"ValueError: {error}", ""
+        finally:
+            subprocess.run = real_run
+        first_line = (stderr.getvalue().splitlines() or [""])[0]
+        check(f"a rev-parse that prints {count} lines for 2 paths exits 1 and tells the agent nothing on stdout",
+              code == 1 and context == "", f"exit {code}: {context}")
+        check(f"its first stderr line names the command and the {count}-line count",
+              f"git rev-parse --show-toplevel --absolute-git-dir failed (printed {count} lines where the 2 paths "
+              "should give one line each" in first_line, repr(first_line))
+
+
 def case_hook_git_failure_exits_1_with_the_cause_on_stderr(root):
-    for planted in ("rev-parse --show-toplevel", "rev-parse -q --verify HEAD", "rev-parse --absolute-git-dir",
-                    "rev-parse HEAD", "status",
-                    "diff HEAD", "ls-files -z --others", "symbolic-ref"):
+    for planted in ("rev-parse --show-toplevel", "status", "diff HEAD"):
         case_root = root / planted.replace(" ", "_")
         case_root.mkdir()
         clone = make_clone(case_root, BASE_MAIN_FILES)
@@ -551,17 +583,15 @@ def case_hook_git_failure_exits_1_with_the_cause_on_stderr(root):
               and "were not listed" in lines[0], repr(lines))
         check(f"a failing git {planted} gives the two next-step lines, which ask for no rerun",
               lines[1:] == ["Nothing needs rerunning: this check runs again at your next file edit or shell command.",
-                            'If a line starting "new-shared-names-reminder:" reports a git failure again at your next file edit or shell command, whether this error '
-                            "or another, tell the user, or, if you are a subagent, the agent that dispatched you, "
-                            "word for word, every line of this message and of the new one, before you go on. If "
-                            "the check finds no git failure then, this failure needs no report."], repr(lines))
+                            hook.next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
+                                "at your next file edit or shell command", "new-shared-names-reminder:")], repr(lines))
     (root / "detached").mkdir()
     detached = make_clone(root / "detached", BASE_MAIN_FILES)
     git(["remote", "set-head", "origin", "--delete"], detached)
     git(["checkout", "-q", "--detach"], detached)
     detached_hook = load_module("hook_for_detached_head", HOOK_PATH)
     check("a detached HEAD is never reported as a branch named HEAD, even where origin has no HEAD",
-          detached_hook.unreported_new_branch(detached, set(), detached_hook.reported_names_record_key_for(detached)) == "")
+          detached_hook.unreported_new_branch(detached, set(), detached_hook.worktree_head_branch_untracked_and_status_text(detached)[1]) == "")
     (root / "timeout").mkdir()
     clone = make_clone(root / "timeout", BASE_MAIN_FILES)
     hook = load_module("hook_for_git_timeout", HOOK_PATH)
@@ -1171,6 +1201,35 @@ def case_hook_shell_commands(root):
     check("a shell edit to an untracked file already scanned is scanned again", "second-shell-name" in rewritten, rewritten)
 
 
+def case_hook_reads_head_branch_and_untracked_files_from_one_status(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    hook = load_module("hook_for_one_status_case", HOOK_PATH)
+    git(["checkout", "-q", "-b", "topic-from-status"], clone)
+    # A source path that looks like an untracked entry shows whether the rename's second field is skipped.
+    write(clone, "? looks untracked.md", "tracked\n")
+    git(["add", "--", "? looks untracked.md"], clone)
+    git(["commit", "-q", "-m", "add an oddly named file"], clone)
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=clone, capture_output=True, text=True).stdout.strip()
+    git(["mv", "--", "? looks untracked.md", "renamed.md"], clone)
+    write(clone, "untracked one.md", "one\n")
+    write(clone, "zz-untracked-two.md", "two\n")
+    found_head, branch, untracked, _ = hook.worktree_head_branch_untracked_and_status_text(clone)
+    check("the status gives HEAD's commit", found_head == head, f"{found_head} {head}")
+    check("the status gives the branch's own name", branch == "topic-from-status", branch)
+    check("a staged rename's source path is not read as an untracked file",
+          sorted(untracked) == ["untracked one.md", "zz-untracked-two.md"], repr(untracked))
+    git(["tag", "topic-from-status"], clone)
+    check("a branch sharing its name with a tag keys the record under the branch's own name, as the branch list does",
+          hook.worktree_head_branch_untracked_and_status_text(clone)[1] == "topic-from-status" and "topic-from-status" in hook.local_branches(clone),
+          f"{hook.worktree_head_branch_untracked_and_status_text(clone)[1]} {hook.local_branches(clone)}")
+    git(["checkout", "-q", "--detach"], clone)
+    check("a detached HEAD gives the detached-HEAD key",
+          hook.worktree_head_branch_untracked_and_status_text(clone)[1] == hook.DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY, hook.worktree_head_branch_untracked_and_status_text(clone)[1])
+    unborn = root / "status-no-commit-yet"
+    git(["init", "-q", "-b", "main", str(unborn)], root)
+    check("a repository with no commit yet gives no HEAD commit", hook.worktree_head_branch_untracked_and_status_text(unborn)[0] == "",
+          repr(hook.worktree_head_branch_untracked_and_status_text(unborn)[0]))
+
 def case_hook_fingerprint_sees_a_rewritten_untracked_file_git_would_quote(root):
     clone = make_clone(root, BASE_MAIN_FILES)
     hook = load_module("new_shared_names_reminder_hook", HOOK_PATH)
@@ -1264,6 +1323,7 @@ def main() -> int:
              case_agent_seat_branch_in_its_agent_home_is_not_reported,
              case_agent_home_check_failure_is_told_and_no_branch_reported,
              case_hook_git_failure_exits_1_with_the_cause_on_stderr,
+             case_hook_git_path_line_count_other_than_two_exits_1_and_says_so,
              case_branch_check_failure_is_told_and_the_file_check_still_runs,
              case_branch_check_and_lister_both_failing_tell_only_the_lister_failure,
              case_quiet_shell_calls_tell_the_branch_check_failure_once_the_lister_works_again,
@@ -1286,6 +1346,7 @@ def main() -> int:
              case_same_branch_name_recreated_is_told_names_again, case_switch_to_a_branch_origin_has_lists_its_names,
              case_overlapping_writers_never_leave_invalid_json_and_keep_every_name,
              case_hook_shell_commands,
+             case_hook_reads_head_branch_and_untracked_files_from_one_status,
              case_hook_fingerprint_sees_a_rewritten_untracked_file_git_would_quote,
              case_hook_fingerprint_sees_an_untracked_file_whose_name_is_not_utf8,
              case_hook_reports_failure_once, case_hook_ignores_other_input]

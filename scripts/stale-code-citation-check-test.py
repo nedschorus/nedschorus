@@ -36,11 +36,18 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 SCRIPTS = Path(__file__).resolve().parent
 PROGRAM = SCRIPTS / "stale-code-citation-check.py"
 LINT = SCRIPTS / "md-drift-lint.py"
 LINT_OVERVIEW_PATH_MODULE = (
-    SCRIPTS / "architecture-overview-path-template-and-checked-against-commit-reader.py")
+    SCRIPTS / "architecture-overview-path-template-and-checked-against-commit-reader-common.py")
 GIT_OUTPUT_MODULE = (SCRIPTS.parent / "nc-systems" / "general-tools"
                      / "git-machine-readable-output-runner-and-parser-common.py")
 NEXT_STEP_LINES_MODULE = GIT_OUTPUT_MODULE.with_name(
@@ -142,11 +149,9 @@ def reports_the_git_failure_and_no_result(root, arguments, code, out, err):
              + " ".join(arguments))
     return (code == 2 and INJECTED_GIT_ERROR in err and "a git command failed" in err
             and "finding(s)" not in err
-            and f"If a branch, commit or path you gave stale-code-citation-check on its command line is misspelt" in err
-            and f"If none of the cases above applies, run exactly {rerun} once more." in err
-            and ('If the rerun, or the corrected command, prints a line containing "could not check, because a git '
-                 'command failed" again, stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line containing '
-                 '"could not check, because a git command failed" from the command that printed this message and from the rerun, or the corrected command.') in err)
+            and next_step_lines.git_failure_next_step_lines(
+                rerun, "stale-code-citation-check", text_the_failure_line_contains="could not check, because a git command failed",
+                include_the_misspelt_branch_commit_or_path_line=True) in err)
 
 
 def document(stamp="2026-05-01", status="design", body=""):

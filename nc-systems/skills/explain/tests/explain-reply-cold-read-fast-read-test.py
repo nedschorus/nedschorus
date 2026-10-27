@@ -16,7 +16,7 @@ reading that means the program is wrong.
 The case on two seats' records ships to a scratch store with the real
 nc-systems/cold-read/cold-read-record-ship.py, pointed there by
 COLD_READ_RECORD_SHIP_DESTINATION, the shipper's own test destination, and
-names each record with the real nc-systems/cold-read/cold-read-record-names.py,
+names each record with the real nc-systems/cold-read/cold-read-record-names-common.py,
 as the fast read does. Only the fast read itself is a stand-in.
 
 The case on a REFUSED record line takes that line from the real shipper,
@@ -301,7 +301,7 @@ def main() -> int:
         # and the second seat to ship was refused (2026-10-01, merge-lane-2's
         # review of the pull request that added the program).
         record_names = load_module("cold_read_record_names",
-                                   COLD_READ_DIRECTORY / "cold-read-record-names.py")
+                                   COLD_READ_DIRECTORY / "cold-read-record-names-common.py")
         store = scratch / "store" / "cold-read-records"
         store.mkdir(parents=True)
         today = datetime.datetime.now()
@@ -373,7 +373,9 @@ def main() -> int:
 
         # Oracle: stdout and exit code. Red: exit 0, or no instruction to send
         # anyway, or the fast read's FAILED line not passed on.
-        failed_line = "FAILED (exit 1 from the fast-clarify cell; no report)"
+        failed_line = ("FAILED (the fast-clarify cell failed on Gemini, exit 1: exit-1 — "
+                       "an error, and on the Sonnet backup claude-sonnet-5-5, exit 1: "
+                       "exit-1 — an error; no report)")
         completed, _ = run_program(
             scratch, {"stdout": failed_line + "\n", "exit": 1}, GOOD_INPUT)
         check("a FAILED fast read exits 1", completed.returncode == 1,
@@ -438,8 +440,10 @@ def main() -> int:
         fast_read_own_line = ("cold-read-fast-read: the cell launcher refused the "
                               "invocation (exit 64); not retried, because the same "
                               "invocation would be refused the same way.")
-        launcher_failed_line = ("FAILED (exit 64 from the fast-clarify cell; no report "
-                                f"at {scratch / 'fast-read.md'})")
+        launcher_failed_line = ("FAILED (the fast-clarify cell failed on Gemini, exit 64: "
+                                "cold-read-agy-cell: refused before agy started, and on "
+                                "the Sonnet backup claude-sonnet-5-5, exit 1: no-report "
+                                f"— no report written; no report at {scratch / 'fast-read.md'})")
         completed, _ = run_program(
             scratch,
             {"stdout": launcher_failed_line + "\n",

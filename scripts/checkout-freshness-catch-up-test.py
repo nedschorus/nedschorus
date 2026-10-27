@@ -2640,11 +2640,11 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
     check("--report prints the git failure instead of 'not a git checkout'",
           run.returncode == 0 and INJECTED_STDERR in run.stdout
           and "not a git checkout" not in run.stdout
-          and f"If git's error names no lock file, run exactly `python3 {SCRIPT_PATH.resolve()} --report --repo "
-              f"{level_seat.resolve()}` once more." in run.stdout
+          and catch_up_module.next_step_lines.git_failure_next_step_lines(
+              f"`python3 {SCRIPT_PATH.resolve()} --report --repo {level_seat.resolve()}`",
+              text_the_failure_line_contains="because a git command failed",
+              include_the_misspelt_branch_commit_or_path_line=False) in run.stdout
           and "you gave" not in run.stdout
-          and ('If the rerun prints a line containing "because a git command failed" again, stop, and tell '
-               "the user, or, if you are a subagent, the agent that dispatched you, word for word") in run.stdout
           and "Nothing needs rerunning" not in run.stdout, run.stdout + run.stderr)
     worktree_list_fails = failing_git_shim("worktree-list-fails-in-modes", '*" worktree list "*')
     run = run_catch_up_once(["--reference-pull", "--repo", str(level_seat)], worktree_list_fails)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for architecture-overview-path-template-and-checked-against-commit-reader.py.
+"""Tests for architecture-overview-path-template-and-checked-against-commit-reader-common.py.
 
-Run: python3 scripts/architecture-overview-path-template-and-checked-against-commit-reader-test.py
+Run: python3 scripts/architecture-overview-path-template-and-checked-against-commit-reader-common-test.py
 """
 
 import importlib.util
@@ -13,7 +13,7 @@ PAGE_PATH = (REPOSITORY_ROOT / "docs" / "nedschorus-wiki"
              / "nedschorus-how-to-write-an-architecture-overview.md")
 
 _spec = importlib.util.spec_from_file_location(
-    "architecture_overview_path_template_and_checked_against_commit_reader", Path(__file__).with_name("architecture-overview-path-template-and-checked-against-commit-reader.py"))
+    "architecture_overview_path_template_and_checked_against_commit_reader", Path(__file__).with_name("architecture-overview-path-template-and-checked-against-commit-reader-common.py"))
 architecture_overview_path_template_and_checked_against_commit_reader = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(architecture_overview_path_template_and_checked_against_commit_reader)
 

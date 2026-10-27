@@ -36,10 +36,17 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 CHECK_SCRIPT = Path(__file__).with_name("dangling-path-citation-check.py")
 LINT_SCRIPT = Path(__file__).with_name("md-drift-lint.py")
 LINT_OVERVIEW_PATH_MODULE = Path(__file__).with_name(
-    "architecture-overview-path-template-and-checked-against-commit-reader.py")
+    "architecture-overview-path-template-and-checked-against-commit-reader-common.py")
 GIT_OUTPUT_MODULE = (Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
                      / "git-machine-readable-output-runner-and-parser-common.py")
 NEXT_STEP_LINES_MODULE = GIT_OUTPUT_MODULE.with_name(
@@ -1087,11 +1094,9 @@ with tempfile.TemporaryDirectory() as workspace:
                  f"{(root / 'scripts' / CHECK_SCRIPT.name).resolve()} --base {base}")
         return (code == 2 and INJECTED_GIT_ERROR in err and "a git command failed" in err
                 and "finding(s)" not in err
-                and f"If a branch, commit or path you gave dangling-path-citation-check on its command line is misspelt" in err
-                and f"If none of the cases above applies, run exactly {rerun} once more." in err
-                and ('If the rerun, or the corrected command, prints a line containing "could not check, because a git '
-                     'command failed" again, stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line containing '
-                     '"could not check, because a git command failed" from the command that printed this message and from the rerun, or the corrected command.') in err)
+                and next_step_lines.git_failure_next_step_lines(
+                    rerun, "dangling-path-citation-check", text_the_failure_line_contains="could not check, because a git command failed",
+                    include_the_misspelt_branch_commit_or_path_line=True) in err)
 
     for failing_arguments, what in (
             ("ls-tree -z HEAD --name-only -d", "listing the root directories"),
@@ -1115,6 +1120,86 @@ with tempfile.TemporaryDirectory() as workspace:
     check("the check exits 2 with git's error when reading a file's base text fails",
           reports_the_git_failure_and_no_result(base_with_launcher, code, err),
           f"{code} {out!r} {err!r}")
+
+
+# --- --only-citations-of-removed-paths: the backward half alone -------------
+with tempfile.TemporaryDirectory() as workspace:
+    root = Path(workspace) / "repo"
+    root.mkdir()
+    build_repository(root)
+    commit_change(root, "scripts/tool-that-moves.py", "VALUE = 1\n")
+    commit_change(root, "scripts/caller.py", 'TOOL = "scripts/tool-that-moves.py"\n')
+    flag_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    commit_change(root, "scripts/forward-only.py", "# runs scripts/never-built.py\n")
+    code, out, err = run_check(root, flag_base, "--only-citations-of-removed-paths")
+    check("with --only-citations-of-removed-paths a new dangling citation alone is not reported",
+          code == 0 and "never-built" not in out, f"{code} {out!r} {err!r}")
+    git(root, "mv", "scripts/tool-that-moves.py", "scripts/tool-after-the-move.py")
+    git(root, "commit", "-qm", "rename the tool, sweeping nothing")
+    code, out, err = run_check(root, flag_base)
+    check("without the flag both halves are reported",
+          code == 1 and "never-built" in out and "cites scripts/tool-that-moves.py" in out,
+          f"{code} {out!r} {err!r}")
+    code, out, err = run_check(root, flag_base, "--only-citations-of-removed-paths")
+    check("with --only-citations-of-removed-paths only the citation of the renamed path is reported",
+          code == 1 and "scripts/caller.py:1: cites scripts/tool-that-moves.py" in out
+          and "never-built" not in out, f"{code} {out!r} {err!r}")
+
+
+# --- the suite run fails on a pure rename that leaves a citation behind -----
+# The branch renames a cited program and changes no Markdown file, so nothing
+# but the suite run can catch it. The run is the selective one CLAUDE.md asks
+# for before every push, after a full run has recorded the suite's inputs.
+RUNNER = Path(__file__).resolve().with_name("run-all-test-suites.py")
+REMOVED_PATH_CITATION_SUITE = Path(__file__).resolve().with_name(
+    "branch-leaves-no-citations-of-removed-paths-test.py")
+SUITE_IN_THE_SCRATCH_CHECKOUT = f"scripts/{REMOVED_PATH_CITATION_SUITE.name}"
+
+
+def run_the_suites(workspace: Path, root: Path, run_name: str, *arguments):
+    completed = subprocess.run(
+        [sys.executable, str(RUNNER), "--checkout", str(root),
+         "--log-dir", str(workspace / f"logs-{run_name}"),
+         "--lock-file", str(workspace / "run.lock"),
+         "--recorded-inputs-directory", str(workspace / "recordings"), *arguments],
+        capture_output=True, text=True, stdin=subprocess.DEVNULL, check=False)
+    return completed.returncode, completed.stdout, completed.stderr
+
+
+with tempfile.TemporaryDirectory() as workspace:
+    workspace = Path(workspace)
+    root = workspace / "repo"
+    root.mkdir()
+    build_repository(root)
+    (root / "scripts" / REMOVED_PATH_CITATION_SUITE.name).write_text(
+        REMOVED_PATH_CITATION_SUITE.read_text(encoding="utf-8"), encoding="utf-8")
+    commit_change(root, "scripts/tool-that-moves.py", "VALUE = 1\n")
+    commit_change(root, "scripts/caller.py", 'TOOL = "scripts/tool-that-moves.py"\n')
+    git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
+    code, out, err = run_the_suites(workspace, root, "full")
+    check("the suite passes a full run of a checkout at origin/main",
+          code == 0 and f"PASS {SUITE_IN_THE_SCRATCH_CHECKOUT}" in out, f"{code} {out!r} {err!r}")
+
+    git(root, "mv", "scripts/tool-that-moves.py", "scripts/tool-after-the-move.py")
+    git(root, "commit", "-qm", "rename the tool, sweeping nothing")
+    changed_names = git(root, "diff", "--name-only", "origin/main", "HEAD").stdout.split()
+    check("the branch changes no Markdown file",
+          changed_names and not any(name.endswith(".md") for name in changed_names),
+          changed_names)
+    since = ("--only-suites-whose-recorded-inputs-changed-since", "origin/main")
+    code, out, err = run_the_suites(workspace, root, "after-the-rename", *since)
+    check("a selective run selects the suite after a pure rename",
+          f"SELECTED {SUITE_IN_THE_SCRATCH_CHECKOUT}:" in out
+          and f"NOT SELECTED {SUITE_IN_THE_SCRATCH_CHECKOUT}:" not in out,
+          f"{code} {out!r} {err!r}")
+    check("a selective run fails while a file still cites the renamed path",
+          code == 1 and f"FAIL {SUITE_IN_THE_SCRATCH_CHECKOUT} exit 1" in out,
+          f"{code} {out!r} {err!r}")
+
+    commit_change(root, "scripts/caller.py", 'TOOL = "scripts/tool-after-the-move.py"\n')
+    code, out, err = run_the_suites(workspace, root, "after-the-sweep", *since)
+    check("a selective run passes once the citation names the new path",
+          code == 0 and f"PASS {SUITE_IN_THE_SCRATCH_CHECKOUT}" in out, f"{code} {out!r} {err!r}")
 
 if failures:
     print(f"\n{len(failures)} case(s) failed: {', '.join(failures)}")

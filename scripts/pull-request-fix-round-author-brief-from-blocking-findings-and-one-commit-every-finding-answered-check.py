@@ -16,13 +16,15 @@ which then re-post its blockers.
 Without --check, run in the author's checkout: refuse when the pull request's head has moved past
 the frozen-head, else print the brief: the frozen-head, each blocking finding word for word, how to
 dispatch the fix-round subagent in a git worktree of its own and push from it, the round's rules,
-and the --check command to finish with, which names the answers file in the author's checkout.
+and the --check command to finish with, which the subagent runs in its own worktree.
 
 With --check, run in the worktree or checkout that holds the round's commit: the commits from the frozen-head to --commit (default
 HEAD) must be none, or one non-merge commit, or with --after-conflict-merge a merge of origin/main
 followed by at most one non-merge commit. The answers file holds one entry per blocking finding,
-each starting "<n>. " on its own line; by default it is ANSWERS_FILE_NAME_FORMAT inside the
-checkout's own git directory, where git never commits it. It prints the files the fix commit changes that no blocking
+each starting "<n>. " on its own line; by default it is ANSWERS_FILE_NAME_FORMAT at the root of
+the worktree or checkout --check runs in, and --check refuses when the checked commit's tree holds
+an answers file the frozen-head's tree does not, since a branch cut before .gitignore named the file does not leave it out of
+commits. It prints the files the fix commit changes that no blocking
 finding names, and, once GitHub's head is the checked commit or the frozen-head, the message for
 merge-lane-2, which the agent sends with SendMessage, since a program cannot.
 
@@ -53,6 +55,7 @@ ANSWER_START_PATTERN = re.compile(r"^(\d+)\.\s+(\S.*)$")
 GH_TIMEOUT_SECONDS = 60
 PROGRAM = "scripts/" + Path(__file__).name
 ANSWERS_FILE_NAME_FORMAT = "fix-round-answers-pull-request-{number}.md"
+ANSWERS_FILE_NAME_PATTERN = re.compile(r"fix-round-answers-pull-request-\d+\.md")
 PRE_PUSH_TEST_COMMAND = ("python3 scripts/run-all-test-suites.py "
                          "--only-suites-whose-recorded-inputs-changed-since origin/main")
 WORKTREE_DISPATCH_INSTRUCTION = (
@@ -279,11 +282,9 @@ def print_brief(number, reviewer_login):
     for index, finding in enumerate(findings, 1):
         lines += ["", f"{index}. {finding_place(finding)} ({finding.get('html_url')})",
                   (finding.get("body") or "").strip()]
-    answers_path = default_answers_path(number)
+    answers_name = ANSWERS_FILE_NAME_FORMAT.format(number=number)
     local_branch = LOCAL_BRANCH_NAME_FORMAT.format(number=number, review_id=review_id)
-    # --answers names the file in this checkout's git directory, which the subagent's own
-    # worktree does not hold by default.
-    check_command = f"python3 {PROGRAM} {number} --check --answers {shlex.quote(answers_path)}"
+    check_command = f"python3 {PROGRAM} {number} --check"
     lines += [
         "",
         WORKTREE_DISPATCH_INSTRUCTION,
@@ -300,10 +301,11 @@ def print_brief(number, reviewer_login):
         "are not part of this round: merge-lane-2 sends them after the merge.",
         "4. Put every change in one commit on top of the branch as step 1 left it. "
         "If no finding holds, make no commit.",
-        f"5. Write the answers file {answers_path}, one entry per finding above, each starting "
-        "\"<n>. \" on its own line, with any further lines of the entry after it: what you fixed, "
-        "or why the finding does not hold. It is inside git's own directory, so it is never "
-        "committed.",
+        f"5. Write the answers file {answers_name} at the root of your worktree, one entry per "
+        "finding above, each starting \"<n>. \" on its own line, with any further lines of the "
+        "entry after it: what you fixed, or why the finding does not hold. Never commit it: "
+        "the branch's .gitignore may not leave it out, and the check in step 7 refuses a commit "
+        "that holds it.",
         f"6. Run the affected test suites: {PRE_PUSH_TEST_COMMAND}",
         "   If a suite fails because of this round's change, fix it in the same commit; if it "
         "fails for another cause, tell merge-lane-2 with SendMessage before pushing.",
@@ -324,14 +326,14 @@ def print_brief(number, reviewer_login):
 
 
 def default_answers_path(number):
-    """The answers file inside the checkout's own git directory, which git never commits."""
+    """The answers file at the root of the worktree or checkout this runs in."""
     try:
-        git_directory = git(["rev-parse", "--absolute-git-dir"]).strip()
+        top_level = git(["rev-parse", "--show-toplevel"]).strip()
     except StepFailed as failure:
-        raise Refused(f"This must run in your checkout of pull request {number}'s branch, whose "
-                      f"git directory holds the answers file, but git could not find one: {failure}.\n"
-                      "Change to that checkout and run this again.") from None
-    return str(Path(git_directory) / ANSWERS_FILE_NAME_FORMAT.format(number=number))
+        raise Refused(f"This must run in the worktree or checkout of pull request {number}'s branch "
+                      f"whose root holds the answers file, but git found no worktree here: {failure}.\n"
+                      "Change to that worktree and run this again.") from None
+    return str(Path(top_level) / ANSWERS_FILE_NAME_FORMAT.format(number=number))
 
 
 def read_answers(path, finding_count):
@@ -410,6 +412,26 @@ def fix_commit_range(frozen_head, commits, after_conflict_merge):
                   "If they are pushed, tell merge-lane-2 with SendMessage; do not force-push.")
 
 
+def files_added_since(frozen_head, commit):
+    """Files commit's tree holds that frozen_head's tree does not, whichever commit of the round added them."""
+    # --no-renames, so that an answers file renamed from a file the frozen-head holds still counts as added.
+    listing = git(["diff", "-z", "--name-only", "--no-renames", "--diff-filter=A", frozen_head, commit])
+    return git_output.nul_separated_fields(listing)
+
+
+def refuse_committed_answers_file(frozen_head, commit):
+    committed = [path for path in files_added_since(frozen_head, commit)
+                 if ANSWERS_FILE_NAME_PATTERN.fullmatch(Path(path).name)]
+    if committed:
+        raise Refused(f"The round does not pass: its commits after the frozen-head {frozen_head[:12]} "
+                      f"add these answers files: {', '.join(committed)}. An answers file must never "
+                      "reach the pull request.\n"
+                      "If the round's commit is not pushed, run git rm --cached on each answers file "
+                      "named above, then git commit --amend --no-edit, and check again.\n"
+                      "If the round's commit is pushed, tell merge-lane-2 with SendMessage which "
+                      "answers files the pushed commit holds; do not force-push.")
+
+
 def unnamed_files(base, fix_commit, findings):
     if base is None:
         return []
@@ -425,6 +447,7 @@ def check_round(number, reviewer_login, answers_path, commit_name, after_conflic
     commit = git(["rev-parse", "--verify", f"{commit_name}^{{commit}}"]).strip()
     git(["cat-file", "-e", f"{frozen_head}^{{commit}}"])
     fix_range = fix_commit_range(frozen_head, commits_since(frozen_head, commit), after_conflict_merge)
+    refuse_committed_answers_file(frozen_head, commit)
     leftovers = unnamed_files(*(fix_range or (None, None)), findings)
     lines = [f"PASS: the fix-round on {url} keeps to its rules; {len(findings)} findings answered."]
     if leftovers:
@@ -465,7 +488,7 @@ def main(argv=None):
     parser.add_argument("--answers",
                         help="with --check: the answers file, one \"<n>. \" entry per finding "
                              "(default: " + ANSWERS_FILE_NAME_FORMAT.format(number="<number>")
-                             + " in the checkout's git directory)")
+                             + " at the root of this worktree)")
     parser.add_argument("--commit", default="HEAD",
                         help="with --check: the round's last commit (default: HEAD)")
     parser.add_argument("--after-conflict-merge", action="store_true",

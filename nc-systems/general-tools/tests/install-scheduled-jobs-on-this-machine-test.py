@@ -79,11 +79,11 @@ NED_BOX_SESSION_DIALOGS_LINE = (
     "*/10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
     "log-store-session-dialogs-refresh-nbd.py --failures-only >> "
     "/home/nedlern/.claude/log-store-session-dialogs-refresh.log 2>&1")
-# The daily worktree cleanup, added to the table after the two jobs above; no
+# The worktree cleanup, added to the table after the two jobs above; no
 # machine had it installed by hand.
 NED_BOX_CLEAN_LINE = (
     "30 6 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
-    "clean-worktrees.py --remove >> /home/nedlern/.claude/daily-clean-worktrees.log 2>&1")
+    "clean-worktrees.py --remove >> /home/nedlern/.claude/clean-worktrees.log 2>&1")
 NED_BOX_CRASH_RESTART_WATCHER_LINE = (
     "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
     "handoff-agent-seat-died-without-session-handoff-restart-watcher.py >> "
@@ -93,15 +93,15 @@ NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE = (
     "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> "
     "/home/nedlern/.claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log 2>&1")
 MAC_CLEAN_PLIST = {
-    "Label": "com.nedschorus.daily-clean-worktrees",
+    "Label": "com.nedschorus.clean-worktrees",
     "ProgramArguments": ["/opt/homebrew/bin/python3",
                          "/Users/el/Projects/nedschorus/scripts/clean-worktrees.py", "--remove"],
     "EnvironmentVariables": {
         "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
                 "/usr/sbin:/sbin"},
     "StartCalendarInterval": {"Hour": 6, "Minute": 30},
-    "StandardOutPath": "/Users/el/.claude/daily-clean-worktrees.log",
-    "StandardErrorPath": "/Users/el/.claude/daily-clean-worktrees.log",
+    "StandardOutPath": "/Users/el/.claude/clean-worktrees.log",
+    "StandardErrorPath": "/Users/el/.claude/clean-worktrees.log",
 }
 # The weekly owner check of the work-snapshot hook in a real claude session, added after the daily jobs.
 NED_BOX_WEEKLY_LIVE_CHECK_LINE = (
@@ -123,14 +123,14 @@ MAC_WEEKLY_LIVE_CHECK_PLIST = {
     "StandardErrorPath":
         "/Users/el/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log",
 }
-# The daily prune of the guarded-file hook's copies of removed checkouts, last in the table.
+# The prune of the guarded-file hook's copies of removed checkouts, last in the table.
 NED_BOX_GUARDED_FILE_PRUNE_LINE = (
     "0 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
     "guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py >> "
-    "/home/nedlern/.claude/daily-guarded-file-versions-and-approvals-store-removed-checkout-"
+    "/home/nedlern/.claude/guarded-file-versions-and-approvals-store-removed-checkout-"
     "copies-prune.log 2>&1")
 MAC_GUARDED_FILE_PRUNE_PLIST = {
-    "Label": "com.nedschorus.daily-guarded-file-versions-and-approvals-store-removed-checkout-"
+    "Label": "com.nedschorus.guarded-file-versions-and-approvals-store-removed-checkout-"
              "copies-prune",
     "ProgramArguments": ["/opt/homebrew/bin/python3",
                          "/Users/el/Projects/nedschorus/nc-systems/general-tools/"
@@ -139,9 +139,9 @@ MAC_GUARDED_FILE_PRUNE_PLIST = {
         "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
                 "/usr/sbin:/sbin"},
     "StartCalendarInterval": {"Hour": 7, "Minute": 0},
-    "StandardOutPath": "/Users/el/.claude/daily-guarded-file-versions-and-approvals-store-"
+    "StandardOutPath": "/Users/el/.claude/guarded-file-versions-and-approvals-store-"
                        "removed-checkout-copies-prune.log",
-    "StandardErrorPath": "/Users/el/.claude/daily-guarded-file-versions-and-approvals-store-"
+    "StandardErrorPath": "/Users/el/.claude/guarded-file-versions-and-approvals-store-"
                          "removed-checkout-copies-prune.log",
 }
 DOMAIN = f"gui/{os.getuid()}"
@@ -226,7 +226,7 @@ real_table = installer.load_table(REAL_TABLE_PATH)
 real_jobs = {job["name"]: job for job in real_table["jobs"]}
 mac, ned_box = real_table["machines"]["mac"], real_table["machines"]["ned-box"]
 mirror, daily = real_jobs["transcript-mirror-to-log-store"], real_jobs["daily-full-test-run-of-main"]
-clean = real_jobs["daily-clean-worktrees"]
+clean = real_jobs["clean-worktrees"]
 
 check("the table gives ned-box the transcript mirror's cron line it has installed, byte for byte",
       installer.cron_line(ned_box, mirror, mirror["on"]["ned-box"]) == NED_BOX_MIRROR_LINE,
@@ -242,21 +242,21 @@ check("the Mac's daily full test run is a launchd job at 03:30, not a cron line:
       "while the Mac sleeps starts at the next wake",
       daily["on"]["mac"]["scheduler"] == "launchd" and mac_plist == MAC_DAILY_PLIST
       and list(mac_plist) == list(MAC_DAILY_PLIST), mac_plist)
-check("the table gives ned-box the daily worktree cleanup's cron line at 06:30, two hours after "
+check("the table gives ned-box the worktree cleanup's cron line at 06:30, two hours after "
       "the daily full test run",
       installer.cron_line(ned_box, clean, clean["on"]["ned-box"]) == NED_BOX_CLEAN_LINE,
       installer.cron_line(ned_box, clean, clean["on"]["ned-box"]))
 mac_clean_plist = installer.launch_agent_plist(mac, clean, clean["on"]["mac"])
-check("the Mac's daily worktree cleanup is a launchd job at 06:30, so a run missed while the Mac "
+check("the Mac's worktree cleanup is a launchd job at 06:30, so a run missed while the Mac "
       "sleeps starts at the next wake",
       clean["on"]["mac"]["scheduler"] == "launchd" and mac_clean_plist == MAC_CLEAN_PLIST
       and list(mac_clean_plist) == list(MAC_CLEAN_PLIST), mac_clean_plist)
-check("the table's jobs are the two typed by hand before this program, the daily worktree "
+check("the table's jobs are the two typed by hand before this program, the worktree "
       "cleanup, ned-box's crash restart watcher, ned-box's Remote Control reconnect watcher, the "
       "weekly owner check of the work-snapshot hook, the session dialogs refresh and the "
-      "guarded-file store's daily prune, and no other",
-      sorted(real_jobs) == ["daily-clean-worktrees", "daily-full-test-run-of-main",
-                            "daily-guarded-file-versions-and-approvals-store-removed-checkout-"
+      "guarded-file store's prune, and no other",
+      sorted(real_jobs) == ["clean-worktrees", "daily-full-test-run-of-main",
+                            "guarded-file-versions-and-approvals-store-removed-checkout-"
                             "copies-prune",
                             "handoff-agent-seat-died-without-session-handoff-restart-watcher",
                             "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-"
@@ -288,7 +288,7 @@ remote_control_watcher = real_jobs[
 remote_control_watcher_documentation = (
     REPOSITORY_ROOT / remote_control_watcher["program"]).read_text(encoding="utf-8")
 guarded_file_prune_documentation = (
-    REPOSITORY_ROOT / real_jobs["daily-guarded-file-versions-and-approvals-store-removed-"
+    REPOSITORY_ROOT / real_jobs["guarded-file-versions-and-approvals-store-removed-"
                                 "checkout-copies-prune"]["program"]).read_text(encoding="utf-8")
 weekly_live_check_documentation = (
     REPOSITORY_ROOT / real_jobs["weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"]
@@ -319,33 +319,34 @@ check("--print as ned-box prints ned-box's eight cron lines from the real table 
           "transcript-mirror-to-log-store — cron line:", NED_BOX_MIRROR_LINE,
           "log-store-session-dialogs-refresh — cron line:", NED_BOX_SESSION_DIALOGS_LINE,
           "daily-full-test-run-of-main — cron line:", NED_BOX_DAILY_LINE,
-          "daily-clean-worktrees — cron line:", NED_BOX_CLEAN_LINE,
+          "clean-worktrees — cron line:", NED_BOX_CLEAN_LINE,
           "handoff-agent-seat-died-without-session-handoff-restart-watcher — cron line:",
           NED_BOX_CRASH_RESTART_WATCHER_LINE,
           "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher — "
           "cron line:", NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE,
           "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — cron line:",
           NED_BOX_WEEKLY_LIVE_CHECK_LINE,
-          "daily-guarded-file-versions-and-approvals-store-removed-checkout-copies-prune — cron "
+          "guarded-file-versions-and-approvals-store-removed-checkout-copies-prune — cron "
           "line:", NED_BOX_GUARDED_FILE_PRUNE_LINE],
       (exit_code, printed.getvalue(), errors.getvalue()))
 printed, errors = io.StringIO(), io.StringIO()
 with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="darwin", home=Path("/Users/el"), run=stub)
 mac_printed = printed.getvalue()
-clean_heading = ("daily-clean-worktrees — launchd job, /Users/el/Library/LaunchAgents/"
-                 "com.nedschorus.daily-clean-worktrees.plist:\n")
+clean_heading = ("clean-worktrees — launchd job, /Users/el/Library/LaunchAgents/"
+                 "com.nedschorus.clean-worktrees.plist:\n")
 weekly_heading = ("weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — launchd job, "
                   "/Users/el/Library/LaunchAgents/com.nedschorus.weekly-uncommitted-work-snapshot-"
                   "hook-real-claude-session-owner-check.plist:\n")
 daily_part, _, clean_and_weekly_part = mac_printed.partition(clean_heading)
 clean_part, _, weekly_and_prune_part = clean_and_weekly_part.partition(weekly_heading)
-prune_heading = ("daily-guarded-file-versions-and-approvals-store-removed-checkout-copies-prune — "
-                 "launchd job, /Users/el/Library/LaunchAgents/com.nedschorus.daily-guarded-file-"
+prune_heading = ("guarded-file-versions-and-approvals-store-removed-checkout-copies-prune — "
+                 "launchd job, /Users/el/Library/LaunchAgents/com.nedschorus.guarded-file-"
                  "versions-and-approvals-store-removed-checkout-copies-prune.plist:\n")
 weekly_part, _, prune_part = weekly_and_prune_part.partition(prune_heading)
-check("--print as the Mac prints the mirror's cron line, the two daily jobs' plists and the weekly "
-      "owner check's and the guarded-file prune's plists, and runs nothing",
+check("--print as the Mac prints the mirror's cron line, the full test run's and the worktree "
+      "cleanup's plists and the weekly owner check's and the guarded-file prune's plists, and "
+      "runs nothing",
       exit_code == 0 and stub.commands == [] and clean_part.startswith("<?xml")
       and daily_part.startswith(
           "machine: mac (darwin, /Users/el)\ntranscript-mirror-to-log-store — cron line:\n"
@@ -1052,9 +1053,8 @@ with tempfile.TemporaryDirectory() as temporary:
           silent_failure.cause.endswith("and printed no error")
           and silent_failure.next_steps("the-rerun", "FAILED: j").splitlines() == [
               "Run `the-rerun` once more, on this machine; it tries this job alone.",
-              'If the rerun prints a line containing "FAILED: j" again, stop, and tell '
-              "the user, or, if you are a subagent, the agent that dispatched you, word for word, the line containing "
-              '"FAILED: j" from the command that printed this message and from the rerun.'],
+              installer.next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+                  "FAILED: j")],
           (silent_failure.cause, silent_failure.next_steps("the-rerun", "FAILED: j")))
     stub.print_error_text = b""
     exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
@@ -1065,18 +1065,16 @@ with tempfile.TemporaryDirectory() as temporary:
               f"Run `{check_rerun}` once more, on this machine; it tries this job alone.",
               "A DIFFERS line is not this failure: it is drift the check found, and does not "
               "count as the rerun failing.",
-              'If the rerun prints a line containing "NOT CHECKED: daily-full-test-run-of-main" '
-              "again, stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line "
-              'containing "NOT CHECKED: daily-full-test-run-of-main" from the command that printed this message and from the rerun.'], (exit_code, errors))
+              installer.next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+                  "NOT CHECKED: daily-full-test-run-of-main")], (exit_code, errors))
     exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
     install_rerun = f"{SCRIPT_PATH.resolve()} --install --job daily-full-test-run-of-main"
     check("--install whose launchctl print fails printing no error ends with the rerun and "
           "with when to stop, and exits 1",
           exit_code == 1 and errors.splitlines()[-2:] == [
               f"Run `{install_rerun}` once more, on this machine; it tries this job alone.",
-              'If the rerun prints a line containing "FAILED: daily-full-test-run-of-main" again, '
-              "stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line "
-              'containing "FAILED: daily-full-test-run-of-main" from the command that printed this message and from the rerun.'], (exit_code, errors))
+              installer.next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+                  "FAILED: daily-full-test-run-of-main")], (exit_code, errors))
     stub.print_error_text = b"Could not print: injected launchctl failure\n"
     before = len(stub.commands)
     exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
@@ -1515,8 +1513,8 @@ with tempfile.TemporaryDirectory() as temporary:
                       "and says what the install printed and to tell the user",
                       install_calls == [True] and exit_code == 2 and stub.crontab_writes == []
                       and "pip exited 1: no network on this machine" in errors
-                      and "Tell the user, or, if you are a subagent, the agent that dispatched "
-                      "you, in these words: \"tree-sitter-bash is missing on " in errors
+                      and shell_reader.report_to_user_or_dispatching_agent_instruction_build(
+                          "\"tree-sitter-bash is missing on ", environment={}) in errors
                       and shell_reader.REQUIREMENTS_FILE.name in errors,
                       (install_calls, exit_code, printed, errors, stub.crontab_writes))
     finally:

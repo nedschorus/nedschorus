@@ -34,6 +34,13 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 SCRIPT_PATH = Path(__file__).with_name("obsolete-file-edit-warning-hook.py")
 
 failures = []
@@ -119,13 +126,8 @@ def silent(result) -> bool:
     return result.returncode == 0 and result.stdout.strip() == ""
 
 
-LOCK_FILE_WAIT_CLAUSE = (
-    "do not delete the lock file yourself, because a git command still running may hold it; "
-    "wait up to one minute for git to remove it by running "
-    "`i=0; while [ -e \"<lock file path>\" ] && [ $i -lt 30 ]; do sleep 2; i=$((i+1)); done` with "
-    "<lock file path> replaced by the path git's error names, without the quotes git puts around it "
-    "(Claude Code refuses a plain `sleep 60`), then run the command below this paragraph, whether or not the "
-    "lock file is gone")
+LOCK_FILE_WAIT_CLAUSE = next_step_lines.lock_file_named_by_git_error_wait_then_rerun_instruction(
+    "the command below this paragraph")
 GIT_FAILURE_RERUN_LINE = (
     "A later run of this hook checks only the file that run's Edit or Write touched, so check "
     "{path} by running the command printed on its own line below this paragraph. If git's error above names no lock file, run that "
@@ -137,12 +139,8 @@ GIT_FAILURE_RERUN_LINE = (
     "whose instructions you follow; or, when git fails again, a git-failure message like this one, "
     "and the last line here says what to do then.")
 GIT_FAILURE_RERUN_FAILS_TOO_LINE = (
-    "If the command on the line above prints JSON whose hookSpecificOutput.additionalContext "
-    'field starts with "obsolete-file-edit-warning-hook:" and reports a git failure, whether this '
-    "error or another, tell the user, or, if you are a subagent, the agent that dispatched you, "
-    "word for word, every line of this message and of that field, before you go on. If the "
-    "command prints nothing, or JSON whose field reports no git failure, the git failure above "
-    "needs no report.")
+    next_step_lines.hook_agent_instruction_if_rerun_command_reports_git_failure_tell_user_both_outputs_line(
+        "obsolete-file-edit-warning-hook:"))
 
 
 def named_rerun_command(result, edited_path) -> str:

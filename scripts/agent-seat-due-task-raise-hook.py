@@ -29,11 +29,17 @@ passed or its waits_on is met, and only when every task in its blockedBy is
 completed. A blockedBy id with no task file does not hold the task: a deleted
 task can never complete, and holding on it would silence the task for good.
 A blocker file that exists but cannot be read does hold it, because its
-status is unknown.
+status is unknown. An open task with neither due_utc nor waits_on, whose
+blockedBy is a non-empty list of tasks that all exist and are completed, is
+raised too: an agent told to record a prerequisite task with addBlockedBy is
+told this hook raises the task when that prerequisite is done. A deleted
+blocker frees such a task without raising it, because nothing it waited on
+was done.
 
 RAISED ONCE. The hook records, per task, the due_utc and waits_on values it
-raised the task for, and does not raise the task again for the same value;
-changing either lets the task be raised again. The Stop hook's
+raised the task for, or for a task raised because its blockers completed, its
+blockedBy list, and does not raise the task again for the same value;
+changing any of them lets the task be raised again. The Stop hook's
 additionalContext continues the conversation, so a hook that said the same
 thing at every turn boundary would never let the agent stop. The record is
 written atomically BEFORE anything is printed, and no raise is printed if the
@@ -199,6 +205,20 @@ def blocker_holds(blocker_id, tasks: dict, directory: Path) -> bool:
     # Not among the readable tasks: held if the file exists but would not
     # read, free if the task is gone.
     return (directory / f"{blocker_id}.json").exists()
+
+
+def completed_blockers(task: dict, tasks: dict) -> "list | None":
+    """The blockedBy ids, sorted, when every one names a completed task; else None.
+
+    Called only for a task is_held_by_blockers let through, so every blocker
+    that exists is completed and only a deleted one is left to rule out.
+    """
+    blocked_by = task.get("blockedBy")
+    if not isinstance(blocked_by, list) or not blocked_by:
+        return None
+    if not all(blocker in tasks for blocker in blocked_by):
+        return None
+    return sorted(set(blocked_by), key=lambda text: (len(text), text))
 
 
 def is_held_by_blockers(task: dict, tasks: dict, directory: Path) -> bool:
@@ -378,12 +398,15 @@ def gh_failure_line(kind: str, number: int, cause: str) -> str:
             f"the user to run `gh auth login` on this machine.")
 
 
-def raise_line(task: dict, due_text, met_citations) -> str:
+def raise_line(task: dict, due_text, met_citations, done_blockers=None) -> str:
     reasons = []
     if due_text is not None:
         reasons.append(f"its due time {single_line(due_text)} has passed")
     if met_citations is not None:
         reasons.append("its prerequisites are met: " + "; ".join(met_citations))
+    if done_blockers is not None:
+        reasons.append("the tasks it waited on are completed: "
+                       + ", ".join(f"task {single_line(blocker)}" for blocker in done_blockers))
     return (f'Act on task {task["id"]} "{single_line(task.get("subject", ""))}" '
             f"now: {', and '.join(reasons)}.")
 
@@ -405,6 +428,8 @@ def due_task_lines(tasks: dict, directory: Path, state: dict, now: datetime) -> 
         if task.get("status") not in OPEN_TASK_STATUSES:
             continue
         metadata = task.get("metadata")
+        if metadata is None:
+            metadata = {}
         if not isinstance(metadata, dict):
             continue
         due_text = metadata.get("due_utc")
@@ -433,16 +458,24 @@ def due_task_lines(tasks: dict, directory: Path, state: dict, now: datetime) -> 
                         condition_citation(kind, number, answer)
                         for kind, number, answer in answers]
 
-        if due_reason is None and prerequisite_citations is None:
+        done_blockers = None
+        if due_text is None and waits_on_value is None:
+            blockers = completed_blockers(task, tasks)
+            if blockers is not None and record.get("blocked_by") != blockers:
+                done_blockers = blockers
+
+        if due_reason is None and prerequisite_citations is None and done_blockers is None:
             continue
         new_record = dict(record)
         if due_reason is not None:
             new_record["due_utc"] = due_text
         if prerequisite_citations is not None:
             new_record["waits_on"] = canonical_waits_on(waits_on_value)
+        if done_blockers is not None:
+            new_record["blocked_by"] = done_blockers
         raised[task_id] = new_record
         state_changed = True
-        lines.append(raise_line(task, due_reason, prerequisite_citations))
+        lines.append(raise_line(task, due_reason, prerequisite_citations, done_blockers))
 
     for task_id in list(raised):
         if task_id not in tasks:

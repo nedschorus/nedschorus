@@ -370,8 +370,8 @@ check("locator ran this turn: logged as locator_ran",
       [line.get("outcome") for line in case.log_lines()] == ["locator_ran"], case.log_lines())
 
 case = (Case().user("Where are the transcripts?")
-        .tool_use("Skill", {"skill": "locate-before-saying-a-file-is-missing"})
-        .skill_loaded("locate-before-saying-a-file-is-missing")
+        .tool_use("Skill", {"skill": "find-missing-file"})
+        .skill_loaded("find-missing-file")
         .assistant_text(B01_CLAIM).write())
 result = case.run()
 check("the skill invoked this turn, its loaded text in the transcript: silent",

@@ -16,7 +16,7 @@ The cycle, per reincarnation:
      the initial agent instructions (user-ruled 2026-08-29: "Also useless is the
      reminder there are files in the queues. Thats what queues are for.").
   6. Launch the successor with the initial agent instructions. Beside the
-     branch sync's line they carry, for agent-instructions-editor alone, one
+     launch-time-git-sync's line they carry, for agent-instructions-editor alone, one
      line per system whose code moved on
      main past the commit its overview was checked against, until the user has been shown
      that overview's refresh that day (overview_refresh_due_lines), plus
@@ -111,7 +111,7 @@ _next_step_lines_spec.loader.exec_module(next_step_lines)
 
 _worth_resuming_spec = importlib.util.spec_from_file_location(
     "seat_transcript_worth_resuming",
-    SCRIPTS_DIRECTORY / "seat-transcript-worth-resuming.py")
+    SCRIPTS_DIRECTORY / "agent-seat-transcript-worth-resuming-common.py")
 worth_resuming = importlib.util.module_from_spec(_worth_resuming_spec)
 _worth_resuming_spec.loader.exec_module(worth_resuming)
 
@@ -137,25 +137,30 @@ _claude_json_presets_spec.loader.exec_module(claude_json_presets)
 
 _architecture_overview_path_template_and_checked_against_commit_reader_spec = importlib.util.spec_from_file_location(
     "architecture_overview_path_template_and_checked_against_commit_reader",
-    SCRIPTS_DIRECTORY / "architecture-overview-path-template-and-checked-against-commit-reader.py")
+    SCRIPTS_DIRECTORY / "architecture-overview-path-template-and-checked-against-commit-reader-common.py")
 architecture_overview_path_template_and_checked_against_commit_reader = importlib.util.module_from_spec(
     _architecture_overview_path_template_and_checked_against_commit_reader_spec)
 _architecture_overview_path_template_and_checked_against_commit_reader_spec.loader.exec_module(architecture_overview_path_template_and_checked_against_commit_reader)
 
-DAILY_MEMORY_REVIEW_MARK_PATH = Path(__file__).resolve().with_name("daily-memory-review-mark.py")
-_daily_memory_review_mark_spec = importlib.util.spec_from_file_location(
-    "daily_memory_review_mark", DAILY_MEMORY_REVIEW_MARK_PATH)
-daily_memory_review_mark = importlib.util.module_from_spec(_daily_memory_review_mark_spec)
-_daily_memory_review_mark_spec.loader.exec_module(daily_memory_review_mark)
+HANDOFF_USER_REVIEW_OF_AGENT_MEMORY_STORES_MARK_PATH = Path(__file__).resolve().with_name(
+    "handoff-user-review-of-agent-memory-stores-mark.py")
+_handoff_user_review_of_agent_memory_stores_mark_spec = importlib.util.spec_from_file_location(
+    "handoff_user_review_of_agent_memory_stores_mark",
+    HANDOFF_USER_REVIEW_OF_AGENT_MEMORY_STORES_MARK_PATH)
+handoff_user_review_of_agent_memory_stores_mark = importlib.util.module_from_spec(
+    _handoff_user_review_of_agent_memory_stores_mark_spec)
+_handoff_user_review_of_agent_memory_stores_mark_spec.loader.exec_module(
+    handoff_user_review_of_agent_memory_stores_mark)
 
-DAILY_OVERVIEW_REFRESH_REMINDER_MARK_PATH = Path(__file__).resolve().with_name(
-    "daily-overview-refresh-reminder-mark.py")
-_daily_overview_refresh_reminder_mark_spec = importlib.util.spec_from_file_location(
-    "daily_overview_refresh_reminder_mark", DAILY_OVERVIEW_REFRESH_REMINDER_MARK_PATH)
-daily_overview_refresh_reminder_mark = importlib.util.module_from_spec(
-    _daily_overview_refresh_reminder_mark_spec)
-_daily_overview_refresh_reminder_mark_spec.loader.exec_module(
-    daily_overview_refresh_reminder_mark)
+HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_PATH = Path(__file__).resolve().with_name(
+    "handoff-architecture-overview-refresh-user-shown-mark.py")
+_handoff_architecture_overview_refresh_user_shown_mark_spec = importlib.util.spec_from_file_location(
+    "handoff_architecture_overview_refresh_user_shown_mark",
+    HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_PATH)
+handoff_architecture_overview_refresh_user_shown_mark = importlib.util.module_from_spec(
+    _handoff_architecture_overview_refresh_user_shown_mark_spec)
+_handoff_architecture_overview_refresh_user_shown_mark_spec.loader.exec_module(
+    handoff_architecture_overview_refresh_user_shown_mark)
 
 _checkout_freshness_catch_up_spec = importlib.util.spec_from_file_location(
     "checkout_freshness_catch_up", SCRIPTS_DIRECTORY / "checkout-freshness-catch-up.py")
@@ -271,38 +276,37 @@ SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
 WRITTEN_BY_SESSION_FIELD = "written-by-session"
 WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 
-BRANCH_SYNC_PROGRAM_NAME = "the handoff-supervisor's branch sync"
 # The prompt goes on to the next step; a stop must hold that back too.
-BRANCH_SYNC_STOP_HOLDS_BACK = "act on the rest of this prompt"
-BRANCH_SYNC_RERUN_FAILS_WHEN = "prints an error again"
-BRANCH_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT = "the branch sync line in this prompt and the error the rerun printed"
+LAUNCH_TIME_GIT_SYNC_STOP_HOLDS_BACK = "act on the rest of this prompt"
+LAUNCH_TIME_GIT_SYNC_RERUN_FAILS_WHEN = "prints an error again"
+LAUNCH_TIME_GIT_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT = "the launch-time-git-sync line in this prompt and the error the rerun printed"
 
 
-def branch_sync_git_failure_next_steps(error) -> str:
-    """The next-step lines for a GitCommandFailed the branch sync reports."""
+def launch_time_git_sync_git_failure_next_steps(error) -> str:
+    """The next-step lines for a GitCommandFailed the launch-time-git-sync reports."""
     rerun = f"`{shlex.join(['git', '-C', str(error.directory), *error.arguments])}`"
     return next_step_lines.git_failure_next_step_lines(
-        rerun, BRANCH_SYNC_PROGRAM_NAME, include_the_misspelt_branch_commit_or_path_line=False,
-        rerun_fails_when=BRANCH_SYNC_RERUN_FAILS_WHEN, which_lines_to_quote_in_the_report=BRANCH_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT,
+        rerun, include_the_misspelt_branch_commit_or_path_line=False,
+        rerun_fails_when=LAUNCH_TIME_GIT_SYNC_RERUN_FAILS_WHEN, which_lines_to_quote_in_the_report=LAUNCH_TIME_GIT_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT,
         read_by_a_subagent=False,
-        next_step_to_skip_when_the_rerun_fails_too=BRANCH_SYNC_STOP_HOLDS_BACK)
+        next_step_to_skip_when_the_rerun_fails_too=LAUNCH_TIME_GIT_SYNC_STOP_HOLDS_BACK)
 
 
-def branch_state_instruction_after(branch_sync_report: str) -> str:
+def branch_state_instruction_after(launch_time_git_sync_report: str) -> str:
     """The branch-state instruction, left out after a git failure, whose next steps may end in stopping."""
     stop_line = next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
-        rerun_fails_when=BRANCH_SYNC_RERUN_FAILS_WHEN, which_lines_to_quote_in_the_report=BRANCH_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT,
+        rerun_fails_when=LAUNCH_TIME_GIT_SYNC_RERUN_FAILS_WHEN, which_lines_to_quote_in_the_report=LAUNCH_TIME_GIT_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT,
         read_by_a_subagent=False,
-        next_step_to_skip_when_the_rerun_fails_too=BRANCH_SYNC_STOP_HOLDS_BACK)
-    return "" if branch_sync_report.endswith(stop_line) else BRANCH_STATE_INSTRUCTION
+        next_step_to_skip_when_the_rerun_fails_too=LAUNCH_TIME_GIT_SYNC_STOP_HOLDS_BACK)
+    return "" if launch_time_git_sync_report.endswith(stop_line) else BRANCH_STATE_INSTRUCTION
 
 
-def branch_sync_report_in_prompt(branch_sync_report: str) -> str:
+def launch_time_git_sync_report_in_prompt(launch_time_git_sync_report: str) -> str:
     """The report as the prompt carries it: a report of several lines, such as a git
     failure's next steps, stands as its own paragraph instead of running on from the
     sentence before it."""
-    text = branch_sync_report + branch_state_instruction_after(branch_sync_report)
-    return f"\n\n{text}\n\n" if "\n" in branch_sync_report else text
+    text = launch_time_git_sync_report + branch_state_instruction_after(launch_time_git_sync_report)
+    return f"\n\n{text}\n\n" if "\n" in launch_time_git_sync_report else text
 
 
 BRANCH_STATE_INSTRUCTION = (
@@ -377,9 +381,7 @@ MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE = (
     "{ned_box_memory_store} over ssh, and run the shell commands for ned-box's "
     "entries there over ssh.\n"
     "Put every entry of both stores to the user in one approval-walk with the "
-    "/walk-me-through skill, one entry per item. Items whose entries have little "
-    "at stake may be shown together in one message, each keeping its own item "
-    "number, as the skill allows.\n"
+    "/walk-me-through skill, one entry per item.\n"
     "In each item, show the entry's text and recommend one outcome: a fix to an "
     "instruction file now, which is best; a task on your task list; a GitHub "
     "issue filed with /ghi-write; or nothing, if the entry is stale.\n"
@@ -389,6 +391,26 @@ MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE = (
     "Do not edit an entry: the instruction-file guard refuses every Edit or "
     "Write into a memory store.\n"
     "When the approval-walk closes, run `python3 {mark_script} done`."
+)
+
+# A loose-ends audit at the session-handoff, not yet built, will write the loose ends into the next-step file; until then that clause matches nothing.
+ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION = (
+    "Bring the user everything that needs the user in one approval-walk, by "
+    "/walk-me-through's steps, opened as your first action: the unanswered "
+    "items of any approval-walk in progress, open questions, concerns, "
+    "suggestions, and the loose ends the next step lists, when it lists "
+    "any. Put first the next step's own item, when it needs the user; then "
+    "items that block work, then items that change direction, then the "
+    "rest. Close each approval-walk in progress with a "
+    "line in its walk-minutes naming the new approval-walk, and give each "
+    "item you carry into it a link to its original walk-document. When the "
+    "next step is to present an item of an approval-walk in progress, this "
+    "instruction overrides it: carry that item into the new approval-walk "
+    "instead of presenting it in the old one. Do the work that does not "
+    "need the user without asking the user: your own yourself, and another "
+    "agent-seat's by sending it to that agent-seat with SendMessage. Keep "
+    "working on the previous session's work while the user answers. When "
+    "nothing needs the user, open no approval-walk and only keep working."
 )
 
 SUPERVISOR_POINTER_SENTENCE = (
@@ -476,7 +498,14 @@ def read_supervisor_state(state_path: Path) -> dict:
 
 def write_supervisor_state(state_path: Path, state: dict) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    # Other programs read this file while the supervisor rewrites it every poll, and the
+    # supervisor can be killed mid-write: a write in place would let either find it cut off.
+    partial_path = state_path.with_name(state_path.name + ".partial")
+    with open(partial_path, "w", encoding="utf-8") as partial:
+        partial.write(json.dumps(state, indent=2))
+        partial.flush()
+        os.fsync(partial.fileno())
+    os.replace(partial_path, state_path)
 
 
 def stamp_heartbeat(state_path: Path, state: dict) -> None:
@@ -686,7 +715,7 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
 
 def supervisor_liveness(state_path: Path):
     """Return (is_alive, explanation) for the supervisor owning this state file."""
-    # Read the PID from the lock: heartbeat writes truncate the state file, so a concurrent read can see it empty.
+    # Read the PID from the lock: the state file holds none.
     if not state_path.is_file():
         return False, f"no supervisor state at {state_path} — none has ever run for this agent"
 
@@ -823,19 +852,18 @@ def spawned_subagent_roster_from(handoff_fields: dict) -> list:
 
 def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
                           predecessor_session_directory: Optional[Path] = None,
-                          branch_sync_report: str = "",
+                          launch_time_git_sync_report: str = "",
                           overview_refresh_due: tuple = (),
                           memory_review_due: tuple = ()) -> str:
     next_step = next_step_from(handoff_fields)
     lines = [
         f"Read {extract_path} — the dialog from the session you are continuing, "
         + written_at_wariness_sentence(handoff_fields.get("written-at", "")),
-        "This handoff should list what items or walks are open. Display them "
-        "to the user, and continue them when you get a chance.",
+        ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION,
         SUPERVISOR_POINTER_SENTENCE,
     ]
-    if branch_sync_report:
-        lines.append(branch_sync_report_in_prompt(branch_sync_report))
+    if launch_time_git_sync_report:
+        lines.append(launch_time_git_sync_report_in_prompt(launch_time_git_sync_report))
     lines.extend(overview_refresh_due)
     lines.extend(memory_review_due)
     roster = spawned_subagent_roster_from(handoff_fields)
@@ -864,12 +892,12 @@ class DialogIgnitionPlan:
     handoff_fields: dict
     predecessor_session_directory: Optional[Path] = None
 
-    def compose(self, branch_sync_report: str,
+    def compose(self, launch_time_git_sync_report: str,
                 overview_refresh_due: tuple = (),
                 memory_review_due: tuple = ()) -> str:
         return build_ignition_prompt(self.extract_path, self.handoff_fields,
                                      self.predecessor_session_directory,
-                                     branch_sync_report=branch_sync_report,
+                                     launch_time_git_sync_report=launch_time_git_sync_report,
                                      overview_refresh_due=overview_refresh_due,
                                      memory_review_due=memory_review_due)
 
@@ -879,16 +907,17 @@ class BootRecoveryIgnitionPlan:
     """A launch-time prompt for a handoff whose transcript cannot be extracted."""
     next_step: str
 
-    def compose(self, branch_sync_report: str,
+    def compose(self, launch_time_git_sync_report: str,
                 overview_refresh_due: tuple = (),
                 memory_review_due: tuple = ()) -> str:
         prompt = (
             f"{self.next_step}\n\n(Recovered at supervisor boot: the previous "
             "session's conversation-tail is unavailable; this next-step and the "
-            "repository are your whole context.)"
+            "repository are your whole context.) "
+            + ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION
         )
-        if branch_sync_report:
-            prompt += " " + branch_sync_report_in_prompt(branch_sync_report)
+        if launch_time_git_sync_report:
+            prompt += " " + launch_time_git_sync_report_in_prompt(launch_time_git_sync_report)
         for line in overview_refresh_due:
             prompt += " " + line
         for line in memory_review_due:
@@ -920,7 +949,7 @@ def run_git_here(arguments: list, working_directory: Path, timeout: int = 60):
         return subprocess.CompletedProcess(arguments, 1, "", f"{type(error).__name__}: {error}")
 
 
-def sync_working_branch_with_main(working_directory: Path) -> str:
+def launch_time_git_sync(working_directory: Path) -> str:
     """Fast-forward a strictly behind checkout, on a branch or detached, that has no
     uncommitted tracked change and no git operation in progress; return a report
     without raising. Untracked files do not block: git refuses on its own to
@@ -932,10 +961,10 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
         toplevel = git.run_git_unless_outside_a_repository(
             working_directory, ["rev-parse", "--show-toplevel"], timeout_seconds=15)
     except git.GitCommandFailed as error:
-        return (f"branch sync: could not tell whether this is a git checkout, left as is — "
-                f"{error}\n{branch_sync_git_failure_next_steps(error)}")
+        return (f"launch-time-git-sync: could not tell whether this is a git checkout, left as is — "
+                f"{error}\n{launch_time_git_sync_git_failure_next_steps(error)}")
     if toplevel is None:
-        return "branch sync: not a git checkout, nothing to sync"
+        return "launch-time-git-sync: not a git checkout, nothing to sync"
 
     fetched = run_git_here(["fetch", "--quiet", "origin"], working_directory)
     fetch_note = "" if fetched.returncode == 0 else " (fetch failed, comparing against what is on disk)"
@@ -959,14 +988,14 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
         # --verify --quiet exits 1 for a name that does not exist.
         if not answer(["rev-parse", "--verify", "--quiet", "origin/main"], 15,
                       accepted_exit_codes=(0, 1)):
-            return f"branch sync: no origin/main to sync with{fetch_note}"
+            return f"launch-time-git-sync: no origin/main to sync with{fetch_note}"
 
         # --verify --quiet exits 1 for an unborn HEAD, which every HEAD comparison below fails on with 128.
         if not answer(["rev-parse", "--verify", "--quiet", "HEAD"], 15,
                       accepted_exit_codes=(0, 1)):
             unborn_branch = answer(["symbolic-ref", "-q", "--short", "HEAD"], 15,
                                    accepted_exit_codes=(0, 1)) or "HEAD"
-            return (f"branch sync: {unborn_branch} has no commits yet, so not compared "
+            return (f"launch-time-git-sync: {unborn_branch} has no commits yet, so not compared "
                     f"with main{fetch_note}")
 
         branch = answer(["rev-parse", "--abbrev-ref", "HEAD"], 15)
@@ -993,35 +1022,35 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
             operation = checkout_freshness_catch_up.in_progress_operation(git_dir, marker)
             reasons.append(f"a {operation} in progress")
         if reasons:
-            return f"branch sync: {branch} left as is — {'; '.join(reasons)}{fetch_note}"
+            return f"launch-time-git-sync: {branch} left as is — {'; '.join(reasons)}{fetch_note}"
 
         if is_ancestor("origin/main", "HEAD"):
             ahead = answer(["rev-list", "--count", "origin/main..HEAD"], 30)
             if ahead == "0":
-                return f"branch sync: {branch} is current with main{fetch_note}"
-            return (f"branch sync: {branch} is {ahead} commit(s) ahead of main and has all of "
+                return f"launch-time-git-sync: {branch} is current with main{fetch_note}"
+            return (f"launch-time-git-sync: {branch} is {ahead} commit(s) ahead of main and has all of "
                     f"it — nothing to pull{fetch_note}")
 
         if not is_ancestor("HEAD", "origin/main"):
             ahead = answer(["rev-list", "--count", "origin/main..HEAD"], 30)
             behind = answer(["rev-list", "--count", "HEAD..origin/main"], 30)
-            return (f"branch sync: {branch} is {ahead} ahead of main and {behind} "
+            return (f"launch-time-git-sync: {branch} is {ahead} ahead of main and {behind} "
                     f"behind{fetch_note}")
     except git.GitCommandFailed as error:
-        return (f"branch sync: {branch} left as is — {error}{fetch_note}\n"
-                f"{branch_sync_git_failure_next_steps(error)}")
+        return (f"launch-time-git-sync: {branch} left as is — {error}{fetch_note}\n"
+                f"{launch_time_git_sync_git_failure_next_steps(error)}")
 
     merged = run_git_here(["merge", "--ff-only", "origin/main"], working_directory)
     if merged.returncode != 0:
         error = "; ".join(line.strip() for line in merged.stderr.splitlines()
                           if line.strip())
-        return f"branch sync: {branch} left as is — {error or 'no detail'}{fetch_note}"
+        return f"launch-time-git-sync: {branch} left as is — {error or 'no detail'}{fetch_note}"
     try:
         tip = answer(["rev-parse", "--short", "HEAD"], 15)
     except git.GitCommandFailed as error:
-        return (f"branch sync: {branch} fast-forwarded to main (its new commit could not be "
-                f"read: {error}){fetch_note}\n{branch_sync_git_failure_next_steps(error)}")
-    return f"branch sync: {branch} fast-forwarded to main ({tip}){fetch_note}"
+        return (f"launch-time-git-sync: {branch} fast-forwarded to main (its new commit could not be "
+                f"read: {error}){fetch_note}\n{launch_time_git_sync_git_failure_next_steps(error)}")
+    return f"launch-time-git-sync: {branch} fast-forwarded to main ({tip}){fetch_note}"
 
 
 class OverviewCheckGitFailure(Exception):
@@ -1066,11 +1095,18 @@ def overview_refresh_due_lines(working_directory: Path,
     for system_directory in git_machine_readable_output.nul_separated_fields(listed):
         system = system_directory.rsplit("/", 1)[-1]
         # The reminder's commands take the name unquoted, and the mark script refuses any other name.
-        if not re.fullmatch(daily_overview_refresh_reminder_mark.SYSTEM_NAME_PATTERN, system):
+        if not re.fullmatch(handoff_architecture_overview_refresh_user_shown_mark.SYSTEM_NAME_PATTERN, system):
             printable = system.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
             print(f"handoff-supervisor: overview check for {printable} passed over: "
-                  f"the name does not match {daily_overview_refresh_reminder_mark.SYSTEM_NAME_PATTERN}, "
-                  f"the pattern daily-overview-refresh-reminder-mark.py accepts")
+                  f"the directory name nc-systems/{printable} on origin/main does not match "
+                  f"{handoff_architecture_overview_refresh_user_shown_mark.SYSTEM_NAME_PATTERN}, "
+                  f"the system-name pattern "
+                  f"nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py "
+                  f"accepts, so its architecture overview is not checked; the other systems "
+                  f"still are.\n"
+                  f"If nc-systems/{printable} holds a system's programs, propose to the user a "
+                  f"name for it that matches, to be renamed in a pull request; otherwise "
+                  f"nothing needs doing.")
             continue
         try:
             overview_path = SYSTEM_OVERVIEW_PATH_TEMPLATE.format(system=system)
@@ -1116,7 +1152,7 @@ def overview_refresh_due_lines(working_directory: Path,
                     checked_against_line=(
                         architecture_overview_path_template_and_checked_against_commit_reader.CHECKED_AGAINST_LINE_TEMPLATE.format(
                             commit=main_commit_full)),
-                    reminder_mark_script=DAILY_OVERVIEW_REFRESH_REMINDER_MARK_PATH,
+                    reminder_mark_script=HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_PATH,
                     system=system)))
         except Exception as error:
             print(f"handoff-supervisor: overview check for {system} passed over: "
@@ -1162,7 +1198,7 @@ def overview_refresh_due_lines(working_directory: Path,
     if not still_to_give:
         return ()
     # The seat marks only after showing the diff, so a seat that dies first cannot consume the daily reminder.
-    reminder_mark = daily_overview_refresh_reminder_mark
+    reminder_mark = handoff_architecture_overview_refresh_user_shown_mark
     try:
         today = reminder_mark.pacific_date_of(now or datetime.now(timezone.utc))
         reminder_marks = reminder_mark.read_daily_overview_refresh_reminder_marks(
@@ -1200,7 +1236,7 @@ def memory_review_due_lines(now: Optional[datetime] = None) -> tuple:
     """Return the daily memory-review reminder, or no lines when unavailable or not due."""
     # Only the Mac can reach both stores; SSH reads have a timeout that a hung Samba mount lacks.
     # A started mark survives a mid-review death to suppress duplicates until the next Pacific noon.
-    mark_module = daily_memory_review_mark
+    mark_module = handoff_user_review_of_agent_memory_stores_mark
     try:
         if mark_module.this_machine_is_ned_box():
             return ()
@@ -1240,7 +1276,7 @@ def memory_review_due_lines(now: Optional[datetime] = None) -> tuple:
     return (f"memory review due: the Mac's memory store holds {entries(mac_entries)} "
             f"and ned-box's holds {entries(ned_box_entries)}, {since}"
             + MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE.format(
-                mark_script=DAILY_MEMORY_REVIEW_MARK_PATH,
+                mark_script=HANDOFF_USER_REVIEW_OF_AGENT_MEMORY_STORES_MARK_PATH,
                 mac_memory_store=mark_module.MAC_MEMORY_STORE_DIRECTORY + "/",
                 ned_box_memory_store_mac_mount=(
                     mark_module.NED_BOX_MEMORY_STORE_MAC_MOUNT_DIRECTORY + "/"),
@@ -1886,8 +1922,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             process, adopted = adopted, None
         else:
             # An adopted session is still working in this directory, so syncing would change files under it.
-            branch_sync_report = sync_working_branch_with_main(settings.working_directory)
-            print(f"handoff-supervisor: {branch_sync_report}")
+            launch_time_git_sync_report = launch_time_git_sync(settings.working_directory)
+            print(f"handoff-supervisor: {launch_time_git_sync_report}")
             if ignition_plan is not None:
                 # Sync after the retiring session releases the tree; then compose the prompt using the fetched main.
                 overview_refresh_due = (
@@ -1898,7 +1934,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 memory_review_due = memory_review_due_lines()
                 for line in memory_review_due:
                     print(f"handoff-supervisor: {line}")
-                prompt = ignition_plan.compose(branch_sync_report, overview_refresh_due,
+                prompt = ignition_plan.compose(launch_time_git_sync_report, overview_refresh_due,
                                                memory_review_due)
                 ignition_plan = None
             # Read after sync, which may have updated the prompt file.

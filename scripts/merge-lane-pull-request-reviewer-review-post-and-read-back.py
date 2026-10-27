@@ -32,12 +32,17 @@ review from a pull request's author and merge-lane-2 approves as that account;
 for any other author the event is COMMENT, and merge-lane-2 records the
 verdict itself. The posted review is then read back by the id GitHub returned,
 and its state and commit must be the ones asked for.
+
+An interrupt or SIGTERM during the post or the read-back kills gh and exits 2,
+saying the review may or may not be posted if it came during the post, and
+that review <id> was posted if it came after GitHub returned the id.
 """
 
 import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -209,7 +214,14 @@ def parse_arguments(argv):
     return parser.parse_args(argv)
 
 
+def exit_on_sigterm(signal_number, frame):
+    raise SystemExit(128 + signal_number)
+
+
 def main(argv=None):
+    # SIGTERM must raise, as an interrupt does, so the post and the read-back can report
+    # what they leave on GitHub.
+    signal.signal(signal.SIGTERM, exit_on_sigterm)
     arguments = parse_arguments(argv)
     number, head = arguments.pull_request, arguments.head_commit
     try:
@@ -239,35 +251,51 @@ def main(argv=None):
         return EXIT_NOT_POSTED
     body, comments = with_outside_comments_in_body(body, comments, lines)
     event = verdict if author == MERGE_LANE_ACCOUNT else "COMMENT"
+    review_id = None
     try:
-        posted = gh_json(token, ["-X", "POST", f"repos/{REPOSITORY}/pulls/{number}/reviews",
-                                 "--input", "-"],
-                         input_text=json.dumps({"commit_id": head, "event": event,
-                                                "body": f"{verdict}\n\n{body}",
-                                                "comments": comments}))
-        review_id = posted["id"]
-    except (GhFailed, KeyError, TypeError) as error:
-        print(POST_FAILED.format(reason=reason_of(error), number=number, head=head,
-                                 repository=REPOSITORY),
-              file=sys.stderr)
+        try:
+            posted = gh_json(token, ["-X", "POST", f"repos/{REPOSITORY}/pulls/{number}/reviews",
+                                     "--input", "-"],
+                             input_text=json.dumps({"commit_id": head, "event": event,
+                                                    "body": f"{verdict}\n\n{body}",
+                                                    "comments": comments}))
+            review_id = posted["id"]
+        except (GhFailed, KeyError, TypeError) as error:
+            print(POST_FAILED.format(reason=reason_of(error), number=number, head=head,
+                                     repository=REPOSITORY),
+                  file=sys.stderr)
+            return EXIT_NOT_POSTED
+        try:
+            copy = gh_json(token, [f"repos/{REPOSITORY}/pulls/{number}/reviews/{review_id}"])
+            differences = [f"{field} is {copy.get(field)!r}, not {wanted!r}"
+                           for field, wanted in (("state", EVENT_STATES[event]),
+                                                 ("commit_id", head))
+                           if copy.get(field) != wanted]
+        except (GhFailed, AttributeError) as error:
+            print(READ_BACK_FAILED.format(review_id=review_id, reason=reason_of(error),
+                                          number=number),
+                  file=sys.stderr)
+            return EXIT_NOT_POSTED
+        if differences:
+            print(READ_BACK_DIFFERS.format(review_id=review_id,
+                                           differences="; ".join(differences), number=number,
+                                           repository=REPOSITORY),
+                  file=sys.stderr)
+            return EXIT_NOT_POSTED
+        print(f"review {review_id} posted on pull request {number} as {event}, verdict "
+              f"{verdict}, on commit {head}; GitHub's copy reads back as {EVENT_STATES[event]}")
+        return EXIT_POSTED
+    except (KeyboardInterrupt, SystemExit):
+        # gh_json's subprocess.run has killed gh before this runs, so nothing more is sent.
+        reason = "this command was interrupted"
+        if review_id is None:
+            print(POST_FAILED.format(reason=reason, number=number, head=head,
+                                     repository=REPOSITORY),
+                  file=sys.stderr)
+        else:
+            print(READ_BACK_FAILED.format(review_id=review_id, reason=reason, number=number),
+                  file=sys.stderr)
         return EXIT_NOT_POSTED
-    try:
-        copy = gh_json(token, [f"repos/{REPOSITORY}/pulls/{number}/reviews/{review_id}"])
-        differences = [f"{field} is {copy.get(field)!r}, not {wanted!r}"
-                       for field, wanted in (("state", EVENT_STATES[event]), ("commit_id", head))
-                       if copy.get(field) != wanted]
-    except (GhFailed, AttributeError) as error:
-        print(READ_BACK_FAILED.format(review_id=review_id, reason=reason_of(error), number=number),
-              file=sys.stderr)
-        return EXIT_NOT_POSTED
-    if differences:
-        print(READ_BACK_DIFFERS.format(review_id=review_id, differences="; ".join(differences),
-                                       number=number, repository=REPOSITORY),
-              file=sys.stderr)
-        return EXIT_NOT_POSTED
-    print(f"review {review_id} posted on pull request {number} as {event}, verdict {verdict}, "
-          f"on commit {head}; GitHub's copy reads back as {EVENT_STATES[event]}")
-    return EXIT_POSTED
 
 
 if __name__ == "__main__":
