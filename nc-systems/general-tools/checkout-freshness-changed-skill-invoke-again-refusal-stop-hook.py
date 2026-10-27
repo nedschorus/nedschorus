@@ -209,8 +209,9 @@ def main():
         print(f"checkout-freshness-changed-skill-invoke-again-refusal-stop-hook: the hook failed, so it did not "
               f"check whether the main branch changed a skill this agent-session invoked: {error!r}. Your turn can "
               f"still end. If a note beginning `checkout-freshness: main changed` named a "
-              f"skill whose steps you will still act on in this agent-session: invoke that skill again with the "
-              f"Skill tool before you act on the skill's next step.",
+              f"skill you have not invoked again since that note, and whose steps you will still act on in this "
+              f"agent-session: invoke that skill again with the Skill tool before you act on the skill's next "
+              f"step.",
               file=sys.stderr)
         return 1
     if output is not None:

@@ -222,6 +222,7 @@ def main():
         check("a transcript that cannot be read: exit 1, one stderr line saying the check did not run",
               code == 1 and stdout == "" and "the hook failed, so it did not check" in stderr
               and "invoke that skill again with the Skill tool" in stderr
+              and "named a skill you have not invoked again since that note" in stderr
               and len(stderr.strip().split("\n")) == 1, f"exit {code}, stdout {stdout!r}, stderr {stderr!r}")
         code, stdout, stderr = run_hook("not json")
         check("input that is not JSON: exit 1 with a stderr line", code == 1 and stdout == ""
