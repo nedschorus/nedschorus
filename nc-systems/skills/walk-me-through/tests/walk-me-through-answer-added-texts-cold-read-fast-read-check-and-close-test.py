@@ -49,12 +49,12 @@ target = Path(sys.argv[sys.argv.index("--target") + 1])
 with open(os.environ["STAND_IN_CALLS"], "a") as calls:
     calls.write(target.read_text())
 mode = os.environ.get("STAND_IN_MODE", "")
-if mode == "sigterm-unremovable":
+if mode.startswith("stopped-unremovable "):
     (target.parent / "locked").mkdir()
     (target.parent / "locked" / "file").write_text("x")
     (target.parent / "locked").chmod(0o500)
-if mode.startswith("sigterm"):
-    os.kill(os.getppid(), signal.SIGTERM)
+if mode.startswith("stopped"):
+    os.kill(os.getppid(), getattr(signal, mode.split()[1]))
     time.sleep(2)  # The check is stopped while it waits for this fast read.
     sys.exit(0)
 if mode == "failed":
@@ -262,35 +262,39 @@ def test_a_fast_read_that_exits_nonzero_without_a_line_is_a_failure():
           not case.left_in_temporary_directory(), case.left_in_temporary_directory())
 
 
-def test_a_check_stopped_by_sigterm_removes_its_scratch_directory_and_ends_as_sigterm_does():
-    case = Case()
-    before = case.minutes.read_text()
-    result = case.run("check", mode="sigterm")
-    check("a SIGTERM during a cold-read-fast-read ends the check as SIGTERM does, and the minutes stay as they were",
-          result.returncode == -signal.SIGTERM and case.minutes.read_text() == before, described(result))
-    check("a SIGTERM during a cold-read-fast-read removes the scratch directory",
-          not case.left_in_temporary_directory(), case.left_in_temporary_directory())
+def test_a_check_stopped_by_sigterm_or_sighup_removes_its_scratch_directory_and_ends_as_the_signal_does():
+    for number in (signal.SIGTERM, signal.SIGHUP):
+        case = Case()
+        before = case.minutes.read_text()
+        result = case.run("check", mode=f"stopped {number.name}")
+        check(f"a {number.name} during a cold-read-fast-read ends the check as {number.name} does, and the minutes "
+              f"stay as they were",
+              result.returncode == -number and case.minutes.read_text() == before, described(result))
+        check(f"a {number.name} during a cold-read-fast-read removes the scratch directory",
+              not case.left_in_temporary_directory(), case.left_in_temporary_directory())
 
 
-def test_a_scratch_directory_a_sigterm_cannot_remove_is_reported_with_the_command_that_removes_it():
-    case = Case()
-    result = case.run("check", mode="sigterm-unremovable")
-    left = [case.temporary_directory / name for name in case.left_in_temporary_directory()]
-    for directory in left:
-        (directory / "locked").chmod(0o700)
-    check("a scratch directory a SIGTERM cannot remove is named, with the command that removes it, "
-          "and the check still ends as SIGTERM does",
-          result.returncode == -signal.SIGTERM and len(left) == 1
-          and f"the scratch directory {left[0]}, which held the text" in result.stderr
-          and f"Run `rm -rf {left[0]}`" in result.stderr
-          and f"Then run `python3 {PROGRAM} check` again, with the flag for the user's answer" in result.stderr,
-          described(result))
-    removal = subprocess.run(["rm", "-rf", str(left[0])] if left else ["false"], capture_output=True, text=True)
-    check("the command the message gives removes the scratch directory",
-          removal.returncode == 0 and not case.left_in_temporary_directory(), case.left_in_temporary_directory())
+def test_a_scratch_directory_a_stop_signal_cannot_remove_is_reported_with_the_command_that_removes_it():
+    for number in (signal.SIGTERM, signal.SIGHUP):
+        case = Case()
+        result = case.run("check", mode=f"stopped-unremovable {number.name}")
+        left = [case.temporary_directory / name for name in case.left_in_temporary_directory()]
+        for directory in left:
+            (directory / "locked").chmod(0o700)
+        check(f"a scratch directory a {number.name} cannot remove is named, with the command that removes it, "
+              f"and the check still ends as {number.name} does",
+              result.returncode == -number and len(left) == 1
+              and f"a {number.name} stopped this check step" in result.stderr
+              and f"the scratch directory {left[0]}, which held the text" in result.stderr
+              and f"Run `rm -rf {left[0]}`" in result.stderr
+              and f"Then run `python3 {PROGRAM} check` again, with the flag for the user's answer" in result.stderr,
+              described(result))
+        removal = subprocess.run(["rm", "-rf", str(left[0])] if left else ["false"], capture_output=True, text=True)
+        check("the command the message gives removes the scratch directory",
+              removal.returncode == 0 and not case.left_in_temporary_directory(), case.left_in_temporary_directory())
 
 
-def test_a_fast_read_that_raises_partway_leaves_no_scratch_directory_and_restores_the_sigterm_handler():
+def test_a_fast_read_that_raises_partway_leaves_no_scratch_directory_and_restores_the_stop_signal_handlers():
     program = load_program()
     case = Case()
 
@@ -298,7 +302,7 @@ def test_a_fast_read_that_raises_partway_leaves_no_scratch_directory_and_restore
         raise RuntimeError("raised partway, while the fast read ran")
 
     program.subprocess = types.SimpleNamespace(run=raising_run)
-    before_handler = signal.getsignal(signal.SIGTERM)
+    before_handlers = [signal.getsignal(number) for number in (signal.SIGTERM, signal.SIGHUP)]
     saved_tempdir, tempfile.tempdir = tempfile.tempdir, str(case.temporary_directory)
     try:
         program.run_fast_read("A text.", "a-name", case.stand_in)
@@ -310,8 +314,9 @@ def test_a_fast_read_that_raises_partway_leaves_no_scratch_directory_and_restore
     check("a fast read that raises partway leaves no scratch directory, and the error reaches the caller",
           raised is not None and not case.left_in_temporary_directory(),
           f"raised {raised!r}; left {case.left_in_temporary_directory()}")
-    check("run_fast_read puts back the SIGTERM handler its caller had",
-          signal.getsignal(signal.SIGTERM) is before_handler, signal.getsignal(signal.SIGTERM))
+    after_handlers = [signal.getsignal(number) for number in (signal.SIGTERM, signal.SIGHUP)]
+    check("run_fast_read puts back the SIGTERM and SIGHUP handlers its caller had",
+          all(after is before for after, before in zip(after_handlers, before_handlers)), after_handlers)
 
 
 def test_a_fast_read_that_names_a_report_but_exits_nonzero_is_a_failure():

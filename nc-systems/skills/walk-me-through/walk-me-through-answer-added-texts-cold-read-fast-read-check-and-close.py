@@ -40,7 +40,7 @@ LOG_STORE_RECORDS_DESTINATION, read on ned-box as it is and on the Mac through
 the Mac's mount of ned-box's home. For each text with none, it saves the text to
 a scratch file and runs cold-read-fast-read.py --target on that file; the
 scratch file's directory is removed when the fast read ends, whatever ends it,
-SIGTERM included, since the cold-read-record keeps its own copy. Then it
+SIGTERM and SIGHUP included, since the cold-read-record keeps its own copy. Then it
 writes the answer line, which names each part's answer in part number order
 when --part-answer is given, and one status line per text, or "no proposed text
 marked", into the walk-minutes, and prints the status lines, the judgement the
@@ -179,8 +179,8 @@ FAST_READ_FAILED_LINES = (
     "Tell the user the line above, and ask whether to run `python3 {program} check{flags}` again or "
     "answer the item another way.",
 )
-SIGTERM_SCRATCH_NOT_REMOVED_LINES = (
-    "{program} check: a SIGTERM stopped this check step while a cold-read-fast-read was running, so the "
+STOP_SIGNAL_SCRATCH_NOT_REMOVED_LINES = (
+    "{program} check: a {signal} stopped this check step while a cold-read-fast-read was running, so the "
     "walk-minutes do not record the user's answer, and the scratch directory {directory}, which held the text "
     "sent to that cold-read-fast-read, could not be removed: {error}\n"
     "Run `rm -rf {directory}`, because nothing else removes that directory and /tmp has a quota.\n"
@@ -365,37 +365,49 @@ def fast_read_record_holding(text, record_directories):
     return None
 
 
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
+
+
 @contextlib.contextmanager
-def removed_on_sigterm(directory):
-    """While the block runs, SIGTERM removes directory and then ends the program as SIGTERM's default does.
+def scratch_directory_removed_on_every_exit():
+    """Make a scratch directory and yield its path; remove it when the block ends, however the block ends. A
+    SIGTERM or SIGHUP during the block removes it and then ends the program as that signal's default does.
 
     The handler raises nothing: an exception raised inside subprocess's own code, between Popen._wait()'s lock
     acquire and its try, leaves the lock held, and the wait() that subprocess.run() then makes blocks forever.
     """
+    made = []
+
     def remove_then_end(number, _):
-        try:
-            shutil.rmtree(directory)
-        except OSError as error:
-            print(SIGTERM_SCRATCH_NOT_REMOVED_LINES.format(program=PROGRAM, program_path=Path(__file__).resolve(),
-                                                         directory=directory, error=error),
-                  file=sys.stderr)
+        for directory in made:
+            try:
+                shutil.rmtree(directory)
+            except OSError as error:
+                print(STOP_SIGNAL_SCRATCH_NOT_REMOVED_LINES.format(
+                    program=PROGRAM, signal=signal.Signals(number).name, program_path=Path(__file__).resolve(),
+                    directory=directory, error=error), file=sys.stderr)
         signal.signal(number, signal.SIG_DFL)
         os.kill(os.getpid(), number)
 
-    previous = signal.signal(signal.SIGTERM, remove_then_end)
+    previous = {number: signal.signal(number, remove_then_end) for number in STOP_SIGNALS}
     try:
-        yield
+        scratch = tempfile.mkdtemp(prefix=PROGRAM + "-")
+        made.append(scratch)
+        yield scratch
     finally:
-        signal.signal(signal.SIGTERM, previous)
+        for directory in made:
+            shutil.rmtree(directory)
+        for number, handler in previous.items():
+            signal.signal(number, handler)
 
 
 def run_fast_read(text, name, fast_read_program):
     """Fast-read the text from a scratch file; return (the report's directory, the lines the fast read printed
     on stderr about an unshipped record or a changed target), or raise FastReadFailed.
 
-    The scratch directory is removed on every exit, SIGTERM included: the fast read keeps its own copy of the
-    text in its record's target/, which is where a later check looks for it."""
-    with tempfile.TemporaryDirectory(prefix=PROGRAM + "-") as scratch, removed_on_sigterm(scratch):
+    The scratch directory is removed on every exit, SIGTERM and SIGHUP included: the fast read keeps its own copy
+    of the text in its record's target/, which is where a later check looks for it."""
+    with scratch_directory_removed_on_every_exit() as scratch:
         target = Path(scratch) / f"{name}.md"
         target.write_text(text + "\n", encoding="utf-8")
         result = subprocess.run([sys.executable, str(fast_read_program), "--target", str(target)],
