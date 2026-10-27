@@ -1,5 +1,6 @@
 ---
 issue: "[Hourly cold-read-full-run of the important markdown file that changed most or has waited longest](https://github.com/nedschorus/nedschorus/issues/1064)"
+kind: design
 ---
 
 # Hourly cold-read-full-run of the important markdown file that changed most or has waited longest

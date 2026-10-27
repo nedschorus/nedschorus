@@ -1,5 +1,6 @@
 ---
 issue: "[Catch a guarded file changed without the user's approval, ask him, and keep every version](https://github.com/nedschorus/nedschorus/issues/1268)"
+kind: design
 ---
 
 # Catch a guarded file changed without the user's approval, ask him, and keep every version

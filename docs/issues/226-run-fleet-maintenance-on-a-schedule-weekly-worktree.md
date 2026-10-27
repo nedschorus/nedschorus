@@ -1,5 +1,6 @@
 ---
 issue: "[Before a seat is retired, report what still cites the paths the retirement removes](https://github.com/nedschorus/nedschorus/issues/226)"
+kind: design
 ---
 
 # Before a seat is retired, report what still cites the paths the retirement removes

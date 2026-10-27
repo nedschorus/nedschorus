@@ -1,5 +1,6 @@
 ---
 issue: "[Check each new task against the open issues when it is filed, and add a match to that issue's GHI-MD](https://github.com/nedschorus/nedschorus/issues/1432)"
+kind: design
 ---
 
 # Check each new task against the open issues when it is filed, and add a match to that issue's GHI-MD

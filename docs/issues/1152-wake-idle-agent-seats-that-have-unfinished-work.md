@@ -1,5 +1,6 @@
 ---
 issue: "[Wake an agent-seat when its 5-hour session limit resets](https://github.com/nedschorus/nedschorus/issues/1152)"
+kind: design
 ---
 
 # Wake an agent-seat when its 5-hour session limit resets

@@ -1,5 +1,6 @@
 ---
 issue: "[checkout-freshness catch-up merges main into a branch whose head is frozen under review](https://github.com/nedschorus/nedschorus/issues/324)"
+kind: design
 ---
 
 # checkout-freshness catch-up reports instead of merging

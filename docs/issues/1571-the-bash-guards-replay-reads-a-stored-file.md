@@ -1,5 +1,6 @@
 ---
 issue: "[The Bash guards replay reads a stored file of distinct recorded command pairs, reuses main's readings and reads many commands in each new process](https://github.com/nedschorus/nedschorus/issues/1571)"
+kind: design
 ---
 
 # The Bash guards replay reads a stored file of distinct recorded command pairs, reuses main's readings and reads many commands in each new process

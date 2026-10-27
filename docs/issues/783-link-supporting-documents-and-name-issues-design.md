@@ -1,6 +1,6 @@
 ---
 issue: "[An issue has one GHI-MD and many supporting documents, and the GHI write tool cannot tell them apart](https://github.com/nedschorus/nedschorus/issues/783)"
-status: design
+kind: design
 ---
 
 # How the ghi-write-tool names an issue and links its GHI-MD and supporting files

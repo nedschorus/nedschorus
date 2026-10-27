@@ -1,6 +1,6 @@
 ---
 issue: "[Build ghi-info — the GHI knowledge agent](https://github.com/nedschorus/nedschorus/issues/46)"
-status: design
+kind: design
 design-as-of: 2026-08-11
 ---
 

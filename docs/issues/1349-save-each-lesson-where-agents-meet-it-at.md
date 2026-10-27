@@ -1,5 +1,6 @@
 ---
 issue: "[Save each lesson where agents meet it at the moment it applies, and decide whether a store that recalls lessons by subject is worth building](https://github.com/nedschorus/nedschorus/issues/1349)"
+kind: design
 ---
 
 # Save each lesson where agents meet it at the moment it applies, and decide whether a store that recalls lessons by subject is worth building

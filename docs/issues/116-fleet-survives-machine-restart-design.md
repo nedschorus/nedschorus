@@ -2,6 +2,7 @@
 issue: "[Fleet survives a machine restart without losing seat context: detect, hand off on notice, relaunch at boot, resume from transcript](https://github.com/nedschorus/nedschorus/issues/116)"
 status: design of record; build tracked in issue [Fleet survives a machine restart without losing seat context: detect, hand off on notice, relaunch at boot, resume from transcript](https://github.com/nedschorus/nedschorus/issues/116)
 design-as-of: 2026-09-11
+kind: design
 ---
 
 # Fleet survives a machine restart (design)

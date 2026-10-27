@@ -1,5 +1,6 @@
 ---
 issue: "[Agents put each question for the user on a page that pops up on his Mac, and hold the dialog with him there](https://github.com/nedschorus/nedschorus/issues/1186)"
+kind: design
 ---
 
 # Agents put each question for the user on a page that pops up on his Mac, and hold the dialog with him there

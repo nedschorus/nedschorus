@@ -1,5 +1,6 @@
 ---
 issue: "[Topic-branch base enforcement: a branch-creation script and a gh pr create check that refuses an undeclared carry of another PR's commits](https://github.com/nedschorus/nedschorus/issues/238)"
+kind: design
 ---
 
 # Design: the topic-branch creation script

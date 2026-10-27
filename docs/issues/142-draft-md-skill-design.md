@@ -3,6 +3,7 @@ issue: "[Build draft-md: the drafting-stage skill run before md-review (user-rul
 form: design
 status: specification
 design-as-of: 2026-08-28
+kind: design
 ---
 
 # draft-md: a draft, first or later, of technical writing for a reader with zero context (issue [Build draft-md: the drafting-stage skill run before md-review (user-ruled 2026-08-22)](https://github.com/nedschorus/nedschorus/issues/142))

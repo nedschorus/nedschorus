@@ -3,6 +3,7 @@ issue: "[Seat mailboxes across machines and runtimes](https://github.com/nedscho
 status: draft (2026-09-22) — no code written, nothing built. Revised 2026-09-22T19:50Z after the user put every seat on one account: the original justification (two accounts, per-account discovery) is dead and is replaced by a measured one (liveness — an offline seat receives nothing, whatever the account). See "Why the fleet needs it"; two additions in §9 and §10.6. Filed as its own issue on 2026-09-28, with §10.7 added; measurements below are as of 2026-09-22.
 home: this issue. It was to reopen GHI [Claude turn/start and turn/steer equivalents](https://github.com/nedschorus/nedschorus/issues/37), the earlier request, closed with no GHI-MD; since PR 708 such an issue cannot be edited by hand, so the user approved filing the design as a new issue instead (merge-lane-2's meta-walk, item 10, "Y" at 2026-09-28T15:18:11Z).
 next action: the user walks this design with merge-lane-2, one open question of §10 at a time; nothing is built before that walk.
+kind: design
 ---
 
 # Seat mailboxes across machines and runtimes
