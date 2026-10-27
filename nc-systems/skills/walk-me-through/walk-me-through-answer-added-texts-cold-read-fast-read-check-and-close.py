@@ -183,8 +183,9 @@ STOP_SIGNAL_SCRATCH_NOT_REMOVED_LINES = (
     "{program} check: a {signal} stopped this check step while a cold-read-fast-read was running, so the "
     "walk-minutes do not record the user's answer, and the scratch directory {directory}, which held the text "
     "sent to that cold-read-fast-read, could not be removed: {error}\n"
-    "Run `rm -rf {directory}`, because nothing else removes that directory and /tmp has a quota.\n"
-    "Then run `python3 {program_path} check` again, with the flag for the user's answer as `--help` lists it, "
+    "Run `rm -rf {directory}`, because nothing else removes that directory, and the disk it is on can fill.\n"
+    "Then run `python3 {program_path} check` again, with the flag for the user's answer as `--help` lists it "
+    "(A takes no flag), "
     "so that the walk-minutes record his answer.")
 CHECK_MINUTES = "{item}: the user answered {answered}{hashtag} ({date_and_time}), which makes its change. Fast reads:"
 CHECK_DEFERRED_MINUTES = "{item}: the user answered deferred ({date_and_time}), which makes no change."
