@@ -204,7 +204,8 @@ def test_command_for(suites, worktree, arguments, recorded_inputs_directory):
     return shlex.join([*command, "--only-suites-named", *suites])
 
 
-def cosmic_ray_timeout_seconds_for(suites, recordings_directory, runner, in_test_sandboxes):
+def default_mutant_timeout_seconds_from_test_suites_own_time_limits(
+        suites, recordings_directory, runner, in_test_sandboxes):
     """The longest of the suites' own limits, times the runner's rounds of them, plus its start-up."""
     longest = max(runner.suite_timeout_and_the_recorded_seconds_it_came_from(
         runner.load_recording(recordings_directory, suite))[0] for suite in suites)
@@ -258,7 +259,7 @@ def suite_timeouts_described(timed_out):
                      for suite, limit in timed_out)
 
 
-def outcomes_from_dump(dump_text, cosmic_ray_timeout_seconds, runner):
+def outcomes_from_dump(dump_text, mutant_timeout_seconds, runner):
     """Return (counts, survivors, errored) from `cosmic-ray dump` output.
 
     cosmic-ray counts a run past either time limit as a kill; each is an errored mutant here,
@@ -290,7 +291,7 @@ def outcomes_from_dump(dump_text, cosmic_ray_timeout_seconds, runner):
             errored.append(mutant_description(
                 item, result,
                 reason=f"timeout: the suites ran past cosmic-ray's limit of "
-                       f"{cosmic_ray_timeout_seconds:g} s, so this mutant was not judged; rerun "
+                       f"{mutant_timeout_seconds:g} s, so this mutant was not judged; rerun "
                        f"when the machine is quieter, or with a larger --mutant-timeout-seconds"))
         elif (worker_outcome not in WORKER_OUTCOMES_THAT_ERRORED
               and test_outcome == "killed"
@@ -322,7 +323,7 @@ def scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(*paths):
     return hashlib.sha256("\0".join(paths).encode()).hexdigest()
 
 
-def baseline_refusal(path, suites, baseline, baseline_results, cosmic_ray_timeout_seconds,
+def baseline_refusal(path, suites, baseline, baseline_results, mutant_timeout_seconds,
                      runner):
     """The message for a baseline cosmic-ray exited nonzero on: a timeout, or failing suites."""
     outputs = [result.get("output") or "" for _, result in baseline_results
@@ -330,10 +331,10 @@ def baseline_refusal(path, suites, baseline, baseline_results, cosmic_ray_timeou
     if TIMED_OUT_OUTPUT in outputs:
         return (f"{PROGRAM}: not run — the suites for {path} ran out of time on the unmutated "
                 f"head: they had not ended when cosmic-ray's limit of "
-                f"{cosmic_ray_timeout_seconds:g} s for one run of them passed, so no mutant "
+                f"{mutant_timeout_seconds:g} s for one run of them passed, so no mutant "
                 f"can be judged. Suites: {' '.join(suites)}\n"
                 f"Run this again with --mutant-timeout-seconds larger than "
-                f"{cosmic_ray_timeout_seconds:g}.")
+                f"{mutant_timeout_seconds:g}.")
     timed_out = runner.run_all_test_suites_output_timed_out_suites_and_limits_parse(
         "\n".join(outputs))
     if timed_out:
@@ -360,13 +361,13 @@ def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
     config = scratch / f"{name}.toml"
     session = scratch / f"{name}.sqlite"
     baseline_session = scratch / f"{name}.baseline.sqlite"
-    cosmic_ray_timeout_seconds = (
+    mutant_timeout_seconds = (
         arguments.mutant_timeout_seconds if arguments.mutant_timeout_seconds is not None
-        else cosmic_ray_timeout_seconds_for(suites, recordings_directory, runner,
-                                            in_test_sandboxes))
+        else default_mutant_timeout_seconds_from_test_suites_own_time_limits(
+            suites, recordings_directory, runner, in_test_sandboxes))
     config.write_text(cosmic_ray_config_text(
         path, test_command_for(suites, worktree, arguments, recorded_inputs_directory),
-        merge_base, cosmic_ray_timeout_seconds))
+        merge_base, mutant_timeout_seconds))
     cosmic_ray = [tools["cosmic-ray"]]
     baseline = run([*cosmic_ray, "baseline", "--session-file",
                     str(baseline_session), str(config)], worktree, environment)
@@ -377,7 +378,7 @@ def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
         baseline_results = ([json.loads(line) for line in dumped.stdout.splitlines()
                              if line.strip()] if dumped.returncode == 0 else [])
         raise CouldNotRun(baseline_refusal(path, suites, baseline, baseline_results,
-                                           cosmic_ray_timeout_seconds, runner))
+                                           mutant_timeout_seconds, runner))
     # cosmic-ray's baseline exits 0 unless the suites failed, so a suite it
     # could not launch at all passes it; only a survived baseline means they ran.
     baseline_results = [json.loads(line) for line in run_or_raise(
@@ -400,7 +401,7 @@ def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
                  environment, what=f"cosmic-ray exec for {path}")
     return outcomes_from_dump(run_or_raise(
         [*cosmic_ray, "dump", str(session)], worktree, environment,
-        what=f"cosmic-ray dump for {path}"), cosmic_ray_timeout_seconds, runner)
+        what=f"cosmic-ray dump for {path}"), mutant_timeout_seconds, runner)
 
 
 def remove_worktree(checkout, worktree, environment):

@@ -964,8 +964,8 @@ def run_cases():
     with tempfile.TemporaryDirectory() as recordings_name:
         many = [f"scripts/s{number}-test.py" for number in range(
             runner_module.TEST_SUITE_ADMISSION_SUITES_RUNNING_AT_ONCE_CEILING + 1)]
-        limit = survivors.cosmic_ray_timeout_seconds_for(many, Path(recordings_name),
-                                                         runner_module, True)
+        limit = survivors.default_mutant_timeout_seconds_from_test_suites_own_time_limits(
+            many, Path(recordings_name), runner_module, True)
     check("with more suites than the runner runs at once, cosmic-ray's limit covers each "
           "round of them",
           limit == 2 * runner_module.TEST_SUITE_TIMEOUT_WITHOUT_PASSING_RECORDING_SECONDS
