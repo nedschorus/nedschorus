@@ -2917,6 +2917,8 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         result["timeout"] = {"limit": timed_out[0], "recorded": timed_out[1]}
     if stopped_by is not None and exit_code != 0:
         result["stopped by"] = stopped_by
+    if sandbox_started is False:
+        result["test sandbox did not start"] = True
     if statistics is not None:
         with statistics:
             statistics.seek(0)
@@ -3426,6 +3428,9 @@ def why_suite_failed(result):
     """What a failed suite's line says after its path: its timeout, or how it exited."""
     if result.get("stopped by"):
         return f"killed when the run was stopped by {result['stopped by']}"
+    if result.get("test sandbox did not start"):
+        return (f"did not start: bwrap could not build its test sandbox "
+                f"({describe_exit(result['exit'])})")
     timeout = result.get("timeout")
     if timeout is None:
         return describe_exit(result["exit"])
@@ -3441,6 +3446,23 @@ def why_suite_failed(result):
 
 
 SUITE_TIMEOUT_LINE = re.compile(r"^FAIL (?P<suite>.+?) TIMEOUT after \d+s \(limit (?P<limit>\d+)s")
+
+
+# A suite's own verdict: the runner's line ends in describe_exit(), not in a timeout, a stop
+# or a test sandbox that did not start.
+SUITE_FAILED_LINE = re.compile(r"^FAIL (?P<suite>\S.*?) (?:exit \d+|killed by \S+)(?: \(| — log )")
+NOT_RUN_TO_THE_END_LINE_PREFIX = f"{PROGRAM}: not run to the end"
+
+
+def run_all_test_suites_output_judges_a_suite_failing(text):
+    """True when the runner ran to its end and a suite failed by its own exit or signal.
+
+    A nonzero exit without that, such as an empty output, a run cut short, or records that
+    could not be written after every suite passed, judged no suite."""
+    lines = text.splitlines()
+    if any(line.startswith(NOT_RUN_TO_THE_END_LINE_PREFIX) for line in lines):
+        return False
+    return any(SUITE_FAILED_LINE.match(line) for line in lines)
 
 
 def run_all_test_suites_output_timed_out_suites_and_limits_parse(text):

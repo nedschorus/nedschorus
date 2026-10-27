@@ -235,9 +235,18 @@ def work_item(path, line, operator, job_id):
         "start_pos": [line, 4], "end_pos": [line, 9], "operator_args": {}}]}
 
 
+# What the suite runner prints when a suite fails under the mutant: what cosmic-ray records as a
+# kill this script counts.
+SUITE_FAILED_RUNNER_OUTPUT = (
+    "FAIL scripts/thing-test.py exit 1 (0.4s)\n\n1 failed:\n"
+    "FAIL scripts/thing-test.py exit 1 — log /tmp/a.log\n"
+    "SUMMARY: 0 passed, 1 failed, 1 total\n")
+
+
 def result(test_outcome, worker_outcome="normal", diff=None):
-    return {"worker_outcome": worker_outcome, "output": "", "test_outcome": test_outcome,
-            "diff": diff}
+    return {"worker_outcome": worker_outcome,
+            "output": SUITE_FAILED_RUNNER_OUTPUT if test_outcome == "killed" else "",
+            "test_outcome": test_outcome, "diff": diff}
 
 
 HEAD_FILES = {
@@ -262,6 +271,15 @@ def runner_output_with_suites_timed_out(timed_out, others=()):
     lines += [f"FAIL {result['suite']} {runner.why_suite_failed(result)} — log /tmp/a.log"
               for result in results]
     return "\n".join(lines) + "\nSUMMARY: 0 passed\n"
+
+
+def runner_output_with_test_sandbox_not_started(suite):
+    """The suite runner's FAIL lines for a suite whose test sandbox did not start, from its code."""
+    runner = load_test_suite_runner()
+    failed = {"suite": suite, "exit": 1, "seconds": 0.1, "skips": [],
+              "test sandbox did not start": True}
+    return (f"{runner.suite_line(failed)}\n\n1 failed:\n"
+            f"FAIL {suite} {runner.why_suite_failed(failed)} — log /tmp/a.log\n")
 
 
 def killed_with_output(output):
@@ -445,14 +463,58 @@ def run_cases():
          0, "1 killed, 0 survived, 0 errored"),
         ("a killed mutant whose output only mentions a timeout is still killed",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
-           {"worker_outcome": "normal", "output": "FAIL: case timeout handling\n",
+           {"worker_outcome": "normal",
+            "output": "FAIL: case timeout handling\n" + SUITE_FAILED_RUNNER_OUTPUT,
             "test_outcome": "killed", "diff": None}]],
          0, "1 killed, 0 survived, 0 errored"),
         # Sorts after "timeout", so only an exact comparison keeps it killed.
         ("a killed mutant whose output is longer than the timeout record is still killed",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
-           {"worker_outcome": "normal", "output": "timeout\n",
+           {"worker_outcome": "normal", "output": "timeout\n" + SUITE_FAILED_RUNNER_OUTPUT,
             "test_outcome": "killed", "diff": None}]],
+         0, "1 killed, 0 survived, 0 errored"),
+        # Each a nonzero exit of the runner that cosmic-ray records as a kill, though no suite
+        # failed under the mutant.
+        ("a killed mutant whose runner printed nothing is ERRORED, not killed",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           killed_with_output("")]],
+         1, "ERRORED   scripts/thing.py:2 core/NumberReplacer (no verdict: the suite runner "
+            "exited nonzero but judged no suite failing, so this mutant was not judged; its "
+            "output was empty)"),
+        ("a killed mutant whose run was not run to the end is ERRORED, not killed, even "
+         "after a suite failed",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           killed_with_output(
+               "FAIL scripts/thing-test.py exit 1 (0.4s)\n"
+               "run-all-test-suites: not run to the end — admission failed: gone\n")]],
+         1, "0 killed, 0 survived, 1 errored"),
+        ("the ERRORED line for a run not run to the end quotes the runner's line",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           killed_with_output(
+               "PASS scripts/thing-test.py (0.4s)\n"
+               "run-all-test-suites: not run to the end — admission failed: gone\n")]],
+         1, "its output says: run-all-test-suites: not run to the end — admission failed: "
+            "gone)"),
+        ("a killed mutant whose every suite passed but whose records could not be written "
+         "is ERRORED, not killed",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           killed_with_output(
+               "PASS scripts/thing-test.py (0.4s)\n"
+               "run-all-test-suites: the run's case times, suite resources, JUnit XML or "
+               "failure history could not be written: full\n"
+               "SUMMARY: 1 passed, 0 failed, 1 total\n")]],
+         1, "0 killed, 0 survived, 1 errored"),
+        ("a killed mutant whose only failing suite's test sandbox did not start is ERRORED, "
+         "not killed",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           killed_with_output(runner_output_with_test_sandbox_not_started(
+               "scripts/thing-test.py"))]],
+         1, "0 killed, 0 survived, 1 errored"),
+        ("a killed mutant with one suite failing beside a test sandbox that did not start is "
+         "killed",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           killed_with_output(runner_output_with_test_sandbox_not_started(
+               "scripts/other-test.py") + SUITE_FAILED_RUNNER_OUTPUT)]],
          0, "1 killed, 0 survived, 0 errored"),
         ("a no-test result beside a killed mutant leaves the exit 0",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"), result("killed")],

@@ -39,10 +39,13 @@ given, sets that limit for every file instead.
 
 A renamed file is mutated under its new name. A mutant cosmic-ray could not
 judge, because its worker raised, its suites could not be launched, a suite
-ran past its own time limit, which the runner's TIMEOUT line names, or the
-suites ran past cosmic-ray's limit, is printed as ERRORED and counts against
-the run like a survivor. cosmic-ray itself reports both timeouts as kills;
-this script does not. On the unmutated head either timeout stops the script
+ran past its own time limit, which the runner's TIMEOUT line names, the
+suites ran past cosmic-ray's limit, or the runner exited nonzero without a
+suite failing by its own exit (it printed nothing, was not run to the end,
+could not write its records, or a suite's test sandbox did not start), is
+printed as ERRORED and counts against the run like a survivor. cosmic-ray
+itself reports every nonzero exit of the runner as a kill; this script does
+not. On the unmutated head either timeout stops the script
 with exit 2 and a message saying the suites ran out of time, with the limit,
 and, for a suite's own limit, the suite.
 
@@ -259,6 +262,17 @@ def suite_timeouts_described(timed_out):
                      for suite, limit in timed_out)
 
 
+def runner_output_described(output, runner):
+    """The runner's lines that say why it judged no suite, or that it printed nothing."""
+    if not output.strip():
+        return "was empty"
+    lines = [line for line in output.splitlines()
+             if line.startswith((f"{runner.PROGRAM}: not run", "FAIL "))]
+    if not lines:
+        return f"ended: {output.strip().splitlines()[-1]}"
+    return f"says: {' | '.join(dict.fromkeys(lines))}"
+
+
 def outcomes_from_dump(dump_text, mutant_timeout_seconds, runner):
     """Return (counts, survivors, errored) from `cosmic-ray dump` output.
 
@@ -308,8 +322,18 @@ def outcomes_from_dump(dump_text, mutant_timeout_seconds, runner):
                        f"the same way again, it makes that suite hang: name it, with the "
                        f"suite, in the pull request's description"))
         elif (worker_outcome not in WORKER_OUTCOMES_THAT_ERRORED
-              and test_outcome == "killed"):
+              and test_outcome == "killed"
+              and runner.run_all_test_suites_output_judges_a_suite_failing(
+                  result.get("output") or "")):
             counts["killed"] += 1
+        elif (worker_outcome not in WORKER_OUTCOMES_THAT_ERRORED
+              and test_outcome == "killed"):
+            counts["errored"] += 1
+            errored.append(mutant_description(
+                item, result,
+                reason=f"no verdict: the suite runner exited nonzero but judged no suite "
+                       f"failing, so this mutant was not judged; its output "
+                       f"{runner_output_described(result.get('output') or '', runner)}"))
         else:
             counts["errored"] += 1
             errored.append(mutant_description(item, result))
