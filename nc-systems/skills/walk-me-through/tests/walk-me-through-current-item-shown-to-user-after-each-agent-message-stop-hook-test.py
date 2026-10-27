@@ -1032,6 +1032,54 @@ def test_an_item_whose_publish_failed_ends_with_the_closing_line_without_its_lin
                   "hold no `#item_page` line for `Item 2 of 9`")
 
 
+def test_the_closing_line_is_read_token_by_token():
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    for case_name, reply in (
+            ("a closing line whose point ends in a code span passes", closing(2, point="the page for `docs/`")),
+            ("a closing line whose point holds a code span and more text passes",
+             closing(2, point="the `docs/` page lives here"))):
+        case.reply("Recorded.\n\n" + reply)
+        check_silent(case_name, case.run())
+    for case_name, reply in (
+            ("the closing line's link alone, without its letters, is sent back",
+             f"[Item 2 of 9, where the poem page lives]({page(2)})"),
+            ("a closing line with a code span after its letters is sent back", closing(2) + "`x`"),
+            ("a closing line whose letters are a code span is sent back",
+             f"[Item 2 of 9, x]({page(2)})` · {LETTERS}`"),
+            ("a label in a code span with no link is sent back", f"`Item 2 of 9` · {LETTERS}")):
+        case.reply("Recorded.\n\n" + reply)
+        check_reminded(case_name, case.run(), "no closing line for `Item 2 of 9` ends the reply")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 9 of 9.")
+    case.reply("Recorded.\n\n" + closing(2, link=page(9)))
+    check_reminded("a closing line for another item is not read as naming the walk's total", case.run(),
+                   "no closing line for `Item 9 of 9` ends the reply")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.",
+                    pages="#item_page item 2 of 9 publish failed: the Artifact tool timed out\n")
+    case.reply("Recorded.\n\n" + closing(2, link=None, point="the page for `docs/`"))
+    check_silent("a closing line without its link whose point holds a code span passes", case.run())
+    case.reply("Recorded.\n\n" + closing(2, link=None, point=None))
+    check_silent("a closing line without its link or a point passes", case.run())
+    case.reply("Recorded.\n\nItem 2 of 9, " + "the poem page lives in the wiki beside the glossary " * 3)
+    check_reminded("a line naming the item without the answer letters is sent back", case.run(),
+                   "no closing line for `Item 2 of 9` ends the reply")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.", pages="#item_page item 2 of 9 wiki/item-2-page\n")
+    case.reply("Recorded.\n\n" + closing(2, link="wiki/item-2-page"))
+    check_silent("a page link that sorts after the words `publish failed` is still a link", case.run())
+    case.reply("Recorded.\n\n" + closing(2, link=None))
+    check_reminded("a closing line without its link for such a page is sent back, given the line with the link",
+                   case.run(), "has no link", f"`[Item 2 of 9, <the point>](wiki/item-2-page) · {LETTERS}`")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    other = "https://claude.ai/artifact/SomeOtherPage"
+    case.reply(f"Recorded.\n\n{closing(2, link=None)}\n{closing(2, link=other)}")
+    check_reminded("of two wrong closing lines for the item, the block names the last one's link", case.run(),
+                   f"links to {other}, but")
+
+
 def test_minutes_without_a_marker_are_not_parsed():
     specification = importlib.util.spec_from_file_location("walk_stop_hook_under_test", HOOK_SCRIPT)
     hook = importlib.util.module_from_spec(specification)
