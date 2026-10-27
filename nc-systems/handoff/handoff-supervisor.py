@@ -1501,6 +1501,7 @@ def claude_json_onboarding_presets_write_or_report() -> None:
 
 # Claude Code makes claude-<uid>/ under it, and the directory itself when missing. Under ~/.cache
 # because ned-box's hourly Timeshift snapshot of /home/nedlern excludes ~/.cache/**.
+# scripts/locate-file-copies-across-machines.py holds a copy, for its search of ned-box.
 NED_BOX_CLAUDE_CODE_TMPDIR = "/home/nedlern/.cache/claude-code-tmp"
 
 

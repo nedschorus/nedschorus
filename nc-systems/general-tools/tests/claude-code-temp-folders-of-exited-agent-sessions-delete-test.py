@@ -57,8 +57,18 @@ class Scene:
         self.parents = [base / "tmp", base / "claude-code-tmp"]
         self.sessions = base / "sessions"
         self.proc = base / "proc"
+        self.projects = base / "projects"
         self.sessions.mkdir()
         self.proc.mkdir()
+        self.projects.mkdir()
+
+    def transcript(self, session_id, project="-home-nedlern-agents-seat", age_seconds=0):
+        # Over the empty-successor size, so crash recovery counts it as real work.
+        path = self.projects / project / f"{session_id}.jsonl"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text("x" * (program.worth_resuming.EMPTY_SUCCESSOR_MAX_BYTES + 1))
+        changed = time.time() - age_seconds
+        os.utime(path, (changed, changed))
 
     def session(self, pid, session_id, start_time=START_TIME, running=True,
                 running_start_time=START_TIME):
@@ -83,7 +93,8 @@ class Scene:
 
     def run(self, *extra, minimum_age="3600", parents=None):
         arguments = [sys.executable, str(PROGRAM), "--sessions-directory", str(self.sessions),
-                     "--proc-directory", str(self.proc), "--minimum-age-seconds", minimum_age]
+                     "--proc-directory", str(self.proc), "--projects-directory", str(self.projects),
+                     "--minimum-age-seconds", minimum_age]
         for parent in (self.parents if parents is None else parents):
             arguments += ["--temp-parent", str(parent)]
         return subprocess.run(arguments + list(extra), capture_output=True, text=True, timeout=60)
@@ -133,8 +144,54 @@ def run_selection_cases():
           (s.parents[0] / ROOT_NAME / "-home-nedlern-agents-other").is_dir())
     check("the summary counts what was deleted and kept",
           "folders of exited agent-sessions deleted: 3; folders kept because their agent-session "
-          "is live: 1; folders kept because they changed in the last 3600 seconds: 1; failures: 0"
+          "is live: 1; folders kept because crash recovery would resume their agent-session: 0; "
+          "folders kept because they changed in the last 3600 seconds: 1; failures: 0"
           in real.stdout, real.stdout)
+
+
+def run_resumable_cases():
+    s = scene()
+    s.session(DEAD_PID, DEAD, running=False)
+    resumable = s.folder(0, DEAD)
+    older = s.folder(0, OTHER)
+    s.transcript(DEAD, age_seconds=60)
+    s.transcript(OTHER, age_seconds=86400)
+    other_project = s.folder(1, REUSED, project="-home-nedlern-agents-other")
+    s.transcript(DEAD, project="-home-nedlern-agents-other")
+    result = s.run()
+    check("resumable cases: the run exits 0 with no failure",
+          result.returncode == 0 and result.stderr == "", result.stdout + result.stderr)
+    check("the folder of a dead agent-session that crash recovery would resume is kept",
+          resumable.is_dir(), result.stdout)
+    check("the folder of an older dead agent-session of the same project is deleted",
+          not older.exists(), result.stdout)
+    check("the newest transcript of one project keeps no folder of another project",
+          not other_project.exists(), result.stdout)
+    check("the summary counts the folder kept for crash recovery",
+          "folders kept because crash recovery would resume their agent-session: 1;"
+          in result.stdout, result.stdout)
+
+    s = scene()
+    unchosen = s.folder(0, DEAD)
+    elsewhere = s.folder(0, OTHER, project="-home-nedlern-agents-other")
+    chooser = program.worth_resuming.newest_real_transcript
+
+    def chooser_fails_for_one_project(project_directory):
+        if project_directory.name == "-home-nedlern-agents-seat":
+            raise PermissionError(13, "Permission denied", str(project_directory))
+        return chooser(project_directory)
+
+    program.worth_resuming.newest_real_transcript = chooser_fails_for_one_project
+    try:
+        result = program.claude_code_temp_folders_of_exited_agent_sessions_delete(
+            [str(s.parents[0])], s.sessions, s.proc, 3600, False, projects_directory=s.projects)
+    finally:
+        program.worth_resuming.newest_real_transcript = chooser
+    check("a project whose resumable transcript cannot be chosen keeps its folders, as a failure "
+          "naming the error, and does not stop the other projects",
+          unchosen.is_dir() and not elsewhere.exists() and len(result["failures"]) == 1
+          and result["failures"][0].startswith(f"the folders in {unchosen.parent} were kept: ")
+          and "Permission denied" in result["failures"][0], str(result))
 
 
 def run_order_and_link_cases():
@@ -324,7 +381,8 @@ def run_recheck_cases():
         return time.time()
 
     result = program.claude_code_temp_folders_of_exited_agent_sessions_delete(
-        [str(s.parents[0])], s.sessions, s.proc, 3600, False, now=session_starts_during_the_run)
+        [str(s.parents[0])], s.sessions, s.proc, 3600, False, now=session_starts_during_the_run,
+        projects_directory=s.projects)
     check("a session that starts during the run keeps its folder",
           first.is_dir() and not second.exists() and result["kept_live"] == 1, str(result))
 
@@ -337,7 +395,8 @@ def run_recheck_cases():
         return time.time()
 
     result = program.claude_code_temp_folders_of_exited_agent_sessions_delete(
-        [str(s.parents[0])], s.sessions, s.proc, 3600, False, now=sessions_file_breaks_during_the_run)
+        [str(s.parents[0])], s.sessions, s.proc, 3600, False, now=sessions_file_breaks_during_the_run,
+        projects_directory=s.projects)
     check("a live set unreadable at the recheck keeps the folder and is a failure",
           first.is_dir() and len(result["failures"]) == 1
           and result["failures"][0].startswith(f"{first} was kept: the sessions file"),
@@ -347,6 +406,7 @@ def run_recheck_cases():
 WORKSPACE = tempfile.mkdtemp(prefix="claude-code-temp-folders-delete-test-workspace-")
 try:
     run_selection_cases()
+    run_resumable_cases()
     run_absent_inputs_cases()
     run_order_and_link_cases()
     run_live_set_failure_cases()

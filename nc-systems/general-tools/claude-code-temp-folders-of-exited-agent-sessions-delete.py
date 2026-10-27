@@ -2,7 +2,8 @@
 """Delete the temporary folder of each Claude Code agent-session whose Claude Code process has exited.
 
     python3 <this file> [--dry-run] [--temp-parent DIR ...] [--sessions-directory DIR]
-                        [--proc-directory DIR] [--minimum-age-seconds N]
+                        [--proc-directory DIR] [--projects-directory DIR]
+                        [--minimum-age-seconds N]
 
 Claude Code gives each agent-session a folder <parent>/claude-<uid>/<project>/<session id>/,
 holding its background tasks' output (tasks/) and its scratchpad (scratchpad/). <parent> is
@@ -26,6 +27,11 @@ too.
 
 WHAT IS KEPT.
 - The folder of a live agent-session.
+- The folder of the agent-session crash recovery would resume for its <project>: the one
+  scripts/recover-crashed-seats.py picks, the newest real transcript in
+  <projects directory>/<project>/, by default ~/.claude/projects/. `claude --resume` reuses the
+  folder, so a seat that crashed and stays down keeps its scratchpad and task output. When that
+  transcript cannot be chosen, the project's folders are all kept, and it is a failure.
 - A folder changed within --minimum-age-seconds, default one hour: the folder itself or one of
   the entries directly inside it, so a process that made its folder before its sessions file
   keeps it.
@@ -62,6 +68,7 @@ what failed.
 
 import argparse
 import errno
+import importlib.util
 import json
 import os
 import re
@@ -88,6 +95,12 @@ DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES = ["/tmp", "/home/nedlern/.ca
 SESSION_FOLDER_NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 EXIT_DONE = 0
 EXIT_FAILED = 1
+
+_worth_resuming_specification = importlib.util.spec_from_file_location(
+    "seat_transcript_worth_resuming",
+    Path(__file__).resolve().parents[2] / "scripts" / "agent-seat-transcript-worth-resuming-common.py")
+worth_resuming = importlib.util.module_from_spec(_worth_resuming_specification)
+_worth_resuming_specification.loader.exec_module(worth_resuming)
 
 
 class LiveSessionsUnreadable(Exception):
@@ -144,9 +157,10 @@ def newest_change(folder: Path) -> float:
 
 def claude_code_temp_folders_of_exited_agent_sessions_delete(temp_parents, sessions_directory: Path,
                                       proc_directory: Path, minimum_age_seconds: float,
-                                      dry_run: bool, now=time.time) -> dict:
+                                      dry_run: bool, now=time.time,
+                                      projects_directory: Path = Path.home() / ".claude" / "projects") -> dict:
     """Delete what may go, and return the counts and the failures, one line each."""
-    result = {"deleted": 0, "kept_live": 0, "kept_recent": 0, "failures": []}
+    result = {"deleted": 0, "kept_live": 0, "kept_resumable": 0, "kept_recent": 0, "failures": []}
     try:
         live = live_session_ids(sessions_directory, proc_directory)
     except LiveSessionsUnreadable as error:
@@ -170,12 +184,23 @@ def claude_code_temp_folders_of_exited_agent_sessions_delete(temp_parents, sessi
             except OSError as error:
                 result["failures"].append(f"{project.path} could not be listed: {error.strerror}")
                 continue
+            transcripts = projects_directory / project.name
+            try:
+                resumable, _ = worth_resuming.newest_real_transcript(transcripts)
+            except OSError as error:
+                result["failures"].append(
+                    f"the folders in {project.path} were kept: the transcript crash recovery would "
+                    f"resume could not be chosen from {transcripts}: {error.filename}: {error.strerror}")
+                continue
             deleted_here = False
             for name in folders:
                 folder = Path(project.path) / name
                 try:
                     if name in live:
                         result["kept_live"] += 1
+                        continue
+                    if name == resumable:
+                        result["kept_resumable"] += 1
                         continue
                     if now() - newest_change(folder) < minimum_age_seconds:
                         result["kept_recent"] += 1
@@ -218,12 +243,16 @@ def main(arguments=None):
                         help="where Claude Code keeps a <pid>.json file per running process")
     parser.add_argument("--proc-directory", type=Path, default=Path("/proc"),
                         help="the process table, for each pid's start time")
+    parser.add_argument("--projects-directory", type=Path,
+                        default=Path.home() / ".claude" / "projects",
+                        help="where Claude Code keeps each project's transcripts")
     parser.add_argument("--minimum-age-seconds", type=float, default=3600,
                         help="keep a folder changed more recently than this")
     options = parser.parse_args(arguments)
     result = claude_code_temp_folders_of_exited_agent_sessions_delete(
         options.temp_parents or DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES, options.sessions_directory,
-        options.proc_directory, options.minimum_age_seconds, options.dry_run)
+        options.proc_directory, options.minimum_age_seconds, options.dry_run,
+        projects_directory=options.projects_directory)
     for failure in result["failures"]:
         print(failure, file=sys.stderr)
     if result["failures"]:
@@ -231,6 +260,8 @@ def main(arguments=None):
     print(f"folders of exited agent-sessions "
           f"{'that would be deleted' if options.dry_run else 'deleted'}: {result['deleted']}; "
           f"folders kept because their agent-session is live: {result['kept_live']}; "
+          f"folders kept because crash recovery would resume their agent-session: "
+          f"{result['kept_resumable']}; "
           f"folders kept because they changed in the last {options.minimum_age_seconds:g} "
           f"seconds: {result['kept_recent']}; failures: {len(result['failures'])}", flush=True)
     return EXIT_FAILED if result["failures"] else EXIT_DONE
