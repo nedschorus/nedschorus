@@ -20,8 +20,7 @@ which judges the findings and runs start-topic-branch, open-pull-request,
 record-finding-leave-out-reason and finish-follow-up-request-and-print-merge-lane-2-message; then run
 remove-recorded-topic-branches-and-worktrees.
 
-start-topic-branch, in the subagent's worktree: refuse a branch name that already exists;
-record the branch and the worktree's path in TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT,
+start-topic-branch, in the subagent's worktree: record the branch and the worktree's path in TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT,
 first, so remove-recorded-topic-branches-and-worktrees knows them even when a later step fails; then git fetch
 origin and git switch -c <topic-branch> origin/main.
 
@@ -32,14 +31,13 @@ missing, is not a title, a blank line and a description, or whose description
 has no defect line, the rule scripts/merge-gate.sh applies, read by the same
 reader; then git push -u origin <branch>, whose pre-push hook runs the test
 suites, gh pr create against main, record the pull request's link against each
-finding in FINDING_ANSWERS_FILE_NAME_FORMAT, and remove the title and description file,
-so the next topic cannot reuse it.
+finding in FINDING_ANSWERS_FILE_NAME_FORMAT.
 
 record-finding-leave-out-reason: record the reason against the finding; refuse a finding that does
 not exist or already has an answer, and an empty reason.
 
 finish-follow-up-request-and-print-merge-lane-2-message: refuse, naming each finding without an answer, until every finding has
-one; then record the finish time, which the hook reads, and print the message
+one; then print the message
 for merge-lane-2, which the subagent sends with SendMessage, since a program
 cannot.
 
@@ -52,7 +50,7 @@ Each worktree or branch left in place is printed with what the author should
 do, and the exit code is 1.
 
 A block that differs from the saved one is a new request: saving it removes
-the answers file, finish time included, but keeps the topic branch records,
+the answers file, but keeps the topic branch records,
 which remove-recorded-topic-branches-and-worktrees still needs.
 
 Not handled: whether a pull request handles its findings, which merge-lane-2
@@ -68,7 +66,6 @@ takes, which argparse says on stderr.
 """
 
 import argparse
-import datetime
 import importlib.util
 import json
 import re
@@ -288,12 +285,6 @@ def save_follow_up_request_and_clear_answers_when_its_findings_changed(request, 
     return saved
 
 
-def read_follow_up_request_finished_time(number, directory="."):
-    """When finish-follow-up-request-and-print-merge-lane-2-message passed for pull request number's follow-up, or None."""
-    states = state_directory(directory)
-    return read_json(state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, number), {}).get("finished_at")
-
-
 def saved_follow_up_request(states, number):
     saved = state_file(states, SAVED_FINDINGS_FILE_NAME_FORMAT, number)
     text = read_text_if_present(saved)
@@ -317,10 +308,6 @@ def saved_follow_up_request(states, number):
     if len(requests) != 1 or requests[0].number != number:
         raise StepFailed(f"the saved follow-up request {saved} cannot be read: {problem}")
     return requests[0]
-
-
-def now():
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def numbers_text(numbers):
@@ -354,13 +341,6 @@ def refuse_unknown_or_answered(number, request, answers, findings, not_done, ans
 def start_topic_branch(number, branch):
     states = state_directory()
     saved_follow_up_request(states, number)
-    exists = git(".", ["rev-parse", "--verify", "--quiet", "refs/heads/" + branch],
-                 accepted_exit_codes=(0, 1)).strip()
-    if exists:
-        raise Refused(f"A branch named {branch} already exists, so start-topic-branch made nothing.\n"
-                      f"If you made it with start-topic-branch for this follow-up, switch to it with git switch {branch} "
-                      "and go on.\n"
-                      "Otherwise run start-topic-branch again with another topic branch name.")
     worktree = git(".", ["rev-parse", "--show-toplevel"]).strip()
     branches_file = state_file(states, TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT, number)
     records = read_json(branches_file, [])
@@ -440,20 +420,15 @@ def open_pull_request(number, findings):
             f"If the push fails the same way, tell the user, in one sentence, that git push of {branch} "
             f"fails and that the follow-up of pull request {number} is stopped until it works.\n"
             "If you are a subagent, pass that sentence to the agent that dispatched you instead.") from None
-    # An earlier open-pull-request may have made the pull request and then failed, so a rerun finds it, not a second one.
-    output = gh(["pr", "list", "--head", branch, "--state", "open", "--json", "url", "--jq", ".[].url"])
+    output = gh(["pr", "create", "--base", "main", "--head", branch, "--title", title, "--body", description])
     links = PULL_REQUEST_LINK_PATTERN.findall(output)
     if not links:
-        output = gh(["pr", "create", "--base", "main", "--head", branch, "--title", title, "--body", description])
-        links = PULL_REQUEST_LINK_PATTERN.findall(output)
-        if not links:
-            raise StepFailed(f"gh pr create printed no pull request link: {output.strip()!r}")
+        raise StepFailed(f"gh pr create printed no pull request link: {output.strip()!r}")
     link = links[-1]
     for finding in findings:
         answers[str(finding)] = {"link": link, "branch": branch}
     record["answers"] = answers
     write_json(answers_file, record)
-    remove_file(description_file)
     unanswered = [index for index in range(1, request.finding_count + 1) if str(index) not in answers]
     print(f"Opened {link} for {findings_text(findings)} of pull request {number}'s follow-up "
           "request, and recorded it.")
@@ -495,11 +470,8 @@ def finish_follow_up_request_and_print_merge_lane_2_message(number):
                       "For each finding you leave out, run: "
                       f"{command(number, LEAVE_OUT_ARGUMENTS)}\n"
                       "Then run finish-follow-up-request-and-print-merge-lane-2-message again.")
-    record["finished_at"] = now()
-    write_json(answers_file, record)
     print("\n".join([
-        f"Every finding of pull request {number}'s follow-up request has an answer, and the follow-up "
-        "is marked finished.",
+        f"Every finding of pull request {number}'s follow-up request has an answer.",
         "Send merge-lane-2 this message with SendMessage:",
         "",
         f"Follow-ups on pull request {number}, answering merge-lane-2's #follow_up_request pull request "

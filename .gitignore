@@ -93,7 +93,7 @@ ghi-mirror/
 fix-round-answers-pull-request-*.md
 
 # the follow-up pull request title and description file: written at a worktree's root by the
-# follow-up's forked subagent and read and removed by the open-pull-request subcommand of
+# follow-up's forked subagent and read by the open-pull-request subcommand of
 # scripts/pull-request-follow-up-request-findings-open-pull-requests-or-record-leave-out-reasons-and-clean-up.py;
 # never part of a follow-up pull request
 /follow-up-pull-request-title-and-description.md

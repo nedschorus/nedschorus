@@ -127,21 +127,16 @@ def test_saves_and_hands_over_the_brief():
         check("two merge-lane-2 messages with blocks get one brief each",
               code == 0 and context is not None and context.count("For you, the author:\n") == 2
               and "merged pull request 1965 and sent 1 non-blocking" in context, repr(context))
-        answers = SAVED.parent / f"pull-request-{NUMBER}-follow-up-finding-answers.json"
-        (repository / answers).write_text('{"answers": {}, "finished_at": "2026-10-27T10:00:00Z"}\n')
         code, _, context, err = run(MERGE_MESSAGE, repository)
-        check("the same block for a finished follow-up gets no brief, and says why",
-              code == 0 and context == (
-                  f"{HOOK.stem}: merge-lane-2's message above holds the #follow_up_request block for pull request {NUMBER} "
-                  "again, and that follow-up was finished at 2026-10-27T10:00:00Z, so this hook gave no "
-                  "follow-up brief: a second subagent would answer the same findings twice.\n"
-                  "If merge-lane-2 says a finding is still open, follow it up yourself as CLAUDE.md says, and "
-                  "answer merge-lane-2 with SendMessage."), repr(context) + err)
-        (repository / answers).write_text("{not json")
-        code, _, context, err = run(MERGE_MESSAGE, repository)
-        check("a follow-up record that cannot be read is reported in the context",
-              code == 0 and context is not None and "could not save the block or read its follow-up's record" in context
-              and "is not the JSON this program writes" in context, repr(context) + err)
+        check("the same block again gets the brief again", code == 0 and context == EXPECTED_BRIEF, repr(context) + err)
+        answers = repository / SAVED.parent / f"pull-request-{NUMBER}-follow-up-finding-answers.json"
+        answers.mkdir()
+        (answers / "inside").write_text("x")
+        changed = message(f"#follow_up_request pull request {NUMBER}\n1. a\n2. b\n3. c\n")
+        code, _, context, err = run(changed, repository)
+        check("a changed block whose old answers cannot be removed is reported in the context",
+              code == 0 and context is not None and "could not save the block, so" in context
+              and "could not remove" in context, repr(context) + err)
     finally:
         shutil.rmtree(root)
 

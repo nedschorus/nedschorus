@@ -37,14 +37,9 @@ BLOCK = (f"#follow_up_request pull request {NUMBER}\n"
          "1. Codex P2 (:519-520): keep the padding when rebuilding code spans.\n"
          "2. mac-claude (inline at :713): send every R through repeat_line.\n")
 LINK = "https://github.com/nedschorus/nedschorus/pull/2001"
-EXISTING_LINK = "https://github.com/nedschorus/nedschorus/pull/2002"
 DESCRIPTION = "Keep code span padding\n\nKeeps the padding.\n\n#no_defect_fixed\n"
 FAKE_GH = """#!/bin/sh
 printf '%s\\036' "$*" >> "$FAKE_GH_LOG"
-if [ "$1 $2" = "pr list" ]; then
-    [ -n "$FAKE_GH_EXISTING" ] && printf '%s\\n' "$FAKE_GH_EXISTING"
-    exit 0
-fi
 [ -n "$FAKE_GH_KILLED" ] && kill -9 $$
 [ -n "$FAKE_GH_CREATE_FAILS_SILENTLY" ] && exit 1
 if [ -n "$FAKE_GH_CREATE_FAILS" ]; then
@@ -84,7 +79,10 @@ class Case:
         git(self.repository, "config", "user.name", "test")
         git(self.repository, "config", "core.hooksPath", str(self.repository / ".git" / "hooks"))
         (self.repository / "base.txt").write_text("base\n")
-        git(self.repository, "add", "base.txt")
+        # As the repository's own .gitignore does, so the file left after open-pull-request is no change.
+        (self.repository / ".gitignore").write_text(
+            "/" + program.FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME + "\n")
+        git(self.repository, "add", "base.txt", ".gitignore")
         git(self.repository, "commit", "-q", "-m", "base")
         git(self.repository, "push", "-q", "origin", "main")
         self.bin = self.root / "bin"
@@ -224,10 +222,6 @@ def test_start():
         check("start records the branch and the worktree's path",
               case.topic_branches() == [{"branch": "topic-one", "worktree": str(worktree)}],
               str(case.topic_branches()))
-        code, out, err = case.run(worktree, "start-topic-branch", "topic-one")
-        check("start refuses a branch that already exists, saying how to go on",
-              code == 1 and "A branch named topic-one already exists, so start-topic-branch made nothing." in err
-              and "git switch topic-one" in err, err)
         code, out, err = case.run(worktree, "start-topic-branch", "topic-two")
         check("a second topic branch is recorded too",
               code == 0 and [record["branch"] for record in case.topic_branches()] == ["topic-one", "topic-two"],
@@ -329,21 +323,17 @@ def test_open():
         check("open sets the branch's upstream", git(worktree, "rev-parse", "--abbrev-ref", "@{upstream}")
               == "origin/topic-one")
         calls = case.gh_calls()
-        check("open looks for an open pull request of the branch, then creates one from the file",
-              len(calls) == 2 and calls[0].startswith("pr list --head topic-one --state open")
-              and calls[1] == "pr create --base main --head topic-one --title Keep code span padding "
+        check("open creates the pull request from the file",
+              len(calls) == 1 and calls[0] == "pr create --base main --head topic-one --title Keep code span padding "
                               "--body Keeps the padding.\n\n#no_defect_fixed\n", str(calls))
         check("open records the link against the finding",
               case.answers() == {"answers": {"1": {"link": LINK, "branch": "topic-one"}}}, str(case.answers()))
-        check("open removes the title and description file", not description.exists())
         code, out, err = case.run(worktree, "start-topic-branch", "topic-two")
         case.commit_change("second.txt")
         case.write_description()
-        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "2", FAKE_GH_EXISTING=EXISTING_LINK)
-        check("open on a branch whose pull request is already open records that pull request, creating none",
-              code == 0 and "pr create" not in case.gh_calls()[-1]
-              and case.answers()["answers"]["2"]["link"] == EXISTING_LINK
-              and f"Every finding has an answer: run python3 {program.PROGRAM} {NUMBER} finish-follow-up-request-and-print-merge-lane-2-message" in out, out + err)
+        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "2")
+        check("open of the last finding says every finding has an answer",
+              code == 0 and f"Every finding has an answer: run python3 {program.PROGRAM} {NUMBER} finish-follow-up-request-and-print-merge-lane-2-message" in out, out + err)
     finally:
         case.close()
 
@@ -449,27 +439,21 @@ def test_leave_out_and_finish():
               and "without that finding" not in err, err)
         code, out, err = case.run(worktree, "finish-follow-up-request-and-print-merge-lane-2-message")
         check("finish names only the finding still without an answer",
-              code == 1 and "Finding 2 of pull request 1964's follow-up request has no answer yet" in err
-              and case.answers().get("finished_at") is None, err)
+              code == 1 and "Finding 2 of pull request 1964's follow-up request has no answer yet" in err, err)
         case.run(worktree, "record-finding-leave-out-reason", "2", "--reason", "a guard nothing calls for")
         code, out, err = case.run(worktree, "finish-follow-up-request-and-print-merge-lane-2-message")
         check("finish passes and prints the message for merge-lane-2",
-              code == 0 and out == "Every finding of pull request 1964's follow-up request has an answer, and "
-                                   "the follow-up is marked finished.\n"
+              code == 0 and out == "Every finding of pull request 1964's follow-up request has an answer.\n"
                                    "Send merge-lane-2 this message with SendMessage:\n\n"
                                    "Follow-ups on pull request 1964, answering merge-lane-2's #follow_up_request "
                                    "pull request 1964:\n"
                                    "1. Left out: already fixed on main\n"
                                    "2. Left out: a guard nothing calls for\n", out + err)
-        finished = case.answers().get("finished_at")
-        check("finish records the finish time, which read_follow_up_request_finished_time reads",
-              finished is not None and program.read_follow_up_request_finished_time(NUMBER, str(case.repository)) == finished)
         case.save()
         check("the same block saved again keeps the answers", case.answers() is not None)
         case.save(BLOCK + "3. a third finding\n")
         check("a changed block removes the answers but keeps the topic branches",
-              case.answers() is None and case.topic_branches() is not None
-              and program.read_follow_up_request_finished_time(NUMBER, str(case.repository)) is None)
+              case.answers() is None and case.topic_branches() is not None)
     finally:
         case.close()
 
