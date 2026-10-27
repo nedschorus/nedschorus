@@ -2,7 +2,7 @@
 """Tests for pull-request-follow-up-author-brief-from-non-blocking-findings-and-every-finding-answered-check.py.
 
 Each case runs the program in a scratch git repository, with the follow-up request saved by the
-program's own save_follow_up_request(), as the hook saves it, and --check run in a second worktree
+program's own save_follow_up_request_and_clear_its_markers(), as the hook saves it, and --check run in a second worktree
 of that repository, as the forked subagent runs it.
 
 Run: python3 scripts/pull-request-follow-up-author-brief-from-non-blocking-findings-and-every-finding-answered-check-test.py
@@ -70,12 +70,12 @@ def run(directory, *arguments):
 
 
 def states(repository):
-    return repository / ".git" / program.STATE_DIRECTORY_NAME
+    return repository / ".git" / program.PULL_REQUEST_FOLLOW_UP_REQUESTS_DIRECTORY_NAME
 
 
 def save(repository, text=BLOCK):
-    [request] = program.follow_up_requests(text)
-    return program.save_follow_up_request(request, str(repository))
+    [request] = program.parse_follow_up_request_blocks_from_message_text(text)
+    return program.save_follow_up_request_and_clear_its_markers(request, str(repository))
 
 
 def case(name):
@@ -90,20 +90,20 @@ def test_help():
 
 def test_block_parsing():
     message = ("PR 1964 merged.\n" + BLOCK + "— merge-lane-2 on ned-box\n")
-    [request] = program.follow_up_requests(message)
+    [request] = program.parse_follow_up_request_blocks_from_message_text(message)
     check("a block ends at the first line that is not a numbered finding",
           request.number == NUMBER and request.text == BLOCK and request.finding_count == 2, request.text)
-    check("text without the request line holds no block", program.follow_up_requests("1. a\n2. b\n") == [])
-    [three] = program.follow_up_requests(f"#follow_up_request pull request {NUMBER}\n1. a\n2. b\n3. c\n")
+    check("text without the request line holds no block", program.parse_follow_up_request_blocks_from_message_text("1. a\n2. b\n") == [])
+    [three] = program.parse_follow_up_request_blocks_from_message_text(f"#follow_up_request pull request {NUMBER}\n1. a\n2. b\n3. c\n")
     check("a block of three findings counts three", three.finding_count == 3, str(three.finding_count))
-    [ended] = program.follow_up_requests(BLOCK + "thanks\n3. a numbered line after the block\n")
+    [ended] = program.parse_follow_up_request_blocks_from_message_text(BLOCK + "thanks\n3. a numbered line after the block\n")
     check("a numbered line after the block's end is not a finding", ended.text == BLOCK, ended.text)
     for label, text in (("no findings", f"#follow_up_request pull request {NUMBER}\nthanks\n"),
                         ("numbering that skips", f"#follow_up_request pull request {NUMBER}\n1. a\n3. b\n"),
                         ("numbering that starts at 2", f"#follow_up_request pull request {NUMBER}\n2. a\n"),
                         ("a repeated number", f"#follow_up_request pull request {NUMBER}\n1. a\n1. b\n")):
         try:
-            program.follow_up_requests(text)
+            program.parse_follow_up_request_blocks_from_message_text(text)
         except ValueError as error:
             check(f"a block with {label} is refused, naming the pull request", str(NUMBER) in str(error), str(error))
         else:

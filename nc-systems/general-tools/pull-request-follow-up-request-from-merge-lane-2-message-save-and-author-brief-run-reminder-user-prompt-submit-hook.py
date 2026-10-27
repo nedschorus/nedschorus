@@ -4,7 +4,7 @@
 A UserPromptSubmit hook. It acts only on a prompt holding a cross-session message whose tag names
 from-name="merge-lane-2" and whose body holds the line "#follow_up_request pull request <number>"
 followed by numbered findings, one to a line. For each such block it saves the block word for word
-with save_follow_up_request() of BRIEF_PROGRAM, which owns the file's place in the git common
+with save_follow_up_request_and_clear_its_markers() of BRIEF_PROGRAM, which owns the file's place in the git common
 directory, and hands the agent, as additionalContext, the two lines of BRIEF_RUN_REMINDER_LINES.
 Any other prompt, including that line outside a merge-lane-2 message, gets no output and exit 0.
 
@@ -75,7 +75,7 @@ def context_for(payload):
     requests = []
     for body in bodies:
         try:
-            requests += brief_program.follow_up_requests(body)
+            requests += brief_program.parse_follow_up_request_blocks_from_message_text(body)
         except ValueError as error:
             return UNREADABLE_BLOCK_LINES.format(problem=error)
     if not requests:
@@ -84,7 +84,7 @@ def context_for(payload):
     lines = []
     for request in requests:
         try:
-            brief_program.save_follow_up_request(request, directory)
+            brief_program.save_follow_up_request_and_clear_its_markers(request, directory)
         except brief_program.StepFailed as error:
             return NOT_SAVED_LINES.format(error=error)
         lines.append(BRIEF_RUN_REMINDER_LINES.format(number=request.number, program=brief_program.PROGRAM))

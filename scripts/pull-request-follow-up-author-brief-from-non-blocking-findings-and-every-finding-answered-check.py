@@ -8,7 +8,7 @@ Usage:
 merge-lane-2 ends a merge message that asks for follow-ups with the line
 "#follow_up_request pull request <number>", then each non-blocking finding on a
 numbered line of its own, "1. ", "2. " and so on. nc-systems/general-tools/pull-request-follow-up-request-from-merge-lane-2-message-save-and-author-brief-run-reminder-user-prompt-submit-hook.py saves that block, word
-for word, to SAVED_FINDINGS_FILE_NAME_FORMAT in STATE_DIRECTORY_NAME under the
+for word, to SAVED_FINDINGS_FILE_NAME_FORMAT in PULL_REQUEST_FOLLOW_UP_REQUESTS_DIRECTORY_NAME under the
 checkout's git common directory, which every worktree of the checkout shares,
 and tells the agent to run this program.
 
@@ -59,7 +59,7 @@ PROGRAM = "scripts/" + Path(__file__).name
 FOLLOW_UP_REQUEST_LINE_PATTERN = re.compile(r"^#follow_up_request pull request (\d+)[ \t]*$")
 FINDING_LINE_PATTERN = fix_round.ANSWER_START_PATTERN
 PULL_REQUEST_LINK_PATTERN = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+")
-STATE_DIRECTORY_NAME = "pull-request-follow-up-requests"
+PULL_REQUEST_FOLLOW_UP_REQUESTS_DIRECTORY_NAME = "pull-request-follow-up-requests"
 SAVED_FINDINGS_FILE_NAME_FORMAT = "pull-request-{number}-non-blocking-findings.md"
 BRIEF_PRINTED_FILE_NAME_FORMAT = "pull-request-{number}-brief-printed-marker"
 EVERY_FINDING_ANSWERED_FILE_NAME_FORMAT = "pull-request-{number}-every-finding-answered-check-passed-marker"
@@ -75,7 +75,7 @@ WORKTREE_REMOVAL_INSTRUCTION = (
     "For the author, when the subagent has finished: remove its worktree, and then each local "
     "branch the subagent names in its last message. <path> is the worktree's path, which the Agent "
     "tool reports when the subagent finishes.\n"
-    + fix_round.WORKTREE_REMOVAL_STEP
+    + fix_round.SUBAGENT_WORKTREE_REMOVAL_STEP_INSTRUCTION_TEXT
     + "   2. Once the worktree is removed, run git branch -D on each local branch the subagent named.")
 
 
@@ -95,7 +95,7 @@ class FollowUpRequest:
         return len(self.lines) - 1
 
 
-def follow_up_requests(text):
+def parse_follow_up_request_blocks_from_message_text(text):
     """Every follow-up request block in text, in order.
 
     A block ends at the first line after its request line that is not a numbered finding. Raises
@@ -123,14 +123,14 @@ def follow_up_requests(text):
 
 
 def state_directory(directory="."):
-    """STATE_DIRECTORY_NAME in the git common directory, which the checkout and its worktrees share."""
+    """PULL_REQUEST_FOLLOW_UP_REQUESTS_DIRECTORY_NAME in the git common directory, which the checkout and its worktrees share."""
     try:
         common = fix_round.git_output.run_git(
             directory, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).decode().strip()
     except fix_round.git_output.GitCommandFailed as failure:
         raise StepFailed(f"git {' '.join(failure.arguments)} failed in {directory}: "
                          f"{failure.stderr.strip()}") from None
-    return Path(common) / STATE_DIRECTORY_NAME
+    return Path(common) / PULL_REQUEST_FOLLOW_UP_REQUESTS_DIRECTORY_NAME
 
 
 def state_file(directory, name_format, number):
@@ -154,7 +154,7 @@ def write_text(path, text):
         raise StepFailed(f"could not write {path}: {error}") from None
 
 
-def save_follow_up_request(request, directory="."):
+def save_follow_up_request_and_clear_its_markers(request, directory="."):
     """Save request's block for its pull request, as the hook does. A block that differs from the one
     saved is a new request, so the brief-printed and every-finding-answered marks are removed."""
     states = state_directory(directory)
@@ -186,7 +186,7 @@ def saved_follow_up_request(states, number):
                       f"{number}.\n"
                       "If you are a subagent, pass that sentence to the agent that dispatched you instead.")
     try:
-        requests = follow_up_requests(text)
+        requests = parse_follow_up_request_blocks_from_message_text(text)
     except ValueError as error:
         requests, problem = [], str(error)
     else:
