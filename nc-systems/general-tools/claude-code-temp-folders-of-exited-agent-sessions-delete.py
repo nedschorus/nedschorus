@@ -31,7 +31,9 @@ WHAT IS KEPT.
   scripts/recover-crashed-seats.py picks, the newest real transcript in
   <projects directory>/<project>/, by default ~/.claude/projects/. `claude --resume` reuses the
   folder, so a seat that crashed and stays down keeps its scratchpad and task output. When that
-  transcript cannot be chosen, the project's folders are all kept, and it is a failure.
+  transcript cannot be chosen, such as when <projects directory>/<project>/ cannot be read, that
+  project's folders are all kept and the failure is reported; the run goes on with the other
+  projects and exits 1. A project with no transcript keeps no folder for this reason.
 - A folder changed within --minimum-age-seconds, default one hour: the folder itself or one of
   the entries directly inside it, so a process that made its folder before its sessions file
   keeps it.
@@ -186,6 +188,13 @@ def claude_code_temp_folders_of_exited_agent_sessions_delete(temp_parents, sessi
                 continue
             transcripts = projects_directory / project.name
             try:
+                # Path.glob in the chooser returns nothing for a folder it cannot read, which
+                # would look like a project with no transcripts; listing it here raises instead.
+                try:
+                    with os.scandir(transcripts):
+                        pass
+                except FileNotFoundError:
+                    pass
                 resumable, _ = worth_resuming.newest_real_transcript(transcripts)
             except OSError as error:
                 result["failures"].append(

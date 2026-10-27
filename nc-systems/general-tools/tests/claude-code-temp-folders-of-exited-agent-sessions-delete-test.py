@@ -193,6 +193,23 @@ def run_resumable_cases():
           and result["failures"][0].startswith(f"the folders in {unchosen.parent} were kept: ")
           and "Permission denied" in result["failures"][0], str(result))
 
+    if os.getuid() != 0:
+        s = scene()
+        s.transcript(DEAD)
+        kept = s.folder(0, OTHER)
+        elsewhere = s.folder(0, REUSED, project="-home-nedlern-agents-other")
+        unreadable = s.projects / "-home-nedlern-agents-seat"
+        unreadable.chmod(0o000)
+        try:
+            result = s.run()
+        finally:
+            unreadable.chmod(0o755)
+        check("a project whose transcript folder cannot be read keeps its folders and is a failure "
+              "naming the error, exit 1, and does not stop the other projects",
+              result.returncode == 1 and kept.is_dir() and not elsewhere.exists()
+              and f"the folders in {kept.parent} were kept: " in result.stderr
+              and "Permission denied" in result.stderr, result.stdout + result.stderr)
+
 
 def run_order_and_link_cases():
     """Each skip moves on to the next entry, not out of its loop; links are not followed."""
