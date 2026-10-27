@@ -417,9 +417,8 @@ def soft_line_breaks_to_join(text: str, broken_ranges) -> list:
                   if child.type in ("softbreak", "hardbreak")]
         if len(breaks) != end - start - 1:
             raise BrokenParagraphLinesNotJoinedError(
-                f"the paragraph on lines {start + 1} to {end} has {end - start - 1} line ends but "
-                f"{len(breaks)} line breaks the parser can place, as when an image or a code span "
-                f"holds a line break")
+                f"the paragraph on lines {start + 1} to {end} holds a line break the parser cannot "
+                f"place, as when an image or a code span holds one")
         lines_to_join += [start + index for index, child_position in enumerate(breaks)
                           if children[child_position].type == "softbreak"
                           and counts_as_line_break(children, child_position)]

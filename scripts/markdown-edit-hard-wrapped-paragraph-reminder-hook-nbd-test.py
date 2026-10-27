@@ -357,7 +357,7 @@ if PARSER_AVAILABLE:
         try:
             joined = hook.text_with_lines_joined(text, hook.soft_line_breaks_to_join(text, ranges))
         except hook.BrokenParagraphLinesNotJoinedError as refusal:
-            check(f"joined or refused: {case_name}", "line breaks the parser can place" in str(refusal),
+            check(f"joined or refused: {case_name}", "holds a line break the parser cannot place" in str(refusal),
                   str(refusal))
             continue
         check(f"joined, parsing as the same Markdown and broken no more: {case_name}",
@@ -385,9 +385,9 @@ if PARSER_AVAILABLE:
         image_refusal = "no refusal"
     except hook.BrokenParagraphLinesNotJoinedError as refusal:
         image_refusal = str(refusal)
-    check("a paragraph whose image holds a line break is refused, naming its lines and counts",
-          image_refusal == "the paragraph on lines 2 to 4 has 2 line ends but 1 line breaks the parser "
-          "can place, as when an image or a code span holds a line break", image_refusal)
+    check("a paragraph whose image holds a line break is refused, naming its lines",
+          image_refusal == "the paragraph on lines 2 to 4 holds a line break the parser cannot place, "
+          "as when an image or a code span holds one", image_refusal)
     two_paragraphs = "A\nB\n\nWhole.\n\nC\nD\nE\n"
     only_second = hook.soft_line_breaks_to_join(two_paragraphs, [(5, 8)])
     check("only the paragraphs in the ranges given are joined", only_second == [5, 6], only_second)
@@ -931,7 +931,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         image_text = "An image ![alt\ntext](x.png) here\nand on.\n"
         result = write_then_run(checkout, image_file, image_text)
         check("a paragraph whose image holds a line break gets the reminder with its reason, the file kept",
-              gives_reminder_with_reason(result, "docs/image.md", "the paragraph on lines 1 to 3 has 2 line ends")
+              gives_reminder_with_reason(result, "docs/image.md", "the paragraph on lines 1 to 3 holds a line break the parser cannot place, as when an image or a code span holds one")
               and image_file.read_text(encoding="utf-8") == image_text, result.stdout + result.stderr)
 
         def main_in_process(payload):
