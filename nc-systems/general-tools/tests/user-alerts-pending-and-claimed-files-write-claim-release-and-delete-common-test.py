@@ -51,6 +51,23 @@ class RenameRacedByAnotherAgentSession:
         raise FileNotFoundError(2, "No such file or directory", str(source))
 
 
+class FirstRenameRacedByAnotherAgentSession:
+    """os, except that the first rename finds its source gone; later renames happen, so a case can check that
+    the files after a raced one are still handled."""
+
+    def __init__(self):
+        self.raced = False
+
+    def __getattr__(self, name):
+        return getattr(os, name)
+
+    def rename(self, source, target):
+        if not self.raced:
+            self.raced = True
+            raise FileNotFoundError(2, "No such file or directory", str(source))
+        return os.rename(source, target)
+
+
 def claimed_at(directory, alert_id, moment):
     path = directory / "claimed" / f"{alert_id}.json"
     os.utime(path, (moment.timestamp(), moment.timestamp()))
@@ -101,6 +118,17 @@ def run_claim_cases(root):
         alerts.os = real_os
     check("an alert another agent-session claimed first is skipped, not an error",
           raised is None and claimed == [], repr((raised, claimed)))
+
+    fresh_home(root, "claim-first-raced")
+    alerts.user_alert_write_to_pending("one", "text", "act", now=NOW - timedelta(hours=1))
+    second = alerts.user_alert_write_to_pending("two", "text", "act", now=NOW)
+    alerts.os = FirstRenameRacedByAnotherAgentSession()
+    try:
+        claimed = alerts.user_alerts_claim_every_pending_by_rename_into_claimed(now=NOW)
+    finally:
+        alerts.os = real_os
+    check("after an alert another agent-session claimed first, the alerts after it are still claimed",
+          [alert["id"] for alert in claimed] == [second], repr(claimed))
 
 
 CONCURRENT_CLAIMER = """
@@ -175,6 +203,52 @@ def run_release_cases(root):
         alerts.os = real_os
     check("a claimed alert another agent-session returned first is skipped, not an error",
           raised is None, repr(raised))
+
+    directory = fresh_home(root, "release-first-raced")
+    first = alerts.user_alert_write_to_pending("one", "text", "act", now=NOW - timedelta(hours=2))
+    second = alerts.user_alert_write_to_pending("two", "text", "act", now=NOW - timedelta(hours=1))
+    alerts.user_alerts_claim_every_pending_by_rename_into_claimed(now=NOW)
+    for alert_id in (first, second):
+        claimed_at(directory, alert_id, NOW - timedelta(hours=1))
+    alerts.os = FirstRenameRacedByAnotherAgentSession()
+    try:
+        alerts.user_alerts_claimed_delete_if_recorded_in_approval_walk_minutes_else_release_to_pending_after_30_minutes(now=NOW)
+    finally:
+        alerts.os = real_os
+    pending = sorted(path.stem for path in (directory / "pending").iterdir())
+    check("after a claimed alert another agent-session returned first, the alerts after it are still returned",
+          pending == [second], repr(pending))
+
+    directory = fresh_home(root, "release-vanished-while-listed")
+    alert_id = alerts.user_alert_write_to_pending("old", "text", "act")
+    alerts.user_alerts_claim_every_pending_by_rename_into_claimed(now=NOW)
+    claimed_at(directory, alert_id, NOW - timedelta(hours=1))
+    # A dangling link sorts first and fails stat() with FileNotFoundError, as a file moved away after listing.
+    (directory / "claimed" / "0-moved-away.json").symlink_to(directory / "nowhere.json")
+    raised = None
+    try:
+        alerts.user_alerts_claimed_delete_if_recorded_in_approval_walk_minutes_else_release_to_pending_after_30_minutes(now=NOW)
+    except Exception as error:  # noqa: BLE001 - the case checks that nothing escapes
+        raised = error
+    pending = sorted(path.stem for path in (directory / "pending").iterdir())
+    check("a claimed alert moved away between listing and reading is skipped, and the alerts after it are "
+          "still returned", raised is None and pending == [alert_id], repr((raised, pending)))
+
+    home = Path(fresh_home(root, "minutes-vanished")).parents[3]
+    minutes = home / "nedschorus-logs/walk"
+    minutes.mkdir(parents=True)
+    (minutes / "b-walk-minutes.md").write_text("#user_alert recorded-id\n", encoding="utf-8")
+    real_walk_minutes_files = alerts.walk_minutes_files
+    alerts.walk_minutes_files = lambda home: [minutes / "a-removed-walk-minutes.md", minutes / "b-walk-minutes.md"]
+    raised, ids = None, None
+    try:
+        ids = alerts.user_alert_ids_named_in_walk_minutes(home)
+    except Exception as error:  # noqa: BLE001 - the case checks that nothing escapes
+        raised = error
+    finally:
+        alerts.walk_minutes_files = real_walk_minutes_files
+    check("walk-minutes removed while they are read are skipped, and the walk-minutes after them still read",
+          raised is None and ids == {"recorded-id"}, repr((raised, ids)))
 
     fresh_home(root, "release-empty")
     check("with no claimed/ directory, releasing does nothing",

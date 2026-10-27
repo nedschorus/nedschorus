@@ -179,15 +179,26 @@ def run_refusal_cases(root):
     checkout, home = walk_checkout(root, "missing")
     before = files(checkout)
     result = run(checkout, home, "alert-gone")
-    check("an alert no longer in claimed/ makes the program exit 1, naming it, and changes nothing",
-          result.returncode == 1 and "alert-gone" in result.stderr and files(checkout) == before, result.stderr)
+    check("an alert no longer in claimed/ makes the program exit 1, naming it in its refusal, and changes nothing",
+          result.returncode == 1 and "the alert alert-gone cannot be read from" in result.stderr
+          and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
+
+    checkout, home = walk_checkout(root, "not-an-object")
+    (home / ".local/state/nedschorus/user-alerts/claimed" / "alert-list.json").write_text("[]", encoding="utf-8")
+    before = files(checkout)
+    result = run(checkout, home, "alert-list")
+    check("an alert file that holds no JSON object makes the program exit 1, naming it in its refusal, and "
+          "changes nothing",
+          result.returncode == 1 and "the alert alert-list cannot be read from" in result.stderr
+          and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
 
     checkout, home = walk_checkout(root, "unknown-item", waiting="item 8 of 9")
     claimed_alert(home, "alert-a", "first")
     before = files(checkout)
     result = run(checkout, home, "alert-a")
     check("a waiting item the walk-document has no heading for makes the program exit 1 and change nothing",
-          result.returncode == 1 and "Item 8 of 9" in result.stderr and files(checkout) == before, result.stderr)
+          result.returncode == 1 and "waiting item cannot be found" in result.stderr and "Item 8 of 9" in result.stderr
+          and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
 
 
 with tempfile.TemporaryDirectory() as temporary_directory:
