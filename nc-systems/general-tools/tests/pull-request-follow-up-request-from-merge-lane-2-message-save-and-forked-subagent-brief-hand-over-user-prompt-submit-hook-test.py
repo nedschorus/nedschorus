@@ -35,19 +35,21 @@ COMMAND = f"python3 scripts/{BRIEF_PROGRAM_NAME} {NUMBER}"
 EXPECTED_BRIEF = f"""merge-lane-2 merged pull request {NUMBER} and sent 2 non-blocking findings to follow up now:
 
 {BLOCK}
-For you, the author:
-Dispatch one subagent with the Agent tool: subagent_type "fork", isolation "worktree", run_in_background true. Give it this whole text; the lines under "For you, the author" are not its.
-When it has ended, run: {COMMAND} remove-recorded-topic-branches-and-worktrees
+Each "Program:" below means: run {COMMAND} followed by the words after it.
 
-For the subagent, working in your own worktree:
+For you, the author:
+Dispatch one subagent: subagent_type "fork", isolation "worktree", run_in_background true. Give it this whole text; the lines under "For you, the author" are not its.
+When it has ended, Program: remove-recorded-topic-branches-and-worktrees
+
+For the subagent, in your own worktree:
 1. Run git fetch origin, then check each finding against origin/main; leave out any that no longer holds.
 2. Group the findings you take on by topic: one pull request per topic.
-3. For each topic, run: {COMMAND} start-topic-branch <topic-branch>
+3. For each topic, Program: start-topic-branch <topic-branch>
    Make the change with its tests, and commit.
    Write follow-up-pull-request-title-and-description.md at your worktree's root: the title, a blank line, then the description. Do not commit it.
-   Run: {COMMAND} open-pull-request --handled-finding-numbers <n>[,<n>...]
-4. For each finding you leave out, run: {COMMAND} record-finding-leave-out-reason <n> --reason "<why>"
-5. Run: {COMMAND} finish-follow-up-request-and-print-merge-lane-2-message
+   Program: open-pull-request --handled-finding-numbers <n>[,<n>...]
+4. For each finding you leave out, Program: record-finding-leave-out-reason <n> --reason "<why>"
+5. Program: finish-follow-up-request-and-print-merge-lane-2-message
    Send the message it prints to merge-lane-2 with SendMessage.
 If a command refuses or fails, do what it prints."""
 SAVED = Path(".git") / "pull-request-follow-up-requests" / f"pull-request-{NUMBER}-non-blocking-findings.md"
@@ -130,7 +132,7 @@ def test_saves_and_hands_over_the_brief():
         code, _, context, err = run(MERGE_MESSAGE, repository)
         check("the same block for a finished follow-up gets no brief, and says why",
               code == 0 and context == (
-                  f"merge-lane-2's message above holds the #follow_up_request block for pull request {NUMBER} "
+                  f"{HOOK.stem}: merge-lane-2's message above holds the #follow_up_request block for pull request {NUMBER} "
                   "again, and that follow-up was finished at 2026-10-27T10:00:00Z, so this hook gave no "
                   "follow-up brief: a second subagent would answer the same findings twice.\n"
                   "If merge-lane-2 says a finding is still open, follow it up yourself as CLAUDE.md says, and "

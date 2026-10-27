@@ -46,6 +46,7 @@ if [ "$1 $2" = "pr list" ]; then
     exit 0
 fi
 [ -n "$FAKE_GH_KILLED" ] && kill -9 $$
+[ -n "$FAKE_GH_CREATE_FAILS_SILENTLY" ] && exit 1
 if [ -n "$FAKE_GH_CREATE_FAILS" ]; then
     echo "GraphQL: something went wrong" >&2
     exit 1
@@ -175,13 +176,14 @@ def test_brief_text():
     brief = program.build_follow_up_request_forked_subagent_brief(request)
     command = f"python3 {program.PROGRAM} {NUMBER}"
     check("the brief quotes the findings word for word", BLOCK in brief, brief)
-    for line in ('Dispatch one subagent with the Agent tool: subagent_type "fork", isolation "worktree", '
-                 "run_in_background true.",
-                 f"When it has ended, run: {command} remove-recorded-topic-branches-and-worktrees",
-                 f"3. For each topic, run: {command} start-topic-branch <topic-branch>",
-                 f"   Run: {command} open-pull-request --handled-finding-numbers <n>[,<n>...]",
-                 f"4. For each finding you leave out, run: {command} record-finding-leave-out-reason <n> --reason \"<why>\"",
-                 f"5. Run: {command} finish-follow-up-request-and-print-merge-lane-2-message",
+    check("the brief names the program once", brief.count(program.PROGRAM) == 1, brief)
+    for line in (f'Each "Program:" below means: run {command} followed by the words after it.',
+                 'Dispatch one subagent: subagent_type "fork", isolation "worktree", run_in_background true.',
+                 "When it has ended, Program: remove-recorded-topic-branches-and-worktrees",
+                 "3. For each topic, Program: start-topic-branch <topic-branch>",
+                 "   Program: open-pull-request --handled-finding-numbers <n>[,<n>...]",
+                 "4. For each finding you leave out, Program: record-finding-leave-out-reason <n> --reason \"<why>\"",
+                 "5. Program: finish-follow-up-request-and-print-merge-lane-2-message",
                  f"   Write {program.FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME} at your worktree's root"):
         check(f"the brief holds: {line}", line in brief, brief)
     words = len(brief.replace(BLOCK.rstrip("\n"), "").split())
@@ -373,7 +375,8 @@ def test_open_failures():
         except program.StepFailed as error:
             check("a push that does not finish in time is a StepFailed with the push's own instructions",
                   str(error) == "git push -u origin topic-one failed (did not finish within 0.5 s), so no pull request was opened."
-                  and "pre-push hook" in error.instructions, str(error))
+                  and "pre-push hook" not in error.instructions
+                  and error.instructions.startswith("Run open-pull-request again once.\n"), error.instructions)
         else:
             check("a push that does not finish in time is a StepFailed with the push's own instructions", False)
         finally:
@@ -390,7 +393,11 @@ def test_open_failures():
               code == 2 and "gh pr create printed no pull request link" in err and case.answers() is None, err)
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_KILLED="1")
         check("a gh killed by a signal is FAILED with exit 2, recording nothing",
-              code == 2 and "FAILED: gh pr create exited -9" in err and case.answers() is None, err)
+              code == 2 and "FAILED: gh pr create was killed by signal 9: it printed no error text\n" in err
+              and case.answers() is None, err)
+        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_CREATE_FAILS_SILENTLY="1")
+        check("a gh that exits nonzero without error text is FAILED, saying it printed none",
+              code == 2 and "FAILED: gh pr create exited 1: it printed no error text\n" in err, err)
         git_only = case.root / "git-only"
         git_only.mkdir()
         (git_only / "git").symlink_to(shutil.which("git"))
@@ -437,7 +444,9 @@ def test_leave_out_and_finish():
               and case.answers()["answers"]["1"] == {"reason": "already fixed on main"}, out + err)
         code, out, err = case.run(worktree, "record-finding-leave-out-reason", "1", "--reason", "again")
         check("record-finding-leave-out-reason refuses a finding that already has an answer",
-              code == 1 and "already has an answer, so nothing was recorded" in err, err)
+              code == 1 and "already has an answer, so nothing was recorded" in err
+              and err.endswith("\nEach finding takes one answer, so leave this one as it is and go on with the next.\n")
+              and "without that finding" not in err, err)
         code, out, err = case.run(worktree, "finish-follow-up-request-and-print-merge-lane-2-message")
         check("finish names only the finding still without an answer",
               code == 1 and "Finding 2 of pull request 1964's follow-up request has no answer yet" in err
@@ -473,6 +482,7 @@ def test_state_failures():
         code, out, err = case.run(outside, "finish-follow-up-request-and-print-merge-lane-2-message")
         check("outside a git checkout the program is FAILED with exit 2",
               code == 2 and out == "" and err.startswith("FAILED: git rev-parse")
+              and f" in {outside} failed" in err
               and "Run the same command again once." in err, err)
         saved = case.save()
         saved.write_text("not a block\n")

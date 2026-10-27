@@ -33,7 +33,7 @@ FOLLOW_UP_PROGRAM_PATH = (Path(__file__).resolve().parents[2] / "scripts"
 # Each text this hook hands an agent follows
 # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 FINISHED_LINES = (
-    "merge-lane-2's message above holds the #follow_up_request block for pull request {number} again, "
+    HOOK + ": merge-lane-2's message above holds the #follow_up_request block for pull request {number} again, "
     "and that follow-up was finished at {finished}, so this hook gave no follow-up brief: a second "
     "subagent would answer the same findings twice.\n"
     "If merge-lane-2 says a finding is still open, follow it up yourself as CLAUDE.md says, and answer "

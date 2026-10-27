@@ -134,23 +134,25 @@ def build_follow_up_request_forked_subagent_brief(request):
         "",
         *request.lines,
         "",
+        f"Each \"Program:\" below means: run {command(number, '')}followed by the words after it.",
+        "",
         "For you, the author:",
-        "Dispatch one subagent with the Agent tool: subagent_type \"fork\", isolation \"worktree\", "
+        "Dispatch one subagent: subagent_type \"fork\", isolation \"worktree\", "
         "run_in_background true. Give it this whole text; the lines under \"For you, the author\" are "
         "not its.",
-        f"When it has ended, run: {command(number, 'remove-recorded-topic-branches-and-worktrees')}",
+        "When it has ended, Program: remove-recorded-topic-branches-and-worktrees",
         "",
-        "For the subagent, working in your own worktree:",
+        "For the subagent, in your own worktree:",
         "1. Run git fetch origin, then check each finding against origin/main; leave out any that "
         "no longer holds.",
         "2. Group the findings you take on by topic: one pull request per topic.",
-        f"3. For each topic, run: {command(number, 'start-topic-branch <topic-branch>')}",
+        "3. For each topic, Program: start-topic-branch <topic-branch>",
         "   Make the change with its tests, and commit.",
         f"   Write {FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME} at your worktree's root: the title, a blank line, "
         "then the description. Do not commit it.",
-        f"   Run: {command(number, OPEN_ARGUMENTS)}",
-        f"4. For each finding you leave out, run: {command(number, LEAVE_OUT_ARGUMENTS)}",
-        f"5. Run: {command(number, 'finish-follow-up-request-and-print-merge-lane-2-message')}",
+        f"   Program: {OPEN_ARGUMENTS}",
+        f"4. For each finding you leave out, Program: {LEAVE_OUT_ARGUMENTS}",
+        "5. Program: finish-follow-up-request-and-print-merge-lane-2-message",
         "   Send the message it prints to merge-lane-2 with SendMessage.",
         "If a command refuses or fails, do what it prints.",
     ])
@@ -200,8 +202,9 @@ def parse_follow_up_request_blocks_from_message_text(text):
 
 
 def git(directory, arguments, **options):
+    # Absolute, so a failure names the directory: "." says nothing to the agent reading it.
     try:
-        return git_output.run_git(directory, arguments, **options).decode()
+        return git_output.run_git(Path(directory).absolute(), arguments, **options).decode()
     except git_output.GitCommandFailed as failure:
         raise StepFailed(str(failure)) from None
 
@@ -216,9 +219,12 @@ def gh(arguments):
         raise StepFailed(f"{name} did not finish within {GH_TIMEOUT_SECONDS} s") from None
     except OSError as error:
         raise StepFailed(f"could not start gh: {error}") from None
+    if completed.returncode < 0:
+        raise StepFailed(f"{name} was killed by signal {-completed.returncode}: "
+                         f"{completed.stderr.strip() or 'it printed no error text'}")
     if completed.returncode != 0:
         raise StepFailed(f"{name} exited {completed.returncode}: "
-                         f"{completed.stderr.strip()}")
+                         f"{completed.stderr.strip() or 'it printed no error text'}")
     return completed.stdout
 
 
@@ -330,7 +336,7 @@ def answer_text(answer):
     return answer["link"] if "link" in answer else "Left out: " + answer["reason"]
 
 
-def refuse_unknown_or_answered(number, request, answers, findings, not_done):
+def refuse_unknown_or_answered(number, request, answers, findings, not_done, answered_instruction):
     unknown = [finding for finding in findings if not 1 <= finding <= request.finding_count]
     if unknown:
         raise Refused(f"merge-lane-2 sent {request.finding_count} findings for pull request {number}, "
@@ -342,9 +348,7 @@ def refuse_unknown_or_answered(number, request, answers, findings, not_done):
         raise Refused(f"{findings_text(answered).capitalize()} of pull request {number}'s follow-up "
                       f"request already {'has' if len(answered) == 1 else 'have'} an answer, so {not_done}:\n"
                       + "\n".join(f"{finding}. {answer_text(answers[str(finding)])}" for finding in answered)
-                      + "\nRun the command again without "
-                      + ("that finding" if len(answered) == 1 else "those findings")
-                      + ": each finding takes one answer.")
+                      + "\n" + answered_instruction(answered))
 
 
 def start_topic_branch(number, branch):
@@ -401,7 +405,11 @@ def open_pull_request(number, findings):
     answers_file = state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, number)
     record = read_json(answers_file, {})
     answers = record.get("answers", {})
-    refuse_unknown_or_answered(number, request, answers, findings, "open-pull-request pushed nothing")
+    refuse_unknown_or_answered(
+        number, request, answers, findings, "open-pull-request pushed nothing",
+        lambda answered: ("Run the command again without "
+                          + ("that finding" if len(answered) == 1 else "those findings")
+                          + ": each finding takes one answer."))
     branch = git(".", ["branch", "--show-current"]).strip()
     recorded = [entry["branch"] for entry in read_json(
         state_file(states, TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT, number), [])]
@@ -419,14 +427,16 @@ def open_pull_request(number, findings):
     except git_output.GitCommandFailed as failure:
         if failure.returncode is None:
             text = f"git push -u origin {branch} failed ({failure.stderr}), so no pull request was opened."
+            hook_instruction = ""
         else:
             text = (f"git push -u origin {branch} exited {failure.returncode}, so no pull request was "
                     f"opened. git's output:\n{failure.stderr.strip()}")
+            hook_instruction = ("If git's output shows the pre-push hook refusing the push, do what it "
+                                "says, commit the fix, and run open-pull-request again.\n"
+                                "Otherwise run open-pull-request again once.\n")
         raise StepFailed(
             text,
-            "If git's output shows the pre-push hook refusing the push, do what it says, commit "
-            "the fix, and run open-pull-request again.\n"
-            "Otherwise run open-pull-request again once.\n"
+            (hook_instruction or "Run open-pull-request again once.\n") +
             f"If the push fails the same way, tell the user, in one sentence, that git push of {branch} "
             f"fails and that the follow-up of pull request {number} is stopped until it works.\n"
             "If you are a subagent, pass that sentence to the agent that dispatched you instead.") from None
@@ -457,7 +467,9 @@ def record_finding_leave_out_reason(number, finding, reason):
     answers_file = state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, number)
     record = read_json(answers_file, {})
     answers = record.get("answers", {})
-    refuse_unknown_or_answered(number, request, answers, [finding], "nothing was recorded")
+    refuse_unknown_or_answered(
+        number, request, answers, [finding], "nothing was recorded",
+        lambda answered: "Each finding takes one answer, so leave this one as it is and go on with the next.")
     if not reason.strip():
         raise Refused(f"--reason is empty, so nothing was recorded for finding {finding}.\n"
                       f"Run it again with the reason the finding is left out: "
