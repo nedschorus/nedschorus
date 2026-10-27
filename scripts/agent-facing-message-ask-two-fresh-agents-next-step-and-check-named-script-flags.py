@@ -10,13 +10,13 @@ what the agent was doing: its goal, the tool call or command that drew the
 message, quoted exactly, and the channel the message came through, such as
 "the tool call was refused with this message".
 
-Two followers read both, one on the cold-read-tier `fast` (Claude Sonnet) and
+Two fresh-agents read both, one on the cold-read-tier `fast` (Claude Sonnet) and
 one on `deep` (Claude Opus), each started through
 nc-systems/cold-read/cold-read-claude-cell.py from this checkout, at the same
 time. That launcher runs `claude -p` in the checkout with hooks off, so each
-follower has CLAUDE.md, the user's CLAUDE.md and the repository to read, as a
+fresh-agent has CLAUDE.md, the user's CLAUDE.md and the repository to read, as a
 real agent does, but only the tools Read, Grep, Glob, Write and WebFetch. A
-follower is told not to act, only to write down what it would do next; this
+fresh-agent is told not to act, only to write down what it would do next; this
 program prints both answers. It does not carry the answers out.
 
 Then, for each path ending in .py or .sh that the message names, it says
@@ -29,9 +29,9 @@ ignores --help does its real work instead; every program in this repository
 is required to accept --help, and a script named in a message from outside the
 repository is run all the same.
 
-Prints its report on stdout. Exit codes: 0 both followers answered, whatever
-the checks of the named scripts found; 1 a follower failed, and the report
-gives the launcher's output; 2 MESSAGE or SITUATION could not be read.
+Prints its report on stdout. Exit codes: 0 both fresh-agents answered, whatever
+the checks of the named scripts found; 1 a fresh-agent wrote no answer, and the report
+gives the launcher's output; 2 MESSAGE or SITUATION could not be read, and no fresh-agent was started.
 """
 
 import argparse
@@ -43,6 +43,7 @@ import sys
 import tempfile
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+PROGRAM_PATH = "scripts/agent-facing-message-ask-two-fresh-agents-next-step-and-check-named-script-flags.py"
 CLAUDE_CELL_LAUNCHER = REPO_ROOT / "nc-systems/cold-read/cold-read-claude-cell.py"
 FOLLOWER_ANSWER_FILE_LABEL_FOR_CELL_FLAG = "agent-facing-message-follower"
 FOLLOWER_TIERS = ("fast", "deep")
@@ -115,15 +116,19 @@ def run_follower(tier: str, target: pathlib.Path, prompt_file: pathlib.Path,
          "--tier", tier, "--target", str(target), "--report", str(report),
          "--prompt-file", str(prompt_file)],
         cwd=REPO_ROOT, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
-    heading = f"## Follower on cold-read-tier {tier}"
+    heading = f"## Fresh-agent on cold-read-tier {tier}"
     if completed.returncode != 0:
         return False, [
             heading, "",
-            f"FAILED: the follower on cold-read-tier {tier} wrote no answer: "
+            f"FAILED: the fresh-agent on cold-read-tier {tier} wrote no answer, because "
             f"{CLAUDE_CELL_LAUNCHER} exited {completed.returncode}.",
-            "Its output follows; its last line beginning `cold-read-claude-cell: cause:` says why.",
-            "If the cause is a passing fault, rerun this program once; otherwise, or if it "
-            "fails the same way again, act on that cause.",
+            "The launcher's output is below. Its last line beginning `cold-read-claude-cell: cause:` "
+            "names the cause.",
+            "If that line names logged-out, account-limit or model-limit: tell the user what the line "
+            "says; a subagent tells the agent that dispatched it.",
+            f"Otherwise, or when there is no such line: rerun {PROGRAM_PATH} once with the same "
+            "--message-file and --situation-file; if a fresh-agent fails again, tell the user the "
+            "cause line, or the exit status when there is none.",
             "", "```", (completed.stderr + completed.stdout).rstrip(), "```"]
     return True, [heading, "", report.read_text(encoding="utf-8").rstrip()]
 
@@ -134,14 +139,18 @@ def main() -> int:
     parser.add_argument("--message-file", required=True, type=pathlib.Path)
     parser.add_argument("--situation-file", required=True, type=pathlib.Path)
     args = parser.parse_args()
-    try:
-        message = args.message_file.read_text(encoding="utf-8")
-        situation = args.situation_file.read_text(encoding="utf-8")
-    except OSError as error:
-        print(f"FAILED: an input file could not be read, so no follower was started: {error}\n"
-              "Pass --message-file and --situation-file paths of readable text files, and rerun.",
-              file=sys.stderr)
-        return 2
+    texts = {}
+    for flag, path in (("--message-file", args.message_file), ("--situation-file", args.situation_file)):
+        try:
+            texts[flag] = path.read_text(encoding="utf-8")
+        except OSError as error:
+            print(f"FAILED: the file given to {flag} could not be read, so no fresh-agent was "
+                  f"started: {error}.\n"
+                  f"Rerun {PROGRAM_PATH} with --message-file and --situation-file, "
+                  f"{flag} naming a readable text file.",
+                  file=sys.stderr)
+            return 2
+    message, situation = texts["--message-file"], texts["--situation-file"]
 
     with tempfile.TemporaryDirectory(prefix="agent-facing-message-ask-two-fresh-agents-") as scratch:
         scratch_path = pathlib.Path(scratch)

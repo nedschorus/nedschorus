@@ -95,8 +95,12 @@ def test_one_follower_fails(scratch):
     exit_code, stdout, _, _ = run_main(scratch, "The push was refused on purpose.", failing_tiers="deep")
     check("one follower fails: exit 1", exit_code == 1, f"exit {exit_code}")
     check("one follower fails: the failure names its tier and the launcher's cause",
-          "FAILED: the follower on cold-read-tier deep wrote no answer" in stdout
+          "FAILED: the fresh-agent on cold-read-tier deep wrote no answer" in stdout
           and "cause: logged-out: Not logged in" in stdout, stdout)
+    check("one follower fails: says when to rerun and when to tell the user",
+          "If that line names logged-out, account-limit or model-limit: tell the user" in stdout
+          and f"Otherwise, or when there is no such line: rerun scripts/{SCRIPT_PATH.name} once" in stdout,
+          stdout)
     check("one follower fails: the other answer is still printed",
           "answer from the fast follower" in stdout, stdout)
 
@@ -106,8 +110,10 @@ def test_unreadable_input_file(scratch):
         scratch, "anything", situation_file=scratch / "no-such-situation.txt")
     check("unreadable input file: exit 2", exit_code == 2, f"exit {exit_code}")
     check("unreadable input file: says what failed and what to do",
-          "an input file could not be read" in stderr and "no-such-situation.txt" in stderr
-          and "Pass --message-file and --situation-file" in stderr, stderr)
+          "the file given to --situation-file could not be read" in stderr
+          and "no-such-situation.txt" in stderr
+          and f"Rerun scripts/{SCRIPT_PATH.name} with --message-file and --situation-file, "
+              "--situation-file naming a readable text file." in stderr, stderr)
     check("unreadable input file: no follower started", calls == [] and stdout == "", calls)
 
 
