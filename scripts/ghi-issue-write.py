@@ -336,6 +336,8 @@ Exit codes:
       path a move takes it from, changed on main since the caller's
       checkout started from it; or an earlier edit of the same file is
       still waiting on an open pull request
+  129, 143  stopped by SIGHUP or SIGTERM, 128 plus the signal number,
+      after removing the landing's temporary worktree and files
 
 The 66 refusals are the deny paths here that do not end with the
 reconsider line, deliberately. A conflict is not a judgment to think
@@ -378,6 +380,13 @@ _next_step_lines_spec = importlib.util.spec_from_file_location(
     / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
+
+_stop_signals_spec = importlib.util.spec_from_file_location(
+    "stop_signal_sigterm_or_sighup_raises_system_exit_so_cleanup_runs_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "stop-signal-sigterm-or-sighup-raises-system-exit-so-cleanup-runs-common.py")
+stop_signals = importlib.util.module_from_spec(_stop_signals_spec)
+_stop_signals_spec.loader.exec_module(stop_signals)
 
 
 def _load_sibling_script(module_name, file_name):
@@ -3111,6 +3120,13 @@ class BadInvocationArgumentParser(argparse.ArgumentParser):
 
 
 def main(argv=None):
+    # A Bash tool timeout or TaskStop sends SIGTERM; raised as SystemExit, the stop still runs the
+    # finally blocks that remove the landing's worktree and the temporary files.
+    with stop_signals.stop_signals_raise_system_exit_so_cleanup_runs():
+        return main_with_stop_signals_raising_system_exit(argv)
+
+
+def main_with_stop_signals_raising_system_exit(argv):
     parser = BadInvocationArgumentParser(
         description="File a GitHub issue from its GHI-MD and make the "
                     "issue's body the links to that issue's files; or land "

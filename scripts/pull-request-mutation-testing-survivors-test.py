@@ -18,9 +18,11 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
@@ -99,6 +101,8 @@ if command == "init":
     pathlib.Path(arguments[2]).write_text("session")
     sys.exit(0)
 if command == "exec":
+    import time
+    time.sleep(plan.get("exec_sleep_seconds", 0))
     sys.exit(plan.get("exec_exit", 0))
 if command == "dump":
     if pathlib.Path(arguments[1]).read_text() == "baseline":
@@ -207,6 +211,15 @@ sys.exit(program.main(arguments))
 
 def run_script(repository, control, *flags, path_override=None,
                extra_environment=None, dropped_variables=()):
+    command, environment = script_command_and_environment(
+        repository, control, *flags, path_override=path_override,
+        extra_environment=extra_environment, dropped_variables=dropped_variables)
+    return subprocess.run(command, capture_output=True, text=True, check=False, env=environment,
+                          timeout=120)
+
+
+def script_command_and_environment(repository, control, *flags, path_override=None,
+                                   extra_environment=None, dropped_variables=()):
     environment = {name: value for name, value in os.environ.items()
                    if name not in dropped_variables}
     environment[CONTROL_DIRECTORY_VARIABLE] = str(control)
@@ -220,11 +233,9 @@ def run_script(repository, control, *flags, path_override=None,
     environment.update(extra_environment or {})
     # Never the real machine lock: the suite runner holds that one while this file runs.
     # Admission's thresholds are opened wide, so a case does not wait on a busy machine.
-    return subprocess.run(
-        [sys.executable, "-c", ADMISSION_OPENED_DRIVER, str(SCRIPT), "--checkout", str(repository),
-         "--recorded-inputs-directory", str(control / "recordings"),
-         "--lock-file", str(control / "machine.lock"), *flags],
-        capture_output=True, text=True, check=False, env=environment, timeout=120)
+    return ([sys.executable, "-c", ADMISSION_OPENED_DRIVER, str(SCRIPT), "--checkout", str(repository),
+             "--recorded-inputs-directory", str(control / "recordings"),
+             "--lock-file", str(control / "machine.lock"), *flags], environment)
 
 
 def worktrees_of(repository):
@@ -1118,6 +1129,47 @@ def run_cases():
         suites = survivors.suites_at_head(repository, head, None)
         check("the suites at head are named as stored",
               suites == ["scripts/tést-test.py"], suites)
+
+    # ------------------------------------------------------------------
+    # A stop signal while cosmic-ray runs still removes the worktree, git's
+    # record of it, and the scratch directory.
+    # ------------------------------------------------------------------
+    for stop_signal in (signal.SIGTERM, signal.SIGHUP):
+        name = signal.Signals(stop_signal).name
+        with tempfile.TemporaryDirectory() as scratch_name:
+            repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+            venv, control = fake_venv(scratch_name, {"exec_sleep_seconds": 60})
+            temporary_directory = Path(scratch_name) / "tmp"
+            temporary_directory.mkdir()
+            worktrees_before = worktrees_of(repository)
+            command, environment = script_command_and_environment(
+                repository, control, "--head", head, "--base", base,
+                "--cosmic-ray-venv", str(venv), "--python", "/usr/bin/python3",
+                extra_environment={"TMPDIR": str(temporary_directory)})
+            script = subprocess.Popen(command, env=environment, stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE, text=True)
+            try:
+                deadline = time.monotonic() + 60
+                execs = []
+                while not execs and time.monotonic() < deadline and script.poll() is None:
+                    execs = [c for c in calls(control) if c["arguments"][:1] == ["exec"]]
+                    time.sleep(0.1)
+                script.send_signal(stop_signal)
+                out, err = script.communicate(timeout=60)
+            finally:
+                if script.poll() is None:
+                    script.kill()
+                    script.communicate()
+            worktree = Path(execs[0]["cwd"]) if execs else None
+            check(f"{name} while cosmic-ray exec runs: the script exits 128 plus the signal "
+                  f"number, having removed the worktree, git's record of it and the "
+                  f"scratch directory",
+                  worktree is not None and script.returncode == 128 + stop_signal
+                  and not worktree.exists() and worktrees_of(repository) == worktrees_before
+                  and list(temporary_directory.iterdir()) == [],
+                  f"exec seen {worktree} rc={script.returncode} "
+                  f"worktrees={worktrees_of(repository)} "
+                  f"left={list(temporary_directory.iterdir())} out={out} err={err}")
 
     # ------------------------------------------------------------------
     # Bad invocations.
