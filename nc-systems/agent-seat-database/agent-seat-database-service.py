@@ -337,30 +337,27 @@ def apply_event(connection, event):
 
 
 def store_event(connection, raw_body):
+    """Store one event; an answer raised here leaves the transaction open, and the
+    request's connection, closed by its caller, rolls it back."""
     event = parse_event(raw_body)
     connection.execute("BEGIN IMMEDIATE")
+    held = connection.execute("SELECT sequence FROM event WHERE event_id = ?",
+                              (event["event_id"],)).fetchone()
+    if held is not None:
+        connection.execute("ROLLBACK")
+        return {"sequence": held[0], **answer_footer(connection)}
+    check_event_fits_its_operation(connection, event)
+    sequence = connection.execute(
+        "INSERT INTO event (event_id, machine, operation, occurred_at, received_at, body) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (event["event_id"], event["machine"], event["operation"], event["occurred_at"],
+         utc_now(), json.dumps(event, sort_keys=True))).lastrowid
     try:
-        held = connection.execute("SELECT sequence FROM event WHERE event_id = ?",
-                                  (event["event_id"],)).fetchone()
-        if held is not None:
-            connection.execute("ROLLBACK")
-            return {"sequence": held[0], **answer_footer(connection)}
-        check_event_fits_its_operation(connection, event)
-        sequence = connection.execute(
-            "INSERT INTO event (event_id, machine, operation, occurred_at, received_at, body) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (event["event_id"], event["machine"], event["operation"], event["occurred_at"],
-             utc_now(), json.dumps(event, sort_keys=True))).lastrowid
-        try:
-            apply_event(connection, event)
-        except sqlite3.IntegrityError:
-            raise Answer(422, {"error": "another agent-seat not retired holds the name "
-                                        f"{event['fields'].get('seat_name')!r}"})
-        connection.execute("COMMIT")
-    except BaseException:
-        if connection.in_transaction:
-            connection.execute("ROLLBACK")
-        raise
+        apply_event(connection, event)
+    except sqlite3.IntegrityError:
+        raise Answer(422, {"error": "another agent-seat not retired holds the name "
+                                    f"{event['fields'].get('seat_name')!r}"})
+    connection.execute("COMMIT")
     return {"sequence": sequence, **answer_footer(connection)}
 
 

@@ -226,7 +226,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and rows(outbox)[-1][0] == newest, (code, errors, rows(outbox)))
 
     # Deletion of sent rows the newest backup holds
-    service_db.execute("INSERT INTO newest_backup VALUES ('another-generation', 99)")
+    service_db.execute("INSERT INTO newest_backup VALUES ('zz-another-generation', 99)")
     queue(outbox)
     run_sender(outbox, url, token_file)
     check("no sent row is deleted while the newest backup's generation ID differs from the file's",
@@ -341,7 +341,7 @@ with tempfile.TemporaryDirectory() as scratch:
     race_row = queue(race_file)
     connection = events_file.open_local_events_file(race_file)
     connection.execute("UPDATE database_generation_seen SET generation_id = 'new'")
-    sender.record_sent(connection, 1, {"sequence": 9, "generation_id": "old",
+    sender.record_sent(connection, 1, {"sequence": 9, "generation_id": "ancient",
                                        "newest_backup": None})
     check("an answer under a generation ID the file no longer holds is dropped, and the row "
           "stays queued", rows(race_file) == [(race_row, 0, None, None)], rows(race_file))

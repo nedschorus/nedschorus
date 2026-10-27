@@ -88,6 +88,9 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a new database is made with WAL and a generation ID that is a UUID",
           db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
           and str(uuid.UUID(generation)) == generation)
+    beside = scratch / "beside.sqlite3"
+    service.create_database_if_absent(beside)
+    check("a database is made in a directory that already exists", beside.exists())
     service.create_database_if_absent(database)
     check("an existing database keeps its generation ID",
           db.execute("SELECT generation_id FROM database_generation").fetchall() == [(generation,)])
@@ -109,6 +112,16 @@ with tempfile.TemporaryDirectory() as scratch:
     check("401: a token sent under another scheme than Bearer is refused", basic == 401, basic)
     status, _ = request("/agent-seats", token="ned-box-token")
     check("a token on a line with surrounding blanks is accepted", status == 200, status)
+    call = urllib.request.Request(base + "/agent-seats",
+                                  headers={"Authorization": f"Token {TOKEN}",
+                                           service.GENERATION_HEADER: generation})
+    try:
+        urllib.request.urlopen(call, timeout=10)
+        other_scheme = None
+    except urllib.error.HTTPError as error:
+        other_scheme = error.code
+    check("401: a token sent under the scheme Token is refused too", other_scheme == 401,
+          other_scheme)
     tokens.rename(scratch / "moved")
     status, _ = request("/agent-seats")
     check("401: every request is refused while the accepted-tokens file cannot be read",
@@ -154,6 +167,8 @@ with tempfile.TemporaryDirectory() as scratch:
             ("a field the operation does not know", event("agent-seat-paused", {"why": "x"})),
             ("a field the operation needs, missing",
              event("agent-seat-created", {"seat_name": "x"})),
+            ("an event without its own time",
+             {k: v for k, v in event("agent-seat-paused", {}).items() if k != "occurred_at"}),
             ("an event key the service does not know",
              event("agent-seat-created", SEAT_FIELDS, priority=1)),
             ("fields that are not an object", event("agent-seat-paused", [])),
@@ -313,6 +328,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an unknown path is answered 404", status == 404, (status, answer))
     status, answer = request("/agent-seats", body={})
     check("a POST to a path that takes GET is answered 404", status == 404, (status, answer))
+    status, answer = request(f"/agent-seats/{reborn}", body={})
+    check("a POST to one agent-seat's path is answered 404", status == 404, (status, answer))
 
     db.execute("INSERT INTO newest_backup VALUES ('gen-of-backup', 12)")
     status, answer = request("/events", event("agent-seat-paused", {}, seat_id=reborn))

@@ -107,7 +107,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("git failing to list the merge's changes (no ORIG_HEAD): exit 1, naming the command, "
           "and nothing restarted",
           code == 1 and calls == [] and "git diff --name-only ORIG_HEAD HEAD" in errors
-          and "systemctl --user restart agent-seat-database-service.service" in errors,
+          and "systemctl --user restart agent-seat-database-service.service" in errors
+          and "service was not restarted: fatal:" in errors,
           (code, errors))
 
     commit_on_branch("docs", "README.md", "words")
@@ -127,7 +128,8 @@ with tempfile.TemporaryDirectory() as scratch:
           and "restarted" in printed, (code, calls, errors))
     code, calls, printed, errors = run(fail=True)
     check("a failed restart prints systemctl's error and exits 1",
-          code == 1 and "Unit agent-seat-database-service.service not found" in errors
+          code == 1 and "systemctl said: Failed to restart agent-seat-database-service."
+          "service: Unit agent-seat-database-service.service not found" in errors
           and "exited 5" in errors, (code, errors))
 
     outside = scratch / "not-a-repository"

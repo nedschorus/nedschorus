@@ -76,14 +76,15 @@ def main(argv=None):
         source.backup(copy)
         copy.execute("PRAGMA journal_mode=DELETE")
         check = integrity_check(copy)
-        if check == ["ok"]:
+        passed = check == ["ok"]
+        if passed:
             highest_sequence = copy.execute("SELECT max(sequence) FROM event").fetchone()[0]
             generation = copy.execute(
                 "SELECT generation_id FROM database_generation").fetchone()[0]
     finally:
         copy.close()
 
-    if check != ["ok"]:
+    if not passed:
         failed_path = copy_path.with_name(copy_path.name + FAILED_CHECK_SUFFIX)
         partial_path.rename(failed_path)
         source.close()

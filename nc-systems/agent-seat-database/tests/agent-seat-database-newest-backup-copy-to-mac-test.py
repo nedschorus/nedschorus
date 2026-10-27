@@ -81,6 +81,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and "agent-seat-database-nightly-backup-with-integrity-check.log" in errors,
           (code, errors))
 
+    (remote / "agent-seat-database-20261023T021500Z.sqlite3").write_bytes(b"oldest")
     (remote / "agent-seat-database-20261024T021500Z.sqlite3").write_bytes(b"older")
     (remote / "agent-seat-database-20261026T021500Z.sqlite3").write_bytes(b"newest backup")
     (remote / "agent-seat-database-20261027T021500Z.sqlite3.partial").write_bytes(b"partial")
