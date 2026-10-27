@@ -228,6 +228,37 @@ def cases(scratch):
           result.returncode == 1 and "no longer holds" in result.stderr, result.stderr)
     check("a refused --approve leaves the marker", (world.repo / ".walk-approved").exists())
 
+    # -- --approve that cannot delete the marker says the approval is recorded and how to delete it
+    if os.geteuid() != 0:
+        world = fresh(scratch, "marker-survives")
+        claude = world.repo / "CLAUDE.md"
+        claude.write_text("project v2\n")
+        key = world.key(claude)
+        world.run()
+        marker = world.marker('The user said "y"')
+        mode = world.repo.stat().st_mode
+        world.repo.chmod(0o500)
+        try:
+            result = world.command("--approve", claude, key)
+        finally:
+            world.repo.chmod(mode)
+        check("--approve that cannot delete the marker exits 1 and says the approval is recorded, "
+              "names the marker, gives the command that deletes it and says not to ask the user",
+              result.returncode == 1 and "approval above is recorded" in result.stderr
+              and f"its marker {marker} could not be deleted" in result.stderr
+              and f"Run: rm -f {marker}\n" in result.stderr
+              and "Do not ask the user again" in result.stderr
+              and "Traceback" not in result.stderr, result.stderr)
+        check("--approve that cannot delete the marker prints the approved version",
+              f"Approved {claude} at version {key}." in result.stdout, result.stdout)
+        check("--approve that cannot delete the marker leaves it", marker.exists())
+        check("--approve that cannot delete the marker records the approval",
+              key in world.store_file(claude, "approved") and world.run() == "",
+              world.store_file(claude, "approved"))
+    else:
+        print("SKIP  --approve that cannot delete the marker: running as root, which can delete "
+              "from a read-only directory")
+
     # -- an obvious-fix marker approves only a change it came before
     world = fresh(scratch, "obvious-fix-before")
     claude = world.repo / "CLAUDE.md"
