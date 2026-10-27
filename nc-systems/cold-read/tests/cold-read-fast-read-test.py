@@ -737,9 +737,9 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and result.stdout == f"{suggestions}\n"
           and launches_counted(counter) == 1
           and launches_counted(claude_counter_path(counter)) == 1
-          and ('Gemini refused with "Individual quota reached"; the quota resets in 2h27m. '
-               "This read does not retry Gemini") in result.stderr
-          and "the Sonnet backup reads the document now." in result.stderr,
+          and ('cold-read-fast-read: Gemini refused with "Individual quota reached"; '
+               "the quota resets in 2h27m. This read does not retry Gemini, which would "
+               "refuse the same way; the Sonnet backup reads the document now.") in result.stderr.splitlines(),
           f"exit {result.returncode}; stdout={result.stdout!r}; "
           f"launches={launches_counted(counter)}, "
           f"claude launches={launches_counted(claude_counter_path(counter))}; "
@@ -805,12 +805,12 @@ with tempfile.TemporaryDirectory() as scratch:
     for refusal, expected in (
             ("Resets in 2h27m3s.",
              'Gemini refused with "Individual quota reached"; the quota resets in 2h27m. '
-             "This read does not retry Gemini, which would refuse the same way until the "
-             "quota resets; the Sonnet backup reads the document now."),
+             "This read does not retry Gemini, which would refuse the same way; the "
+             "Sonnet backup reads the document now."),
             ("Please upgrade.",
              'Gemini refused with "Individual quota reached"; Gemini gave no reset time. '
-             "This read does not retry Gemini, which would refuse the same way until the "
-             "quota resets; the Sonnet backup reads the document now.")):
+             "This read does not retry Gemini, which would refuse the same way; the "
+             "Sonnet backup reads the document now.")):
         message = module.gemini_quota_not_retried_message(
             f"AGY_ERROR: Individual quota reached. {refusal}")
         check(f"the not-retried message for {refusal!r} needs no reset time to read true",

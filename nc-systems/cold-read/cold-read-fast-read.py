@@ -1163,8 +1163,7 @@ def gemini_quota_not_retried_message(error_line: str) -> str:
     """Why the read goes straight to Sonnet, worded to hold whether or not Gemini
     gave a reset time."""
     return (f"{gemini_quota_refusal(error_line)}. This read does not retry Gemini, "
-            "which would refuse the same way until the quota resets; the Sonnet "
-            "backup reads the document now.")
+            "which would refuse the same way; the Sonnet backup reads the document now.")
 
 
 def ultra_quota_line(error_line: str) -> str:
