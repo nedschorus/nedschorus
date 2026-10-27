@@ -95,10 +95,10 @@ GIT_TIMEOUT_SECONDS = 600
 PRINTED_TEXT_LENGTH = 300
 SCRATCH_OR_RUN_LOG_DIRECTORY_NOT_REMOVED_MESSAGE = (
     "REPLAY FAILED: the paths listed below could not be removed, so this Bash guards replay exits 2; any verdicts "
-    "it printed above stand. Each path is in the replay's scratch directory in /tmp, or, after a replay that "
+    "it printed above stand. Each path is in the replay's scratch directory, made under TMPDIR, or, after a replay that "
     "found nothing to report, in its run log directory.\n"
-    "Remove each listed path with rm -rf <path>, because nothing else removes it, and /tmp is shared by every "
-    "agent-session on the machine.\n  ")
+    "Remove each listed path with rm -rf <path>, because nothing else removes it, and the disk it is on can "
+    "fill.\n  ")
 DEFAULT_LOG_STORE_RUNS_DIRECTORY = (
     "/home/nedlern/nedschorus-logs/bash-guards-replay-changed-verdict-or-failed-run-log-directories")
 VERDICT_CHANGED_MESSAGE = (
