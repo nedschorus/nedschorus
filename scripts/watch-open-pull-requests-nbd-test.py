@@ -52,6 +52,14 @@ FIXTURE_TOKEN = "fixture-token-never-a-real-credential-0123456789"
 
 CONTROL_DIRECTORY_VARIABLE = "WATCH_OPEN_PULL_REQUESTS_TEST_CONTROL_DIR"
 
+# Every wait returns as soon as its event happens, so this limit only stops a
+# wait whose event never comes. Each poll starts a Python process for the fake
+# gh, which takes seconds on a busy ned-box: 10 s failed a correct watcher
+# there. 60 s keeps a total failure, every wait timing out, inside the
+# runner's 600 s suite limit only because wait_for and wait_for_calls give up
+# when the watcher has exited.
+EVENT_WAIT_BACKSTOP_SECONDS = 60.0
+
 # The fake gh. It answers from control.json (one file, so a phase change is
 # atomic), records the token it was handed, and logs each call. A call
 # carrying a `cursor=` argument answers from control-next-page.json instead,
@@ -164,12 +172,15 @@ class WatcherProcess:
         for line in stream:
             sink.append(line.rstrip("\n"))
 
-    def wait_for(self, fragment, timeout=10.0):
-        """True once some stdout line contains the fragment; False on timeout."""
+    def wait_for(self, fragment, timeout=EVENT_WAIT_BACKSTOP_SECONDS):
+        """True once some stdout line contains the fragment; False on timeout,
+        or once the watcher has exited and its stdout is drained without it."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if any(fragment in line for line in self.lines):
                 return True
+            if self.process.poll() is not None and not self._threads[0].is_alive():
+                return any(fragment in line for line in self.lines)
             time.sleep(0.02)
         return False
 
@@ -188,8 +199,11 @@ class WatcherProcess:
         return list(self.lines)
 
 
-def wait_for_calls(fake_gh, wanted, timeout=10.0):
+def wait_for_calls(fake_gh, wanted, watcher, timeout=EVENT_WAIT_BACKSTOP_SECONDS):
     """Block until the fake `gh` has been called `wanted` times, and CHECK it.
+
+    Gives up early once the watcher process has exited, since no more calls
+    can come.
 
     This used to return a boolean that every one of its call sites discarded,
     which made the polls it waits for unproven. The damage was not theoretical:
@@ -208,8 +222,13 @@ def wait_for_calls(fake_gh, wanted, timeout=10.0):
     while time.monotonic() < deadline:
         if fake_gh.call_count() >= wanted:
             return True
+        if watcher.process.poll() is not None:
+            break
         time.sleep(0.02)
-    check(f"the fake gh was called at least {wanted} time(s) within {timeout}s "
+    if fake_gh.call_count() >= wanted:
+        return True
+    check(f"the fake gh was called at least {wanted} time(s) within {timeout:g}s, "
+          "while the watcher ran "
           "— everything asserted after this point depends on those polls",
           False, f"call_count={fake_gh.call_count()}")
     return False
@@ -364,18 +383,19 @@ def run_bad_invocation_cases(token_file, missing_token_file):
             result = subprocess.run(
                 [sys.executable, str(WATCH_SCRIPT),
                  "--token-file", str(token_file), *flags],
-                capture_output=True, text=True, timeout=15)
+                capture_output=True, text=True, timeout=EVENT_WAIT_BACKSTOP_SECONDS)
             ok = (result.returncode == 2
                   and len(result.stderr.strip().splitlines()) == 1)
             detail = f"rc={result.returncode} stderr={result.stderr!r}"
         except subprocess.TimeoutExpired:
-            ok, detail = False, "still running after 15s — validation never fired"
+            ok, detail = False, (f"still running after {EVENT_WAIT_BACKSTOP_SECONDS:g}s"
+                                  " — validation never fired")
         check(f"bad invocation {label} exits 2 with one stderr line", ok, detail)
 
     result = subprocess.run(
         [sys.executable, str(WATCH_SCRIPT),
          "--token-file", str(missing_token_file)],
-        capture_output=True, text=True, timeout=15)
+        capture_output=True, text=True, timeout=EVENT_WAIT_BACKSTOP_SECONDS)
     check("an unreadable token file exits 2 and names the path",
           result.returncode == 2 and str(missing_token_file) in result.stderr,
           f"rc={result.returncode} stderr={result.stderr!r}")
@@ -404,7 +424,7 @@ def run_subprocess_cases():
         check("the first poll prints a baseline line naming what is open",
               baseline, "\n".join(watcher.lines))
 
-        wait_for_calls(fake_gh, 4)
+        wait_for_calls(fake_gh, 4, watcher)
         check("a pull request open at the first poll is not an event",
               watcher.count("PR #145") == 0, "\n".join(watcher.lines))
 
@@ -421,7 +441,7 @@ def run_subprocess_cases():
               "\n".join(watcher.lines))
 
         calls_now = fake_gh.call_count()
-        wait_for_calls(fake_gh, calls_now + 4)
+        wait_for_calls(fake_gh, calls_now + 4, watcher)
         check("polls that change nothing produce no further lines",
               watcher.count("PR #146") == 1 and watcher.count("PR #145") == 0,
               "\n".join(watcher.lines))
@@ -431,7 +451,7 @@ def run_subprocess_cases():
             pull_request_node(145, "a" * 40, "RETITLED 145"),
             pull_request_node(146, "b" * 40, "RETITLED 146", draft=True)]))
         calls_now = fake_gh.call_count()
-        wait_for_calls(fake_gh, calls_now + 4)
+        wait_for_calls(fake_gh, calls_now + 4, watcher)
         check("a changed title is not an event",
               "RETITLED" not in "\n".join(watcher.lines), "\n".join(watcher.lines))
 
@@ -452,7 +472,7 @@ def run_subprocess_cases():
                                                        "RETITLED 146",
                                                        draft=True)]))
         calls_now = fake_gh.call_count()
-        wait_for_calls(fake_gh, calls_now + 3)
+        wait_for_calls(fake_gh, calls_now + 3, watcher)
         fake_gh.answer(graphql_body([
             pull_request_node(145, "a" * 40, "reopened"),
             pull_request_node(146, "c" * 40, "RETITLED 146", draft=True)]))
@@ -472,14 +492,14 @@ def run_subprocess_cases():
         watcher = WatcherProcess("--exit-after-first-poll-with-events",
                                  environment=fake_gh.environment(),
                                  token_file=token_file)
-        wait_for_calls(fake_gh, 3)
+        wait_for_calls(fake_gh, 3, watcher)
         check("--exit-after-first-poll-with-events keeps polling while no event comes",
               watcher.process.poll() is None, "\n".join(watcher.lines))
         fake_gh.answer(graphql_body([
             pull_request_node(145, "d" * 40, "open"),
             pull_request_node(147, "e" * 40, "opened with the move")]))
         try:
-            exit_code = watcher.process.wait(timeout=10)
+            exit_code = watcher.process.wait(timeout=EVENT_WAIT_BACKSTOP_SECONDS)
         except subprocess.TimeoutExpired:
             exit_code = None
         lines = watcher.stop()
@@ -522,7 +542,7 @@ def run_subprocess_cases():
               "\n".join(watcher.lines))
 
         calls_now = fake_gh.call_count()
-        wait_for_calls(fake_gh, calls_now + 5)
+        wait_for_calls(fake_gh, calls_now + 5, watcher)
         check("the blind line is printed once per episode, not once per poll",
               watcher.count("WATCH: query failed") == 1,
               "\n".join(watcher.lines))
@@ -582,7 +602,7 @@ def run_subprocess_cases():
         recovered = watcher.wait_for("WATCH: query recovered after ")
         watcher.wait_for("open at baseline")
         calls_now = fake_gh.call_count()
-        wait_for_calls(fake_gh, calls_now + 3)
+        wait_for_calls(fake_gh, calls_now + 3, watcher)
         lines = watcher.stop()
         check("recovering with no baseline says the openings are absorbed",
               recovered and any("query recovered" in line and "NO BASELINE" in line
@@ -751,7 +771,7 @@ def run_subprocess_cases():
         first = watcher.wait_for("PR #145 OPENED aaaaaaaa nedlern: first")
         second = watcher.wait_for("PR #146 OPENED bbbbbbbb nedlern: second")
         calls_now = fake_gh.call_count()
-        wait_for_calls(fake_gh, calls_now + 4)
+        wait_for_calls(fake_gh, calls_now + 4, watcher)
         lines = watcher.stop()
         check("--from-start reports every already-open pull request",
               first and second, "\n".join(lines))
