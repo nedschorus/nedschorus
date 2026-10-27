@@ -80,5 +80,15 @@ check("no error text at all (None) is not an absent answer and does not raise",
 check("the answer is a real bool, not a match object",
       type(says_absent("no current target")) is bool)
 
+_wording_copies_finder_spec = importlib.util.spec_from_file_location(
+    "common_module_wording_copied_into_other_test_files_finder_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools" / "common-module-wording-copied-into-other-test-files-finder-common.py")
+wording_copies_finder = importlib.util.module_from_spec(_wording_copies_finder_spec)
+_wording_copies_finder_spec.loader.exec_module(wording_copies_finder)
+wording_copies = wording_copies_finder.common_module_wording_copies_in_other_test_files(
+    REPOSITORY_ROOT / "nc-systems" / "general-tools" / "tmux-target-or-server-does-not-exist-error-pattern-common.py", REPOSITORY_ROOT)
+check("no other test file keeps its own copy of this module's wording: each gets the wording by calling the module",
+      wording_copies == [], "\n".join(map(wording_copies_finder.copied_wording_report_line, wording_copies)))
+
 print(f"{failures} failure(s)" if failures else "all cases pass")
 sys.exit(1 if failures else 0)

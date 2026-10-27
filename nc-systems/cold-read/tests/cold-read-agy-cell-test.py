@@ -91,11 +91,14 @@ scratch_repository_fixture = importlib.util.module_from_spec(
     _scratch_repository_fixture_spec)
 _scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
 
-# The phrases the launcher and the shared module print, spelled out here
-# rather than imported so a reworded line fails here rather than passing
-# however either side was reworded.
-STDOUT_RECOVERY_PHRASE = "recovered the report from the model's chat output"
-NEAR_MISS_RECOVERY_PHRASE = "recovered a near-miss report"
+# The shared cell module, whose own suite pins its wording; the cases here take that wording from it.
+_cell_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common", SYSTEM_DIRECTORY / "cold-read-cell-common.py")
+cell_common = importlib.util.module_from_spec(_cell_common_spec)
+_cell_common_spec.loader.exec_module(cell_common)
+
+STDOUT_RECOVERY_PHRASE = cell_common.STDOUT_RECOVERY_PHRASE
+NEAR_MISS_RECOVERY_PHRASE = cell_common.NEAR_MISS_RECOVERY_PHRASE
 
 # A review-length chat answer and a remark-length one, either side of the
 # launcher's 120-word threshold.

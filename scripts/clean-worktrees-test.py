@@ -983,18 +983,9 @@ with tempfile.TemporaryDirectory() as scratch:
               (failed_listing.returncode, failed_listing.stdout, failed_listing.stderr))
         check(f"a failed worktree listing{' under ' + flags[0] if flags else ''} gives the "
               "shared next steps, naming the command that was run",
-              stderr_lines[1:] == [
-                  f"If git's error names a lock file, such as .git/index.lock, do not delete the lock "
-                  f"file yourself, because a git command still running may hold it; wait up to one "
-                  f"minute for git to remove it by running `i=0; while [ -e \"<lock file path>\" ] "
-                  f"&& [ $i -lt 30 ]; do sleep 2; i=$((i+1)); done` with <lock file path> replaced by "
-                  f"the path git's error names, without the quotes git puts around it (Claude Code "
-                  f"refuses a plain `sleep 60`), then run "
-                  f"exactly {rerun}, whether or not the lock file is gone.",
-                  f"If git's error names no lock file, run exactly {rerun} once more.",
-                  'If the rerun prints a line containing "clean-worktrees: stopped, because" again, '
-                  "stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line "
-                  'containing "clean-worktrees: stopped, because" from the command that printed this message and from the rerun.'],
+              stderr_lines[1:] == load_clean_worktrees_module().next_step_lines.git_failure_next_step_lines(
+                  rerun, text_the_failure_line_contains="clean-worktrees: stopped, because",
+                  include_the_misspelt_branch_commit_or_path_line=False).splitlines(),
               failed_listing.stderr)
 
     module = load_clean_worktrees_module()

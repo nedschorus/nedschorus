@@ -168,6 +168,12 @@ scratch_repository_fixture = importlib.util.module_from_spec(
     _scratch_repository_fixture_spec)
 _scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
 
+# The shared cell module, whose own suite pins its wording; the cases here take that wording from it.
+_cell_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common", SYSTEM_DIRECTORY / "cold-read-cell-common.py")
+cell_common = importlib.util.module_from_spec(_cell_common_spec)
+_cell_common_spec.loader.exec_module(cell_common)
+
 # Every run here ships its record to a scratch log-store inside the scratch
 # repository, through the shipper's destination override, so no case reaches
 # ned-box; the store is real, the copy is the real rsync. A case that wants the
@@ -1086,9 +1092,9 @@ with tempfile.TemporaryDirectory() as scratch:
     # is the stray-write case above, where a real STRAY WRITE line is lifted
     # through the same `cell_status_line` test.
     echoed_passage = (
-        "As the document says: the supervisor fell back to its own default, "
-        "then stray writes were not checked for this run, then files outside "
-        "its report changed while it ran, and it recovered a near-miss report."
+        f"As the document says: the supervisor {cell_common.FELL_BACK_PHRASE} its own default, "
+        f"then {cell_common.STRAY_WRITE_CHECK_SKIPPED_PHRASE}, then {cell_common.STRAY_WRITE_PHRASE}, "
+        f"and it {cell_common.NEAR_MISS_RECOVERY_PHRASE}."
     )
     repository = build_scratch_repository(scratch, "checkout-echoed-phrases")
     result = run_grid(
