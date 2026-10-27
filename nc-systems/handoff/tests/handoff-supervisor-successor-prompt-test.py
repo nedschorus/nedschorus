@@ -3050,6 +3050,62 @@ def run_boot_ignition_without_a_conversation_tail_cases(workspace: Path):
           repr(unrecorded.launched_prompts))
 
 
+def run_generation_continues_past_numbered_files_on_disk_cases(workspace: Path):
+    """A supervisor whose state file holds a generation below numbered files
+    left on disk, as a state file read as fresh leaves it, numbers the
+    successor's conversation-tail above them, so the pruner, which keeps the
+    two highest numbers, keeps the file the successor's prompt names."""
+    agent = "generationbelowfiles"
+    handoff_directory = workspace / agent
+    handoff_directory.mkdir(parents=True)
+    settings = supervisor.SupervisorSettings(
+        agent=agent, working_directory=workspace, handoff_directory=handoff_directory,
+        agent_command="unused-stub-agent", first_prompt="")
+    for name in ("dialog-0007.md", "dialog-0007-complete.md", "dialog-0020.md",
+                 "dialog-0020-complete.md", "handoff-0006.md", "handoff-0007.md"):
+        (handoff_directory / f"{agent}-{name}").write_text("left from an earlier count",
+                                                            encoding="utf-8")
+    settings.handoff_path.write_text(
+        "written-at: 2026-10-26T00:00:00Z\nnext-step: resume the audit\n"
+        "restart-counter: 5\nwritten-by-session: retiring-session\n", encoding="utf-8")
+    supervisor.write_supervisor_state(
+        settings.state_path,
+        {"consumed_counter": 4, "launched_session_id": "retiring-session", "generation": 3})
+    launched_prompts = []
+
+    def writing_extract_dialog(session_id, working_directory, output_path):
+        output_path.write_text("the retiring session's dialog", encoding="utf-8")
+        return True
+
+    def launch_recording(agent_command, session_id, working_directory, prompt, **_):
+        launched_prompts.append(prompt)
+        return StubLaunchedSession(0)
+
+    with supervisor_names_replaced(
+            extract_dialog=writing_extract_dialog,
+            launch_agent_session=launch_recording,
+            launch_time_git_sync=lambda working_directory: "launch-time-git-sync: stubbed",
+            memory_review_due_lines=lambda: (),
+            stdin_isatty=False), \
+            contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        supervisor.supervise_sessions(settings)
+    successor_extract = handoff_directory / f"{agent}-dialog-0021.md"
+    remaining = sorted(item.name for item in handoff_directory.glob(f"{agent}-*-0*.md"))
+    check("GENERATION PAST FILES ON DISK: the successor's prompt names its conversation-tail, "
+          "numbered above the highest file on disk",
+          len(launched_prompts) == 1 and str(successor_extract) in launched_prompts[0],
+          repr(launched_prompts)[:600])
+    check("GENERATION PAST FILES ON DISK: the conversation-tail and handoff copy just written "
+          "survive the pruning, and the lowest-numbered leftovers go",
+          remaining == [f"{agent}-dialog-0020-complete.md", f"{agent}-dialog-0020.md",
+                        f"{agent}-dialog-0021.md",
+                        f"{agent}-handoff-0007.md", f"{agent}-handoff-0021.md"],
+          str(remaining))
+    state = supervisor.read_supervisor_state(settings.state_path)
+    check("GENERATION PAST FILES ON DISK: the state file records the generation just written",
+          state.get("generation") == 21, str(state))
+
+
 def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     """The successor is told which subagents were still working when the
     session it replaces ended, and that it may need to re-commission
@@ -3366,6 +3422,7 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_memory_review_due_prompt_cases(workspace)
     run_boot_ignition_case(workspace)
     run_boot_ignition_without_a_conversation_tail_cases(workspace)
+    run_generation_continues_past_numbered_files_on_disk_cases(workspace)
     run_first_prompt_file_cases(workspace)
     run_multi_line_next_step_cases(workspace, recent_timestamp)
     run_launch_and_retention_cases(workspace, recent_timestamp)

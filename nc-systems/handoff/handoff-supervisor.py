@@ -920,7 +920,7 @@ class BootRecoveryIgnitionPlan:
         return prompt
 
 
-def prune_old_generations(directory: Path, stem: str) -> None:
+def numbered_files_by_generation(directory: Path, stem: str) -> dict:
     # A tail and its -complete companion share one generation; counting files would evict the previous tail.
     numbered_file_name = re.compile(rf"{re.escape(stem)}-(\d+)(?:-complete)?\.md")
     files_by_generation = {}
@@ -928,6 +928,18 @@ def prune_old_generations(directory: Path, stem: str) -> None:
         match = numbered_file_name.fullmatch(item.name)
         if match:
             files_by_generation.setdefault(int(match.group(1)), []).append(item)
+    return files_by_generation
+
+
+def highest_generation_on_disk(directory: Path, agent: str) -> int:
+    return max((generation
+                for stem in (f"{agent}-dialog", f"{agent}-handoff")
+                for generation in numbered_files_by_generation(directory, stem)),
+               default=0)
+
+
+def prune_old_generations(directory: Path, stem: str) -> None:
+    files_by_generation = numbered_files_by_generation(directory, stem)
     for generation in sorted(files_by_generation)[:-GENERATIONS_KEPT]:
         for stale in files_by_generation[generation]:
             stale.unlink()
@@ -1788,7 +1800,10 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
 
 def supervise_sessions(settings: SupervisorSettings) -> int:
     state = read_supervisor_state(settings.state_path)
-    generation = state.get("generation", 0)
+    # A state file read as fresh restarts the count below the numbered files still on disk,
+    # and the pruner, which keeps the highest numbers, would then delete the file just written.
+    generation = max(state.get("generation", 0),
+                     highest_generation_on_disk(settings.handoff_directory, settings.agent))
     if settings.first_prompt:
         prompt = settings.first_prompt
     elif settings.resume_session_id:
