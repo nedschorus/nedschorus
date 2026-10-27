@@ -369,7 +369,7 @@ def test_open_failures():
             program.open_pull_request(NUMBER, [1])
         except program.StepFailed as error:
             check("a push that does not finish in time is a StepFailed with the push's own instructions",
-                  str(error).startswith("git push -u origin topic-one did not finish, so no pull request was opened.")
+                  str(error) == "git push -u origin topic-one failed (did not finish within 0.5 s), so no pull request was opened."
                   and "pre-push hook" in error.instructions, str(error))
         else:
             check("a push that does not finish in time is a StepFailed with the push's own instructions", False)
@@ -378,8 +378,8 @@ def test_open_failures():
             program.PUSH_TIMEOUT_SECONDS = original_timeout
         hook.unlink()
         code, out, err = case.run(worktree, "open-pull-request", "--findings", "1", FAKE_GH_CREATE_FAILS="1")
-        check("gh pr create that fails is FAILED with exit 2, recording nothing",
-              code == 2 and "gh pr create" in err and "GraphQL: something went wrong" in err
+        check("gh pr create that fails is FAILED with exit 2, naming the call without its description, recording nothing",
+              code == 2 and "FAILED: gh pr create exited 1: GraphQL: something went wrong\n" in err
               and "Run the same command again once." in err and case.answers() is None
               and description.exists(), err)
         code, out, err = case.run(worktree, "open-pull-request", "--findings", "1", FAKE_GH_CREATE_OUTPUT="no link here")

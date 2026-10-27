@@ -10,8 +10,9 @@ Usage:
 
 merge-lane-2 ends a merge message that asks for follow-ups with the line
 "#follow_up_request pull request <number>", then each non-blocking finding on a
-numbered line of its own, "1. ", "2. " and so on. HOOK_PATH saves that block
-word for word to SAVED_FINDINGS_FILE_NAME_FORMAT in
+numbered line of its own, "1. ", "2. " and so on. The hook
+nc-systems/general-tools/pull-request-follow-up-request-from-merge-lane-2-message-save-and-forked-subagent-brief-hand-over-user-prompt-submit-hook.py
+saves that block word for word to SAVED_FINDINGS_FILE_NAME_FORMAT in
 PULL_REQUEST_FOLLOW_UP_REQUESTS_DIRECTORY_NAME under the git common directory,
 which every worktree of the checkout shares, and hands the author
 build_follow_up_request_forked_subagent_brief(): dispatch one forked subagent in a worktree of its own,
@@ -62,7 +63,8 @@ start-topic-branch leaves.
 
 Exit codes: 0 done; 1 refused, or clean-up left something in place, said with
 what to do; 2 git, gh or a file failed, said on stderr, and what the subcommand
-did before the failure stays done.
+did before the failure stays done, or the arguments are not ones the program
+takes, which argparse says on stderr.
 """
 
 import argparse
@@ -88,8 +90,6 @@ defect_line_reader = importlib.util.module_from_spec(_defect_line_reader_spec)
 _defect_line_reader_spec.loader.exec_module(defect_line_reader)
 
 PROGRAM = "scripts/" + Path(__file__).name
-HOOK_PATH = ("nc-systems/general-tools/pull-request-follow-up-request-from-merge-lane-2-message-save-"
-             "and-forked-subagent-brief-hand-over-user-prompt-submit-hook.py")
 FOLLOW_UP_REQUEST_LINE_PATTERN = re.compile(r"^#follow_up_request pull request (\d+)[ \t]*$")
 FINDING_LINE_PATTERN = re.compile(r"^(\d+)\.\s+(\S.*)$")
 PULL_REQUEST_LINK_PATTERN = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+")
@@ -207,15 +207,17 @@ def git(directory, arguments, **options):
 
 
 def gh(arguments):
+    # The subcommand alone names the call: pr create's arguments hold the whole description.
+    name = "gh " + " ".join(arguments[:2])
     try:
         completed = subprocess.run(["gh", *arguments], capture_output=True, text=True,
                                    stdin=subprocess.DEVNULL, timeout=GH_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
-        raise StepFailed(f"gh {' '.join(arguments)} did not finish within {GH_TIMEOUT_SECONDS} s") from None
+        raise StepFailed(f"{name} did not finish within {GH_TIMEOUT_SECONDS} s") from None
     except OSError as error:
         raise StepFailed(f"could not start gh: {error}") from None
     if completed.returncode != 0:
-        raise StepFailed(f"gh {' '.join(arguments)} exited {completed.returncode}: "
+        raise StepFailed(f"{name} exited {completed.returncode}: "
                          f"{completed.stderr.strip()}")
     return completed.stdout
 
@@ -415,10 +417,13 @@ def open_pull_request(number, findings):
     try:
         git_output.run_git(".", ["push", "-u", "origin", branch], timeout_seconds=PUSH_TIMEOUT_SECONDS)
     except git_output.GitCommandFailed as failure:
-        outcome = "did not finish" if failure.returncode is None else f"exited {failure.returncode}"
+        if failure.returncode is None:
+            text = f"git push -u origin {branch} failed ({failure.stderr}), so no pull request was opened."
+        else:
+            text = (f"git push -u origin {branch} exited {failure.returncode}, so no pull request was "
+                    f"opened. git's output:\n{failure.stderr.strip()}")
         raise StepFailed(
-            f"git push -u origin {branch} {outcome}, so no pull request was opened. git's output:\n"
-            f"{failure.stderr.strip()}",
+            text,
             "If git's output shows the pre-push hook refusing the push, do what it says, commit "
             "the fix, and run open-pull-request again.\n"
             "Otherwise run open-pull-request again once.\n"

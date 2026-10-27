@@ -4,7 +4,7 @@
 A UserPromptSubmit hook. It acts only on a prompt holding a cross-session message whose tag names
 from-name="merge-lane-2" and whose body holds the line "#follow_up_request pull request <number>"
 followed by numbered findings, one to a line. For each such block it saves the block word for word
-with save_follow_up_request_and_clear_answers_when_its_findings_changed() of FOLLOW_UP_PROGRAM, which owns the file's
+with save_follow_up_request_and_clear_answers_when_its_findings_changed() of the program at FOLLOW_UP_PROGRAM_PATH, which owns the file's
 place in the git common directory, and hands the agent, as additionalContext, the brief
 build_follow_up_request_forked_subagent_brief() of that program writes; when that pull request's follow-up is already
 finished with this same block, it hands FINISHED_LINES instead, so no second subagent answers the
