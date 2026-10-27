@@ -45,6 +45,7 @@ if [ "$1 $2" = "pr list" ]; then
     [ -n "$FAKE_GH_EXISTING" ] && printf '%s\\n' "$FAKE_GH_EXISTING"
     exit 0
 fi
+[ -n "$FAKE_GH_KILLED" ] && kill -9 $$
 if [ -n "$FAKE_GH_CREATE_FAILS" ]; then
     echo "GraphQL: something went wrong" >&2
     exit 1
@@ -256,6 +257,8 @@ def test_open_refusals():
     try:
         worktree = started(case)
         case.commit_change()
+        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "0")
+        check("open refuses finding 0", code == 1 and "so there is no finding 0, and" in err, err)
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1,3")
         check("open refuses a finding that does not exist",
               code == 1 and "merge-lane-2 sent 2 findings for pull request 1964, numbered 1 to 2, so there "
@@ -385,6 +388,9 @@ def test_open_failures():
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_CREATE_OUTPUT="no link here")
         check("gh pr create that prints no link is FAILED with exit 2",
               code == 2 and "gh pr create printed no pull request link" in err and case.answers() is None, err)
+        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_KILLED="1")
+        check("a gh killed by a signal is FAILED with exit 2, recording nothing",
+              code == 2 and "FAILED: gh pr create exited -9" in err and case.answers() is None, err)
         git_only = case.root / "git-only"
         git_only.mkdir()
         (git_only / "git").symlink_to(shutil.which("git"))
@@ -434,7 +440,8 @@ def test_leave_out_and_finish():
               code == 1 and "already has an answer, so nothing was recorded" in err, err)
         code, out, err = case.run(worktree, "finish-follow-up-request-and-print-merge-lane-2-message")
         check("finish names only the finding still without an answer",
-              code == 1 and "Finding 2 of pull request" in err and case.answers().get("finished_at") is None, err)
+              code == 1 and "Finding 2 of pull request 1964's follow-up request has no answer yet" in err
+              and case.answers().get("finished_at") is None, err)
         case.run(worktree, "record-finding-leave-out-reason", "2", "--reason", "a guard nothing calls for")
         code, out, err = case.run(worktree, "finish-follow-up-request-and-print-merge-lane-2-message")
         check("finish passes and prints the message for merge-lane-2",
@@ -471,10 +478,13 @@ def test_state_failures():
         saved.write_text("not a block\n")
         code, out, err = case.run(case.repository, "finish-follow-up-request-and-print-merge-lane-2-message")
         check("a saved file that holds no block is FAILED", code == 2 and "exactly one block" in err, err)
-        saved.write_text(BLOCK.replace(str(NUMBER), str(NUMBER + 1)))
-        code, out, err = case.run(case.repository, "finish-follow-up-request-and-print-merge-lane-2-message")
-        check("a saved file whose block names another pull request is FAILED",
-              code == 2 and "exactly one block, for this pull request" in err, err)
+        for label, text in (("a later pull request", BLOCK.replace(str(NUMBER), str(NUMBER + 1))),
+                            ("an earlier pull request", BLOCK.replace(str(NUMBER), str(NUMBER - 1))),
+                            ("two blocks", BLOCK + "\n" + BLOCK.replace(str(NUMBER), str(NUMBER - 1)))):
+            saved.write_text(text)
+            code, out, err = case.run(case.repository, "finish-follow-up-request-and-print-merge-lane-2-message")
+            check(f"a saved file whose block is for {label} is FAILED",
+                  code == 2 and "exactly one block, for this pull request" in err, err)
         saved.write_text(f"#follow_up_request pull request {NUMBER}\n2. x\n")
         code, out, err = case.run(case.repository, "finish-follow-up-request-and-print-merge-lane-2-message")
         check("a saved block with bad numbering is FAILED", code == 2 and "numbered 1, 2, 3" in err, err)
@@ -553,6 +563,40 @@ def test_clean_up():
         case.close()
 
 
+def test_clean_up_goes_on_past_each_worktree_and_branch():
+    case = Case()
+    try:
+        case.save()
+        command = "remove-recorded-topic-branches-and-worktrees"
+        worktrees = {}
+        for name in ("gone", "locked", "clean-one", "clean-two"):
+            worktrees[name] = case.subagent_worktree(f"worktree-{name}")
+            code, _, err = case.run(worktrees[name], "start-topic-branch", f"branch-{name}")
+            assert code == 0, err
+        git(case.repository, "worktree", "remove", str(worktrees["gone"]))
+        git(case.repository, "branch", "-D", "branch-gone")
+        git(case.repository, "worktree", "lock", "--reason", "kept by the user", str(worktrees["locked"]))
+        case.worktree = worktrees["clean-one"]
+        case.commit_change()
+        git(worktrees["clean-two"], "push", "-q", "origin", "branch-clean-two")
+        code, out, err = case.run(case.repository, command)
+        branches = git(case.repository, "branch")
+        check("clean-up goes on past a worktree already gone, a locked worktree and a missing or unpushed branch",
+              code == 1 and not worktrees["clean-one"].exists() and not worktrees["clean-two"].exists()
+              and "Deleted branch branch-clean-two." in out and "branch-clean-two" not in branches
+              and "Branch branch-clean-one holds commits on no branch of origin" in out
+              and "branch-locked" in branches and worktrees["locked"].exists()
+              and "left 2 worktrees or branches in place" in out, out + err)
+        git(case.repository, "worktree", "unlock", str(worktrees["locked"]))
+        git(case.repository, "worktree", "lock", str(worktrees["locked"]))
+        code, out, err = case.run(case.repository, command)
+        check("a lock without a reason is named as such",
+              code == 1 and "is locked (lock reason: none given)" in out
+              and "of pull request 1964's follow-up is locked (no reason given)" in out, out + err)
+    finally:
+        case.close()
+
+
 def test_clean_up_failure():
     case = Case()
     try:
@@ -568,7 +612,8 @@ def test_clean_up_failure():
 
 for test in (test_help, test_block_parsing, test_brief_text, test_no_saved_block, test_start,
              test_open_refusals, test_open, test_open_failures, test_leave_out_and_finish,
-             test_state_failures, test_clean_up, test_clean_up_failure):
+             test_state_failures, test_clean_up, test_clean_up_goes_on_past_each_worktree_and_branch,
+             test_clean_up_failure):
     test()
 
 print(f"FAILED: {len(failures)} failed" if failures else "PASSED: 0 failed")
