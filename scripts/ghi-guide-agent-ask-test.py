@@ -685,9 +685,11 @@ try:
           and "out-of-scope" not in ghi_ask.COLD_START_PROMPT_TEMPLATE
           and "escalate:" not in ghi_ask.COLD_START_PROMPT_TEMPLATE,
           ghi_ask.COLD_START_PROMPT_TEMPLATE[-600:])
-    check("the start-up prompt allows gh only for a link repair's issue edit, and "
+    check("the start-up prompt allows gh only for a link repair's issue edit, takes the issue's text from the mirror, and "
           "sends document changes through ghi-issue-write.py's pull request, never a push to main",
-          "The one time you run gh is to make the issue edit a link repair (form 4) needs."
+          "The one time you run gh is to make the issue edit a link repair (form 4) needs; "
+          "take the issue's current text from the mirror." in ghi_ask.COLD_START_PROMPT_TEMPLATE
+          and "Issue edits go through gh as normal, starting from the issue's text in the mirror;"
           in ghi_ask.COLD_START_PROMPT_TEMPLATE
           and "whose pull request merge-lane-2 reviews and merges; never push to main yourself."
           in ghi_ask.COLD_START_PROMPT_TEMPLATE

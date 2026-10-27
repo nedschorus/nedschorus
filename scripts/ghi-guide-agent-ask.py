@@ -96,7 +96,7 @@ stale answers about the very designs the issues point at, and superseded
 skills to answer under. The freshness hook's merge used to keep the
 checkout current; that merge is gone, so the refresh belongs to the caller
 that knows an ask is about to happen. It never fails an ask: any refusal —
-a dirty tree, a commit of ghi-guide-agent's own, an unreachable origin — is one
+a dirty tree, a local commit not on origin/main, an unreachable origin — is one
 stderr line and the ask proceeds against what is on disk.
 
 Concurrency: the state file is flock'd. An ask that cannot get the lock
@@ -236,14 +236,14 @@ You run inside a checkout of the project repository; your knowledge is the local
 - issues-open.md — every open issue in full: number, title, labels, updated time, body, comments. Read this file whole now, before anything else.
 - issues-closed.md — one line per closed issue. Do not load it whole; grep it only when a request asks about closed history.
 
-GitHub is the source of truth; the mirror is your working copy of it. Answer from the mirror only: never read issue state from GitHub (no gh queries, no API, no web). The one time you run gh is to make the issue edit a link repair (form 4) needs. The facts a request states are already established by script; your job is only the judgment.
+GitHub is the source of truth; the mirror is your working copy of it. Answer from the mirror only: never read issue state from GitHub (no gh queries, no API, no web). The one time you run gh is to make the issue edit a link repair (form 4) needs; take the issue's current text from the mirror. The facts a request states are already established by script; your job is only the judgment.
 
 Requests arrive in four forms:
 
 1. **You are asked for a reading list**: what should an agent read before it files or edits an issue on some topic. Reply with a bare list — "read #13, #24, #31" — plus, only when needed, note lines in plain sentences. Closed issues belong in a reply only when the request says closed history is wanted; tag each truthfully: "#31 (closed 2026-08-08)".
 2. **You are shown a draft issue** — title and body — and asked whether the corpus already covers it. When the draft is an edit of an existing issue, the request names that issue: leave it out of the comparison. Reply with exactly one line, nothing else: `verdict: too-similar #n` (an existing issue already covers this ground; #n is that issue), or `verdict: related #n,#m` (no collision, but the author should know these), or `verdict: unrelated`. In these shapes #n,#m stands for one or more issue numbers. When the draft conflicts with a ruling the user made, reply instead with the ruling question under Boundaries. A reply in any other shape is thrown away.
 3. **You are told a fact that corrects your last reply** — an issue you cited has closed — and asked to redo that one judgment. The fact is already established by script from the refreshed mirror: do not question or verify it; re-read the named entry in issues-closed.md, including any Superseded-by: link, and reply with a corrected reading list.
-4. **You are asked to repair a link** — a cross-reference the maintenance sweep found broken. The request states the defect; repair exactly that link and nothing else. Issue edits go through gh as normal; document-side changes are landed through `scripts/ghi-issue-write.py`, whose pull request merge-lane-2 reviews and merges; never push to main yourself. Reply done: <the repair>, done: no change needed — <why>, or blocked: <what stopped you>.
+4. **You are asked to repair a link** — a cross-reference the maintenance sweep found broken. The request states the defect; repair exactly that link and nothing else. Issue edits go through gh as normal, starting from the issue's text in the mirror; document-side changes are landed through `scripts/ghi-issue-write.py`, whose pull request merge-lane-2 reviews and merges; never push to main yourself. Reply done: <the repair>, done: no change needed — <why>, or blocked: <what stopped you>.
 
 Boundaries:
 
@@ -713,8 +713,8 @@ def fast_forward_seat_checkout(seat_dir: Path) -> str:
     tracked_changes = [entry for entry in git_output.status_entries(status.stdout)
                        if entry.code != "??"]
     if tracked_changes:
-        # ghi-guide-agent commits its own document-side link repairs and lands them
-        # on main; work in progress here is real work, not debris.
+        # ghi-guide-agent's document-side link repairs go through ghi-issue-write.py's
+        # pull requests, so uncommitted tracked changes here are real work, not debris.
         return (f"ghi-guide-agent-ask: the seat checkout has {len(tracked_changes)} uncommitted "
                 f"tracked change(s); not refreshing it")
 
