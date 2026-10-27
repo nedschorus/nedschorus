@@ -121,6 +121,11 @@ with tempfile.TemporaryDirectory() as temporary:
           answer == "read #1" and error is None, (answer, error))
     check("cold start makes exactly two claude calls (cold-start turn, then ask)",
           len(claude_calls) == 2, claude_calls)
+    check("a cold start's ask turn carries the plan-reuse sentence and its "
+          "cold-start turn does not",
+          ghi_ask.ASK_PROMPT_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE_REQUEST_SENTENCE in claude_calls[1][0]
+          and ghi_ask.ASK_PROMPT_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE_REQUEST_SENTENCE not in claude_calls[0][0],
+          claude_calls)
     check("cold-start's second call resumes the session the first call opened",
           claude_calls[1][1] == "sess-A", claude_calls)
     # With no session to resume there is nothing a delta could inform: the
@@ -150,6 +155,23 @@ with tempfile.TemporaryDirectory() as temporary:
           "#7" in claude_calls[0][0] and "changed" in claude_calls[0][0], claude_calls)
     check("only a delta refresh runs on an ordinary resume (no full refresh)",
           len(refresh_calls) == 1 and refresh_calls[0]["full"] is False, refresh_calls)
+
+    # --- every question ghi-info is sent carries the plan-reuse sentence ----
+    reuse = ghi_ask.ASK_PROMPT_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE_REQUEST_SENTENCE
+    check("the plan-reuse sentence is the one the user approved",
+          reuse == ("If the question describes a plan, also name any issue whose "
+                    "design built something the plan should reuse instead of "
+                    "building its own."), reuse)
+    check("a resumed ask's prompt carries the plan-reuse sentence",
+          reuse in claude_calls[0][0], claude_calls[0][0])
+    for is_resume in (False, True):
+        for include_closed in (False, True):
+            composed = ghi_ask.compose_resume_ask_prompt(
+                "what covers Q?", include_closed, [9], is_resume)
+            check(f"the ask prompt (resume={is_resume}, include_closed="
+                  f"{include_closed}) carries the plan-reuse sentence right "
+                  "after the question",
+                  "what covers Q?\n\n" + reuse in composed, composed)
 
     # --- reincarnation: closes-since-birth over threshold forces a cold start ----
     seat3 = root / "seat3"
