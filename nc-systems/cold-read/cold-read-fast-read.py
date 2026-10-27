@@ -70,8 +70,8 @@ gitignored records tree:
 `cold-read-records/<name>-<YYYY-MM-DD>/fast-read.md`, where <name> is the
 cold-read-target's file name without its extension -- `SKILL-<skill name>`
 for a skill, whose file is always SKILL.md -- the date is local, and the
-directory takes a -2, -3 suffix when the day's name is taken, the
-cold-read-grid's rule (user-ruled 2026-09-18). That directory
+directory takes a -2, -3 suffix when the day's name is taken in this
+checkout or in the log-store, the cold-read-grid's rule (user-ruled 2026-09-18). That directory
 also gets `target/<repository path>`, the exact bytes the reviewer read,
 frozen before the cold-read-cell launches, and once the report has landed the
 directory is shipped to the log-store on ned-box by
@@ -183,7 +183,7 @@ _record_names_spec = importlib.util.spec_from_file_location(
     pathlib.Path(__file__).with_name("cold-read-record-names-common.py"))
 record_names = importlib.util.module_from_spec(_record_names_spec)
 _record_names_spec.loader.exec_module(record_names)
-# Loaded only for LOG_STORE_RECORDS_DESTINATION, where a read's record lands.
+# Loaded for where a read's record lands and for a record name free in the store.
 _record_shipper_spec = importlib.util.spec_from_file_location(
     "cold_read_record_ship", RECORD_SHIPPER)
 record_shipper = importlib.util.module_from_spec(_record_shipper_spec)
@@ -638,8 +638,12 @@ def fast_read_report_path_for_target(
         target, checkout_root_holding(target))
     if suggestions is not None:
         return suggestions
-    return (fresh_record_dir(RECORDS_DIR / record_directory_name_for_target(target, now))
-            / "fast-read.md")
+    record_dir, store_unlisted = record_shipper.first_record_directory_unused_in_checkout_and_log_store_and_log_store_listing_error(
+        RECORDS_DIR / record_directory_name_for_target(target, now))
+    if store_unlisted is not None:
+        print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(PROGRAM, record_dir, store_unlisted),
+              file=sys.stderr)
+    return record_dir / "fast-read.md"
 
 
 def walk_draft_suggestions_file_path_for_target_in_worktree_or_none(
@@ -663,7 +667,8 @@ def walk_draft_suggestions_file_path_for_target_in_worktree_or_none(
 
 # THE RECORD-NAME RULE: `<file stem>-<YYYY-MM-DD>`, and
 # `SKILL-<skill name>-<YYYY-MM-DD>` for a skill; a second read of one document
-# on one day takes -2, -3. The document comes first so every read of one
+# on one day takes -2, -3, the first free both in this checkout and in the
+# log-store, where another checkout's read of that day may already be. The document comes first so every read of one
 # document sits together in the log-store's listing. Two documents with the
 # same stem in different directories read on one day come out as -2 of each
 # other (target/ shows which was which), and the -N count says nothing about
@@ -696,9 +701,6 @@ def record_clock_reading() -> datetime.datetime:
 
 record_name_for_target = record_names.record_name_for_target
 record_directory_name_for_target = record_names.record_directory_name_for_target
-
-
-fresh_record_dir = record_names.fresh_record_directory
 
 
 # --- Sentence ids -------------------------------------------------------
