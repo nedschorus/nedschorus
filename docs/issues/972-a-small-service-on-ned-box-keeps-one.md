@@ -1,5 +1,6 @@
 ---
 issue: "[A small HTTP service with SQLite on ned-box keeps one record of every agent-seat on both machines](https://github.com/nedschorus/nedschorus/issues/972)"
+kind: design
 ---
 
 # A small HTTP service with SQLite on ned-box keeps one record of every agent-seat on both machines

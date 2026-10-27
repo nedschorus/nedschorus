@@ -1,5 +1,6 @@
 ---
 issue: "[Replace the hand-written parsers in the project's hooks and scripts with real parsers](https://github.com/nedschorus/nedschorus/issues/1196)"
+kind: design
 ---
 
 # Replace the hand-written parsers in the project's hooks and scripts with real parsers

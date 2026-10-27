@@ -1,5 +1,6 @@
 ---
 issue: "[Proposed improvements or changes to a GHI are handled by agents first, and reach the user only when they need him](https://github.com/nedschorus/nedschorus/issues/1132)"
+kind: design
 ---
 
 # Proposed improvements or changes to a GHI are handled by agents first, and reach the user only when they need him

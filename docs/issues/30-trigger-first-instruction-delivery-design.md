@@ -1,5 +1,6 @@
 ---
 issue: "[Trigger-first instruction delivery (moved from nedlern#1972): delivery timing as a property of every instruction — step-2 CLAUDE.md design input + carried design and scan](https://github.com/nedschorus/nedschorus/issues/30)"
+kind: design
 ---
 
 > **Carried from nedlern 2026-07-27** (user-directed, part of the nedlern
