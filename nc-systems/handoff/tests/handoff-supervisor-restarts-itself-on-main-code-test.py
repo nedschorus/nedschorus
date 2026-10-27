@@ -5,15 +5,15 @@ fresh start of itself from there, by os.execv.
 
 Covered: where the restart sits in the cycle; that a dont-restart handoff is
 not restarted on; that a checkout which cannot fast-forward, or an os.execv
-that raises, leaves the supervisor running its loaded code and tells the
+that raises or returns, leaves the supervisor running its loaded code and tells the
 successor why; that the restarted process starts the successor from the
 unconsumed handoff and restarts again at the next one; the restarted
 process's argv, built from the settings for both argument lists the running
 supervisors were started with; that main() keeps accepting every flag in that
 argv; that the lock accepts a holder with this process's own ID; and a real
-os.execv that keeps the process ID.
+os.execv that keeps the process ID and lets the restarted program claim the lock.
 
-Run: python3 nc-systems/handoff/tests/handoff-supervisor-restarts-itself-on-main-code-at-each-session-handoff-test.py
+Run: python3 nc-systems/handoff/tests/handoff-supervisor-restarts-itself-on-main-code-test.py
 
 Prints one line per case and exits non-zero if any case fails.
 """
@@ -52,7 +52,7 @@ git_in = fixture.git_in
 StubLaunchedSession = fixture.StubLaunchedSession
 supervisor_names_replaced = fixture.supervisor_names_replaced
 
-RESTART_FLAG = "--started-by-handoff-supervisor-restart-of-itself-on-main-code"
+RESTART_FLAG = "--started-by-handoff-supervisor-restarting-itself-on-main-code"
 
 
 class ProcessReplaced(BaseException):
@@ -66,7 +66,7 @@ class StubIgnitionPlan:
 
 def supervise_one_handoff(workspace: Path, case: str, own_checkout_sync_report: str,
                           exec_raises=None, handoff_extra: str = "", answer: str = "y",
-                          restarts: bool = True):
+                          restarts: bool = True, exec_returns: bool = False):
     """Run the loop through one handoff with the restart's git sync and os.execv
     stubbed. The first session writes the handoff; a successor, if launched,
     exits cleanly so the loop stops."""
@@ -100,6 +100,8 @@ def supervise_one_handoff(workspace: Path, case: str, own_checkout_sync_report: 
         result.state_at_exec = supervisor.read_supervisor_state(settings.state_path)
         if exec_raises is not None:
             raise exec_raises
+        if exec_returns:
+            return
         raise ProcessReplaced()
 
     def carry_over(settings_, retiring, fields, generation):
@@ -143,7 +145,7 @@ def run_restart_placement_cases(workspace: Path):
         check(f"RESTART ({case}): the console says it is restarting, before the exec",
               "restarting on main's code as process" in run.console, run.console[-400:])
     check("RESTART: the replacing argv is the one built from the settings",
-          run.exec_argv == supervisor.handoff_supervisor_restart_arguments(run.settings),
+          run.exec_argv == supervisor.handoff_supervisor_restart_arguments_build(run.settings),
           str(run.exec_argv))
 
     run = supervise_one_handoff(workspace, "neverrestarts",
@@ -167,20 +169,23 @@ def run_dont_restart_case(workspace: Path):
 
 
 def run_restart_failure_cases(workspace: Path):
-    for case, report, exec_raises, expected in (
+    for case, report, exec_raises, exec_returns, expected in (
             ("cannotfastforward",
              "launch-time-git-sync: main left as is — 2 uncommitted tracked change(s)",
-             None, "launch-time-git-sync: main left as is — 2 uncommitted tracked change(s)"),
+             None, False, "launch-time-git-sync: main left as is — 2 uncommitted tracked change(s)"),
             ("behindandahead",
              "launch-time-git-sync: seat-branch is 3 ahead of main and 4 behind",
-             None, "launch-time-git-sync: seat-branch is 3 ahead of main and 4 behind"),
+             None, False, "launch-time-git-sync: seat-branch is 3 ahead of main and 4 behind"),
             ("gitfailure",
              "launch-time-git-sync: main left as is — git failed\nRerun it; if it fails, stop.",
-             None, "launch-time-git-sync: main left as is — git failed"),
+             None, False, "launch-time-git-sync: main left as is — git failed"),
             ("execraises", "launch-time-git-sync: main is current with main",
-             PermissionError(13, "Permission denied"),
-             "os.execv failed: PermissionError: [Errno 13] Permission denied")):
-        run = supervise_one_handoff(workspace, case, report, exec_raises=exec_raises)
+             PermissionError(13, "Permission denied"), False,
+             "os.execv failed: PermissionError: [Errno 13] Permission denied"),
+            ("execreturns", "launch-time-git-sync: main is current with main", None, True,
+             "os.execv returned without replacing the process")):
+        run = supervise_one_handoff(workspace, case, report, exec_raises=exec_raises,
+                                    exec_returns=exec_returns)
         check(f"NOT RESTARTED ({case}): the supervisor carries on and starts the successor itself",
               not run.replaced and run.events[-2:] == ["carry over", "launch"]
               and len(run.prompts) == 2, str(run.events))
@@ -205,7 +210,7 @@ def run_restarted_process_cases(workspace: Path):
         agent="restarted", working_directory=workspace, handoff_directory=handoff_directory,
         agent_command="unused-stub-agent", first_prompt="",
         restarts_itself_on_main_code_at_each_session_handoff=True,
-        started_by_handoff_supervisor_restart_of_itself_on_main_code=True)
+        started_by_handoff_supervisor_restarting_itself_on_main_code=True)
     supervisor.write_supervisor_state(settings.state_path, {
         supervisor.LAUNCHED_SESSION_ID_STATE_KEY: "retiring-session", "generation": 3})
     settings.handoff_path.write_text("restart-counter: 1\nnext-step: carry on\n", encoding="utf-8")
@@ -292,7 +297,7 @@ def run_restart_arguments_cases(workspace: Path):
         # As scripts/launch-claude-ubuntu starts a supervisor, the --cd value unexpanded.
         exit_code, settings = settings_main_builds(
             ["--agent", "launcherstarted", "--cd", "~/agents/launcherstarted"])
-        argv = supervisor.handoff_supervisor_restart_arguments(settings) if settings else []
+        argv = supervisor.handoff_supervisor_restart_arguments_build(settings) if settings else []
         check("ARGV: a launcher's argument list restarts with the settings' values, the "
               "appended system prompt left to the restarted code's default",
               exit_code == 0 and argv == [
@@ -301,7 +306,7 @@ def run_restart_arguments_cases(workspace: Path):
                   "--handoff-dir", str(handoffs)] + expected_tail, str(argv))
         check("ARGV: main() marks the settings it builds as restarting, and not restarted",
               settings is not None and settings.restarts_itself_on_main_code_at_each_session_handoff
-              and not settings.started_by_handoff_supervisor_restart_of_itself_on_main_code,
+              and not settings.started_by_handoff_supervisor_restarting_itself_on_main_code,
               str(settings))
 
         # As scripts/recover-crashed-seats.py starts one.
@@ -309,7 +314,7 @@ def run_restart_arguments_cases(workspace: Path):
             ["--agent", "recoverystarted", "--cd", str(home / "agents" / "recoverystarted"),
              "--handoff-dir", str(handoffs), "--resume-session-id", "6282ec41",
              "--first-prompt-file", str(recovery_prompt)])
-        argv = supervisor.handoff_supervisor_restart_arguments(settings) if settings else []
+        argv = supervisor.handoff_supervisor_restart_arguments_build(settings) if settings else []
         check("ARGV: a recovery's argument list restarts without --resume-session-id or "
               "--first-prompt-file, which describe its first start only",
               exit_code == 0 and argv == [
@@ -323,14 +328,14 @@ def run_restart_arguments_cases(workspace: Path):
             ["--agent", "recoverystarted", "--cd", str(workspace), "--handoff-dir", str(handoffs),
              "--agent-command", "claude", "--agent-update-timeout-seconds", "7",
              "--agent-append-system-prompt-file", str(prompt_file), RESTART_FLAG])
-        argv = supervisor.handoff_supervisor_restart_arguments(settings) if settings else []
+        argv = supervisor.handoff_supervisor_restart_arguments_build(settings) if settings else []
         check("ARGV: a given appended-system-prompt file and update timeout are passed on",
               argv[-6:] == ["claude", "--agent-update-timeout-seconds", "7",
                             "--agent-append-system-prompt-file", str(prompt_file), RESTART_FLAG],
               str(argv))
         check("ARGV: the restart flag is read into the settings, and passed on once",
               settings is not None
-              and settings.started_by_handoff_supervisor_restart_of_itself_on_main_code
+              and settings.started_by_handoff_supervisor_restarting_itself_on_main_code
               and argv.count(RESTART_FLAG) == 1, str(argv))
 
 
@@ -412,10 +417,22 @@ def run_real_exec_cases(workspace: Path):
     and the program that replaces the process has the same process ID."""
     root = workspace / "real-exec"
     root.mkdir()
-    stub = root / "stub-handoff-supervisor.py"
+    # Named as the supervisor, so a lock check that reads its command line takes it for one.
+    stub = root / "replacing-program" / "handoff-supervisor.py"
+    stub.parent.mkdir()
     stub.write_text(
-        "import json, os, sys\n"
-        "print('REPLACED ' + json.dumps({'pid': os.getpid(), 'argv': sys.argv[1:]}))\n",
+        "import importlib.util, json, os, sys\n"
+        "from pathlib import Path\n"
+        f"spec = importlib.util.spec_from_file_location('supervisor', {str(SCRIPT_PATH)!r})\n"
+        "supervisor = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(supervisor)\n"
+        "try:\n"
+        "    supervisor.claim_supervisor_lock(Path(os.environ['RESTART_TEST_LOCK_PATH']))\n"
+        "    claim = 'claimed'\n"
+        "except Exception as error:\n"
+        "    claim = f'refused: {error}'\n"
+        "print('REPLACED ' + json.dumps({'pid': os.getpid(), 'argv': sys.argv[1:], "
+        "'claim': claim}))\n",
         encoding="utf-8")
     program = root / "restart-once.py"
     program.write_text(
@@ -427,6 +444,7 @@ def run_real_exec_cases(workspace: Path):
         "supervisor.REPOSITORY_ROOT = Path(sys.argv[1])\n"
         "supervisor.HANDOFF_SUPERVISOR_SCRIPT_PATH = Path(sys.argv[2])\n"
         "print(f'PID {os.getpid()}')\n"
+        "lock = supervisor.claim_supervisor_lock(Path(os.environ['RESTART_TEST_LOCK_PATH']))\n"
         "settings = supervisor.SupervisorSettings(\n"
         "    agent='realexec', working_directory=Path(sys.argv[1]),\n"
         "    handoff_directory=Path(sys.argv[1]), agent_command='claude', first_prompt='')\n"
@@ -435,8 +453,10 @@ def run_real_exec_cases(workspace: Path):
         encoding="utf-8")
 
     checkout, tip = a_checkout_behind_origin_main(root)
+    environment = dict(os.environ, RESTART_TEST_LOCK_PATH=str(root / "realexec-supervisor.lock"))
     finished = subprocess.run([sys.executable, str(program), str(checkout), str(stub)],
-                              capture_output=True, text=True, check=False, timeout=120)
+                              capture_output=True, text=True, check=False, timeout=120,
+                              env=environment)
     lines = finished.stdout.splitlines()
     process_id = next((line.split()[1] for line in lines if line.startswith("PID ")), None)
     replaced = next((json.loads(line[len("REPLACED "):]) for line in lines
@@ -449,13 +469,18 @@ def run_real_exec_cases(workspace: Path):
           and replaced["argv"][-1] == RESTART_FLAG
           and "--resume-session-id" not in replaced["argv"],
           finished.stdout + finished.stderr)
+    check("REAL EXEC: the replacing program claims the lock the replaced process held, "
+          "because the exec released the flock and the lock file names its own process ID",
+          replaced is not None and replaced["claim"] == "claimed",
+          finished.stdout + finished.stderr)
     check("REAL EXEC: what the process printed before the exec reaches its output",
           "restarting on main's code as process" in finished.stdout, finished.stdout)
 
     git_in(["reset", "--quiet", "--hard", "HEAD~1"], checkout)
     (checkout / "tracked.txt").write_text("edited\n", encoding="utf-8")
     finished = subprocess.run([sys.executable, str(program), str(checkout), str(stub)],
-                              capture_output=True, text=True, check=False, timeout=120)
+                              capture_output=True, text=True, check=False, timeout=120,
+                              env=environment)
     check("REAL EXEC: a checkout with an uncommitted tracked change is left as is, and the "
           "process is not replaced but told why",
           "REPLACED " not in finished.stdout

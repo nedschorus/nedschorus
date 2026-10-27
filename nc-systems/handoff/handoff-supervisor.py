@@ -18,7 +18,7 @@ The cycle, per reincarnation:
      carries out the steps below at startup, as after a reboot, where a
      dialog that cannot be extracted starts the successor from the handoff's
      next-step alone. Started with
-     --started-by-handoff-supervisor-restart-of-itself-on-main-code, the fresh
+     --started-by-handoff-supervisor-restarting-itself-on-main-code, the fresh
      process prints that the restart worked. When the checkout cannot be
      fast-forwarded, or os.execv fails, this process prints why, carries on
      with the code it started with, and the successor's initial agent
@@ -963,8 +963,8 @@ def run_git_here(arguments: list, working_directory: Path, timeout: int = 60):
 
 
 # The handoff-supervisor restarts itself on main's code only after a report holding one of these.
-LAUNCH_TIME_GIT_SYNC_CURRENT_WITH_MAIN = " is current with main"
-LAUNCH_TIME_GIT_SYNC_FAST_FORWARDED_TO_MAIN = " fast-forwarded to main"
+LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_CURRENT_WITH_MAIN = " is current with main"
+LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_FAST_FORWARDED_TO_MAIN = " fast-forwarded to main"
 
 
 def launch_time_git_sync(working_directory: Path) -> str:
@@ -1045,7 +1045,7 @@ def launch_time_git_sync(working_directory: Path) -> str:
         if is_ancestor("origin/main", "HEAD"):
             ahead = answer(["rev-list", "--count", "origin/main..HEAD"], 30)
             if ahead == "0":
-                return f"launch-time-git-sync: {branch}{LAUNCH_TIME_GIT_SYNC_CURRENT_WITH_MAIN}{fetch_note}"
+                return f"launch-time-git-sync: {branch}{LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_CURRENT_WITH_MAIN}{fetch_note}"
             return (f"launch-time-git-sync: {branch} is {ahead} commit(s) ahead of main and has all of "
                     f"it — nothing to pull{fetch_note}")
 
@@ -1066,9 +1066,9 @@ def launch_time_git_sync(working_directory: Path) -> str:
     try:
         tip = answer(["rev-parse", "--short", "HEAD"], 15)
     except git.GitCommandFailed as error:
-        return (f"launch-time-git-sync: {branch}{LAUNCH_TIME_GIT_SYNC_FAST_FORWARDED_TO_MAIN} (its new commit could not be "
+        return (f"launch-time-git-sync: {branch}{LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_FAST_FORWARDED_TO_MAIN} (its new commit could not be "
                 f"read: {error}){fetch_note}\n{launch_time_git_sync_git_failure_next_steps(error)}")
-    return f"launch-time-git-sync: {branch}{LAUNCH_TIME_GIT_SYNC_FAST_FORWARDED_TO_MAIN} ({tip}){fetch_note}"
+    return f"launch-time-git-sync: {branch}{LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_FAST_FORWARDED_TO_MAIN} ({tip}){fetch_note}"
 
 
 class OverviewCheckGitFailure(Exception):
@@ -1755,7 +1755,7 @@ class SupervisorSettings:
     adopted_session: Optional[AdoptedSession] = None
     # Only main() sets this: os.execv would replace any other caller's process, such as a test's.
     restarts_itself_on_main_code_at_each_session_handoff: bool = False
-    started_by_handoff_supervisor_restart_of_itself_on_main_code: bool = False
+    started_by_handoff_supervisor_restarting_itself_on_main_code: bool = False
 
     @property
     def handoff_path(self) -> Path:
@@ -1821,8 +1821,8 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
 
 
 HANDOFF_SUPERVISOR_SCRIPT_PATH = Path(__file__).resolve()
-STARTED_BY_HANDOFF_SUPERVISOR_RESTART_OF_ITSELF_ON_MAIN_CODE_FLAG = (
-    "--started-by-handoff-supervisor-restart-of-itself-on-main-code")
+STARTED_BY_HANDOFF_SUPERVISOR_RESTARTING_ITSELF_ON_MAIN_CODE_FLAG = (
+    "--started-by-handoff-supervisor-restarting-itself-on-main-code")
 HANDOFF_SUPERVISOR_NOT_RESTARTED_ON_MAIN_CODE_TEMPLATE = (
     "The handoff-supervisor of this agent-seat did not restart itself on main's current "
     "code at this session-handoff, so it still runs the code it started with, and changes "
@@ -1832,7 +1832,7 @@ HANDOFF_SUPERVISOR_NOT_RESTARTED_ON_MAIN_CODE_TEMPLATE = (
 )
 
 
-def handoff_supervisor_restart_arguments(settings: SupervisorSettings) -> list:
+def handoff_supervisor_restart_arguments_build(settings: SupervisorSettings) -> list:
     """The argv of the restarted handoff-supervisor, built from the settings so that
     flags describing only the first start, such as --resume-session-id, are left out."""
     # Main's code parses this argv, so each flag name here must stay accepted by main().
@@ -1848,7 +1848,7 @@ def handoff_supervisor_restart_arguments(settings: SupervisorSettings) -> list:
     if (settings.appended_system_prompt_file
             and settings.appended_system_prompt_file != str(DEFAULT_APPENDED_SYSTEM_PROMPT_PATH)):
         arguments += ["--agent-append-system-prompt-file", settings.appended_system_prompt_file]
-    return arguments + [STARTED_BY_HANDOFF_SUPERVISOR_RESTART_OF_ITSELF_ON_MAIN_CODE_FLAG]
+    return arguments + [STARTED_BY_HANDOFF_SUPERVISOR_RESTARTING_ITSELF_ON_MAIN_CODE_FLAG]
 
 
 def replace_this_process_with(arguments: list) -> None:
@@ -1863,10 +1863,10 @@ def handoff_supervisor_restart_itself_on_main_code_or_return_failure_report(
     report = launch_time_git_sync(REPOSITORY_ROOT)
     print(f"handoff-supervisor: its own checkout {REPOSITORY_ROOT}: {report}")
     first_line = report.splitlines()[0]
-    if (LAUNCH_TIME_GIT_SYNC_FAST_FORWARDED_TO_MAIN not in first_line
-            and LAUNCH_TIME_GIT_SYNC_CURRENT_WITH_MAIN not in first_line):
+    if (LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_FAST_FORWARDED_TO_MAIN not in first_line
+            and LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_CURRENT_WITH_MAIN not in first_line):
         return first_line
-    arguments = handoff_supervisor_restart_arguments(settings)
+    arguments = handoff_supervisor_restart_arguments_build(settings)
     print(f"handoff-supervisor: restarting on main's code as process {os.getpid()}: "
           f"{shlex.join(arguments)}")
     # Exec discards what the buffers still hold.
@@ -1907,7 +1907,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
 
     print(f"handoff-supervisor: {settings.agent} in {settings.working_directory}")
     print(f"handoff-supervisor: watching {settings.handoff_path}")
-    if settings.started_by_handoff_supervisor_restart_of_itself_on_main_code:
+    if settings.started_by_handoff_supervisor_restarting_itself_on_main_code:
         print(f"handoff-supervisor: restarted on main's code as process {os.getpid()}, "
               f"from {HANDOFF_SUPERVISOR_SCRIPT_PATH}")
     not_restarted_on_main_code_report = ""
@@ -2208,7 +2208,7 @@ def main(argv=None) -> int:
         help="process id of the already-running session to adopt; required with --adopt-session-id",
     )
     parser.add_argument(
-        STARTED_BY_HANDOFF_SUPERVISOR_RESTART_OF_ITSELF_ON_MAIN_CODE_FLAG, action="store_true",
+        STARTED_BY_HANDOFF_SUPERVISOR_RESTARTING_ITSELF_ON_MAIN_CODE_FLAG, action="store_true",
         help="set only by a handoff-supervisor restarting itself on main's code at a "
              "session-handoff; prints at startup that the restart worked",
     )
@@ -2290,8 +2290,8 @@ def main(argv=None) -> int:
         appended_system_prompt_file=appended_system_prompt_file,
         adopted_session=adopted,
         restarts_itself_on_main_code_at_each_session_handoff=True,
-        started_by_handoff_supervisor_restart_of_itself_on_main_code=(
-            arguments.started_by_handoff_supervisor_restart_of_itself_on_main_code),
+        started_by_handoff_supervisor_restarting_itself_on_main_code=(
+            arguments.started_by_handoff_supervisor_restarting_itself_on_main_code),
     )
 
     try:
