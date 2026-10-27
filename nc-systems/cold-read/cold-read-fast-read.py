@@ -1151,6 +1151,14 @@ def gemini_ultra_quota_reset_time(error_line: str) -> str:
     return f"{hours + 'h' if hours else ''}{minutes + 'm' if minutes else ''}"
 
 
+def gemini_quota_refusal(error_line: str) -> str:
+    """Gemini's quota refusal in its own words, with the reset time it gave, so
+    the reader needs no term of ours for the sign-in whose quota ran out."""
+    reset = gemini_ultra_quota_reset_time(error_line)
+    return (f'Gemini refused with "{GEMINI_ULTRA_QUOTA_TEXT}"; '
+            + (f"the quota resets in {reset}" if reset else "Gemini gave no reset time"))
+
+
 def ultra_quota_line(error_line: str) -> str:
     """The stderr line telling the user that Ultra ran out and Sonnet read the document."""
     reset = gemini_ultra_quota_reset_time(error_line)
@@ -1170,9 +1178,7 @@ def fast_clarify_cell_failure_cause(launcher: pathlib.Path, exit_code: int,
                 f"user can raise it at {GEMINI_SPENDING_CAP_PAGE}")
     quota_line = gemini_ultra_quota_error_line(launcher, output)
     if quota_line:
-        reset = gemini_ultra_quota_reset_time(quota_line)
-        return (f"exit {exit_code}: the Ultra sign-in's Gemini quota is used up; "
-                + (f"it resets in {reset}" if reset else "Gemini gave no reset time"))
+        return f"exit {exit_code}: {gemini_quota_refusal(quota_line)}"
     cause_prefix = f"{launcher.stem}: {agy_cell.common.CAUSE_PHRASE} "
     lines = [line.strip() for line in output.splitlines() if line.strip()]
     causes = [line[len(cause_prefix):] for line in lines if line.startswith(cause_prefix)]
@@ -1305,8 +1311,9 @@ def main() -> int:
                 break
             quota_error_line = gemini_ultra_quota_error_line(AGY_CELL_LAUNCHER, output)
             if quota_error_line:
-                print(f"{PROGRAM}: the Ultra sign-in's Gemini quota is used up; not "
-                      "retried, because a retry fails the same way until the reset.",
+                print(f"{PROGRAM}: {gemini_quota_refusal(quota_error_line)}. This read "
+                      "does not retry Gemini, which would refuse the same way until "
+                      "then; the Sonnet backup reads the document now.",
                       file=sys.stderr)
                 break
             if attempt < FAST_READ_ATTEMPTS:

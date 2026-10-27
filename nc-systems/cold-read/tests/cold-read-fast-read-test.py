@@ -718,7 +718,7 @@ with tempfile.TemporaryDirectory() as scratch:
           "the Ultra sign-in's quota",
           result.returncode == 1 and result.stdout.startswith("FAILED")
           and "stub agy: the gemini cause" in result.stdout
-          and "Gemini quota is used up" not in result.stdout,
+          and "Gemini refused with" not in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}")
 
     repository = build_scratch_repository(scratch)
@@ -737,7 +737,9 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and result.stdout == f"{suggestions}\n"
           and launches_counted(counter) == 1
           and launches_counted(claude_counter_path(counter)) == 1
-          and "fails the same way until the reset" in result.stderr,
+          and ('Gemini refused with "Individual quota reached"; the quota resets in 2h27m. '
+               "This read does not retry Gemini") in result.stderr
+          and "the Sonnet backup reads the document now." in result.stderr,
           f"exit {result.returncode}; stdout={result.stdout!r}; "
           f"launches={launches_counted(counter)}, "
           f"claude launches={launches_counted(claude_counter_path(counter))}; "
@@ -751,8 +753,8 @@ with tempfile.TemporaryDirectory() as scratch:
           and stderr_lines[stderr_lines.index(ULTRA_QUOTA_LINE) + 1:][:1] == [ULTRA_QUOTA_RELAY_LINE],
           repr(result.stderr))
     check("the Sonnet backup line in the report names the Ultra quota and its reset time",
-          len(quota_lines) > 1 and "Ultra sign-in's Gemini quota is used up" in quota_lines[1]
-          and "it resets in 2h27m" in quota_lines[1],
+          len(quota_lines) > 1
+          and 'Gemini refused with "Individual quota reached"; the quota resets in 2h27m' in quota_lines[1],
           repr(quota_lines[:2]))
 
     repository = build_scratch_repository(scratch)
@@ -784,7 +786,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("when the Sonnet backup fails after the quota, no line says Sonnet read the "
           "document, and FAILED names the quota and its reset time",
           result.returncode == 1 and result.stdout.startswith("FAILED")
-          and "Ultra sign-in's Gemini quota is used up; it resets in 2h27m" in result.stdout
+          and 'Gemini refused with "Individual quota reached"; the quota resets in 2h27m' in result.stdout
           and "Ultra quota used up" not in result.stderr
           and "Copy the line above" not in result.stderr,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
