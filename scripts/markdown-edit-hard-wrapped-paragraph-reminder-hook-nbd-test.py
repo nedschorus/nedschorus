@@ -10,20 +10,28 @@ installs the pinned file. The shared Markdown parser module's own suite checks
 that a missing markdown-it-py is installed; here one case checks that the hook reports a failed install as a non-blocking error. The hook's
 cases run the hook as Claude Code does, as a subprocess reading a PostToolUse
 payload on stdin, against a throwaway repository under a temporary directory
-with a .gitignore that ignores one directory.
+with a .gitignore that ignores one directory. The join's races and failures that a
+subprocess cannot bring about on cue are brought about by calling the hook's functions
+in this process, with a holder of the lock, a changed file or a failing os.replace put in
+their way.
 
 Every git call, the hook's included, runs with the variables that redirect git
 (GIT_DIR and its kin) removed, and the scratch repository is checked to be a
 repository at its own path before any case writes to it.
 """
 
+import contextlib
+import fcntl
 import importlib.util
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 # Before anything runs git: a run started with GIT_DIR set must still build this
@@ -339,6 +347,98 @@ else:
     print("the detector's cases were not run: markdown-it-py is missing")
 
 
+# ---------------------------------------------------------------------------
+# The join, called directly.
+# ---------------------------------------------------------------------------
+
+if PARSER_AVAILABLE:
+    for case_name, text in BROKEN_CASES:
+        ranges = hook.markdown_broken_paragraph_line_ranges(text)
+        try:
+            joined = hook.text_with_lines_joined(text, hook.soft_line_breaks_to_join(text, ranges))
+        except hook.JoinNotMade as refusal:
+            check(f"joined or refused: {case_name}", "line breaks the parser can place" in str(refusal),
+                  str(refusal))
+            continue
+        check(f"joined, parsing as the same Markdown and broken no more: {case_name}",
+              hook.markdown_structure_with_line_breaks_as_spaces(joined)
+              == hook.markdown_structure_with_line_breaks_as_spaces(text)
+              and not hook.markdown_has_hard_wrapped_paragraph(joined)
+              and joined.count("\n") < text.count("\n"), repr(joined))
+
+    for case_name, text, expected in (
+            ("a hard break by two trailing spaces is kept, the soft break after it joined",
+             "First line  \nsecond line\nthird line\n", "First line  \nsecond line third line\n"),
+            ("a trailing <br> is kept, the soft break after it joined",
+             "First<br>\nsecond\nthird\n", "First<br>\nsecond third\n"),
+            ("a trailing backslash is kept", "One\\\ntwo\nthree\n", "One\\\ntwo three\n"),
+            ("a list item's continuation indentation and a trailing tab and space go",
+             "- The first half \t\n    and the second half.\n", "- The first half and the second half.\n"),
+            ("front matter stays as it is", "---\ntitle: x\nmore: y\n---\n\nOne\ntwo\n",
+             "---\ntitle: x\nmore: y\n---\n\nOne two\n")):
+        joined = hook.text_with_lines_joined(
+            text, hook.soft_line_breaks_to_join(text, hook.markdown_broken_paragraph_line_ranges(text)))
+        check(f"join: {case_name}", joined == expected, repr(joined))
+
+    try:
+        hook.soft_line_breaks_to_join("\nAn image ![alt\ntext](x.png) here\nand on.\n", [(1, 4)])
+        image_refusal = "no refusal"
+    except hook.JoinNotMade as refusal:
+        image_refusal = str(refusal)
+    check("a paragraph whose image holds a line break is refused, naming its lines and counts",
+          image_refusal == "the paragraph on lines 2 to 4 has 2 line ends but 1 line breaks the parser "
+          "can place, as when an image or a code span holds a line break", image_refusal)
+    two_paragraphs = "A\nB\n\nWhole.\n\nC\nD\nE\n"
+    only_second = hook.soft_line_breaks_to_join(two_paragraphs, [(5, 8)])
+    check("only the paragraphs in the ranges given are joined", only_second == [5, 6], only_second)
+    check("the structure compared keeps a code block's line breaks",
+          hook.markdown_structure_with_line_breaks_as_spaces("    a\n    b\n")
+          != hook.markdown_structure_with_line_breaks_as_spaces("    a b\n"))
+    check("the structure compared keeps the break between two paragraphs",
+          hook.markdown_structure_with_line_breaks_as_spaces("a\n\nb\n")
+          != hook.markdown_structure_with_line_breaks_as_spaces("a b\n"))
+    check("the structure compared ignores where a block sits",
+          hook.markdown_structure_with_line_breaks_as_spaces("# H\n\na\nb\n")
+          == hook.markdown_structure_with_line_breaks_as_spaces("# H\n\na b\n"))
+
+for case_name, tool_name, tool_input, tool_response, expected in (
+        ("a Write's content", "Write", {"content": "x"}, {}, ["x"]),
+        ("a Write without content", "Write", {}, {}, []),
+        ("an Edit whose tool_response is not an object", "Edit", {}, None, []),
+        ("an Edit whose tool_response lacks replaceAll", "Edit", {},
+         {"originalFile": "a", "oldString": "a", "newString": "b"}, []),
+        ("an Edit whose tool_response lacks newString", "Edit", {},
+         {"originalFile": "a", "oldString": "a", "replaceAll": False}, []),
+        ("an Edit whose tool_response lacks oldString", "Edit", {},
+         {"originalFile": "a", "newString": "b", "replaceAll": False}, []),
+        ("an Edit with an empty oldString, which writes newString as the file", "Edit", {},
+         {"originalFile": None, "oldString": "", "newString": "new", "replaceAll": False}, ["new"]),
+        ("an Edit whose originalFile is missing", "Edit", {},
+         {"oldString": "a", "newString": "b", "replaceAll": False}, []),
+        ("an Edit replacing the first copy", "Edit", {},
+         {"originalFile": "a a", "oldString": "a", "newString": "b", "replaceAll": False}, ["b a"]),
+        ("a replace_all Edit", "Edit", {},
+         {"originalFile": "a a", "oldString": "a", "newString": "b", "replaceAll": True}, ["b b"]),
+        ("an Edit deleting text that ends without a newline, with or without the newline after it",
+         "Edit", {}, {"originalFile": "x\ny\nz", "oldString": "y", "newString": "", "replaceAll": False},
+         ["x\n\nz", "x\nz"]),
+        ("an Edit deleting text that ends in a newline", "Edit", {},
+         {"originalFile": "x\ny\nz", "oldString": "y\n", "newString": "", "replaceAll": False}, ["x\nz"]),
+        ("an Edit whose oldString is not in originalFile", "Edit", {},
+         {"originalFile": "x", "oldString": "y", "newString": "z", "replaceAll": False}, [])):
+    got = hook.texts_the_tool_wrote(tool_name, tool_input, tool_response)
+    check(f"texts the tool wrote: {case_name}", got == expected, got)
+
+check("the joins are described as the agent reads them",
+      hook.joined_lines_description([(1, 2, 1), (5, 7, 4)]) == "lines 1 to 2 into line 1; lines 5 to 7 into line 4")
+many_joins = [(3 * n + 1, 3 * n + 2, 2 * n + 1) for n in range(hook.JOINS_DESCRIBED_AT_MOST + 2)]
+many_described = hook.joined_lines_description(many_joins)
+check("past JOINS_DESCRIBED_AT_MOST joins, only that many are named, then how many more",
+      many_described == hook.joined_lines_description(many_joins[:hook.JOINS_DESCRIBED_AT_MOST]) + "; and 2 more"
+      and hook.joined_lines_description(many_joins[:hook.JOINS_DESCRIBED_AT_MOST]).count("lines ")
+      == hook.JOINS_DESCRIBED_AT_MOST, many_described)
+
+
 class AddedLineNumbersThatCanOnlyBeLookedUp:
     """Added line numbers a filter may test lines against but not walk through:
     walking them for every broken paragraph costs paragraphs times added lines."""
@@ -528,7 +628,26 @@ def agent_text(result):
     return parsed.get("hookSpecificOutput", {}).get("additionalContext", "")
 
 
+def reminder_with_reason(path, reason_start):
+    """The start of the reminder whose last line says the hook did not join because of a
+    reason starting with reason_start."""
+    return (hook.REMINDER_MESSAGE.format(path=path)
+            + hook.JOIN_NOT_MADE_LINE.format(reason=reason_start))[:-1]
+
+
+def gives_reminder_with_reason(result, path, reason_start):
+    text = agent_text(result)
+    return (result.returncode == 0 and result.stderr == ""
+            and text.startswith(reminder_with_reason(path, reason_start)) and text.endswith("."))
+
+
+def gives_reminder_as_today(result, path):
+    return (result.returncode == 0 and result.stderr == ""
+            and agent_text(result) == hook.REMINDER_MESSAGE.format(path=path))
+
+
 BROKEN_TEXT = "# Notes\n\nThe first half of a sentence\nand the second half.\n"
+BROKEN_TEXT_JOINED = "# Notes\n\nThe first half of a sentence and the second half.\n"
 CLEAN_TEXT = "# Notes\n\nA whole paragraph on one line.\n"
 
 with tempfile.TemporaryDirectory() as temporary_directory:
@@ -547,17 +666,18 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         result = write_then_run(checkout, checkout / "docs" / "broken.md", BROKEN_TEXT)
         reply = json.loads(result.stdout) if result.stdout.strip() else {}
         text = agent_text(result)
-        check("a Write leaving a broken paragraph gets one PostToolUse reminder, exit 0",
+        check("a Write leaving a broken paragraph in an unguarded file gets the lines joined and "
+              "one PostToolUse message naming them, exit 0",
               result.returncode == 0 and result.stderr == ""
               and reply.get("hookSpecificOutput", {}).get("hookEventName") == "PostToolUse"
-              and text.startswith("markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in docs/broken.md holds")
-              and "every Markdown file you write from now on" in text,
+              and text == hook.JOINED_MESSAGE.format(path="docs/broken.md", tool_name="Write",
+                                                     joins="lines 3 to 4 into line 3")
+              and (checkout / "docs" / "broken.md").read_text(encoding="utf-8") == BROKEN_TEXT_JOINED,
               result.stdout + result.stderr)
-        check("the reminder names no line number",
-              ":3" not in text and "line 3" not in text, text)
 
         edited_file = checkout / "docs" / "edited.md"
-        reminded_prefix = "markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in docs/edited.md"
+        reminded_prefix = hook.JOINED_MESSAGE.format(path="docs/edited.md", tool_name="Edit", joins="lines ")
+        reminded_prefix = reminded_prefix[:reminded_prefix.index("lines ")]
         broken_before = "# Notes\n\nThe first half of a sentence\nand the second part.\n"
         result = edit_then_run(checkout, edited_file, broken_before, "the second part", "the second half")
         check("an Edit that wrote into a broken paragraph gets the reminder",
@@ -623,8 +743,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "gets no reminder", silent(result), result.stdout + result.stderr)
         result = edit_then_run(checkout, edited_file, broken_before, "the second part", "the second half",
                                line_end="\r\n")
-        check("an Edit into a broken paragraph of a CRLF file, whose originalFile holds LF, gets the reminder",
-              agent_text(result).startswith(reminded_prefix), result.stdout + result.stderr)
+        check("an Edit into a broken paragraph of a CRLF file, whose originalFile holds LF, gets the "
+              "reminder, saying the hook joins only lines ending in a bare line feed, and the file kept",
+              gives_reminder_with_reason(result, "docs/edited.md", "the file holds a carriage return")
+              and edited_file.read_bytes() == broken_before.replace("the second part", "the second half")
+              .replace("\n", "\r\n").encode("utf-8"), result.stdout + result.stderr)
         result = edit_then_run(checkout, edited_file, "# Notes\n\nThe first half\nand the second half.\n\nNext.\n",
                                "and the second half.\n\nNext.", "and the second half.\n\nNext, changed.",
                                line_end="\r\n")
@@ -670,6 +793,292 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         check("an Edit whose file on disk lacks the line count its replacements give is reported "
               "as a check not made, exit 1",
               result.returncode == 1 and "line count" in result.stderr, result.stdout + result.stderr)
+
+
+        # ---- the join, as the hook makes it after a tool call
+        several = checkout / "docs" / "several.md"
+        result = write_then_run(checkout, several, "A\nB\n\nWhole.\n\nC\n  D\nE\n")
+        check("a Write with two broken paragraphs has both joined, each named with its lines before "
+              "and after the join",
+              agent_text(result) == hook.JOINED_MESSAGE.format(
+                  path="docs/several.md", tool_name="Write",
+                  joins="lines 1 to 2 into line 1; lines 6 to 8 into line 5")
+              and several.read_text(encoding="utf-8") == "A B\n\nWhole.\n\nC D E\n",
+              result.stdout + result.stderr)
+
+        untouched = "# Notes\n\nThe untouched first\nand second.\n\nThe edited part\nand the rest.\n"
+        result = edit_then_run(checkout, edited_file, untouched, "The edited part", "The edited half")
+        check("an Edit gets only the broken paragraph it wrote into joined, the untouched one kept",
+              agent_text(result) == hook.JOINED_MESSAGE.format(
+                  path="docs/edited.md", tool_name="Edit", joins="lines 6 to 7 into line 6")
+              and edited_file.read_text(encoding="utf-8")
+              == "# Notes\n\nThe untouched first\nand second.\n\nThe edited half and the rest.\n",
+              result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file, edited_file.read_text(encoding="utf-8"),
+                               "The edited half", "The edited whole")
+        check("the agent's next Edit, made after reading the joined file again, is judged as any "
+              "other: silent, the file as the Edit left it",
+              silent(result) and "The edited whole and the rest." in edited_file.read_text(encoding="utf-8"),
+              result.stdout + result.stderr)
+
+        result = edit_then_run(checkout, edited_file, "", "", "Made by an Edit\nwith no old_string.\n")
+        check("an Edit with an empty old_string, which makes the file, gets its lines joined",
+              agent_text(result) == hook.JOINED_MESSAGE.format(
+                  path="docs/edited.md", tool_name="Edit", joins="lines 1 to 2 into line 1")
+              and edited_file.read_text(encoding="utf-8") == "Made by an Edit with no old_string.\n",
+              result.stdout + result.stderr)
+
+        new_file = checkout / "docs" / "new-directory" / "made-by-write.md"
+        new_file.parent.mkdir(parents=True)
+        new_file.write_text(BROKEN_TEXT, encoding="utf-8")
+        new_file.chmod(0o640)
+        result = run_hook(payload_for(checkout, "Write", new_file, {"content": BROKEN_TEXT}))
+        check("a Write that made a new file in a new directory gets it joined, its permission bits "
+              "kept and no temporary file left beside it",
+              agent_text(result).startswith(reminded_prefix.replace("docs/edited.md", "docs/new-directory/made-by-write.md"))
+              and new_file.read_text(encoding="utf-8") == BROKEN_TEXT_JOINED
+              and (new_file.stat().st_mode & 0o777) == 0o640
+              and sorted(entry.name for entry in new_file.parent.iterdir()) == ["made-by-write.md"],
+              result.stdout + result.stderr)
+
+        several.write_text("A\nB\n", encoding="utf-8")
+        payload = payload_for(checkout, "Write", several, {"content": "A\nB\n"})
+        first, second = run_hook(payload), run_hook(payload)
+        check("the same Write's hook run twice on one file: the first joins it, the second finds "
+              "no broken paragraph and is silent, the file left joined",
+              agent_text(first) == hook.JOINED_MESSAGE.format(path="docs/several.md", tool_name="Write",
+                                                              joins="lines 1 to 2 into line 1")
+              and silent(second) and several.read_text(encoding="utf-8") == "A B\n",
+              first.stdout + second.stdout)
+
+        concurrent = checkout / "docs" / "concurrent.md"
+        concurrent.write_text(BROKEN_TEXT, encoding="utf-8")
+        payload_text = json.dumps(payload_for(checkout, "Write", concurrent, {"content": BROKEN_TEXT}))
+        runs = [subprocess.Popen([sys.executable, str(HOOK_PATH)], stdin=subprocess.PIPE,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                 env=CLEAN_ENVIRONMENT) for _ in range(4)]
+        outputs = [run.communicate(payload_text) for run in runs]
+        texts = [agent_text(subprocess.CompletedProcess([], 0, out, err)) for out, err in outputs]
+        joined_runs = [text for text in texts if text == hook.JOINED_MESSAGE.format(
+            path="docs/concurrent.md", tool_name="Write", joins="lines 3 to 4 into line 3")]
+        # A run that reads the file after the join finds nothing broken and is silent; one that
+        # read it before is refused, by the lock and the read again under it.
+        refused_runs = [text for text in texts if text == "" or text.startswith(
+            hook.REMINDER_MESSAGE.format(path="docs/concurrent.md") + "\nThis hook joins such lines itself")]
+        check("four runs of the hook started together on one file: one joins it, the other three are "
+              "silent or give the reminder with a reason, and the file is joined once",
+              len(joined_runs) == 1 and len(refused_runs) == 3
+              and all(run.returncode == 0 and err == "" for run, (out, err) in zip(runs, outputs))
+              and concurrent.read_text(encoding="utf-8") == BROKEN_TEXT_JOINED,
+              texts)
+
+        for guarded_name in ("CLAUDE.md", "docs/agents/guarded-page.md", "docs/guarded-prompt.md",
+                             ".claude/guarded-notes.md", "docs/guarded-design.md"):
+            guarded_file = checkout / guarded_name
+            result = write_then_run(checkout, guarded_file, BROKEN_TEXT)
+            check(f"a Write of {guarded_name}, which the instruction-file guard protects, gets the "
+                  f"reminder as today and the file kept",
+                  gives_reminder_as_today(result, guarded_name)
+                  and guarded_file.read_text(encoding="utf-8") == BROKEN_TEXT,
+                  result.stdout + result.stderr)
+        check("the reminder names no line number",
+              ":3" not in hook.REMINDER_MESSAGE and "line 3" not in hook.REMINDER_MESSAGE)
+        for exempt_name in ("docs/drafts/draft-design.md", "docs/agents/queue/queued-prompt.md"):
+            exempt_file = checkout / exempt_name
+            result = write_then_run(checkout, exempt_file, BROKEN_TEXT)
+            check(f"a Write of {exempt_name}, which the instruction-file guard leaves open, gets "
+                  f"its lines joined", exempt_file.read_text(encoding="utf-8") == BROKEN_TEXT_JOINED,
+                  result.stdout + result.stderr)
+
+        link_target = checkout / "docs" / "link-target.md"
+        link_target.write_text(BROKEN_TEXT, encoding="utf-8")
+        link = checkout / "docs" / "link.md"
+        link.symlink_to(link_target)
+        result = run_hook(payload_for(checkout, "Write", link, {"content": BROKEN_TEXT}))
+        check("a Write through a symbolic link gets the reminder with its reason, link and target kept",
+              gives_reminder_with_reason(result, "docs/link-target.md", "the file is a symbolic link")
+              and link.is_symlink() and link_target.read_text(encoding="utf-8") == BROKEN_TEXT,
+              result.stdout + result.stderr)
+
+        changed_since = checkout / "docs" / "changed-since.md"
+        changed_since.write_text(BROKEN_TEXT + "Added by another program.\n", encoding="utf-8")
+        result = run_hook(payload_for(checkout, "Write", changed_since, {"content": BROKEN_TEXT}))
+        check("a file changed since the Write wrote it gets the reminder with its reason, the file kept",
+              gives_reminder_with_reason(result, "docs/changed-since.md",
+                                         "the file on disk is not the text the tool's payload says it wrote")
+              and changed_since.read_text(encoding="utf-8") == BROKEN_TEXT + "Added by another program.\n",
+              result.stdout + result.stderr)
+
+        no_content = checkout / "docs" / "no-content.md"
+        no_content.write_text(BROKEN_TEXT, encoding="utf-8")
+        result = run_hook(payload_for(checkout, "Write", no_content, {}))
+        check("a Write whose payload lacks its content gets the reminder, saying the hook cannot tell "
+              "whether the file changed, the file kept",
+              gives_reminder_with_reason(result, "docs/no-content.md",
+                                         "the tool's payload does not hold the text the tool wrote")
+              and no_content.read_text(encoding="utf-8") == BROKEN_TEXT, result.stdout + result.stderr)
+
+        result = edit_then_run(checkout, edited_file, "# Notes\n\nHe said \u201chi\u201d\nand left.\n",
+                               "\u201chi\u201d", "\"hello\"", written_new_string="\u201chello\u201d")
+        check("an Edit Claude Code wrote with curly quotes where new_string had straight ones, into "
+              "the broken paragraph, gets the reminder with its reason, the file kept",
+              gives_reminder_with_reason(result, "docs/edited.md",
+                                         "the file on disk is not the text the tool's payload says it wrote")
+              and edited_file.read_text(encoding="utf-8") == "# Notes\n\nHe said \u201chello\u201d\nand left.\n",
+              result.stdout + result.stderr)
+
+        image_file = checkout / "docs" / "image.md"
+        image_text = "An image ![alt\ntext](x.png) here\nand on.\n"
+        result = write_then_run(checkout, image_file, image_text)
+        check("a paragraph whose image holds a line break gets the reminder with its reason, the file kept",
+              gives_reminder_with_reason(result, "docs/image.md", "the paragraph on lines 1 to 3 has 2 line ends")
+              and image_file.read_text(encoding="utf-8") == image_text, result.stdout + result.stderr)
+
+        def main_in_process(payload):
+            """Run the hook's main in this process, so a test can put a fault in its way."""
+            stdout = io.StringIO()
+            real_stdin = sys.stdin
+            sys.stdin = io.StringIO(json.dumps(payload))
+            try:
+                with contextlib.redirect_stdout(stdout):
+                    exit_code = hook.main()
+            finally:
+                sys.stdin = real_stdin
+            return subprocess.CompletedProcess([], exit_code, stdout.getvalue(), "")
+
+        guard_check_file = checkout / "docs" / "guard-check-fails.md"
+        real_guard_loader = hook._load_instruction_file_guard
+
+        def guard_that_will_not_load():
+            raise FileNotFoundError("instruction-file-guard.py is gone")
+
+        class GuardWhoseCheckRaises:
+            is_protected = staticmethod(lambda file_path: False)
+            is_reusable_prompt = staticmethod(lambda file_path: False)
+
+            @staticmethod
+            def is_reviewed_document(file_path):
+                raise OSError("resolve failed")
+
+        for case_name, loader, reason in (
+                ("will not load", guard_that_will_not_load,
+                 "it could not tell whether the instruction-file guard protects docs/guard-check-fails.md: "
+                 "FileNotFoundError: instruction-file-guard.py is gone"),
+                ("raises in a check", lambda: GuardWhoseCheckRaises,
+                 "it could not tell whether the instruction-file guard protects docs/guard-check-fails.md: "
+                 "OSError: resolve failed")):
+            guard_check_file.write_text(BROKEN_TEXT, encoding="utf-8")
+            hook._load_instruction_file_guard = loader
+            try:
+                result = main_in_process(payload_for(checkout, "Write", guard_check_file, {"content": BROKEN_TEXT}))
+            finally:
+                hook._load_instruction_file_guard = real_guard_loader
+            check(f"a guard that {case_name} leaves the file kept and gives the reminder, saying the "
+                  f"guard could not be asked",
+                  result.returncode == 0 and agent_text(result) == (
+                      hook.REMINDER_MESSAGE.format(path="docs/guard-check-fails.md")
+                      + hook.JOIN_NOT_MADE_LINE.format(reason=reason))
+                  and guard_check_file.read_text(encoding="utf-8") == BROKEN_TEXT, result.stdout)
+
+        def join_refusal(action):
+            try:
+                action()
+            except hook.JoinNotMade as refusal:
+                return str(refusal)
+            return "no refusal"
+
+        race_file = checkout / "docs" / "race.md"
+        race_file.write_text(BROKEN_TEXT, encoding="utf-8")
+        real_structure = hook.markdown_structure_with_line_breaks_as_spaces
+        hook.markdown_structure_with_line_breaks_as_spaces = lambda text: text.count("\n")
+        try:
+            refusal = join_refusal(lambda: hook.broken_paragraphs_joined_in_file(
+                race_file, BROKEN_TEXT, [(2, 4)], [BROKEN_TEXT]))
+        finally:
+            hook.markdown_structure_with_line_breaks_as_spaces = real_structure
+        check("a join whose text would not parse as the same Markdown is refused, the file kept",
+              refusal == "the joined text would not parse as the same Markdown"
+              and race_file.read_text(encoding="utf-8") == BROKEN_TEXT, refusal)
+
+        # The agent's own next Edit, or any other program, writing the file after the hook read
+        # it and before the hook writes: the hook must not write over that change.
+        race_file.write_text("# Notes\n\nWritten by the agent's next Edit.\n", encoding="utf-8")
+        refusal = join_refusal(lambda: hook.file_replaced_if_unchanged(race_file, BROKEN_TEXT, BROKEN_TEXT_JOINED))
+        check("a file changed between the hook's read and its write is refused, the change kept",
+              refusal == "the file changed while the hook was joining its lines"
+              and race_file.read_text(encoding="utf-8") == "# Notes\n\nWritten by the agent's next Edit.\n",
+              refusal)
+
+        race_file.write_text("# A\n", encoding="utf-8")
+        refusal = join_refusal(lambda: hook.file_replaced_if_unchanged(race_file, BROKEN_TEXT, BROKEN_TEXT_JOINED))
+        check("a file changed to text that sorts before the text read is refused too, the change kept",
+              refusal == "the file changed while the hook was joining its lines"
+              and race_file.read_text(encoding="utf-8") == "# A\n", refusal)
+
+        three = checkout / "docs" / "three-joins.md"
+        three_text = "A\nB\n\nC\nD\n\nE\nF\nG\n"
+        three.write_text(three_text, encoding="utf-8")
+        joins = hook.broken_paragraphs_joined_in_file(
+            three, three_text, hook.markdown_broken_paragraph_line_ranges(three_text), [three_text])
+        check("three joins are each numbered before and after the joins above them",
+              joins == [(1, 2, 1), (4, 5, 3), (7, 9, 5)]
+              and three.read_text(encoding="utf-8") == "A B\n\nC D\n\nE F G\n", joins)
+
+        race_file.write_text(BROKEN_TEXT, encoding="utf-8")
+        real_replace = hook.os.replace
+
+        def failing_replace(source, destination):
+            raise PermissionError("replace refused by the test")
+
+        hook.os.replace = failing_replace
+        try:
+            refusal = join_refusal(lambda: hook.file_replaced_if_unchanged(race_file, BROKEN_TEXT, BROKEN_TEXT_JOINED))
+        finally:
+            hook.os.replace = real_replace
+        check("a write that fails is refused with its error, the file kept and no temporary file left",
+              refusal == "writing the joined text failed: PermissionError: replace refused by the test"
+              and race_file.read_text(encoding="utf-8") == BROKEN_TEXT
+              and not [entry for entry in race_file.parent.iterdir() if entry.name.endswith(".hard-wrap-join")],
+              refusal)
+
+        missing_directory_file = checkout / "docs" / "no-such-directory" / "x.md"
+        refusal = join_refusal(lambda: hook.file_replaced_if_unchanged(missing_directory_file, "a", "b"))
+        check("a directory that cannot be opened for the lock is refused, naming it",
+              refusal.startswith(f"the hook could not open {missing_directory_file.parent} to lock it: "), refusal)
+
+        vanished_race_file = checkout / "docs" / "vanished-race.md"
+        refusal = join_refusal(lambda: hook.file_replaced_if_unchanged(vanished_race_file, "a", "b"))
+        check("a file removed before the hook's write is refused as a failed write",
+              refusal.startswith("writing the joined text failed: FileNotFoundError: ")
+              and not vanished_race_file.exists(), refusal)
+
+        # Another run of this hook on the same directory: the lock keeps the two apart.
+        holder = os.open(race_file.parent, os.O_RDONLY)
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        real_wait = hook.JOIN_LOCK_WAIT_SECONDS
+        hook.JOIN_LOCK_WAIT_SECONDS = 0.3
+        started = time.monotonic()
+        try:
+            refusal = join_refusal(lambda: hook.file_replaced_if_unchanged(race_file, BROKEN_TEXT, BROKEN_TEXT_JOINED))
+            waited = time.monotonic() - started
+            check("while another run holds the directory's lock past the wait, the join is refused "
+                  "after waiting, the file kept",
+                  refusal == f"another run of this hook held the lock on {race_file.parent} for over 0.3 seconds"
+                  and waited >= 0.3 and race_file.read_text(encoding="utf-8") == BROKEN_TEXT,
+                  f"{refusal} after {waited:.2f} s")
+            hook.JOIN_LOCK_WAIT_SECONDS = 5.0
+            releaser = threading.Timer(0.3, lambda: fcntl.flock(holder, fcntl.LOCK_UN))
+            releaser.start()
+            started = time.monotonic()
+            refusal = join_refusal(lambda: hook.file_replaced_if_unchanged(race_file, BROKEN_TEXT, BROKEN_TEXT_JOINED))
+            waited = time.monotonic() - started
+            releaser.join()
+            check("a lock released within the wait lets the join go ahead once it is free",
+                  refusal == "no refusal" and 0.25 <= waited < 4.0
+                  and race_file.read_text(encoding="utf-8") == BROKEN_TEXT_JOINED, f"{refusal} after {waited:.2f} s")
+        finally:
+            hook.JOIN_LOCK_WAIT_SECONDS = real_wait
+            os.close(holder)
 
 
     result = write_then_run(checkout, checkout / "docs" / "clean.md", CLEAN_TEXT)

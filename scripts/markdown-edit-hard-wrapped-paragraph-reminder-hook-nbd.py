@@ -1,26 +1,24 @@
 #!/usr/bin/env python3
-"""Remind the agent to keep Markdown paragraphs on one line, after an Edit or
-Write leaves a Markdown file holding a paragraph broken across lines.
+"""Join the lines of each Markdown paragraph an Edit or a Write just broke across lines, or,
+where the hook must not or cannot, tell the agent to join them.
 
 Use hookSpecificOutput.additionalContext: successful PostToolUse plain stdout reaches only the debug log.
 Read cwd from the payload; CLAUDE_PROJECT_DIR can name a different checkout in a forked session.
 
 The whole file is read from disk after the tool ran, for Edit as for Write, so an
 Edit inside a fenced code block is judged with the fence visible. Only a broken
-paragraph the tool wrote is reported: for a Write, any in the file; for an Edit, one
+paragraph the tool wrote is handled: for a Write, any in the file; for an Edit, one
 whose lines overlap a line the Edit added. The added lines come from a line diff of each
 replacement the Edit made in the payload's tool_response.originalFile (see
 edit_added_line_numbers): a search for new_string in the file would also find copies the
 Edit did not write, and tool_response.structuredPatch is built after leading tabs are
 turned into spaces, so it drops a line whose only change is a tab. A broken paragraph
-the agent did not touch is left alone, because in a file the instruction-file guard
-protects, rejoining it would need the user's approval for whitespace. An Edit that only deleted lines adds none and gets no reminder. An Edit
+the agent did not touch is left alone: the agent did not write it, and someone may have
+broken its lines on purpose. An Edit that only deleted lines adds none and is left alone. An Edit
 of a file holding a broken paragraph, whose added lines cannot be found that way,
 gets one line on stderr and exit 1, a non-blocking hook error, so the agent is told the
 check was not made. An Edit of a file holding no broken paragraph needs no diff to be
 judged, so a payload lacking that text there is not reported.
-The reminder carries no line numbers: the agent is to rejoin each broken
-paragraph it wrote, and to write later Markdown files the same way.
 
 Which lines form a paragraph is decided by markdown-it-py's CommonMark parser, not
 by this file: a paragraph, in a list item or at the top level, is broken when its
@@ -31,10 +29,52 @@ shared install module, for the python3 the hooks run. When that install fails, t
 stderr what failed, what the install printed and the command that installs it
 by hand, and exits 1, which Claude Code shows as a non-blocking hook error.
 
-A file holding display math ($$) or a footnote definition ([^label]:) gets no
-reminder at all: CommonMark reads both as paragraphs, and judging their line
-breaks needs rules this hook does not carry, so it stays silent rather than tell
-an agent to join lines that must stay apart.
+A file holding display math ($$) or a footnote definition ([^label]:) is left alone:
+CommonMark reads both as paragraphs, and judging their line breaks needs rules this
+hook does not carry, so it stays silent rather than join lines that must stay apart.
+
+The join. The hook decides whether a file is guarded by calling instruction-file-guard.py's
+own is_protected, is_reusable_prompt and is_reviewed_document, as
+.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py does, so the
+three cannot disagree. In a guarded file it never joins: a join there is a change the user
+has not approved, so it gives the reminder alone. In any other file it joins each soft line
+break of the broken paragraphs the tool wrote: the line before the break loses its trailing
+spaces and tabs, the line after loses its indentation, and one space stands between them.
+A hard break the author chose (two trailing spaces, a trailing backslash or a trailing <br>)
+is kept. It then tells the agent which lines it joined and to read the file again before
+its next Edit of it, since Claude Code refuses an Edit made from a read older than the
+file. It gives the reminder instead, with the reason it did not join, when any of these
+holds; each leaves the file as the tool wrote it:
+- the guard's code would not load or raised, so the hook cannot tell whether it is guarded;
+- the file is a symbolic link, which the replacement would turn into a plain file;
+- the file holds a carriage return, whose line ends the join does not handle;
+- the tool's payload lacks the text the tool wrote, so the hook cannot tell whether the
+  file changed since;
+- the file on disk is not the text the tool's payload says it wrote: something changed
+  it since, or, for an Edit, Claude Code wrote curly quotes the agent typed straight, and
+  the hook cannot tell which;
+- a paragraph's line count and its line breaks do not match, as when an image or a code
+  span holds a line break, so the hook cannot tell which line ends to join;
+- the joined text does not parse as the same Markdown with only line breaks turned into
+  spaces;
+- another run of this hook holds the lock on the file's directory for over
+  JOIN_LOCK_WAIT_SECONDS;
+- the file changed between the hook's read and its write;
+- writing the joined text failed.
+
+How the write can fail, and the harm it can do. The hook writes the joined text to a
+temporary file beside the target, gives it the target's permission bits, and moves it over
+the target with os.replace, holding an flock on the target's directory so two runs of this
+hook cannot interleave; just before the move it reads the target again and gives up when it
+differs from what it joined. A failed write leaves the target as it was and removes the
+temporary file, except when the hook is killed, as by its timeout, between making the
+temporary file and the move: then a file named .<name>.<random>.hard-wrap-join is left
+beside the target, and git shows it as untracked. The harm: a program other than this hook that writes the target in the
+instant between that last read and the move loses its write, since only this hook takes
+the lock; the move gives the target a new inode, so a hard link to the old one keeps the
+unjoined text, and the file's owner becomes the user the hook runs as; an agent that skips
+the re-read has its next Edit of the file refused once by Claude Code; and a hook that runs
+beside this one and reads the file may report line numbers from before the join.
 
 A fault, such as stdin that is not a JSON object, a written file that cannot be read
 or any exception: one line on stderr naming the hook and the fault, nothing on stdout,
@@ -43,12 +83,17 @@ write; exit 0 would read as "no broken paragraph found". A file that is not UTF-
 not a fault: the hook judges only UTF-8 text, and stays silent on other bytes."""
 
 import difflib
+import fcntl
 import functools
 import importlib.util
 import json
+import os
 import re
+import shutil
 import socket
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 MARKDOWN_SUFFIXES = (".md", ".markdown")
@@ -63,6 +108,28 @@ REMINDER_MESSAGE = (
     "In every Markdown file you write from now on, write each paragraph, list item and "
     "table row as one line, however long; break lines only where Markdown needs a break."
 )
+
+JOIN_NOT_MADE_LINE = (
+    "\nThis hook joins such lines itself when it safely can; it did not join these, because {reason}.")
+
+JOINED_MESSAGE = (
+    "markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in {path} held "
+    "paragraphs or list items broken across lines, and this hook has joined each into one "
+    "line, changing only the line breaks and the spaces around them: {joins}.\n"
+    "Read {path} again before your next Edit of it: the hook changed the file after your "
+    "{tool_name}, so Claude Code refuses an Edit made from your earlier read, and every line "
+    "below a joined paragraph has moved up.\n"
+    "In every Markdown file you write from now on, write each paragraph, list item and "
+    "table row as one line, however long; break lines only where Markdown needs a break."
+)
+
+# Long enough for another run of this hook to finish its write, well inside the hook's
+# 30-second timeout in .claude/settings.json.
+JOIN_LOCK_WAIT_SECONDS = 5.0
+JOIN_LOCK_POLL_SECONDS = 0.05
+# A Write of a long hard-wrapped document joins thousands of paragraphs; naming them all
+# would fill the agent's context.
+JOINS_DESCRIBED_AT_MOST = 20
 
 # Front matter opens on the file's first line and closes on a line holding --- or ...
 FRONT_MATTER_DELIMITER = "---"
@@ -287,6 +354,190 @@ def markdown_has_hard_wrapped_paragraph(text: str) -> bool:
     Raises MarkdownParserMissing when markdown-it-py is missing and installing it failed."""
     return bool(markdown_broken_paragraph_line_ranges(text))
 
+
+class JoinNotMade(Exception):
+    """Why the hook left a broken paragraph for the agent to join; str() is the reason,
+    worded to follow "because"."""
+
+
+def file_is_guarded_by_instruction_file_guard(file_path: str) -> bool:
+    """Whether instruction-file-guard.py refuses an unapproved write to file_path. Raises
+    whatever loading the guard or its checks raise."""
+    guard = _load_instruction_file_guard()
+    return (guard.is_protected(file_path) or guard.is_reusable_prompt(file_path)
+            or guard.is_reviewed_document(file_path))
+
+
+def _load_instruction_file_guard():
+    specification = importlib.util.spec_from_file_location(
+        "instruction_file_guard",
+        Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "instruction-file-guard.py")
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def texts_the_tool_wrote(tool_name, tool_input, tool_response) -> list:
+    """The texts the file holds if nothing changed it after the tool; empty when the payload
+    lacks what they are built from. An Edit with an empty new_string and an old_string not
+    ending in a newline may also have removed the newline after it, so both are given."""
+    if tool_name == "Write":
+        content = tool_input.get("content")
+        return [content] if isinstance(content, str) else []
+    if not isinstance(tool_response, dict):
+        return []
+    original = tool_response.get("originalFile")
+    old, new = tool_response.get("oldString"), tool_response.get("newString")
+    replace_all = tool_response.get("replaceAll")
+    if not (isinstance(old, str) and isinstance(new, str) and isinstance(replace_all, bool)):
+        return []
+    if not old:
+        return [new]
+    if not isinstance(original, str):
+        return []
+    removed_texts = [old, old + "\n"] if not new and not old.endswith("\n") else [old]
+    return [original.replace(removed, new) if replace_all else original.replace(removed, new, 1)
+            for removed in removed_texts if removed in original]
+
+
+def soft_line_breaks_to_join(text: str, broken_ranges) -> list:
+    """The 0-based numbers of the lines, within broken_ranges, whose line break is a soft
+    one counts_as_line_break counts, so that the line is to be joined to the next.
+    Raises JoinNotMade when a paragraph's line breaks cannot be matched to its lines."""
+    tokens = markdown_commonmark_parser_with_tables_common().markdown_parser().parse(
+        front_matter_blanked(text))
+    wanted = set(map(tuple, broken_ranges))
+    lines_to_join = []
+    for opener, token in zip(tokens, tokens[1:]):
+        if not (opener.type == "paragraph_open" and token.type == "inline" and tuple(opener.map) in wanted):
+            continue
+        start, end = opener.map
+        children = token.children or []
+        breaks = [child_position for child_position, child in enumerate(children)
+                  if child.type in ("softbreak", "hardbreak")]
+        if len(breaks) != end - start - 1:
+            raise JoinNotMade(
+                f"the paragraph on lines {start + 1} to {end} has {end - start - 1} line ends but "
+                f"{len(breaks)} line breaks the parser can place, as when an image or a code span "
+                f"holds a line break")
+        lines_to_join += [start + index for index, child_position in enumerate(breaks)
+                          if children[child_position].type == "softbreak"
+                          and counts_as_line_break(children, child_position)]
+    return sorted(lines_to_join)
+
+
+def text_with_lines_joined(text: str, lines_to_join) -> str:
+    """text with each line in lines_to_join joined to the line after it by one space."""
+    lines = text.split("\n")
+    joined = []
+    joining = set(lines_to_join)
+    for number, line in enumerate(lines):
+        if joined and number - 1 in joining:
+            joined[-1] = joined[-1].rstrip(" \t") + " " + line.lstrip(" \t")
+        else:
+            joined.append(line)
+    return "\n".join(joined)
+
+
+def markdown_structure_with_line_breaks_as_spaces(text: str) -> list:
+    """What text parses to, leaving out where each block sits and how whitespace runs
+    inside paragraphs and headings are spelled."""
+    tokens = markdown_commonmark_parser_with_tables_common().markdown_parser().parse(
+        front_matter_blanked(text))
+    return [(token.type, token.tag, token.nesting, token.markup, token.info, token.attrs,
+             " ".join(token.content.split()) if token.type == "inline" else token.content)
+            for token in tokens]
+
+
+def file_replaced_if_unchanged(path: Path, text_read: str, new_text: str) -> None:
+    """Replace path's bytes with new_text when path still holds text_read, holding the
+    lock on path's directory that every run of this hook takes. Raises JoinNotMade, with
+    the file left as it was, when the lock is not had in time, when path changed, or when
+    the write fails."""
+    directory = path.parent
+    try:
+        directory_descriptor = os.open(directory, os.O_RDONLY)
+    except OSError as error:
+        raise JoinNotMade(f"the hook could not open {directory} to lock it: {error}") from error
+    try:
+        deadline = time.monotonic() + JOIN_LOCK_WAIT_SECONDS
+        while True:
+            try:
+                fcntl.flock(directory_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise JoinNotMade(
+                        f"another run of this hook held the lock on {directory} for over "
+                        f"{JOIN_LOCK_WAIT_SECONDS:g} seconds") from None
+                time.sleep(JOIN_LOCK_POLL_SECONDS)
+        _file_replaced_if_unchanged_under_lock(path, text_read, new_text)
+    finally:
+        os.close(directory_descriptor)
+
+
+def _file_replaced_if_unchanged_under_lock(path: Path, text_read: str, new_text: str) -> None:
+    temporary_path = None
+    try:
+        if path.read_bytes() != text_read.encode("utf-8"):
+            raise JoinNotMade("the file changed while the hook was joining its lines")
+        descriptor, temporary_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.",
+                                                      suffix=".hard-wrap-join")
+        temporary_path = Path(temporary_name)
+        with os.fdopen(descriptor, "wb") as temporary:
+            temporary.write(new_text.encode("utf-8"))
+        shutil.copymode(path, temporary_path)
+        os.replace(temporary_path, path)
+    except OSError as error:
+        raise JoinNotMade(f"writing the joined text failed: {type(error).__name__}: {error}") from error
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def broken_paragraphs_joined_in_file(path: Path, text: str, broken_ranges, texts_written) -> list:
+    """Join the broken paragraphs of broken_ranges in path, which held text when read, and
+    return the joins as (first line, last line, joined line), 1-based, the first two
+    numbered as before the join and the third as after it. Raises JoinNotMade, with the
+    file left as it was, for each case the module docstring lists after the guard's."""
+    if path.is_symlink():
+        raise JoinNotMade("the file is a symbolic link, which the hook's write would replace "
+                          "with a plain file")
+    if "\r" in text:
+        raise JoinNotMade("the file holds a carriage return, and the hook joins only lines "
+                          "that end in a bare line feed")
+    if not texts_written:
+        raise JoinNotMade("the tool's payload does not hold the text the tool wrote, so the hook "
+                          "cannot tell whether the file changed since")
+    if text not in texts_written:
+        raise JoinNotMade("the file on disk is not the text the tool's payload says it wrote, "
+                          "so it may have changed since")
+    lines_to_join = soft_line_breaks_to_join(text, broken_ranges)
+    new_text = text_with_lines_joined(text, lines_to_join)
+    if markdown_structure_with_line_breaks_as_spaces(new_text) != markdown_structure_with_line_breaks_as_spaces(text):
+        raise JoinNotMade("the joined text would not parse as the same Markdown")
+    file_replaced_if_unchanged(path, text, new_text)
+    joins = []
+    removed_before = 0
+    for line in lines_to_join:
+        if joins and joins[-1][1] == line + 1:
+            joins[-1][1] = line + 2
+        else:
+            joins.append([line + 1, line + 2, line + 1 - removed_before])
+        removed_before += 1
+    return [tuple(join) for join in joins]
+
+
+def joined_lines_description(joins) -> str:
+    """The joins as the agent reads them: "lines 3 to 4 into line 3; lines 7 to 9 into line 6",
+    the first JOINS_DESCRIBED_AT_MOST of them, then how many more there were."""
+    described = "; ".join(f"lines {first} to {last} into line {joined}"
+                          for first, last, joined in joins[:JOINS_DESCRIBED_AT_MOST])
+    if len(joins) > JOINS_DESCRIBED_AT_MOST:
+        described += f"; and {len(joins) - JOINS_DESCRIBED_AT_MOST} more"
+    return described
+
+
 def main() -> int:
     payload = json.loads(sys.stdin.read())
     if not isinstance(payload, dict):
@@ -335,9 +586,27 @@ def main() -> int:
     if not broken_ranges:
         return 0
 
+    message = REMINDER_MESSAGE.format(path=relative_path)
+    try:
+        guarded = file_is_guarded_by_instruction_file_guard(file_path)
+    except Exception as error:
+        message += JOIN_NOT_MADE_LINE.format(reason=(
+            f"it could not tell whether the instruction-file guard protects {relative_path}: "
+            f"{type(error).__name__}: {error}"))
+    else:
+        if not guarded:
+            try:
+                joins = broken_paragraphs_joined_in_file(
+                    Path(file_path), text, broken_ranges,
+                    texts_the_tool_wrote(tool_name, tool_input, payload.get("tool_response")))
+            except JoinNotMade as refusal:
+                message += JOIN_NOT_MADE_LINE.format(reason=refusal)
+            else:
+                message = JOINED_MESSAGE.format(path=relative_path, tool_name=tool_name,
+                                                joins=joined_lines_description(joins))
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PostToolUse",
-        "additionalContext": REMINDER_MESSAGE.format(path=relative_path),
+        "additionalContext": message,
     }}, ensure_ascii=False))
     return 0
 
