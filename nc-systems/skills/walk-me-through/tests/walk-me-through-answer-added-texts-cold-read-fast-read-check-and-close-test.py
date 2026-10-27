@@ -72,9 +72,14 @@ if mode == "path-then-exit-1":
     sys.exit(1)
 if mode == "target-changed":
     sys.stderr.write("cold-read-fast-read: #cold_read_target_changed_during_run: the target changed while it was read.\n")
-if mode in ("record-not-shipped", "record-not-shipped-then-exit-4"):
+if mode in ("record-not-shipped", "record-not-shipped-then-exit-4", "record-not-shipped-then-killed"):
     sys.stderr.write("cold-read-fast-read: record: FAILED: ned-box could not be reached (ssh exit 255); "
                      "the record stays on disk.\n")
+    sys.stdout.flush()
+    sys.stderr.flush()
+    if mode == "record-not-shipped-then-killed":
+        import signal
+        os.kill(os.getpid(), signal.SIGTERM)
     sys.exit(4 if mode == "record-not-shipped-then-exit-4" else 1)
 if mode == "record-refused":
     sys.stderr.write("cold-read-fast-read: record: REFUSED: already in the store with different content.\n")
@@ -333,12 +338,15 @@ def test_a_fast_read_that_names_a_report_and_exits_1_without_a_record_line_is_a_
 
 
 def test_a_record_line_does_not_excuse_an_exit_other_than_1():
-    case = Case()
-    before = case.minutes.read_text()
-    result = case.run("check", mode="record-not-shipped-then-exit-4")
-    check("a fast read that did not ship its record but exits 4 is reported as FAILED",
-          result.returncode == 1 and result.stdout.startswith("FAILED: ") and "exited 4" in result.stdout
-          and case.minutes.read_text() == before, described(result))
+    for mode, exit_code in (("record-not-shipped-then-exit-4", 4), ("record-not-shipped-then-killed", -15)):
+        case = Case()
+        before = case.minutes.read_text()
+        result = case.run("check", mode=mode)
+        check(f"a fast read that did not ship its record but exits {exit_code} is reported as FAILED",
+              result.returncode == 1 and result.stdout.startswith("FAILED: ")
+              and f"exited {exit_code} " in result.stdout
+              and "its stderr: cold-read-fast-read: record: FAILED: ned-box could not be reached" in result.stdout
+              and case.minutes.read_text() == before, described(result))
 
 
 def test_a_fast_read_whose_record_was_refused_is_used_and_reported():

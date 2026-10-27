@@ -94,7 +94,7 @@ GOOD_INPUT = (
 )
 
 STAND_IN_SOURCE = r'''#!/usr/bin/env python3
-import json, os, pathlib, shutil, subprocess, sys, time
+import json, os, pathlib, shutil, signal, subprocess, sys, time
 plan = json.loads(os.environ["STAND_IN_PLAN"])
 log = pathlib.Path(os.environ["STAND_IN_LOG"])
 target = pathlib.Path(sys.argv[sys.argv.index("--target") + 1])
@@ -123,6 +123,10 @@ if "report_source" in plan:
     sys.exit(0 if "record: shipped:" in record_line else 1)
 print(plan.get("stdout", ""), end="")
 print(plan.get("stderr", ""), end="", file=sys.stderr)
+if plan.get("killed_by_sigterm"):
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.kill(os.getpid(), signal.SIGTERM)
 sys.exit(plan.get("exit", 0))
 '''
 
@@ -287,6 +291,14 @@ def main() -> int:
                       "stderr": "cold-read-fast-read: record: FAILED: ned-box could not be reached\n"},
             GOOD_INPUT)
         check("a record line does not excuse an exit other than 1",
+              completed.returncode == 1
+              and "The fresh-reader's read failed." in completed.stdout,
+              f"exit {completed.returncode}, stdout {completed.stdout!r}")
+        completed, _ = run_program(
+            scratch, {"stdout": f"{report_copy}\n", "killed_by_sigterm": True,
+                      "stderr": "cold-read-fast-read: record: FAILED: ned-box could not be reached\n"},
+            GOOD_INPUT)
+        check("a record line does not excuse a fast read killed by a signal",
               completed.returncode == 1
               and "The fresh-reader's read failed." in completed.stdout,
               f"exit {completed.returncode}, stdout {completed.stdout!r}")
