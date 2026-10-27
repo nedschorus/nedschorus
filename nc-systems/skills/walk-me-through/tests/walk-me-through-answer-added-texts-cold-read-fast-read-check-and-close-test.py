@@ -287,11 +287,12 @@ def test_a_scratch_directory_a_stop_signal_cannot_remove_is_reported_with_the_co
               and f"a {number.name} stopped this check step" in result.stderr
               and f"the scratch directory {left[0]}, which held the text" in result.stderr
               and f"Run `rm -rf {left[0]}`" in result.stderr
-              and f"Then run `python3 {PROGRAM} check` again, with the flag for the user's answer" in result.stderr,
+              and f"Then run the same `python3 {PROGRAM} check` command again, with the same answer"
+              in result.stderr,
               described(result))
-        check(f"the {number.name} message says answer A takes no flag, and gives a reason for the removal that "
+        check(f"the {number.name} message names no answer's flags, and gives a reason for the removal that "
               f"holds wherever TMPDIR points",
-              "(A takes no flag)" in result.stderr and "/tmp has a quota" not in result.stderr
+              "flag" not in result.stderr and "/tmp has a quota" not in result.stderr
               and "the disk it is on can fill" in result.stderr,
               described(result))
         removal = subprocess.run(["rm", "-rf", str(left[0])] if left else ["false"], capture_output=True, text=True)
