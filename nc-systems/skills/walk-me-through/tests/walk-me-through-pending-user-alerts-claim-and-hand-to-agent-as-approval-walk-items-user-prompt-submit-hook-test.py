@@ -22,7 +22,7 @@ _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 HERE = Path(__file__).resolve().parents[1]
-HOOK = HERE / "walk-me-through-pending-user-alerts-claimed-as-approval-walk-items-user-prompt-submit-hook.py"
+HOOK = HERE / "walk-me-through-pending-user-alerts-claim-and-hand-to-agent-as-approval-walk-items-user-prompt-submit-hook.py"
 INSERT_PROGRAM = HERE / "walk-me-through-user-alert-insert-after-waiting-item-raise-item-count-and-record-in-walk-minutes.py"
 WALK = "alerts-hook-test-walk-2026-10-27"
 failures = []
@@ -55,7 +55,7 @@ class Case:
         path = self.alerts / directory / f"{alert_id}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"id": alert_id, "written_at": "2026-10-27T12:00:00+00:00", "title": title,
-                                    "notice_text": "text", "action": "act"}), encoding="utf-8")
+                                    "alert_text": "text", "action": "act"}), encoding="utf-8")
         return path
 
     def turn_record(self, origin, text):

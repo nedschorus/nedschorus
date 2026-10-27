@@ -15,9 +15,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 MODULE_FILE = (Path(__file__).resolve().parents[1]
-               / "user-alerts-pending-and-claimed-files-write-claim-and-release-common.py")
+               / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
 _specification = importlib.util.spec_from_file_location(
-    "user_alerts_pending_and_claimed_files_write_claim_and_release_common", MODULE_FILE)
+    "user_alerts_pending_and_claimed_files_write_claim_release_and_delete_common", MODULE_FILE)
 alerts = importlib.util.module_from_spec(_specification)
 _specification.loader.exec_module(alerts)
 
@@ -64,11 +64,11 @@ def run_write_cases(root):
     alert = json.loads(written.read_text(encoding="utf-8")) if written.is_file() else {}
     check("an alert is written into pending/ with its id, time, title, notice text and action",
           alert == {"id": alert_id, "written_at": "2026-10-27T12:00:00+00:00", "title": "merge-lane-2 is down",
-                    "notice_text": "notice\n  ssh x", "action": "restart it"}, repr(alert))
+                    "alert_text": "notice\n  ssh x", "action": "restart it"}, repr(alert))
     check("the alert's id starts with the UTC time it was written",
           alert_id.startswith("20261027T120000Z-"), alert_id)
-    check("nothing is left in writing/, where the file was written before its rename",
-          list((directory / "writing").iterdir()) == [], repr(list((directory / "writing").iterdir())))
+    check("nothing is left in being-written/, where the file was written before its rename",
+          list((directory / "being-written").iterdir()) == [], repr(list((directory / "being-written").iterdir())))
 
 
 def run_claim_cases(root):
@@ -151,7 +151,7 @@ def run_release_cases(root):
     closed_walk.mkdir(parents=True)
     (closed_walk / "b-walk-minutes.md").write_text(f"#user_alert {in_closed_walk}\n", encoding="utf-8")
     (closed_walk / "b-walk.md").write_text(f"#user_alert {unrecorded}\n", encoding="utf-8")
-    alerts.claimed_user_alerts_delete_if_in_walk_minutes_else_release_to_pending_after_30_minutes(now=NOW)
+    alerts.user_alerts_claimed_delete_if_recorded_in_approval_walk_minutes_else_release_to_pending_after_30_minutes(now=NOW)
     pending = sorted(path.stem for path in (directory / "pending").iterdir())
     claimed = sorted(path.stem for path in (directory / "claimed").iterdir())
     check("a claimed alert no walk-minutes name returns to pending/ after 30 minutes; a walk-document naming it "
@@ -168,7 +168,7 @@ def run_release_cases(root):
     try:
         raised = None
         try:
-            alerts.claimed_user_alerts_delete_if_in_walk_minutes_else_release_to_pending_after_30_minutes(now=NOW)
+            alerts.user_alerts_claimed_delete_if_recorded_in_approval_walk_minutes_else_release_to_pending_after_30_minutes(now=NOW)
         except Exception as error:  # noqa: BLE001 - the case checks that nothing escapes
             raised = error
     finally:
@@ -178,7 +178,7 @@ def run_release_cases(root):
 
     fresh_home(root, "release-empty")
     check("with no claimed/ directory, releasing does nothing",
-          alerts.claimed_user_alerts_delete_if_in_walk_minutes_else_release_to_pending_after_30_minutes(now=NOW) is None)
+          alerts.user_alerts_claimed_delete_if_recorded_in_approval_walk_minutes_else_release_to_pending_after_30_minutes(now=NOW) is None)
 
 
 with tempfile.TemporaryDirectory() as temporary_directory:

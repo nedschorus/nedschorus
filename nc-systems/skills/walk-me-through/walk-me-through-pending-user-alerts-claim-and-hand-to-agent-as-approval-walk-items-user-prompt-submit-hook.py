@@ -11,7 +11,7 @@ own, when that record's text is the payload's prompt; Claude Code may not have w
 when this hook runs, and the newest record is then the previous turn's. Otherwise the prompt itself decides: one
 that opens as NOT_TYPED_PROMPT_OPENINGS lists is not his.
 
-ON A TYPED PROMPT the hook calls, from ALERTS_MODULE_FILE, claimed_user_alerts_delete_if_in_walk_minutes_else_release_to_pending_after_30_minutes,
+ON A TYPED PROMPT the hook calls, from ALERTS_MODULE_FILE, user_alerts_claimed_delete_if_recorded_in_approval_walk_minutes_else_release_to_pending_after_30_minutes,
 then user_alerts_claim_every_pending_by_rename_into_claimed, whose docstrings say what each moves. When it claimed nothing it prints nothing.
 Otherwise it finds the open approval-walk of the checkout the payload's cwd names with WALK_FINDER_FILE, the
 module the other walk-me-through hooks use, and its additionalContext tells the agent:
@@ -39,7 +39,7 @@ CHECKOUT = HERE.parents[2]
 WALK_FINDER_FILE = HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
 INSERT_PROGRAM = HERE / "walk-me-through-user-alert-insert-after-waiting-item-raise-item-count-and-record-in-walk-minutes.py"
 ALERTS_MODULE_FILE = (CHECKOUT / "nc-systems" / "general-tools"
-                      / "user-alerts-pending-and-claimed-files-write-claim-and-release-common.py")
+                      / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
 TRANSCRIPT_READER_FILE = CHECKOUT / "scripts" / "claude-code-session-transcript-records-read-backward-common.py"
 USER_TURN_ORIGIN = "human"
 # How Claude Code opens a background-task notice, another agent-session's message and a subagent's hand-back.
@@ -144,10 +144,10 @@ def output_for(payload, user_alerts=None):
     if sys.platform != "linux" or not typed_by_user(payload):
         return None
     user_alerts = user_alerts or load_module(
-        "user_alerts_pending_and_claimed_files_write_claim_and_release_common", ALERTS_MODULE_FILE)
+        "user_alerts_pending_and_claimed_files_write_claim_release_and_delete_common", ALERTS_MODULE_FILE)
     directory = user_alerts.user_alerts_directory()
     try:
-        user_alerts.claimed_user_alerts_delete_if_in_walk_minutes_else_release_to_pending_after_30_minutes()
+        user_alerts.user_alerts_claimed_delete_if_recorded_in_approval_walk_minutes_else_release_to_pending_after_30_minutes()
         alerts = user_alerts.user_alerts_claim_every_pending_by_rename_into_claimed()
     except Exception as error:  # noqa: BLE001 - a failed claim must reach the user through the agent
         context = "\n".join(line.format(directory=directory, error=repr(error)) for line in CLAIM_FAILED_LINES)
@@ -162,7 +162,7 @@ def main():
     try:
         output = output_for(json.loads(sys.stdin.read()))
     except Exception as error:  # noqa: BLE001
-        print(f"walk-me-through-pending-user-alerts-claimed-as-approval-walk-items-user-prompt-submit-hook: the "
+        print(f"walk-me-through-pending-user-alerts-claim-and-hand-to-agent-as-approval-walk-items-user-prompt-submit-hook: the "
               f"hook failed, so no alert was claimed or offered on this prompt: {error!r}", file=sys.stderr)
         return 1
     if output is not None:

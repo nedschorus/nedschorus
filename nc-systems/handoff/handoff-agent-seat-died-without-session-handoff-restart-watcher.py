@@ -109,8 +109,8 @@ _ned_box_home_specification = importlib.util.spec_from_file_location(
 ned_box_home_path_constants = importlib.util.module_from_spec(_ned_box_home_specification)
 _ned_box_home_specification.loader.exec_module(ned_box_home_path_constants)
 _user_alerts_specification = importlib.util.spec_from_file_location(
-    "user_alerts_pending_and_claimed_files_write_claim_and_release_common",
-    REPOSITORY / "nc-systems" / "general-tools" / "user-alerts-pending-and-claimed-files-write-claim-and-release-common.py")
+    "user_alerts_pending_and_claimed_files_write_claim_release_and_delete_common",
+    REPOSITORY / "nc-systems" / "general-tools" / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
 user_alerts = importlib.util.module_from_spec(_user_alerts_specification)
 _user_alerts_specification.loader.exec_module(user_alerts)
 

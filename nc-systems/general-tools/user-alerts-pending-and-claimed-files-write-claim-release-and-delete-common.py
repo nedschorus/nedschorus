@@ -3,12 +3,12 @@
 on ned-box, the home directory read from HOME when each function runs.
 
 A program that must tell the user something calls user_alert_write_to_pending, which writes the alert into
-writing/ and renames it into pending/, so no reader sees half a file. The alert holds `id`, `written_at` (UTC,
-ISO 8601), `title`, `notice_text`, and `action`: what an agent on ned-box can do about it, or that only the
+being-written/ and renames it into pending/, so no reader sees half a file. The alert holds `id`, `written_at` (UTC,
+ISO 8601), `title`, `alert_text`, and `action`: what an agent on ned-box can do about it, or that only the
 user can act, and where.
 
 The walk-me-through UserPromptSubmit hook, on each prompt the user types into a ned-box agent-session, first
-calls claimed_user_alerts_delete_if_in_walk_minutes_else_release_to_pending_after_30_minutes, then user_alerts_claim_every_pending_by_rename_into_claimed, so an alert
+calls user_alerts_claimed_delete_if_recorded_in_approval_walk_minutes_else_release_to_pending_after_30_minutes, then user_alerts_claim_every_pending_by_rename_into_claimed, so an alert
 it returns to pending/ is claimed again by the same prompt. A claim is an os.rename into claimed/, which
 succeeds for one caller only, so each alert goes to one agent-session. The claim sets the file's modification
 time to the claim time, because a rename keeps the old one, and that time is what the 30-minute limit reads.
@@ -43,17 +43,17 @@ def user_alerts_directory():
     return Path.home() / USER_ALERTS_RELATIVE_TO_HOME
 
 
-def user_alert_write_to_pending(title, notice_text, action, now=None):
+def user_alert_write_to_pending(title, alert_text, action, now=None):
     """Write one alert into pending/ and return its id."""
     now = now or datetime.now(timezone.utc)
     directory = user_alerts_directory()
     alert_id = f"{now.strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     alert = {"id": alert_id, "written_at": now.isoformat(timespec="seconds"), "title": title,
-             "notice_text": notice_text, "action": action}
-    writing, pending = directory / "writing", directory / "pending"
-    writing.mkdir(parents=True, exist_ok=True)
+             "alert_text": alert_text, "action": action}
+    being_written, pending = directory / "being-written", directory / "pending"
+    being_written.mkdir(parents=True, exist_ok=True)
     pending.mkdir(parents=True, exist_ok=True)
-    written = writing / f"{alert_id}.json"
+    written = being_written / f"{alert_id}.json"
     written.write_text(json.dumps(alert, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     os.rename(written, pending / written.name)
     return alert_id
@@ -105,7 +105,7 @@ def user_alert_ids_named_in_walk_minutes(home):
     return ids
 
 
-def claimed_user_alerts_delete_if_in_walk_minutes_else_release_to_pending_after_30_minutes(now=None):
+def user_alerts_claimed_delete_if_recorded_in_approval_walk_minutes_else_release_to_pending_after_30_minutes(now=None):
     """Delete every claimed alert some walk-minutes name, and move back to pending/ every other claimed alert
     claimed more than CLAIM_LIMIT_SECONDS ago. The walk-minutes are read only when some claimed alert is older
     than that, so a prompt costs two directory listings while alerts are fresh or absent."""

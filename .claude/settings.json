@@ -48,7 +48,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/walk-me-through/walk-me-through-pending-user-alerts-claimed-as-approval-walk-items-user-prompt-submit-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/walk-me-through/walk-me-through-pending-user-alerts-claim-and-hand-to-agent-as-approval-walk-items-user-prompt-submit-hook.py",
             "timeout": 10
           }
         ]

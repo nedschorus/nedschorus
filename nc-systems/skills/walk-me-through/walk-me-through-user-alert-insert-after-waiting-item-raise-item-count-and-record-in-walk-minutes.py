@@ -9,7 +9,7 @@ each alert, read from user-alerts/claimed/<id>.json under ALERTS_MODULE_FILE's d
 - the walk-document gets a new item right after the unit holding the last waiting item N, which the walk-minutes'
   last `#next_to_present` line names, numbered N.K with K the lowest number no item of the walk uses, as the
   walk-me-through skill's Re-planning section says; its heading copies the waiting item's heading level and
-  reads `Item N.K of M: <the alert's title>`, and its body holds the alert's notice text in a fence and what can
+  reads `Item N.K of M: <the alert's title>`, and its body holds the alert's text in a fence and what can
   be done about it;
 - every running count `Item ... of M` that opens a line outside code in the walk-document gets M raised by one;
 - the walk-minutes get a re-planning line, the line `#user_alert <id>`, and, below every earlier one, a
@@ -38,7 +38,7 @@ CHECKOUT = HERE.parents[2]
 PROGRAM = Path(__file__).stem
 WALK_FINDER_FILE = HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
 ALERTS_MODULE_FILE = (CHECKOUT / "nc-systems" / "general-tools"
-                      / "user-alerts-pending-and-claimed-files-write-claim-and-release-common.py")
+                      / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
 LINE_OPENING = re.compile(r"^(?:#{1,6}\s+|[-*+]\s+)?")
 HEADING_LEVEL = re.compile(r"^(#{1,6})\s")
 
@@ -82,7 +82,7 @@ def fence_for(text):
 
 
 def item_lines(heading_hashes, number, total, alert):
-    notice = str(alert.get("notice_text", "")).rstrip("\n")
+    notice = str(alert.get("alert_text", "")).rstrip("\n")
     fence = fence_for(notice)
     return ["", f"{heading_hashes} Item {number} of {total}: {alert.get('title')}", "",
             f"A program on ned-box wrote this alert for the user at {alert.get('written_at')}:", "",
@@ -106,7 +106,7 @@ def raised_counts(text, total, new_total, walk_finder, parser):
 def insert(cwd, alert_ids, now=None):
     walk_finder = load_module("walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
                               WALK_FINDER_FILE)
-    user_alerts = load_module("user_alerts_pending_and_claimed_files_write_claim_and_release_common",
+    user_alerts = load_module("user_alerts_pending_and_claimed_files_write_claim_release_and_delete_common",
                                 ALERTS_MODULE_FILE)
     parser = walk_finder.markdown_parser()
     top = walk_finder.checkout_top(Path(cwd))

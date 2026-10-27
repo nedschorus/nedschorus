@@ -81,7 +81,7 @@ def walk_checkout(root, name, waiting="item 4 of 9", document=WALK_DOCUMENT):
 
 def claimed_alert(home, alert_id, title):
     alert = {"id": alert_id, "written_at": "2026-10-27T12:00:00+00:00", "title": title,
-             "notice_text": "merge-lane-2 is down.\n  ssh -t nedlern@ned-box 'recover'", "action": "Restart it."}
+             "alert_text": "merge-lane-2 is down.\n  ssh -t nedlern@ned-box 'recover'", "action": "Restart it."}
     (home / ".local/state/nedschorus/user-alerts/claimed" / f"{alert_id}.json").write_text(
         json.dumps(alert), encoding="utf-8")
 
@@ -108,7 +108,7 @@ def run_one_alert_cases(root):
     check("the alert becomes item 4.1, right after waiting item 4 and before the next item",
           added in lines and lines.index("## Item 4 of 9: a filter".replace("of 9", "of 10"))
           < lines.index(added) < lines.index("## Items 5 and 6 of 10: two small corrections"), document)
-    check("the added item holds the alert's notice text in a fence and what can be done",
+    check("the added item holds the alert's text in a fence and what can be done",
           "```text\nmerge-lane-2 is down.\n  ssh -t nedlern@ned-box 'recover'\n```" in document
           and "What can be done: Restart it." in document, document)
     check("every running count that opens a line outside code is raised to the new item count",
