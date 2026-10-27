@@ -16,6 +16,7 @@ import json
 import os
 import pathlib
 import sys
+import subprocess
 import tempfile
 
 SCRIPT_PATH = pathlib.Path(__file__).with_name("agent-facing-message-ask-two-fresh-agents-next-step-and-check-named-script-flags.py")
@@ -31,6 +32,8 @@ with open(os.environ["FAKE_LAUNCHER_LOG"], "a") as log:
     log.write(json.dumps({"arguments": arguments,
                           "target": pathlib.Path(value("--target")).read_text(),
                           "prompt": pathlib.Path(value("--prompt-file")).read_text()}) + "\\n")
+if tier in os.environ.get("FAKE_SIGNALLED_TIERS", "").split():
+    os.kill(os.getpid(), 9)
 if tier in os.environ.get("FAKE_FAILING_TIERS", "").split():
     print("cold-read-claude-cell: cause: logged-out: Not logged in", file=sys.stderr)
     sys.exit(1)
@@ -48,7 +51,8 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def run_main(scratch: pathlib.Path, message: str, failing_tiers: str = "", situation_file=None):
+def run_main(scratch: pathlib.Path, message: str, failing_tiers: str = "", situation_file=None,
+             signalled_tiers: str = ""):
     """Run main() with a fake launcher; return (exit code, stdout, stderr, launcher calls)."""
     launcher = scratch / "fake-launcher.py"
     launcher.write_text(FAKE_LAUNCHER)
@@ -61,6 +65,7 @@ def run_main(scratch: pathlib.Path, message: str, failing_tiers: str = "", situa
         situation_file.write_text("You ran `git push` to publish your topic branch.\n")
     os.environ["FAKE_LAUNCHER_LOG"] = str(log)
     os.environ["FAKE_FAILING_TIERS"] = failing_tiers
+    os.environ["FAKE_SIGNALLED_TIERS"] = signalled_tiers
     ask_two_fresh_agents.CLAUDE_CELL_LAUNCHER = launcher
     sys.argv = [str(SCRIPT_PATH), "--message-file", str(message_file),
                 "--situation-file", str(situation_file)]
@@ -105,6 +110,32 @@ def test_one_follower_fails(scratch):
           "answer from the fast follower" in stdout, stdout)
 
 
+def test_follower_killed_by_signal(scratch):
+    exit_code, stdout, _, _ = run_main(scratch, "anything", signalled_tiers="fast")
+    check("follower killed by a signal: exit 1 and reported",
+          exit_code == 1 and "wrote no answer, because" in stdout and "exited -9" in stdout, stdout)
+
+
+def test_missing_flag_refused(scratch):
+    for kept in ("--message-file", "--situation-file"):
+        sys.argv = [str(SCRIPT_PATH), kept, str(scratch / "x.txt")]
+        stderr = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(stderr):
+                ask_two_fresh_agents.main()
+            exit_code = None
+        except SystemExit as stop:
+            exit_code = stop.code
+        check(f"missing flag refused when only {kept} is given", exit_code == 2, stderr.getvalue())
+
+
+def test_help_runs_as_a_program(scratch):
+    completed = subprocess.run([sys.executable, str(SCRIPT_PATH), "--help"], capture_output=True,
+                               text=True, cwd=scratch, check=False)
+    check("--help runs as a program", completed.returncode == 0 and completed.stdout.startswith("usage"),
+          completed.stdout + completed.stderr)
+
+
 def test_unreadable_input_file(scratch):
     exit_code, stdout, stderr, calls = run_main(
         scratch, "anything", situation_file=scratch / "no-such-situation.txt")
@@ -124,12 +155,15 @@ def test_named_scripts(scratch):
     shell.write_text("echo 'usage: helped.sh [--pull-request N]'\n")
     broken = scratch / "broken.py"
     broken.write_text("import sys\nprint('cannot start: missing module'); sys.exit(3)\n")
+    signalled = scratch / "signalled.py"
+    signalled.write_text("import os\nos.kill(os.getpid(), 9)\n")
     hanging = scratch / "hanging.py"
     hanging.write_text("import time\ntime.sleep(30)\n")
     message = (
         f"Rerun `python3 {helped} --head HEAD --base-branch main` then `{shell} --pull-request 5`.\n"
         f"Or run {broken} --dry-run; {hanging} --wait\n"
-        f"Never run {scratch}/missing.py --force.\n")
+        f"Never run {scratch}/missing.py --force.\n"
+        f"Last, {signalled} --once.\n")
     ask_two_fresh_agents.HELP_TIMEOUT_SECONDS = 2
     try:
         exit_code, stdout, _, _ = run_main(scratch, message)
@@ -147,16 +181,20 @@ def test_named_scripts(scratch):
           and "`--dry-run`" not in stdout, stdout)
     check("named scripts: a --help that hangs is reported",
           f"`{hanging}`: exists; --help did not finish within 2 s" in stdout, stdout)
+    check("named scripts: a --help killed by a signal is reported",
+          f"`{signalled}`: exists; --help exited -9" in stdout, stdout)
     check("named scripts: a missing script is reported", f"`{scratch}/missing.py`: NOT FOUND" in stdout, stdout)
 
 
 def test_named_scripts_parsing():
     scripts = ask_two_fresh_agents.scripts_and_flags_named_in_agent_facing_message(
         "Run scripts/a.py --x --y scripts/b.sh --z | grep --count\n"
+        "Or c.py --c1 d.py --d1 e.py --e1\n"
         "Then scripts/a.py --x --w.\n"
         "Read nc-systems/cold-read/cold-read-claude-cell.py first.")
     check("parsing: flags stop at the next path and at a pipe, and repeat mentions merge",
           scripts == {"scripts/a.py": ["--x", "--y", "--w"], "scripts/b.sh": ["--z"],
+                      "c.py": ["--c1"], "d.py": ["--d1"], "e.py": ["--e1"],
                       "nc-systems/cold-read/cold-read-claude-cell.py": []}, scripts)
     check("parsing: a relative path is resolved from the checkout's top directory",
           ask_two_fresh_agents.named_script_existence_and_flags_in_help_check_report_lines("scripts/no-such-script-anywhere.py", [])
@@ -170,7 +208,8 @@ def test_no_named_scripts(scratch):
 
 
 def main() -> int:
-    for test in (test_both_followers_answer, test_one_follower_fails, test_unreadable_input_file,
+    for test in (test_both_followers_answer, test_one_follower_fails, test_follower_killed_by_signal,
+                 test_missing_flag_refused, test_help_runs_as_a_program, test_unreadable_input_file,
                  test_named_scripts, test_no_named_scripts):
         with tempfile.TemporaryDirectory() as scratch:
             test(pathlib.Path(scratch))
