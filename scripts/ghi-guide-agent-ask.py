@@ -201,8 +201,8 @@ LOGGED_OUT_REMEDY = (f" — the claude on {AGENT_BOX} is logged out; run `claude
 # refresh is bounded separately by ghi-mirror-refresh's own constants
 # (MAX_PAGES x the per-call gh timeout), which can exceed this slack when
 # GitHub stalls (PR #143 review, P3). The cost of that case is
-# misattribution, not a wrong answer: the Mac reports "the box was silent"
-# instead of the box's real refresh error, and both land the caller on the
+# misattribution, not a wrong answer: the Mac reports that the ssh call did
+# not finish instead of the box's real refresh error, and both land the caller on the
 # ghi-write skill's fallback ladder.
 SSH_TIMEOUT_SECONDS = ASK_TIMEOUT_SECONDS + 120
 
@@ -236,14 +236,14 @@ You run inside a checkout of the project repository; your knowledge is the local
 - issues-open.md — every open issue in full: number, title, labels, updated time, body, comments. Read this file whole now, before anything else.
 - issues-closed.md — one line per closed issue. Do not load it whole; grep it only when a request asks about closed history.
 
-GitHub is the source of truth; the mirror is your working copy of it. Answer from the mirror only — never fetch issue state from GitHub (no gh queries, no API, no web). The facts a request states are already established by script; your job is only the judgment.
+GitHub is the source of truth; the mirror is your working copy of it. Answer from the mirror only: never read issue state from GitHub (no gh queries, no API, no web). The one time you run gh is to make the issue edit a link repair (form 4) needs. The facts a request states are already established by script; your job is only the judgment.
 
 Requests arrive in four forms:
 
 1. **You are asked for a reading list**: what should an agent read before it files or edits an issue on some topic. Reply with a bare list — "read #13, #24, #31" — plus, only when needed, note lines in plain sentences. Closed issues belong in a reply only when the request says closed history is wanted; tag each truthfully: "#31 (closed 2026-08-08)".
 2. **You are shown a draft issue** — title and body — and asked whether the corpus already covers it. When the draft is an edit of an existing issue, the request names that issue: leave it out of the comparison. Reply with exactly one line, nothing else: `verdict: too-similar #n` (an existing issue already covers this ground; #n is that issue), or `verdict: related #n,#m` (no collision, but the author should know these), or `verdict: unrelated`. In these shapes #n,#m stands for one or more issue numbers. When the draft conflicts with a ruling the user made, reply instead with the ruling question under Boundaries. A reply in any other shape is thrown away.
 3. **You are told a fact that corrects your last reply** — an issue you cited has closed — and asked to redo that one judgment. The fact is already established by script from the refreshed mirror: do not question or verify it; re-read the named entry in issues-closed.md, including any Superseded-by: link, and reply with a corrected reading list.
-4. **You are asked to repair a link** — a cross-reference the maintenance sweep found broken. The request states the defect; repair exactly that link and nothing else. Issue edits go through gh as normal; document-side changes are committed with a message stating what and why and landed on main immediately (on a push race, re-pull and retry once; else report blocked). Reply done: <the repair>, done: no change needed — <why>, or blocked: <what stopped you>.
+4. **You are asked to repair a link** — a cross-reference the maintenance sweep found broken. The request states the defect; repair exactly that link and nothing else. Issue edits go through gh as normal; document-side changes are landed through `scripts/ghi-issue-write.py`, whose pull request merge-lane-2 reviews and merges; never push to main yourself. Reply done: <the repair>, done: no change needed — <why>, or blocked: <what stopped you>.
 
 Boundaries:
 
@@ -331,8 +331,8 @@ NOT_ABOUT_ISSUES_MESSAGE = (
     '--state all --search "<terms>"')
 RULING_QUESTION_MESSAGE_TEMPLATE = (
     "ghi-guide-agent found a ruling of the user's that it cannot tell still applies: {sentence}\n"
-    "If you file or edit the GHI, scripts/ghi-issue-write.py records this question in the log-store on ned-box, and the run of scripts/ghi-issue-write.py tells you to dispatch a subagent to settle the question.\n"
-    "Otherwise, ask the user whether that ruling still applies, and put the question on your task list.")
+    "If you are filing or editing a GHI, go on with scripts/ghi-issue-write.py as planned: it records this question in the log-store on ned-box and tells you to dispatch a subagent to settle it.\n"
+    "If you are not filing or editing a GHI, ask the user whether that ruling still applies, and put the question on your task list.")
 # What follows the sentence when it opened with the number of the issue
 # holding the ruling; scripts/ghi-issue-write.py reads the number back from it.
 RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE = " (held in GHI {number})"
@@ -948,11 +948,13 @@ def main(argv=None) -> int:
                     input=question if question_on_stdin else None,
                 )
             except subprocess.TimeoutExpired:
-                print(f"ghi-guide-agent-ask: the box was silent for {SSH_TIMEOUT_SECONDS}s "
-                      "and was killed", file=sys.stderr)
+                print(f"ghi-guide-agent-ask: the ssh call to {AGENT_BOX} did not finish "
+                      f"within {SSH_TIMEOUT_SECONDS}s, so this script stopped it; "
+                      f"that alone does not show {AGENT_BOX} is down.", file=sys.stderr)
                 return 1
             except OSError as error:
-                print(f"ghi-guide-agent-ask: could not reach the box: {error}", file=sys.stderr)
+                print(f"ghi-guide-agent-ask: could not start ssh to {AGENT_BOX}: {error}",
+                      file=sys.stderr)
                 return 1
             sys.stdout.write(completed.stdout)
             sys.stderr.write(completed.stderr)

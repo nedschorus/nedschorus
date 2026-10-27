@@ -444,7 +444,7 @@ GHI_GUIDE_AGENT_ASK_RULING_QUESTION_EXIT_CODE = 3
 # Where the ruling question's sentence ends: the opening of the line that
 # follows {sentence} in ghi-guide-agent-ask.py's RULING_QUESTION_MESSAGE_TEMPLATE.
 # A sentence can run over several lines. Copied and checked like the above.
-GHI_GUIDE_AGENT_ASK_RULING_QUESTION_SENTENCE_END = "If you file or edit the GHI"
+GHI_GUIDE_AGENT_ASK_RULING_QUESTION_SENTENCE_END = "If you are filing or editing a GHI"
 # How the sentence ends when ghi-guide-agent named the issue holding the ruling:
 # ghi-guide-agent-ask.py's RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE, as a pattern whose group
 # is the number. Copied and checked like the above.
@@ -1469,10 +1469,11 @@ def record_ruling_question(prefix: str, repo: str, conflict, title: str,
     except (Refused, subprocess.TimeoutExpired, OSError) as failure:
         raise Refused(
             f"Nothing was {operation_done}: ghi-guide-agent raised a question about "
-            "a ruling of the user's, and recording it in the log-store "
-            f"failed: {failure}\n"
+            "a ruling of the user's, and writing that question to the "
+            f"log-store failed: {failure}\n"
             f"ghi-guide-agent's question: {conflict.sentence}\n"
-            "Rerun this command now; do not wait for the user's answer.\n"
+            "Run the same scripts/ghi-issue-write.py command again now; the "
+            "user need not answer anything first.\n"
             "If this message appears again, do not rerun: tell the user what "
             "failed, that this draft may conflict with a ruling of his, and "
             "give him ghi-guide-agent's question.", 1)

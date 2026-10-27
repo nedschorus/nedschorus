@@ -1617,13 +1617,14 @@ def run_cases(scratch: Path):
                       lambda: (refusal.code == 1 and len(lines_out) == 4
                       and lines_out[0].startswith(
                           "Nothing was filed: ghi-guide-agent raised a question "
-                          "about a ruling of the user's, and recording it in "
-                          "the log-store failed:")
+                          "about a ruling of the user's, and writing that "
+                          "question to the log-store failed:")
                       and detail in lines_out[0]
                       and lines_out[1] == ("ghi-guide-agent's question: the ruling "
                                            "may not hold")
-                      and lines_out[2] == ("Rerun this command now; do not "
-                                           "wait for the user's answer.")
+                      and lines_out[2] == ("Run the same scripts/ghi-issue-write.py "
+                                           "command again now; the user need not "
+                                           "answer anything first.")
                       and lines_out[3] == (
                           "If this message appears again, do not rerun: tell "
                           "the user what failed, that this draft may conflict "
@@ -3076,8 +3077,8 @@ def run_edit_cases(scratch: Path):
             check(lookup_name,
                   lambda: (refusal.code == 1
                   and str(refusal).startswith("Nothing was edited:")
-                  and "Rerun this command now; do not wait for the user's "
-                  "answer." in str(refusal)
+                  and "Run the same scripts/ghi-issue-write.py command again "
+                  "now; the user need not answer anything first." in str(refusal)
                   and not failing_lookup.ran("git push")
                   and not lookup_store.exists()
                   and source.read_text() == FILE_TEXT),

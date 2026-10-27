@@ -573,8 +573,8 @@ ESCALATE_SENTENCE = ("the 2026-09-19 body ruling in #46 may not hold after "
 APPROVED_RULING_QUESTION_MESSAGE = (
     "ghi-guide-agent found a ruling of the user's that it cannot tell still applies: "
     + ESCALATE_SENTENCE + "\n"
-    "If you file or edit the GHI, scripts/ghi-issue-write.py records this question in the log-store on ned-box, and the run of scripts/ghi-issue-write.py tells you to dispatch a subagent to settle the question.\n"
-    "Otherwise, ask the user whether that ruling still applies, and put the question on your task list.\n")
+    "If you are filing or editing a GHI, go on with scripts/ghi-issue-write.py as planned: it records this question in the log-store on ned-box and tells you to dispatch a subagent to settle it.\n"
+    "If you are not filing or editing a GHI, ask the user whether that ruling still applies, and put the question on your task list.\n")
 
 # Typed out rather than read from the module, like the two messages above, so
 # a change to the hint's text fails this file.
@@ -685,6 +685,14 @@ try:
           and "out-of-scope" not in ghi_ask.COLD_START_PROMPT_TEMPLATE
           and "escalate:" not in ghi_ask.COLD_START_PROMPT_TEMPLATE,
           ghi_ask.COLD_START_PROMPT_TEMPLATE[-600:])
+    check("the start-up prompt allows gh only for a link repair's issue edit, and "
+          "sends document changes through ghi-issue-write.py's pull request, never a push to main",
+          "The one time you run gh is to make the issue edit a link repair (form 4) needs."
+          in ghi_ask.COLD_START_PROMPT_TEMPLATE
+          and "whose pull request merge-lane-2 reviews and merges; never push to main yourself."
+          in ghi_ask.COLD_START_PROMPT_TEMPLATE
+          and "landed on main immediately" not in ghi_ask.COLD_START_PROMPT_TEMPLATE,
+          ghi_ask.COLD_START_PROMPT_TEMPLATE[:1500])
     check("the cold-start prompt has every ruling question start with the "
           "issue holding the ruling",
           "Every ruling question starts with that issue number."
@@ -1162,6 +1170,37 @@ with tempfile.TemporaryDirectory() as temporary:
                       and "--question-file" not in hint and "/dev/stdin" not in hint
                       and str(question_path) not in hint,
                       (exit_code, hint[-500:]))
+        finally:
+            patch("DEFAULT_SEAT_DIR", seat_orig)
+
+        # Off the box, an ssh call that times out or cannot start is reported
+        # as the ssh call failing, naming the machine, never as the machine
+        # having died: an agent told ned-box is down stops every ned-box step.
+        def ssh_timing_out(command, **keywords):
+            raise ghi_ask.subprocess.TimeoutExpired(command, ghi_ask.SSH_TIMEOUT_SECONDS)
+
+        def ssh_not_starting(command, **keywords):
+            raise FileNotFoundError("ssh")
+
+        patch("DEFAULT_SEAT_DIR", root / "no-seat-on-this-machine")
+        try:
+            for name, fake, expected in (
+                    ("times out", ssh_timing_out,
+                     f"ghi-guide-agent-ask: the ssh call to {ghi_ask.AGENT_BOX} did not "
+                     f"finish within {ghi_ask.SSH_TIMEOUT_SECONDS}s, so this script "
+                     f"stopped it; that alone does not show {ghi_ask.AGENT_BOX} is down.\n"),
+                    ("cannot start", ssh_not_starting,
+                     f"ghi-guide-agent-ask: could not start ssh to {ghi_ask.AGENT_BOX}: "
+                     "ssh\n")):
+                patch_module_function(ghi_ask.subprocess, "run", fake)
+                caller_error = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(caller_error):
+                    exit_code = ghi_ask.main([argument_question])
+                check(f"off the box, an ssh call that {name} exits 1 saying the "
+                      "ssh call failed, naming the machine",
+                      exit_code == 1 and caller_error.getvalue() == expected,
+                      (exit_code, caller_error.getvalue()))
         finally:
             patch("DEFAULT_SEAT_DIR", seat_orig)
     finally:
