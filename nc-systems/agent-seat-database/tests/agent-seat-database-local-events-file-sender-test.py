@@ -17,7 +17,9 @@ Prints one line per case and exits non-zero if any case fails.
 import importlib.util
 import io
 import json
+import signal
 import socket
+import sys
 import sqlite3
 import tempfile
 import threading
@@ -114,11 +116,29 @@ def generation_in(path):
     return found
 
 
+class SenderRanTooLong(Exception):
+    pass
+
+
+def stop_a_sender_that_never_stops(signal_number, frame):
+    raise SenderRanTooLong()
+
+
+signal.signal(signal.SIGALRM, stop_a_sender_that_never_stops)
+
+
 def run_sender(path, url, token_file):
+    """Run the sender; a sender that sends the same row for ever fails the case, not the suite's clock."""
     errors = io.StringIO()
-    with redirect_stderr(errors):
-        code = sender.main(["--local-events-file", str(path), "--service-url", url,
-                            "--token-file", str(token_file)])
+    signal.alarm(20)
+    try:
+        with redirect_stderr(errors):
+            code = sender.main(["--local-events-file", str(path), "--service-url", url,
+                                "--token-file", str(token_file)])
+    except SenderRanTooLong:
+        code = "ran for 20 seconds without stopping"
+    finally:
+        signal.alarm(0)
     return code, errors.getvalue()
 
 
@@ -134,6 +154,10 @@ with tempfile.TemporaryDirectory() as scratch:
 
     def service_generation():
         return service_db.execute("SELECT generation_id FROM database_generation").fetchone()[0]
+
+    check("this machine is named as the service names it",
+          events_file.THIS_MACHINE == ("mac" if sys.platform == "darwin" else "ned-box"),
+          events_file.THIS_MACHINE)
 
     # The local events file
     fresh = scratch / "made" / "here" / "events.sqlite"
