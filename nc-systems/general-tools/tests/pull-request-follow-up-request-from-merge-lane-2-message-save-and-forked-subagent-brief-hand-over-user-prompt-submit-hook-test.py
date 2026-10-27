@@ -37,7 +37,7 @@ EXPECTED_BRIEF = f"""merge-lane-2 merged pull request {NUMBER} and sent 2 non-bl
 {BLOCK}
 For you, the author:
 Dispatch one subagent with the Agent tool: subagent_type "fork", isolation "worktree", run_in_background true. Give it this whole text; the lines under "For you, the author" are not its.
-When it has ended, run: {COMMAND} clean-up
+When it has ended, run: {COMMAND} remove-recorded-topic-branches-and-worktrees
 
 For the subagent, working in your own worktree:
 1. Run git fetch origin, then check each finding against origin/main; leave out any that no longer holds.
@@ -45,9 +45,9 @@ For the subagent, working in your own worktree:
 3. For each topic, run: {COMMAND} start-topic-branch <topic-branch>
    Make the change with its tests, and commit.
    Write follow-up-pull-request-title-and-description.md at your worktree's root: the title, a blank line, then the description. Do not commit it.
-   Run: {COMMAND} open-pull-request --findings <n>[,<n>...]
-4. For each finding you leave out, run: {COMMAND} leave-out <n> --reason "<why>"
-5. Run: {COMMAND} finish-and-print-merge-lane-2-message
+   Run: {COMMAND} open-pull-request --handled-finding-numbers <n>[,<n>...]
+4. For each finding you leave out, run: {COMMAND} record-finding-leave-out-reason <n> --reason "<why>"
+5. Run: {COMMAND} finish-follow-up-request-and-print-merge-lane-2-message
    Send the message it prints to merge-lane-2 with SendMessage.
 If a command refuses or fails, do what it prints."""
 SAVED = Path(".git") / "pull-request-follow-up-requests" / f"pull-request-{NUMBER}-non-blocking-findings.md"

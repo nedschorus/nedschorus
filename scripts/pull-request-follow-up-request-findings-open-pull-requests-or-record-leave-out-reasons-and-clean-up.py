@@ -3,10 +3,10 @@
 
 Usage:
   PROGRAM <number> start-topic-branch <topic-branch>
-  PROGRAM <number> open-pull-request --findings <n>[,<n>...]
-  PROGRAM <number> leave-out <n> --reason "<why>"
-  PROGRAM <number> finish-and-print-merge-lane-2-message
-  PROGRAM <number> clean-up
+  PROGRAM <number> open-pull-request --handled-finding-numbers <n>[,<n>...]
+  PROGRAM <number> record-finding-leave-out-reason <n> --reason "<why>"
+  PROGRAM <number> finish-follow-up-request-and-print-merge-lane-2-message
+  PROGRAM <number> remove-recorded-topic-branches-and-worktrees
 
 merge-lane-2 ends a merge message that asks for follow-ups with the line
 "#follow_up_request pull request <number>", then each non-blocking finding on a
@@ -17,17 +17,17 @@ PULL_REQUEST_FOLLOW_UP_REQUESTS_DIRECTORY_NAME under the git common directory,
 which every worktree of the checkout shares, and hands the author
 build_follow_up_request_forked_subagent_brief(): dispatch one forked subagent in a worktree of its own,
 which judges the findings and runs start-topic-branch, open-pull-request,
-leave-out and finish-and-print-merge-lane-2-message; then run
-clean-up.
+record-finding-leave-out-reason and finish-follow-up-request-and-print-merge-lane-2-message; then run
+remove-recorded-topic-branches-and-worktrees.
 
 start-topic-branch, in the subagent's worktree: refuse a branch name that already exists;
 record the branch and the worktree's path in TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT,
-first, so clean-up knows them even when a later step fails; then git fetch
+first, so remove-recorded-topic-branches-and-worktrees knows them even when a later step fails; then git fetch
 origin and git switch -c <topic-branch> origin/main.
 
 open-pull-request, on a topic branch start-topic-branch recorded, with the change committed: refuse a
 finding that does not exist or already has an answer, a branch start-topic-branch
-did not record, and a TITLE_AND_DESCRIPTION_FILE_NAME at the worktree's root that is
+did not record, and a FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME at the worktree's root that is
 missing, is not a title, a blank line and a description, or whose description
 has no defect line, the rule scripts/merge-gate.sh applies, read by the same
 reader; then git push -u origin <branch>, whose pre-push hook runs the test
@@ -35,15 +35,15 @@ suites, gh pr create against main, record the pull request's link against each
 finding in FINDING_ANSWERS_FILE_NAME_FORMAT, and remove the title and description file,
 so the next topic cannot reuse it.
 
-leave-out: record the reason against the finding; refuse a finding that does
+record-finding-leave-out-reason: record the reason against the finding; refuse a finding that does
 not exist or already has an answer, and an empty reason.
 
-finish-and-print-merge-lane-2-message: refuse, naming each finding without an answer, until every finding has
+finish-follow-up-request-and-print-merge-lane-2-message: refuse, naming each finding without an answer, until every finding has
 one; then record the finish time, which the hook reads, and print the message
 for merge-lane-2, which the subagent sends with SendMessage, since a program
 cannot.
 
-clean-up, in the author's checkout once the subagent has ended: remove each
+remove-recorded-topic-branches-and-worktrees, in the author's checkout once the subagent has ended: remove each
 recorded worktree with git worktree remove, unless the agent harness still
 locks it (a lock reason starting HARNESS_LOCK_REASON_START), something else
 locks it, or it holds changed or untracked files; then delete each recorded
@@ -53,7 +53,7 @@ do, and the exit code is 1.
 
 A block that differs from the saved one is a new request: saving it removes
 the answers file, finish time included, but keeps the topic branch records,
-which clean-up still needs.
+which remove-recorded-topic-branches-and-worktrees still needs.
 
 Not handled: whether a pull request handles its findings, which merge-lane-2
 judges; two subagents following up one pull request at once, whose records
@@ -61,7 +61,7 @@ can overwrite each other; a finding that spans more than one line, which the
 hook does not save; the branch the agent harness made the worktree on, which
 start-topic-branch leaves.
 
-Exit codes: 0 done; 1 refused, or clean-up left something in place, said with
+Exit codes: 0 done; 1 refused, or remove-recorded-topic-branches-and-worktrees left something in place, said with
 what to do; 2 git, gh or a file failed, said on stderr, and what the subcommand
 did before the failure stays done, or the arguments are not ones the program
 takes, which argparse says on stderr.
@@ -97,14 +97,14 @@ PULL_REQUEST_FOLLOW_UP_REQUESTS_DIRECTORY_NAME = "pull-request-follow-up-request
 SAVED_FINDINGS_FILE_NAME_FORMAT = "pull-request-{number}-non-blocking-findings.md"
 TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT = "pull-request-{number}-follow-up-topic-branches-and-worktrees.json"
 FINDING_ANSWERS_FILE_NAME_FORMAT = "pull-request-{number}-follow-up-finding-answers.json"
-TITLE_AND_DESCRIPTION_FILE_NAME = "follow-up-pull-request-title-and-description.md"
+FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME = "follow-up-pull-request-title-and-description.md"
 HARNESS_LOCK_REASON_START = "claude agent"
 GH_TIMEOUT_SECONDS = 60
 # The pre-push hook runs the test suites, and may first wait up to 600 s for their lock.
 PUSH_TIMEOUT_SECONDS = 3600
 FETCH_TIMEOUT_SECONDS = 300
-OPEN_ARGUMENTS = "open-pull-request --findings <n>[,<n>...]"
-LEAVE_OUT_ARGUMENTS = 'leave-out <n> --reason "<why>"'
+OPEN_ARGUMENTS = "open-pull-request --handled-finding-numbers <n>[,<n>...]"
+LEAVE_OUT_ARGUMENTS = 'record-finding-leave-out-reason <n> --reason "<why>"'
 # Each text this program hands an agent follows
 # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 
@@ -138,7 +138,7 @@ def build_follow_up_request_forked_subagent_brief(request):
         "Dispatch one subagent with the Agent tool: subagent_type \"fork\", isolation \"worktree\", "
         "run_in_background true. Give it this whole text; the lines under \"For you, the author\" are "
         "not its.",
-        f"When it has ended, run: {command(number, 'clean-up')}",
+        f"When it has ended, run: {command(number, 'remove-recorded-topic-branches-and-worktrees')}",
         "",
         "For the subagent, working in your own worktree:",
         "1. Run git fetch origin, then check each finding against origin/main; leave out any that "
@@ -146,11 +146,11 @@ def build_follow_up_request_forked_subagent_brief(request):
         "2. Group the findings you take on by topic: one pull request per topic.",
         f"3. For each topic, run: {command(number, 'start-topic-branch <topic-branch>')}",
         "   Make the change with its tests, and commit.",
-        f"   Write {TITLE_AND_DESCRIPTION_FILE_NAME} at your worktree's root: the title, a blank line, "
+        f"   Write {FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME} at your worktree's root: the title, a blank line, "
         "then the description. Do not commit it.",
         f"   Run: {command(number, OPEN_ARGUMENTS)}",
         f"4. For each finding you leave out, run: {command(number, LEAVE_OUT_ARGUMENTS)}",
-        f"5. Run: {command(number, 'finish-and-print-merge-lane-2-message')}",
+        f"5. Run: {command(number, 'finish-follow-up-request-and-print-merge-lane-2-message')}",
         "   Send the message it prints to merge-lane-2 with SendMessage.",
         "If a command refuses or fails, do what it prints.",
     ])
@@ -283,7 +283,7 @@ def save_follow_up_request_and_clear_answers_when_its_findings_changed(request, 
 
 
 def read_follow_up_request_finished_time(number, directory="."):
-    """When finish-and-print-merge-lane-2-message passed for pull request number's follow-up, or None."""
+    """When finish-follow-up-request-and-print-merge-lane-2-message passed for pull request number's follow-up, or None."""
     states = state_directory(directory)
     return read_json(state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, number), {}).get("finished_at")
 
@@ -412,7 +412,7 @@ def open_pull_request(number, findings):
                       f"If you have not run start-topic-branch for this topic, run: {command(number, 'start-topic-branch <topic-branch>')}\n"
                       "Then make and commit the change on it.\n"
                       "If you have, switch to its branch with git switch <topic-branch>, and run open-pull-request again.")
-    description_file = Path(git(".", ["rev-parse", "--show-toplevel"]).strip()) / TITLE_AND_DESCRIPTION_FILE_NAME
+    description_file = Path(git(".", ["rev-parse", "--show-toplevel"]).strip()) / FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME
     title, description = read_title_and_description(description_file)
     try:
         git_output.run_git(".", ["push", "-u", "origin", branch], timeout_seconds=PUSH_TIMEOUT_SECONDS)
@@ -448,10 +448,10 @@ def open_pull_request(number, findings):
     print(f"Opened {link} for {findings_text(findings)} of pull request {number}'s follow-up "
           "request, and recorded it.")
     print(f"Findings without an answer yet: {numbers_text(unanswered)}." if unanswered
-          else f"Every finding has an answer: run {command(number, 'finish-and-print-merge-lane-2-message')}")
+          else f"Every finding has an answer: run {command(number, 'finish-follow-up-request-and-print-merge-lane-2-message')}")
 
 
-def leave_out(number, finding, reason):
+def record_finding_leave_out_reason(number, finding, reason):
     states = state_directory()
     request = saved_follow_up_request(states, number)
     answers_file = state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, number)
@@ -468,7 +468,7 @@ def leave_out(number, finding, reason):
     print(f"Recorded finding {finding} of pull request {number}'s follow-up request as left out.")
 
 
-def finish_and_print_merge_lane_2_message(number):
+def finish_follow_up_request_and_print_merge_lane_2_message(number):
     states = state_directory()
     request = saved_follow_up_request(states, number)
     answers_file = state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, number)
@@ -482,7 +482,7 @@ def finish_and_print_merge_lane_2_message(number):
                       f"branch: {command(number, OPEN_ARGUMENTS)}\n"
                       "For each finding you leave out, run: "
                       f"{command(number, LEAVE_OUT_ARGUMENTS)}\n"
-                      "Then run finish-and-print-merge-lane-2-message again.")
+                      "Then run finish-follow-up-request-and-print-merge-lane-2-message again.")
     record["finished_at"] = now()
     write_json(answers_file, record)
     print("\n".join([
@@ -496,14 +496,14 @@ def finish_and_print_merge_lane_2_message(number):
     ]))
 
 
-def clean_up(number):
+def remove_recorded_topic_branches_and_worktrees(number):
     states = state_directory()
     records = read_json(state_file(states, TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT, number), [])
     if not records:
-        print(f"No topic branch is recorded for pull request {number}'s follow-up, so clean-up removed "
+        print(f"No topic branch is recorded for pull request {number}'s follow-up, so remove-recorded-topic-branches-and-worktrees removed "
               "nothing.")
         return 0
-    again = command(number, "clean-up")
+    again = command(number, "remove-recorded-topic-branches-and-worktrees")
     worktrees = {worktree.path.rstrip("/"): worktree for worktree in git_output.worktree_records(
         git(".", ["worktree", "list", "--porcelain", "-z"]))}
     left_paths, left = set(), []
@@ -514,18 +514,18 @@ def clean_up(number):
         reason = worktree.locked_reason
         if reason is not None and reason.startswith(HARNESS_LOCK_REASON_START):
             left.append(f"Worktree {path} is locked by the agent harness (lock reason: {reason}), so "
-                        "clean-up left it and the topic branches recorded with it: the subagent may still be running.\n"
+                        "remove-recorded-topic-branches-and-worktrees left it and the topic branches recorded with it: the subagent may still be running.\n"
                         f"Wait until the subagent has ended, then run: {again}\n"
                         "If the worktree is still locked when you end your turn, tell the user, in one "
                         f"sentence, that the agent harness still locks worktree {path} of pull request "
-                        f"{number}'s follow-up, so clean-up could not remove it.\n"
+                        f"{number}'s follow-up, so remove-recorded-topic-branches-and-worktrees could not remove it.\n"
                         "If you are a subagent, pass that sentence to the agent that dispatched you instead.")
         elif reason is not None:
-            left.append(f"Worktree {path} is locked (lock reason: {reason or 'none given'}), so clean-up "
+            left.append(f"Worktree {path} is locked (lock reason: {reason or 'none given'}), so remove-recorded-topic-branches-and-worktrees "
                         "left it and the topic branches recorded with it.\n"
                         "If whoever the lock reason names may still be using the worktree, leave it, "
                         f"and tell the user, in one sentence, that worktree {path} of pull request "
-                        f"{number}'s follow-up is locked ({reason or 'no reason given'}), so clean-up left "
+                        f"{number}'s follow-up is locked ({reason or 'no reason given'}), so remove-recorded-topic-branches-and-worktrees left "
                         "it.\n"
                         f"Otherwise list its changed or untracked files with git -C {path} status "
                         "--short, read them, copy out any that is work to keep, and tell merge-lane-2 "
@@ -537,7 +537,7 @@ def clean_up(number):
         else:
             changed = git(path, ["status", "--short"]).rstrip("\n")
             if changed:
-                left.append(f"Worktree {path} holds changed or untracked files, so clean-up left it and "
+                left.append(f"Worktree {path} holds changed or untracked files, so remove-recorded-topic-branches-and-worktrees left it and "
                             f"the topic branches recorded with it:\n{changed}\n"
                             "Read them, copy out of the worktree any file that is work to keep, such as a "
                             "change the subagent did not push, and tell merge-lane-2 about it with "
@@ -558,7 +558,7 @@ def clean_up(number):
             continue
         if not git(".", ["for-each-ref", "--contains", "refs/heads/" + branch, "refs/remotes/origin/"]).strip():
             commits = git(".", ["log", "--oneline", "refs/remotes/origin/main..refs/heads/" + branch]).rstrip("\n")
-            left.append(f"Branch {branch} holds commits on no branch of origin, so clean-up left it:\n"
+            left.append(f"Branch {branch} holds commits on no branch of origin, so remove-recorded-topic-branches-and-worktrees left it:\n"
                         f"{commits}\n"
                         f"Read them with git log -p origin/main..{branch}, copy out any that is work to keep, "
                         "and tell merge-lane-2 about it with SendMessage.\n"
@@ -597,27 +597,27 @@ def main(argv=None):
     start_parser.add_argument("branch", metavar="topic-branch")
     open_parser = subcommands.add_parser(
         "open-pull-request", help="push the recorded topic branch, open its pull request and record its link")
-    open_parser.add_argument("--findings", type=finding_numbers, required=True,
+    open_parser.add_argument("--handled-finding-numbers", type=finding_numbers, required=True,
                              help="the findings the pull request handles, such as 1,3")
-    leave_out_parser = subcommands.add_parser("leave-out", help="record why a finding is left out")
+    leave_out_parser = subcommands.add_parser("record-finding-leave-out-reason", help="record why a finding is left out")
     leave_out_parser.add_argument("finding", type=int)
     leave_out_parser.add_argument("--reason", required=True)
-    subcommands.add_parser("finish-and-print-merge-lane-2-message", help="check every finding has an answer and print the message "
+    subcommands.add_parser("finish-follow-up-request-and-print-merge-lane-2-message", help="check every finding has an answer and print the message "
                                           "for merge-lane-2")
-    subcommands.add_parser("clean-up", help="in the author's checkout, once the subagent has ended: "
+    subcommands.add_parser("remove-recorded-topic-branches-and-worktrees", help="in the author's checkout, once the subagent has ended: "
                                             "remove each recorded worktree and topic branch")
     arguments = parser.parse_args(argv)
     try:
         if arguments.subcommand == "start-topic-branch":
             start_topic_branch(arguments.number, arguments.branch)
         elif arguments.subcommand == "open-pull-request":
-            open_pull_request(arguments.number, arguments.findings)
-        elif arguments.subcommand == "leave-out":
-            leave_out(arguments.number, arguments.finding, arguments.reason)
-        elif arguments.subcommand == "finish-and-print-merge-lane-2-message":
-            finish_and_print_merge_lane_2_message(arguments.number)
+            open_pull_request(arguments.number, arguments.handled_finding_numbers)
+        elif arguments.subcommand == "record-finding-leave-out-reason":
+            record_finding_leave_out_reason(arguments.number, arguments.finding, arguments.reason)
+        elif arguments.subcommand == "finish-follow-up-request-and-print-merge-lane-2-message":
+            finish_follow_up_request_and_print_merge_lane_2_message(arguments.number)
         else:
-            return clean_up(arguments.number)
+            return remove_recorded_topic_branches_and_worktrees(arguments.number)
     except Refused as refusal:
         print(f"REFUSED: {refusal}", file=sys.stderr)
         return 1
