@@ -28,6 +28,7 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 - **agent-session** — one running conversation occupying an agent-seat. Agent-sessions end and are replaced; the agent-seat persists.
 - **approval-walk** — presenting material to the user one item at a time, under /walk-me-through, for a decision on each item; its outcomes are recorded in walk-minutes.
 - **approved-by-walk** — approved by the user item by item in an approval-walk, not by one yes to a bundle.
+- **architecture-overview** — a wiki page, `docs/nedschorus-wiki/nedschorus-<system>-architecture-overview.md`, that tells a reader who must change a system what it is for, what its components are and how they fit together, written as `docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md` says. #prose
 - **build-slice** — one numbered increment of a build plan, built and merged on its own.
 - **C-numbers** — the identifiers `C1`, `C2` … of the main-gatekeeper's decisions on the credential that pushes to main, defined in `nc-systems/main-gatekeeper/main-gatekeeper-design.md` § The credential and enforcement.
 - **code-prompt-code (aka CPC)** — a program built from both code and prompts.
