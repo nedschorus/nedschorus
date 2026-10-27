@@ -75,3 +75,13 @@ Both launchers are attach-or-create: running a name that is already up attaches 
 **Does not cross:** worktrees and their directories, agent-homes, handoff files, supervisor locks, tmux sessions, Claude credentials (each machine authenticates separately), and anything uncommitted. A pull on one machine tells the other nothing.
 
 **A consequence worth remembering:** pulling the main checkout does not update agent-homes or task worktrees, because each sits on its own branch. After a merge to `main`, the main checkout needs its own pull. `main` is merged into a long-lived agent branch only by a hand-merge, to clear a conflict; an agent sees the change because the handoff-supervisor fast-forwards a clean seat-branch at launch, `scripts/checkout-freshness-catch-up.py` rebases a never-pushed branch onto `main` at each turn boundary, and new work starts on a topic branch cut from current `main`.
+
+## What the system needs in order to run
+
+Three things must hold. When one of them fails, an agent tells the user what failed and the remedy the failing program gave. Until the failure is fixed, the agent goes on with the work that does not need the failed part, and leaves the rest waiting; it does not find a way around the failure.
+
+- **ned-box is up and reachable from the Mac as `ssh nedlern@ned-box`.** Most agent-seats run on ned-box, merge-lane-2 merges every pull request there, and the log-store, `/home/nedlern/nedschorus-logs/`, lives there. A Mac agent that cannot reach ned-box can still edit and commit on the Mac, but it cannot have work reviewed or merged, and it cannot write to the log-store or read from it.
+- **`claude` on ned-box is logged in.** Every agent-seat on ned-box, and every program that starts a Claude agent there, such as a cold-read or ghi-info, runs as that login. When it is logged out, nothing on ned-box can start a Claude agent, and only the user can log it back in.
+- **The Mac has ned-box's home directory mounted at `/Volumes/nedhome`.** The mount is how the user opens a file on ned-box from the Mac, through a `file:///Volumes/nedhome/...` link an agent gives him. The Mac's copy of `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py` also writes its backups into the log-store through it. Without the mount, those links do not open and the Mac's backups are not written; the hook says so when it runs.
+
+What each machine does is in § The two machines, above.
