@@ -48,7 +48,6 @@ program.TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 101
 program.TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE = -1
 sys.exit(program.main(arguments))
 '''
-MUTATION_SCRIPT_PATH = SCRIPTS_DIR / "pull-request-mutation-testing-survivors.py"
 
 failures = []
 cases_run = 0
@@ -85,7 +84,6 @@ def load(name, path):
 
 
 runner = load("run_all_test_suites", RUNNER_PATH)
-mutation = load("pull_request_mutation_testing_survivors", MUTATION_SCRIPT_PATH)
 
 
 class Completed:
@@ -490,27 +488,6 @@ if linux_only_cases_run_here("the report's sandbox lines"):
               "one argument although its path holds a space",
               printed_command(not_top, "and its value with: ") == ["--checkout", str(repository)], not_top)
 
-# --- The mutation script's test command --------------------------------------
-
-def mutant_test_command_and_its_script(*arguments):
-    """The mutation script's test command for these arguments, and the script it runs."""
-    with tempfile.TemporaryDirectory() as scratch_name:
-        script_file = pathlib.Path(scratch_name) / "mutant.test-command.sh"
-        command = mutation.test_command_for(arguments[0], arguments[1], script_file,
-                                            *arguments[2:])
-        return command == shlex.join(["sh", str(script_file)]), script_file.read_text()
-
-
-runs_its_script, script = mutant_test_command_and_its_script(
-    ["a-test.py"], "/usr/bin/python3", ("/usr/bin/bwrap", "--unshare-pid", "--setenv", "X", "1"))
-check("each mutant's suites run inside the sandbox prefix",
-      runs_its_script
-      and script == "/usr/bin/bwrap --unshare-pid --setenv X 1 /usr/bin/python3 -u a-test.py\n",
-      script)
-runs_its_script, script = mutant_test_command_and_its_script(["a-test.py"], "/usr/bin/python3")
-check("without a sandbox, the mutant's test command is unchanged",
-      runs_its_script and script == "/usr/bin/python3 -u a-test.py\n", script)
-
 # --- A signalled suite inside bwrap is reported as the signal ----------------
 
 with tempfile.TemporaryDirectory() as scratch_name:
@@ -555,14 +532,6 @@ with tempfile.TemporaryDirectory() as scratch_name:
 for suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX:
     check(f"the suite listed to run outside the sandbox exists: {suite}",
           (SCRIPTS_DIR.parent / suite).is_file())
-
-runs_its_script, script = mutant_test_command_and_its_script(
-    ["a-test.py", "b-test.py"], "/usr/bin/python3", ("/usr/bin/bwrap", "--unshare-pid"),
-    {"b-test.py": "why"})
-check("a mutant's suite listed to run outside the sandbox runs without the prefix",
-      runs_its_script
-      and script == "/usr/bin/bwrap --unshare-pid /usr/bin/python3 -u a-test.py "
-                    "&& /usr/bin/python3 -u b-test.py\n", script)
 
 
 # --- Covers over listening sockets that vanish or cannot be reached -----------

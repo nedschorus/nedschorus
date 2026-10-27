@@ -107,6 +107,7 @@ if command == "exec":
 if command == "dump":
     if pathlib.Path(arguments[1]).read_text() == "baseline":
         if plan.get("baseline_dump_exit"):
+            print("Traceback (most recent call last): the session cannot be read")
             sys.exit(plan["baseline_dump_exit"])
         lines = plan.get("baseline_dump", [[{{"job_id": "baseline", "mutations": []}},
                                              {{"worker_outcome": "normal", "output": "",
