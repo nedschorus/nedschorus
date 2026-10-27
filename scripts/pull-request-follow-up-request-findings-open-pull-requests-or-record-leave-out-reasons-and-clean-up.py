@@ -62,7 +62,7 @@ start-topic-branch leaves.
 
 Exit codes: 0 done; 1 refused, or clean-up left something in place, said with
 what to do; 2 git, gh or a file failed, said on stderr, and what the subcommand
-recorded before the failure stays recorded.
+did before the failure stays done.
 """
 
 import argparse
@@ -320,6 +320,10 @@ def numbers_text(numbers):
     return numbers[0] if len(numbers) == 1 else ", ".join(numbers[:-1]) + " and " + numbers[-1]
 
 
+def findings_text(numbers):
+    return ("finding " if len(numbers) == 1 else "findings ") + numbers_text(numbers)
+
+
 def answer_text(answer):
     return answer["link"] if "link" in answer else "Left out: " + answer["reason"]
 
@@ -328,13 +332,13 @@ def refuse_unknown_or_answered(number, request, answers, findings, not_done):
     unknown = [finding for finding in findings if not 1 <= finding <= request.finding_count]
     if unknown:
         raise Refused(f"merge-lane-2 sent {request.finding_count} findings for pull request {number}, "
-                      f"numbered 1 to {request.finding_count}, so there is no finding "
-                      f"{numbers_text(unknown)}, and {not_done}.\n"
+                      f"numbered 1 to {request.finding_count}, so there "
+                      f"{'is no' if len(unknown) == 1 else 'are no'} {findings_text(unknown)}, and {not_done}.\n"
                       "Run the command again with finding numbers from the follow-up request.")
     answered = [finding for finding in findings if str(finding) in answers]
     if answered:
-        raise Refused(f"Finding {numbers_text(answered)} of pull request {number}'s follow-up request "
-                      f"already has an answer, so {not_done}:\n"
+        raise Refused(f"{findings_text(answered).capitalize()} of pull request {number}'s follow-up "
+                      f"request already {'has' if len(answered) == 1 else 'have'} an answer, so {not_done}:\n"
                       + "\n".join(f"{finding}. {answer_text(answers[str(finding)])}" for finding in answered)
                       + "\nRun the command again without "
                       + ("that finding" if len(answered) == 1 else "those findings")
@@ -409,11 +413,13 @@ def open_pull_request(number, findings):
     description_file = Path(git(".", ["rev-parse", "--show-toplevel"]).strip()) / TITLE_AND_DESCRIPTION_FILE_NAME
     title, description = read_title_and_description(description_file)
     try:
-        git(".", ["push", "-u", "origin", branch], timeout_seconds=PUSH_TIMEOUT_SECONDS)
-    except StepFailed as failure:
+        git_output.run_git(".", ["push", "-u", "origin", branch], timeout_seconds=PUSH_TIMEOUT_SECONDS)
+    except git_output.GitCommandFailed as failure:
+        outcome = "did not finish" if failure.returncode is None else f"exited {failure.returncode}"
         raise StepFailed(
-            f"{failure}\nso no pull request was opened.",
-            "If git's output above shows the pre-push hook refusing the push, do what it says, commit "
+            f"git push -u origin {branch} {outcome}, so no pull request was opened. git's output:\n"
+            f"{failure.stderr.strip()}",
+            "If git's output shows the pre-push hook refusing the push, do what it says, commit "
             "the fix, and run open-pull-request again.\n"
             "Otherwise run open-pull-request again once.\n"
             f"If the push fails the same way, tell the user, in one sentence, that git push of {branch} "
@@ -434,7 +440,7 @@ def open_pull_request(number, findings):
     write_json(answers_file, record)
     remove_file(description_file)
     unanswered = [index for index in range(1, request.finding_count + 1) if str(index) not in answers]
-    print(f"Opened {link} for finding {numbers_text(findings)} of pull request {number}'s follow-up "
+    print(f"Opened {link} for {findings_text(findings)} of pull request {number}'s follow-up "
           "request, and recorded it.")
     print(f"Findings without an answer yet: {numbers_text(unanswered)}." if unanswered
           else f"Every finding has an answer: run {command(number, 'finish-and-print-merge-lane-2-message')}")
@@ -465,8 +471,8 @@ def finish_and_print_merge_lane_2_message(number):
     answers = record.get("answers", {})
     unanswered = [index for index in range(1, request.finding_count + 1) if str(index) not in answers]
     if unanswered:
-        raise Refused(f"Finding {numbers_text(unanswered)} of pull request {number}'s follow-up "
-                      "request has no answer yet, so the follow-up is not finished.\n"
+        raise Refused(f"{findings_text(unanswered).capitalize()} of pull request {number}'s follow-up "
+                      f"request {'has' if len(unanswered) == 1 else 'have'} no answer yet, so the follow-up is not finished.\n"
                       "For each finding a pull request handles, run on that pull request's topic "
                       f"branch: {command(number, OPEN_ARGUMENTS)}\n"
                       "For each finding you leave out, run: "
@@ -617,7 +623,7 @@ def main(argv=None):
             f"failed and that the follow-up of pull request {arguments.number} is stopped until it works.\n"
             "If you are a subagent, pass that sentence to the agent that dispatched you instead.")
         print(f"FAILED: {failure}\n"
-              f"{arguments.subcommand} stopped there; what it recorded before the failure stays recorded.\n"
+              f"{arguments.subcommand} stopped there; what it did before the failure stays done.\n"
               + instructions, file=sys.stderr)
         return 2
     return 0

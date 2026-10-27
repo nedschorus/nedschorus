@@ -233,7 +233,7 @@ def test_start():
         code, out, err = case.run(worktree, "start-topic-branch", "topic-three")
         check("a fetch that fails is FAILED with exit 2, and the branch stays recorded for clean-up",
               code == 2 and err.startswith("FAILED: git fetch origin") and "Run the same command again once." in err
-              and "start-topic-branch stopped there; what it recorded before the failure stays recorded." in err
+              and "start-topic-branch stopped there; what it did before the failure stays done." in err
               and case.topic_branches()[-1]["branch"] == "topic-three", err)
         code, out, err = case.run(worktree, "start-topic-branch", "topic-three")
         check("start run again after a failure records the branch once",
@@ -295,6 +295,14 @@ def test_open_refusals():
               code == 1 and "Finding 2 of pull request 1964's follow-up request already has an answer, so "
                             "open-pull-request pushed nothing:\n2. Left out: already fixed\nRun the command again without "
                             "that finding" in err, err)
+        code, out, err = case.run(worktree, "open-pull-request", "--findings", "3,4")
+        check("open names several findings that do not exist in the plural",
+              code == 1 and "so there are no findings 3 and 4, and" in err, err)
+        case.run(worktree, "leave-out", "1", "--reason", "also fixed")
+        code, out, err = case.run(worktree, "open-pull-request", "--findings", "1,2")
+        check("open names several answered findings in the plural",
+              code == 1 and "Findings 1 and 2 of pull request 1964's follow-up request already have an answer" in err
+              and "without those findings" in err, err)
         code, out, err = case.run(worktree, "open-pull-request", "--findings", "1,x")
         check("open refuses finding numbers that are not numbers", code == 2 and "such as 1,3" in err, err)
     finally:
@@ -346,12 +354,28 @@ def test_open_failures():
         hook.chmod(0o755)
         code, out, err = case.run(worktree, "open-pull-request", "--findings", "1")
         check("a refused push is FAILED with exit 2, git's output and what to do after the hook refuses",
-              code == 2 and "pre-push: suite x fails" in err and "so no pull request was opened." in err
-              and "If git's output above shows the pre-push hook refusing the push, do what it says, commit "
+              code == 2 and err.startswith("FAILED: git push -u origin topic-one exited 1, so no pull request was opened. git's "
+                                         "output:\npre-push: suite x fails")
+              and "If git's output shows the pre-push hook refusing the push, do what it says, commit "
                   "the fix, and run open-pull-request again." in err
               and "Run the same command again once." not in err, err)
         check("a refused push calls no gh, records nothing and keeps the file",
               case.gh_calls() == [] and case.answers() is None and description.exists())
+        hook.write_text("#!/bin/sh\nsleep 5\n")
+        original_timeout, original_directory = program.PUSH_TIMEOUT_SECONDS, os.getcwd()
+        program.PUSH_TIMEOUT_SECONDS = 0.5
+        os.chdir(worktree)
+        try:
+            program.open_pull_request(NUMBER, [1])
+        except program.StepFailed as error:
+            check("a push that does not finish in time is a StepFailed with the push's own instructions",
+                  str(error).startswith("git push -u origin topic-one did not finish, so no pull request was opened.")
+                  and "pre-push hook" in error.instructions, str(error))
+        else:
+            check("a push that does not finish in time is a StepFailed with the push's own instructions", False)
+        finally:
+            os.chdir(original_directory)
+            program.PUSH_TIMEOUT_SECONDS = original_timeout
         hook.unlink()
         code, out, err = case.run(worktree, "open-pull-request", "--findings", "1", FAKE_GH_CREATE_FAILS="1")
         check("gh pr create that fails is FAILED with exit 2, recording nothing",
@@ -391,7 +415,7 @@ def test_leave_out_and_finish():
         worktree = started(case)
         code, out, err = case.run(worktree, "finish-and-print-merge-lane-2-message")
         check("finish refuses, naming each finding without an answer",
-              code == 1 and "Finding 1 and 2 of pull request 1964's follow-up request has no answer yet" in err
+              code == 1 and "Findings 1 and 2 of pull request 1964's follow-up request have no answer yet" in err
               and f"python3 {program.PROGRAM} {NUMBER} leave-out <n> --reason \"<why>\"" in err, err)
         code, out, err = case.run(worktree, "leave-out", "3", "--reason", "x")
         check("leave-out refuses a finding that does not exist",
