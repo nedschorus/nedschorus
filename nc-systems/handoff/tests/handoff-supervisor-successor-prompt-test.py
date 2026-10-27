@@ -618,13 +618,13 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
           + repr(synced_prompt.split("branch-conflict-check.py describes.", 1)[-1])
           + "; expected: " + repr(expected_rest_after_the_branch_state_line))
     # The supervisor's other ignition shape composes the same instruction at a
-    # second call site (`BootRecoveryIgnitionPlan.compose`), and nothing pinned
+    # second call site (`IgnitionPlanWithoutConversationTail.compose`), and nothing pinned
     # what that one produced: measured 2026-09-21, the same appended sentence
     # there left handoff-supervisor-test at 234 PASS / 0 FAIL and
     # recover-crashed-seats-test at 345 passed / 0 failed. The whole prompt is
     # pinned, so an append anywhere in it -- inside the constant or after it --
     # fails here.
-    boot_recovery_prompt = supervisor.BootRecoveryIgnitionPlan(
+    boot_recovery_prompt = supervisor.IgnitionPlanWithoutConversationTail(
         "finish the supervisor").compose(
             "launch-time-git-sync: fixture-branch is 3 commit(s) behind main")
     check("the boot-recovery prompt is exactly its next step, the recovery note, and the branch-state line",
@@ -1078,7 +1078,7 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
     plan = supervisor.DialogIgnitionPlan(root / "extract.md", {})
     for shape, prompt in (
             ("dialog", plan.compose(report)),
-            ("boot-recovery", supervisor.BootRecoveryIgnitionPlan("next").compose(report))):
+            ("boot-recovery", supervisor.IgnitionPlanWithoutConversationTail("next").compose(report))):
         check(f"after a launch-time-git-sync git failure, the {shape} prompt gives the next steps and "
               "no rebase instruction, which would contradict their stop",
               report in prompt and supervisor.BRANCH_STATE_INSTRUCTION not in prompt, prompt)
@@ -2303,7 +2303,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     check("the dialog plan hands its overview lines to the prompt it composes",
           plan_prompt == prompt and prompt != "", repr(plan_prompt))
     try:
-        boot_recovery_prompt = supervisor.BootRecoveryIgnitionPlan(
+        boot_recovery_prompt = supervisor.IgnitionPlanWithoutConversationTail(
             "finish the supervisor").compose(
                 "launch-time-git-sync: fixture-branch is 3 commit(s) behind main", (line,))
     except TypeError:
@@ -2835,7 +2835,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
                      "are your whole context.) "
                      + supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION + " ")
     try:
-        boot_recovery_prompt = supervisor.BootRecoveryIgnitionPlan("finish the review").compose(
+        boot_recovery_prompt = supervisor.IgnitionPlanWithoutConversationTail("finish the review").compose(
             launch_time_git_sync_report, (overview_line,), (memory_line,))
     except TypeError:
         boot_recovery_prompt = ""
@@ -2869,9 +2869,9 @@ def run_memory_review_due_prompt_cases(workspace: Path):
     settings.handoff_path.write_text(
         "written-at: 2026-09-30T00:00:00Z\nnext-step: resume the audit\nrestart-counter: 5\n",
         encoding="utf-8")
+    # No earlier session recorded, so the recovery note is the one without a transcript.
     supervisor.write_supervisor_state(
-        settings.state_path,
-        {"consumed_counter": 4, "launched_session_id": "no-such-session", "generation": 4})
+        settings.state_path, {"consumed_counter": 4, "generation": 4})
     launched_prompts = []
 
     def launch_recording(agent_command, session_id, working_directory, prompt, **_):

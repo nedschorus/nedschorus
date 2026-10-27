@@ -230,8 +230,8 @@ REINCARNATION_OPENER_MARKER = "the dialog from the session you are continuing"
 # Anchor the opener to avoid matching its text quoted in a hand-written brief.
 REINCARNATION_OPENER_PATTERN = re.compile(
     r"Read .+? — (?:it is )?" + re.escape(REINCARNATION_OPENER_MARKER))
-# Boot ignition without a dialog also consumes the handoff and retires the parent.
-BOOT_RECOVERY_IGNITION_MARKER = "(Recovered at supervisor boot:"
+# An ignition without a conversation-tail, at boot or at a handoff, also consumes the handoff and retires the parent.
+IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER = "the previous session's conversation-tail is unavailable"
 
 
 def default_agents_root() -> Path:
@@ -506,7 +506,7 @@ def is_unreplied_reincarnation_successor(transcript_path: Path) -> bool:
     """Return whether a handoff successor has no substantive turns."""
     first_turn = first_user_turn_text(transcript_path)
     return ((REINCARNATION_OPENER_PATTERN.match(first_turn) is not None
-             or BOOT_RECOVERY_IGNITION_MARKER in first_turn)
+             or IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER in first_turn)
             and substantive_turn_count(transcript_path) == 0)
 
 

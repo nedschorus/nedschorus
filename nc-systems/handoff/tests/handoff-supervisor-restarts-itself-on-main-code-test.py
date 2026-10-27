@@ -7,7 +7,10 @@ Covered: where the restart sits in the cycle; that a dont-restart handoff is
 not restarted on; that a checkout which cannot fast-forward, or an os.execv
 that raises or returns, leaves the supervisor running its loaded code and tells the
 successor why; that the restarted process starts the successor from the
-unconsumed handoff and restarts again at the next one; the restarted
+unconsumed handoff and restarts again at the next one; that a retiring
+session without a transcript, at a handoff the supervisor could not restart
+on or in the restarted process, gives a successor started from the next
+step and told the transcript is missing; the restarted
 process's argv, built from the settings for both argument lists the running
 supervisors were started with; that main() keeps accepting every flag in that
 argv; that the lock accepts a holder with this process's own ID; and a real
@@ -270,6 +273,100 @@ def run_restarted_process_cases(workspace: Path):
           replaced and events[2:] == ["sync own checkout", "exec"], str(events))
 
 
+def recovery_note_for_a_missing_transcript(occasion: str, session_id: str, workspace: Path) -> str:
+    transcript = supervisor.project_directory_for_working_directory(workspace) / f"{session_id}.jsonl"
+    return (f"(Recovered at {occasion}: the previous session's conversation-tail is unavailable, "
+            "because the handoff-supervisor could not extract session "
+            f"{session_id}'s session-dialog, and that session's transcript is not at "
+            f"{transcript}; this next-step and the repository are your whole context.) ")
+
+
+def run_missing_transcript_cases(workspace: Path):
+    """The retiring session has no transcript, so the real extractor fails. A
+    supervisor that could not restart starts the successor from the next step;
+    a restarted process does the same at startup, and says it was a handoff."""
+    case = "missingtranscriptnotrestarted"
+    handoff_directory = workspace / case
+    handoff_directory.mkdir()
+    settings = supervisor.SupervisorSettings(
+        agent=case, working_directory=workspace, handoff_directory=handoff_directory,
+        agent_command="unused-stub-agent", first_prompt="first",
+        restarts_itself_on_main_code_at_each_session_handoff=True)
+    launched_session_ids, prompts = [], []
+    cannot_fast_forward = "launch-time-git-sync: main left as is — 2 uncommitted tracked change(s)"
+
+    def launch(agent_command, session_id, working_directory, prompt, **_):
+        launched_session_ids.append(session_id)
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            settings.handoff_path.write_text("restart-counter: 1\nnext-step: carry on\n",
+                                             encoding="utf-8")
+            return StubLaunchedSession(-15, ended=False)
+        return StubLaunchedSession(0)
+
+    console, errors = io.StringIO(), io.StringIO()
+    with supervisor_names_replaced(
+            launch_agent_session=launch, stop_session=lambda process: process.terminate(),
+            remove_finished_worktrees_at_handoff=lambda directory: "worktree cleanup: stubbed",
+            launch_time_git_sync=lambda directory: (
+                cannot_fast_forward if Path(directory) == supervisor.REPOSITORY_ROOT
+                else "launch-time-git-sync: stubbed"),
+            replace_this_process_with=lambda arguments: (_ for _ in ()).throw(ProcessReplaced()),
+            memory_review_due_lines=lambda: (),
+            stdin_isatty=True), \
+            contextlib.redirect_stdout(console), contextlib.redirect_stderr(errors):
+        exit_code = supervisor.supervise_sessions(settings)
+    state = supervisor.read_supervisor_state(settings.state_path)
+    retiring = launched_session_ids[0] if launched_session_ids else ""
+    successor_prompt = prompts[1] if len(prompts) == 2 else ""
+    check("MISSING TRANSCRIPT, NOT RESTARTED: the extractor fails, and the supervisor still "
+          "starts the successor and consumes the handoff",
+          exit_code == 0 and len(prompts) == 2 and state.get("consumed_counter") == 1
+          and "not relaunching" not in console.getvalue() + errors.getvalue(),
+          f"{exit_code!r} {len(prompts)} {state} {errors.getvalue()[-400:]}")
+    check("MISSING TRANSCRIPT, NOT RESTARTED: the successor's prompt is the next step, says the "
+          "transcript is missing, and says why the supervisor did not restart",
+          successor_prompt.startswith(
+              "carry on\n\n" + recovery_note_for_a_missing_transcript("a handoff", retiring, workspace))
+          and f'reason: "{cannot_fast_forward}"' in successor_prompt,
+          successor_prompt[:900])
+
+    for case, restarted, occasion in (("missingtranscriptrestarted", True, "a handoff"),
+                                      ("missingtranscriptboot", False, "supervisor boot")):
+        handoff_directory = workspace / case
+        handoff_directory.mkdir()
+        settings = supervisor.SupervisorSettings(
+            agent=case, working_directory=workspace, handoff_directory=handoff_directory,
+            agent_command="unused-stub-agent", first_prompt="",
+            restarts_itself_on_main_code_at_each_session_handoff=True,
+            started_by_handoff_supervisor_restarting_itself_on_main_code=restarted)
+        retiring = f"0badbeef-0000-4000-8000-{os.getpid():012d}"
+        supervisor.write_supervisor_state(settings.state_path, {
+            supervisor.LAUNCHED_SESSION_ID_STATE_KEY: retiring, "generation": 3})
+        settings.handoff_path.write_text("restart-counter: 1\nnext-step: carry on\n",
+                                         encoding="utf-8")
+        prompts = []
+
+        def launch_once(agent_command, session_id, working_directory, prompt, **_):
+            prompts.append(prompt)
+            return StubLaunchedSession(0)
+
+        with supervisor_names_replaced(
+                launch_agent_session=launch_once,
+                launch_time_git_sync=lambda directory: "launch-time-git-sync: stubbed",
+                memory_review_due_lines=lambda: (),
+                stdin_isatty=True), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            supervisor.supervise_sessions(settings)
+        state = supervisor.read_supervisor_state(settings.state_path)
+        check(f"MISSING TRANSCRIPT ({case}): the successor starts from the next step, its prompt "
+              f"says it was recovered at {occasion} and that the transcript is missing",
+              len(prompts) == 1 and state.get("consumed_counter") == 1
+              and prompts[0].startswith(
+                  "carry on\n\n" + recovery_note_for_a_missing_transcript(occasion, retiring, workspace)),
+              f"{state} {prompts[:1]!r}"[:900])
+
+
 @contextlib.contextmanager
 def a_claude_on_path(workspace: Path):
     directory = workspace / "claude-on-path"
@@ -520,6 +617,7 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_dont_restart_case(workspace)
     run_restart_failure_cases(workspace)
     run_restarted_process_cases(workspace)
+    run_missing_transcript_cases(workspace)
     run_restart_arguments_cases(workspace)
     run_restart_flag_names_stay_accepted_case(workspace)
     run_own_process_id_in_lock_case(workspace)
