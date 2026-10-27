@@ -49,6 +49,16 @@ are empty, or the parser's own tokens, as item starts are, so a line in code or
 in a comment is never an item's start, a marker, a recommendation or a recorded
 answer.
 
+ITEM PAGES. The walk-me-through skill publishes each item as a page before
+any message shows it, and records the page's link in the walk-minutes as a
+line `#item_page item N of M <link>`, or, when the publish failed, as
+`#item_page item N of M publish failed: <reason>`.
+newest_item_page_link_per_item_from_walk_minutes reads both forms, each on one
+line and at the line's start, outside code and HTML comments; a publish-failed
+line with no reason is not read. The newest line for an item number counts,
+whatever its `of M`, because a re-planned walk keeps an item's page while its
+total changes.
+
 Agent-facing messages follow
 docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 """
@@ -89,10 +99,16 @@ ITEM_LABEL = re.compile(
     rf"^(?:(?P<bold>\*\*|__)item\s+(?P<bold_number>{WHOLE_NUMBER})(?:\s+of\s+(?P<total>\d+))?"
     rf"(?=\s*[:.,]|(?P=bold)\s*(?:[:.,\-–—]|$))"
     rf"|item\s+(?P<plain_number>{WHOLE_NUMBER})[:.](?=\s|$))", re.I)
-REPLY_COUNT = re.compile(rf"\bitems?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
 # Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
 REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
 NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
+# A link is one run of non-space characters, so `publish failed: <reason>` can never be read as a link. Spaces
+# only, never a newline, so a line that ends short is not completed by the line below it.
+ITEM_PAGE_LINE_PATTERN = re.compile(
+    rf"^#item_page[ \t]+item[ \t]+({NUMBER})[ \t]+of[ \t]+\d+[ \t]+(?:(publish failed:[ \t]*\S.*?)|(\S+))[ \t]*$",
+    re.I | re.M)
+# A link has no space in it, so no link can equal this value.
+ITEM_PAGE_PUBLISH_FAILED = "publish failed"
 NOT_A_FORM_PROBLEM = (
     "does not open with an item in one of the forms `item N of M`, `item N.K of M`, "
     "`items N and P of M` or `items N to P of M`")
@@ -188,6 +204,13 @@ def next_to_present(minutes_text, parser):
         return None
     hashtag, value = markers[-1]
     return value, not hashtag
+
+
+def newest_item_page_link_per_item_from_walk_minutes(minutes_text, parser):
+    """Return {item number: the link of its newest `#item_page` line, or ITEM_PAGE_PUBLISH_FAILED when that line
+    records a failed publish}."""
+    return {number: ITEM_PAGE_PUBLISH_FAILED if failed else link
+            for number, failed, link in ITEM_PAGE_LINE_PATTERN.findall("\n".join(prose_lines(minutes_text, parser)))}
 
 
 def is_closed(value):

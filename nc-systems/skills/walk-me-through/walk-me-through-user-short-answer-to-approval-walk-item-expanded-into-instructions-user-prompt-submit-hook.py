@@ -51,17 +51,19 @@ no recommendation for any of its items and says why.
 
 R ON AN OPEN APPROVAL-WALK, as the whole prompt (R or repeat), hands the
 agent each waiting item's closing line to print, word for word: the item's
-link, from the newest `#item_page item N of M <link>` line for that item
-number in the minutes, outside code and HTML comments, with the item's running
-count and point from its walk-document heading, any link in the point cut to
-its text, then ANSWER_LETTERS_TEXT, as the walk-me-through skill writes it.
-The link opens the item's page, which shows the item in full on every screen
-the user reads. For an item with no `#item_page` line, the agent
-is told to show the item in full, heading included, word for word as the
-walk-document has it; the hook copies no item text. In a NUMBERED answer, each R
-does the same for the item it names, and an answer whose every
-letter is R, such as `37.4 r`, gets none of the lines for recording answers,
-since R records nothing. When no approval-walk is
+link, from the newest `#item_page` line for that item number in the minutes,
+as WALK_FINDER_FILE's docstring says, with the item's running count and point
+from its walk-document heading, any link in the point cut to its text, then
+ANSWER_LETTERS_TEXT, as the walk-me-through skill writes it. The link opens
+the item's page, which shows the item in full on every screen the user reads.
+When the newest line records a failed publish, the closing line has no link,
+as the skill writes it then. For an item with no `#item_page` line, the agent
+is told to publish the item and record its line first, as the skill says,
+then to print the closing line, given with `<page link>` in place of the
+link; the hook copies no item text. In a NUMBERED answer, each R, on an item
+or on a part of the waiting item, does the same for the item it names, and an
+answer whose every letter is R, such as `37.4 r`, gets none of the lines for
+recording answers, since R records nothing. When no approval-walk is
 open, or its walk-document has no item with a number an R names, or with one
 of the numbers after a word, as in `approve 5 and 6`, the hook prints
 nothing, so the prompt reaches the agent as typed; when the walk-document or
@@ -154,7 +156,6 @@ WORD_RIDER = re.compile(rf"^(?P<answer>{WORD})\b[\s,;:.\-]+{NOT_AN_ITEM_NUMBER}(
 RECOMMENDATION = re.compile(r"Recommendation:(.*)$", re.I | re.M)
 PART_START = re.compile(r"^Part (\d+)\.(?=\s|$)")
 MOST_PARTS = 5
-ITEM_PAGE = re.compile(rf"^#item_page\s+item\s+({NUMBER})\s+of\s+\d+\s+(\S+)\s*$", re.I | re.M)
 HEADING_POINT = re.compile(r"^[#\s*]*items?\s[^:]*:\s*(.*?)[\s*]*$", re.I)
 # The walk-me-through skill's closing line after its link, word for word; the hook's test checks SKILL.md holds it.
 ANSWER_LETTERS_TEXT = ("A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · "
@@ -262,8 +263,10 @@ MEANINGS = {
     "Z": (("Z means defer: move {item} as the walk-me-through skill's sentence on Z says.",
            "Then run the check step with --deferred, then close, and do what close prints."),
           ("Z means defer: postpone your last question or proposal and record it as a task.",)),
-    "R": (("\"{word}\" asks to see {item} again: show it in full, heading included, word for word as the "
-           "walk-document has it, and wait for his answer.",),
+    "R": (("\"{word}\" asks to see {item} again: reply with only its closing line, as the walk-me-through skill "
+           "writes it, with the link from the minutes' newest `#item_page` line for it, and wait for his answer.",
+           "If the minutes have no `#item_page` line for it, first publish the item and record the line, as the "
+           "skill says."),
           ("{word} asks to see your last question or proposal again: show it in full, word for word, "
            "and wait for his answer.",)),
     "E": (("E means explain: run the explain skill, {explain_skill}, on {item}.",),
@@ -290,6 +293,15 @@ MEANINGS.update({f"O{option}": tuple(tuple(line.replace("{option}", option) for 
 REPEAT_PAGE_LINE = (
     "\"{answer}\" asks to see {item} again. Its page shows it in full, so reply with only this closing line, "
     "word for word, and wait for his answer: {closing_line}")
+REPEAT_UNPUBLISHED_LINES = (
+    "\"{answer}\" asks to see {item} again, and the hook found no `#item_page` line for it in the walk-minutes"
+    "{minutes}.",
+    "If the walk-minutes hold none, publish the item as the walk-me-through skill says, and add to them the line "
+    "`#item_page {item} <page link>`, because the item's page is what shows the user the item in full.",
+    "If the publish fails, add the line `#item_page {item} publish failed: <what the Artifact tool said>` "
+    "instead, and leave the link out of the closing line, keeping only its link text and what follows the link.",
+    "Then reply with only the item's closing line, with the page's link in place of `<page link>`, and wait for "
+    "his answer: {closing_line}")
 NUMBERED_R_WAITING_ITEM_LINE = "Then end your message naming the item waiting for his answer, {item}."
 # Check records one answer for every item the `#next_to_present` line names, and close moves that line on.
 ONE_ITEM_AT_A_TIME_LINE = (
@@ -344,9 +356,6 @@ PARTS_REPEATED_LINES = (
     "Ask the user to answer every part of {item} again, giving each part's number once with its letter, as in "
     "`1 a 2 d`.",
 )
-PART_R_LINE = (
-    "R on a part asks to see {item} again: show it in full, heading included, word for word as the walk-document "
-    "has it.")
 PARTS_SAME_LETTER_LINE = (
     "Every part has the answer {letter}, so the answer is {letter} to the whole of {item}, and means what the "
     "lines below say.")
@@ -445,9 +454,11 @@ class WalkState:
     """The open approval-walk as the hook read it."""
 
     def __init__(self, name, item, numbers, total, recommendations, problem, recommendation_problems=None,
-                 parts=None, pages=None, points=None):
+                 parts=None, pages=None, points=None, minutes=None):
         self.name, self.item, self.numbers, self.total = name, item, numbers, total
-        self.pages = pages or {}  # item number -> link of its newest `#item_page` line
+        self.minutes = minutes  # the walk-minutes' path
+        # item number -> link of its newest `#item_page` line, or the walk finder's ITEM_PAGE_PUBLISH_FAILED
+        self.pages = pages or {}
         self.points = points or {}  # item number -> the point its walk-document heading states
         self.recommendations = recommendations  # item number -> recommendation text or None
         self.problem = problem  # why recommendations could not be read, or None
@@ -469,8 +480,7 @@ def read_walk(cwd):
     minutes, value, _ = walk
     name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
     # The newest line for an item wins, since a re-planned walk records its pages again.
-    pages = {number: link for number, link in ITEM_PAGE.findall(
-        "\n".join(walk_finder.prose_lines(minutes.read_text(encoding="utf-8"), parser)))}
+    pages = walk_finder.newest_item_page_link_per_item_from_walk_minutes(minutes.read_text(encoding="utf-8"), parser)
     count = walk_finder.VALUE_COUNT.match(value)
     if not count:
         return WalkState(name, f"the item its minutes' `#next_to_present` line names, `{value}`,",
@@ -481,7 +491,8 @@ def read_walk(cwd):
         return WalkState(name, count[0], [], None, {}, f"the `#next_to_present` line, `{value}`, {problem}")
     document = minutes.with_name(name + ".md")
     if not document.is_file():
-        return WalkState(name, count[0], numbers, total, {}, f"the walk-document {document} does not exist")
+        return WalkState(name, count[0], numbers, total, {}, f"the walk-document {document} does not exist",
+                         pages=pages, minutes=minutes)
     text = document.read_text(encoding="utf-8")
     tokens = parser.parse(text)
     spans = walk_finder.item_unit_spans(text, parser)
@@ -492,7 +503,7 @@ def read_walk(cwd):
         walk_finder.prose_lines(text, parser, tokens), walk_finder.item_opening_lines(text, parser, tokens),
         spans, total, walk_finder, part_starts(tokens))
     return WalkState(name, count[0], numbers, total, recommendations, None, problems, parts, pages,
-                     heading_points(text.split("\n"), spans, total, parser))
+                     heading_points(text.split("\n"), spans, total, parser), minutes)
 
 
 def heading_points(lines, spans, total, parser):
@@ -529,13 +540,17 @@ def without_links(markdown, parser):
     return "".join(pieces)
 
 
-def closing_line(number, walk):
-    """The walk-me-through skill's closing line for the item, or None when the minutes record no page for it."""
-    link = walk.pages.get(number)
+def closing_line(number, walk, link=None):
+    """The walk-me-through skill's closing line for the item, with link in place of its page's, or None when the
+    minutes record no page for it and no link is given; without its link when the minutes record a failed
+    publish."""
+    link = link or walk.pages.get(number)
     if link is None:
         return None
     point = walk.points.get(number)
     label = "Item " + item_name(number, walk)[len("item "):] + (f", {point}" if point else "")
+    if link == load_walk_finder().ITEM_PAGE_PUBLISH_FAILED:
+        return f"{label} · {ANSWER_LETTERS_TEXT}"
     return f"[{label}]({link}) · {ANSWER_LETTERS_TEXT}"
 
 
@@ -646,8 +661,9 @@ def parts_lines(answer, parts, walk):
         return [line.format(parts=named(repeated), item=item) for line in PARTS_REPEATED_LINES]
     pairs = ", ".join(f"part {int(number)}: {letter}" for number, letter in answer["pairs"])
     lines = [PARTS_READ_LINE.format(item=item, parts=f"1 to {parts[-1]}", pairs=pairs)]
-    if len(deciding) < len(answer["pairs"]):
-        lines.append(PART_R_LINE.format(item=item))
+    first_repeat = next((number for number, letter in answer["pairs"] if letter == "R"), None)
+    if first_repeat is not None:
+        lines.append(repeat_line(f"{first_repeat} R", walk.numbers[0], walk))
     letters = {letter for _, letter in deciding}
     unanswered = [number for number in parts if number not in numbers]
     if not deciding:
@@ -731,10 +747,13 @@ def meaning_lines(answer, walk, in_walk):
 
 
 def repeat_line(answer, number, walk):
-    """The line telling the agent how to answer an R for the item: its closing line, or the item in full."""
+    """The text telling the agent how to answer an R for the item: its closing line, or, when the minutes record
+    no page for it, to publish the item and record its page first."""
     line = closing_line(number, walk)
     if line is None:
-        return MEANINGS["R"][0][0].format(word=answer, item=item_name(number, walk))
+        return "\n".join(REPEAT_UNPUBLISHED_LINES).format(
+            answer=answer, item=item_name(number, walk), minutes=f" {walk.minutes}" if walk.minutes else "",
+            closing_line=closing_line(number, walk, "<page link>"))
     return REPEAT_PAGE_LINE.format(answer=answer, item=item_name(number, walk), closing_line=line)
 
 
