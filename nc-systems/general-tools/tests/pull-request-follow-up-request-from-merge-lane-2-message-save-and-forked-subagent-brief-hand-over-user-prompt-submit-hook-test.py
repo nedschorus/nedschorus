@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Tests for pull-request-follow-up-request-from-merge-lane-2-message-save-and-author-brief-run-reminder-user-prompt-submit-hook.py.
+"""Tests for pull-request-follow-up-request-from-merge-lane-2-message-save-and-forked-subagent-brief-hand-over-user-prompt-submit-hook.py.
 
 Each case runs the hook as Claude Code does, with a UserPromptSubmit payload on stdin, whose cwd is
 a scratch git repository; prompts copy the format of a real cross-session message from merge-lane-2.
 
-Run: python3 nc-systems/general-tools/tests/pull-request-follow-up-request-from-merge-lane-2-message-save-and-author-brief-run-reminder-user-prompt-submit-hook-test.py
+Run: python3 nc-systems/general-tools/tests/pull-request-follow-up-request-from-merge-lane-2-message-save-and-forked-subagent-brief-hand-over-user-prompt-submit-hook-test.py
 """
 
 import importlib.util
@@ -24,16 +24,32 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
-HOOK_NAME = "pull-request-follow-up-request-from-merge-lane-2-message-save-and-author-brief-run-reminder-user-prompt-submit-hook.py"
+HOOK_NAME = "pull-request-follow-up-request-from-merge-lane-2-message-save-and-forked-subagent-brief-hand-over-user-prompt-submit-hook.py"
 HOOK = Path(__file__).resolve().parents[1] / HOOK_NAME
-BRIEF_PROGRAM_NAME = "pull-request-follow-up-author-brief-from-non-blocking-findings-and-every-finding-answered-check.py"
+BRIEF_PROGRAM_NAME = "pull-request-follow-up-request-findings-open-pull-requests-or-record-leave-out-reasons-and-clean-up.py"
 NUMBER = 1964
 BLOCK = (f"#follow_up_request pull request {NUMBER}\n"
          "1. Codex P2 (:519-520): keep the padding when rebuilding code spans.\n"
          "2. mac-claude (inline at :713): send every R through repeat_line.\n")
-EXPECTED_LINES = (
-    f"merge-lane-2 has merged pull request {NUMBER} and sent non-blocking findings for you to follow up now.\n"
-    f"Run `scripts/{BRIEF_PROGRAM_NAME} {NUMBER}` now and do what it prints.")
+COMMAND = f"python3 scripts/{BRIEF_PROGRAM_NAME} {NUMBER}"
+EXPECTED_BRIEF = f"""merge-lane-2 merged pull request {NUMBER} and sent 2 non-blocking findings to follow up now:
+
+{BLOCK}
+For you, the author:
+Dispatch one subagent with the Agent tool: subagent_type "fork", isolation "worktree", run_in_background true. Give it this whole text; the lines under "For you, the author" are not its.
+When it has ended, run: {COMMAND} clean-up
+
+For the subagent, working in your own worktree:
+1. Run git fetch origin, then check each finding against origin/main; leave out any that no longer holds.
+2. Group the findings you take on by topic: one pull request per topic.
+3. For each topic, run: {COMMAND} start-topic-branch <topic-branch>
+   Make the change with its tests, and commit.
+   Write follow-up-pull-request-title-and-description.md at your worktree's root: the title, a blank line, then the description. Do not commit it.
+   Run: {COMMAND} open-pull-request --findings <n>[,<n>...]
+4. For each finding you leave out, run: {COMMAND} leave-out <n> --reason "<why>"
+5. Run: {COMMAND} finish-and-print-merge-lane-2-message
+   Send the message it prints to merge-lane-2 with SendMessage.
+If a command refuses or fails, do what it prints."""
 SAVED = Path(".git") / "pull-request-follow-up-requests" / f"pull-request-{NUMBER}-non-blocking-findings.md"
 
 failures = []
@@ -95,20 +111,35 @@ def test_silent_prompts():
         shutil.rmtree(root)
 
 
-def test_saves_and_reminds():
+def test_saves_and_hands_over_the_brief():
     root, repository = scratch()
     try:
         code, _, context, err = run(MERGE_MESSAGE, repository)
         check("a merge-lane-2 follow-up request exits 0", code == 0, err)
-        check("the reminder is exactly the two approved lines", context == EXPECTED_LINES, repr(context))
+        check("the context is exactly the follow-up brief", context == EXPECTED_BRIEF, context or "")
         saved = repository / SAVED
         check("the block is saved word for word, without the signature line",
               saved.exists() and saved.read_text() == BLOCK, saved.read_text() if saved.exists() else "missing")
         second = message(f"#follow_up_request pull request 1965\n1. one finding\n")
         code, _, context, err = run(MERGE_MESSAGE + "\n" + second, repository)
-        check("two merge-lane-2 messages with blocks get one reminder each",
-              code == 0 and context is not None and context.count("now and do what it prints.") == 2
-              and "pull request 1965 and sent" in context, repr(context))
+        check("two merge-lane-2 messages with blocks get one brief each",
+              code == 0 and context is not None and context.count("For you, the author:\n") == 2
+              and "merged pull request 1965 and sent 1 non-blocking" in context, repr(context))
+        answers = SAVED.parent / f"pull-request-{NUMBER}-follow-up-finding-answers.json"
+        (repository / answers).write_text('{"answers": {}, "finished_at": "2026-10-27T10:00:00Z"}\n')
+        code, _, context, err = run(MERGE_MESSAGE, repository)
+        check("the same block for a finished follow-up gets no brief, and says why",
+              code == 0 and context == (
+                  f"merge-lane-2's message above holds the #follow_up_request block for pull request {NUMBER} "
+                  "again, and that follow-up was finished at 2026-10-27T10:00:00Z, so this hook gave no "
+                  "follow-up brief: a second subagent would answer the same findings twice.\n"
+                  "If merge-lane-2 says a finding is still open, follow it up yourself as CLAUDE.md says, and "
+                  "answer merge-lane-2 with SendMessage."), repr(context) + err)
+        (repository / answers).write_text("{not json")
+        code, _, context, err = run(MERGE_MESSAGE, repository)
+        check("a follow-up record that cannot be read is reported in the context",
+              code == 0 and context is not None and "could not save the block or read its follow-up's record" in context
+              and "is not the JSON this program writes" in context, repr(context) + err)
     finally:
         shutil.rmtree(root)
 
@@ -155,7 +186,7 @@ def test_save_failures():
         shutil.rmtree(root)
 
 
-for test in (test_silent_prompts, test_saves_and_reminds, test_unreadable_block, test_save_failures):
+for test in (test_silent_prompts, test_saves_and_hands_over_the_brief, test_unreadable_block, test_save_failures):
     test()
 
 print(f"FAILED: {len(failures)} failed" if failures else "PASSED: 0 failed")

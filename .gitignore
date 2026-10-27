@@ -92,7 +92,8 @@ ghi-mirror/
 # never part of the fix commit
 fix-round-answers-pull-request-*.md
 
-# follow-up answers files: written at a worktree's root by the follow-up's forked subagent and read
-# by scripts/pull-request-follow-up-author-brief-from-non-blocking-findings-and-every-finding-answered-check.py --check;
+# the follow-up pull request title and description file: written at a worktree's root by the
+# follow-up's forked subagent and read and removed by the open subcommand of
+# scripts/pull-request-follow-up-request-findings-open-pull-requests-or-record-leave-out-reasons-and-clean-up.py;
 # never part of a follow-up pull request
-follow-up-answers-pull-request-*.md
+/follow-up-pull-request-title-and-description.md

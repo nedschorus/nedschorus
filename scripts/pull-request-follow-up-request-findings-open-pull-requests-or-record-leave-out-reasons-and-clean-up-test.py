@@ -1,0 +1,551 @@
+#!/usr/bin/env python3
+"""Tests for pull-request-follow-up-request-findings-open-pull-requests-or-record-leave-out-reasons-and-clean-up.py.
+
+Each case runs the program in a scratch clone of a scratch bare origin, with the follow-up request
+saved by the program's own save_follow_up_request_and_clear_answers_when_its_findings_changed(), as the hook saves it.
+start, open, leave-out and finish run in a second worktree of the clone, as the forked subagent
+runs them; clean-up runs in the clone, as the author runs it. A fake gh first on PATH stands in for
+GitHub; a pre-push hook in the clone injects a refused push.
+
+Run: python3 scripts/pull-request-follow-up-request-findings-open-pull-requests-or-record-leave-out-reasons-and-clean-up-test.py
+"""
+
+import importlib.util
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().with_name("git-redirecting-environment-removal-test-fixture.py"))
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
+PROGRAM = Path(__file__).resolve().with_name(
+    "pull-request-follow-up-request-findings-open-pull-requests-or-record-leave-out-reasons-and-clean-up.py")
+_program_spec = importlib.util.spec_from_file_location("follow_up_program", PROGRAM)
+program = importlib.util.module_from_spec(_program_spec)
+_program_spec.loader.exec_module(program)
+
+NUMBER = 1964
+BLOCK = (f"#follow_up_request pull request {NUMBER}\n"
+         "1. Codex P2 (:519-520): keep the padding when rebuilding code spans.\n"
+         "2. mac-claude (inline at :713): send every R through repeat_line.\n")
+LINK = "https://github.com/nedschorus/nedschorus/pull/2001"
+EXISTING_LINK = "https://github.com/nedschorus/nedschorus/pull/2002"
+DESCRIPTION = "Keep code span padding\n\nKeeps the padding.\n\n#no_defect_fixed\n"
+FAKE_GH = """#!/bin/sh
+printf '%s\\036' "$*" >> "$FAKE_GH_LOG"
+if [ "$1 $2" = "pr list" ]; then
+    [ -n "$FAKE_GH_EXISTING" ] && printf '%s\\n' "$FAKE_GH_EXISTING"
+    exit 0
+fi
+if [ -n "$FAKE_GH_CREATE_FAILS" ]; then
+    echo "GraphQL: something went wrong" >&2
+    exit 1
+fi
+printf 'Creating pull request\\n%s\\n' "${FAKE_GH_CREATE_OUTPUT-https://github.com/nedschorus/nedschorus/pull/2001}"
+"""
+
+failures = []
+
+
+def check(name, condition, detail=""):
+    print(("PASS " if condition else "FAIL ") + name)
+    if not condition:
+        failures.append(name)
+        if detail:
+            print("     " + detail.replace("\n", "\n     "))
+
+
+def git(directory, *arguments):
+    return subprocess.run(["git", "-C", str(directory), *arguments], check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
+class Case:
+    """A bare origin, the author's clone, a fake gh, and the subagent's worktree once made."""
+
+    def __init__(self):
+        self.root = Path(os.path.realpath(tempfile.mkdtemp(prefix="follow-up-program-test-")))
+        self.origin = self.root / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)], check=True)
+        self.repository = self.root / "repository"
+        subprocess.run(["git", "clone", "-q", str(self.origin), str(self.repository)], check=True,
+                       capture_output=True)
+        git(self.repository, "config", "user.email", "test@example.invalid")
+        git(self.repository, "config", "user.name", "test")
+        git(self.repository, "config", "core.hooksPath", str(self.repository / ".git" / "hooks"))
+        (self.repository / "base.txt").write_text("base\n")
+        git(self.repository, "add", "base.txt")
+        git(self.repository, "commit", "-q", "-m", "base")
+        git(self.repository, "push", "-q", "origin", "main")
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        (self.bin / "gh").write_text(FAKE_GH)
+        (self.bin / "gh").chmod(0o755)
+        self.gh_log = self.root / "gh.log"
+        self.environment = {**os.environ, "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
+                            "FAKE_GH_LOG": str(self.gh_log)}
+        self.worktree = None
+
+    def save(self, text=BLOCK):
+        [request] = program.parse_follow_up_request_blocks_from_message_text(text)
+        return program.save_follow_up_request_and_clear_answers_when_its_findings_changed(request, str(self.repository))
+
+    def subagent_worktree(self, name="subagent-worktree"):
+        self.worktree = self.root / name
+        git(self.repository, "worktree", "add", "-q", "--detach", str(self.worktree))
+        return self.worktree
+
+    def run(self, directory, *arguments, **environment):
+        completed = subprocess.run([sys.executable, str(PROGRAM), str(NUMBER), *map(str, arguments)],
+                                   cwd=directory, capture_output=True, text=True,
+                                   stdin=subprocess.DEVNULL, env={**self.environment, **environment})
+        return completed.returncode, completed.stdout, completed.stderr
+
+    def states(self):
+        return self.repository / ".git" / program.PULL_REQUEST_FOLLOW_UP_REQUESTS_DIRECTORY_NAME
+
+    def topic_branches(self):
+        path = self.states() / f"pull-request-{NUMBER}-follow-up-topic-branches-and-worktrees.json"
+        return json.loads(path.read_text()) if path.exists() else None
+
+    def answers(self):
+        path = self.states() / f"pull-request-{NUMBER}-follow-up-finding-answers.json"
+        return json.loads(path.read_text()) if path.exists() else None
+
+    def gh_calls(self):
+        return self.gh_log.read_text().split("\x1e")[:-1] if self.gh_log.exists() else []
+
+    def commit_change(self, name="change.txt"):
+        (self.worktree / name).write_text("change\n")
+        git(self.worktree, "add", name)
+        git(self.worktree, "commit", "-q", "-m", "change")
+
+    def write_description(self, text=DESCRIPTION):
+        path = self.worktree / program.TITLE_AND_DESCRIPTION_FILE_NAME
+        path.write_text(text)
+        return path
+
+    def close(self):
+        for path in self.root.rglob("*"):
+            if path.is_dir() and not path.is_symlink():
+                path.chmod(0o700)
+        shutil.rmtree(self.root)
+
+
+def test_help():
+    completed = subprocess.run([sys.executable, str(PROGRAM), "--help"], capture_output=True, text=True)
+    check("--help exits 0 and names every subcommand",
+          completed.returncode == 0 and all(name in completed.stdout for name in
+                                            ("start-topic-branch", "open-pull-request", "leave-out", "finish-and-print-merge-lane-2-message", "clean-up")),
+          completed.stdout)
+
+
+def test_block_parsing():
+    message = ("PR 1964 merged.\n" + BLOCK + "— merge-lane-2 on ned-box\n")
+    [request] = program.parse_follow_up_request_blocks_from_message_text(message)
+    check("a block ends at the first line that is not a numbered finding",
+          request.number == NUMBER and request.text == BLOCK and request.finding_count == 2, request.text)
+    check("text without the request line holds no block",
+          program.parse_follow_up_request_blocks_from_message_text("1. a\n2. b\n") == [])
+    [ended] = program.parse_follow_up_request_blocks_from_message_text(BLOCK + "thanks\n3. a numbered line after\n")
+    check("a numbered line after the block's end is not a finding", ended.text == BLOCK, ended.text)
+    for label, text in (("no findings", f"#follow_up_request pull request {NUMBER}\nthanks\n"),
+                        ("numbering that skips", f"#follow_up_request pull request {NUMBER}\n1. a\n3. b\n"),
+                        ("numbering that starts at 2", f"#follow_up_request pull request {NUMBER}\n2. a\n"),
+                        ("a repeated number", f"#follow_up_request pull request {NUMBER}\n1. a\n1. b\n")):
+        try:
+            program.parse_follow_up_request_blocks_from_message_text(text)
+        except ValueError as error:
+            check(f"a block with {label} is refused, naming the pull request", str(NUMBER) in str(error), str(error))
+        else:
+            check(f"a block with {label} is refused, naming the pull request", False)
+
+
+def test_brief_text():
+    [request] = program.parse_follow_up_request_blocks_from_message_text(BLOCK)
+    brief = program.build_follow_up_request_forked_subagent_brief(request)
+    command = f"python3 {program.PROGRAM} {NUMBER}"
+    check("the brief quotes the findings word for word", BLOCK in brief, brief)
+    for line in ('Dispatch one subagent with the Agent tool: subagent_type "fork", isolation "worktree", '
+                 "run_in_background true.",
+                 f"When it has ended, run: {command} clean-up",
+                 f"3. For each topic, run: {command} start-topic-branch <topic-branch>",
+                 f"   Run: {command} open-pull-request --findings <n>[,<n>...]",
+                 f"4. For each finding you leave out, run: {command} leave-out <n> --reason \"<why>\"",
+                 f"5. Run: {command} finish-and-print-merge-lane-2-message",
+                 f"   Write {program.TITLE_AND_DESCRIPTION_FILE_NAME} at your worktree's root"):
+        check(f"the brief holds: {line}", line in brief, brief)
+    words = len(brief.replace(BLOCK.rstrip("\n"), "").split())
+    check("the brief, findings aside, is about 150 words", words <= 185, str(words))
+
+
+def test_no_saved_block():
+    case = Case()
+    try:
+        for arguments in (("start-topic-branch", "topic"), ("open-pull-request", "--findings", "1"),
+                          ("leave-out", "1", "--reason", "x"), ("finish-and-print-merge-lane-2-message",)):
+            code, out, err = case.run(case.repository, *arguments)
+            check(f"{arguments[0]} with no saved block refuses with exit 1",
+                  code == 1 and out == "" and err.startswith(
+                      f"REFUSED: No follow-up request from merge-lane-2 is saved for pull request {NUMBER}"), err)
+        check("start with no saved block records nothing", case.topic_branches() is None)
+        code, out, err = case.run(case.repository, "clean-up")
+        check("clean-up with nothing recorded removes nothing and exits 0",
+              code == 0 and "No topic branch is recorded" in out, out + err)
+    finally:
+        case.close()
+
+
+def test_start():
+    case = Case()
+    try:
+        case.save()
+        worktree = case.subagent_worktree()
+        git(case.repository, "commit", "-q", "--allow-empty", "-m", "newer main")
+        git(case.repository, "push", "-q", "origin", "main")
+        code, out, err = case.run(worktree, "start-topic-branch", "topic-one")
+        check("start exits 0 and says the branch is made and recorded",
+              code == 0 and "On topic branch topic-one, made from origin/main and recorded" in out, err)
+        check("start switches the worktree to the new branch",
+              git(worktree, "branch", "--show-current") == "topic-one")
+        check("start fetches origin first, so the branch is made from the newest origin/main",
+              git(worktree, "rev-parse", "HEAD") == git(case.origin, "rev-parse", "main"))
+        check("start records the branch and the worktree's path",
+              case.topic_branches() == [{"branch": "topic-one", "worktree": str(worktree)}],
+              str(case.topic_branches()))
+        code, out, err = case.run(worktree, "start-topic-branch", "topic-one")
+        check("start refuses a branch that already exists, saying how to go on",
+              code == 1 and "A branch named topic-one already exists, so start-topic-branch made nothing." in err
+              and "git switch topic-one" in err, err)
+        code, out, err = case.run(worktree, "start-topic-branch", "topic-two")
+        check("a second topic branch is recorded too",
+              code == 0 and [record["branch"] for record in case.topic_branches()] == ["topic-one", "topic-two"],
+              err + str(case.topic_branches()))
+        git(worktree, "remote", "set-url", "origin", str(case.root / "missing.git"))
+        code, out, err = case.run(worktree, "start-topic-branch", "topic-three")
+        check("a fetch that fails is FAILED with exit 2, and the branch stays recorded for clean-up",
+              code == 2 and err.startswith("FAILED: git fetch origin") and "Run the same command again once." in err
+              and "start-topic-branch stopped there; what it recorded before the failure stays recorded." in err
+              and case.topic_branches()[-1]["branch"] == "topic-three", err)
+        code, out, err = case.run(worktree, "start-topic-branch", "topic-three")
+        check("start run again after a failure records the branch once",
+              [record["branch"] for record in case.topic_branches()].count("topic-three") == 1,
+              str(case.topic_branches()))
+    finally:
+        case.close()
+
+
+def started(case, branch="topic-one"):
+    case.save()
+    worktree = case.subagent_worktree()
+    code, _, err = case.run(worktree, "start-topic-branch", branch)
+    assert code == 0, err
+    return worktree
+
+
+def test_open_refusals():
+    case = Case()
+    try:
+        worktree = started(case)
+        case.commit_change()
+        code, out, err = case.run(worktree, "open-pull-request", "--findings", "1,3")
+        check("open refuses a finding that does not exist",
+              code == 1 and "merge-lane-2 sent 2 findings for pull request 1964, numbered 1 to 2, so there "
+                            "is no finding 3, and open-pull-request pushed nothing." in err, err)
+        code, out, err = case.run(worktree, "open-pull-request", "--findings", "1")
+        check("open refuses when the title and description file is missing",
+              code == 1 and f"{worktree / program.TITLE_AND_DESCRIPTION_FILE_NAME} does not exist, so "
+                            "open-pull-request pushed nothing." in err, err)
+        for label, text in (("no blank second line", "Title\nDescription\n#no_defect_fixed\n"),
+                            ("no title", "\n\n#no_defect_fixed\n"),
+                            ("no description", "Title\n\n")):
+            case.write_description(text)
+            code, out, err = case.run(worktree, "open-pull-request", "--findings", "1")
+            check(f"open refuses a title and description file with {label}",
+                  code == 1 and "is not the pull request's title on the first line, a blank line, then the "
+                                "description, so open-pull-request pushed nothing." in err, err)
+        case.write_description("Title\n\nA description without a defect line.\n")
+        code, out, err = case.run(worktree, "open-pull-request", "--findings", "1")
+        check("open refuses a description without a defect line",
+              code == 1 and "has no line beginning \"#root_cause\", \"#root_cause_not_fixed\" or "
+                            "\"#no_defect_fixed\", so open-pull-request pushed nothing" in err, err)
+        case.write_description("Title\n\n- **Root cause:** the old label still counts.\n")
+        git(worktree, "switch", "-q", "--detach")
+        code, out, err = case.run(worktree, "open-pull-request", "--findings", "1")
+        check("open refuses a detached HEAD, after accepting the merge gate's old defect label",
+              code == 1 and "This worktree is on a detached HEAD, which start-topic-branch did not record" in err, err)
+        git(worktree, "switch", "-q", "-c", "unrecorded")
+        code, out, err = case.run(worktree, "open-pull-request", "--findings", "1")
+        check("open refuses a branch start did not record",
+              code == 1 and "This worktree is on branch unrecorded, which start-topic-branch did not record" in err, err)
+        check("no refusal pushed or called gh",
+              case.gh_calls() == [] and "topic-one" not in git(case.origin, "branch"), str(case.gh_calls()))
+        git(worktree, "switch", "-q", "topic-one")
+        code, out, err = case.run(worktree, "leave-out", "2", "--reason", "already fixed")
+        code, out, err = case.run(worktree, "open-pull-request", "--findings", "1,2")
+        check("open refuses a finding that already has an answer, quoting the answer",
+              code == 1 and "Finding 2 of pull request 1964's follow-up request already has an answer, so "
+                            "open-pull-request pushed nothing:\n2. Left out: already fixed\nRun the command again without "
+                            "that finding" in err, err)
+        code, out, err = case.run(worktree, "open-pull-request", "--findings", "1,x")
+        check("open refuses finding numbers that are not numbers", code == 2 and "such as 1,3" in err, err)
+    finally:
+        case.close()
+
+
+def test_open():
+    case = Case()
+    try:
+        worktree = started(case)
+        case.commit_change()
+        description = case.write_description()
+        code, out, err = case.run(worktree, "open-pull-request", "--findings", "1")
+        check("open exits 0 and says what it opened and what is left",
+              code == 0 and f"Opened {LINK} for finding 1 of pull request 1964's follow-up request, and "
+                            "recorded it." in out and "Findings without an answer yet: 2." in out, out + err)
+        check("open pushes the branch to origin", git(case.origin, "rev-parse", "topic-one")
+              == git(worktree, "rev-parse", "HEAD"))
+        check("open sets the branch's upstream", git(worktree, "rev-parse", "--abbrev-ref", "@{upstream}")
+              == "origin/topic-one")
+        calls = case.gh_calls()
+        check("open looks for an open pull request of the branch, then creates one from the file",
+              len(calls) == 2 and calls[0].startswith("pr list --head topic-one --state open")
+              and calls[1] == "pr create --base main --head topic-one --title Keep code span padding "
+                              "--body Keeps the padding.\n\n#no_defect_fixed\n", str(calls))
+        check("open records the link against the finding",
+              case.answers() == {"answers": {"1": {"link": LINK, "branch": "topic-one"}}}, str(case.answers()))
+        check("open removes the title and description file", not description.exists())
+        code, out, err = case.run(worktree, "start-topic-branch", "topic-two")
+        case.commit_change("second.txt")
+        case.write_description()
+        code, out, err = case.run(worktree, "open-pull-request", "--findings", "2", FAKE_GH_EXISTING=EXISTING_LINK)
+        check("open on a branch whose pull request is already open records that pull request, creating none",
+              code == 0 and "pr create" not in case.gh_calls()[-1]
+              and case.answers()["answers"]["2"]["link"] == EXISTING_LINK
+              and f"Every finding has an answer: run python3 {program.PROGRAM} {NUMBER} finish-and-print-merge-lane-2-message" in out, out + err)
+    finally:
+        case.close()
+
+
+def test_open_failures():
+    case = Case()
+    try:
+        worktree = started(case)
+        case.commit_change()
+        description = case.write_description()
+        hook = case.repository / ".git" / "hooks" / "pre-push"
+        hook.write_text("#!/bin/sh\necho 'pre-push: suite x fails' >&2\nexit 1\n")
+        hook.chmod(0o755)
+        code, out, err = case.run(worktree, "open-pull-request", "--findings", "1")
+        check("a refused push is FAILED with exit 2, git's output and what to do after the hook refuses",
+              code == 2 and "pre-push: suite x fails" in err and "so no pull request was opened." in err
+              and "If git's output above shows the pre-push hook refusing the push, do what it says, commit "
+                  "the fix, and run open-pull-request again." in err
+              and "Run the same command again once." not in err, err)
+        check("a refused push calls no gh, records nothing and keeps the file",
+              case.gh_calls() == [] and case.answers() is None and description.exists())
+        hook.unlink()
+        code, out, err = case.run(worktree, "open-pull-request", "--findings", "1", FAKE_GH_CREATE_FAILS="1")
+        check("gh pr create that fails is FAILED with exit 2, recording nothing",
+              code == 2 and "gh pr create" in err and "GraphQL: something went wrong" in err
+              and "Run the same command again once." in err and case.answers() is None
+              and description.exists(), err)
+        code, out, err = case.run(worktree, "open-pull-request", "--findings", "1", FAKE_GH_CREATE_OUTPUT="no link here")
+        check("gh pr create that prints no link is FAILED with exit 2",
+              code == 2 and "gh pr create printed no pull request link" in err and case.answers() is None, err)
+        git_only = case.root / "git-only"
+        git_only.mkdir()
+        (git_only / "git").symlink_to(shutil.which("git"))
+        code, out, err = case.run(worktree, "open-pull-request", "--findings", "1", PATH=str(git_only))
+        check("a gh that cannot start is FAILED with exit 2", code == 2 and "could not start gh" in err, err)
+        (case.bin / "gh").write_text("#!/bin/sh\nsleep 5\n")
+        original_timeout = program.GH_TIMEOUT_SECONDS
+        program.GH_TIMEOUT_SECONDS = 0.5
+        saved_path = os.environ["PATH"]
+        os.environ["PATH"] = case.environment["PATH"]
+        try:
+            program.gh(["pr", "list"])
+        except program.StepFailed as error:
+            check("a gh that does not finish in time is a StepFailed", "did not finish within 0.5 s" in str(error),
+                  str(error))
+        else:
+            check("a gh that does not finish in time is a StepFailed", False)
+        finally:
+            os.environ["PATH"] = saved_path
+            program.GH_TIMEOUT_SECONDS = original_timeout
+    finally:
+        case.close()
+
+
+def test_leave_out_and_finish():
+    case = Case()
+    try:
+        worktree = started(case)
+        code, out, err = case.run(worktree, "finish-and-print-merge-lane-2-message")
+        check("finish refuses, naming each finding without an answer",
+              code == 1 and "Finding 1 and 2 of pull request 1964's follow-up request has no answer yet" in err
+              and f"python3 {program.PROGRAM} {NUMBER} leave-out <n> --reason \"<why>\"" in err, err)
+        code, out, err = case.run(worktree, "leave-out", "3", "--reason", "x")
+        check("leave-out refuses a finding that does not exist",
+              code == 1 and "so there is no finding 3, and nothing was recorded." in err, err)
+        code, out, err = case.run(worktree, "leave-out", "1", "--reason", "  ")
+        check("leave-out refuses an empty reason",
+              code == 1 and "--reason is empty, so nothing was recorded for finding 1." in err
+              and f"python3 {program.PROGRAM} {NUMBER} leave-out 1 --reason \"<why>\"" in err
+              and case.answers() is None, err)
+        code, out, err = case.run(worktree, "leave-out", "1", "--reason", "already\nfixed on main")
+        check("leave-out records the reason on one line",
+              code == 0 and "Recorded finding 1 of pull request 1964's follow-up request as left out." in out
+              and case.answers()["answers"]["1"] == {"reason": "already fixed on main"}, out + err)
+        code, out, err = case.run(worktree, "leave-out", "1", "--reason", "again")
+        check("leave-out refuses a finding that already has an answer",
+              code == 1 and "already has an answer, so nothing was recorded" in err, err)
+        code, out, err = case.run(worktree, "finish-and-print-merge-lane-2-message")
+        check("finish names only the finding still without an answer",
+              code == 1 and "Finding 2 of pull request" in err and case.answers().get("finished_at") is None, err)
+        case.run(worktree, "leave-out", "2", "--reason", "a guard nothing calls for")
+        code, out, err = case.run(worktree, "finish-and-print-merge-lane-2-message")
+        check("finish passes and prints the message for merge-lane-2",
+              code == 0 and out == "Every finding of pull request 1964's follow-up request has an answer, and "
+                                   "the follow-up is marked finished.\n"
+                                   "Send merge-lane-2 this message with SendMessage:\n\n"
+                                   "Follow-ups on pull request 1964, answering merge-lane-2's #follow_up_request "
+                                   "pull request 1964:\n"
+                                   "1. Left out: already fixed on main\n"
+                                   "2. Left out: a guard nothing calls for\n", out + err)
+        finished = case.answers().get("finished_at")
+        check("finish records the finish time, which read_follow_up_request_finished_time reads",
+              finished is not None and program.read_follow_up_request_finished_time(NUMBER, str(case.repository)) == finished)
+        case.save()
+        check("the same block saved again keeps the answers", case.answers() is not None)
+        case.save(BLOCK + "3. a third finding\n")
+        check("a changed block removes the answers but keeps the topic branches",
+              case.answers() is None and case.topic_branches() is not None
+              and program.read_follow_up_request_finished_time(NUMBER, str(case.repository)) is None)
+    finally:
+        case.close()
+
+
+def test_state_failures():
+    case = Case()
+    try:
+        outside = case.root / "not-a-repository"
+        outside.mkdir()
+        code, out, err = case.run(outside, "finish-and-print-merge-lane-2-message")
+        check("outside a git checkout the program is FAILED with exit 2",
+              code == 2 and out == "" and err.startswith("FAILED: git rev-parse")
+              and "Run the same command again once." in err, err)
+        saved = case.save()
+        saved.write_text("not a block\n")
+        code, out, err = case.run(case.repository, "finish-and-print-merge-lane-2-message")
+        check("a saved file that holds no block is FAILED", code == 2 and "exactly one block" in err, err)
+        saved.write_text(BLOCK.replace(str(NUMBER), str(NUMBER + 1)))
+        code, out, err = case.run(case.repository, "finish-and-print-merge-lane-2-message")
+        check("a saved file whose block names another pull request is FAILED",
+              code == 2 and "exactly one block, for this pull request" in err, err)
+        saved.write_text(f"#follow_up_request pull request {NUMBER}\n2. x\n")
+        code, out, err = case.run(case.repository, "finish-and-print-merge-lane-2-message")
+        check("a saved block with bad numbering is FAILED", code == 2 and "numbered 1, 2, 3" in err, err)
+        saved.unlink()
+        saved.mkdir()
+        code, out, err = case.run(case.repository, "finish-and-print-merge-lane-2-message")
+        check("a saved file that cannot be read is FAILED", code == 2 and "could not read" in err, err)
+        saved.rmdir()
+        case.save()
+        answers = case.states() / f"pull-request-{NUMBER}-follow-up-finding-answers.json"
+        answers.write_text("{not json")
+        code, out, err = case.run(case.repository, "finish-and-print-merge-lane-2-message")
+        check("an answers file that is not JSON is FAILED", code == 2 and "is not the JSON this program writes" in err, err)
+        answers.unlink()
+        answers.mkdir()
+        (answers / "inside").write_text("x")
+        try:
+            case.save(BLOCK + "3. c\n")
+        except program.StepFailed as error:
+            check("an answers file that cannot be removed is reported", "could not remove" in str(error), str(error))
+        else:
+            check("an answers file that cannot be removed is reported", False)
+        shutil.rmtree(answers)
+        case.save()
+        case.states().chmod(0o500)
+        code, out, err = case.run(case.repository, "leave-out", "1", "--reason", "x")
+        check("an answers file that cannot be written is FAILED, with nothing printed on stdout",
+              code == 2 and out == "" and "could not write" in err, err)
+    finally:
+        case.close()
+
+
+def test_clean_up():
+    case = Case()
+    try:
+        worktree = started(case)
+        case.commit_change()
+        case.write_description()
+        case.run(worktree, "open-pull-request", "--findings", "1")
+        case.run(worktree, "start-topic-branch", "topic-unpushed")
+        case.commit_change("unpushed.txt")
+        git(worktree, "switch", "-q", "topic-one")
+        git(case.repository, "worktree", "lock", "--reason", "claude agent agent-a1b2 (pid 4242)", str(worktree))
+        code, out, err = case.run(case.repository, "clean-up")
+        check("clean-up leaves a worktree the agent harness locks, and its branches, with exit 1",
+              code == 1 and f"Worktree {worktree} is locked by the agent harness (lock reason: claude agent "
+                            "agent-a1b2 (pid 4242)), so clean-up left it" in out
+              and f"Wait until the subagent has ended, then run: python3 {program.PROGRAM} {NUMBER} clean-up" in out
+              and worktree.exists() and "topic-one" in git(case.repository, "branch"), out + err)
+        git(case.repository, "worktree", "unlock", str(worktree))
+        git(case.repository, "worktree", "lock", "--reason", "kept by the user", str(worktree))
+        code, out, err = case.run(case.repository, "clean-up")
+        check("clean-up leaves a worktree locked for another reason, saying what to do",
+              code == 1 and "is locked (lock reason: kept by the user), so clean-up left it" in out
+              and f"Then run: git worktree remove --force --force {worktree}" in out and worktree.exists(), out + err)
+        git(case.repository, "worktree", "unlock", str(worktree))
+        (worktree / "stray.txt").write_text("stray\n")
+        code, out, err = case.run(case.repository, "clean-up")
+        check("clean-up leaves a worktree with untracked files, listing them",
+              code == 1 and f"Worktree {worktree} holds changed or untracked files" in out
+              and "?? stray.txt" in out and f"Then run: git worktree remove --force {worktree}" in out
+              and worktree.exists(), out + err)
+        (worktree / "stray.txt").unlink()
+        code, out, err = case.run(case.repository, "clean-up")
+        check("clean-up removes the worktree and the pushed branch, and leaves the unpushed branch with exit 1",
+              code == 1 and f"Removed worktree {worktree}." in out and "Deleted branch topic-one." in out
+              and "Branch topic-unpushed holds commits on no branch of origin, so clean-up left it:" in out
+              and "Then run: git branch -D topic-unpushed" in out and not worktree.exists()
+              and "topic-one" not in git(case.repository, "branch")
+              and "topic-unpushed" in git(case.repository, "branch"), out + err)
+        git(case.repository, "branch", "-D", "topic-unpushed")
+        code, out, err = case.run(case.repository, "clean-up")
+        check("clean-up run again, with everything gone, is done with exit 0",
+              code == 0 and "is done: every recorded worktree and topic branch is removed." in out, out + err)
+    finally:
+        case.close()
+
+
+def test_clean_up_failure():
+    case = Case()
+    try:
+        worktree = started(case)
+        (case.repository / ".git" / "worktrees" / worktree.name / "index").write_text("not an index")
+        code, out, err = case.run(case.repository, "clean-up")
+        check("a git command clean-up cannot run is FAILED with exit 2",
+              code == 2 and err.startswith("FAILED: git status --short") and "Run the same command again once." in err,
+              out + err)
+    finally:
+        case.close()
+
+
+for test in (test_help, test_block_parsing, test_brief_text, test_no_saved_block, test_start,
+             test_open_refusals, test_open, test_open_failures, test_leave_out_and_finish,
+             test_state_failures, test_clean_up, test_clean_up_failure):
+    test()
+
+print(f"FAILED: {len(failures)} failed" if failures else "PASSED: 0 failed")
+sys.exit(1 if failures else 0)

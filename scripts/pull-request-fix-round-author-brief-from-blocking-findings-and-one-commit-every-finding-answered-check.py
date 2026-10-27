@@ -90,9 +90,10 @@ WORKTREE_DISPATCH_INSTRUCTION = (
 LOCAL_BRANCH_NAME_FORMAT = "fix-round-pull-request-{number}-review-{review_id}"
 # The subagent works on a local branch, not a detached HEAD: .claude/hooks/session-location-write-guard.py
 # refuses every Edit or Write to a tracked file while HEAD is detached.
-# scripts/pull-request-follow-up-author-brief-from-non-blocking-findings-and-every-finding-answered-check.py
-# prints this step too, so it holds no format placeholder.
-SUBAGENT_WORKTREE_REMOVAL_STEP_INSTRUCTION_TEXT = (
+WORKTREE_REMOVAL_INSTRUCTION = (
+    "For the author, when the subagent has finished: remove its worktree, and then the local branch "
+    "{local_branch}, which the subagent makes in step 0 of the rules below. <path> is the worktree's "
+    "path, which the Agent tool reports when the subagent finishes.\n"
     "   1. Run: git worktree remove <path>\n"
     "      If git refuses because the worktree is locked and the lock reason starts with \"claude agent\", "
     "the agent harness holds the lock: run step 1 again once git worktree list no longer shows the "
@@ -107,13 +108,8 @@ SUBAGENT_WORKTREE_REMOVAL_STEP_INSTRUCTION_TEXT = (
     "path and the lock reason, and go no further. Otherwise list its changed or untracked files with "
     "git -C <path> status --short, read them, copy out any that is work to keep and tell merge-lane-2 "
     "about it with SendMessage. Then run: git worktree remove --force --force <path> (the second --force removes a "
-    "locked worktree).\n")
-WORKTREE_REMOVAL_INSTRUCTION = (
-    "For the author, when the subagent has finished: remove its worktree, and then the local branch "
-    "{local_branch}, which the subagent makes in step 0 of the rules below. <path> is the worktree's "
-    "path, which the Agent tool reports when the subagent finishes.\n"
-    + SUBAGENT_WORKTREE_REMOVAL_STEP_INSTRUCTION_TEXT
-    + "   2. Once the worktree is removed, run: git branch -D {local_branch}")
+    "locked worktree).\n"
+    "   2. Once the worktree is removed, run: git branch -D {local_branch}")
 PULL_REQUEST_FIELDS = ("url", "headRefOid", "headRefName")
 ADVISOR_FIX_ROUND_NUMBER = 3
 ADVISOR_FIX_ROUND_INSTRUCTION = (
@@ -406,7 +402,7 @@ def default_answers_path(number):
     return str(Path(top_level) / ANSWERS_FILE_NAME_FORMAT.format(number=number))
 
 
-def read_answers(path, finding_count, findings_described=None):
+def read_answers(path, finding_count):
     try:
         text = Path(path).read_text()
     except OSError as error:
@@ -432,8 +428,8 @@ def read_answers(path, finding_count, findings_described=None):
             problems.append(f"no entry for finding {', '.join(map(str, missing))}")
         if extra:
             problems.append(f"an entry for finding {', '.join(map(str, extra))}, which does not exist")
-        described = findings_described or f"the review has {finding_count} blocking findings"
-        raise Refused(f"The answers file {path} has {' and '.join(problems)}; {described}.\n"
+        raise Refused(f"The answers file {path} has {' and '.join(problems)}; the review has "
+                      f"{finding_count} blocking findings.\n"
                       "Give each finding, numbered as the brief numbers it, exactly one entry "
                       "starting \"<n>. \" on its own line.")
     return {number: " ".join(parts) for number, parts in sorted(answers.items())}

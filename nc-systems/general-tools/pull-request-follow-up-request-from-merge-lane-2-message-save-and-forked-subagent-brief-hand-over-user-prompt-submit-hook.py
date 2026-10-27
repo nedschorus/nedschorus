@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Save the follow-up request block of a merge-lane-2 message, and tell the agent to run the follow-up brief.
+"""Save the follow-up request block of a merge-lane-2 message, and hand the agent the follow-up brief.
 
 A UserPromptSubmit hook. It acts only on a prompt holding a cross-session message whose tag names
 from-name="merge-lane-2" and whose body holds the line "#follow_up_request pull request <number>"
 followed by numbered findings, one to a line. For each such block it saves the block word for word
-with save_follow_up_request_and_clear_its_markers() of BRIEF_PROGRAM, which owns the file's place in the git common
-directory, and hands the agent, as additionalContext, the two lines of BRIEF_RUN_REMINDER_LINES.
-Any other prompt, including that line outside a merge-lane-2 message, gets no output and exit 0.
+with save_follow_up_request_and_clear_answers_when_its_findings_changed() of FOLLOW_UP_PROGRAM, which owns the file's
+place in the git common directory, and hands the agent, as additionalContext, the brief
+build_follow_up_request_forked_subagent_brief() of that program writes; when that pull request's follow-up is already
+finished with this same block, it hands FINISHED_LINES instead, so no second subagent answers the
+findings again. Any other prompt, including that line outside a merge-lane-2 message, gets no output
+and exit 0.
 
 The hook never blocks the prompt, so merge-lane-2's message always reaches the agent. When a block
 cannot be read or saved, the additionalContext says so instead, and says what to do; the hook still
@@ -25,19 +28,25 @@ REQUEST_LINE_START = "#follow_up_request"
 MERGE_LANE_2_MESSAGE_PATTERN = re.compile(
     r"<cross-session-message\b(?P<attributes>[^>]*)>(?P<body>.*?)</cross-session-message>", re.DOTALL)
 MERGE_LANE_2_SENDER_PATTERN = re.compile(r"\bfrom-name=\"merge-lane-2\"")
-BRIEF_PROGRAM_PATH = (Path(__file__).resolve().parents[2] / "scripts"
-                      / "pull-request-follow-up-author-brief-from-non-blocking-findings-and-every-finding-answered-check.py")
-BRIEF_RUN_REMINDER_LINES = (
-    "merge-lane-2 has merged pull request {number} and sent non-blocking findings for you to follow up now.\n"
-    "Run `{program} {number}` now and do what it prints.")
+FOLLOW_UP_PROGRAM_PATH = (Path(__file__).resolve().parents[2] / "scripts"
+                         / "pull-request-follow-up-request-findings-open-pull-requests-or-record-leave-out-reasons-and-clean-up.py")
+# Each text this hook hands an agent follows
+# docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+FINISHED_LINES = (
+    "merge-lane-2's message above holds the #follow_up_request block for pull request {number} again, "
+    "and that follow-up was finished at {finished}, so this hook gave no follow-up brief: a second "
+    "subagent would answer the same findings twice.\n"
+    "If merge-lane-2 says a finding is still open, follow it up yourself as CLAUDE.md says, and answer "
+    "merge-lane-2 with SendMessage.")
 UNREADABLE_BLOCK_LINES = (
     HOOK + ": merge-lane-2's message above holds a #follow_up_request block, but {problem}, so "
-    "nothing was saved for the follow-up brief.\n"
+    "nothing was saved, and no follow-up brief is given.\n"
     "Tell merge-lane-2 with SendMessage that its #follow_up_request block could not be read, quoting "
     "this line, and ask it to send the block again.")
 NOT_SAVED_LINES = (
     HOOK + ": merge-lane-2's message above holds a #follow_up_request block, but the hook could not "
-    "save the block, so the follow-up brief program has no findings to print: {error}\n"
+    "save the block or read its follow-up's record, so the follow-up program cannot track the "
+    "findings: {error}\n"
     "Follow up the findings in merge-lane-2's message yourself now, as CLAUDE.md says: open a pull "
     "request for each you take on, and tell merge-lane-2 with SendMessage the reason for each you "
     "leave out.\n"
@@ -46,10 +55,10 @@ NOT_SAVED_LINES = (
     "If you are a subagent, pass that sentence to the agent that dispatched you instead.")
 
 
-def load_brief_program():
+def load_follow_up_program():
     specification = importlib.util.spec_from_file_location(
-        "pull_request_follow_up_author_brief_from_non_blocking_findings_and_every_finding_answered_check",
-        BRIEF_PROGRAM_PATH)
+        "pull_request_follow_up_request_findings_open_pull_requests_or_record_leave_out_reasons_and_clean_up",
+        FOLLOW_UP_PROGRAM_PATH)
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -69,26 +78,28 @@ def context_for(payload):
     if not bodies:
         return None
     try:
-        brief_program = load_brief_program()
+        follow_up_program = load_follow_up_program()
     except Exception as error:
-        return NOT_SAVED_LINES.format(error=f"loading {BRIEF_PROGRAM_PATH} failed: {error!r}")
+        return NOT_SAVED_LINES.format(error=f"loading {FOLLOW_UP_PROGRAM_PATH} failed: {error!r}")
     requests = []
     for body in bodies:
         try:
-            requests += brief_program.parse_follow_up_request_blocks_from_message_text(body)
+            requests += follow_up_program.parse_follow_up_request_blocks_from_message_text(body)
         except ValueError as error:
             return UNREADABLE_BLOCK_LINES.format(problem=error)
     if not requests:
         return None
     directory = payload.get("cwd") or "."
-    lines = []
+    texts = []
     for request in requests:
         try:
-            brief_program.save_follow_up_request_and_clear_its_markers(request, directory)
-        except brief_program.StepFailed as error:
+            follow_up_program.save_follow_up_request_and_clear_answers_when_its_findings_changed(request, directory)
+            finished = follow_up_program.read_follow_up_request_finished_time(request.number, directory)
+        except follow_up_program.StepFailed as error:
             return NOT_SAVED_LINES.format(error=error)
-        lines.append(BRIEF_RUN_REMINDER_LINES.format(number=request.number, program=brief_program.PROGRAM))
-    return "\n".join(lines)
+        texts.append(FINISHED_LINES.format(number=request.number, finished=finished) if finished
+                     else follow_up_program.build_follow_up_request_forked_subagent_brief(request))
+    return "\n\n".join(texts)
 
 
 def main():
