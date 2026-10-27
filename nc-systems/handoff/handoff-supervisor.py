@@ -11,13 +11,14 @@ The cycle, per reincarnation:
   1. Watch the handoff file for a restart-counter above the last consumed.
   2. Kill the running session, and remove the agent-seat's finished worktrees.
   2a. Unless the handoff carries dont-restart, fast-forward the checkout this
-     program runs from to origin/main, and, when that leaves it on main's
-     commit, replace this process with a fresh start of this program from
-     that checkout (os.execv, so the process ID stays, and the lock file
-     keeps naming it). The handoff is still unconsumed, so the fresh process
-     carries out the steps below at startup, as after a reboot, where a
-     dialog that cannot be extracted starts the successor from the handoff's
-     next-step alone. Started with
+     program runs from to origin/main, and, when the checkout is then on
+     main's commit, whether it moved or was already there, replace this
+     process with a fresh start of this program from that checkout
+     (os.execv, so the process ID stays, and the lock file keeps naming it).
+     The handoff is still unconsumed, so the fresh process carries out steps
+     3 to 6 below at startup, as after a reboot: it extracts the dialog
+     (step 3), and only when the dialog cannot be extracted does it start
+     the successor from the handoff's next-step alone. Started with
      --started-by-handoff-supervisor-restarting-itself-on-main-code, the fresh
      process prints that the restart worked. When the checkout cannot be
      fast-forwarded, or os.execv fails, this process prints why, carries on
@@ -1825,10 +1826,12 @@ STARTED_BY_HANDOFF_SUPERVISOR_RESTARTING_ITSELF_ON_MAIN_CODE_FLAG = (
     "--started-by-handoff-supervisor-restarting-itself-on-main-code")
 HANDOFF_SUPERVISOR_NOT_RESTARTED_ON_MAIN_CODE_TEMPLATE = (
     "The handoff-supervisor of this agent-seat did not restart itself on main's current "
-    "code at this session-handoff, so it still runs the code it started with, and changes "
-    "merged to main since then reach this agent-seat only when it restarts. Why: {report} "
-    "Tell the user this, quoting that line, because the handoff-supervisor restarts only "
-    "from a checkout, {checkout}, that fast-forwards to main or is current with it."
+    "code at this session-handoff. It still runs the code it started with, so changes "
+    "merged to main since it started reach this agent-seat only when the handoff-supervisor "
+    "restarts. The handoff-supervisor's reason: \"{report}\". Tell the user that the "
+    "handoff-supervisor did not restart itself on main's code, and quote its reason, "
+    "because the handoff-supervisor restarts only from a checkout, {checkout}, that "
+    "fast-forwards to main or is current with it."
 )
 
 
