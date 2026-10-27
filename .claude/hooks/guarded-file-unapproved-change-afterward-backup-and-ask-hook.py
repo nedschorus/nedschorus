@@ -171,7 +171,7 @@ MARKER_SURVIVED = (
     "If rm fails too, tell the user, with this message.")
 
 
-class MarkerSurvived(Exception):
+class ApprovalRecordedButApprovalMarkerNotDeleted(Exception):
     """--approve recorded the approval but could not delete the marker; args[0] is the
     approved lines, args[1] the marker's path, args[2] the OSError."""
 
@@ -1299,7 +1299,7 @@ def approve(pairs, cwd: Path):
         marker.unlink(missing_ok=True)
     except OSError as error:
         # A surviving marker would let a later --approve spend the user's words a second time.
-        raise MarkerSurvived(lines, marker, error)
+        raise ApprovalRecordedButApprovalMarkerNotDeleted(lines, marker, error)
     return lines
 
 
@@ -1426,7 +1426,7 @@ def main(arguments=None):
             return EXIT_BAD_INVOCATION
         try:
             lines = approve(pairs, Path.cwd()) if mode == "--approve" else restore(pairs)
-        except MarkerSurvived as error:
+        except ApprovalRecordedButApprovalMarkerNotDeleted as error:
             approved_lines, marker, reason = error.args
             print("\n".join(approved_lines))
             print(MARKER_SURVIVED.format(program_name=HOOK_PATH.name, marker=marker, reason=reason,

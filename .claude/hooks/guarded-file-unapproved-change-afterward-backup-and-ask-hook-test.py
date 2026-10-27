@@ -272,7 +272,7 @@ def cases(scratch):
     try:
         os.environ.update(world.environment())
         outcome = hook.approve([(str(claude), key)], world.repo)
-    except hook.MarkerSurvived as error:
+    except hook.ApprovalRecordedButApprovalMarkerNotDeleted as error:
         outcome = error
     finally:
         os.environ.clear()
