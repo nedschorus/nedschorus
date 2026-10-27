@@ -802,6 +802,20 @@ with tempfile.TemporaryDirectory() as scratch:
         check(f"the Ultra quota line for {refusal!r} reads {expected!r}",
               line == expected, repr(line))
 
+    for refusal, expected in (
+            ("Resets in 2h27m3s.",
+             'Gemini refused with "Individual quota reached"; the quota resets in 2h27m. '
+             "This read does not retry Gemini, which would refuse the same way until the "
+             "quota resets; the Sonnet backup reads the document now."),
+            ("Please upgrade.",
+             'Gemini refused with "Individual quota reached"; Gemini gave no reset time. '
+             "This read does not retry Gemini, which would refuse the same way until the "
+             "quota resets; the Sonnet backup reads the document now.")):
+        message = module.gemini_quota_not_retried_message(
+            f"AGY_ERROR: Individual quota reached. {refusal}")
+        check(f"the not-retried message for {refusal!r} needs no reset time to read true",
+              message == expected, repr(message))
+
     # The launcher turns any agy failure that leaves no report, a stub agy's
     # exit 64 included, into its own exit 1, so only a launcher that refuses
     # reaches the read's no-retry path for exit 64.

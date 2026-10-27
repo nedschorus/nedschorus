@@ -1159,6 +1159,14 @@ def gemini_quota_refusal(error_line: str) -> str:
             + (f"the quota resets in {reset}" if reset else "Gemini gave no reset time"))
 
 
+def gemini_quota_not_retried_message(error_line: str) -> str:
+    """Why the read goes straight to Sonnet, worded to hold whether or not Gemini
+    gave a reset time."""
+    return (f"{gemini_quota_refusal(error_line)}. This read does not retry Gemini, "
+            "which would refuse the same way until the quota resets; the Sonnet "
+            "backup reads the document now.")
+
+
 def ultra_quota_line(error_line: str) -> str:
     """The stderr line telling the user that Ultra ran out and Sonnet read the document."""
     reset = gemini_ultra_quota_reset_time(error_line)
@@ -1311,9 +1319,7 @@ def main() -> int:
                 break
             quota_error_line = gemini_ultra_quota_error_line(AGY_CELL_LAUNCHER, output)
             if quota_error_line:
-                print(f"{PROGRAM}: {gemini_quota_refusal(quota_error_line)}. This read "
-                      "does not retry Gemini, which would refuse the same way until "
-                      "then; the Sonnet backup reads the document now.",
+                print(f"{PROGRAM}: {gemini_quota_not_retried_message(quota_error_line)}",
                       file=sys.stderr)
                 break
             if attempt < FAST_READ_ATTEMPTS:
