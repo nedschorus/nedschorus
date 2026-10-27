@@ -45,9 +45,9 @@ Exit codes: 0 every mutant was killed, 1 a mutant survived, errored or was
 not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
 a git step failed, the head commit is already in the base, the worktree could
 not be made, or a suite fails or cannot be launched on the unmutated head),
-3 not run because another process holds the lock. Stopped by SIGTERM or SIGHUP,
-the script removes the scratch worktree, git's record of it included, and its
-scratch directory, then exits 128 plus the signal number.
+3 not run because another process holds the lock, 143 or 129 stopped by
+SIGTERM or SIGHUP (128 plus the signal number), after removing the scratch
+worktree, git's record of it included, and the scratch directory.
 """
 
 import argparse
