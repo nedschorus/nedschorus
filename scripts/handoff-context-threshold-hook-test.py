@@ -929,6 +929,10 @@ with tempfile.TemporaryDirectory() as workspace:
               result.stderr[:400])
         check("the deferral gives the ceiling as a number",
               "65% ceiling" in result.stderr, result.stderr[:500])
+        # A reader could not tell whether the time limit bounds subagents too.
+        check("the deferral says the time limit bounds background tasks, not subagents",
+              "once every subagent has finished, and every background task has "
+              "either finished or run for" in result.stderr, result.stderr[:600])
         # The notice used to promise the handoff waits until the subagents
         # finish, full stop. The ceiling overrides that, and an agent reading
         # a guarantee its work is safe should be told the one thing that cuts
