@@ -7,7 +7,7 @@ walk-minutes and set their `#next_to_present` line to the next item.
 Usage, from the agent-session's checkout:
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check
       [--obvious | --after-advisor | --disapproved | --deferred | --option N
-       | --part-answer N=ANSWER ...]
+       | --part-answer N=ANSWER ... | --not-asked KIND]
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py close
 
 The answer is an approval, A, unless a flag says otherwise: --obvious for AO,
@@ -50,9 +50,15 @@ and a test, and every touched file must exist except that test; kind 3, a
 removal, needs touches, and each unused name must appear, by `git grep`, in no
 file outside the touched ones and docs/walk/, or, with no unused line, every
 touched file must be Markdown; kind 4, a rename, needs touches and a rename
-line, the new name in a `*glossary*.md` file, and the old name in no file
-outside the touched ones and docs/walk/; kind 5, carrying out a ruling, needs a
-source; for kinds 1 to 4 every touched file but a kind 2 test must exist. A
+line, the new name as the term of an entry, a line opening `- **<new name>**`,
+in a `*-glossary.md` file, and the old name in no file outside the touched ones
+and docs/walk/; kind 5, carrying out a ruling, needs a source; for kinds 1 to 4
+every touched file but a kind 2 test must exist. An unused or old name is
+searched for as written, matching case, as a whole word. When it has two or
+more words, it is also searched for with its words joined by hyphens, by
+underscores and by nothing; these spellings ignore case and match even inside
+a longer name, so `poem-list` is also found in `poem_list_path`, `POEM_LIST`
+and `PoemList`. A
 failed check is refused, writing nothing, with every problem listed; a `git
 grep` that fails is a failure too. Otherwise CHECK fast-reads the `#new` texts as
 for A, writes the line `<item>: settled without asking the user, not asked,
@@ -180,7 +186,7 @@ EVIDENCE_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*(#not_asked_(?
                            r"[*_`]*[:\s]*(.*)$")
 TOUCHES, TEST, SOURCE, UNUSED, RENAME = (f"#not_asked_{name}" for name in ("touches", "test", "source", "unused",
                                                                         "rename"))
-GLOSSARY_FILES = "*glossary*.md"
+GLOSSARY_FILES = "*-glossary.md"
 STATUS_LINE_PREFIX = "- "
 OBVIOUS_HASHTAG = " #approved_obvious"
 AFTER_ADVISOR_HASHTAG = " #approved_after_advisor"
@@ -325,7 +331,8 @@ NOT_ASKED_STILL_USED_PROBLEM = ("- `{word}`, named on its `{marker}` line, is st
 NOT_ASKED_NOT_MARKDOWN_PROBLEM = ("- it has no `{marker}` line, and `{touches}` names {paths}, which are not "
                                   "Markdown standing instructions; name each thing removed on a `{marker}` line.")
 NOT_ASKED_RENAME_SHAPE_PROBLEM = "- its `{marker}` line `{value}` does not give the old name, then the new name."
-NOT_ASKED_NOT_IN_GLOSSARY_PROBLEM = "- the new name `{new}` is in no glossary file ({pattern}) in the checkout."
+NOT_ASKED_NOT_IN_GLOSSARY_PROBLEM = ("- the new name `{new}` is the term of no entry, a line opening `- **{new}**`, "
+                                     "in a glossary file ({pattern}) in the checkout.")
 NOT_ASKED_WHY = {
     TOUCHES: "list on it every file the change edits or deletes, separated by spaces.",
     TEST: "name on it the test that fails before the fix and passes after it.",
@@ -595,9 +602,10 @@ def words(values):
     return [word.strip("`,;") for value in values for word in value.split() if word.strip("`,;")]
 
 
-def files_naming(top, word, item, kind, pathspec=None):
-    """Return the checkout files, tracked or untracked, outside the walk directory, that hold word as a word."""
-    command = ["git", "-C", str(top), "grep", "--untracked", "-l", "-w", "-F", "-e", word]
+def files_matching(top, options, pattern, item, kind, pathspec=None):
+    """Return the checkout files, tracked or untracked, outside the walk directory, in which `git grep` with
+    the options given finds the pattern."""
+    command = ["git", "-C", str(top), "grep", "--untracked", "-l", *options, "-e", pattern]
     if pathspec:
         command += ["--", pathspec]
     result = subprocess.run(command, capture_output=True, text=True)
@@ -605,6 +613,30 @@ def files_naming(top, word, item, kind, pathspec=None):
         raise Failure(GIT_GREP_FAILED.format(code=result.returncode, top=top, item=item, kind=kind,
                                              error=result.stderr.strip(), program=Path(__file__).resolve()))
     return {path for path in result.stdout.split("\n") if path and not path.startswith("docs/walk/")}
+
+
+def other_spellings(name):
+    """The name's words joined by hyphens, by underscores and by nothing, lowercased, when it has two or more."""
+    parts = [part.lower() for part in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+", name)]
+    if len(parts) < 2:
+        return []
+    return sorted({separator.join(parts) for separator in ("-", "_", "")} - {name})
+
+
+def files_naming(top, name, item, kind):
+    """Return the files outside the walk directory that hold the name as a word, or another of its spellings,
+    ignoring case, anywhere: a name written `poem-list` in prose is `poem_list` or `PoemList` in code."""
+    found = files_matching(top, ["-w", "-F"], name, item, kind)
+    for spelling in other_spellings(name):
+        found |= files_matching(top, ["-i", "-F"], spelling, item, kind)
+    return found
+
+
+def glossary_entry_files(top, name, item, kind):
+    """Return the glossary files with an entry whose term is the name, as in `- **poem-index** — ...`; a name
+    a glossary only mentions, such as an example of a bad name, is not one it lists."""
+    escaped = re.sub(r"([.\[\]()*+?{}|^$\\])", r"\\\1", name)
+    return files_matching(top, ["-i", "-E"], rf"^- \*\*{escaped}\*\*", item, kind, GLOSSARY_FILES)
 
 
 def not_asked_problems(kind, rating, lines, top, item):
@@ -621,7 +653,7 @@ def not_asked_problems(kind, rating, lines, top, item):
     if kind == 1 and not proposed_texts(lines, {NEW_MARK}):
         problems.append(NOT_ASKED_NO_NEW_TEXT_PROBLEM)
     tests = words(found[TEST])
-    for path in touched:
+    for path in touched if kind != 5 else []:
         if not (top / path).exists():
             # A code fix may add the test that shows it; any other new file is an addition the user sees.
             if kind == 2 and path in tests:
@@ -650,7 +682,7 @@ def not_asked_problems(kind, rating, lines, top, item):
                 problems.append(NOT_ASKED_RENAME_SHAPE_PROBLEM.format(marker=RENAME, value=value))
                 continue
             old, new = names
-            if not files_naming(top, new, item, kind, GLOSSARY_FILES):
+            if not glossary_entry_files(top, new, item, kind):
                 problems.append(NOT_ASKED_NOT_IN_GLOSSARY_PROBLEM.format(new=new, pattern=GLOSSARY_FILES))
             others = sorted(files_naming(top, old, item, kind) - set(touched))
             if others:

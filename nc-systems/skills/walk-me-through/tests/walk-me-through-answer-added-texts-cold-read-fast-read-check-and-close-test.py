@@ -1358,7 +1358,7 @@ def not_asked_case(next_to_present, files=None):
     defaults = {"docs/poems/index.md": "The poems: poem-list.\n", "tools/counter.py": "count = 0\n",
                 "tools/counter-test.py": "import counter\n", "tools/old_reader.py": "def old_reader(): pass\n",
                 "tools/main.py": "from old_reader import old_reader\n",
-                "docs/glossary.md": "- poem-index: the page that lists every poem.\n"}
+                "docs/poems-glossary.md": "- **poem-index** — the page that lists every poem.\n"}
     for path, text in {**defaults, **(files or {})}.items():
         if text is None:
             continue
@@ -1423,6 +1423,13 @@ def test_each_kind_refuses_without_the_evidence_code_can_check():
     case = not_asked_case("item 2 of 7", {"tools/counter-test.py": None})
     result = case.run("check", "--not-asked", "2")
     check("kind 2 may add the test that shows its fix", result.returncode == 0, described(result))
+    case = not_asked_case("item 5 of 7")
+    (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").write_text(NOT_ASKED_DOCUMENT.replace(
+        '#not_asked_source the user, 2026-10-20: "make a GHI for the counter."',
+        '#not_asked_source the user, 2026-10-20: "make a GHI for the counter."\n\n'
+        '#not_asked_touches docs/issues/counter.md'))
+    result = case.run("check", "--not-asked", "5")
+    check("kind 5 may touch a file the ruling it carries out creates", result.returncode == 0, described(result))
     document = NOT_ASKED_DOCUMENT.replace("#not_asked_test tools/counter-test.py", "#not_asked_test tools/counter.py")
     case = not_asked_case("item 2 of 7")
     (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").write_text(document)
@@ -1434,6 +1441,9 @@ def test_a_removal_is_refused_while_an_untouched_file_still_names_what_it_remove
     check("kind 3 is refused when a file the item does not touch still names the removed thing",
           *refused(not_asked_case("item 3 of 7", {"tools/other.py": "old_reader()\n"}), 3,
                    "`old_reader`, named on its `#not_asked_unused` line, is still named in tools/other.py"))
+    check("kind 3 is refused when an untouched file names the removed thing in another spelling",
+          *refused(not_asked_case("item 3 of 7", {"docs/tools.md": "Run `old-reader.py`.\n"}), 3,
+                   "`old_reader`, named on its `#not_asked_unused` line, is still named in docs/tools.md"))
     check("kind 3 with no unused line is refused when it touches a file that is not Markdown",
           *refused(not_asked_case("item 2 of 7"), 3, "it has no `#not_asked_unused` line, and `#not_asked_touches` "
                                                      "names tools/counter.py, tools/counter-test.py"))
@@ -1445,11 +1455,22 @@ def test_a_removal_is_refused_while_an_untouched_file_still_names_what_it_remove
 
 def test_a_rename_is_refused_unless_a_glossary_lists_the_new_name_and_no_untouched_file_keeps_the_old():
     check("kind 4 is refused when no glossary file lists the new name",
-          *refused(not_asked_case("item 4 of 7", {"docs/glossary.md": "- other: something else.\n"}), 4,
-                   "the new name `poem-index` is in no glossary file"))
+          *refused(not_asked_case("item 4 of 7", {"docs/poems-glossary.md": "- **other** — something else.\n"}), 4,
+                   "the new name `poem-index` is the term of no entry"))
+    check("kind 4 is refused when a glossary only mentions the new name, as in an example, outside an entry's term",
+          *refused(not_asked_case("item 4 of 7", {"docs/poems-glossary.md": "- **other** — not poem-index.\n"}), 4,
+                   "the new name `poem-index` is the term of no entry"))
+    check("kind 4 is refused when the entry is in a file whose name only holds the word glossary, not a glossary",
+          *refused(not_asked_case("item 4 of 7", {"docs/poems-glossary.md": None,
+                                                  "docs/how-to-name-glossary-terms.md": "- **poem-index** — bad.\n"}),
+                   4, "the new name `poem-index` is the term of no entry"))
     check("kind 4 is refused when a file the item does not touch still holds the old name",
           *refused(not_asked_case("item 4 of 7", {"docs/about.md": "See poem-list.\n"}), 4,
                    "`poem-list`, named on its `#not_asked_rename` line, is still named in docs/about.md"))
+    for spelling in ("POEM_LIST = 1", "poem_list_path = 1", "class PoemList: pass", "poemList = 1"):
+        check(f"kind 4 is refused when an untouched file holds the old name spelled as code spells it: {spelling}",
+              *refused(not_asked_case("item 4 of 7", {"tools/poems.py": f"{spelling}\n"}), 4,
+                       "`poem-list`, named on its `#not_asked_rename` line, is still named in tools/poems.py"))
     case = not_asked_case("item 4 of 7")
     document = NOT_ASKED_DOCUMENT.replace("#not_asked_rename poem-list poem-index", "#not_asked_rename poem-list")
     (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").write_text(document)
