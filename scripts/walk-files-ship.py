@@ -129,6 +129,36 @@ delivered, and again if the walk is reopened and closed. The one stdout line
 ends with the minutes' citation in scp form, which is the link that closing
 sentence wants.
 
+THE WALK-CLOSED MARKER. When this run puts minutes into the store, added or
+replaced, whose last `#next_to_present` line says the walk is closed
+(`none, closed`, read by the walk-me-through item finder), it writes
+~/.claude/handoffs/<session id>-handoff-due-at-lower-context-threshold-after-approval-walk-closed,
+the session id read from CLAUDE_CODE_SESSION_ID. The marker's name is
+scripts/handoff-context-threshold-hook.py's, and that Stop hook, finding it,
+asks the agent to run /handoff when the context used plus the tokens the
+session's compactions dropped is at least 20%. The close is recognised from
+the minutes, which /walk-me-through closes before it runs this program, so no
+flag is needed; a later run that finds the closed minutes already in the
+store, such as a dispositions update, writes no marker. Only a run that adds
+or replaces the closed minutes in the store writes the marker. That includes a
+run whose stdout line opens with `REFUSED:` or `FAILED:` because some other
+file did not ship, since the closed minutes are the close and a re-run finds
+them unchanged. A `FAILED:` run that stops before the rename step, the
+record shipper's replace_with_staged_files, because preparing the store,
+listing it or the copy failed, writes no marker, and so does a run whose
+rename step renamed nothing because it found another shipment's staging
+directory. A `FAILED:` run whose rename
+step failed, at any point in it, a directory it makes, a rename or the
+read-back after the renames, without saying which renames were done, writes
+the marker when the closed minutes were among the files it was to rename,
+since they may be in the store and a re-run would find them unchanged. With no
+session id, as in a terminal, no marker is written, the files still ship, the
+exit code is unchanged, and stderr says so. A marker that cannot be written
+adds a FAILED line on stderr and makes the exit 1, on a REFUSED run too: the
+exit code reports the marker, not the stdout line, which stays the one
+`shipped:`, `REFUSED:` or `FAILED:` line the files earned. The files need no
+re-run; the stderr line tells the agent to run /handoff itself.
+
 WHAT THIS IS: the THIRD CALLER of nc-systems/cold-read/cold-read-record-ship.py, imported by
 importlib the way scripts/seat-shared-file-ship.py and
 scripts/sanity-check-record-ship.py import it, so the store's location, the ssh
@@ -140,9 +170,9 @@ ned-box the copy is local and the citation still names the host.
 OUTPUT. Exactly one line on stdout -- `shipped:`, `REFUSED:` or `FAILED:` --
 ending, when anything reached the store, with the minutes' citation. Everything
 else is on stderr. Exit 0 when every file shipped or was already there, 2 when
-any add-only file was refused, 1 when the store could not be reached or written
-or a file does not hold this run's bytes after the copy, 64 for a bad
-invocation.
+any add-only file was refused, 1 when the store could not be reached or written,
+a file does not hold this run's bytes after the copy, or the walk-closed marker
+could not be written, 64 for a bad invocation.
 
 THE DESTINATION is the record shipper's one constant with the kind swapped to
 `walk/`. Its environment override, COLD_READ_RECORD_SHIP_DESTINATION, moves this
@@ -172,6 +202,21 @@ _shipper_spec = importlib.util.spec_from_file_location(
     "cold_read_record_ship", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-record-ship.py")
 shipper = importlib.util.module_from_spec(_shipper_spec)
 _shipper_spec.loader.exec_module(shipper)
+
+_walk_finder_spec = importlib.util.spec_from_file_location(
+    "walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
+    REPO_ROOT / "nc-systems" / "skills" / "walk-me-through"
+    / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py")
+walk_finder = importlib.util.module_from_spec(_walk_finder_spec)
+_walk_finder_spec.loader.exec_module(walk_finder)
+
+# The hook owns the walk-closed marker's name, so writer and reader cannot drift.
+_threshold_hook_spec = importlib.util.spec_from_file_location(
+    "handoff_context_threshold_hook", REPO_ROOT / "scripts" / "handoff-context-threshold-hook.py")
+threshold_hook = importlib.util.module_from_spec(_threshold_hook_spec)
+_threshold_hook_spec.loader.exec_module(threshold_hook)
+
+SESSION_ID_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 
 EXIT_SHIPPED = shipper.EXIT_SHIPPED
 EXIT_FAILED = shipper.EXIT_FAILED
@@ -284,19 +329,25 @@ def store_digests_and_sizes(copy_host, targets: list):
     process). One round trip remotely: for each target that is a file, the
     sha256sum line sha256sum itself prints, and a size line of this program's
     own. An unreachable host is the process's non-zero return with a dict of
-    None, and so is a stored file sha256sum cannot hash: the remote loop exits
+    None, and so is a local read that fails, and a stored file sha256sum
+    cannot hash: the remote loop exits
     1 at it. Without that exit the loop would go on, its last `printf` would
     make the script exit 0, and the file would be missing from the listing,
     which the caller reads as not stored, so an add-only file in the store
     would be copied over."""
     if copy_host is None:
-        stored = {}
-        for target in targets:
-            path = pathlib.Path(target)
-            if path.is_file():
-                stored[str(target)] = StoredWalkFile(sha256_of(path),
-                                                     path.stat().st_size)
-        return subprocess.CompletedProcess([], 0, "", ""), stored
+
+        def read_stored():
+            stored = {}
+            for target in targets:
+                path = pathlib.Path(target)
+                if path.is_file():
+                    stored[str(target)] = StoredWalkFile(sha256_of(path),
+                                                         path.stat().st_size)
+            return stored
+
+        return shipper.local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
+            read_stored)
     quoted = " ".join(shlex.quote(str(target)) for target in targets)
     # sha256sum prints its own line; printf prints the size line beside it, in
     # one round trip. The format is quoted for the remote shell, its trailing
@@ -443,9 +494,8 @@ def ship_walk(destination: WalkStoreDestination, name: str,
     listed, stored = store_digests_and_sizes(destination.copy_host,
                                              list(targets.values()))
     if stored is None:
-        reason = ("ned-box unreachable"
-                  if listed.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED
-                  else f"ssh exit {listed.returncode}")
+        reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+            destination.copy_host, listed)
         print(f"FAILED: {name} — {reason}; the walk's files stay on disk, unshipped.")
         sys.stderr.write(listed.stderr)
         return EXIT_FAILED
@@ -480,6 +530,8 @@ def ship_walk(destination: WalkStoreDestination, name: str,
     # puts the walk text before the minutes and the minutes before the
     # dispositions. `lost` names a file whose copy is not what the store holds.
     added, replaced, lost = set(), [], []
+    minutes_name = walk_file_name(name, MINUTES_ROLE_SUFFIX)
+    marker_failed = False
     if to_place or to_replace:
         staging_dir = destination.walk_path / (
             f"{shipper.STAGING_DIRECTORY_PREFIX}{name}-{secrets.token_hex(6)}")
@@ -508,37 +560,17 @@ def ship_walk(destination: WalkStoreDestination, name: str,
                 return EXIT_FAILED
             if outcomes is None:
                 shipper.remove_staging_directory(destination.copy_host, staging_dir)
-                reason = ("ned-box unreachable"
-                          if renamed.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED
-                          else f"ssh exit {renamed.returncode}")
+                reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+                    destination.copy_host, renamed)
                 print(f"FAILED: {name} — {reason} while putting the copied files "
                       f"in place; a later run finishes it.")
                 sys.stderr.write(renamed.stderr)
+                # The renames stop partway, so the minutes may be in
+                # place already, and a re-run would find them unchanged.
+                if any(planned.source.name == minutes_name for planned in to_replace):
+                    walk_closed_marker_written_when_minutes_close_the_walk(
+                        present[MINUTES_ROLE_SUFFIX])
                 return EXIT_FAILED
-        after = {}
-        if to_place:
-            placed, after = shipper.link_staged_files_never_over_existing(
-                destination.copy_host, staging_dir, destination.walk_path,
-                [source.name for source in to_place])
-            if after is None:
-                reason = ("ned-box unreachable"
-                          if placed.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED
-                          else f"ssh exit {placed.returncode}")
-                print(f"FAILED: {name} — {reason} while putting the copied files "
-                      f"in place; a later run finishes it.")
-                sys.stderr.write(placed.stderr)
-                return EXIT_FAILED
-        else:
-            shipper.remove_staging_directory(destination.copy_host, staging_dir)
-        for source in to_place:
-            in_store_now = after.get(source.name)
-            if in_store_now == local_digests[source.name]:
-                added.add(source.name)
-            elif in_store_now is None:
-                lost.append(f"{source.name} (not in the store after the copy)")
-            else:
-                refused.append(f"{source.name} (store sha256 {in_store_now}, "
-                               f"local sha256 {local_digests[source.name]})")
         for planned in to_replace:
             file_name = planned.source.name
             local_digest = local_digests[file_name]
@@ -561,6 +593,35 @@ def ship_walk(destination: WalkStoreDestination, name: str,
                 replaced.append(WalkFileReplacement(
                     file_name, planned.role_name, outcome.displaced_sha256,
                     local_digest, planned.ruling))
+        # Before the add-only placement, which can still return: a re-run
+        # finds these minutes unchanged and so cannot record the close.
+        if minutes_name in added or any(replacement.file_name == minutes_name
+                                        for replacement in replaced):
+            marker_failed = not walk_closed_marker_written_when_minutes_close_the_walk(
+                present[MINUTES_ROLE_SUFFIX])
+        after = {}
+        if to_place:
+            placed, after = shipper.link_staged_files_never_over_existing(
+                destination.copy_host, staging_dir, destination.walk_path,
+                [source.name for source in to_place])
+            if after is None:
+                reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+                    destination.copy_host, placed)
+                print(f"FAILED: {name} — {reason} while putting the copied files "
+                      f"in place; a later run finishes it.")
+                sys.stderr.write(placed.stderr)
+                return EXIT_FAILED
+        else:
+            shipper.remove_staging_directory(destination.copy_host, staging_dir)
+        for source in to_place:
+            in_store_now = after.get(source.name)
+            if in_store_now == local_digests[source.name]:
+                added.add(source.name)
+            elif in_store_now is None:
+                lost.append(f"{source.name} (not in the store after the copy)")
+            else:
+                refused.append(f"{source.name} (store sha256 {in_store_now}, "
+                               f"local sha256 {local_digests[source.name]})")
         replaced.sort(key=lambda replacement: [
             source.name for source in present.values()].index(replacement.file_name))
     added = [source.name for source in present.values() if source.name in added]
@@ -603,9 +664,43 @@ def ship_walk(destination: WalkStoreDestination, name: str,
         print(f"REFUSED: {name} — already in the store with different content and "
               f"not replaced, add-only: {'; '.join(refused)}. The rest: {summary}; "
               f"minutes at {citation}")
-        return EXIT_REFUSED
+        return EXIT_FAILED if marker_failed else EXIT_REFUSED
     print(f"shipped: {name} — {summary}; minutes at {citation}")
-    return EXIT_SHIPPED
+    return EXIT_FAILED if marker_failed else EXIT_SHIPPED
+
+
+def walk_closed_marker_written_when_minutes_close_the_walk(minutes: pathlib.Path) -> bool:
+    """Write this agent-session's walk-closed marker when the minutes' last
+    `#next_to_present` line says the walk is closed (see THE WALK-CLOSED
+    MARKER). False only when the marker was due and could not be written."""
+    marker = walk_finder.next_to_present(minutes.read_text(encoding="utf-8"),
+                                         walk_finder.markdown_parser())
+    if marker is None or not walk_finder.is_closed(marker[0]):
+        return True
+    session_id = os.environ.get(SESSION_ID_ENVIRONMENT_VARIABLE, "")
+    if not session_id:
+        print(f"{PROGRAM}: the walk is closed, but {SESSION_ID_ENVIRONMENT_VARIABLE} is "
+              f"not set, so no walk-closed marker was written and the handoff Stop hook "
+              f"will not ask for /handoff at this close. The walk's files are not "
+              f"affected; do not rerun this command.\n"
+              f"If an agent-session ran this command: run /handoff as the last step of "
+              f"this turn, after the walk's closing message.\n"
+              f"If a person ran it in a terminal: nothing more is needed.", file=sys.stderr)
+        return True
+    path = threshold_hook.handoff_due_at_lower_context_threshold_after_approval_walk_closed_marker_path(
+        session_id)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{minutes.name}\n", encoding="utf-8")
+    except OSError as error:
+        print(f"{PROGRAM}: FAILED to write the walk-closed marker {path} ({error}), so "
+              f"the handoff Stop hook will not ask for /handoff at this close. The walk's "
+              f"files shipped as the stdout line says; do not rerun this command. This run "
+              f"exits 1 only to report the marker.\n"
+              f"Run /handoff as the last step of this turn, after the walk's closing "
+              f"message.", file=sys.stderr)
+        return False
+    return True
 
 
 def main() -> int:

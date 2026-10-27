@@ -15,7 +15,6 @@ A change is the difference an agent's work makes, from before it starts to after
 - Creating a wiki page: a Markdown file in `docs/nedschorus-wiki/`, whether written there or moved in from elsewhere; moving a file into the wiki is never a cosmetic-change, though moving a page within the wiki can be.
 - Rewording a sentence of prose when it is unclear which meaning is intended.
 - A change to what a sentence that states a user-ruling says.
-- A guard, validation, retry or workaround that `CLAUDE.md` says to raise as a question for the user.
 - A change to code or data outside the repository, such as a crontab entry or a LaunchAgent.
 
 ## Exceptions: changes that need no approval, even when they fall under the list above

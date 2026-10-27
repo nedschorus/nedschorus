@@ -3,7 +3,7 @@
 
 User-walked 2026-08-17 (git-infra rules walk, deployment-boundary item). The
 fleet already had the between-sessions half: handoff-supervisor.py's
-sync_working_branch_with_main fast-forwards a clean seat branch at launch,
+launch_time_git_sync fast-forwards a clean seat branch at launch,
 and its own docstring names the gap — "a long-lived session drifts
 arbitrarily far from main with nothing announcing it." This script is the
 announcing, and where safe the catching up, DURING a session:
@@ -278,7 +278,7 @@ GIT_FAILED_NOTES_DELIVERY_AGENT_NEXT_STEP_LINES = (
     "{program} printed, git's error included."
 )
 GIT_FAILED_RERUN_NEXT_STEP_LINES = next_step_lines.git_failure_next_step_lines(
-    "{rerun}", "{program}", text_the_failure_line_contains="because a git command failed",
+    "{rerun}", text_the_failure_line_contains="because a git command failed",
     include_the_misspelt_branch_commit_or_path_line=False)
 
 

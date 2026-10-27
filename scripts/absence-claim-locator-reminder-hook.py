@@ -21,7 +21,7 @@ THE HOOK STAYS SILENT when any of these holds:
     rule of nc-systems/general-tools/claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py);
   - the agent ran the locator this turn (a Bash command naming
     locate-file-copies-across-machines.py) or invoked the skill
-    locate-before-saying-a-file-is-missing;
+    find-missing-file;
   - this agent-session (for a subagent, this subagent) was already reminded:
     agents remember the reminder for a while, so it comes once;
   - the agent-session is a headless `claude -p` child, told apart as the
@@ -87,7 +87,13 @@ _stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_locat
 stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
 _stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
 
-SKILL_NAME = "locate-before-saying-a-file-is-missing"
+_claude_code_session_transcript_records_read_backward_common_specification = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_records_read_backward_common",
+    Path(__file__).resolve().with_name("claude-code-session-transcript-records-read-backward-common.py"))
+claude_code_session_transcript_records_read_backward_common = importlib.util.module_from_spec(_claude_code_session_transcript_records_read_backward_common_specification)
+_claude_code_session_transcript_records_read_backward_common_specification.loader.exec_module(claude_code_session_transcript_records_read_backward_common)
+
+SKILL_NAME = "find-missing-file"
 LOCATOR_PROGRAM_NAME = "locate-file-copies-across-machines.py"
 # A person ("human"), another session or a subagent handing back ("peer"), and
 # a parent session writing to its subagent ("coordinator"): the agent answers each.
@@ -349,15 +355,7 @@ def is_human_or_parent_message(record):
 
 def read_turn(transcript_path):
     """Return (last reply text, locator ran this turn) for the transcript's last turn."""
-    records = []
-    with open(transcript_path, encoding="utf-8") as transcript:
-        for line in transcript:
-            try:
-                record = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(record, dict):
-                records.append(record)
+    records = claude_code_session_transcript_records_read_backward_common.records_from_newest_boundary_to_end(transcript_path, is_human_or_parent_message)
     start = 0
     for index in range(len(records) - 1, -1, -1):
         if is_human_or_parent_message(records[index]):

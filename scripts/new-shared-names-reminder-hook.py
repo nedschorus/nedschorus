@@ -146,11 +146,6 @@ def write_state(session_id: str, state: dict) -> None:
         pass
 
 
-def reported_names_path(checkout: Path) -> Path:
-    """Return the worktree's record of reported names, in its own git directory; raises GitCommandFailed when git fails."""
-    return Path(git_output(["rev-parse", "--absolute-git-dir"], checkout).strip()) / REPORTED_NAMES_FILE_NAME
-
-
 DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY = "HEAD"
 LOCAL_BRANCH_LIST_FAILURE = (
     "new-shared-names-reminder: git for-each-ref failed, so this run could not drop the record's "
@@ -194,14 +189,31 @@ class UnreadableReportedNamesRecordNotMoved(ReportedNamesRecordFailure):
         self.move_reason = move_reason
 
 
-def reported_names_record_key_for(checkout: Path) -> str:
-    """Return the branch the worktree is on, or the detached-HEAD key; raises GitCommandFailed when git fails.
+def worktree_head_branch_untracked_and_status_text(checkout: Path):
+    """Return (HEAD's commit, or "" when the repository has no commit yet; the branch the worktree is
+    on, or the detached-HEAD key; the untracked files; the status text). Raises GitCommandFailed when git fails.
 
-    git refuses a branch named HEAD, so the key cannot be mistaken for a branch.
+    One status call stands in for several git calls, because this hook runs after every tool call.
+    git refuses a branch named HEAD, so the detached-HEAD key cannot be mistaken for a branch.
     """
-    # With -q, symbolic-ref exits 1 and prints nothing when HEAD is detached.
-    branch = git_output(["symbolic-ref", "--short", "-q", "HEAD"], checkout, accepted_exit_codes=(0, 1)).strip()
-    return branch or DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY
+    status = git_output(["status", "--porcelain=v2", "--branch", "--no-ahead-behind", "-z",
+                         "--untracked-files=all"], checkout)
+    head, branch, untracked = "", DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY, []
+    fields = iter(git_machine_readable_output.nul_separated_fields(status))
+    for field in fields:
+        if field.startswith("# branch.oid "):
+            oid = field[len("# branch.oid "):]
+            head = "" if oid == "(initial)" else oid
+        elif field.startswith("# branch.head "):
+            name = field[len("# branch.head "):]
+            if name != "(detached)":
+                branch = name
+        elif field.startswith("? "):
+            untracked.append(field[2:])
+        elif field.startswith("2 "):
+            # A rename or copy entry is followed by a field holding the path it came from.
+            next(fields, None)
+    return head, branch, untracked, status
 
 
 def read_reported_names_record(record_path: Path) -> dict:
@@ -289,25 +301,20 @@ def reported_names_record_merge_prune_and_write(record_path: Path, key: str, ent
 def local_branches(checkout: Path):
     """Return the names of the local branches, or None when git cannot list them."""
     try:
-        return git_output(["for-each-ref", "--format=%(refname:short)", "refs/heads"], checkout).splitlines()
+        return git_output(["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads"], checkout).splitlines()
     except git_machine_readable_output.GitCommandFailed:
         return None
 
 
-def head_is_unborn(checkout: Path) -> bool:
-    """Whether the repository has no commit yet; raises GitCommandFailed when git fails."""
-    # With -q --verify, rev-parse exits 1 and prints nothing when HEAD names no commit.
-    return git_output(["rev-parse", "-q", "--verify", "HEAD"], checkout, accepted_exit_codes=(0, 1)).strip() == ""
+def worktree_fingerprint(checkout: Path, status=None):
+    """Return a digest of HEAD, the uncommitted changes and the untracked files; raises GitCommandFailed when git fails.
 
-
-def worktree_fingerprint(checkout: Path):
-    """Return a digest of HEAD, the uncommitted changes and the untracked files; raises GitCommandFailed when git fails."""
-    head = git_output(["rev-parse", "HEAD"], checkout)
-    status = git_output(["status", "--porcelain", "--untracked-files=all"], checkout)
+    status is worktree_head_branch_untracked_and_status_text(checkout) when the caller has it already; HEAD must name a commit.
+    """
+    head, _, untracked, status_text = status or worktree_head_branch_untracked_and_status_text(checkout)
     diff = git_output(["diff", "HEAD"], checkout)
-    untracked = git_output(["ls-files", "-z", "--others", "--exclude-standard"], checkout)
-    parts = [head, status, diff]
-    for path in git_machine_readable_output.nul_separated_fields(untracked):
+    parts = [head, status_text, diff]
+    for path in untracked:
         try:
             details = (checkout / path).stat()
         except OSError:
@@ -409,18 +416,30 @@ def main() -> int:
     working_directory = payload.get("cwd")
     if not isinstance(working_directory, str) or not Path(working_directory).is_dir():
         return 0
+    location_arguments = ["rev-parse", "--show-toplevel", "--absolute-git-dir"]
     try:
-        top_level = git_machine_readable_output.run_git_unless_outside_a_repository(
-            Path(working_directory), ["rev-parse", "--show-toplevel"], timeout_seconds=GIT_CALL_TIMEOUT_SECONDS)
-        if top_level is None or not top_level.strip():
+        locations = git_machine_readable_output.run_git_unless_outside_a_repository(
+            Path(working_directory), location_arguments, timeout_seconds=GIT_CALL_TIMEOUT_SECONDS)
+        if locations is None or not locations.strip():
             return 0
-        checkout = Path(os.fsdecode(top_level).strip())
+        location_lines = os.fsdecode(locations).strip().split("\n")
+        if len(location_lines) != 2:
+            print(GIT_FAILURE_TEMPLATE.format(
+                command=" ".join(location_arguments),
+                outcome=f"printed {len(location_lines)} lines where the 2 paths should give one line each; "
+                        "a path holding a newline prints as two lines, and fewer lines mean git "
+                        "printed less than asked"), file=sys.stderr)
+            return 1
+        top_level, git_directory = location_lines
+        checkout = Path(top_level)
+        # The record lives in the worktree's own git directory, so each worktree keeps its own.
+        record_path = Path(git_directory) / REPORTED_NAMES_FILE_NAME
+        status = worktree_head_branch_untracked_and_status_text(checkout)
         # A repository with no commit yet has no branch to compare, and HEAD cannot be read.
-        if head_is_unborn(checkout):
+        if not status[0]:
             return 0
-        record_path = reported_names_path(checkout)
-        fingerprint = worktree_fingerprint(checkout)
-        record_key = reported_names_record_key_for(checkout)
+        fingerprint = worktree_fingerprint(checkout, status)
+        record_key = status[1]
     except git_machine_readable_output.GitCommandFailed as failure:
         print(git_failure_text(failure), file=sys.stderr)
         return 1

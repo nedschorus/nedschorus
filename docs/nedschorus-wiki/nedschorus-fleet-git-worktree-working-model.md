@@ -238,7 +238,7 @@ carry no stamp; directory basenames are not globally unique across machines
 *first* handoff is written by its provisioner from elsewhere, the guard
 correctly refuses, and `--claim` is the sanctioned path.
 
-**R10. Agent-instructions files change only when approved-by-walk —
+**R10. Whether a change to an agent-instructions file needs the user's approval is set by the [approval page](nedschorus-which-changes-need-the-users-approval.md) —
 built-live (root-resolution fixed by PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedschorus/nedschorus/pull/86)).**
 `.claude/hooks/instruction-file-guard.py`: CLAUDE.md, per-seat
 `CLAUDE.local.md`, `.claude/` (minus `worktrees/`, `jobs/` and `handoffs/`),
@@ -415,8 +415,8 @@ scratchpad outside the repository in every system prompt. A remind-tier
 hook on scratch-shaped writes stays a recorded candidate sharing R26's
 hook-plus-config pattern.
 
-**R24. Branch surveys fetch before they conclude — text, encoded into
-R22's cleanup script when built.** Before concluding what exists or is
+**R24. Branch surveys fetch before they conclude — mostly encoded: the Stop hook `scripts/checkout-freshness-catch-up.py` fetches origin at the end of each turn, at most once every five minutes, so the remote-tracking refs are rarely more than a few minutes old; a survey that must be exact still fetches first.**
+Before concluding what exists or is
 merged: `git fetch --prune origin` and read remote-tracking refs; a
 survey that cannot reach the remote says so. Evidence: a prune list built
 from unfetched refs missed four merged branches (2026-08-17).
@@ -460,7 +460,7 @@ rulings; listed here to keep the numbering complete.
 | R6+R7 | No writes into the reference | block | built, PR [session-location guard: writes landing in the reference checkout are refused from any seat](https://github.com/nedschorus/nedschorus/pull/91) |
 | R8 | One live session per directory | — | waits on detection; build nothing |
 | R9 | One name = one agent-seat | default + block | built-live, PR [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedschorus/nedschorus/pull/72) |
-| R10 | Instruction files must be approved-by-walk | block | built-live; shell gap ruled unguarded |
+| R10 | The approval page sets which agent-instructions changes need approval | block | built-live; shell gap ruled unguarded |
 | R11 | Backups read-only to agents | block (no lane) | built-live; lane removed |
 | R12 | Agents never push to main | impossible (account tier) + text (agent tier) | partial; required reviews live 2026-08-20; C2 pending |
 | R13 | PR process + deputization | text (process) | built-live; deputization recorded at R13, PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedschorus/nedschorus/pull/93) |
@@ -474,7 +474,7 @@ rulings; listed here to keep the numbering complete.
 | R21 | Worktrees reaped when safe | detect + remind | built-live, PR [clean-worktrees: mechanical reaper for finished session worktrees, reporting at every seat launch](https://github.com/nedschorus/nedschorus/pull/73); vacancy proven, PR [worktree reaper: prove vacancy before reaping, instead of assuming it](https://github.com/nedschorus/nedschorus/pull/100) |
 | R22 | Junk ignored by pattern | default | ruled closed; issue [Worktree file hygiene: classify untracked files so junk is ignored rather than accumulating in search results](https://github.com/nedschorus/nedschorus/issues/50) closed |
 | R23 | Scratch lives in the scratchpad | default | satisfied by runtime default |
-| R24 | Surveys fetch before concluding | text | encode into R22's cleanup script when built |
+| R24 | Surveys fetch before concluding | default + text | mostly encoded: the checkout-freshness Stop hook fetches origin each turn; exact surveys still fetch first |
 | R25 | Dead registrations surfaced | remind (report) | built, PR [clean-worktrees: one report line names dead registrations and the prune command (R25)](https://github.com/nedschorus/nedschorus/pull/112) |
 | R26 | New MDs land in canonical locations | remind | ruled-unbuilt, issue [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedschorus/nedschorus/issues/11) |
 | R27 | On-machine records stay uncommitted | default | built-live |

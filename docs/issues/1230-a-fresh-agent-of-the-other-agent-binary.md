@@ -1,5 +1,6 @@
 ---
 issue: "[A fresh agent of the other agent-binary tries to break each proposal that changes how a program or an agent works, before the user decides on it](https://github.com/nedschorus/nedschorus/issues/1230)"
+kind: design
 ---
 
 # A fresh agent of the other agent-binary tries to break each proposal that changes how a program or an agent works, before the user decides on it

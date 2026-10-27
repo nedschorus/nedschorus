@@ -16,7 +16,7 @@ operation and there will be none: what would have been a comment goes into
 the GHI-MD, through `edit` (user-ruled 2026-09-24, item 4 of the meta-walk
 reboot-test-meta-walk-2026-09-23: "But I don't want comments as agents
 forget to read them. Better to update the ghi-Md"). The PreToolUse hook
-.claude/hooks/ghi-issue-write-redirect.py refuses a hand-typed
+.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py refuses a hand-typed
 `gh issue comment`, `gh issue create` or body edit on this repository and
 sends the author here.
 
@@ -336,6 +336,8 @@ Exit codes:
       path a move takes it from, changed on main since the caller's
       checkout started from it; or an earlier edit of the same file is
       still waiting on an open pull request
+  129, 143  stopped by SIGHUP or SIGTERM, 128 plus the signal number,
+      after removing the landing's temporary worktree and files
 
 The 66 refusals are the deny paths here that do not end with the
 reconsider line, deliberately. A conflict is not a judgment to think
@@ -378,6 +380,13 @@ _next_step_lines_spec = importlib.util.spec_from_file_location(
     / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
+
+_stop_signals_spec = importlib.util.spec_from_file_location(
+    "stop_signal_sigterm_or_sighup_raises_system_exit_so_cleanup_runs_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "stop-signal-sigterm-or-sighup-raises-system-exit-so-cleanup-runs-common.py")
+stop_signals = importlib.util.module_from_spec(_stop_signals_spec)
+_stop_signals_spec.loader.exec_module(stop_signals)
 
 
 def _load_sibling_script(module_name, file_name):
@@ -1369,14 +1378,16 @@ def ghi_info_files_in_log_store(prefix: str, runner) -> list:
                 if item.is_file() and item.name.startswith(head)
                 and item.name.endswith(".md")]
     # Each file goes out as its name and its base64 text, each ended by a
-    # NUL, so no text can be mistaken for a separator. Only a store with no
-    # directory yet reads as empty: any other failure exits nonzero, so a
-    # store that could not be read is never taken for one holding nothing.
+    # NUL, so no text can be mistaken for a separator. GNU base64 wraps its
+    # lines and macOS's has no -w, so the wraps stay in and b64decode skips
+    # them. Only a store with no directory yet reads as empty: any other
+    # failure exits nonzero, so a store that could not be read is never taken
+    # for one holding nothing.
     quoted = shlex.quote(directory)
     script = (f"[ -e {quoted} ] || exit 0; cd {quoted} || exit 1; "
               f"for f in {shlex.quote(head)}*.md; do "
               "[ -f \"$f\" ] || continue; "
-              "printf '%s\\0' \"$f\" && base64 -w0 \"$f\" && printf '\\0' "
+              "printf '%s\\0' \"$f\" && base64 < \"$f\" && printf '\\0' "
               "|| exit 1; done")
     completed = runner([*GHI_INFO_LOG_STORE_SSH_COMMAND, host, script])
     fields = (completed.stdout or "").split("\0")
@@ -3109,6 +3120,13 @@ class BadInvocationArgumentParser(argparse.ArgumentParser):
 
 
 def main(argv=None):
+    # A Bash tool timeout or TaskStop sends SIGTERM; raised as SystemExit, the stop still runs the
+    # finally blocks that remove the landing's worktree and the temporary files.
+    with stop_signals.stop_signals_raise_system_exit_so_cleanup_runs():
+        return main_with_stop_signals_raising_system_exit(argv)
+
+
+def main_with_stop_signals_raising_system_exit(argv):
     parser = BadInvocationArgumentParser(
         description="File a GitHub issue from its GHI-MD and make the "
                     "issue's body the links to that issue's files; or land "

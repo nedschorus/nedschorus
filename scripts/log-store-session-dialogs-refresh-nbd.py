@@ -10,7 +10,7 @@ transcript mirror (scripts/transcript-mirror-to-log-store.py) copies each
 machine's session transcripts into the store every minute, so both machines'
 sessions are already on ned-box's disk:
 
-  /home/nedlern/nedschorus-logs/transcripts/<machine>/projects/<project-key>/<session-id>.jsonl
+  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/<machine>/projects/<project-key>/<session-id>.jsonl
 
 For each of those transcripts that changed since its dialog was written, this
 program writes the session's complete filtered dialog, the form the handoff
@@ -57,7 +57,7 @@ keeps the time the failure began across passes, is the whole dialog when
 there was none before, and goes when a later pass rewrites the dialog. A
 warned dialog is given modification time 0, which no transcript's change
 time equals, so the next pass tries the transcript again. A store with no
-transcripts/ directory is FAILED too: on ned-box that means the store is not
+agent-session-files-by-machine/ directory is FAILED too: on ned-box that means the store is not
 where this program looks. Without --failures-only a pass ends with one line
 counting the dialogs written, the ones already current, and the failures.
 Exit 0 when nothing failed, 1 when anything did, 3 when another run holds the
@@ -90,7 +90,7 @@ import types
 PROGRAM = "log-store-session-dialogs-refresh"
 LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
 STORE_ROOT_ENVIRONMENT_VARIABLE = "LOG_STORE_SESSION_DIALOGS_REFRESH_LOG_STORE_ROOT_OVERRIDE"
-TRANSCRIPTS_DIRECTORY_NAME = "transcripts"
+TRANSCRIPTS_DIRECTORY_NAME = "agent-session-files-by-machine"
 SESSION_DIALOGS_DIRECTORY_NAME = "session-dialogs"
 SESSION_DIALOG_SUFFIX = "-dialog-complete.md"
 LOCK_FILE_NAME = ".log-store-session-dialogs-refresh.lock"

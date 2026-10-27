@@ -18,6 +18,7 @@ Run: python3 scripts/resupervise-seat-test.py
 """
 
 import fcntl
+import importlib.util
 import json
 import os
 import re
@@ -35,13 +36,19 @@ SUPERVISOR_SCRIPT = (RESUPERVISE_SCRIPT.resolve().parent.parent
                      / "nc-systems" / "handoff" / "handoff-supervisor.py")
 
 failures = []
-# What the unknown-kill check's answers mean, written out so a change to the shared tmux
-# pattern's answers shows up here as a changed message.
+_tmux_error_pattern_spec = importlib.util.spec_from_file_location(
+    "tmux_target_or_server_does_not_exist_error_pattern_common",
+    RESUPERVISE_SCRIPT.resolve().parent.parent / "nc-systems" / "general-tools"
+    / "tmux-target-or-server-does-not-exist-error-pattern-common.py")
+tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)
+_tmux_error_pattern_spec.loader.exec_module(tmux_error_pattern)
+# What the unknown-kill check's answers mean; the answers come from the shared tmux pattern,
+# whose own suite pins them.
 UNKNOWN_KILL_CHECK_ANSWER_LINES = (
     "If the check exits 0, the session still exists: start no agent, and report to the user. "
-    "If it prints \"can't find session\" or \"can't find window\" or \"can't find pane\" or "
-    "\"no current target\" or \"no server running\" or "
-    "\"error connecting to <socket path> (No such file or directory)\", the session is gone: run "
+    "If it prints " + " or ".join(
+        f'"{wording}"' for wording, _ in tmux_error_pattern.TMUX_TARGET_OR_SERVER_DOES_NOT_EXIST_ERROR_WORDINGS)
+    + ", the session is gone: run "
     "again, for this agent-seat only, the command that printed this message. Any other output, or a "
     "check that does not return within 30 seconds, leaves the "
     "outcome unknown: start no agent, and report the output to the user.\n")
@@ -313,8 +320,8 @@ def run_missing_launcher_case(workspace: Path):
     # source, so a new import there needs no change here.
     supervisor_home = workspace / "nc-systems" / "handoff"
     supervisor_home.mkdir(parents=True)
-    for supervisor_file in ("handoff-supervisor.py", "daily-memory-review-mark.py",
-                            "daily-overview-refresh-reminder-mark.py",
+    for supervisor_file in ("handoff-supervisor.py", "handoff-user-review-of-agent-memory-stores-mark.py",
+                            "handoff-architecture-overview-refresh-user-shown-mark.py",
                             "uncommitted-work-snapshots.py"):
         (supervisor_home / supervisor_file).write_text(
             SUPERVISOR_SCRIPT.with_name(supervisor_file).read_text(encoding="utf-8"),

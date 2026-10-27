@@ -1,5 +1,6 @@
 ---
 issue: "[The pull request head test run takes its suite sandbox lists from main instead of the merged tree it tests](https://github.com/nedschorus/nedschorus/issues/1660)"
+kind: design
 ---
 
 # The pull request head test run takes its suite sandbox lists from main instead of the merged tree it tests
@@ -37,7 +38,7 @@ The trade-off this accepts: a pull request can now add a suite to `SUITES_RUN_WI
 
 ## Not affected
 
-`scripts/run-suite-in-signal-sandbox.py` and `scripts/pull-request-mutation-testing-survivors.py` also read `SUITES_RUN_WITHOUT_ANY_SANDBOX`. Neither has this defect in merge-lane-2's work, because none of merge-lane-2's steps runs them from main on a merged tree. Those steps are the four in `STEPS` of `scripts/merge-lane-pull-request-worktrees-reviewer-brief-codex-review-and-head-tests-run-without-merge.py`. Each of the two programs reads the list from the runner in its own checkout.
+`scripts/run-suite-in-signal-sandbox.py` and `scripts/pull-request-mutation-testing-survivors.py` also read `SUITES_RUN_WITHOUT_ANY_SANDBOX`. Neither has this defect in merge-lane-2's work, because none of merge-lane-2's steps runs them from main on a merged tree. Those steps are the ones in `STEPS` of `scripts/merge-lane-pull-request-worktrees-reviewer-brief-codex-review-and-head-tests-run-without-merge.py`. Each of the two programs reads the list from the runner in its own checkout.
 
 ## Next action
 

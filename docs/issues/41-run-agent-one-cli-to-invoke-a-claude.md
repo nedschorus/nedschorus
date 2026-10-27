@@ -1,5 +1,6 @@
 ---
 issue: "[run-agent: one CLI to invoke a Claude or Codex agent headlessly from any caller (Python, shell, either runtime)](https://github.com/nedschorus/nedschorus/issues/41)"
+kind: design
 ---
 
 # run-agent: one CLI to invoke a Claude or Codex agent headlessly from any caller (Python, shell, either runtime)

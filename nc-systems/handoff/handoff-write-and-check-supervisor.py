@@ -401,7 +401,7 @@ def log_store_task_list_copy_location_in_scp_form(host, store_list_directory) ->
         return f"{host}:{store_list_directory}"
     if os.environ.get(transcript_mirror.DESTINATION_ENVIRONMENT_VARIABLE):
         return str(store_list_directory)
-    store_host, _ = transcript_mirror.split_destination(transcript_mirror.LOG_STORE_TRANSCRIPTS_DESTINATION)
+    store_host, _ = transcript_mirror.split_destination(transcript_mirror.LOG_STORE_AGENT_SESSION_FILES_DESTINATION)
     return f"{store_host}:{store_list_directory}"
 
 

@@ -72,7 +72,7 @@ THE RECORD is one text file per machine and day in the log-store:
 
   nedlern@ned-box:/home/nedlern/nedschorus-logs/daily-full-test-runs/<machine>/<YYYY-MM-DD>.txt
 
-<machine> is `ned-box` or `mac`, the spellings the log-store's transcripts/
+<machine> is `ned-box` or `mac`, the spellings the log-store's agent-session-files-by-machine/
 directory uses. The date is the date in America/Los_Angeles when the run
 started, never the machine's own zone. The record holds: this program's
 name, the machine, the date and the UTC time the run started; origin/main's
@@ -111,7 +111,7 @@ therefore remove the worktree the first is testing. So a run holds an
 exclusive lock on daily-full-test-run-of-main.lock in its directory, and a
 second run exits 6 having done nothing.
 
-WHAT IS REUSED. nc-systems/handoff/daily-memory-review-mark.py is loaded by
+WHAT IS REUSED. nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py is loaded by
 path, the way nc-systems/handoff/handoff-supervisor.py loads it, for the
 Pacific date (pacific_time_of), the test that this machine is ned-box
 (this_machine_is_ned_box), ned-box's ssh target, and
@@ -186,9 +186,9 @@ def module_loaded_by_path(module_name: str, path: Path):
     return module
 
 
-daily_memory_review_mark = module_loaded_by_path(
-    "daily_memory_review_mark",
-    REPOSITORY_ROOT / "nc-systems" / "handoff" / "daily-memory-review-mark.py")
+handoff_user_review_of_agent_memory_stores_mark = module_loaded_by_path(
+    "handoff_user_review_of_agent_memory_stores_mark",
+    REPOSITORY_ROOT / "nc-systems" / "handoff" / "handoff-user-review-of-agent-memory-stores-mark.py")
 run_all_test_suites = module_loaded_by_path(
     "run_all_test_suites", Path(__file__).resolve().with_name("run-all-test-suites.py"))
 
@@ -464,7 +464,7 @@ def parse_arguments(argv):
 def main(argv=None, now=None, monotonic=time.monotonic) -> int:
     arguments = parse_arguments(argv)
     now = now or datetime.now(timezone.utc)
-    mark = daily_memory_review_mark
+    mark = handoff_user_review_of_agent_memory_stores_mark
     on_ned_box = mark.this_machine_is_ned_box()
     machine = (DAILY_FULL_TEST_RUN_MACHINE_NAME_ON_NED_BOX if on_ned_box
                else DAILY_FULL_TEST_RUN_MACHINE_NAME_ELSEWHERE)
@@ -489,7 +489,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
 
 def daily_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, machine,
                                    pacific_date, clone, directory) -> int:
-    mark = daily_memory_review_mark
+    mark = handoff_user_review_of_agent_memory_stores_mark
     worktree = directory / DAILY_FULL_TEST_RUN_WORKTREE_DIRECTORY_NAME
     logs = directory / DAILY_FULL_TEST_RUN_LOGS_DIRECTORY_NAME
     run_started = monotonic()

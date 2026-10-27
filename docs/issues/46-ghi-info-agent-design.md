@@ -1,6 +1,6 @@
 ---
 issue: "[Build ghi-info — the GHI knowledge agent](https://github.com/nedschorus/nedschorus/issues/46)"
-status: design
+kind: design
 design-as-of: 2026-08-11
 ---
 
@@ -18,7 +18,7 @@ Issue [Build ghi-info — the GHI knowledge agent](https://github.com/nedschorus
 - **The mirror and the seat:** `scripts/ghi-mirror-refresh.py`, run in the seat's checkout `~/agents/ghi-info` on ned-box, which holds `ghi-mirror/`.
 - **The ask wrapper:** `scripts/ghi-info-ask.py`.
 - **The write tool:** `scripts/ghi-issue-write.py`, with its create and edit operations. It has no comment operation: the user ruled on 2026-09-24 that agents write no issue comments.
-- **The redirect hook:** `.claude/hooks/ghi-issue-write-redirect.py`. It refuses a hand-typed write rather than rewriting it into the tool as § The GHI write path describes; its docstring says why.
+- **The redirect hook:** `.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py`. It refuses a hand-typed write rather than rewriting it into the tool as § The GHI write path describes; its docstring says why.
 - **The corpus migration:** done 2026-09-27, when every open issue's body became the links to its files (by a one-time migration program, deleted once the migration finished).
 - **Not built:** the maintenance sweep and fixer spawning (§ Maintenance and fixers).
 
@@ -68,11 +68,13 @@ Two files, split by state: `issues-open.md` — every open issue near-raw (numbe
 
 One overall timeout (inside the hook budget); a killed run is a named failure. Auth is the box's two credentials — its `gh` login and its long-lived Claude token (interactive logins expire unattended). Precedent: nedsmessenger runs this pattern live (`~/Projects/nedsmessenger/adapter/adapter.py`, `ask_claude` — headless `claude -p --resume`, answer off the exit stream; NM runs three watchdogs where version 1 here starts with one timeout).
 
+When the timeout kills an ask, the message also tells the asking agent to ask again with fewer tasks in one question. The asks seen timing out were batch asks: on 2026-10-14, when each agent-seat asked whether a GHI already covered any of its tasks, putting many tasks in one question, the asks of 6 of the 8 agent-seats were killed by the timeout. The user approved this on 2026-10-23 (item 12 of the approval-walk cold-read-research-open-items-2026-10-22, minutes at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/cold-read-research-open-items-2026-10-22-minutes.md`). Not built yet: today the message is only `ghi-info-ask: claude was silent for 300s and was killed` on ned-box, or `ghi-info-ask: the box was silent for 420s and was killed` when asked from the Mac, both printed by `scripts/ghi-info-ask.py`.
+
 **A failed ask never blocks a write.** The ladder: ask → grep the local mirror (stale if not regenerated) → `gh` search → proceed under the ordinary rules — the `ghi-write` skill and the artifact-lifecycle rule. Self-correction: a GHI author who finds a relation `ghi-info` missed adds the cross-link while editing; the next refresh carries it into the corpus, and answers reflect it after the next reload — a lag bounded by the reincarnation triggers.
 
 ## The GHI write path (ghi-issue-write)
 
-GHI authors write with `gh` as trained for create, edit, and close; comments are the one taught exception. A PreToolUse hook (`.claude/hooks/ghi-issue-write-redirect.py`, sibling of `.claude/hooks/instruction-file-guard.py`) rewrites body-bearing `gh issue create`/`edit` into `scripts/ghi-issue-write.py` via `updatedInput` (rewrite mechanics and the 600 s configurable command-hook timeout verified 2026-08-07 against https://code.claude.com/docs/en/hooks). The tool's internal `gh` calls are subprocesses below the hook layer; `ghi-info`'s and fixers' writes route through the tool like any author's.
+GHI authors write with `gh` as trained for create, edit, and close; comments are the one taught exception. A PreToolUse hook (`.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py`, sibling of `.claude/hooks/instruction-file-guard.py`) rewrites body-bearing `gh issue create`/`edit` into `scripts/ghi-issue-write.py` via `updatedInput` (rewrite mechanics and the 600 s configurable command-hook timeout verified 2026-08-07 against https://code.claude.com/docs/en/hooks). The tool's internal `gh` calls are subprocesses below the hook layer; `ghi-info`'s and fixers' writes route through the tool like any author's.
 
 **Creating an issue.** The author writes the GHI-MD, gives it its cold read and acts on what that returns, then runs `scripts/ghi-issue-write.py create <path>`. **The author runs the read, not the tool** (user-ruled 2026-09-20). The user ruled on 2026-09-16, at the merge-lane seat, that a GHI-MD is cold-read before its issue links to it: "These MD files should be cold read". The read is the one the cold-read skill gives a document of that kind, and the ruling also settled the 2026-09-04 direction that `ghi-write`'s prose outputs get a cold read like every other node's. Putting the read inside the tool would block the author in one command while a reviewer reads the whole document, and would separate the reviewer's notes from the author still holding the file's context. The tool does not check that a read happened: this is the front-loading layer's job, like routing. A file not yet filed lives in `docs/issues/queue/` under any name. The tool does the rest:
 

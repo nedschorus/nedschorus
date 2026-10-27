@@ -62,7 +62,7 @@ check("a git failure in a program that takes names on its command line gets four
           "from the command that printed this message and from the rerun, or the corrected command."], lines)
 
 lines = next_step_lines.git_failure_next_step_lines(
-    "`git -C d status`", "the sync", include_the_misspelt_branch_commit_or_path_line=False,
+    "`git -C d status`", include_the_misspelt_branch_commit_or_path_line=False,
     rerun_fails_when="prints an error again", which_lines_to_quote_in_the_report="the sync line and the error",
     read_by_a_subagent=False,
     next_step_to_skip_when_the_rerun_fails_too="act on the rest of this prompt").splitlines()
@@ -72,6 +72,19 @@ check("a program that takes no names gets one case; a line no subagent reads nam
           "If git's error names no lock file, run exactly `git -C d status` once more.",
           "If the rerun prints an error again, stop, do not act on the rest of this prompt, "
           "and tell the user word for word, the sync line and the error."], lines)
+
+try:
+    lines = next_step_lines.git_failure_next_step_lines(
+        "`p --x`", text_the_failure_line_contains="p: could not",
+        include_the_misspelt_branch_commit_or_path_line=True)
+except TypeError as error:
+    lines = None
+    said = str(error)
+check("the misspelt-name line without the program it names is refused, naming the argument and both "
+      "values of the flag",
+      lines is None and "needs program" in said
+      and "include_the_misspelt_branch_commit_or_path_line=True" in said
+      and "include_the_misspelt_branch_commit_or_path_line=False" in said, lines)
 
 for case_name, arguments in [
         ("neither the failure text nor the free-text pair", {}),
@@ -175,6 +188,16 @@ check("the printer writes one JSON object carrying the text as PostToolUse addit
       printed.getvalue() == json.dumps({"hookSpecificOutput": {
           "hookEventName": "PostToolUse", "additionalContext": "line one \u00e9\nline two"}},
           ensure_ascii=False) + "\n" and "\u00e9" in printed.getvalue(), printed.getvalue())
+
+_wording_copies_finder_spec = importlib.util.spec_from_file_location(
+    "common_module_wording_copied_into_other_test_files_finder_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools" / "common-module-wording-copied-into-other-test-files-finder-common.py")
+wording_copies_finder = importlib.util.module_from_spec(_wording_copies_finder_spec)
+_wording_copies_finder_spec.loader.exec_module(wording_copies_finder)
+wording_copies = wording_copies_finder.common_module_wording_copies_in_other_test_files(
+    REPOSITORY_ROOT / "nc-systems" / "general-tools" / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py", REPOSITORY_ROOT)
+check("no other test file keeps its own copy of this module's wording: each gets the wording by calling the module",
+      wording_copies == [], "\n".join(map(wording_copies_finder.copied_wording_report_line, wording_copies)))
 
 print(f"{failures} failure(s)" if failures else "all cases pass")
 sys.exit(1 if failures else 0)

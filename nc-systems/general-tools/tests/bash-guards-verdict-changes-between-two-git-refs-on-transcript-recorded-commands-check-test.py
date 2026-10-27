@@ -25,7 +25,7 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py"
 TMUX_KILL_GUARD = "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py"
-ISSUE_WRITE_GUARD = ".claude/hooks/ghi-issue-write-redirect.py"
+ISSUE_WRITE_GUARD = ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py"
 SEARCH_FILE_GUARD = "scripts/search-file-argument-read-as-option-guard-hook.py"
 SHELL_READER = "nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py"
 
@@ -366,7 +366,7 @@ try:
     check("a guard whose own `except Exception` surrounds a timed-out read: exit 2, the timeout is not swallowed",
           status == 2 and "TIMEOUT" in out and "NO VERDICT CHANGED" not in out, f"status {status}\n{out}\n{err}")
 
-    codex_guard = "scripts/hand-typed-codex-exec-redirect-hook.py"
+    codex_guard = "scripts/hand-typed-codex-exec-command-refusal-hook.py"
     calls_file = Path(scratch) / "codex-guard-calls-on-tmux-kill-server"
 
     def codex_guard_on_tmux_kill_server(code_on_tmux_kill_server):
@@ -510,13 +510,43 @@ try:
         settings = json.loads(path.read_text())
         for entry in settings["hooks"]["PreToolUse"]:
             entry["hooks"] = [hook for hook in entry.get("hooks", [])
-                              if "hand-typed-codex-exec-redirect-hook.py" not in hook.get("command", "")]
+                              if "hand-typed-codex-exec-command-refusal-hook.py" not in hook.get("command", "")]
         path.write_text(json.dumps(settings, indent=2))
     fewer_hooks = commit_with_change(drop_codex_hook, scratch)
     status, out, err = run_replay(fewer_hooks, scratch)
     check("a head whose settings.json lacks a Bash hook the replay reads: exit 2, naming the hook",
-          status == 2 and "replayed but not a Bash hook: ['scripts/hand-typed-codex-exec-redirect-hook.py']" in err,
+          status == 2 and "replayed but not a Bash hook: ['scripts/hand-typed-codex-exec-command-refusal-hook.py']" in err,
           f"status {status}\n{out}\n{err}")
+
+    # In the guard's own directory, so the files it loads beside itself are still found.
+    former_tmux_kill_guard = str(Path(TMUX_KILL_GUARD).with_name("tmux-kill-guard-at-a-former-path-hook.py"))
+
+    def move_tmux_kill_guard_to_its_former_path(worktree):
+        git("mv", TMUX_KILL_GUARD, former_tmux_kill_guard, cwd=worktree)
+        path = worktree / ".claude" / "settings.json"
+        path.write_text(path.read_text().replace(TMUX_KILL_GUARD, former_tmux_kill_guard))
+    before_rename = commit_with_change(move_tmux_kill_guard_to_its_former_path, scratch)
+    status, out, err = run_replay("HEAD", scratch, base_ref=before_rename)
+    check("a head that renames a guard whose former path the replay does not know: exit 2, naming the former path "
+          "and the map that takes it",
+          status == 2 and "at the base ref" in err and f"not replayed: ['{former_tmux_kill_guard}']" in err
+          and "BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH" in err, f"status {status}\n{out}\n{err}")
+    renames_as_written = getattr(replay, "BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH", {})
+    replay.BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {former_tmux_kill_guard: TMUX_KILL_GUARD}
+    try:
+        status, out, err = run_replay("HEAD", scratch, base_ref=before_rename)
+        check("a head that only renames a guard whose former path the replay knows: exit 0, and the renamed guard "
+              "is not a guard the head adds",
+              status == 0 and "NO VERDICT CHANGED" in out
+              and "guards the head adds, read at the head only: none" in out, f"status {status}\n{out}\n{err}")
+        status, out, err = run_replay(refusing_ls, scratch, base_ref=before_rename)
+        check("a head that renames a guard and changes its verdict: exit 1, the difference named by the guard's "
+              "current path",
+              status == 1 and "in-process: rows whose verdict differs: 1" in out and f"  {TMUX_KILL_GUARD}: 1" in out
+              and "base: ['passed', None]" in out and "NEW GUARD REFUSES RECORDED COMMANDS" not in out,
+              f"status {status}\n{out}\n{err}")
+    finally:
+        replay.BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = renames_as_written
 
     def commit_without_guard(guard_path):
         """Return a commit made from HEAD that has neither the guard's file nor its hook, as a base before the guard."""
@@ -842,7 +872,7 @@ try:
         subprocess.run(["pkill", "-f", str(Path(scratch) / "run-exiting")])
 
     codex_guard, _, _, _ = replay.guards_loaded(REPOSITORY_ROOT, False)
-    codex_path = "scripts/hand-typed-codex-exec-redirect-hook.py"
+    codex_path = "scripts/hand-typed-codex-exec-command-refusal-hook.py"
     check("the codex exec guard's reading refuses a hand-typed codex exec and passes ls",
           replay.GUARDS[codex_path](codex_guard[codex_path], 'codex exec -C /tmp/x "do the task"', "/", "/")[0] == "refused"
           and replay.GUARDS[codex_path](codex_guard[codex_path], "ls -la", "/", "/")[0] == "passed",
@@ -1236,6 +1266,23 @@ try:
 finally:
     # The test's checkouts are registered only in its own clone, which goes with the scratch directory.
     check_scratch_directory_removed(scratch)
+
+check("the default transcript folders are this machine's and the three copies the mirror keeps on ned-box",
+      replay.DEFAULT_TRANSCRIPT_DIRECTORIES == [
+          str(Path.home() / ".claude" / "projects"),
+          "/home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/projects",
+          "/home/nedlern/nedschorus-logs/agent-session-files-by-machine/ned-box",
+          "/home/nedlern/nedschorus-logs/agent-session-files-by-machine/recovered"],
+      replay.DEFAULT_TRANSCRIPT_DIRECTORIES)
+
+# A deleted entry passes this case; only a replay against a base that still runs the former path shows it.
+renames_to_paths_not_in_guards = {former: current for former, current
+                                  in replay.BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH.items() if current not in replay.GUARDS}
+former_paths_still_in_guards = sorted(set(replay.BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH) & set(replay.GUARDS))
+check("each renamed guard's former path maps to a path in GUARDS, and no former path is itself in GUARDS",
+      not renames_to_paths_not_in_guards and not former_paths_still_in_guards,
+      f"mapped to paths not in GUARDS: {renames_to_paths_not_in_guards}; former paths in GUARDS: "
+      f"{former_paths_still_in_guards}")
 
 if failures:
     print(f"{len(failures)} failed")

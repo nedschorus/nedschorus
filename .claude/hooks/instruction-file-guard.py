@@ -14,14 +14,18 @@ marker. In the machine's reference checkout, session-location-write-guard.py
 refuses the Write of the marker and the edit itself, so the refusals send the
 agent to its own worktree."""
 
+import importlib.util
 import json
 import os
 import sys
 from pathlib import Path
 
-# Resolve the sibling import from this file, independent of the caller's working directory.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from guard_approval_marker import consume_approval_marker, read_marker_approval  # noqa: E402
+_marker_spec = importlib.util.spec_from_file_location(
+    "guard_approval_marker_common", Path(__file__).resolve().with_name("guard-approval-marker-common.py"))
+_guard_approval_marker_common = importlib.util.module_from_spec(_marker_spec)
+_marker_spec.loader.exec_module(_guard_approval_marker_common)
+consume_approval_marker = _guard_approval_marker_common.consume_approval_marker
+read_marker_approval = _guard_approval_marker_common.read_marker_approval
 
 PROTECTED_BASENAMES = ("CLAUDE.md", "CLAUDE.local.md")
 PROTECTED_DIRECTORY = ".claude"
@@ -68,7 +72,8 @@ ROUTE_AROUND_LINES = (
 COLD_READ_BEFORE_ASKING_SENTENCES = (
     "Before you put the change to the user, write the changed text to a file in your "
     "session's scratchpad and give it the cold read that step 2 of the /cold-read skill "
-    "names for it, a fast read for a change of one sentence; revise the text from the "
+    "names for it, a fast read for a change that leaves unchanged what the file tells "
+    "a program or an agent to do, and what it decides or plans; revise the text from the "
     "findings once, then put the change to him. Skip this when the change only fixes an "
     "obvious error `CLAUDE.md` lets you fix without asking."
 )

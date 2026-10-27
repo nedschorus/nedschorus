@@ -1,6 +1,6 @@
 ---
-name: locate-before-saying-a-file-is-missing
-description: Use when you are about to tell anyone that a file, record, transcript, approval or other stored artifact does not exist, is gone, or cannot be found. Runs scripts/locate-file-copies-across-machines.py, or for an approval scripts/locate-user-approval-by-question-subject.py, and says how to report where you looked and what you could not reach, instead of saying it is missing.
+name: find-missing-file
+description: Use before you write that a file, record, transcript, backup, approval or other stored artifact is missing, even when a search you just ran came up empty, as in "does not exist", "not found", "no such file", "is gone", "was deleted", "I could not find it" or "there is no approval". Runs scripts/locate-file-copies-across-machines.py, or for an approval scripts/locate-user-approval-by-question-subject.py, and says how to report where you looked and what you could not reach, instead of saying it is missing.
 ---
 
 # Locate before saying a file is missing

@@ -1235,7 +1235,7 @@ def run_written_by_session_field_cases(workspace: Path):
 PRUNE_LIST_ID = "prune.case-tasks"
 # Claude Code names the list's directory with the "." mapped to "-".
 PRUNE_LIST_DIRECTORY_NAME = "prune-case-tasks"
-REMOTE_STORE_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/transcripts"
+REMOTE_STORE_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine"
 
 
 def task_bytes(task_id: int, status: str, subject: str = "", blocks=(), blocked_by=()) -> bytes:

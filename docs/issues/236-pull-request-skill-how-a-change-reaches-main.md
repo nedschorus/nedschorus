@@ -1,5 +1,6 @@
 ---
 issue: "[pull-request skill: how a change reaches main — durable-file disposition, the description, and topic-branch creation](https://github.com/nedschorus/nedschorus/issues/236)"
+kind: design
 ---
 
 # pull-request skill: how a change reaches main — durable-file disposition, the description, and topic-branch creation

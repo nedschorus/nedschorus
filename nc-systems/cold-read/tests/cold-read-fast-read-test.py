@@ -16,9 +16,23 @@ WHAT IS PINNED HERE.
     set, so no case can flake across a minute boundary.
 
   - One retry. A cell that fails once is run again and, when the second run
-    produces a report, the read succeeds. A cell that fails twice is not run
-    a third time: the read prints a line opening FAILED on stdout, exits 1,
-    and leaves no report.
+    produces a report, the read succeeds. A Gemini cell that fails twice is
+    not run a third time, and one that fails on Gemini's monthly spending cap
+    is not run a second time. The cap counts only on agy's own error line,
+    opening `AGY_ERROR:`: the cap's words inside other text are retried, and
+    a Sonnet backup failure carrying agy's cap line is not reported as the
+    cap. A refusal by the agy launcher, exit 64, is not retried either. A
+    cell whose agy exits 64 is retried, because the read never sees that 64:
+    the launcher turns any agy failure that leaves no report into its own
+    exit 1.
+
+  - The Sonnet backup. After the Gemini cell's failures, the same cell runs
+    once on claude-sonnet-5-5 through the claude cell launcher; its report is
+    the read's, stamped runtime=claude, with a line after the stamp naming
+    the backup and Gemini's cause. When the backup fails too, the read prints
+    one line opening FAILED, naming both causes, exits 1, and leaves no
+    report. A stub `claude` is first on PATH in every case, failing unless
+    the case plans a report, so no case reaches the real claude.
 
   - The chat-instead-of-file quirk carries through: a model that answers a
     review-length text in chat and writes no file still gives the read a
@@ -32,7 +46,7 @@ WHAT IS PINNED HERE.
     substituted and no placeholder left.
 
   - That embedded template is current: it is byte-for-byte the text of
-    .claude/skills/cold-read/prompts/fast-clarify.md, the editable source of
+    .claude/skills/cold-read/prompts/fast-clarify-prompt.md, the editable source of
     truth the user ruled on 2026-09-07. The constant in the script is a
     derived copy of that file, and this is the case that holds the two in
     step.
@@ -41,11 +55,11 @@ WHAT IS PINNED HERE.
     and nothing launched.
 
   - The full-run warning. A target in the class the /cold-read skill's step 2
-    sends to the cold-read-full-run -- a skill or its prompt, a file under
-    docs/agents/, a wiki file, a design, a test design, a design-contract --
-    is read with one line on stderr and one line in the report saying the
-    full run is still required; step 2's own exceptions (a walk file,
-    CLAUDE.md) and everything else are read with nothing said. The warning
+    sends to the cold-read-full-run -- CLAUDE.md, a skill or its prompt, a file
+    under docs/agents/, a wiki file, a design, a test design, a design-contract
+    -- is read with one line on stderr and one line in the report saying the
+    full run is still required; step 2's own exception (a walk file) and
+    everything else are read with nothing said. The warning
     never refuses and never touches stdout's one line.
 
   - The bare-number check. A walk draft is read with every bare issue, pull
@@ -105,6 +119,12 @@ _scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
 scratch_repository_fixture = importlib.util.module_from_spec(
     _scratch_repository_fixture_spec)
 _scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
+
+# The shared cell module, whose own suite pins its wording; the cases here take that wording from it.
+_cell_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common", SYSTEM_DIRECTORY / "cold-read-cell-common.py")
+cell_common = importlib.util.module_from_spec(_cell_common_spec)
+_cell_common_spec.loader.exec_module(cell_common)
 # Every read on the records route ships its record; here, to a scratch
 # log-store inside the scratch checkout through the shipper's destination
 # override, so no case reaches ned-box.
@@ -117,7 +137,7 @@ RECORD_CLOCK_OVERRIDE_VARIABLE = "COLD_READ_RECORD_CLOCK_OVERRIDE"
 AGENT_SESSION_ID_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 FIXED_RECORD_CLOCK_FOR_TESTS = "2026-09-16T10:42"
 FIXED_RECORD_STAMP_FOR_TESTS = "2026-09-16"
-STDOUT_RECOVERY_PHRASE = "recovered the report from the model's chat output"
+STDOUT_RECOVERY_PHRASE = cell_common.STDOUT_RECOVERY_PHRASE
 LONG_CHAT_REVIEW = " ".join(f"word{index}" for index in range(150)) + "\n"
 
 # The script under test, imported so the cases below read the constants it
@@ -140,13 +160,13 @@ def script_under_test_module():
 # root). One pair today, because only the fast cell has a second copy of its
 # prompt: the user's ruling that the reviewer's instructions live in the .py
 # that runs the cell was made about the fast cell. The other cold-read
-# prompts -- defect-hunt.md, restate.md, terminology.md -- are read from the
+# prompts -- defect-hunt-prompt.md, restate-prompt.md, terminology-prompt.md -- are read from the
 # skill at run time and have no second copy anywhere, so nothing about them
 # belongs here. If another cell ever embeds its prompt the same way, the same
 # shape covers it: one more pair, on one more line.
 EMBEDDED_PROMPT_COPY_AND_SOURCE_PAIRS = (
     ("FAST_CLARIFY_PROMPT_TEMPLATE",
-     ".claude/skills/cold-read/prompts/fast-clarify.md"),
+     ".claude/skills/cold-read/prompts/fast-clarify-prompt.md"),
 )
 
 # The stub `agy`: the model from --model, the prompt from --print's value,
@@ -170,8 +190,8 @@ if "edit_document" in step:
 if "delete_document" in step:
     pathlib.Path(step["delete_document"]).unlink()
 if launches <= step.get("fail_first_attempts", 0):
-    sys.stderr.write("stub agy: simulated failure on launch %d\\n" % launches)
-    sys.exit(1)
+    sys.stderr.write(step.get("fail_stderr", "stub agy: simulated failure on launch %d\\n" % launches))
+    sys.exit(step.get("fail_exit", 1))
 report_path = pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"])
 if "report" in step:
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -180,6 +200,34 @@ if "stdout" in step:
     sys.stdout.write(step["stdout"])
 sys.exit(step.get("exit", 0))
 """
+
+# The stub `claude`, which the claude cell launcher runs for the Sonnet
+# backup. It is on PATH in every case, so no case reaches the real claude, and
+# with no plan it fails, so a case that does not plan the backup sees it fail.
+# "report" writes the report and succeeds; "fail_stderr" is what a failure
+# prints.
+STUB_CLAUDE = """#!/usr/bin/env python3
+import json, os, pathlib, sys
+argv = sys.argv
+sys.stdin.read()
+plan = json.loads(os.environ.get("COLD_READ_CLAUDE_CELL_TEST_STUB_PLAN", "{}"))
+counter_path = pathlib.Path(os.environ["COLD_READ_CLAUDE_CELL_TEST_STUB_COUNTER_PATH"])
+launches = (int(counter_path.read_text()) if counter_path.is_file() else 0) + 1
+counter_path.write_text(str(launches))
+if "report" not in plan:
+    sys.stderr.write(plan.get("fail_stderr", "stub claude: simulated failure\\n"))
+    sys.exit(1)
+report_path = pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"])
+report_path.parent.mkdir(parents=True, exist_ok=True)
+report_path.write_text(plan["report"], encoding="utf-8")
+"""
+# The words Gemini's agy prints when the project's monthly spending cap is
+# reached, as a real failing read on ned-box printed them.
+GEMINI_SPENDING_CAP_STDERR = (
+    'AGY_ERROR: {"short_error":"agent executor error: generating and executing: '
+    'Error 429, Message: Your project has exceeded its monthly spending cap. '
+    'Please go to AI Studio at https://ai.studio/spend to manage your project '
+    'spend cap.","error_code":429,"retryable":true}\n')
 
 failures = []
 
@@ -238,7 +286,7 @@ def build_scratch_repository(scratch):
 def run_fast_read(repository, stub_directory, plan, expected_report, target_argument,
                   counter_path, ship_destination=None,
                   record_clock=FIXED_RECORD_CLOCK_FOR_TESTS, agent_session_id=None,
-                  current_directory=None):
+                  current_directory=None, claude_plan=None):
     """The read as a subprocess, with the stub agy first on PATH, run from
     `current_directory`, by default `repository`.
 
@@ -250,7 +298,11 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     stub = stub_directory / "agy"
     stub.write_text(STUB_AGY, encoding="utf-8")
     stub.chmod(0o755)
+    stub_claude = stub_directory / "claude"
+    stub_claude.write_text(STUB_CLAUDE, encoding="utf-8")
+    stub_claude.chmod(0o755)
     counter_path.unlink(missing_ok=True)
+    claude_counter_path(counter_path).unlink(missing_ok=True)
     # The agy cell scans HOME for credential files at launch, and the real
     # home takes seconds to walk.
     scratch_home = repository.parent / "scratch-home"
@@ -261,6 +313,9 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
     environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(expected_report)
     environment["COLD_READ_AGY_CELL_TEST_STUB_COUNTER_PATH"] = str(counter_path)
+    environment["COLD_READ_CLAUDE_CELL_TEST_STUB_PLAN"] = json.dumps(claude_plan or {})
+    environment["COLD_READ_CLAUDE_CELL_TEST_STUB_COUNTER_PATH"] = str(
+        claude_counter_path(counter_path))
     environment[RECORD_SHIP_DESTINATION_VARIABLE] = (
         ship_destination or str(repository / SCRATCH_LOG_STORE_RELATIVE))
     environment[RECORD_CLOCK_OVERRIDE_VARIABLE] = record_clock
@@ -280,6 +335,11 @@ def agent_session_written_beside(report):
     """The JSON the read wrote beside report naming its agent-session, or None when there is none."""
     written = report.with_name(report.name + ".agent-session.json")
     return json.loads(written.read_text(encoding="utf-8")) if written.is_file() else None
+
+
+def claude_counter_path(counter_path):
+    """Where the stub claude counts its launches, beside the stub agy's counter."""
+    return counter_path.with_name(counter_path.name + "-claude")
 
 
 def launches_counted(counter_path):
@@ -311,11 +371,11 @@ with tempfile.TemporaryDirectory() as scratch:
     record_directory_name = name_module.record_directory_name_for_target
     clock_at_1042 = datetime.datetime(2026, 9, 16, 10, 42)
     skill_target = Path("/r/.claude/skills/cold-read/SKILL.md")
-    terminology_target = Path("/r/.claude/skills/cold-read/prompts/terminology.md")
+    terminology_target = Path("/r/.claude/skills/cold-read/prompts/terminology-prompt.md")
     check("a skill's document part is SKILL, a hyphen, and the skill's name",
           record_name(skill_target) == "SKILL-cold-read", record_name(skill_target))
     check("a skill's prompt file is its stem alone, like any other document",
-          record_name(terminology_target) == "terminology", record_name(terminology_target))
+          record_name(terminology_target) == "terminology-prompt", record_name(terminology_target))
     check("an ordinary document is its stem, with no directory",
           record_name(Path("/r/docs/drafts/explain-skill-draft.md")) == "explain-skill-draft")
     check("README gets no special case",
@@ -524,13 +584,184 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the read prints one line opening FAILED on stdout",
           result.stdout.startswith("FAILED") and len(result.stdout.splitlines()) == 1,
           repr(result.stdout))
-    check("exactly two launches were made: the run and one retry",
-          launches_counted(counter) == 2, f"launches={launches_counted(counter)}")
+    check("exactly two Gemini launches were made: the run and one retry, then one "
+          "Sonnet backup launch",
+          launches_counted(counter) == 2 and launches_counted(claude_counter_path(counter)) == 1,
+          f"launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}")
     check("no report is left behind by a failed read",
           not suggestions.exists(), f"{suggestions} exists")
     check("a failed read writes no agent-session file",
           agent_session_written_beside(suggestions) is None,
           repr(agent_session_written_beside(suggestions)))
+
+    # --- The Sonnet backup -----------------------------------------------
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: of the walk item\n"},
+    )
+    backup_lines = (suggestions.read_text(encoding="utf-8").splitlines()
+                    if suggestions.is_file() else [])
+    check("when the Gemini cell fails twice, the Sonnet backup's report is the read's",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and "STUB SONNET FAST READ: of the walk item" in "\n".join(backup_lines)
+          and launches_counted(counter) == 2
+          and launches_counted(claude_counter_path(counter)) == 1,
+          f"exit {result.returncode}; stdout={result.stdout!r}; "
+          f"launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+    check("the Sonnet backup's stamp names the claude runtime, claude-sonnet-5-5, "
+          "effort medium and the fast tier",
+          all(field in provenance_stamp_of(suggestions)
+              for field in ("runtime=claude", "model=claude-sonnet-5-5", "effort=medium",
+                            "cell=fast-clarify", "tier=fast")),
+          repr(provenance_stamp_of(suggestions)))
+    check("the report's second line says the Sonnet backup ran and names the Gemini cause",
+          len(backup_lines) > 1
+          and backup_lines[1].startswith("<!-- #cold_read_fast_read_sonnet_backup_ran ")
+          and "stub agy: the gemini cause" in backup_lines[1],
+          repr(backup_lines[:2]))
+    check("stderr says the Sonnet backup runs and why, before it runs, and that it read the document",
+          "running the same cell once on claude-sonnet-5-5" in result.stderr
+          and "stub agy: the gemini cause" in result.stderr
+          and "cold-read-fast-read: #cold_read_fast_read_sonnet_backup_ran " in result.stderr,
+          repr(result.stderr))
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_exit": 3,
+               "fail_stderr": GEMINI_SPENDING_CAP_STDERR}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: past the cap\n"},
+    )
+    cap_lines = (suggestions.read_text(encoding="utf-8").splitlines()
+                 if suggestions.is_file() else [])
+    check("Gemini's monthly spending cap is not retried: one Gemini launch, then the "
+          "Sonnet backup, whose report is the read's",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and launches_counted(counter) == 1
+          and launches_counted(claude_counter_path(counter)) == 1
+          and "a retry cannot pass a monthly cap" in result.stderr,
+          f"exit {result.returncode}; launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+    check("the Sonnet backup line names Gemini's spending cap and where to raise it",
+          len(cap_lines) > 1 and "monthly spending cap" in cap_lines[1]
+          and "https://ai.studio/spend" in cap_lines[1],
+          repr(cap_lines[:2]))
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_exit": 3,
+               "fail_stderr": "The design quotes it: " + GEMINI_SPENDING_CAP_STDERR}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: after a quoted cap\n"},
+    )
+    quoted_cap_lines = (suggestions.read_text(encoding="utf-8").splitlines()
+                        if suggestions.is_file() else [])
+    check("the cap's words inside other text, such as a model quoting a document, are not "
+          "the cap: the Gemini cell is retried, and the backup line does not name the cap",
+          result.returncode == 0 and launches_counted(counter) == 2
+          and "retrying once" in result.stderr
+          and "a retry cannot pass a monthly cap" not in result.stderr
+          and len(quoted_cap_lines) > 1
+          and "spending cap is reached" not in quoted_cap_lines[1],
+          f"exit {result.returncode}; launches={launches_counted(counter)}; "
+          f"lines={quoted_cap_lines[:2]!r}; stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"fail_stderr": GEMINI_SPENDING_CAP_STDERR},
+    )
+    check("a Sonnet backup failure whose output carries agy's cap line is not reported as "
+          "Gemini's spending cap",
+          result.returncode == 1 and result.stdout.startswith("FAILED")
+          and "stub agy: the gemini cause" in result.stdout
+          and "spending cap is reached" not in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}")
+
+    # The launcher turns any agy failure that leaves no report, a stub agy's
+    # exit 64 included, into its own exit 1, so only a launcher that refuses
+    # reaches the read's no-retry path for exit 64.
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_exit": 64}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: after agy's exit 64\n"},
+    )
+    check("agy's own exit 64 is retried like any failure: two Gemini launches, then the backup",
+          result.returncode == 0 and launches_counted(counter) == 2
+          and launches_counted(claude_counter_path(counter)) == 1,
+          f"exit {result.returncode}; launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    copied_agy_cell = repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"
+    launcher_entry = 'if __name__ == "__main__":\n    sys.exit(main())\n'
+    copied_agy_cell_text = copied_agy_cell.read_text(encoding="utf-8")
+    check("the copied agy launcher ends in the entry point the refusing stand-in replaces",
+          copied_agy_cell_text.endswith(launcher_entry), repr(copied_agy_cell_text[-80:]))
+    copied_agy_cell.write_text(
+        copied_agy_cell_text.replace(launcher_entry, (
+            'if __name__ == "__main__":\n'
+            '    counter = pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_COUNTER_PATH"])\n'
+            '    counter.write_text(str((int(counter.read_text()) if counter.is_file() else 0) + 1))\n'
+            '    print(f"{PROGRAM}: stand-in refusal of the invocation", file=sys.stderr)\n'
+            '    sys.exit(common.EXIT_BAD_INVOCATION)\n')),
+        encoding="utf-8")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: never\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: after the launcher's refusal\n"},
+    )
+    refusal_lines = (suggestions.read_text(encoding="utf-8").splitlines()
+                     if suggestions.is_file() else [])
+    check("the agy launcher's refusal, exit 64, is not retried: one Gemini launch, then the "
+          "Sonnet backup, whose report is the read's",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and launches_counted(counter) == 1
+          and launches_counted(claude_counter_path(counter)) == 1
+          and "refused the invocation (exit 64)" in result.stderr
+          and "STUB SONNET FAST READ: after the launcher's refusal" in "\n".join(refusal_lines),
+          f"exit {result.returncode}; launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+    check("the backup line names the launcher's refusal as the Gemini cell's cause",
+          len(refusal_lines) > 1 and "stand-in refusal of the invocation" in refusal_lines[1],
+          repr(refusal_lines[:2]))
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"fail_stderr": "stub claude: the sonnet cause\n"},
+    )
+    check("when Gemini and the Sonnet backup both fail, one FAILED line names both causes",
+          result.returncode == 1 and len(result.stdout.splitlines()) == 1
+          and result.stdout.startswith("FAILED")
+          and "stub agy: the gemini cause" in result.stdout
+          and "stub claude: the sonnet cause" in result.stdout
+          and not suggestions.exists(),
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
     # --- Chat instead of file, through the read ---------------------------
     repository = build_scratch_repository(scratch)
@@ -997,18 +1228,19 @@ def ssh_time_limit_seconds_with_agy_cell(agy_cell_text):
     return module.COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS
 
 
-check("the ssh time limit of a read on ned-box follows the agy cell's per-model limit "
-      "and the length of the fast cold-read-tier's model chain",
+check("the ssh time limit of a read on ned-box follows the agy cell's per-model limit, "
+      "the length of the fast cold-read-tier's model chain and the Sonnet backup's allowance",
       ssh_time_limit_seconds_with_agy_cell(
           "COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 45 * 60\n"
           "TIER_TO_AGY_MODEL_CHAIN = {'fast': ('model-a', 'model-b')}\n")
-      == warning_module.FAST_READ_ATTEMPTS * 2 * 45 * 60 + 5 * 60)
+      == warning_module.FAST_READ_ATTEMPTS * 2 * 45 * 60
+      + warning_module.COLD_READ_FAST_READ_SONNET_BACKUP_RUN_ALLOWANCE_SECONDS + 5 * 60)
 class_of = warning_module.full_run_class_of_target
 root = warning_module.REPO_ROOT
 check("a skill is in the class",
       class_of(root / ".claude/skills/cold-read/SKILL.md") == "a skill or a skill's prompt")
 check("a skill's prompt is in the class",
-      class_of(root / ".claude/skills/cold-read/prompts/terminology.md")
+      class_of(root / ".claude/skills/cold-read/prompts/terminology-prompt.md")
       == "a skill or a skill's prompt")
 check("a file under docs/agents/ is in the class",
       class_of(root / "docs/agents/pr-reviewer-instructions.md") == "a file under docs/agents/")
@@ -1033,10 +1265,13 @@ check("a design's glossary is not in step 2's list, so it is not called a design
       class_of(root / "docs/design-to-main/design-to-main-glossary.md") is None)
 check("notes about a design are not the design",
       class_of(root / "docs/issues/142-draft-md-skill-design-notes.md") is None)
-check("step 2's own exceptions are not in the class: a walk file and CLAUDE.md",
-      class_of(root / "docs/walk/an-item-draft.md") is None
-      and class_of(root / "CLAUDE.md") is None
-      and class_of(root / "docs/agents/CLAUDE.local.md") is None)
+check("CLAUDE.md is recognised by its name, wherever it sits",
+      class_of(root / "CLAUDE.md") == "CLAUDE.md"
+      and class_of(root / "nc-systems/cold-read/CLAUDE.md") == "CLAUDE.md")
+check("step 2's own exception is not in the class: a walk file",
+      class_of(root / "docs/walk/an-item-draft.md") is None)
+check("a seat's CLAUDE.local.md at the checkout's root is not in the class",
+      class_of(root / "CLAUDE.local.md") is None)
 check("an ordinary document is not in the class",
       class_of(root / "docs/issues/32-preservation-and-placement.md") is None)
 check("a file outside the checkout is not classified",
@@ -1129,15 +1364,17 @@ with tempfile.TemporaryDirectory() as warning_scratch:
     check("the read still succeeds: the warning never refuses",
           result.returncode == 0 and brief_report.is_file(),
           f"exit {result.returncode}; stderr={result.stderr!r}")
-    check("the warning is on stderr, naming the class",
-          "the cold-read-full-run is required before this document lands "
+    check("the warning is on stderr, naming the class and step 2's exemption",
+          "unless step 2 of the /cold-read skill exempts this change" in result.stderr
+          and "the cold-read-full-run is required before this document lands "
           "(a file under docs/agents/)" in result.stderr, repr(result.stderr))
     check("stdout is still exactly the report path",
           result.stdout.strip() == str(brief_report)
           and len(result.stdout.splitlines()) == 1, repr(result.stdout))
     brief_report_text = brief_report.read_text(encoding="utf-8") if brief_report.is_file() else ""
     check("the report carries the same sentence, so the shipped record says it too",
-          "The cold-read-full-run is required before this document lands" in brief_report_text,
+          "Unless step 2 of the /cold-read skill exempts this change" in brief_report_text
+          and "the cold-read-full-run is required before this document lands" in brief_report_text,
           repr(brief_report_text[-400:]))
 
     # A document outside the class is read with nothing said.

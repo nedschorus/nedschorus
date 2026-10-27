@@ -1,5 +1,6 @@
 ---
 issue: "[A project style guide: words to avoid, a mechanical checker, and a check on unbacked promises](https://github.com/nedschorus/nedschorus/issues/14)"
+kind: design
 ---
 
 # A project style guide: words to avoid, a mechanical checker, and a check on unbacked promises
@@ -50,8 +51,9 @@ The legacy system's list failed as text alone. The legacy page records that "und
    - **A promise to act later, or after an event**: passes when the same turn created or updated a task with a due time or a checkable prerequisite, which GHI [Tasks raise themselves when their due time passes or their prerequisite is met](https://github.com/nedschorus/nedschorus/issues/940) raises to the agent when it is due. A task with neither does not pass, because nothing makes it fire.
    - **A standing rule** ("from now on…", "going forward", "from here on", "Noted"): passes only when backed by the hook or test that enforces it, or by a task to build one together with a proposal to the user. A memory never passes: nothing forces an agent to read one.
    - **A hold** ("I'll hold"): passes with a task whose due time re-checks whether the hold can be released.
+   - **An announced action**: a sentence saying the agent is doing, or is about to do, an action of one of the types the measurement found: opening a pull request, filing a GHI, pushing, committing, sending a message, or dispatching an agent, such as "Next I'm starting the pull request", found by the phrase set at the top of the measurement's script `measure_announced_actions.py`, kept beside the measurement's report named under Supporting documents. A sentence that does not promise the action now, because it is conditional, such as "I'll push once the tests pass", or negative, such as "I won't push yet", is not an announced action; a conditional one is a promise to act after an event, above. It passes when the same turn holds a tool call of that type, before or after the sentence, a shell command such as `gh pr create`, `git push` or `scripts/ghi-issue-write.py` included, or started a background task. Otherwise the check refuses the stop once for that sentence, and lets a second stop through. The refusal gives this message, in place of the one below, in four lines: "Refused: you announced an action you have not done."; "You said: "<the sentence>". You have not done it yet."; "Do it now."; and "If you cannot do it now, or have a reason not to, tell the user the reason."
 
-   The check's message is "you promised X: create the task now, or take the promise back", not a replacement word. The check runs as a Stop hook, so it can refuse the stop with that message and the agent's turn continues until the promise is backed or taken back. A promise is raised once per message, so the check cannot loop the agent: taking the promise back is a sentence to the user saying so. For a standing rule the check can see only that the turn created a task or changed a hook or test file, not that the change enforces the rule; the review of that change judges the fit.
+   For every other promise, the check's message is "you promised X: create the task now, or take the promise back", not a replacement word. The check runs as a Stop hook, so it can refuse the stop with that message and the agent's turn continues until the promise is backed or taken back. A promise is raised once per message, so the check cannot loop the agent: taking the promise back is a sentence to the user saying so. For a standing rule the check can see only that the turn created a task or changed a hook or test file, not that the change enforces the rule; the review of that change judges the fit.
 4. **CLAUDE.md points to the page**, in its terms bullet, so every agent reads the rule before acting. The terms bullet gained, by the user's approval on 2026-09-30, the sentence "When you describe something a glossary names, use the glossary's term, spelled as the glossary spells it." in a pull request of its own.
 
 ## Supporting documents
@@ -68,6 +70,7 @@ The legacy system's list failed as text alone. The legacy page records that "und
   - "going forward" 12 (17%; 8% without `TaskUpdate`): the lowest backed share of any phrase seen ten or more times.
   - "moving forward", "won't happen again", "lesson learned", "I'll keep that in mind" and "I'll always" or "I'll never" do not occur; "I promise" occurs once.
 - The forms the phrase list misses, found 2026-10-02 by Codex over 4,000 sampled sentences that hold a future or commitment marker and match no listed phrase: `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-backlog/promise-phrase-codex-mining-2026-10-02.md`. Most frequent in the sample: "say so", "tell me", "say the word" or "say which", followed by "and I'll …" (93 together); "I'll merge", "post", "send", "show", "push" or "review" "… when" or "once" an event happens (about 40); "I won't touch", "start" or "merge" "… until" (17); "from here on" (3). Codex judged 35 of 200 sentences it read closely to be promises nothing backs.
+- The measurement of announced actions not done, 2026-10-19, over 3,260 transcripts on ned-box from 2026-09-18 to 2026-10-19: `nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/announced-action-not-executed-measurement-2026-10-19/report.md`, with its script `measure_announced_actions.py` and every hit in `hits.csv` beside it. About 10 real failures a month; in 76% of stops after such a sentence the agent was waiting for its own background work, which is why the check passes a turn that started a background task.
 - The cold-read reviewers' complaints, counted 2026-09-30 over the 2,911 reports in `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/`: "it" quoted as unclear in 133 reports, "this" 21, "its" 18, "they" 13, "that" 9; "only" 41, "never" 34, "or" 29, "every" 26.
 - The legacy list: [command-vocabulary.md](https://github.com/nedlern/nedlern/blob/main/docs/wiki/reference/command-vocabulary.md), § Overloaded Words to Avoid and § Deceptive Phrases That Hide Intent; on the user's Mac at `/Users/el/Projects/nedlern/docs/wiki/reference/command-vocabulary.md`.
 - The legacy checker spec, never built: [console-banned-wording-checker-spec.md](https://github.com/nedlern/nedlern/blob/main/docs/working/proposed/console-banned-wording-checker-spec.md); on the Mac at `/Users/el/Projects/nedlern/docs/working/proposed/console-banned-wording-checker-spec.md`.
@@ -84,7 +87,8 @@ A subagent of the agent-seat merge-lane-backlog builds the checker (user, 2026-1
 2. the PreToolUse hook on SendMessage;
 3. the MessageDisplay mark, with the Stop hook;
 4. the cold-read-fast-read section;
-5. the promise check of item 3, after the idle check of GHI [Tasks raise themselves when their due time passes or their prerequisite is met](https://github.com/nedschorus/nedschorus/issues/940) is built.
+5. the announced-action check of item 3, which needs no task, so it does not wait for step 6;
+6. the rest of the promise check of item 3, after the idle check of GHI [Tasks raise themselves when their due time passes or their prerequisite is met](https://github.com/nedschorus/nedschorus/issues/940) is built.
 
 ## Trigger to close
 

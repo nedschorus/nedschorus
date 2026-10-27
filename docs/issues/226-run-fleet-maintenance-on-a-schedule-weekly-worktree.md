@@ -1,5 +1,6 @@
 ---
 issue: "[Before a seat is retired, report what still cites the paths the retirement removes](https://github.com/nedschorus/nedschorus/issues/226)"
+kind: design
 ---
 
 # Before a seat is retired, report what still cites the paths the retirement removes
@@ -17,15 +18,15 @@ This issue first asked for two things: worktree clean-up on a weekly schedule, a
 
 This part brings one worktree clean-up back into this issue, at the user's request on 2026-10-04 that it join the daily maintenance; the citation check above is unchanged.
 
-`scripts/clean-worktrees.py --remove` also runs daily at 06:30 on both machines, declared as `daily-clean-worktrees` in `nc-systems/general-tools/scheduled-jobs-on-each-machine.json`. It removes only session worktrees under `.claude/worktrees/`, and keeps every other worktree with the line "outside the managed area (.claude/worktrees/) — its owner decides its lifecycle". Nothing removes those. On ned-box on 2026-10-04, 82 of the 102 worktrees registered in `~/Projects/nedschorus` were merge-lane-2's review checkouts under `/tmp/claude-1000/-home-nedlern-agents-merge-lane-2/` (count from `git -C ~/Projects/nedschorus worktree list`); merge-lane-2 removed 71 of them by hand that day.
+`scripts/clean-worktrees.py --remove` also runs daily at 06:30 on both machines, declared as `clean-worktrees` in `nc-systems/general-tools/scheduled-jobs-on-each-machine.json`. It removes only session worktrees under `.claude/worktrees/`, and keeps every other worktree with the line "outside the managed area (.claude/worktrees/) — its owner decides its lifecycle". Nothing removes those. On ned-box on 2026-10-04, 82 of the 102 worktrees registered in `~/Projects/nedschorus` were merge-lane-2's review checkouts under `/tmp/claude-1000/-home-nedlern-agents-merge-lane-2/` (count from `git -C ~/Projects/nedschorus worktree list`); merge-lane-2 removed 71 of them by hand that day.
 
-The job to add, on ned-box, where merge-lane-2 runs: `daily-clean-worktrees` also removes merge-lane-2's review worktrees once their pull request is closed. It follows the rule merge-lane-2 gave in its message to fleet-restart-at-login on 2026-10-04, with one addition, that no process has its working directory inside the worktree:
+The job to add, on ned-box, where merge-lane-2 runs: `clean-worktrees` also removes merge-lane-2's review worktrees once their pull request is closed. It follows the rule merge-lane-2 gave in its message to fleet-restart-at-login on 2026-10-04, with one addition, that no process has its working directory inside the worktree:
 
 - A worktree at `/tmp/claude-1000/-home-nedlern-agents-merge-lane-2/*/scratchpad/wt/pr<N>-head`, `pr<N>-merged` or `pr<N>-mut`, where `<N>` is the digits after `pr`, is removed once PR N on nedschorus/nedschorus is merged or closed (`gh pr view <N> --json state`).
 - A reviewer's worktree under the same directory, at `*/scratchpad/rv*/wt/*` or with `mac-claude-pr<N>` in its path, is removed on the same condition.
 - `*/scratchpad/wt/main` is never removed.
 - Removal uses `git worktree remove --force`, because a merged checkout holds test byproducts, which are throwaway.
-- Any other worktree under `/tmp/claude-1000/-home-nedlern-agents-merge-lane-2/`, and any whose number cannot be read, is left in place and listed in the job's output, `.claude/daily-clean-worktrees.log`, as `clean-worktrees.py` already does for every worktree it keeps.
+- Any other worktree under `/tmp/claude-1000/-home-nedlern-agents-merge-lane-2/`, and any whose number cannot be read, is left in place and listed in the job's output, `.claude/clean-worktrees.log`, as `clean-worktrees.py` already does for every worktree it keeps.
 
 Next action for this part: extend `scripts/clean-worktrees.py`, which the daily job already runs, with these rules and their tests.
 

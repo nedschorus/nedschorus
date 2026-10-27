@@ -18,7 +18,7 @@ the agent is told through additionalContext that the worktree's uncommitted
 work is not protected; the hook always exits 0, since the tool call has
 already happened.
 
-Design: nc-systems/handoff/uncommitted-work-snapshots-across-crashes-design.md.
+Design: nc-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md.
 """
 
 import importlib.util
@@ -103,7 +103,7 @@ def run(payload, start_process_id):
     agent_seat = os.environ.get(snapshots.AGENT_SEAT_ENVIRONMENT_VARIABLE, "")
     for worktree in worktrees:
         try:
-            if snapshots.common_git_directory(worktree) != clone:
+            if worktree != CLONE_ROOT and snapshots.common_git_directory(worktree) != clone:
                 continue
             if owner_key is None:
                 if snapshots.has_uncommitted_changes(worktree):

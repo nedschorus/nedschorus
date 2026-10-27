@@ -465,7 +465,7 @@ with scratch() as directory:
 with scratch() as directory:
     base = pathlib.Path(directory)
     make_stand_in_bin(base)
-    mirror = base / "box/logs/transcripts"
+    mirror = base / "box/logs/agent-session-files-by-machine"
     write(mirror / "mac/seat-briefs/some-seat/CLAUDE.local.md", "brief")
     write(mirror / "ned-box/tasks/nedschorus-some-seat-tasks/41.json", "task")
     write(mirror / "mac/CLAUDE.md", "global instructions")

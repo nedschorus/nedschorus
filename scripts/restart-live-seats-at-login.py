@@ -51,16 +51,14 @@ The rule, from docs/issues/116-fleet-survives-machine-restart-design.md
     write too.
   - A seat's heartbeat is its last_poll_at. When that cannot be read —
     empty, cut off, no stamp, a stamp that does not parse, or one in the
-    future — the file's last write stands in for it. A reboot in the middle
-    of the supervisor's whole-file write leaves a file cut off at the stop,
-    and the user's answer for that file (2026-09-11) was to try the resume:
-    "Resume or continue works perfectly 99% of the time, so I'd try that."
-    A file damaged long before the stop is judged like any old seat.
+    future — the file's last write stands in for it, and is judged against
+    the anchor like any heartbeat, so a file cut off by the stop is resumed
+    with the seats that were running then.
   - The anchor is the newest heartbeat before this boot; it approximates the
     moment the machine stopped.
   - A seat whose heartbeat or file was written since boot has had a
     supervisor since boot — recovered by hand, started by an earlier run of
-    this program, or caught mid-write while it runs now. It is neither the
+    this program, or running now. It is neither the
     anchor nor restarted.
   - The seats whose heartbeats are within LIVE_SET_WINDOW_SECONDS of the
     anchor were running at the stop, and are restarted — however long before

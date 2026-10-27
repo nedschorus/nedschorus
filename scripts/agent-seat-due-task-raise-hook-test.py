@@ -271,6 +271,61 @@ seat.respond({"pr:6": {"state": "MERGED", "title": "T", "url": "https://x/6"}})
 check("blockedBy incomplete: gh not asked for the held task",
       silent(seat.run()) and seat.gh_calls() == [], seat.gh_calls())
 
+# --- blockedBy alone: raised once its blockers all complete -------------------
+seat = Seat()
+seat.task("50", blocked_by=["52", "51"], subject="Ship after both")
+seat.task("51", status="completed")
+seat.task("52", status="in_progress")
+check("blockedBy alone, one blocker still open: silent", silent(seat.run()))
+seat.task("52", status="completed")
+result = seat.run()
+check("blockedBy alone, every blocker completed: the exact text handed to the agent",
+      context_of(result) == ('Act on task 50 "Ship after both" now: the tasks it waited on '
+                             f"are completed: task 51, task 52.\n{DEFER_LINE}"),
+      repr(context_of(result)))
+check("blockedBy alone: no gh call", seat.gh_calls() == [], seat.gh_calls())
+check("blockedBy alone: the raise is recorded by its blocker list",
+      json.loads(seat.state_path.read_text())["raised"]["50"] == {"blocked_by": ["51", "52"]},
+      seat.state_path.read_text() if seat.state_path.exists() else "no state file")
+check("blockedBy alone: raised once, then silent", silent(seat.run()))
+seat.task("53", status="completed")
+seat.task("50", blocked_by=["51", "52", "53"], subject="Ship after both")
+text = context_of(seat.run()) or ""
+check("blockedBy alone: a changed blocker list raises again", "Act on task 50 " in text, text)
+check("blockedBy alone: then silent again", silent(seat.run()))
+
+seat = Seat()
+seat.task("54", metadata={}, blocked_by=["55"])
+seat.task("55", status="completed")
+text = context_of(seat.run()) or ""
+check("blockedBy alone with an empty metadata object: raised", "Act on task 54 " in text, text)
+
+seat = Seat()
+seat.task("56", blocked_by=["998"])
+check("blockedBy alone naming a deleted task: freed but not raised", silent(seat.run()))
+
+seat = Seat()
+seat.task("57", blocked_by=["58", "998"])
+seat.task("58", status="completed")
+check("blockedBy alone, one blocker completed and one deleted: not raised", silent(seat.run()))
+
+seat = Seat()
+seat.task("59", metadata={"due_utc": FUTURE_DUE}, blocked_by=["60"])
+seat.task("60", status="completed")
+check("blockers completed but a due time still ahead: silent", silent(seat.run()))
+
+seat = Seat()
+seat.task("61", metadata={"waits_on": [{"pr_merged": 7}]}, blocked_by=["62"])
+seat.task("62", status="completed")
+seat.respond({"pr:7": {"state": "OPEN", "title": "T", "url": "https://x/7"}})
+check("blockers completed but waits_on not met: silent", silent(seat.run()))
+
+seat = Seat()
+seat.task("63")
+check("a task with no metadata and no blockedBy: silent", silent(seat.run()))
+check("a task with no metadata and no blockedBy: no state written",
+      not seat.state_path.exists())
+
 # --- waits_on -----------------------------------------------------------------
 seat = Seat()
 seat.task("40", metadata={"waits_on": [{"pr_merged": 101}, {"issue_closed": 202}]})

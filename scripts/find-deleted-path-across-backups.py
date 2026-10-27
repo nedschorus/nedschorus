@@ -366,6 +366,11 @@ _next_step_lines_spec = importlib.util.spec_from_file_location(
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
+_transcript_mirror_spec = importlib.util.spec_from_file_location(
+    "transcript_mirror_to_log_store", Path(__file__).with_name("transcript-mirror-to-log-store.py"))
+transcript_mirror = importlib.util.module_from_spec(_transcript_mirror_spec)
+_transcript_mirror_spec.loader.exec_module(transcript_mirror)
+
 FOUND = "FOUND"
 NOT_FOUND = "NOT FOUND"
 UNAVAILABLE = "UNAVAILABLE"
@@ -389,10 +394,12 @@ DEFAULT_BOX_SEARCH_ROOTS = (
 )
 DEFAULT_TRANSCRIPTS_DIR = "~/.claude/projects"
 DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
-# Keep this path aligned with transcript-mirror-to-log-store.py's destination.
-MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE = ("transcripts", "mac", "projects")
-# Keep this name aligned with transcript-mirror-to-log-store.py's MIRROR_PASS_STAMP_FILE_NAME.
-MAC_MIRROR_PASS_STAMP_FILE_NAME = "last-complete-mirror-pass-utc.txt"
+MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE = (
+    *transcript_mirror.split_destination(transcript_mirror.LOG_STORE_AGENT_SESSION_FILES_DESTINATION)[1]
+    .relative_to(DEFAULT_LOG_STORE_ROOT).parts,
+    transcript_mirror.MACHINE_NAME_ELSEWHERE,
+    next(store for name, _, store, _ in transcript_mirror.SOURCES if name == "projects"))
+MAC_MIRROR_PASS_STAMP_FILE_NAME = transcript_mirror.MIRROR_PASS_STAMP_FILE_NAME
 MAC_MIRROR_PASS_STAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 LOG_STORE_HITS_SHOWN = 10
 

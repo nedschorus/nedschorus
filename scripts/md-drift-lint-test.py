@@ -561,7 +561,7 @@ with tempfile.TemporaryDirectory() as frozen_workspace:
 # top of the ordinary ones; any other Markdown file does not.
 OVERVIEW_NAME = "docs/nedschorus-wiki/nedschorus-demo-architecture-overview.md"
 OVERVIEW_PATH_MODULE = LINT_SCRIPT.with_name(
-    "architecture-overview-path-template-and-checked-against-commit-reader.py")
+    "architecture-overview-path-template-and-checked-against-commit-reader-common.py")
 
 
 def overview_repository(root: Path):

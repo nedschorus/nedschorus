@@ -61,7 +61,7 @@ The main-gatekeeper is the program that will be the single route by which a chan
 - `scripts/branch-conflict-check.py`: it acts on a branch and checks it for a merge conflict. It belongs to no single system, and its name says so by naming none (see "Where a rule above does not apply").
 - `nc-systems/handoff/handoff-supervisor.py`: the system is the handoff system, and the program supervises it.
 
-A name can also fail the third question by saying something untrue. `.claude/hooks/ghi-issue-write-redirect.py` refuses a write to a GitHub issue typed by hand and tells the agent which command to run instead; it does not redirect the write anywhere. Its name says "redirect", so a reader expects the write to have gone through by another route. Step 4 covers this.
+A name can also fail the third question by saying something untrue. The hook now named `.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py` refuses a write to a GitHub issue typed by hand and tells the agent which command to run instead; it does not redirect the write anywhere. Its former name, `ghi-issue-write-redirect.py`, said "redirect", so a reader expected the write to have gone through by another route. Step 4 covers this.
 
 ### Order the parts from the system to the role
 
@@ -122,6 +122,7 @@ A new term is coined only when no existing name and no SDLC-term fits, and it is
 
 - **A name that belongs to the whole project names no system.** `agent-seat` and `log-store` belong to no single system, and a general tool such as `scripts/branch-conflict-check.py` serves them all. Adding the project's name, as in `nedschorus-agent-seat`, would add a word that every such name shares. The wiki's `nedschorus-` prefix is a pattern set by the file naming standards, and the pattern governs there.
 - **An SDLC-term keeps its standard name.** `worktree`, `pull request` and `test double` mean the same thing to every programmer who knows them, and a reader who does not can look them up anywhere. A longer name of this project's own would hide that they are standard.
+- **A project-term or system-term whose words already name something in software engineering or another computing field starts with `nc-`, short for NedsChorus, placed before any system name, when the project means something different by them or adds significant project-specific detail to the standard meaning.** In standard usage a critical component is a part whose failure brings a system down, so the project's term for the code that judges other work is `nc-critical-code`; a test suite is a set of test cases run as one program, so the project's term for one `-test.py` or `-test.sh` file is `nc-test-suite`. The prefix tells the reader to look the term up in the glossary. A standard term used with its standard meaning takes no prefix.
 - **What is set outside the project stays as it is set**, as the opening of this page says.
 - **A name used only inside one file** is left to the writer: this page does not govern it. A loop index `i`, an exception `error`, or a constant only its own file reads is found by a reader who already has the file open.
 

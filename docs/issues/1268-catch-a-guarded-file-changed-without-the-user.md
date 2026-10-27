@@ -1,5 +1,6 @@
 ---
 issue: "[Catch a guarded file changed without the user's approval, ask him, and keep every version](https://github.com/nedschorus/nedschorus/issues/1268)"
+kind: design
 ---
 
 # Catch a guarded file changed without the user's approval, ask him, and keep every version
@@ -197,4 +198,4 @@ Build the hook on one topic branch, with the tests above, as `.claude/hooks/guar
 
 ## Provisional additions (not yet vetted by the user)
 
-- prime-intellect, 2026-10-15: a forked subagent applying the user's approved rulings to PR [Cold-read: a Deferred-decisions section reviewers respect, and at most three cold-read-full-runs per change, counted by the grid](https://github.com/nedschorus/nedschorus/pull/1453) wrote `.claude/skills/cold-read/SKILL.md`, `.claude/skills/cold-read/prompts/defect-hunt.md` and `.claude/skills/cold-read/prompts/terminology.md` with `cp` in a shell command, which `.claude/hooks/instruction-file-guard.py` does not see; the text carried two additions beyond the approved wording, found only because the subagent reported them, and the user then approved both. The user asked on 2026-10-15 for this hook to be built now.
+- prime-intellect, 2026-10-15: a forked subagent applying the user's approved rulings to PR [Cold-read: a Deferred-decisions section reviewers respect, and at most three cold-read-full-runs per change, counted by the grid](https://github.com/nedschorus/nedschorus/pull/1453) wrote `.claude/skills/cold-read/SKILL.md`, `.claude/skills/cold-read/prompts/defect-hunt-prompt.md` (then named `defect-hunt.md`) and `.claude/skills/cold-read/prompts/terminology-prompt.md` (then named `terminology.md`) with `cp` in a shell command, which `.claude/hooks/instruction-file-guard.py` does not see; the text carried two additions beyond the approved wording, found only because the subagent reported them, and the user then approved both. The user asked on 2026-10-15 for this hook to be built now.

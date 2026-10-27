@@ -18,9 +18,11 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
@@ -43,7 +45,7 @@ def load_test_suite_runner():
 CONTROL_DIRECTORY_VARIABLE = "PULL_REQUEST_MUTATION_TESTING_SURVIVORS_TEST_CONTROL_DIR"
 
 FAKE_COSMIC_RAY_SOURCE = f'''#!/usr/bin/env python3
-import fcntl, json, os, pathlib, subprocess, sys
+import fcntl, json, os, pathlib, re, shlex, subprocess, sys
 
 control = pathlib.Path(os.environ["{CONTROL_DIRECTORY_VARIABLE}"])
 plan = json.loads((control / "plan.json").read_text())
@@ -83,7 +85,14 @@ if tool == "cr-filter-git":
     sys.exit(plan.get("filter_exit", 0))
 command = arguments[0]
 if command == "baseline":
-    (control / "config.toml").write_text(pathlib.Path(arguments[-1]).read_text())
+    config_text = pathlib.Path(arguments[-1]).read_text()
+    (control / "config.toml").write_text(config_text)
+    # The script the test command runs lives in the scratch directory, gone when a case looks.
+    # Not tomllib, which Apple's Python 3.9 lacks; the script writes this line's value as JSON.
+    test_command = re.search(r"^test-command = (.*)$", config_text, re.MULTILINE).group(1)
+    words = shlex.split(json.loads(test_command))
+    if words[0] == "sh" and len(words) == 2:
+        (control / "test-command.sh").write_text(pathlib.Path(words[1]).read_text())
     if "--session-file" in arguments:
         session = arguments[arguments.index("--session-file") + 1]
         pathlib.Path(session).write_text("baseline")
@@ -92,6 +101,8 @@ if command == "init":
     pathlib.Path(arguments[2]).write_text("session")
     sys.exit(0)
 if command == "exec":
+    import time
+    time.sleep(plan.get("exec_sleep_seconds", 0))
     sys.exit(plan.get("exec_exit", 0))
 if command == "dump":
     if pathlib.Path(arguments[1]).read_text() == "baseline":
@@ -169,6 +180,12 @@ def fake_venv(directory, plan):
     return venv, control
 
 
+def config_and_test_command_script(control):
+    """The config the fake cosmic-ray's baseline saw, and the script its test command runs."""
+    return tuple((control / name).read_text() if (control / name).exists() else ""
+                 for name in ("config.toml", "test-command.sh"))
+
+
 def calls(control):
     return [json.loads(line) for line in
             (control / "calls.log").read_text().splitlines() if line]
@@ -194,6 +211,15 @@ sys.exit(program.main(arguments))
 
 def run_script(repository, control, *flags, path_override=None,
                extra_environment=None, dropped_variables=()):
+    command, environment = script_command_and_environment(
+        repository, control, *flags, path_override=path_override,
+        extra_environment=extra_environment, dropped_variables=dropped_variables)
+    return subprocess.run(command, capture_output=True, text=True, check=False, env=environment,
+                          timeout=120)
+
+
+def script_command_and_environment(repository, control, *flags, path_override=None,
+                                   extra_environment=None, dropped_variables=()):
     environment = {name: value for name, value in os.environ.items()
                    if name not in dropped_variables}
     environment[CONTROL_DIRECTORY_VARIABLE] = str(control)
@@ -207,11 +233,9 @@ def run_script(repository, control, *flags, path_override=None,
     environment.update(extra_environment or {})
     # Never the real machine lock: the suite runner holds that one while this file runs.
     # Admission's thresholds are opened wide, so a case does not wait on a busy machine.
-    return subprocess.run(
-        [sys.executable, "-c", ADMISSION_OPENED_DRIVER, str(SCRIPT), "--checkout", str(repository),
-         "--recorded-inputs-directory", str(control / "recordings"),
-         "--lock-file", str(control / "machine.lock"), *flags],
-        capture_output=True, text=True, check=False, env=environment, timeout=120)
+    return ([sys.executable, "-c", ADMISSION_OPENED_DRIVER, str(SCRIPT), "--checkout", str(repository),
+             "--recorded-inputs-directory", str(control / "recordings"),
+             "--lock-file", str(control / "machine.lock"), *flags], environment)
 
 
 def worktrees_of(repository):
@@ -262,7 +286,7 @@ def run_cases():
                                "--python", "/usr/bin/python3",
                                "--mutant-timeout-seconds", "45")
         out = completed.stdout
-        config = (control / "config.toml").read_text() if (control / "config.toml").exists() else ""
+        config, test_command_script = config_and_test_command_script(control)
         recorded = calls(control)
         check("survivors found: exit 1", completed.returncode == 1,
               f"rc={completed.returncode} out={out} err={completed.stderr}")
@@ -278,12 +302,17 @@ def run_cases():
         # this file and the script it runs.
         outside_process = re.compile(
             re.escape(test_suite_runner.SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_VARIABLE) + r"=\d+")
-        check("the config's test command runs the sibling suite through sh -c, "
-              "because cosmic-ray runs it without a shell, inside the signal sandbox "
+        test_command = re.search(r"^test-command = (.*)$", config, re.MULTILINE)
+        test_command_words = shlex.split(json.loads(test_command.group(1))) if test_command else []
+        check("the config's test command runs a script in the scratch directory with sh, "
+              "because cosmic-ray runs the command without a shell",
+              len(test_command_words) == 2 and test_command_words[0] == "sh"
+              and test_command_words[1].endswith(".test-command.sh"), config)
+        check("the test command's script runs the sibling suite, inside the signal sandbox "
               "when this machine has one",
-              outside_process.sub("OUTSIDE", f"test-command = {json.dumps('sh -c ' + shlex.quote(launch))}")
-              in outside_process.sub("OUTSIDE", config),
-              (launch, config))
+              outside_process.sub("OUTSIDE", test_command_script).strip()
+              == outside_process.sub("OUTSIDE", launch),
+              (launch, test_command_script))
         check("the config sets the git filter's branch to the merge base, not the base's tip",
               f'branch = "{base}"' in config
               and "[cosmic-ray.filters.git-filter]" in config, config)
@@ -511,14 +540,14 @@ def run_cases():
             {"exit": 1, "reads": {"scripts/thing.py": "blob"}}))
         completed = run_script(repository, control, "--head", head, "--base", base,
                                "--cosmic-ray-venv", str(venv))
-        config = (control / "config.toml").read_text() if (control / "config.toml").exists() else ""
+        _, test_command_script = config_and_test_command_script(control)
         check("a suite whose passing recording reads the file is run on its mutants",
-              "scripts/reader-test.py" in config and "scripts/thing-test.py" in config,
-              config)
+              "scripts/reader-test.py" in test_command_script
+              and "scripts/thing-test.py" in test_command_script, test_command_script)
         check("a suite whose recording does not read the file is not run on its mutants",
-              "other-file-reader-test.py" not in config, config)
+              "other-file-reader-test.py" not in test_command_script, test_command_script)
         check("a suite whose recorded run did not pass is not chosen from that recording",
-              "failed-reader-test.py" not in config, config)
+              "failed-reader-test.py" not in test_command_script, test_command_script)
 
     # ------------------------------------------------------------------
     # A changed file with no suite is reported, not silently skipped.
@@ -890,8 +919,7 @@ def run_cases():
                                    "--cosmic-ray-venv", str(venv),
                                    path_override=f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
                                    dropped_variables=(inside_variable,))
-            config = ((control / "config.toml").read_text()
-                      if (control / "config.toml").exists() else "")
+            _, test_command_script = config_and_test_command_script(control)
             check("with the sandbox on, the run says each suite runs in its own test sandbox, named by the bwrap program",
                   f"each suite runs in its own test sandbox: {fake_bin / 'bwrap'}"
                   in completed.stdout, f"rc={completed.returncode} out={completed.stdout}")
@@ -900,8 +928,9 @@ def run_cases():
                   in completed.stdout, f"rc={completed.returncode} out={completed.stdout}")
             check("a suite listed to run outside the sandbox runs without the prefix in "
                   "the mutant's test command",
-                  outside_suite in config and str(fake_bin / "bwrap") not in config,
-                  config)
+                  outside_suite in test_command_script
+                  and str(fake_bin / "bwrap") not in test_command_script,
+                  test_command_script)
             cosmic_ray_calls = [call for call in calls(control) if call["tool"] == "cosmic-ray"]
             check("in test sandboxes, cosmic-ray, and so every suite it runs, holds an admission "
                   "slot and runs at low priority",
@@ -944,13 +973,13 @@ def run_cases():
                                    "--cosmic-ray-venv", str(venv), "--python", str(home_python),
                                    path_override=f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
                                    dropped_variables=(inside_variable,))
-            config = ((control / "config.toml").read_text()
-                      if (control / "config.toml").exists() else "")
+            _, test_command_script = config_and_test_command_script(control)
             check("an interpreter in the hidden home directory has what it loads shown "
                   "read-only in each mutant's test sandbox",
-                  f"--ro-bind {standard_library} {standard_library}" in config
-                  and f"--ro-bind {home_python} {home_python}" in config,
-                  f"rc={completed.returncode} out={completed.stdout[-600:]} config={config[:1500]}")
+                  f"--ro-bind {standard_library} {standard_library}" in test_command_script
+                  and f"--ro-bind {home_python} {home_python}" in test_command_script,
+                  f"rc={completed.returncode} out={completed.stdout[-600:]} "
+                  f"script={test_command_script[:1500]}")
 
         # Repository paths longer than a file name may be: each file named in the scratch
         # directory, the suite's proof included, stays within the 255-byte limit.
@@ -970,9 +999,8 @@ def run_cases():
                                    "--cosmic-ray-venv", str(venv),
                                    path_override=f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
                                    dropped_variables=(inside_variable,))
-            config = ((control / "config.toml").read_text()
-                      if (control / "config.toml").exists() else "")
-            proofs = re.findall(r"\S+\.started", config)
+            _, test_command_script = config_and_test_command_script(control)
+            proofs = re.findall(r"\S+\.started", test_command_script)
             check("with paths longer than a file name may be, the run goes to its summary",
                   completed.returncode == 0 and "SUMMARY:" in completed.stdout
                   and "File name too long" not in completed.stderr,
@@ -1004,7 +1032,8 @@ def run_cases():
                 ("a sandbox that fails before the suite", ("sh", "-c", "exit 1", "stand-in"), 1,
                  True)):
             did_not_start.unlink(missing_ok=True)
-            command = survivors.test_command_for(["a-test.py"], sys.executable, prefix, (),
+            command = survivors.test_command_for(["a-test.py"], sys.executable,
+                                                 scratch / "a.test-command.sh", prefix, (),
                                                  {"a-test.py": proof}, did_not_start)
             completed = subprocess.run(shlex.split(command), cwd=scratch, capture_output=True,
                                        text=True, timeout=60)
@@ -1022,6 +1051,62 @@ def run_cases():
             check(f"{label}: the run {'stops, naming the suite' if named else 'goes on'}",
                   (raised is not None and "a-test.py" in raised and "did not start" in raised)
                   if named else raised is None, raised)
+
+    # A file that many suites read: the chain of their launches passes Linux's 128 KiB limit
+    # on one argument, as a long sandbox prefix per suite makes it with about 71 suites.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        scratch = Path(scratch_name)
+        ran = scratch / "ran"
+        suites = [f"suites/{'s' * 60}-{number}-test.sh" for number in range(71)]
+        (scratch / "suites").mkdir()
+        for number, suite in enumerate(suites):
+            (scratch / suite).write_text(f"echo {number} >> {shlex.quote(str(ran))}\n")
+        script_file = scratch / "many.test-command.sh"
+        long_prefix = ("env", "PADDING=" + "p" * 2000)
+        command = survivors.test_command_for(suites, sys.executable, script_file, long_prefix)
+        try:
+            completed = subprocess.run(shlex.split(command), cwd=scratch, capture_output=True,
+                                       text=True, timeout=120)
+            outcome = (completed.returncode, completed.stderr)
+        except OSError as error:
+            outcome = (None, str(error))
+        check("with 71 suites whose launches together pass 128 KiB, the test command starts, "
+              "exits 0 and runs every suite in order",
+              len(script_file.read_text().encode()) > 128 * 1024 and outcome[0] == 0
+              and ran.exists() and ran.read_text().split() == [str(n) for n in range(71)],
+              (len(command), outcome))
+
+        ran.unlink(missing_ok=True)
+        (scratch / suites[35]).write_text(f"echo 35 >> {shlex.quote(str(ran))}\nexit 3\n")
+        command = survivors.test_command_for(suites, sys.executable, script_file, long_prefix)
+        completed = subprocess.run(shlex.split(command), cwd=scratch, capture_output=True,
+                                   text=True, timeout=120)
+        check("with a failing suite among many, the test command exits nonzero and runs no "
+              "suite after the failing one",
+              completed.returncode != 0
+              and ran.read_text().split() == [str(n) for n in range(36)],
+              (completed.returncode, ran.read_text() if ran.exists() else None))
+
+        unwritable = scratch / "no-such-directory" / "x.test-command.sh"
+        try:
+            survivors.test_command_for(suites[:1], sys.executable, unwritable)
+            raised = None
+        except survivors.CouldNotRun as error:
+            raised = str(error)
+        check("a test command script that cannot be written stops the invocation with "
+              "CouldNotRun, naming the file",
+              raised is not None and str(unwritable) in raised, raised)
+        check("the unwritable-script refusal says the program writes the file itself and that no "
+              "mutant was run, then on a line of its own tells the agent to pass the first line "
+              "to the user and say it will not rerun until the user says to",
+              raised is not None and "this program could not write" in raised
+              and "no mutant was run" in raised
+              and len(raised.split("\n")) == 2
+              and raised.split("\n")[1] == ("Tell the user the first line of this message, word "
+                                             "for word, and that you will not rerun "
+                                             "scripts/pull-request-mutation-testing-survivors.py "
+                                             "until they say to."),
+              raised)
     stem_for = survivors.scratch_file_name_stem_under_255_bytes_unique_to_repository_paths
     long_path = "/".join(["é" * 120] * 3) + ".py"
     stems = [stem_for(long_path, long_path), stem_for(long_path, long_path),
@@ -1044,6 +1129,47 @@ def run_cases():
         suites = survivors.suites_at_head(repository, head, None)
         check("the suites at head are named as stored",
               suites == ["scripts/tést-test.py"], suites)
+
+    # ------------------------------------------------------------------
+    # A stop signal while cosmic-ray runs still removes the worktree, git's
+    # record of it, and the scratch directory.
+    # ------------------------------------------------------------------
+    for stop_signal in (signal.SIGTERM, signal.SIGHUP):
+        name = signal.Signals(stop_signal).name
+        with tempfile.TemporaryDirectory() as scratch_name:
+            repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+            venv, control = fake_venv(scratch_name, {"exec_sleep_seconds": 60})
+            temporary_directory = Path(scratch_name) / "tmp"
+            temporary_directory.mkdir()
+            worktrees_before = worktrees_of(repository)
+            command, environment = script_command_and_environment(
+                repository, control, "--head", head, "--base", base,
+                "--cosmic-ray-venv", str(venv), "--python", "/usr/bin/python3",
+                extra_environment={"TMPDIR": str(temporary_directory)})
+            script = subprocess.Popen(command, env=environment, stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE, text=True)
+            try:
+                deadline = time.monotonic() + 60
+                execs = []
+                while not execs and time.monotonic() < deadline and script.poll() is None:
+                    execs = [c for c in calls(control) if c["arguments"][:1] == ["exec"]]
+                    time.sleep(0.1)
+                script.send_signal(stop_signal)
+                out, err = script.communicate(timeout=60)
+            finally:
+                if script.poll() is None:
+                    script.kill()
+                    script.communicate()
+            worktree = Path(execs[0]["cwd"]) if execs else None
+            check(f"{name} while cosmic-ray exec runs: the script exits 128 plus the signal "
+                  f"number, having removed the worktree, git's record of it and the "
+                  f"scratch directory",
+                  worktree is not None and script.returncode == 128 + stop_signal
+                  and not worktree.exists() and worktrees_of(repository) == worktrees_before
+                  and list(temporary_directory.iterdir()) == [],
+                  f"exec seen {worktree} rc={script.returncode} "
+                  f"worktrees={worktrees_of(repository)} "
+                  f"left={list(temporary_directory.iterdir())} out={out} err={err}")
 
     # ------------------------------------------------------------------
     # Bad invocations.

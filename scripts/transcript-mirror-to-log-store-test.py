@@ -25,7 +25,7 @@ SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 MIRROR = SCRIPTS_DIR / "transcript-mirror-to-log-store.py"
 DESTINATION_VARIABLE = "TRANSCRIPT_MIRROR_DESTINATION"
 SOURCE_HOME_VARIABLE = "TRANSCRIPT_MIRROR_SOURCE_HOME"
-RULED_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/transcripts"
+RULED_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine"
 RSYNC_SSH_TRANSPORT = ("ssh -o BatchMode=yes -o ConnectTimeout=10"
                        " -o ServerAliveInterval=15 -o ServerAliveCountMax=4")
 SERVER_ALIVE_OPTIONS = ("ServerAliveInterval=15", "ServerAliveCountMax=4")
@@ -121,7 +121,7 @@ QUIET = ("--failures-only",)
 with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_name:
     scratch = pathlib.Path(scratch_name).resolve()
     home = make_home(scratch)
-    store = scratch / "store" / "transcripts"
+    store = scratch / "store" / "agent-session-files-by-machine"
     machine = "ned-box" if os.uname().nodename.split(".")[0] == "ned-box" else "mac"
 
     # --- Local mode, real rsync ---------------------------------------------
@@ -131,16 +131,16 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
           result.returncode == 0 and len(lines) == 5
           and all(line.startswith("mirrored: ") for line in lines),
           result.stdout + result.stderr)
-    check("transcripts land under transcripts/<machine>/projects/ in Claude Code's own layout",
+    check("transcripts land under agent-session-files-by-machine/<machine>/projects/ in Claude Code's own layout",
           (store / machine / "projects" / "-Users-el-agents-MD-skills" / "aaaa.jsonl").is_file())
     check("the memory store rides along inside projects/",
           (store / machine / "projects" / "-Users-el-agents-MD-skills" / "memory" / "MEMORY.md").is_file())
-    check("handoffs land under transcripts/<machine>/handoffs/",
+    check("handoffs land under agent-session-files-by-machine/<machine>/handoffs/",
           (store / machine / "handoffs" / "MD-skills-dialog-0001.md").is_file())
-    check("task lists land under transcripts/<machine>/tasks/ in Claude Code's own layout, dotfiles included",
+    check("task lists land under agent-session-files-by-machine/<machine>/tasks/ in Claude Code's own layout, dotfiles included",
           (store / machine / "tasks" / "nedschorus-MD-skills-tasks" / "1.json").is_file()
           and (store / machine / "tasks" / "nedschorus-MD-skills-tasks" / ".highwatermark").is_file())
-    check("a seat-brief lands under transcripts/<machine>/seat-briefs/<seat>/CLAUDE.local.md",
+    check("a seat-brief lands under agent-session-files-by-machine/<machine>/seat-briefs/<seat>/CLAUDE.local.md",
           text_or_none(store / machine / "seat-briefs" / "MD-skills" / "CLAUDE.local.md")
           == "# MD-skills seat-brief\n")
     check("only seat-briefs are copied from ~/agents: nothing for a worktree without one, a deeper CLAUDE.local.md or a stray file",
@@ -148,7 +148,7 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
                  for p in (store / machine / "seat-briefs").rglob("*"))
           == ["MD-skills", "MD-skills/CLAUDE.local.md"],
           str(list((store / machine / "seat-briefs").rglob("*"))))
-    check("the global CLAUDE.md lands at transcripts/<machine>/CLAUDE.md, and nothing else of ~/.claude's top level does",
+    check("the global CLAUDE.md lands at agent-session-files-by-machine/<machine>/CLAUDE.md, and nothing else of ~/.claude's top level does",
           text_or_none(store / machine / "CLAUDE.md") == "# global instructions\n"
           and not (store / machine / ".transcript-mirror.lock").exists())
     stamp = store / machine / STAMP_NAME
@@ -329,7 +329,7 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
     rsync_calls = [c for c in calls if c[0].endswith("rsync")]
     ssh_calls = [c for c in calls if c[0].endswith("ssh")]
     stamp_calls = [c for c in ssh_calls if STAMP_NAME in " ".join(c)]
-    remote_stamp = f"/home/nedlern/nedschorus-logs/transcripts/{machine}/{STAMP_NAME}"
+    remote_stamp = f"/home/nedlern/nedschorus-logs/agent-session-files-by-machine/{machine}/{STAMP_NAME}"
     check("remote mode writes the stamp on ned-box once, after every rsync, through a .partial file renamed over it",
           len(stamp_calls) == 1 and calls[-1] == stamp_calls[0]
           and stamp_calls[0][-2] == "nedlern@ned-box"
@@ -347,7 +347,7 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
         (home / "agents", f"{machine}/seat-briefs/", True),
         (home / ".claude", f"{machine}/", True),
     ]
-    check("five rsync calls, -a, over batch-mode ssh, each source into its place under transcripts/<machine>/ on ned-box, a file list only for the seat-briefs and CLAUDE.md",
+    check("five rsync calls, -a, over batch-mode ssh, each source into its place under agent-session-files-by-machine/<machine>/ on ned-box, a file list only for the seat-briefs and CLAUDE.md",
           len(rsync_calls) == 5 and all(
               "-a" in c and RSYNC_SSH_TRANSPORT in c
               and c[-1] == f"{RULED_DESTINATION}/{target}"
@@ -484,7 +484,7 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
           and "  ned-box: * * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
           "transcript-mirror-to-log-store.py --failures-only >>" in MIRROR.read_text())
     check("the destination constant in the script is the ruled one",
-          f'LOG_STORE_TRANSCRIPTS_DESTINATION = "{RULED_DESTINATION}"' in MIRROR.read_text())
+          f'LOG_STORE_AGENT_SESSION_FILES_DESTINATION = "{RULED_DESTINATION}"' in MIRROR.read_text())
 
 print()
 if failures:

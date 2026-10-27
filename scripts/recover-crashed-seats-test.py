@@ -446,13 +446,13 @@ def supervisor_first_turn_for_a_by_hand_command(command, workspace):
 
     sup = recovery.supervisor
     original_launch = sup.launch_agent_session
-    original_sync = sup.sync_working_branch_with_main
+    original_sync = sup.launch_time_git_sync
     # Both launchers pin the seat's task list before the supervisor starts.
     original_task_list = os.environ.get("CLAUDE_CODE_TASK_LIST_ID")
     os.environ["CLAUDE_CODE_TASK_LIST_ID"] = f"nedschorus-{workspace.name}-tasks"
     try:
         sup.launch_agent_session = launch_probe
-        sup.sync_working_branch_with_main = lambda directory: "sync skipped (probe)"
+        sup.launch_time_git_sync = lambda directory: "sync skipped (probe)"
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             try:
                 sup.main(supervisor_argv)
@@ -460,7 +460,7 @@ def supervisor_first_turn_for_a_by_hand_command(command, workspace):
                 pass
     finally:
         sup.launch_agent_session = original_launch
-        sup.sync_working_branch_with_main = original_sync
+        sup.launch_time_git_sync = original_sync
         if original_task_list is None:
             os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
         else:
@@ -1711,10 +1711,10 @@ with tempfile.TemporaryDirectory() as temporary:
         "# Handoff\nrestart-counter: 7\nnext-step: stale\n", encoding="utf-8")
     sup = supervisor_module
     original_launch = sup.launch_agent_session
-    original_sync = sup.sync_working_branch_with_main
+    original_sync = sup.launch_time_git_sync
     try:
         sup.launch_agent_session = probe_launch
-        sup.sync_working_branch_with_main = lambda d: "sync skipped (probe)"
+        sup.launch_time_git_sync = lambda d: "sync skipped (probe)"
         settings = sup.SupervisorSettings(
             agent="seat-a", working_directory=workspace.seat_directory,
             handoff_directory=workspace.handoffs, agent_command="claude",
@@ -1725,7 +1725,7 @@ with tempfile.TemporaryDirectory() as temporary:
             pass
     finally:
         sup.launch_agent_session = original_launch
-        sup.sync_working_branch_with_main = original_sync
+        sup.launch_time_git_sync = original_sync
     check("F4: a stale handoff is consume-marked before the resume launch",
           state_seen_at_launch.get("consumed_counter") == 7
           and state_seen_at_launch.get("resume_flag") is True,
@@ -1755,16 +1755,16 @@ with tempfile.TemporaryDirectory() as temporary:
     # Both under 100KB.
     # The opener is the post-2026-08-30 shape the supervisor now composes —
     # written-at stamp, gap computed by the reader from `date`, the wariness
-    # tail cut and the open-walks duty added in the user's second round the
-    # same day — so the marker match against the CURRENT template is what
+    # tail cut, then the one-approval-walk instruction (shortened here) — so
+    # the marker match against the CURRENT template is what
     # these cases prove (the pre-change shape is covered at F3/P2 above).
     ignition_opener = (
         "Read /x/seat-a-dialog-0003.md — the dialog from the session you are "
         "continuing, written at 2026-08-28T12:00:00Z. Calculate from `date` "
         "how long ago that was, and be wary of obsolescence and drift in "
-        "everything in this handoff in proportion to that gap. This handoff "
-        "should list what items or walks are open. Display them to the user, "
-        "and continue them when you get a chance.")
+        "everything in this handoff in proportion to that gap. Bring the user "
+        "everything that needs the user in one approval-walk, by "
+        "/walk-me-through's steps, opened as your first action.")
     workspace = Workspace(root / "r11")
     all_dead()
     write_transcript(workspace.project_directory(), "generation-3-handed-off",
@@ -1798,10 +1798,10 @@ with tempfile.TemporaryDirectory() as temporary:
         raise StopIteration()
     sup = supervisor_module
     original_launch2 = sup.launch_agent_session
-    original_sync2 = sup.sync_working_branch_with_main
+    original_sync2 = sup.launch_time_git_sync
     try:
         sup.launch_agent_session = prompt_probe
-        sup.sync_working_branch_with_main = lambda d: "sync skipped (probe)"
+        sup.launch_time_git_sync = lambda d: "sync skipped (probe)"
         ws = Workspace(root / "r13")
         settings = sup.SupervisorSettings(
             agent="seat-a", working_directory=ws.seat_directory,
@@ -1813,7 +1813,7 @@ with tempfile.TemporaryDirectory() as temporary:
             pass
     finally:
         sup.launch_agent_session = original_launch2
-        sup.sync_working_branch_with_main = original_sync2
+        sup.launch_time_git_sync = original_sync2
     check("P3-4: a by-hand resume launch defaults to the crash-recovery prompt",
           launched_prompts and launched_prompts[0][1] is True
           and "resumed by crash recovery" in launched_prompts[0][0]
@@ -1991,7 +1991,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # to BRANCH_STATE_INSTRUCTION at the plan's own call site left this suite
     # at 345 passed, 0 failed. Two reasons. The case asserts only that the
     # recovery marker reaches the successor, never what the prompt says; and
-    # it composes with an empty branch-sync report, so the branch-state
+    # it composes with an empty launch-time-git-sync report, so the branch-state
     # sentence is not in this fixture at all. The wording is pinned in
     # nc-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py, by
     # the boot-recovery check that pull request [the ignition prompt's sentences are constants,
@@ -4687,10 +4687,11 @@ with tempfile.TemporaryDirectory() as temporary:
           (retired, workspace.launches, report_failed))
     workspace = a_seat_behind_a_leftover_shell("leftover-shell-kill-outcome-unknown")
     retired = []
+    tmux_gone_answers = " or ".join(
+        f'"{wording}"' for wording, _
+        in recovery.resupervise.tmux_error_pattern.TMUX_TARGET_OR_SERVER_DOES_NOT_EXIST_ERROR_WORDINGS)
     check_instruction = ("If the check exits 0, the session still exists: start no agent, and "
-                         "report to the user. If it prints \"can't find session\" or \"can't find "
-                         "window\" or \"can't find pane\" or \"no current target\" or \"no server "
-                         "running\" or \"error connecting to <socket path> (No such file or directory)\", "
+                         f"report to the user. If it prints {tmux_gone_answers}, "
                          "the session is gone: run again, for this agent-seat only, the command "
                          "that printed this message. Any other output, or a check that does not "
                          "return within 30 seconds, leaves the outcome unknown: start no agent, and "
@@ -4734,7 +4735,7 @@ with tempfile.TemporaryDirectory() as temporary:
           and "run again, for this agent-seat only, the command that printed this message"
           in report_real
           and "a check that does not return within 30 seconds" in report_real
-          and "error connecting to <socket path> (No such file or directory)" in report_real
+          and f"If it prints {tmux_gone_answers}, the session is gone" in report_real
           and "..." not in report_real
           and "resupervise-seat" not in report_real
           and report_real.splitlines()[-2].startswith("To check, run the command on the next line")
@@ -5179,6 +5180,9 @@ with tempfile.TemporaryDirectory() as temporary:
     seat = str(workspace.seat_directory.resolve())
     real_subprocess_run = recovery.subprocess.run
     real_shutil_which = recovery.shutil.which
+    real_process_table_directory = recovery.PROCESS_TABLE_DIRECTORY
+    # The lsof reader is the one used where /proc is missing, as on the Mac.
+    recovery.PROCESS_TABLE_DIRECTORY = root / "no-process-table"
 
     def lsof_prints(text, returncode=0):
         class Listing:
@@ -5225,10 +5229,85 @@ with tempfile.TemporaryDirectory() as temporary:
               == (True, "the occupancy check (lsof) exited 1; vacancy unproven"),
               recovery.seat_directory_occupied(workspace.seat_directory,
                                                apart_from_process_ids=[27178]))
+
+        # The /proc reader, used wherever /proc exists, as on ned-box: each
+        # numbered entry's cwd is a link to that process's working directory.
+        recovery.PROCESS_TABLE_DIRECTORY = process_table = root / "process-table"
+        (process_table / "self").mkdir(parents=True)
+        (process_table / "self" / "cwd").symlink_to("/")
+        recovery.subprocess.run = lambda *arguments, **keywords: (_ for _ in ()).throw(
+            AssertionError("the /proc reader ran a program"))
+
+        def process_in(process_id, working_directory=None, cwd_is_a_link=True):
+            entry = process_table / str(process_id)
+            entry.mkdir()
+            if working_directory is not None:
+                if cwd_is_a_link:
+                    (entry / "cwd").symlink_to(working_directory)
+                else:
+                    (entry / "cwd").write_text("not a link")
+            return entry
+
+        process_in(21, "/elsewhere")
+        process_in(22, seat)
+        process_in(23, f"{seat}/worktree")
+        process_in(24, f"{seat}-other")
+        check("PROC READER: names every process rooted in the seat, and no other",
+              sorted(recovery.processes_rooted_in_seat_directory(workspace.seat_directory)[0])
+              == [22, 23],
+              recovery.processes_rooted_in_seat_directory(workspace.seat_directory))
+        # A process that ends while the table is read leaves its entry without a cwd.
+        process_in(25)
+        unreadable = process_in(26, seat)
+        unreadable.chmod(0)
+        try:
+            readable_anyway = os.access(unreadable / "cwd", os.F_OK)
+            answer, why = recovery.processes_rooted_in_seat_directory(
+                workspace.seat_directory, require_a_complete_listing=True)
+            check("PROC READER: an ended process and an unreadable one do not hide the live one",
+                  answer is not None and 22 in answer and 23 in answer and why == "",
+                  (answer, why))
+            if not readable_anyway:
+                check("PROC READER: an unreadable process is skipped, as lsof skips it",
+                      26 not in answer, answer)
+        finally:
+            unreadable.chmod(0o755)
+        process_in(27, cwd_is_a_link=False, working_directory="x")
+        answer, why = recovery.processes_rooted_in_seat_directory(
+            workspace.seat_directory, require_a_complete_listing=True)
+        check("PROC READER: another read failure leaves a complete listing unproven",
+              answer is None and "process 27" in why and "vacancy unproven" in why,
+              (answer, why))
+        answer, why = recovery.processes_rooted_in_seat_directory(workspace.seat_directory)
+        check("PROC READER: but a process found in the seat is still positive evidence",
+              answer is not None and sorted(answer)[:2] == [22, 23], (answer, why))
+        for entry in list(process_table.iterdir()):
+            if entry.name.isdigit():
+                for child in entry.iterdir():
+                    child.unlink()
+                entry.rmdir()
+        process_in(21, "/elsewhere")
+        check("PROC READER: a table naming no process in the seat is a vacant seat",
+              recovery.processes_rooted_in_seat_directory(workspace.seat_directory) == ([], ""),
+              recovery.processes_rooted_in_seat_directory(workspace.seat_directory))
+        (process_table / "21" / "cwd").unlink()
+        (process_table / "21").rmdir()
+        answer, why = recovery.processes_rooted_in_seat_directory(workspace.seat_directory)
+        check("PROC READER: a table whose working directories could not be read proves nothing",
+              answer is None and "no working directories at all" in why, (answer, why))
+        process_in(31, seat)
+        check("PROC READER: the occupancy check treats a process found there as occupying the seat",
+              recovery.seat_directory_occupied(workspace.seat_directory)[0] is True
+              and recovery.seat_directory_occupied(
+                  workspace.seat_directory, apart_from_process_ids=[31]) == (False, ""),
+              (recovery.seat_directory_occupied(workspace.seat_directory),
+               recovery.seat_directory_occupied(workspace.seat_directory,
+                                                apart_from_process_ids=[31])))
     finally:
         patch("run_tmux", real_run_tmux)
         recovery.subprocess.run = real_subprocess_run
         recovery.shutil.which = real_shutil_which
+        recovery.PROCESS_TABLE_DIRECTORY = real_process_table_directory
         recovery.resupervise.retire_seat_tmux_session = real_retire_seat_tmux_session
         patch("processes_rooted_in_seat_directory", real_processes_rooted_in_seat_directory)
         patch("seat_directory_occupied", real_seat_directory_occupied)

@@ -1,5 +1,6 @@
 ---
 issue: "[Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956)"
+kind: design
 ---
 # Every refusal and warning a program hands an agent says why and what to do instead
 
@@ -34,8 +35,8 @@ Thirteen messages from the registered hooks, each with at least one gap or one c
 
 | # | Program | When it appears | What | Why | Instead | Conditions | Citation in the text |
 |---|---|---|---|---|---|---|---|
-| 1 | `ghi-issue-write-redirect.py` | closing or reopening an issue with `--comment` | yes | no | yes | yes | none |
-| 2 | `ghi-issue-write-redirect.py` | deleting an issue | yes | no | yes | no | none |
+| 1 | `ghi-issue-write-hand-typed-gh-command-refusal.py` | closing or reopening an issue with `--comment` | yes | no | yes | yes | none |
+| 2 | `ghi-issue-write-hand-typed-gh-command-refusal.py` | deleting an issue | yes | no | yes | no | none |
 | 3 | `session-location-write-guard.py` | write from a detached HEAD | yes | yes | yes | no | none |
 | 4 | `backup-and-snapshot-write-guard.py` | write to backup state | yes | yes | yes | yes | date |
 | 5 | `synthetic-keystroke-guard-hook.py` | AppleScript typing | yes | yes | yes | one instruction | date, issue number |
@@ -54,7 +55,7 @@ Thirteen messages from the registered hooks, each with at least one gap or one c
 
 **When an agent sees this.** An agent finishes the work of a GHI and runs `gh issue close 224 --comment "done in the layout pull request"`. The guard refuses the command, because agents here do not write issue comments: what an issue says lives in the issue's GHI-MD.
 
-**What the agent is told today** (`.claude/hooks/ghi-issue-write-redirect.py:168`; the program fills `{subcommand}` with `close` or `reopen`, shown here for `close`):
+**What the agent is told today** (`.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py:168`; the program fills `{subcommand}` with `close` or `reopen`, shown here for `close`):
 
 ```
 Run gh issue close again without --comment.
@@ -96,13 +97,13 @@ Run gh issue reopen again without --comment.
 {record_line}
 ```
 
-**What changes.** `STATE_CHANGE_COMMENT_REFUSAL` becomes two templates, one per subcommand. The hook takes the issue number from the command's first positional argument, or from an issue URL there, imports `scripts/ghi-issue-write.py` by path and calls its `ghi_md_paths_for_issue` against origin/main, the same function that builds the issue's body, so the hook's answer and the tool's cannot disagree. `COMMENT_REFUSAL`, `EDIT_BODY_REFUSAL` and `EDIT_TITLE_REFUSAL` in the same hook carry the same `docs/issues/<number>-*.md` placeholder and take the same fill. `.claude/hooks/ghi-issue-write-redirect-test.py` compares each refusal against its template, and also requires every refusal line to start with one of its listed opening words and to contain neither "ruled" nor "2026"; the list gains "This" and "The", and needs a test case for each of the three record lines and for the fallback. Once `scripts/ghi-issue-write.py` gains the close command named under Related issues, the record and close lines shrink to one line naming that command; that change is its own pull request, after this one. The file is under `.claude/`, so the exact text must be approved-by-walk: the instruction-file guard refuses the edit until the user's approval words are quoted into its marker.
+**What changes.** `STATE_CHANGE_COMMENT_REFUSAL` becomes two templates, one per subcommand. The hook takes the issue number from the command's first positional argument, or from an issue URL there, imports `scripts/ghi-issue-write.py` by path and calls its `ghi_md_paths_for_issue` against origin/main, the same function that builds the issue's body, so the hook's answer and the tool's cannot disagree. `COMMENT_REFUSAL`, `EDIT_BODY_REFUSAL` and `EDIT_TITLE_REFUSAL` in the same hook carry the same `docs/issues/<number>-*.md` placeholder and take the same fill. `.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal-test.py` compares each refusal against its template, and also requires every refusal line to start with one of its listed opening words and to contain neither "ruled" nor "2026"; the list gains "This" and "The", and needs a test case for each of the three record lines and for the fallback. Once `scripts/ghi-issue-write.py` gains the close command named under Related issues, the record and close lines shrink to one line naming that command; that change is its own pull request, after this one. The file is under `.claude/`, so the exact text must be approved-by-walk: the instruction-file guard refuses the edit until the user's approval words are quoted into its marker.
 
 ### 2. Deleting an issue
 
 **When an agent sees this.** An agent files a GHI by mistake and runs `gh issue delete 912 --yes`.
 
-**What the agent is told today** (`.claude/hooks/ghi-issue-write-redirect.py:200`):
+**What the agent is told today** (`.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py:200`):
 
 ```
 Do not delete this project's issues.
@@ -128,7 +129,7 @@ If the issue will not be done, or was filed by mistake and duplicates no other i
 This issue has no file on main under docs/issues/<number>-* or a system's directory: if the issue was filed by mistake, close it with gh issue close <number> --reason "not planned"; otherwise stop and tell the user.
 ```
 
-**What changes.** `DELETE_REFUSAL` becomes a template, filled by the lookup of message 1; `.claude/hooks/ghi-issue-write-redirect-test.py` compares against the template, and every line starts with a listed opening word. The record line, the wait and the duplicate line are new; the /ghi-write skill already says to record the outcome before closing and names the duplicate close reason, and `gh issue close --duplicate-of` sets that close reason. Under `.claude/`: the exact text must be approved-by-walk.
+**What changes.** `DELETE_REFUSAL` becomes a template, filled by the lookup of message 1; `.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal-test.py` compares against the template, and every line starts with a listed opening word. The record line, the wait and the duplicate line are new; the /ghi-write skill already says to record the outcome before closing and names the duplicate close reason, and `gh issue close --duplicate-of` sets that close reason. Under `.claude/`: the exact text must be approved-by-walk.
 
 ### 3. Writing from a detached HEAD
 
@@ -452,18 +453,18 @@ A task prompt or another agent's message is the user's approval only when it quo
 
 The second approval-walk moved instructions the messages gave into code, so the pull request also changes these programs; each change is described under its message:
 
-- `.claude/hooks/ghi-issue-write-redirect.py` looks up the issue's files on main (messages 1 and 2).
+- `.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py` looks up the issue's files on main (messages 1 and 2).
 - `.claude/hooks/session-location-write-guard.py` lets through a write while a git operation is in progress (open question 7) and a write to a path git ignores (message 3).
 - `scripts/synthetic-keystroke-guard-hook.py` gains its check mode (message 7) and chooses the show-the-user line by platform (messages 6, 7 and 9).
 - `scripts/obsolete-file-edit-warning-hook.py` reports a git operation in progress, the overlap verdict and git's failure text (message 12).
 - `.claude/hooks/instruction-file-guard.py` exempts the session's scratchpad (message 14).
-- `nc-systems/handoff/daily-overview-refresh-reminder-mark.py` gains `--shown-on-pacific-date`, described below.
+- `nc-systems/handoff/daily-overview-refresh-reminder-mark.py`, the program's name at the time, since renamed `nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py`, gains `--shown-on-pacific-date`, described below.
 
 And it adds one test suite, `scripts/registered-hook-messages-carry-no-citations-test.py`, discovered by the test runner like every `*-test.py`, which reads the hooks registered in `.claude/settings.json`, imports each, collects its module-level string constants whose names end in `_REASON`, `_MESSAGE`, `_REFUSAL`, `_ADVICE`, `_NOTICE`, `_INSTRUCTION`, `_TEMPLATE` or `_LINE`, and fails on a date, the word "ruled", an issue or pull request number in any spelling (`nedschorus#27`, `#37`, `PR 931`, `GHI 913`), or a GitHub pull or issue link. It also fails when a registered hook declares no such constant, so a message built inline cannot escape the check, and it holds an explicit list of exemptions, empty at first, for a message that needs one of those forms as data. The suite reads only registered hooks' message constants: tried on main, it flagged the six messages of this table that carry a citation and nothing else among 50 constants, while across all 152 programs and tests about 16 of its 26 hits were dates or issue numbers that are data, not citations.
 
 ## The mark program's messages and the supervisor's console
 
-PR [The instruction-file guard protects the files the user reviews, by where they sit](https://github.com/nedschorus/nedschorus/pull/852), now merged, added a program an agent runs, `nc-systems/handoff/daily-overview-refresh-reminder-mark.py`, and added or reworded five lines on the handoff-supervisor's console. The program's texts below are main's.
+PR [The instruction-file guard protects the files the user reviews, by where they sit](https://github.com/nedschorus/nedschorus/pull/852), now merged, added a program an agent runs, `nc-systems/handoff/daily-overview-refresh-reminder-mark.py`, the program's name at the time, since renamed `nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py`, and added or reworded five lines on the handoff-supervisor's console. This section records part one, which PR [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/pull/1007) shipped before the rename, so the program's name, its test's name and its texts below are given as they stood then; none of them is a command to run today.
 
 The program writes a daily-overview-refresh-reminder-mark: the dated file in the log-store, one per system per day, recording that an agent-seat has shown the user that day's refreshed draft of the system's overview page, so that other agent-seats do not show it again. An agent-seat runs the program after the agent-seat has shown the user the difference between the overview page and the refreshed draft. The mark is written only after that, so an agent-seat that reincarnates in between gets the same reminder.
 
@@ -562,7 +563,7 @@ The audit found gaps in four more groups, and left out of its scope three progra
 
 ## Provisional additions (not yet vetted by the user)
 
-- MD-skills, 2026-10-14: Add the unwritten-mark message of `daily-memory-review-mark.py` to this document's mark-program messages, beside the daily-overview-refresh-reminder-mark messages (MD-skills task #144).
+- MD-skills, 2026-10-14: Add the unwritten-mark message of `nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py` to this document's mark-program messages, beside the daily-overview-refresh-reminder-mark messages (MD-skills task #144).
 - MD-skills, 2026-10-14: Issue guard wording, one small pull request: the shared no-file line prints a literal `<number>` though the guard knows the number; the rerun and record lines do not say that the edit command opens a pull request; the body refusal's "--title alone afterwards" does not say after what (MD-skills task #157, from the review notes on PR [The issue guard's comment, body and title refusals name the issue's file and the rerun](https://github.com/nedschorus/nedschorus/pull/1031)).
 - Agent-seat agent-instructions-editor, 2026-10-14: add the list of the kinds of obvious error, which `CLAUDE.md` lets an agent fix in a guarded file without asking the user, to the refusals of `.claude/hooks/instruction-file-guard.py` (message 14), so that an agent meets the list at the moment the guard stops it.
 - reboot-test, 2026-10-14: a reminder hook that names the wiki page on how to write an agent-facing message, and the command for that message's cold-read-fast-read, whenever an agent edits a message in a Python program, is built on branch `python-edit-changed-agent-facing-message-check-reminder-hook-topic-branch`, pushed with no pull request yet; it waits for that page to merge in PR [Wiki: How to write an agent-facing-message](https://github.com/nedschorus/nedschorus/pull/1363). Then the 105 messages an audit found failing are rewritten, the ones agents meet most often first, each with its fast read.

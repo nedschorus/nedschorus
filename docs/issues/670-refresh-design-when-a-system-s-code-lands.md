@@ -1,5 +1,6 @@
 ---
 issue: "[refresh-design: when a system's code lands, bring its design, build-slice plan and overview into line — removing, never revising](https://github.com/nedschorus/nedschorus/issues/670)"
+kind: design
 ---
 
 # refresh-design: when a system's code lands, bring its design, build-slice plan and overview into line — removing, never revising
@@ -22,7 +23,7 @@ The walk's minutes are shipped at its close to the log-store as `nedlern@ned-box
 
 1. **A design is pinned to what landed (item 5, accepted).** It is not refined between design-to-main runs. It carries decisions, never build status: decisions do not go out of phase, descriptions of the build do. The evidence: `nc-systems/main-gatekeeper/main-gatekeeper-design.md` carries a `status:` line and an Implementation status block and has been patched out of phase; `nc-systems/handoff/handoff-design.md` carries neither and has taken no substantive edit since moving.
 2. **What a refresh is (item 6; the user: "Y but be careful").**
-   - **It removes; it never revises.** A change that revises a decision is a **redesign** — a full design-to-main run with its own five-verdict review (`scripts/design-to-main/design-to-main-state-tables.py`: reject design, contract, implementation, tests, test-design). Checkable: a refresh commit's diff is deletions plus the pinned line. His caution, in his words: "We ran into endless problems with designs chasing code, code and test code chasing design changes … once the code lands on main (ie pasts all test) then we can refresh the design."
+   - **It removes; it never revises.** A change that revises a decision is a **redesign** — a full design-to-main run with its own five-verdict review (`scripts/design-to-main/design-to-main-state-tables-common.py`: reject design, contract, implementation, tests, test-design). Checkable: a refresh commit's diff is deletions plus the pinned line. His caution, in his words: "We ran into endless problems with designs chasing code, code and test code chasing design changes … once the code lands on main (ie pasts all test) then we can refresh the design."
    - **It runs at landing** (his word: "y").
    - **It refreshes all three documents.** His words: "Designs do go stale, that's why we need refresh-design (which probably should refresh all 3 documents)."
    - **The design does not move**, and each landing appends one pinned line carrying the **commit**, not only a date — so the next refresh's range is exact.

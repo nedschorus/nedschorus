@@ -16,7 +16,10 @@ Steps:
      --pairs-file.
   2. Check out each ref as a detached worktree in the scratch directory, and check that the
      guards this replay reads are exactly the Bash PreToolUse hooks in the head checkout's
-     .claude/settings.json, and, less the guards the head adds, in the base checkout's.
+     .claude/settings.json, and, less the guards the head adds, in the base checkout's. A base hook
+     at a former path, a key of this script's BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH map, is the
+     guard that key maps to, read at the base from its former path; its rows are named by its current
+     path, so a renamed guard is not an added guard.
   3. At each ref, run the guards' analysis functions on every pair, with the guards' probes
      of git and gh stubbed so a verdict depends only on the command text and the working directory
      (in-process mode). Run the search-file guard's main() with each pair's own working
@@ -62,11 +65,19 @@ from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
+_transcript_mirror_spec = importlib.util.spec_from_file_location(
+    "transcript_mirror_to_log_store",
+    Path(__file__).resolve().parents[2] / "scripts" / "transcript-mirror-to-log-store.py")
+_transcript_mirror = importlib.util.module_from_spec(_transcript_mirror_spec)
+_transcript_mirror_spec.loader.exec_module(_transcript_mirror)
+_, _AGENT_SESSION_FILES = _transcript_mirror.split_destination(
+    _transcript_mirror.LOG_STORE_AGENT_SESSION_FILES_DESTINATION)
+
 DEFAULT_TRANSCRIPT_DIRECTORIES = [
     str(Path.home() / ".claude" / "projects"),
-    "/home/nedlern/nedschorus-logs/transcripts/mac/projects",
-    "/home/nedlern/nedschorus-logs/transcripts/ned-box",
-    "/home/nedlern/nedschorus-logs/transcripts/recovered",
+    str(_AGENT_SESSION_FILES / _transcript_mirror.MACHINE_NAME_ELSEWHERE / "projects"),
+    str(_AGENT_SESSION_FILES / _transcript_mirror.MACHINE_NAME_ON_STORE_HOST),
+    str(_AGENT_SESSION_FILES / "recovered"),
 ]
 
 DEFAULT_PER_PAIR_TIMEOUT_SECONDS = 20
@@ -311,17 +322,26 @@ def check_guards_match_settings(hooks, replayed, label):
         raise ReplayFailed(
             f"the Bash hooks in .claude/settings.json at the {label} ref are not the guards this replay reads; "
             f"not replayed: {sorted(hooks - replayed) or 'none'}; replayed but not a Bash hook: "
-            f"{sorted(replayed - hooks) or 'none'}. Add each new hook to GUARDS in this script, with a function "
-            f"that reads one command through it, in the pull request that adds the hook")
+            f"{sorted(replayed - hooks) or 'none'}.\n"
+            "When the pull request adds a hook: add it to GUARDS in this script, with a function that reads one "
+            "command through it.\n"
+            "When the pull request renames a guard's file: change its path in GUARDS, and add the line "
+            "\"<former path>\": \"<new path>\", to the BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH map in this script, "
+            "so the base's hook at the former path is read as the same guard.\n"
+            "Make the change in the pull request that adds or renames the hook, and run this check from that pull "
+            "request's copy of this script, because only that copy has the change.")
 
 
 def guards_added_at_head(checkouts):
-    """Return the guards in the head's settings.json but not the base's, after checking both against GUARDS."""
-    head_hooks, base_hooks = bash_hook_files(checkouts["head"]), bash_hook_files(checkouts["base"])
+    """Return (the guards in the head's settings.json but not the base's, {guard: its file at the base}),
+    after checking both against GUARDS."""
+    head_hooks = bash_hook_files(checkouts["head"])
     check_guards_match_settings(head_hooks, set(GUARDS), "head")
-    added = head_hooks - base_hooks
-    check_guards_match_settings(base_hooks, set(GUARDS) - added, "base")
-    return sorted(added)
+    base_files = {BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH.get(path, path): path
+                  for path in bash_hook_files(checkouts["base"])}
+    added = head_hooks - set(base_files)
+    check_guards_match_settings(set(base_files), set(GUARDS) - added, "base")
+    return sorted(added), base_files
 
 
 # ---------------------------------------------------------------- step 3: one ref's verdicts
@@ -383,15 +403,19 @@ class ShellReaderLongRunningChildProcessRequestSender:
         return child.wait()
 
 
-def guards_loaded(checkout, new_process, guards_left_out=()):
+def guards_loaded(checkout, new_process, bash_guard_paths_at_git_ref_by_current_path=None):
     """Return (guards, how many shell reader modules were switched to read in a new process,
     the senders of the long-running child processes, how many of those modules read one command per
     process because their reader has no flag for a long-running child).
 
-    guards_left_out are the guards the head adds, which the base checkout does not have.
+    bash_guard_paths_at_git_ref_by_current_path gives the file the checkout has each guard at, by the guard's
+    path in GUARDS; a guard missing from it, one the head adds, is not read. None reads every guard at its path
+    in GUARDS.
     """
-    guards = {path: load_module(checkout, path, "replayed_" + re.sub(r"\W", "_", path))
-              for path in GUARDS if path not in guards_left_out}
+    paths = bash_guard_paths_at_git_ref_by_current_path
+    paths = {path: path for path in GUARDS} if paths is None else paths
+    guards = {path: load_module(checkout, paths[path], "replayed_" + re.sub(r"\W", "_", path))
+              for path in GUARDS if path in paths}
     switched, one_command_per_process, senders = 0, 0, {}
     if new_process:
         for guard in guards.values():
@@ -497,16 +521,23 @@ def read_markdown_push_reminder(guard, command, working_directory, search_file_d
             "\n\n".join(messages) or None]
 
 
+# A renamed guard's former file path, which a base ref's settings.json may still run, to its path in GUARDS.
+# The line does nothing once main's settings.json no longer runs the former path, and may then be removed.
+BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {
+    ".claude/hooks/ghi-issue-write-redirect.py": ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
+    "scripts/hand-typed-codex-exec-redirect-hook.py": "scripts/hand-typed-codex-exec-command-refusal-hook.py",
+}
+
 # Every Bash PreToolUse hook in .claude/settings.json, by the file it runs, with the function
 # that reads one command through it. check_guards_match_settings() names each hook missing here,
 # so a new guard is one line: its file and a reading function like the ones above.
 GUARDS = {
     "scripts/synthetic-keystroke-guard-hook.py": read_synthetic_keystroke,
     "scripts/force-push-with-open-pull-request-guard-hook.py": read_force_push,
-    ".claude/hooks/ghi-issue-write-redirect.py": read_issue_write,
+    ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py": read_issue_write,
     "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py": read_tmux_kill,
     "scripts/search-file-argument-read-as-option-guard-hook.py": read_search_file,
-    "scripts/hand-typed-codex-exec-redirect-hook.py": read_codex_exec,
+    "scripts/hand-typed-codex-exec-command-refusal-hook.py": read_codex_exec,
     "nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py":
         read_markdown_push_reminder,
 }
@@ -532,12 +563,14 @@ def guard_readings(guards, command, working_directory, search_file_directory):
     return readings
 
 
-def worker_start(checkout, new_process, search_file_directory, timeout, guards_left_out):
+def worker_start(checkout, new_process, search_file_directory, timeout,
+                 bash_guard_paths_at_git_ref_by_current_path):
     os.nice(15)
     WORKER["timeout"] = timeout
     WORKER["checkout"] = str(checkout)
     signal.signal(signal.SIGALRM, raise_pair_timed_out)
-    WORKER["guards"], WORKER["switched"], _, _ = guards_loaded(checkout, new_process, guards_left_out)
+    WORKER["guards"], WORKER["switched"], _, _ = guards_loaded(checkout, new_process,
+                                                               bash_guard_paths_at_git_ref_by_current_path)
     WORKER["search_file_directory"] = search_file_directory
 
 
@@ -585,12 +618,14 @@ def worker_search_file_main_rows(pairs):
     return rows, WORKER["switched"]
 
 
-def smoke_check(checkout, new_process, search_file_directory, timeout, guards_left_out):
+def smoke_check(checkout, new_process, search_file_directory, timeout,
+                bash_guard_paths_at_git_ref_by_current_path):
     """Fail the replay when a guard cannot read even `true`: the replay no longer fits the guards' code.
 
     Return (how many shell reader modules read in a new process, how many of them one command per process).
     """
-    guards, switched, senders, one_command_per_process = guards_loaded(checkout, new_process, guards_left_out)
+    guards, switched, senders, one_command_per_process = guards_loaded(checkout, new_process,
+                                                                       bash_guard_paths_at_git_ref_by_current_path)
     signal.signal(signal.SIGALRM, raise_pair_timed_out)
     WORKER["timeout"] = timeout
     readings = guard_readings(guards, "true", "/", search_file_directory)
@@ -612,17 +647,18 @@ def smoke_check(checkout, new_process, search_file_directory, timeout, guards_le
 
 
 def ref_verdicts(checkout, pairs, jobs, new_process, search_file_directory, search_file_main, timeout,
-                 guards_left_out=()):
+                 bash_guard_paths_at_git_ref_by_current_path=None):
     """Return (rows, shell readers switched to a new process, how many of them read one command per process,
     how many timed-out readings were read again, how many of those passed on the second reading)."""
     switched, one_command_per_process = smoke_check(checkout, new_process, search_file_directory, timeout,
-                                                    guards_left_out)
+                                                    bash_guard_paths_at_git_ref_by_current_path)
     tasks = [pairs[start:start + PAIRS_PER_TASK] for start in range(0, len(pairs), PAIRS_PER_TASK)]
     read = worker_search_file_main_rows if search_file_main else worker_guard_rows
     # Not multiprocessing.Pool: when a Pool worker dies, its task is never finished and map() waits
     # forever. A ProcessPoolExecutor marks every unfinished task broken instead.
     executor = ProcessPoolExecutor(jobs, initializer=worker_start,
-                                   initargs=(checkout, new_process, search_file_directory, timeout, guards_left_out))
+                                   initargs=(checkout, new_process, search_file_directory, timeout,
+                                             bash_guard_paths_at_git_ref_by_current_path))
     rows, not_read, workers_switched = [], [], set()
     try:
         futures = [executor.submit(read, task) for task in tasks]
@@ -896,7 +932,7 @@ def replay_with_sigterm_handled(arguments):
             checkouts[label] = checkout  # Before the add, so a stop in the middle of the add is cleaned up too.
             run_git(repository, "worktree", "add", "--detach", str(checkout), commit)
             print(f"{label}: {ref} at {commit}")
-        added_guards = guards_added_at_head(checkouts)
+        added_guards, base_guard_files = guards_added_at_head(checkouts)
         print(f"guards the head adds, read at the head only: {added_guards or 'none'}")
 
         modes = [("in-process", "pairs.json", False, False),
@@ -921,7 +957,7 @@ def replay_with_sigterm_handled(arguments):
                                    str(arguments.jobs), "1" if new_process else "0",
                                    "1" if search_file_main else "0", str(search_file_directory),
                                    str(arguments.per_pair_timeout_seconds),
-                                   json.dumps(added_guards if label == "base" else [])],
+                                   json.dumps(base_guard_files if label == "base" else None)],
                                   scratch / f"verdicts-{mode.split()[0]}-{label}.log",
                                   step_deadline_seconds(len(mode_pairs), arguments.jobs,
                                                         arguments.per_pair_timeout_seconds))
@@ -994,11 +1030,11 @@ def replay_with_sigterm_handled(arguments):
 
 
 def verdicts_step(checkout, pairs_path, out_path, jobs, new_process, search_file_main, search_file_directory,
-                  timeout, guards_left_out):
+                  timeout, bash_guard_paths_at_git_ref_by_current_path):
     pairs = json.loads(Path(pairs_path).read_text())
     rows, switched, one_command_per_process, read_again, passed_again = ref_verdicts(
         checkout, pairs, int(jobs), new_process == "1", search_file_directory, search_file_main == "1", int(timeout),
-        json.loads(guards_left_out))
+        json.loads(bash_guard_paths_at_git_ref_by_current_path))
     Path(out_path).write_text(json.dumps({"rows": rows, "shell_readers_in_a_new_process": switched,
                                           "shell_readers_reading_one_command_per_process": one_command_per_process,
                                           "timed_out_readings_read_again": read_again,
