@@ -2,7 +2,7 @@
 """Hand an agent-facing-message and its situation to two fresh-agents, and check the scripts it names.
 
 Usage:
-  scripts/agent-facing-message-follow-trial-by-two-fresh-agents.py \\
+  scripts/agent-facing-message-ask-two-fresh-agents-next-step-and-check-named-script-flags.py \\
       --message-file MESSAGE --situation-file SITUATION
 
 MESSAGE holds the message exactly as the agent receives it. SITUATION says
@@ -43,8 +43,8 @@ import sys
 import tempfile
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-FOLLOWER_LAUNCHER = REPO_ROOT / "nc-systems/cold-read/cold-read-claude-cell.py"
-FOLLOWER_CELL_LABEL = "agent-facing-message-follower"
+CLAUDE_CELL_LAUNCHER = REPO_ROOT / "nc-systems/cold-read/cold-read-claude-cell.py"
+FOLLOWER_ANSWER_FILE_LABEL_FOR_CELL_FLAG = "agent-facing-message-follower"
 FOLLOWER_TIERS = ("fast", "deep")
 HELP_TIMEOUT_SECONDS = 60
 
@@ -65,7 +65,7 @@ FLAG_PATTERN = re.compile(r"(?<![\w-])--[A-Za-z][\w-]*")
 FLAG_SPAN_END_PATTERN = re.compile(r"[`;|&]")
 
 
-def named_scripts_with_flags(message: str) -> dict:
+def scripts_and_flags_named_in_agent_facing_message(message: str) -> dict:
     """Map each script path the message names to the flags written after it, in order of first mention."""
     scripts: dict = {}
     for line in message.splitlines():
@@ -81,7 +81,7 @@ def named_scripts_with_flags(message: str) -> dict:
     return scripts
 
 
-def named_script_check_lines(script: str, flags: list) -> list:
+def named_script_existence_and_flags_in_help_check_report_lines(script: str, flags: list) -> list:
     path = pathlib.Path(script).expanduser()
     if not path.is_absolute():
         path = REPO_ROOT / path
@@ -111,7 +111,7 @@ def run_follower(tier: str, target: pathlib.Path, prompt_file: pathlib.Path,
                  report: pathlib.Path) -> tuple:
     """Return whether the follower answered, and the report's lines for it."""
     completed = subprocess.run(
-        [sys.executable, str(FOLLOWER_LAUNCHER), "--cell", FOLLOWER_CELL_LABEL,
+        [sys.executable, str(CLAUDE_CELL_LAUNCHER), "--cell", FOLLOWER_ANSWER_FILE_LABEL_FOR_CELL_FLAG,
          "--tier", tier, "--target", str(target), "--report", str(report),
          "--prompt-file", str(prompt_file)],
         cwd=REPO_ROOT, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
@@ -120,7 +120,7 @@ def run_follower(tier: str, target: pathlib.Path, prompt_file: pathlib.Path,
         return False, [
             heading, "",
             f"FAILED: the follower on cold-read-tier {tier} wrote no answer: "
-            f"{FOLLOWER_LAUNCHER} exited {completed.returncode}.",
+            f"{CLAUDE_CELL_LAUNCHER} exited {completed.returncode}.",
             "Its output follows; its last line beginning `cold-read-claude-cell: cause:` says why.",
             "If the cause is a passing fault, rerun this program once; otherwise, or if it "
             "fails the same way again, act on that cause.",
@@ -143,7 +143,7 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
-    with tempfile.TemporaryDirectory(prefix="agent-facing-message-follow-trial-") as scratch:
+    with tempfile.TemporaryDirectory(prefix="agent-facing-message-ask-two-fresh-agents-") as scratch:
         scratch_path = pathlib.Path(scratch)
         target = scratch_path / "situation-and-message.md"
         target.write_text(f"# What you were doing\n\n{situation.rstrip()}\n\n"
@@ -161,11 +161,11 @@ def main() -> int:
     for _, section in follower_results:
         report_lines += section + [""]
     report_lines += ["## Scripts the message names", ""]
-    scripts = named_scripts_with_flags(message)
+    scripts = scripts_and_flags_named_in_agent_facing_message(message)
     if not scripts:
         report_lines.append("The message names no path ending in .py or .sh.")
     for script, flags in scripts.items():
-        report_lines += named_script_check_lines(script, flags)
+        report_lines += named_script_existence_and_flags_in_help_check_report_lines(script, flags)
     print("\n".join(report_lines))
     return 0 if all(answered for answered, _ in follower_results) else 1
 

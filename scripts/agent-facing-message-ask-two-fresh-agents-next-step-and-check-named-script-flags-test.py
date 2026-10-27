@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Tests for scripts/agent-facing-message-follow-trial-by-two-fresh-agents.py.
+"""Tests for scripts/agent-facing-message-ask-two-fresh-agents-next-step-and-check-named-script-flags.py.
 
-No model runs: every case points FOLLOWER_LAUNCHER at a fake launcher, written
+No model runs: every case points CLAUDE_CELL_LAUNCHER at a fake launcher, written
 to a temporary directory, that records its arguments and either writes an
 answer to --report or fails the way cold-read-claude-cell.py fails.
 
-Run: python3 scripts/agent-facing-message-follow-trial-by-two-fresh-agents-test.py
+Run: python3 scripts/agent-facing-message-ask-two-fresh-agents-next-step-and-check-named-script-flags-test.py
 Prints one line per case and exits 1 if any case fails.
 """
 
@@ -18,10 +18,10 @@ import pathlib
 import sys
 import tempfile
 
-SCRIPT_PATH = pathlib.Path(__file__).with_name("agent-facing-message-follow-trial-by-two-fresh-agents.py")
-_spec = importlib.util.spec_from_file_location("follow_trial", SCRIPT_PATH)
-follow_trial = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(follow_trial)
+SCRIPT_PATH = pathlib.Path(__file__).with_name("agent-facing-message-ask-two-fresh-agents-next-step-and-check-named-script-flags.py")
+_spec = importlib.util.spec_from_file_location("ask_two_fresh_agents", SCRIPT_PATH)
+ask_two_fresh_agents = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(ask_two_fresh_agents)
 
 FAKE_LAUNCHER = """import json, os, pathlib, sys
 arguments = sys.argv[1:]
@@ -61,12 +61,12 @@ def run_main(scratch: pathlib.Path, message: str, failing_tiers: str = "", situa
         situation_file.write_text("You ran `git push` to publish your topic branch.\n")
     os.environ["FAKE_LAUNCHER_LOG"] = str(log)
     os.environ["FAKE_FAILING_TIERS"] = failing_tiers
-    follow_trial.FOLLOWER_LAUNCHER = launcher
+    ask_two_fresh_agents.CLAUDE_CELL_LAUNCHER = launcher
     sys.argv = [str(SCRIPT_PATH), "--message-file", str(message_file),
                 "--situation-file", str(situation_file)]
     stdout, stderr = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-        exit_code = follow_trial.main()
+        exit_code = ask_two_fresh_agents.main()
     calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
     return exit_code, stdout.getvalue(), stderr.getvalue(), calls
 
@@ -84,10 +84,10 @@ def test_both_followers_answer(scratch):
           "You ran `git push`" in call["target"] and "The push was refused on purpose." in call["target"],
           call["target"])
     check("both followers answer: the prompt names the checkout and keeps the launcher's placeholders",
-          str(follow_trial.REPO_ROOT) in call["prompt"] and "{TARGET_PATH}" in call["prompt"]
+          str(ask_two_fresh_agents.REPO_ROOT) in call["prompt"] and "{TARGET_PATH}" in call["prompt"]
           and "{REPORT_PATH}" in call["prompt"], call["prompt"])
     check("both followers answer: the cell label is the follower label",
-          call["arguments"][call["arguments"].index("--cell") + 1] == follow_trial.FOLLOWER_CELL_LABEL,
+          call["arguments"][call["arguments"].index("--cell") + 1] == ask_two_fresh_agents.FOLLOWER_ANSWER_FILE_LABEL_FOR_CELL_FLAG,
           call["arguments"])
 
 
@@ -124,11 +124,11 @@ def test_named_scripts(scratch):
         f"Rerun `python3 {helped} --head HEAD --base-branch main` then `{shell} --pull-request 5`.\n"
         f"Or run {broken} --dry-run; {hanging} --wait\n"
         f"Never run {scratch}/missing.py --force.\n")
-    follow_trial.HELP_TIMEOUT_SECONDS = 2
+    ask_two_fresh_agents.HELP_TIMEOUT_SECONDS = 2
     try:
         exit_code, stdout, _, _ = run_main(scratch, message)
     finally:
-        follow_trial.HELP_TIMEOUT_SECONDS = 60
+        ask_two_fresh_agents.HELP_TIMEOUT_SECONDS = 60
     check("named scripts: exit 0 although checks found problems", exit_code == 0, f"exit {exit_code}")
     check("named scripts: a flag in --help is reported in it", "`--head`: in the --help output" in stdout, stdout)
     check("named scripts: a flag only a prefix of which is in --help is reported missing",
@@ -145,7 +145,7 @@ def test_named_scripts(scratch):
 
 
 def test_named_scripts_parsing():
-    scripts = follow_trial.named_scripts_with_flags(
+    scripts = ask_two_fresh_agents.scripts_and_flags_named_in_agent_facing_message(
         "Run scripts/a.py --x --y scripts/b.sh --z | grep --count\n"
         "Then scripts/a.py --x --w.\n"
         "Read nc-systems/cold-read/cold-read-claude-cell.py first.")
@@ -153,9 +153,9 @@ def test_named_scripts_parsing():
           scripts == {"scripts/a.py": ["--x", "--y", "--w"], "scripts/b.sh": ["--z"],
                       "nc-systems/cold-read/cold-read-claude-cell.py": []}, scripts)
     check("parsing: a relative path is resolved from the checkout's top directory",
-          follow_trial.named_script_check_lines("scripts/no-such-script-anywhere.py", [])
+          ask_two_fresh_agents.named_script_existence_and_flags_in_help_check_report_lines("scripts/no-such-script-anywhere.py", [])
           == [f"- `scripts/no-such-script-anywhere.py`: NOT FOUND at "
-              f"{follow_trial.REPO_ROOT / 'scripts/no-such-script-anywhere.py'}"])
+              f"{ask_two_fresh_agents.REPO_ROOT / 'scripts/no-such-script-anywhere.py'}"])
 
 
 def test_no_named_scripts(scratch):
