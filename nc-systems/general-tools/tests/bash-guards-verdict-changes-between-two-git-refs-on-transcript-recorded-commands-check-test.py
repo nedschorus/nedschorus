@@ -1201,31 +1201,33 @@ try:
           and any(str(locked_run_logs / "locked" / "file") in line for line in after_exit_0),
           f"after exit 1 {after_exit_1}; after exit 0 {after_exit_0}")
 
-    temporary = Path(tempfile.mkdtemp(prefix="temporary-sigterm-", dir=scratch))
-    runs = Path(tempfile.mkdtemp(prefix="log-store-runs-sigterm-", dir=scratch))
     pairs_file = Path(scratch) / "fixture-pairs.json"
     pairs_file.write_text(json.dumps(FIXTURE_PAIRS))
-    stopped = subprocess.Popen(
-        [sys.executable, str(SCRIPT_PATH), "--repository", str(TEST_REPOSITORY), "--head-ref", "HEAD",
-         "--base-ref", "HEAD", "--pairs-file", str(pairs_file), "--jobs", "2", "--log-store-runs-directory", str(runs)],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(os.environ, TMPDIR=str(temporary)))
-    printed_before_the_stop = []
-    for line in stopped.stdout:
-        printed_before_the_stop.append(line)
-        if line.startswith("pairs: "):
-            break
-    stopped.send_signal(signal.SIGTERM)
-    try:
-        out, err = stopped.communicate(timeout=REPLAY_STOP_SECONDS)
-    except subprocess.TimeoutExpired:
-        stopped.kill()
-        out, err = stopped.communicate()
-    check("a replay stopped by SIGTERM after it made its scratch directory: exit 2, the scratch directory is removed "
-          "and the run log directory kept",
-          stopped.returncode == 2 and not os.listdir(temporary) and len(os.listdir(runs)) == 1
-          and "scratch directory removed" in out,
-          f"exit {stopped.returncode}; left {os.listdir(temporary)}; runs {os.listdir(runs)}\n"
-          f"{''.join(printed_before_the_stop)}{out}\n{err}")
+    for stop_signal in (signal.SIGTERM, signal.SIGHUP):
+        temporary = Path(tempfile.mkdtemp(prefix=f"temporary-{stop_signal.name}-", dir=scratch))
+        runs = Path(tempfile.mkdtemp(prefix=f"log-store-runs-{stop_signal.name}-", dir=scratch))
+        stopped = subprocess.Popen(
+            [sys.executable, str(SCRIPT_PATH), "--repository", str(TEST_REPOSITORY), "--head-ref", "HEAD",
+             "--base-ref", "HEAD", "--pairs-file", str(pairs_file), "--jobs", "2", "--log-store-runs-directory",
+             str(runs)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(os.environ, TMPDIR=str(temporary)))
+        printed_before_the_stop = []
+        for line in stopped.stdout:
+            printed_before_the_stop.append(line)
+            if line.startswith("pairs: "):
+                break
+        stopped.send_signal(stop_signal)
+        try:
+            out, err = stopped.communicate(timeout=REPLAY_STOP_SECONDS)
+        except subprocess.TimeoutExpired:
+            stopped.kill()
+            out, err = stopped.communicate()
+        check(f"a replay stopped by {stop_signal.name} after it made its scratch directory: exit 2, the scratch "
+              f"directory is removed and the run log directory kept",
+              stopped.returncode == 2 and not os.listdir(temporary) and len(os.listdir(runs)) == 1
+              and "scratch directory removed" in out,
+              f"exit {stopped.returncode}; left {os.listdir(temporary)}; runs {os.listdir(runs)}\n"
+              f"{''.join(printed_before_the_stop)}{out}\n{err}")
 
     previous_directory = os.getcwd()
     os.chdir(scratch)
