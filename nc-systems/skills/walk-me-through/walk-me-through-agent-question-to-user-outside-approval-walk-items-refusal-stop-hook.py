@@ -213,7 +213,8 @@ REFUSAL_INSTRUCTIONS = (
     "it does; it ignores a `>` quote mark or a list mark such as `-` or `1.` at the start of a line, bold, italic "
     "and code marks, and letter case, so you may add or drop those. "
     "Give the item one recommendation and one alternative, and end it with the recommendation stated as an "
-    "action, as in `Recommendation: <what you recommend doing>.`",
+    "action, as in `Recommendation: <what you recommend doing>.` State the alternative before it, as in "
+    "`The alternative: <what D does instead>.`",
     "2. Change the walk's item count M from {total} to {new_total} in every item heading of {document} that "
     "carries `of {total}`, and in "
     "the last `#next_to_present` line of {minutes}, which then reads `#next_to_present {waiting_value} of "
@@ -232,8 +233,8 @@ SEVERAL_CLOSING_LINES_NAMED = "each waiting item's closing line, on a line of it
 NO_PAGE_LINK = "<page link>"
 NO_PAGE_TEMPLATE = (
     "\nThe minutes record no `#item_page` line for {items}. For each such item, publish its page first if it has "
-    "none and record the page's link in {minutes}, as the walk-me-through skill says; then put the link in place "
-    "of `<page link>` in the item's closing line.")
+    "none and add to {minutes} the line `#item_page item <N> of <M> <page link>`, which this hook reads back; then "
+    "put the link in place of `<page link>` in the item's closing line.")
 NOT_LOGGED_NOTICE = ("This refusal was not logged, {problem}. If that is because ned-box cannot be reached, tell "
                      "the user that this hook could not log to the log-store on ned-box; otherwise you need not act on it.")
 

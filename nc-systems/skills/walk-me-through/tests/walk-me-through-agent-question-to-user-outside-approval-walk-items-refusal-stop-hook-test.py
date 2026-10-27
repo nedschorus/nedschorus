@@ -260,7 +260,8 @@ def test_the_block_message_says_what_to_do():
              "that way, and refuses again until it does; it ignores a `>` quote mark or a list mark such as `-` or "
              "`1.` at the start of a line, bold, italic and code marks, and letter case, so you may add or drop those. "
              "Give the item one recommendation and one alternative, and end it with the recommendation stated as "
-             "an action, as in `Recommendation: <what you recommend doing>.`"),
+             "an action, as in `Recommendation: <what you recommend doing>.` State the alternative before it, as in "
+             "`The alternative: <what D does instead>.`"),
             ("the message says to change M everywhere",
              f"Change the walk's item count M from 10 to 11 in every item heading of {case.document} that carries `of 10`"),
             ("the message gives the minutes' new line",
@@ -272,8 +273,8 @@ def test_the_block_message_says_what_to_do():
              "waiting item's closing line, as the walk-me-through skill writes it, as the last text of that message:\n"
              f"`[Item 2 of 11, where the poem page lives](<page link>) · {CLOSING_LINE_ANSWER_LETTERS}`\n"
              "The minutes record no `#item_page` line for item 2. For each such item, publish its page first if it "
-             f"has none and record the page's link in {case.minutes}, as the walk-me-through skill says; then put "
-             "the link in place of `<page link>` in the item's closing line.\n"),
+             f"has none and add to {case.minutes} the line `#item_page item <N> of <M> <page link>`, which this hook "
+             "reads back; then put the link in place of `<page link>` in the item's closing line.\n"),
             ("the message says how to clear a false block",
              "If the flagged text does not ask the user anything, reword it in your reply so that it no longer reads")):
         check(case_name, phrase in reason, reason)
