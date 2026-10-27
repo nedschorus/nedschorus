@@ -85,13 +85,18 @@ FAKE_SESSION = "session_0FakePrePushTestSessionAAAA"
 SHELLS_FOR_THE_HOOK = [shell for shell in ("/bin/sh", "/bin/dash")
                        if os.path.exists(shell)]
 
-OUTER_PUSH_TIMEOUT_SECONDS = 30
+HANGING_CHECK_BUDGET_SECONDS = "1"
+# A backstop only: the stop message and the stopped processes are what show a
+# hung check or test run was stopped at its budget. The hook may wait the
+# budget plus its grace for SIGTERM, up to 1 + 5 seconds, so this is ten times
+# that, which a busy machine cannot reach.
+HANGING_CASE_WALL_CLOCK_LIMIT_SECONDS = 60
+# Above the backstop, so a slow stop fails the backstop's own case first.
+OUTER_PUSH_TIMEOUT_SECONDS = 90
 # A hanging fake check sleeps this long. Longer than the outer timeout, so a
 # hook that fails to stop it still fails its case; short enough that one
 # missed by every cleanup exits on its own soon after the suite does.
-FAKE_HANG_SECONDS = 90
-HANGING_CHECK_BUDGET_SECONDS = "1"
-HANGING_CASE_WALL_CLOCK_LIMIT_SECONDS = 15
+FAKE_HANG_SECONDS = 120
 
 REFUSAL_HEADER = "pre-push: branch %s conflicts with origin/main; this push is refused."
 CLOSING_INSTRUCTION = "Once the merge is committed, push again."
