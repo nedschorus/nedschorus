@@ -8,9 +8,12 @@ Argon at high on agy) and the terminology pass in two (deep x {claude, codex})
 -- every report saved into a cold-read-record named
 `cold-read-records/<file stem>-<YYYY-MM-DD>/`, or `SKILL-<skill name>-<YYYY-MM-DD>/` for a skill
 (a -2, -3 suffix for a second read of the document that day), progress and next-step
-instructions printed for the reviewing agent as reviews land. The Argon cell
-runs on agy's one cold-read-tier, `fast`, with the model and effort the grid
-gives it, so its report is `agy-hunt-fast.md` and its stamp says tier=fast.
+instructions printed for the reviewing agent as reviews land. A report is
+named `<runtime>-<hunt|terminology>-<cold-read-tier>.md`, or for a cell the grid
+gives a model, `<runtime>-<hunt|terminology>-<model>.md`. The Argon cell runs on
+agy's one cold-read-tier, `fast`, with the model and effort the grid gives it, so
+its report is `agy-hunt-gemini-4-argon-high.md`; its stamp says tier=fast beside
+the model and effort it ran with.
 
 Usage:
   nc-systems/cold-read/cold-read-grid.py --target docs/drafts/foo.md
@@ -669,10 +672,10 @@ def incomplete_set_marker(absent: dict, launched: int) -> str:
 
 
 def cell_report_path(
-    record_dir: pathlib.Path, runtime: str, cell_pass: str, tier: str,
+    record_dir: pathlib.Path, runtime: str, cell_pass: str, tier_or_model: str,
 ) -> pathlib.Path:
     pass_token = "hunt" if cell_pass == "defect-hunt" else cell_pass
-    return record_dir / f"{runtime}-{pass_token}-{tier}.md"
+    return record_dir / f"{runtime}-{pass_token}-{tier_or_model}.md"
 
 
 class CellAttempt(typing.NamedTuple):
@@ -734,7 +737,9 @@ def launch_cells(target: pathlib.Path, record_dir: pathlib.Path,
     """Return {report_path: CellAttempt} for reviewers of the frozen target."""
     running = {}
     for cell in GRID_CELLS:
-        report_path = cell_report_path(record_dir, cell.runtime, cell.cell_pass, cell.tier)
+        # A model the grid gives names the report, so the name says what ran.
+        report_path = cell_report_path(record_dir, cell.runtime, cell.cell_pass,
+                                       cell.model or cell.tier)
         stderr_path = record_dir / (report_path.name + ".stderr.log")
         command = [str(CELL_LAUNCHERS[cell.runtime]), "--cell", cell.cell_pass,
                    "--tier", cell.tier,

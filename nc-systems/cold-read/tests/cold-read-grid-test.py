@@ -104,7 +104,8 @@ WHAT IS PINNED HERE.
     stray write on its own is a warning and not a failure.
 
   - Every file the grid writes into a record directory is a bare role name
-    (user-ruled 2026-09-18) — `<runtime>-<pass>-<tier>.md` for a report and
+    (user-ruled 2026-09-18) — `<runtime>-<pass>-<tier>.md` for a report, the
+    model in place of the tier for a cell the grid gives a model, and
     `reference-check.md` for the pre-pass; the directory's name says which
     read. From 2026-09-15 to 2026-09-18 every file carried the record's name
     as a prefix, added because two cold-read runs going at once in one
@@ -641,7 +642,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the closing text names the six cells still reading as stopped",
           all(name in stopped_line for name in (
               "claude-hunt-deep", "claude-hunt-second-strongest-model", "claude-terminology-deep",
-              "codex-hunt-deep", "codex-terminology-deep", "agy-hunt-fast")), repr(stopped_line))
+              "codex-hunt-deep", "codex-terminology-deep", "agy-hunt-gemini-4-argon-high")), repr(stopped_line))
     saved_lines = [line for line in result.stdout.splitlines() if line.startswith("saved:")]
     check("no cell that was still reading lands",
           all("codex-hunt-second-strongest-model" in line for line in saved_lines), repr(saved_lines))
@@ -1085,28 +1086,28 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- The agy cell is a defect-hunt on Gemini Argon at high ---------------
     # agy serves only the fast tier, so the grid gives the model and effort.
-    agy_report = record_directory / "agy-hunt-fast.md" if record_directory else None
+    agy_report = record_directory / "agy-hunt-gemini-4-argon-high.md" if record_directory else None
     agy_stamp = (agy_report.read_text(encoding="utf-8").splitlines()[0]
                  if agy_report and agy_report.is_file() else "")
     check("the agy cell runs defect-hunt on gemini-4-argon-high at high, tier fast",
           agy_stamp.startswith("<!-- provenance: runtime=agy model=gemini-4-argon-high ")
           and "effort=high cell=defect-hunt tier=fast " in agy_stamp
-          and effort_by_report.get("agy-hunt-fast.md") == "high",
+          and effort_by_report.get("agy-hunt-gemini-4-argon-high.md") == "high",
           f"stamp={agy_stamp!r}; efforts={effort_by_report!r}")
 
     # --- The agy cell fails both attempts: the other six stand ---------------
     repository = build_scratch_repository(scratch, "checkout-agy-cell-absent")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "agy-hunt-fast.md", "attempts": 2}])})
+        [{"fragment": "agy-hunt-gemini-4-argon-high.md", "attempts": 2}])})
     check("an absent agy cell is RETRYING then FAILED from agy's own cause line",
           len(lines_opening(result, "RETRYING:")) == 1
-          and any(line.startswith("FAILED (exit 1): agy-hunt-fast — exit-1 — ")
+          and any(line.startswith("FAILED (exit 1): agy-hunt-gemini-4-argon-high — exit-1 — ")
                   for line in lines_opening(result, "FAILED")),
           repr(result.stdout))
     check("an absent agy cell leaves six of seven landed, exit 1",
           result.returncode == 1 and len(lines_opening(result, "saved:")) == 6
           and "6 of 7 reports landed in" in result.stdout
-          and any(line.startswith("- agy-hunt-fast: exit-1 — ")
+          and any(line.startswith("- agy-hunt-gemini-4-argon-high: exit-1 — ")
                   for line in result.stdout.splitlines()),
           f"exit {result.returncode}; stdout={result.stdout!r}")
 
@@ -1839,7 +1840,7 @@ with tempfile.TemporaryDirectory() as scratch:
            for runtime in ("claude", "codex")
            for pass_token, tier in (("hunt", "deep"), ("hunt", "second-strongest-model"),
                                     ("terminology", "deep"))]
-        + ["agy-hunt-fast.md"])
+        + ["agy-hunt-gemini-4-argon-high.md"])
     check("the set holds the seven cells, the reference-integrity pre-pass and the stop marker",
           written_names == expected_names, written_names)
 
@@ -1945,7 +1946,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch, "full-run-count-agy-report-only")
     for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
         seed_log_store_record(repository, f"cold-read-grid-test-target-{day}",
-                              ["agy-hunt-fast.md", "reference-check.md"])
+                              ["agy-hunt-gemini-4-argon-high.md", "reference-check.md"])
     result = run_grid(repository, stubs / "full-run-count-agy-report-only")
     check("runs whose only report is the agy cell's count toward the three",
           result.returncode == 2 and "refusing cold-read-full-run 4" in result.stderr,

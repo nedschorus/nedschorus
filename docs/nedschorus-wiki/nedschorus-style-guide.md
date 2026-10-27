@@ -23,7 +23,7 @@ This page lists words to avoid in this project and what to write instead. Most o
 | `box` | `box` | `ned-box` | ned-box | files, messages to other agents, messages to the user |
 | `brief` | `brief`, `seat brief` | `seat-brief` | seat-brief for an agent-seat's standing file; "the subagent's prompt" for instructions given to a subagent | files, messages to other agents, messages to the user |
 | `fast read` | `fast read`, `fast-read` | `cold-read-fast-read` | cold-read-fast-read | files, messages to other agents, messages to the user |
-| `cold-read run` | `cold-read run` | | cold-read-full-run for the seven-reviewer review; cold-read-cell for one reviewer | files, messages to other agents, messages to the user |
+| `cold-read run` | `cold-read run` | | cold-read-full-run for the review by every cold-read-cell; cold-read-cell for one reviewer | files, messages to other agents, messages to the user |
 | `first prompt` | `first prompt` | `initial-agent-instructions` | initial-agent-instructions | files, messages to other agents, messages to the user |
 | `runtime` | `runtime` | | agent-binary for `claude` or `codex`; "run time" for a duration | files, messages to other agents, messages to the user |
 | `ruling` | `ruling`, `rulings`, `ruled`, `unruled` | `user-ruling` | user-ruling for a recorded decision of the user; "the user decided" for the act; "the user has not decided" for unruled; "the reviewer decided" for a decision that was not the user's | files, messages to other agents, messages to the user |
