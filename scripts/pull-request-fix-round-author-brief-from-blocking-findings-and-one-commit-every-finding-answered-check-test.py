@@ -625,6 +625,11 @@ def check_cases(root, repository, base, frozen_head):
                          "--check", "--after-conflict-merge")
     check("check: an answers file added in the conflict merge's own commit refuses",
           code == 1 and "other-answers/fix-round-answers-pull-request-1899.md" in err, out + err)
+    commit_file(repository, "hook.py", "fixed after merge\n", "fix after the merge")
+    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews),
+                         "--check", "--after-conflict-merge")
+    check("check: an answers file the conflict merge adds refuses when a fix commit sits on top",
+          code == 1 and "other-answers/fix-round-answers-pull-request-1899.md" in err, out + err)
 
     git(repository, "reset", "-q", "--hard", unignored_head)
     held = commit_file(repository, "fix-round-answers-pull-request-1900.md", "1. x\n",
