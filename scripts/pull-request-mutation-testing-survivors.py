@@ -22,19 +22,26 @@ this file, on the scratch worktree, given --only-suites-named with the file's
 suites, --leave-recorded-inputs-and-failure-history-unchanged, so a mutant
 changes no suite's recording, and --stop-at-first-failing-suite, so a mutant
 one suite kills does not wait for the rest. The runner runs the suites in
-parallel under its admission, each in its signal sandbox and, on Linux with
+parallel, each starting when the runner's admission lets it (on Linux in test
+sandboxes, when the machine's CPU and memory have room: ADMISSION in the
+runner's docstring), each in its signal sandbox and, on Linux with
 bwrap, its test sandbox, each under its own time limit (see PER-SUITE TIMEOUT
 in the runner's docstring), and passes on --python, --recorded-inputs-directory
 and, when given, --lock-file. Where suites run without test sandboxes (macOS,
-or Linux without bwrap), each of the runner's runs takes the machine's lock, so
-a mutant's run is refused while another test run holds it. When bwrap is on
-PATH but cannot start, the script exits 2 before making the worktree.
+or Linux without bwrap), each of the runner's runs takes the machine's lock,
+and the runner exits 3 without running a suite while another test run holds it.
+On a mutant, that refusal judges no suite, so the mutant is printed as ERRORED
+with the runner's refusal and the script goes on to the next mutant; on the
+unmutated head it stops the script with exit 2, as a failing suite there does.
+When bwrap is on PATH but cannot start, the script exits 2 before making the
+worktree.
 
 cosmic-ray's own limit on one run of the test command, per changed file, is
 the longest of its suites' time limits, computed as the runner computes them
-from the recordings, times the rounds of parallel runs the runner needs for
-them, plus TEST_SUITE_RUNNER_START_UP_SECONDS: a backstop, which a run passes
-only when admission keeps its suites waiting. --mutant-timeout-seconds, when
+from the recordings, times the number of suites divided by the number the
+runner runs at once (its suites_run_at_once(), the same call the runner
+makes), rounded up, plus TEST_SUITE_RUNNER_START_UP_SECONDS: a backstop,
+which a run passes only when admission keeps its suites waiting. --mutant-timeout-seconds, when
 given, sets that limit for every file instead.
 
 A renamed file is mutated under its new name. A mutant cosmic-ray could not
@@ -45,8 +52,8 @@ suite failing by its own exit (it printed nothing, was not run to the end,
 could not write its records, or a suite's test sandbox did not start), is
 printed as ERRORED and counts against the run like a survivor. cosmic-ray
 itself reports every nonzero exit of the runner as a kill; this script does
-not. On the unmutated head either timeout stops the script
-with exit 2 and a message saying the suites ran out of time, with the limit,
+not. On the unmutated head either a suite's own time limit or cosmic-ray's
+limit on one run of the test command stops the script with exit 2 and a message saying the suites ran out of time, with the limit,
 and, for a suite's own limit, the suite.
 
 Exit codes: 0 every mutant was killed, 1 a mutant survived, errored or was

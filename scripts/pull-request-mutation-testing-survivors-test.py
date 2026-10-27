@@ -495,6 +495,13 @@ def run_cases():
                "run-all-test-suites: not run to the end — admission failed: gone\n")]],
          1, "its output says: run-all-test-suites: not run to the end — admission failed: "
             "gone)"),
+        ("a killed mutant whose run the machine's lock refused is ERRORED with the refusal",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           killed_with_output(
+               "run-all-test-suites: not run — another run holds /tmp/test.lock: pid 7.\n"
+               "To wait for the lock, run this again with --wait-for-lock-seconds 3600.\n")]],
+         1, "its output says: run-all-test-suites: not run — another run holds "
+            "/tmp/test.lock: pid 7.)"),
         ("a killed mutant whose every suite passed but whose records could not be written "
          "is ERRORED, not killed",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
