@@ -7,6 +7,9 @@ Usage:
                                  [--wait-for-lock-seconds N]
                                  [--only-suites-whose-recorded-inputs-changed-since COMMIT]
                                  [--recorded-inputs-directory DIR]
+                                 [--leave-recorded-inputs-and-failure-history-unchanged]
+                                 [--stop-at-first-failing-suite]
+                                 [--only-suites-named SUITE [SUITE ...]]
 
   --checkout    the top directory of the checkout to test; default, the
                 checkout this file is in
@@ -36,6 +39,20 @@ Usage:
   --recorded-inputs-directory
                 where each suite's recorded inputs are kept; default
                 ~/.cache/nedschorus-test-suite-recorded-inputs
+  --leave-recorded-inputs-and-failure-history-unchanged
+                record no suite's inputs, save no recording and add nothing
+                to test-case-failure-history.jsonl, so a run on code that is
+                not meant to last, such as a mutant, changes nothing a later
+                run reads. The recordings are still read, for the starting
+                order and each suite's time limit
+  --stop-at-first-failing-suite
+                once a suite fails, kill the suites running beside it, as a
+                stop signal does, and start no other; the run exits 1, and
+                each suite killed is reported as stopped, not as failed
+  --only-suites-named SUITE [SUITE ...]
+                run only these suites, each named by its path from the
+                checkout's top directory, as git lists it; a name git does
+                not list stops the run with exit 2
 
 WHY THIS EXISTS (user-ruled 2026-09-21, walk "redesigning how pull requests
 are processed", items 3 and 6). Until this program, every full run of the
@@ -294,7 +311,8 @@ machine-cpu-and-memory-readings.tsv in its log directory, each suite's kind, adm
 CPU seconds and peak memory in test-suite-resource-use.tsv, each case line's time in
 test-case-times.tsv, and all of it as JUnit XML in junit.xml. Every failing
 case is added to test-case-failure-history.jsonl in
---recorded-inputs-directory, with its commit and branch.
+--recorded-inputs-directory, with its commit and branch, except in a run given
+--leave-recorded-inputs-and-failure-history-unchanged.
 
 CONCURRENCY. -j N runs N suites at once. The default is the machine's core
 count (4 when Python cannot tell), or the number of suites to run when that
@@ -429,7 +447,8 @@ source. Recordings live outside every checkout, under
 --recorded-inputs-directory and then the repository's root commit, one file
 per suite: worktrees come and go and every one of a clone's worktrees, and
 every clone, shares the same paths, so a recording made in one serves them
-all. Every run replaces the recordings of the suites it ran, a failed or
+all. Every run not given --leave-recorded-inputs-and-failure-history-unchanged
+replaces the recordings of the suites it ran, a failed or
 killed run's included, so the last recording always says how the suite's
 last run ended; the daily full run refreshes them all. Each recording is
 written to a temporary file of its own and renamed into place under a short
@@ -550,7 +569,8 @@ these.
 
 EXIT. 0 when every suite exited 0; 1 when any suite failed; 2 when the run
 could not start (not a checkout's top directory, no suites listed, git or
-the interpreter unusable, a COMMIT git cannot resolve); 3 when another run
+the interpreter unusable, a COMMIT git cannot resolve, a suite
+--only-suites-named names that git does not list); 3 when another run
 holds the lock, where a lock is taken.
 """
 
@@ -1260,6 +1280,21 @@ def suites_listed_by_git(top):
             f"{PROGRAM}: not run — git lists no {TEST_SUITE_PATHSPEC} file in {top}.\n"
             f"Pass --checkout a checkout that has its suites committed or added.")
     return suites
+
+
+def suites_named_among_those_listed(top, listed, named):
+    """The listed suites, or only those named, in the order git lists them."""
+    if named is None:
+        return listed
+    unknown = [suite for suite in named if suite not in listed]
+    if unknown:
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — --only-suites-named names {', '.join(unknown)}, which git "
+            f"does not list as a suite in {top}.\n"
+            f"Name each suite by its path from the checkout's top directory, as "
+            f"`git -C {shlex.quote(str(top))} ls-files -- '{TEST_SUITE_PATHSPEC}' "
+            f"'{SHELL_TEST_SUITE_PATHSPEC}'` lists it, then run this again.")
+    return [suite for suite in listed if suite in named]
 
 
 def interpreter_and_version(given):
@@ -2715,13 +2750,13 @@ def suite_process_started(process, status_read, note_suite_process):
 
 def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefix=(),
                   note_suite_process=None, in_cgroup_scope=False, nice=False, platform=None,
-                  time_limit=None, run_stop_signals=None):
+                  time_limit=None, run_stops=None):
     """Run one suite; return its result, on Linux with each case line it printed timed.
 
     time_limit is (limit seconds, recorded seconds or None) from
     suite_timeout_and_the_recorded_seconds_it_came_from(); a suite still running at its limit
-    has its process group killed, and its result carries "timeout". Once run_stop_signals,
-    a list a signal handler appends to, is not empty, the suite is killed the same way,
+    has its process group killed, and its result carries "timeout". Once run_stops,
+    a list naming what stopped the run, is not empty, the suite is killed the same way,
     and its result carries "stopped by".
 
     With in_cgroup_scope, the suite runs in a cgroup scope of its own and its CPU seconds
@@ -2826,7 +2861,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
             sandbox_started = suite_process_started(process, status_read, note_suite_process)
         deadline = None if time_limit is None else started + time_limit[0]
         while True:
-            wait_seconds = None if run_stop_signals is None else RUN_STOP_SIGNAL_CHECK_SECONDS
+            wait_seconds = None if run_stops is None else RUN_STOP_SIGNAL_CHECK_SECONDS
             if deadline is not None:
                 left = max(0.0, deadline - time.monotonic())
                 wait_seconds = left if wait_seconds is None else min(wait_seconds, left)
@@ -2835,8 +2870,8 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                 break
             except subprocess.TimeoutExpired:
                 pass
-            if run_stop_signals:
-                stopped_by = run_stop_signals[0]
+            if run_stops:
+                stopped_by = run_stops[0]
             elif deadline is not None and time.monotonic() >= deadline:
                 timed_out = time_limit
             else:
@@ -3405,6 +3440,21 @@ def why_suite_failed(result):
     return f"TIMEOUT after {result['seconds']:.0f}s (limit {timeout['limit']:.0f}s{source})"
 
 
+SUITE_TIMEOUT_LINE = re.compile(r"^FAIL (?P<suite>.+?) TIMEOUT after \d+s \(limit (?P<limit>\d+)s")
+
+
+def run_all_test_suites_output_timed_out_suites_and_limits_parse(text):
+    """[(suite, limit seconds)] for each suite whose FAIL line says it ran past its limit.
+
+    Each suite once, in the order first printed: the list of failed suites repeats its line."""
+    found = {}
+    for line in text.splitlines():
+        match = SUITE_TIMEOUT_LINE.match(line)
+        if match:
+            found.setdefault(match["suite"], int(match["limit"]))
+    return list(found.items())
+
+
 def suite_line(result):
     detail = f"{result['seconds']:.1f}s"
     if result["skips"]:
@@ -3474,6 +3524,10 @@ def parse_arguments(argv):
                         dest="changed_since", metavar="COMMIT")
     parser.add_argument("--recorded-inputs-directory",
                         default=str(DEFAULT_RECORDED_INPUTS_DIRECTORY))
+    parser.add_argument("--leave-recorded-inputs-and-failure-history-unchanged",
+                        dest="leave_records_unchanged", action="store_true")
+    parser.add_argument("--stop-at-first-failing-suite", action="store_true")
+    parser.add_argument("--only-suites-named", nargs="+", metavar="SUITE")
     arguments = parser.parse_args(argv)
     if arguments.jobs is not None and arguments.jobs < 1:
         parser.error("-j takes a whole number of at least 1")
@@ -3545,7 +3599,8 @@ def main(argv=None, platform=None):
         # Read again under the lock: the checkout may have changed while this run waited,
         # and the commit this run reports is read under the lock too.
         try:
-            suites = suites_listed_by_git(top)
+            listed = suites_listed_by_git(top)
+            suites = suites_named_among_those_listed(top, listed, arguments.only_suites_named)
             sandbox_lists, sandbox_lists_source = (
                 suite_sandbox_lists_read_from_checkout_under_test(top))
         except CouldNotRun as refusal:
@@ -3602,19 +3657,28 @@ def main(argv=None, platform=None):
             [suite for suite, selected, _ in selection if selected], recordings)
         jobs = suites_run_at_once(arguments.jobs, len(chosen), os.cpu_count(),
                                   admission_decides=in_test_sandboxes)
-        strace = strace_usable()
-        recording_dir = log_dir / "recorded-inputs"
-        recording_dir.mkdir(parents=True, exist_ok=True)
-        recorder = (install_python_input_recorder(log_dir), recording_dir, strace)
+        if arguments.leave_records_unchanged:
+            strace = recorder = None
+        else:
+            strace = strace_usable()
+            recording_dir = log_dir / "recorded-inputs"
+            recording_dir.mkdir(parents=True, exist_ok=True)
+            recorder = (install_python_input_recorder(log_dir), recording_dir, strace)
         report = Report(log_dir / REPORT_FILE_NAME)
+        named_note = (f"; {len(suites)} named by --only-suites-named"
+                      if arguments.only_suites_named is not None else "")
         selected_note = (f"; {len(chosen)} selected by inputs changed since "
                          f"{changed_since[:12]}" if changed_since is not None else "")
-        report.line(f"{PROGRAM}: {top} at {commit} ({state}); {len(suites)} suites "
-                    f"listed by git{selected_note}; {version} ({interpreter}); "
+        report.line(f"{PROGRAM}: {top} at {commit} ({state}); {len(listed)} suites "
+                    f"listed by git{named_note}{selected_note}; {version} ({interpreter}); "
                     f"-j {jobs}; logs in {log_dir}")
-        report.line(f"inputs recorded by {PYTHON_INPUT_RECORDER_METHOD}"
-                    + (f" and {STRACE_INPUT_RECORDER_METHOD} ({strace})" if strace else "")
-                    + f", kept in {recordings_dir}")
+        if recorder is None:
+            report.line(f"inputs not recorded, and no recording in {recordings_dir} or failure "
+                        f"history changed: --leave-recorded-inputs-and-failure-history-unchanged")
+        else:
+            report.line(f"inputs recorded by {PYTHON_INPUT_RECORDER_METHOD}"
+                        + (f" and {STRACE_INPUT_RECORDER_METHOD} ({strace})" if strace else "")
+                        + f", kept in {recordings_dir}")
         report.line(signal_sandbox_line(sandbox_prefix, unconfined_because))
         report.line(f"{SUITE_SANDBOX_LISTS_SOURCE_LINE_PREFIX}{sandbox_lists_source}")
         if lock_handle is not None and arguments.wait_for_lock_seconds > 0:
@@ -3665,11 +3729,14 @@ def main(argv=None, platform=None):
                 report.line(f"{'SELECTED' if selected else 'NOT SELECTED'} {suite}: {why}")
 
         run_stop_signals = []
+        # What stopped the run: a stop signal's name, or, with --stop-at-first-failing-suite,
+        # the first failing suite. Each suite's thread acts on its first entry.
+        run_stops = []
 
         def run_admitted(suite, **options):
-            if run_stop_signals:
+            if run_stops:
                 raise TestRunStoppedBeforeSuiteStarted(suite)
-            options["run_stop_signals"] = run_stop_signals
+            options["run_stops"] = run_stops
             options["time_limit"] = suite_timeout_and_the_recorded_seconds_it_came_from(
                 recordings.get(suite))
             outside = suite in SUITES_RUN_WITHOUT_ANY_SANDBOX
@@ -3697,7 +3764,7 @@ def main(argv=None, platform=None):
             return result
 
         def run_and_record(suite):
-            if is_shell_test_suite(suite):
+            if is_shell_test_suite(suite) or recorder is None:
                 return run_admitted(suite)
             result = run_admitted(suite, recorder=recorder)
             try:
@@ -3729,12 +3796,22 @@ def main(argv=None, platform=None):
             shutil.rmtree(recording_paths_for(recording_dir, suite)[1], ignore_errors=True)
             return result
 
+        def run_and_record_then_stop_the_run_if_first_to_fail(suite):
+            result = run_and_record(suite)
+            # In the suite's own thread, so the next suite this thread takes sees the stop
+            # before it starts.
+            if (arguments.stop_at_first_failing_suite and result["exit"] != 0
+                    and not run_stops):
+                run_stops.append(f"the first failing suite, {suite}")
+            return result
+
         results = []
 
         def record_run_stop(signal_number, frame):
             # Only recorded here: the suites' threads and the loop below act on it where it
             # is safe, since raising inside subprocess code can leave a child unreaped.
             run_stop_signals.append(signal.Signals(signal_number).name)
+            run_stops.append(signal.Signals(signal_number).name)
 
         def ignore_run_stop(signal_number, frame):
             pass
@@ -3748,14 +3825,15 @@ def main(argv=None, platform=None):
                        else record_run_stop)
             signal_handlers_replaced[stop_signal] = signal.signal(stop_signal, handler)
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-            running = [pool.submit(run_and_record, suite) for suite in chosen]
+            running = [pool.submit(run_and_record_then_stop_the_run_if_first_to_fail, suite)
+                       for suite in chosen]
             pending = set(running)
             stop_acted_on = False
             while pending:
                 done, pending = concurrent.futures.wait(
                     pending, timeout=RUN_STOP_SIGNAL_CHECK_SECONDS,
                     return_when=concurrent.futures.FIRST_COMPLETED)
-                if run_stop_signals and not stop_acted_on:
+                if run_stops and not stop_acted_on:
                     stop_acted_on = True
                     for waiting in running:
                         waiting.cancel()
@@ -3768,7 +3846,7 @@ def main(argv=None, platform=None):
                         result = finished.result()
                     except (TestRunStoppedBeforeSuiteStarted,
                             MachineWideTestSuiteAdmissionCancelled):
-                        if run_stop_signals:
+                        if run_stops:
                             continue
                         raise
                     except (MachineWideTestSuiteAdmissionCouldNotDecide, SignalSandboxCouldNotStart,
@@ -3808,7 +3886,10 @@ def main(argv=None, platform=None):
             return EXIT_COULD_NOT_RUN
 
         results.sort(key=lambda result: result["suite"])
-        failed = [result for result in results if result["exit"] != 0]
+        # Here only --stop-at-first-failing-suite stops a suite: a stop signal returned above.
+        stopped = [result for result in results if result.get("stopped by")]
+        failed = [result for result in results
+                  if result["exit"] != 0 and not result.get("stopped by")]
         skipping = [result for result in results if result["skips"]]
         if failed:
             report.line("")
@@ -3816,6 +3897,11 @@ def main(argv=None, platform=None):
             for result in failed:
                 report.line(f"FAIL {result['suite']} {why_suite_failed(result)}"
                             f" — log {result['log']}")
+        if run_stops:
+            report.line("")
+            report.line(f"stopped at {run_stops[0]}: {len(stopped)} suites killed while they "
+                        f"ran, {len(chosen) - len(results)} not started "
+                        f"(--stop-at-first-failing-suite)")
         if skipping:
             report.line("")
             report.line("skipped cases:")
@@ -3842,10 +3928,11 @@ def main(argv=None, platform=None):
         if admission is not None:
             try:
                 write_case_times_suite_resources_and_junit_xml_of_run(log_dir, results)
-                append_test_case_failure_history(
-                    Path(arguments.recorded_inputs_directory).expanduser()
-                    / TEST_CASE_FAILURE_HISTORY_FILE_NAME,
-                    top, commit, branch_of_checkout(top), log_dir, results)
+                if not arguments.leave_records_unchanged:
+                    append_test_case_failure_history(
+                        Path(arguments.recorded_inputs_directory).expanduser()
+                        / TEST_CASE_FAILURE_HISTORY_FILE_NAME,
+                        top, commit, branch_of_checkout(top), log_dir, results)
             except OSError as error:
                 records_failed = True
                 report.line(f"{PROGRAM}: the run's case times, suite resources, JUnit XML or "
@@ -3859,7 +3946,9 @@ def main(argv=None, platform=None):
         not_selected = (f"; {len(suites) - len(chosen)} suites not selected, their recorded "
                         f"inputs unchanged since {changed_since[:12]}"
                         if changed_since is not None else "")
-        report.line(f"SUMMARY: {len(results) - len(failed)} passed, {len(failed)} failed, "
+        stopped_note = f", {len(stopped)} stopped" if run_stops else ""
+        report.line(f"SUMMARY: {len(results) - len(failed) - len(stopped)} passed, "
+                    f"{len(failed)} failed{stopped_note}, "
                     f"{len(results)} total; {skip_count} cases skipped in {len(skipping)} "
                     f"suites; {top.name} at {commit[:12]}; {version}{not_selected}")
         report.close()
