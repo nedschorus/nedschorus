@@ -66,16 +66,18 @@ class StubIgnitionPlan:
 
 def supervise_one_handoff(workspace: Path, case: str, own_checkout_sync_report: str,
                           exec_raises=None, handoff_extra: str = "", answer: str = "y",
-                          restarts: bool = True, exec_returns: bool = False):
+                          restarts=True, exec_returns: bool = False):
     """Run the loop through one handoff with the restart's git sync and os.execv
     stubbed. The first session writes the handoff; a successor, if launched,
     exits cleanly so the loop stops."""
     handoff_directory = workspace / case
     handoff_directory.mkdir(parents=True)
+    # None leaves the setting at its default.
+    restart_setting = ({} if restarts is None
+                       else {"restarts_itself_on_main_code_at_each_session_handoff": restarts})
     settings = supervisor.SupervisorSettings(
         agent=case, working_directory=workspace, handoff_directory=handoff_directory,
-        agent_command="unused-stub-agent", first_prompt="first",
-        restarts_itself_on_main_code_at_each_session_handoff=restarts)
+        agent_command="unused-stub-agent", first_prompt="first", **restart_setting)
     result = SimpleNamespace(events=[], prompts=[], exec_argv=None, replaced=False,
                              state_at_exec=None, console="")
 
@@ -150,11 +152,13 @@ def run_restart_placement_cases(workspace: Path):
 
     run = supervise_one_handoff(workspace, "neverrestarts",
                                 "launch-time-git-sync: main fast-forwarded to main (abc1234)",
-                                restarts=False)
+                                restarts=None)
     check("RESTART: settings not built by main() never restart, so a test importing the "
           "module keeps its own process",
           not run.replaced and "sync own checkout" not in run.events and len(run.prompts) == 2,
           str(run.events))
+    check("RESTART: settings not built by main() do not say at startup that they were restarted",
+          "restarted on main's code" not in run.console, run.console[-400:])
 
 
 def run_dont_restart_case(workspace: Path):
@@ -220,6 +224,9 @@ def run_restarted_process_cases(workspace: Path):
         events.append(("launch", session_id))
         prompts.append(prompt)
         states_at_launch.append(supervisor.read_supervisor_state(settings.state_path))
+        # A process that failed to restart launches again; that session ends without a handoff, so the case ends.
+        if len(prompts) > 1:
+            return StubLaunchedSession(0)
         settings.handoff_path.write_text("restart-counter: 2\nnext-step: again\n", encoding="utf-8")
         return StubLaunchedSession(-15, ended=False)
 
@@ -333,6 +340,24 @@ def run_restart_arguments_cases(workspace: Path):
               argv[-6:] == ["claude", "--agent-update-timeout-seconds", "7",
                             "--agent-append-system-prompt-file", str(prompt_file), RESTART_FLAG],
               str(argv))
+        # A path that sorts before the default one, so only an inequality test passes it on.
+        settings_with_early_path = supervisor.SupervisorSettings(
+            agent="earlypath", working_directory=workspace, handoff_directory=handoffs,
+            agent_command="claude", first_prompt="",
+            appended_system_prompt_file="/a/appended-system-prompt.md")
+        early_argv = supervisor.handoff_supervisor_restart_arguments_build(settings_with_early_path)
+        check("ARGV: any appended-system-prompt file other than the default is passed on",
+              early_argv[-3:-1] == ["--agent-append-system-prompt-file",
+                                    "/a/appended-system-prompt.md"], str(early_argv))
+        # Given by its own flag, the default path is a string equal to, not the same object as, the default.
+        settings_naming_the_default = supervisor.SupervisorSettings(
+            agent="defaultnamed", working_directory=workspace, handoff_directory=handoffs,
+            agent_command="claude", first_prompt="",
+            appended_system_prompt_file="".join(str(supervisor.DEFAULT_APPENDED_SYSTEM_PROMPT_PATH)))
+        default_named_argv = supervisor.handoff_supervisor_restart_arguments_build(
+            settings_naming_the_default)
+        check("ARGV: the default appended-system-prompt file, given as a flag, is not passed on",
+              "--agent-append-system-prompt-file" not in default_named_argv, str(default_named_argv))
         check("ARGV: the restart flag is read into the settings, and passed on once",
               settings is not None
               and settings.started_by_handoff_supervisor_restarting_itself_on_main_code
