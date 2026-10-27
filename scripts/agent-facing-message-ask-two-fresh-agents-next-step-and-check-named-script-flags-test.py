@@ -38,6 +38,8 @@ if tier in os.environ.get("FAKE_FAILING_TIERS", "").split():
     print("cold-read-claude-cell: cause: logged-out: Not logged in", file=sys.stderr)
     sys.exit(1)
 pathlib.Path(value("--report")).write_text(f"answer from the {tier} follower\\n")
+if tier in os.environ.get("FAKE_STRAY_WRITE_TIERS", "").split():
+    print(f"cold-read-claude-cell: {os.environ['FAKE_STRAY_WRITE_PHRASE']} — notes.md.", file=sys.stderr)
 """
 
 failures = []
@@ -52,7 +54,7 @@ def check(case_name, condition, detail=""):
 
 
 def run_main(scratch: pathlib.Path, message: str, failing_tiers: str = "", situation_file=None,
-             signalled_tiers: str = ""):
+             signalled_tiers: str = "", stray_write_tiers: str = ""):
     """Run main() with a fake launcher; return (exit code, stdout, stderr, launcher calls)."""
     launcher = scratch / "fake-launcher.py"
     launcher.write_text(FAKE_LAUNCHER)
@@ -66,6 +68,8 @@ def run_main(scratch: pathlib.Path, message: str, failing_tiers: str = "", situa
     os.environ["FAKE_LAUNCHER_LOG"] = str(log)
     os.environ["FAKE_FAILING_TIERS"] = failing_tiers
     os.environ["FAKE_SIGNALLED_TIERS"] = signalled_tiers
+    os.environ["FAKE_STRAY_WRITE_TIERS"] = stray_write_tiers
+    os.environ["FAKE_STRAY_WRITE_PHRASE"] = ask_two_fresh_agents.cell_common.STRAY_WRITE_PHRASE
     ask_two_fresh_agents.CLAUDE_CELL_LAUNCHER = launcher
     sys.argv = [str(SCRIPT_PATH), "--message-file", str(message_file),
                 "--situation-file", str(situation_file)]
@@ -114,6 +118,18 @@ def test_follower_killed_by_signal(scratch):
     exit_code, stdout, _, _ = run_main(scratch, "anything", signalled_tiers="fast")
     check("follower killed by a signal: exit 1 and reported",
           exit_code == 1 and "wrote no answer, because" in stdout and "exited -9" in stdout, stdout)
+
+
+def test_follower_writes_outside_its_report(scratch):
+    exit_code, stdout, _, _ = run_main(scratch, "Create notes.md first.", stray_write_tiers="deep")
+    check("follower writes outside its report: exit 3", exit_code == 3, f"exit {exit_code}")
+    check("follower writes outside its report: the launcher's line and the warning are printed",
+          f"{ask_two_fresh_agents.cell_common.STRAY_WRITE_PHRASE} — notes.md" in stdout
+          and "CHECKOUT CHANGED" in stdout and "answer from the deep follower" in stdout, stdout)
+    exit_code, _, _, _ = run_main(scratch, "Create notes.md first.", failing_tiers="fast",
+                                  stray_write_tiers="deep")
+    check("follower writes outside its report while the other fails: exit 1", exit_code == 1,
+          f"exit {exit_code}")
 
 
 def test_missing_flag_refused(scratch):
@@ -209,7 +225,7 @@ def test_no_named_scripts(scratch):
 
 def main() -> int:
     for test in (test_both_followers_answer, test_one_follower_fails, test_follower_killed_by_signal,
-                 test_missing_flag_refused, test_help_runs_as_a_program, test_unreadable_input_file,
+                 test_follower_writes_outside_its_report, test_missing_flag_refused, test_help_runs_as_a_program, test_unreadable_input_file,
                  test_named_scripts, test_no_named_scripts):
         with tempfile.TemporaryDirectory() as scratch:
             test(pathlib.Path(scratch))

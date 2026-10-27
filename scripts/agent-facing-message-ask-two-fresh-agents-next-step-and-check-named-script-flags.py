@@ -17,7 +17,10 @@ time. That launcher runs `claude -p` in the checkout with hooks off, so each
 fresh-agent has CLAUDE.md, the user's CLAUDE.md and the repository to read, as a
 real agent does, but only the tools Read, Grep, Glob, Write and WebFetch. A
 fresh-agent is told not to act, only to write down what it would do next; this
-program prints both answers. It does not carry the answers out.
+program prints both answers. It does not carry the answers out, but a
+fresh-agent can still write files with its Write tool: whatever the launcher
+prints on its error output, its line on files changed outside the report
+included, is printed under that fresh-agent's answer.
 
 Then, for each path ending in .py or .sh that the message names, it says
 whether the file exists (relative paths from this checkout's top directory),
@@ -31,11 +34,13 @@ repository is run all the same.
 
 Prints its report on stdout. Exit codes: 0 both fresh-agents answered, whatever
 the checks of the named scripts found; 1 a fresh-agent wrote no answer, and the report
-gives the launcher's output; 2 MESSAGE or SITUATION could not be read, and no fresh-agent was started.
+gives the launcher's output; 2 MESSAGE or SITUATION could not be read, and no fresh-agent was started;
+3 both fresh-agents answered, and the launcher reported files in this checkout changed outside a report.
 """
 
 import argparse
 import concurrent.futures
+import importlib.util
 import pathlib
 import re
 import subprocess
@@ -48,6 +53,12 @@ CLAUDE_CELL_LAUNCHER = REPO_ROOT / "nc-systems/cold-read/cold-read-claude-cell.p
 FOLLOWER_ANSWER_FILE_LABEL_FOR_CELL_FLAG = "agent-facing-message-follower"
 FOLLOWER_TIERS = ("fast", "deep")
 HELP_TIMEOUT_SECONDS = 60
+EXIT_CHECKOUT_CHANGED = 3
+
+_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common", REPO_ROOT / "nc-systems/cold-read/cold-read-cell-common.py")
+cell_common = importlib.util.module_from_spec(_common_spec)
+_common_spec.loader.exec_module(cell_common)
 
 # Messages this program hands an agent follow
 # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
@@ -110,7 +121,7 @@ def named_script_existence_and_flags_in_help_check_report_lines(script: str, fla
 
 def run_follower(tier: str, target: pathlib.Path, prompt_file: pathlib.Path,
                  report: pathlib.Path) -> tuple:
-    """Return whether the follower answered, and the report's lines for it."""
+    """Return whether the follower answered, whether it changed files outside its report, and the report's lines for it."""
     completed = subprocess.run(
         [sys.executable, str(CLAUDE_CELL_LAUNCHER), "--cell", FOLLOWER_ANSWER_FILE_LABEL_FOR_CELL_FLAG,
          "--tier", tier, "--target", str(target), "--report", str(report),
@@ -118,7 +129,7 @@ def run_follower(tier: str, target: pathlib.Path, prompt_file: pathlib.Path,
         cwd=REPO_ROOT, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
     heading = f"## Fresh-agent on cold-read-tier {tier}"
     if completed.returncode != 0:
-        return False, [
+        return False, False, [
             heading, "",
             f"FAILED: the fresh-agent on cold-read-tier {tier} wrote no answer, because "
             f"{CLAUDE_CELL_LAUNCHER} exited {completed.returncode}.",
@@ -130,7 +141,18 @@ def run_follower(tier: str, target: pathlib.Path, prompt_file: pathlib.Path,
             "--message-file and --situation-file; if a fresh-agent fails again, tell the user the "
             "cause line, or the exit status when there is none.",
             "", "```", (completed.stderr + completed.stdout).rstrip(), "```"]
-    return True, [heading, "", report.read_text(encoding="utf-8").rstrip()]
+    lines = [heading, "", report.read_text(encoding="utf-8").rstrip()]
+    changed_checkout = cell_common.STRAY_WRITE_PHRASE in completed.stderr
+    if completed.stderr.strip():
+        lines += ["", "The launcher also printed this on its error output, although it exited 0:",
+                  "", "```", completed.stderr.rstrip(), "```"]
+    if changed_checkout:
+        lines += ["", f"CHECKOUT CHANGED: the launcher names files in {REPO_ROOT} that changed outside "
+                  "the fresh-agent's report while it ran.",
+                  "Run `git status --short` there and read each file it names; revert only the changes "
+                  "the fresh-agent made, because another agent-session working in the checkout may have "
+                  "made the rest."]
+    return True, changed_checkout, lines
 
 
 def main() -> int:
@@ -167,7 +189,7 @@ def main() -> int:
                 FOLLOWER_TIERS))
 
     report_lines = []
-    for _, section in follower_results:
+    for _, _, section in follower_results:
         report_lines += section + [""]
     report_lines += ["## Scripts the message names", ""]
     scripts = scripts_and_flags_named_in_agent_facing_message(message)
@@ -176,7 +198,9 @@ def main() -> int:
     for script, flags in scripts.items():
         report_lines += named_script_existence_and_flags_in_help_check_report_lines(script, flags)
     print("\n".join(report_lines))
-    return 0 if all(answered for answered, _ in follower_results) else 1
+    if not all(answered for answered, _, _ in follower_results):
+        return 1
+    return EXIT_CHECKOUT_CHANGED if any(changed for _, changed, _ in follower_results) else 0
 
 
 if __name__ == "__main__":
