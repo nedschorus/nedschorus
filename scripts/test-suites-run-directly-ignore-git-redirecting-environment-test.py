@@ -126,6 +126,7 @@ REMOVE_THE_VARIABLES_ANOTHER_WAY = {
 SUITES_RUN_WITH_GIT_DIR = {
     "scripts/dangling-path-citation-check-test.py": (
         "scripts/dangling-path-citation-check.py", "scripts/md-drift-lint.py",
+        "scripts/branch-leaves-no-citations-of-removed-paths-test.py",
         "scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py",
         "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
         "nc-systems/general-tools/failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py"),
