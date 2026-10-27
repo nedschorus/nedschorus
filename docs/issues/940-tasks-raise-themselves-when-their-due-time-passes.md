@@ -1,5 +1,6 @@
 ---
 issue: "[Tasks raise themselves when their due time passes or their prerequisite is met](https://github.com/nedschorus/nedschorus/issues/940)"
+kind: design
 ---
 
 # Tasks raise themselves when their due time passes or their prerequisite is met

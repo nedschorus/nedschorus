@@ -1,5 +1,6 @@
 ---
 issue: "[Agent-seat retirement as a program: the agent-seat marks itself retired, the handoff-supervisor confirms with the user and retires it, and the launchers refuse a retired name](https://github.com/nedschorus/nedschorus/issues/1125)"
+kind: design
 ---
 
 # Agent-seat retirement as a program: the agent-seat marks itself retired, the handoff-supervisor confirms with the user and retires it, and the launchers refuse a retired name

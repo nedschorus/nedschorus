@@ -1,5 +1,6 @@
 ---
 issue: "[Rationalize the repository layout: group components by owning system under nc-systems/, and a hook dispatcher](https://github.com/nedschorus/nedschorus/issues/224)"
+kind: design
 ---
 
 # Rationalize the repository layout: group components by owning system under nc-systems/, and a hook dispatcher

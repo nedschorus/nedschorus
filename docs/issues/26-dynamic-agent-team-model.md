@@ -1,5 +1,6 @@
 ---
 issue: "[Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26)"
+kind: design
 ---
 
 Issue: https://github.com/nedschorus/nedschorus/issues/26
