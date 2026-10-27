@@ -869,8 +869,8 @@ def run_launched_session_claude_code_tmpdir_cases(workspace: Path):
     for on_ned_box, expected in ((True, supervisor.NED_BOX_CLAUDE_CODE_TMPDIR),
                                  (False, "decoy-inherited-tmpdir")):
         record_path.unlink(missing_ok=True)
-        with mock.patch.object(supervisor.daily_memory_review_mark, "this_machine_is_ned_box",
-                               return_value=on_ned_box), \
+        with mock.patch.object(supervisor.handoff_user_review_of_agent_memory_stores_mark,
+                               "this_machine_is_ned_box", return_value=on_ned_box), \
                 mock.patch.dict(os.environ, {"CLAUDE_CODE_TMPDIR": "decoy-inherited-tmpdir"}):
             supervisor.launch_agent_session(str(stub_agent), "tmpdir-session", directory,
                                             "prompt").wait(timeout=60)

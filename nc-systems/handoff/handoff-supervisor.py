@@ -1537,7 +1537,7 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     # ned-box's /tmp is a small tmpfs with a per-user quota that Claude Code's per-session folders
     # filled; nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py
     # deletes the folders of exited sessions under both places.
-    if daily_memory_review_mark.this_machine_is_ned_box():
+    if handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box():
         session_environment["CLAUDE_CODE_TMPDIR"] = NED_BOX_CLAUDE_CODE_TMPDIR
     claude_json_onboarding_presets_write_or_report()
     return subprocess.Popen(command, cwd=str(working_directory), env=session_environment)
