@@ -20,8 +20,9 @@ FOR EACH SKILL named in a note, the newest note governs. The hook refuses when
 the skill was invoked before that note and has not been invoked after it, and
 this hook has not already refused for it after that note. An invocation is the
 main agent's Skill tool call naming the skill, or a user prompt carrying
-`<command-name>/<name></command-name>`, which is how Claude Code records the
-user typing the skill's command; a subagent's call (`isSidechain` true) does
+`<command-name>/<name></command-name>` as its text or in a text block, which is
+how Claude Code records the user typing the skill's command; a tool result,
+which Claude Code also writes as a `user` record, does not count; a subagent's call (`isSidechain` true) does
 not reload the skill in the main agent's context, so it does not count. A
 refusal already made is found as the Stop-hook block Claude Code records, an
 `attachment` of type `hook_blocking_error` or the `Stop hook feedback:` user
@@ -40,7 +41,7 @@ transcript or the transcript does not exist.
 
 OUTPUT: {"decision": "block", "reason": <message>}, exit 0. ON A FAULT, such
 as input that is not JSON or a transcript that cannot be read, one line on
-stderr naming it and exit 1: Claude Code records a Stop hook's exit 1 as a
+stderr naming it and saying what to do instead, and exit 1: Claude Code records a Stop hook's exit 1 as a
 non-blocking error and still ends the turn.
 
 Agent-facing messages follow
@@ -138,7 +139,12 @@ def invoked_skills(record):
         return {block["input"].get("skill") for block in content or ()
                 if isinstance(block, dict) and block.get("name") == "Skill" and isinstance(block.get("input"), dict)}
     if record.get("type") == "user":
-        return set(re.findall(r"<command-name>/([^<\s]+)</command-name>", json.dumps(content)))
+        # Tool results are `user` records too, holding their output under "content", never "text": a tool output
+        # quoting the tag is not the user typing the command.
+        texts = [content] if isinstance(content, str) else [
+            block.get("text") for block in content or () if isinstance(block, dict)]
+        return {skill for text in texts if isinstance(text, str)
+                for skill in re.findall(r"<command-name>/([^<\s]+)</command-name>", text)}
     return set()
 
 
@@ -201,7 +207,10 @@ def main():
         output = run(sys.stdin.read())
     except Exception as error:
         print(f"checkout-freshness-changed-skill-invoke-again-refusal-stop-hook: the hook failed, so it did not "
-              f"check whether a skill main changed needs invoking again; the agent need not act: {error!r}",
+              f"check whether the main branch changed a skill this agent-session invoked: {error!r}. Your turn can "
+              f"still end. If a note beginning `checkout-freshness: main changed` named a "
+              f"skill whose steps you will still act on in this agent-session: invoke that skill again with the "
+              f"Skill tool before you act on the skill's next step.",
               file=sys.stderr)
         return 1
     if output is not None:

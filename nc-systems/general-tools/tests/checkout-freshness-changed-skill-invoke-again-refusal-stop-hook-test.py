@@ -75,6 +75,12 @@ def typed_command(skill=SKILL):
         f"<command-args></command-args>")}}
 
 
+def tool_result_quoting_typed_command(skill=SKILL):
+    """The `user` record Claude Code writes for a tool's output, here a grep that printed the typed-command tag."""
+    return {"type": "user", "isSidechain": False, "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "toolu_1", "content": f"<command-name>/{skill}</command-name>"}]}}
+
+
 def prompt(text="go on"):
     return {"type": "user", "isSidechain": False, "message": {"role": "user", "content": text}}
 
@@ -179,6 +185,10 @@ def main():
         check_silent("a typed command in a prompt made of text blocks counts after the note: silent",
                      run_on([skill_call(), note(), {"type": "user", "message": {"role": "user", "content": [
                          {"type": "text", "text": f"<command-name>/{SKILL}</command-name>"}]}}], directory))
+        check_blocks("a tool result quoting the typed command after the note is no invocation: blocks",
+                     run_on([skill_call(), note(), tool_result_quoting_typed_command()], directory), OPENING)
+        check_silent("a tool result quoting the typed command before the note is no invocation: silent",
+                     run_on([tool_result_quoting_typed_command(), note()], directory))
         note_text = freshness.SKILL_CHANGED_NOTE.format(path=PATH, skill=SKILL)
         for kind in ("async_hook_response", "hook_success"):
             check_silent(f"the note's text in an attachment of type {kind} is no note: silent",
@@ -211,6 +221,7 @@ def main():
         code, stdout, stderr = run_hook(json.dumps({"transcript_path": str(unreadable)}))
         check("a transcript that cannot be read: exit 1, one stderr line saying the check did not run",
               code == 1 and stdout == "" and "the hook failed, so it did not check" in stderr
+              and "invoke that skill again with the Skill tool" in stderr
               and len(stderr.strip().split("\n")) == 1, f"exit {code}, stdout {stdout!r}, stderr {stderr!r}")
         code, stdout, stderr = run_hook("not json")
         check("input that is not JSON: exit 1 with a stderr line", code == 1 and stdout == ""
