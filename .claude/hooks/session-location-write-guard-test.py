@@ -126,6 +126,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           str(result.returncode))
     check("the reference refusal names the marker", ".location-write-approved" in result.stderr,
           result.stderr)
+    check("the reference refusal asks for the user's approval of this write",
+          "If the user has approved this write in this checkout, quote his approval words"
+          in result.stderr and "merge-lane resolving" not in result.stderr, result.stderr)
 
     result = run_hook(reference, str(reference / "book.ipynb"), decoy, notebook=True)
     check("NotebookEdit's notebook_path is judged too", result.returncode == 2,
@@ -163,6 +166,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           str(result.returncode))
     check("the cross refusal says the session works in another checkout",
           "this session works in another checkout" in result.stderr, result.stderr)
+    check("the cross refusal asks for the user's approval of writing the path directly",
+          "If the user has approved writing " in result.stderr
+          and " directly, quote his approval words" in result.stderr
+          and "merge-lane resolving" not in result.stderr, result.stderr)
     result = run_hook(seat, str(reference / "brand" / "new" / "dir" / "note.md"), decoy)
     check("a write creating new directories in the reference is still judged",
           result.returncode == 2, str(result.returncode))

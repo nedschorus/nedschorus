@@ -65,9 +65,8 @@ REFERENCE_DENY_MESSAGE = (
     "Refusing to write {path}: this session sits in the machine's reference checkout, the "
     "main worktree other agents read as the truth about main.\n"
     "Do the work in your own worktree, and leave this checkout as it is.\n"
-    "If this write is legitimate work in this checkout, such as merge-lane resolving "
-    "conflicts with the user's approval, quote his approval words into {marker} at the "
-    "checkout root with a shell command (printf or echo), then try the write again; the "
+    "If the user has approved this write in this checkout, quote his approval words into "
+    "{marker} at the checkout root with a shell command (printf or echo), then try the write again; the "
     "marker is used up by the one call it approves, and the Write tool cannot create the "
     "marker, because this guard refuses that Write."
 )
@@ -90,8 +89,8 @@ CROSS_REFERENCE_DENY_MESSAGE = (
     "Do the work in your own worktree.\n"
     "If the change must reach the reference checkout, send it through a branch and "
     "merge-lane.\n"
-    "If this write is legitimate direct work, such as merge-lane resolving conflicts with "
-    "the user's approval, quote his approval words into {marker} at the root of your own "
+    "If the user has approved writing {path} directly, quote his approval words into "
+    "{marker} at the root of your own "
     "checkout, then try the write again; the marker is used up by the one call it approves."
 )
 
