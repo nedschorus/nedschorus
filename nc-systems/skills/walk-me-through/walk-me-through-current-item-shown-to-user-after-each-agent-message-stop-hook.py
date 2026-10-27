@@ -200,16 +200,16 @@ REPLY_LACKS_CLOSING_LINE_INSTRUCTIONS = (
     "End your reply with each waiting item's closing line, on a line of its own, with nothing after it, as the "
     "walk-me-through skill writes it, with <the point> as its walk-document heading states it:\n{closing_lines}",
     "If the link you wrote is the item's current page, published with the Artifact tool, and the walk-minutes "
-    "are out of date, add the line `#item_page item N of M <that link>` at the end of {minutes} instead, since "
-    "the newest such line for an item is the one this hook reads.",
+    "are out of date, keep the link and add the line `#item_page item N of M <that link>` at the end of "
+    "{minutes}, since the newest such line for an item is the one this hook reads.",
     "If his answer moved the approval-walk on, first run `python3 nc-systems/skills/walk-me-through/"
     "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check`, adding the "
     "flag --help lists for his answer, if it lists one; when check passes, run the close command "
     "it prints. Together they set the `#next_to_present` line in {minutes} to the item now "
-    "waiting, so do not set that line by hand; then name the item now waiting. When check fails, "
-    "do what it printed instead.",
+    "waiting, so do not set that line by hand; then end your reply with the closing line of the item now "
+    "waiting instead. When check fails, do what it printed instead.",
     "If he ended or abandoned the approval-walk, add the line `#next_to_present none, closed` "
-    "at the end of {minutes} instead of naming the item, and end the turn.",
+    "at the end of {minutes} instead of writing a closing line, and end the turn.",
 )
 OLD_MARKER_INSTRUCTIONS = (
     "Add this line at the end of {minutes}, below every earlier marker line, and leave "

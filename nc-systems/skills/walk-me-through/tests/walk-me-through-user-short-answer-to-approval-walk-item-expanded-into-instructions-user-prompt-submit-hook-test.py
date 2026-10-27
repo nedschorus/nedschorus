@@ -445,6 +445,8 @@ def r_meaning_lines(word, item):
     """The lines R gives when the hook could not tell which item is waiting."""
     return [f"\"{word}\" asks to see {item} again: reply with only its closing line, as the walk-me-through skill "
             "writes it, with the link from the minutes' newest `#item_page` line for it, and wait for his answer.",
+            "If that line records a failed publish, leave the link out of the closing line, keeping only its link "
+            "text and what follows the link.",
             "If the minutes have no `#item_page` line for it, first publish the item and record the line, as the "
             "skill says."]
 
@@ -459,8 +461,9 @@ def r_lines(word, item, point=None, minutes=" <minutes>"):
             f"If the publish fails, add the line `#item_page {item} publish failed: <what the Artifact tool said>` "
             "instead, and leave the link out of the closing line, keeping only its link text and what follows the "
             "link.",
-            "Then reply with only the item's closing line, with the page's link in place of `<page link>`, and wait "
-            f"for his answer: [{label}](<page link>) · {LETTERS_AFTER_LINK}"]
+            "Then reply with only the item's closing line, with the page's link in place of `<page link>`, or "
+            f"without the link if the publish failed, and wait for his answer: [{label}](<page link>) · "
+            f"{LETTERS_AFTER_LINK}"]
 
 
 def numbered_r_lines(number, item, point=None, minutes=" <minutes>"):

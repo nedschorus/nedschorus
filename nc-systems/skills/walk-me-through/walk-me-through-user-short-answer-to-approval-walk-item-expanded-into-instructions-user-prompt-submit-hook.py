@@ -265,6 +265,8 @@ MEANINGS = {
           ("Z means defer: postpone your last question or proposal and record it as a task.",)),
     "R": (("\"{word}\" asks to see {item} again: reply with only its closing line, as the walk-me-through skill "
            "writes it, with the link from the minutes' newest `#item_page` line for it, and wait for his answer.",
+           "If that line records a failed publish, leave the link out of the closing line, keeping only its link "
+           "text and what follows the link.",
            "If the minutes have no `#item_page` line for it, first publish the item and record the line, as the "
            "skill says."),
           ("{word} asks to see your last question or proposal again: show it in full, word for word, "
@@ -300,8 +302,8 @@ REPEAT_UNPUBLISHED_LINES = (
     "`#item_page {item} <page link>`, because the item's page is what shows the user the item in full.",
     "If the publish fails, add the line `#item_page {item} publish failed: <what the Artifact tool said>` "
     "instead, and leave the link out of the closing line, keeping only its link text and what follows the link.",
-    "Then reply with only the item's closing line, with the page's link in place of `<page link>`, and wait for "
-    "his answer: {closing_line}")
+    "Then reply with only the item's closing line, with the page's link in place of `<page link>`, or without "
+    "the link if the publish failed, and wait for his answer: {closing_line}")
 NUMBERED_R_WAITING_ITEM_LINE = "Then end your message naming the item waiting for his answer, {item}."
 # Check records one answer for every item the `#next_to_present` line names, and close moves that line on.
 ONE_ITEM_AT_A_TIME_LINE = (
