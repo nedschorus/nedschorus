@@ -157,7 +157,8 @@ line is no longer the only copy — the verbatim text travels beside it.
 field as built on 2026-08-23; the 2026-08-29 narrowing supersedes them where
 they disagree, and the scripts stay the normative description. What changed:
 the writer records ONLY subagents still working when the handoff is written —
-last event a spawn or a resume — one field each, carrying the agent id and
+last event a spawn, a resume, or an interim task-notification, which Claude Code
+sends when a subagent stops with background work of its own still running — one field each, carrying the agent id and
 the job description and nothing else (`spawned-subagent-1: a309071aa3681d280
 "Fix ignored-path write blind spot"`). Subagents that completed, failed, or
 were stopped are not recorded at all, and a session whose subagents all ended
@@ -210,8 +211,8 @@ meets a handoff without it, derives an empty roster, and says nothing about
 subagents. Nothing migrates.
 
 **`last event` is stated, never interpreted.** It is whatever the transcript
-last recorded — `spawned`, `resumed`, or any `<status>` a notification
-carries, which across the measured transcripts means `completed`, `killed`,
+last recorded — `spawned`, `resumed`, `waiting on its own background work` for an
+interim notification, or any `<status>` a final notification carries, which across the measured transcripts means `completed`, `killed`,
 `failed` and `stopped`. That list is open by construction rather than
 exhaustive: the derivation copies the status through instead of matching it
 against a set, so a status the harness adds later appears here with no code
