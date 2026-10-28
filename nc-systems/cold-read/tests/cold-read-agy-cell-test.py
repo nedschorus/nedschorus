@@ -244,7 +244,7 @@ def agy_cell_copy_killing_agy_after_seconds(repository, timeout_seconds, margin_
     cell_text = copied_cell.read_text(encoding="utf-8")
     for constant_line, value in (
             ("COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n", timeout_seconds),
-            ("AGY_PRINT_TIMEOUT_MARGIN_SECONDS = 60\n", margin_seconds)):
+            ("COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS = 60\n", margin_seconds)):
         if cell_text.count(constant_line) != 1:
             raise AssertionError(f"the agy cell no longer holds {constant_line!r} once")
         cell_text = cell_text.replace(

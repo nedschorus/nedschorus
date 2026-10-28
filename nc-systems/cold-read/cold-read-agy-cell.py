@@ -145,9 +145,10 @@ AGY_PRINT_TIMEOUT = f"{COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS // 60}m"
 # agy does not always honour --print-timeout, so the cell kills agy's process
 # group this long after agy's own deadline. The fast read on the Mac sizes its
 # ssh time limit from the sum.
-AGY_PRINT_TIMEOUT_MARGIN_SECONDS = 60
+COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS = 60
 COLD_READ_AGY_CELL_PER_MODEL_RUN_KILL_AFTER_SECONDS = (
-    COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS + AGY_PRINT_TIMEOUT_MARGIN_SECONDS)
+    COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS
+    + COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS)
 
 GEMINI_API_KEY_FILE = pathlib.Path.home() / ".config" / "nedschorus" / "gemini-api.key"
 AGY_MISSING_GEMINI_API_KEY_LINE_PREFIX = (

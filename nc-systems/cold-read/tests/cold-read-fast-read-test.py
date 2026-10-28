@@ -903,8 +903,8 @@ with tempfile.TemporaryDirectory() as scratch:
         copied_agy_cell.read_text(encoding="utf-8")
         .replace("COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n",
                  "COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 1\n")
-        .replace("AGY_PRINT_TIMEOUT_MARGIN_SECONDS = 60\n",
-                 "AGY_PRINT_TIMEOUT_MARGIN_SECONDS = 1\n"),
+        .replace("COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS = 60\n",
+                 "COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS = 1\n"),
         encoding="utf-8")
     suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
     result = run_fast_read(
