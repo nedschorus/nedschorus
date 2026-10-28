@@ -1163,11 +1163,20 @@ with tempfile.TemporaryDirectory() as workspace:
         SHARE_PROBE_SESSION_ID = "handoff-threshold-hook-test-share-session"
         share_fired_marker_file = hook.fired_marker_path(SHARE_PROBE_SESSION_ID)
         share_payload = {"session_id": SHARE_PROBE_SESSION_ID}
+        # Live sessions keep walk-closed markers written before the lower threshold was removed.
+        share_walk_closed_marker_file = hook.HANDOFF_DIRECTORY / (
+            f"{SHARE_PROBE_SESSION_ID}"
+            "-handoff-due-at-lower-context-threshold-after-approval-walk-closed")
+        share_walk_closed_marker_file.write_text("", encoding="utf-8")
 
         twenty_one = transcript_of(workspace, "twenty-one.jsonl", [
             compaction_record(50_000), usage_record(160_000)])  # 16% + 5% = 21%
-        result = run_hook({**share_payload, "transcript_path": str(twenty_one)})
-        check("the hook stays silent at 21% with the dropped tokens",
+        try:
+            result = run_hook({**share_payload, "transcript_path": str(twenty_one)})
+        finally:
+            share_walk_closed_marker_file.unlink(missing_ok=True)
+        check("the hook stays silent at 21% with the dropped tokens, "
+              "even with a walk-closed marker left on disk",
               result.returncode == 0 and not result.stderr.strip()
               and not share_fired_marker_file.exists(),
               f"code {result.returncode}, stderr {result.stderr[:200]}")
