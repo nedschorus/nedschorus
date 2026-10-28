@@ -1025,6 +1025,21 @@ with tempfile.TemporaryDirectory() as scratch_name:
               history_paths == [tilde_home / "recorded-for-this-case"
                                 / runner.TEST_CASE_FAILURE_HISTORY_FILE_NAME], history_paths)
 
+        history_paths.clear()
+        run_scratch = scratch / "main-records-left-unchanged"
+        run_scratch.mkdir()
+        with replaced(append_test_case_failure_history=note_history_path, **as_if_bwrap), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = runner.main(["--checkout", str(run_repository),
+                                "--lock-file", str(run_scratch / "run.lock"),
+                                "--log-dir", str(run_scratch / "logs"),
+                                "--recorded-inputs-directory", str(run_scratch / "recorded"),
+                                "--leave-recorded-inputs-and-failure-history-unchanged"])
+        check("with --leave-recorded-inputs-and-failure-history-unchanged, a run in test "
+              "sandboxes adds nothing to the failure history, and still writes its JUnit XML",
+              history_paths == [] and (run_scratch / "logs" / runner.JUNIT_XML_FILE_NAME).exists(),
+              (code, history_paths))
+
     code, printed, logs = main_with(
         "no-bwrap", signal_sandbox=lambda **options: ((), "bwrap is not on PATH"))
     check("without test sandboxes there is no admission, and no case times, JUnit XML or "
