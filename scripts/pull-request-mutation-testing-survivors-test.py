@@ -284,7 +284,7 @@ def runner_output_with_suites_timed_out(timed_out, others=()):
 
 
 def runner_output_with_test_sandbox_not_started(suite):
-    """The suite runner's FAIL lines for a suite whose test sandbox did not start, from its code."""
+    """The suite runner's FAIL lines for a suite whose nc-test-sandbox did not start, from its code."""
     runner = load_test_suite_runner()
     failed = {"suite": suite, "exit": 1, "seconds": 0.1, "skips": [],
               "test sandbox did not start": True}
@@ -309,7 +309,7 @@ def test_command_output_when_the_machine_lock_is_held(scratch):
     repository, _, _ = scratch_repository(scratch, HEAD_FILES)
     lock_file = Path(scratch) / "machine.lock"
     environment = dict(os.environ)
-    # Suites without a test sandbox: the path that takes the machine lock.
+    # Suites without an nc-test-sandbox: the path that takes the machine lock.
     environment[load_test_suite_runner().SIGNAL_SANDBOX_INSIDE_VARIABLE] = "1"
     with open(lock_file, "a+") as holder:
         fcntl.flock(holder, fcntl.LOCK_EX)
@@ -568,13 +568,13 @@ def run_cases():
                "failure history could not be written: full\n"
                "SUMMARY: 1 passed, 0 failed, 1 total\n")]],
          1, "0 killed, 0 survived, 1 errored"),
-        ("a killed mutant whose only failing suite's test sandbox did not start is ERRORED, "
+        ("a killed mutant whose only failing suite's nc-test-sandbox did not start is ERRORED, "
          "not killed",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
            killed_with_output(runner_output_with_test_sandbox_not_started(
                "scripts/thing-test.py"))]],
          1, "0 killed, 0 survived, 1 errored"),
-        ("a killed mutant with one suite failing beside a test sandbox that did not start is "
+        ("a killed mutant with one suite failing beside an nc-test-sandbox that did not start is "
          "killed",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
            killed_with_output(runner_output_with_test_sandbox_not_started(
@@ -1123,8 +1123,8 @@ def run_cases():
                                    path_override=f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
                                    dropped_variables=(inside_variable,))
             _, words = config_and_test_command_words(control)
-            check("with the sandbox on, the run says each suite runs in its own test sandbox, named by the bwrap program",
-                  f"each suite runs in its own test sandbox: {fake_bin / 'bwrap'}"
+            check("with the sandbox on, the run says each suite runs in its own nc-test-sandbox, named by the bwrap program",
+                  f"each suite runs in its own nc-test-sandbox: {fake_bin / 'bwrap'}"
                   in completed.stdout, f"rc={completed.returncode} out={completed.stdout}")
             check("a suite listed to run outside the sandbox is named in a NO SANDBOX line",
                   f"NO SANDBOX  {outside_suite} runs WITHOUT the signal sandbox"

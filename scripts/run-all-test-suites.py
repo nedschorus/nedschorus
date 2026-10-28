@@ -16,7 +16,7 @@ Usage:
   --python      the interpreter that runs each suite file; default, the one
                 running this program
   -j            how many suites of this run may run at once; default, on Linux
-                in test sandboxes, every suite to run, up to admission's
+                in nc-test-sandboxes, every suite to run, up to admission's
                 ceiling, and otherwise the machine's core count, or the number
                 of suites to run when that is fewer
   --log-dir     where each suite's output and the report are written;
@@ -24,7 +24,7 @@ Usage:
                 removed two days after its run ends. Two runs cannot share
                 one --log-dir: the second exits 3
   --lock-file   default ~/.claude/.run-all-test-suites.lock. Where each suite
-                runs in a test sandbox (Linux with bwrap), no lock is taken: the
+                runs in an nc-test-sandbox (Linux with bwrap), no lock is taken: the
                 run records and the admission directory beside this path are
                 shared by every run that names it. Elsewhere (macOS, or Linux
                 without bwrap), the lock that keeps two runs on one machine apart
@@ -92,7 +92,7 @@ PID namespace of their own. The suite runs as the same user, so a signal a
 suite sends can reach only the processes it started, never the agent-seats
 that run as the same account.
 
-THE SIGNAL SANDBOX IS ALSO EACH SUITE'S TEST SANDBOX, built when the
+THE SIGNAL SANDBOX IS ALSO EACH SUITE'S NC-TEST-SANDBOX, built when the
 suite starts and gone when it ends. It hides by default, because a list of
 files or sockets to cover misses every one not on it and every one made after
 the list. The file system is read-only, except: a private /tmp, which TMPDIR
@@ -260,14 +260,14 @@ is installed on it, by putting SKIPPED_CASE_THIS_MACHINE_CANNOT_RUN_MARKER,
 `SKIP  [this machine cannot run it] <case>: <reason>`. A marked skip is
 counted and printed like any other; it only changes selection, below.
 
-RUNS THAT OVERLAP, AND ONE RUN AT A TIME WITHOUT TEST SANDBOXES. Measured
+RUNS THAT OVERLAP, AND ONE RUN AT A TIME WITHOUT NC-TEST-SANDBOXES. Measured
 2026-09-21: two overlapping runs of scripts/resupervise-seat-test.py both exit
 0 and both print "all cases passed" while silently dropping cases to SKIP,
 because the suites share machine state. On Linux with bwrap each suite runs in
-a test sandbox of its own (see THE SIGNAL SANDBOX IS ALSO EACH SUITE'S TEST SANDBOX above), which shares no /tmp, tmux
+an nc-test-sandbox of its own (see THE SIGNAL SANDBOX IS ALSO EACH SUITE'S NC-TEST-SANDBOX above), which shares no /tmp, tmux
 directory or home directory writes with any other suite, so runs overlap
 freely and no lock is taken; ADMISSION below decides when each suite starts.
-Where suites do not run in test sandboxes, a run takes an exclusive lock on
+Where suites do not run in nc-test-sandboxes, a run takes an exclusive lock on
 --lock-file, and a second run on the same machine exits 3 without running
 anything, or, with --wait-for-lock-seconds, waits for the lock first. A wait blocks in the
 kernel's queue: a caller that instead retried every few seconds lost the lock
@@ -292,7 +292,7 @@ directories runs made before records existed are removed once nothing in
 them has changed for two days. macOS has no /proc to read start times
 from, so there a run still cleans up after the lock's last holder.
 
-ADMISSION, on Linux in test sandboxes.
+ADMISSION, on Linux in nc-test-sandboxes.
 Every run on the machine shares one admission, kept in the directory beside
 --lock-file. A suite starts only while the machine's CPU use averaged over the
 last 5 s is under 50% and its available memory is above 10 GB, read with
@@ -336,7 +336,7 @@ which the floor covers; no pass exceeded this limit measured from the suite's
 fastest pass. 1800 s is six times the longest pass seen. A suite past its limit
 has its process group killed with SIGKILL; each suite starts in a session of
 its own, so the group holds every process it started except one that starts a
-session of its own. In a test sandbox the group holds the init of the suite's
+session of its own. In an nc-test-sandbox the group holds the init of the suite's
 PID namespace, whose end ends every process inside, so nothing is left; outside
 one, such a process is not reached. It is reported FAIL with `TIMEOUT after
 <n>s (limit <m>s, <k> times recorded <r>s)`, `(limit <m>s, the floor, more than
@@ -643,10 +643,10 @@ AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES = (
 # the sandbox, such as a suite that tests this program, runs its suites as they
 # are: they are already inside.
 #
-# On Linux, each suite's test sandbox is these signal-sandbox arguments, shared by every
+# On Linux, each suite's nc-test-sandbox is these signal-sandbox arguments, shared by every
 # suite, plus the per-suite arguments of bwrap_arguments_for_one_suites_test_sandbox();
-# on macOS the signal sandbox is sandbox-exec alone and there is no test sandbox. The
-# test sandbox hides by default: the
+# on macOS the signal sandbox is sandbox-exec alone and there is no nc-test-sandbox. The
+# nc-test-sandbox hides by default: the
 # file system read-only, a private /tmp, /dev and System V IPC, the home directory an
 # empty tmpfs into which only the paths in TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY are
 # bound, and /run hidden, since it holds the machine's sockets: Docker's, the system bus,
@@ -680,7 +680,7 @@ TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS = {
                  "re-creates under a new directory",
 }
 XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX = f"/run/user/{os.getuid()}"
-# Variables naming a socket or a server outside the test sandbox.
+# Variables naming a socket or a server outside the nc-test-sandbox.
 TEST_SANDBOX_OUTSIDE_SOCKET_VARIABLES = (
     "TMUX",
     "TMUX_PANE",
@@ -753,7 +753,7 @@ SUITES_RUN_WITHOUT_ANY_SANDBOX = {
     "scripts/run-all-test-suites-cleanup-after-killed-runs-real-process-test.py":
         "it starts this program, whose suites run in bwrap, which cannot start inside bwrap",
     "scripts/run-all-test-suites-test-sandbox-escape-test.py":
-        "it builds test sandboxes itself with bwrap, which cannot start inside bwrap",
+        "it builds nc-test-sandboxes itself with bwrap, which cannot start inside bwrap",
     "scripts/run-all-test-suites-overlapping-runs-real-process-test.py":
         "it starts this program, whose suites run in bwrap, which cannot start inside bwrap",
     "scripts/mac-request-from-ned-box-forced-command-test.py":
@@ -769,8 +769,8 @@ SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY = {
         "it replays at two refs, each in a worktree it adds to this repository",
 }
 
-# Suites whose test sandbox keeps the machine's network, each with its reason. Every
-# other suite's test sandbox has a network of its own with only loopback, so no
+# Suites whose nc-test-sandbox keeps the machine's network, each with its reason. Every
+# other suite's nc-test-sandbox has a network of its own with only loopback, so no
 # suite reaches a port or an abstract Unix socket (such as the X server's) outside it.
 SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK = {}
 
@@ -2317,7 +2317,7 @@ def signal_sandbox(platform=None, environment=None, which=shutil.which,
     return prefix, None
 
 
-# Directories the test sandbox already makes private or hides, which the scan for
+# Directories the nc-test-sandbox already makes private or hides, which the scan for
 # writable directories does not walk.
 TEST_SANDBOX_PRIVATE_DIRECTORY_PATHS_NOT_SCANNED_FOR_WRITABLE_DIRECTORIES = ("/proc", "/sys", "/dev", "/tmp", "/run")
 
@@ -2347,7 +2347,7 @@ def directories_this_account_can_create_files_in_hidden_in_test_sandbox():
     if unhidden:
         raise SignalSandboxCouldNotStart(
             f"{', '.join(unhidden)}, which the scan for directories this account can write "
-            f"never walks, would not be hidden whole in the test sandbox, so what "
+            f"never walks, would not be hidden whole in the nc-test-sandbox, so what "
             f"{'it holds' if len(unhidden) == 1 else 'they hold'} would show inside it")
     pruned = tuple(dict.fromkeys(
         (*pruned, *TEST_SANDBOX_DIRECTORIES_THE_WRITABLE_DIRECTORY_SCAN_NEVER_WALKS)))
@@ -2395,7 +2395,7 @@ INTERPRETER_LOADED_PATHS_TIMEOUT_SECONDS = 60
 
 @functools.lru_cache(maxsize=None)
 def interpreter_directories_shown_read_only_in_test_sandbox(interpreter, hidden=None):
-    """The paths an interpreter loads that a test sandbox would hide: its executable under
+    """The paths an interpreter loads that an nc-test-sandbox would hide: its executable under
     the name given and its real one, its standard library, its site-packages, a virtual
     environment's pyvenv.cfg and its shared libpython, each as the interpreter reports it;
     none for an interpreter that loads nothing hidden.
@@ -2414,12 +2414,12 @@ def interpreter_directories_shown_read_only_in_test_sandbox(interpreter, hidden=
     except (OSError, subprocess.TimeoutExpired) as error:
         raise SignalSandboxCouldNotStart(
             f"the interpreter {given} could not report the paths it loads, so what it needs "
-            f"inside the test sandbox is not known: {error}") from error
+            f"inside the nc-test-sandbox is not known: {error}") from error
     loaded = answer.stdout.strip().split("\0")
     if answer.returncode != 0 or len(loaded) < 6 or not all(map(os.path.isabs, loaded)):
         raise SignalSandboxCouldNotStart(
             f"the interpreter {given} could not report the paths it loads, so what it needs "
-            f"inside the test sandbox is not known: exit {answer.returncode}: "
+            f"inside the nc-test-sandbox is not known: exit {answer.returncode}: "
             f"{(answer.stderr or answer.stdout).strip()}")
     shown = []
     for path in [given, *loaded]:
@@ -2433,7 +2433,7 @@ def interpreter_directories_shown_read_only_in_test_sandbox(interpreter, hidden=
                    for top in hidden):
                 raise SignalSandboxCouldNotStart(
                     f"the interpreter {given} loads {candidate}, which is or holds a "
-                    f"directory the test sandbox hides whole, so showing it would show that "
+                    f"directory the nc-test-sandbox hides whole, so showing it would show that "
                     f"directory; run the suites with an interpreter installed elsewhere")
             if candidate not in shown:
                 shown.append(candidate)
@@ -2444,7 +2444,7 @@ def interpreter_directories_shown_read_only_in_test_sandbox(interpreter, hidden=
 
 def paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(interpreters, program_files=(),
                                                                 checkout=None):
-    """Every path a suite's launch reads that a test sandbox would hide: each interpreter's
+    """Every path a suite's launch reads that an nc-test-sandbox would hide: each interpreter's
     directories, and for each program file run inside the sandbox, such as the launcher that
     checks the sandbox from inside it, the git checkout holding it, since the program loads
     repository modules from beside and above its own directory. A program file in the
@@ -2483,7 +2483,7 @@ def git_checkout_holding_directory_or_none(directory):
 
 
 def directories_hidden_whole_in_test_sandbox():
-    """Every directory a test sandbox shows as private or empty, the scanned ones included."""
+    """Every directory an nc-test-sandbox shows as private or empty, the scanned ones included."""
     return (*TEST_SANDBOX_PRIVATE_DIRECTORY_PATHS_NOT_SCANNED_FOR_WRITABLE_DIRECTORIES,
             REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX,
             *TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS,
@@ -2509,7 +2509,7 @@ def empty_file_bound_over_a_listening_socket_in_test_sandbox():
         os.close(descriptor)
     if not stat.S_ISREG(status.st_mode) or status.st_size != 0 or status.st_uid != os.getuid():
         raise SignalSandboxCouldNotStart(
-            f"{path}, the empty file that covers a listening socket inside the test "
+            f"{path}, the empty file that covers a listening socket inside the nc-test-"
             f"sandbox, is not an empty regular file of this account; delete it, "
             f"then run this again")
     return str(path)
@@ -2563,7 +2563,7 @@ def bwrap_arguments_for_one_suites_test_sandbox(checkout, writable_paths=(), sui
         raise SignalSandboxCouldNotStart(
             f"the git common directory of the checkout {real_checkout} could not be found "
             f"(git rev-parse --git-common-dir named {common!r}), so it could not be kept "
-            f"read-only inside the test sandbox")
+            f"read-only inside the nc-test-sandbox")
     # A bind made after the checkout's does not show under a second name the checkout was
     # bound at, so each protection is made under every name the checkout has.
     given_checkout = Path(os.path.abspath(checkout))
@@ -2588,8 +2588,8 @@ def bwrap_arguments_for_one_suites_test_sandbox(checkout, writable_paths=(), sui
 
 
 def broad_covers_of_one_suites_test_sandbox():
-    """The bwrap arguments that hide whole directories and listening sockets in a test
-    sandbox, to come before every bind of a path the suite needs."""
+    """The bwrap arguments that hide whole directories and listening sockets in an
+    nc-test-sandbox, to come before every bind of a path the suite needs."""
     arguments = []
     for directory in directories_this_account_can_create_files_in_hidden_in_test_sandbox():
         arguments += ["--tmpfs", directory]
@@ -2642,7 +2642,7 @@ def listening_unix_sockets_the_test_sandbox_would_show(proc_net_unix="/proc/net/
 
 
 def uncovered_listening_sockets_report_line_or_none(proc_net_unix="/proc/net/unix"):
-    """The report's line naming listening sockets the test sandbox does not hide, because this program cannot reach them."""
+    """The report's line naming listening sockets the nc-test-sandbox does not hide, because this program cannot reach them."""
     unreachable = []
     listening_unix_sockets_the_test_sandbox_would_show(
         proc_net_unix, unreachable, hidden=directories_hidden_whole_in_test_sandbox())
@@ -2650,15 +2650,15 @@ def uncovered_listening_sockets_report_line_or_none(proc_net_unix="/proc/net/uni
         return None
     names = sorted(set(unreachable))
     if len(names) == 1:
-        start = "a listening socket that the test sandbox does not hide, because this program cannot reach it"
+        start = "a listening socket that the nc-test-sandbox does not hide, because this program cannot reach it"
     else:
-        start = "listening sockets that the test sandbox does not hide, because this program cannot reach them"
+        start = "listening sockets that the nc-test-sandbox does not hide, because this program cannot reach them"
     return f"{start} and so neither can a suite: {', '.join(names)}; the run goes on, and nothing needs doing"
 
 
 def command_prefix_starting_one_suite_in_its_test_sandbox(sandbox_prefix, checkout, writable_paths=(),
                                                          suite=None, read_only_paths=()):
-    """The sandbox prefix with one suite's test sandbox added under bwrap."""
+    """The sandbox prefix with one suite's nc-test-sandbox added under bwrap."""
     if not does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix):
         return tuple(sandbox_prefix)
     return (*sandbox_prefix,
@@ -2712,7 +2712,7 @@ def signal_sandbox_refusal(error, program=PROGRAM):
 
 def signal_sandbox_line(prefix, unconfined_because):
     if does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(prefix):
-        return f"each suite runs in its own test sandbox: {' '.join(prefix)}"
+        return f"each suite runs in its own nc-test-sandbox: {' '.join(prefix)}"
     if prefix:
         return (f"each suite runs in a sandbox that refuses its signals to any process "
                 f"outside it: {' '.join(prefix)}")
@@ -2723,7 +2723,7 @@ def signal_sandbox_line(prefix, unconfined_because):
 
 
 TEST_SANDBOX_DID_NOT_START_NOTE = (
-    f"\n{PROGRAM}: the suite did not start: bwrap could not build its test sandbox, for the "
+    f"\n{PROGRAM}: the suite did not start: bwrap could not build its nc-test-sandbox, for the "
     f"reason bwrap printed above.\n"
     f"If bwrap says it can't create a file at a path, that path is a socket or credential "
     f"file that disappeared between this program's scan and the sandbox's start: run the "
@@ -2764,8 +2764,8 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
     and its result carries "stopped by".
 
     With in_cgroup_scope, the suite runs in a cgroup scope of its own and its CPU seconds
-    and peak memory are read from there; with nice, at low priority. Inside its test
-    sandbox the suite may write only the checkout and its own recorded-input files: the
+    and peak memory are read from there; with nice, at low priority. Inside its
+    nc-test-sandbox the suite may write only the checkout and its own recorded-input files: the
     run's log directory, where this program writes, stays out of its reach."""
     platform = sys.platform if platform is None else platform
     log_file = log_path_for(log_dir, suite)
@@ -2796,7 +2796,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                        "-o", str(strace_dir / "trace"), *command]
     if suite in SUITES_RUN_WITHOUT_ANY_SANDBOX:
         sandbox_prefix = ()
-    # The test sandbox is built from Linux's /proc and bwrap, so nothing of it is built
+    # The nc-test-sandbox is built from Linux's /proc and bwrap, so nothing of it is built
     # on another platform, whatever the prefix.
     if platform.startswith("linux"):
         if does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix):
@@ -2936,7 +2936,7 @@ def kill_test_suite_process_group(process):
     """SIGKILL the suite's process group, which every process it started stays in unless
     it starts a session of its own.
 
-    In a test sandbox the group holds the init of the suite's PID namespace, since bwrap
+    In an nc-test-sandbox the group holds the init of the suite's PID namespace, since bwrap
     is not given --new-session, and the init's end ends every process in the namespace.
     Called before the suite's first process is reaped, so its process group id is still
     its own."""
@@ -3433,7 +3433,7 @@ def why_suite_failed(result):
     if result.get("stopped by"):
         return f"killed when the run was stopped by {result['stopped by']}"
     if result.get("test sandbox did not start"):
-        return (f"did not start: bwrap could not build its test sandbox "
+        return (f"did not start: bwrap could not build its nc-test-sandbox "
                 f"({describe_exit(result['exit'])})")
     timeout = result.get("timeout")
     if timeout is None:
@@ -3453,7 +3453,7 @@ SUITE_TIMEOUT_LINE = re.compile(r"^FAIL (?P<suite>.+?) TIMEOUT after \d+s \(limi
 
 
 # A suite's own verdict: the runner's line ends in describe_exit(), not in a timeout, a stop
-# or a test sandbox that did not start.
+# or an nc-test-sandbox that did not start.
 SUITE_FAILED_LINE = re.compile(
     r"^FAIL (?P<suite>\S.*?) (?:exit \d+|killed by (?:signal \d+|\S+))(?: \(| — log )")
 NOT_RUN_TO_THE_END_LINE_PREFIX = f"{PROGRAM}: not run to the end"
@@ -3594,7 +3594,7 @@ def main(argv=None, platform=None):
         print(signal_sandbox_refusal(error), file=sys.stderr)
         return EXIT_COULD_NOT_RUN
 
-    # In a test sandbox of its own each suite shares no machine state with another run's
+    # In an nc-test-sandbox of its own each suite shares no machine state with another run's
     # suites, so runs overlap, and admission decides when each suite starts.
     in_test_sandboxes = platform.startswith("linux") and \
         does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix)
@@ -3884,7 +3884,7 @@ def main(argv=None, platform=None):
                         if admission is not None:
                             admission.cancel()
                         what = ("admission failed" if isinstance(error, MachineWideTestSuiteAdmissionCouldNotDecide)
-                                else "a suite's test sandbox could not be built"
+                                else "a suite's nc-test-sandbox could not be built"
                                 if isinstance(error, SignalSandboxCouldNotStart)
                                 else "a suite could not be started")
                         report.line(f"{PROGRAM}: not run to the end — {what}: {error}")
@@ -3903,7 +3903,7 @@ def main(argv=None, platform=None):
                                  or any(result.get("stopped by") for result in results)):
             report.line(f"{PROGRAM}: not run to the end — stopped by {run_stop_signals[0]}. "
                         f"The process group of every suite still running was killed, which "
-                        f"in a test sandbox ends every process the suite started; outside "
+                        f"in an nc-test-sandbox ends every process the suite started; outside "
                         f"one, a process a suite started in a session of its own is not "
                         f"reached and may still be running. The suites not yet started "
                         f"were not run.")
@@ -3951,7 +3951,7 @@ def main(argv=None, platform=None):
                             f"{log_dir / MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME} is cut "
                             f"short, so this run exits 2 if every suite passed, and 1 if any "
                             f"failed. Fix what it names, then run this again.")
-        # The case times, suite resources and failure history come with the test sandboxes.
+        # The case times, suite resources and failure history come with the nc-test-sandboxes.
         if admission is not None:
             try:
                 write_case_times_suite_resources_and_junit_xml_of_run(log_dir, results)
