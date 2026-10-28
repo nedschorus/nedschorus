@@ -230,7 +230,7 @@ def check_refused_untouched(fixture, code, stderr, words):
     check("REFUSED" in stderr and words in stderr, stderr)
     check("do not write a handoff for this restart" in stderr, stderr)
     check("tell merge-lane-2 with SendMessage" in stderr, stderr)
-    check(not process_state(fixture.supervisor).startswith("T"),
+    check(not process_state(fixture.supervisor).startswith(("T", "t")),
           f"handoff-supervisor state {process_state(fixture.supervisor)}")
     check("NOT RESTARTED" in fixture.log_text, fixture.log_text)
 
@@ -273,7 +273,7 @@ def refuses_when_git_status_fails(fixture):
     shutil.rmtree(fixture.checkout / ".git" / "objects")
     code, _, stderr = run_main(fixture)
     check(code == 1 and "REFUSED" in stderr, stderr)
-    check(not process_state(fixture.supervisor).startswith("T"), "signalled")
+    check(not process_state(fixture.supervisor).startswith(("T", "t")), "signalled")
 
 
 @case
@@ -305,7 +305,7 @@ def refuses_when_lock_names_another_process(fixture):
         str(fixture.helper))
     code, _, stderr = run_main(fixture)
     check_refused_untouched(fixture, code, stderr, f"names process {fixture.helper}, but")
-    check(not process_state(fixture.helper).startswith("T"), "helper was signalled")
+    check(not process_state(fixture.helper).startswith(("T", "t")), "helper was signalled")
 
 
 @case
@@ -374,7 +374,7 @@ def finds_an_agent_session_started_with_resume(fixture):
              12: (10, "S", f"claude --session-id {SESSION_ID}x"),
              13: (99, "S", f"claude --session-id {SESSION_ID}"),
              14: (10, "S", "claude --session-id")}
-    check(restart.agent_session_process_id(table, 10, SESSION_ID) == 11, "not found by --resume")
+    check(restart.find_agent_session_process_id_among_handoff_supervisor_children(table, 10, SESSION_ID) == 11, "not found by --resume")
 
 
 @case
@@ -382,7 +382,7 @@ def refuses_when_the_log_cannot_be_appended(fixture):
     restart.log_path_for(fixture.handoff_directory, fixture.name).mkdir()
     code, _, stderr = run_main(fixture)
     check(code == 1 and "cannot append to the log" in stderr, stderr)
-    check(not process_state(fixture.supervisor).startswith("T"), "signalled")
+    check(not process_state(fixture.supervisor).startswith(("T", "t")), "signalled")
 
 
 @case
@@ -422,8 +422,8 @@ def a_stopped_supervisor_that_the_freeze_check_sees_running_is_continued(fixture
         return table
     code, _, stderr = run_main(fixture, read_table=table_showing_it_running)
     check(code == 1 and "did not stay stopped" in stderr, stderr)
-    check(seen[-1].startswith("T"), f"the real process was not stopped: {seen}")
-    check(not process_state(fixture.supervisor).startswith("T"), "SIGCONT was not sent")
+    check(seen[-1].startswith(("T", "t")), f"the real process was not stopped: {seen}")
+    check(not process_state(fixture.supervisor).startswith(("T", "t")), "SIGCONT was not sent")
 
 
 @case
@@ -443,7 +443,7 @@ def rejects_a_bad_agent_seat_name_and_wait(fixture):
                 raise AssertionError(f"{arguments} accepted")
             except SystemExit as exit_:
                 check(exit_.code == 2, f"exit {exit_.code}")
-    check(not process_state(fixture.supervisor).startswith("T"), "signalled")
+    check(not process_state(fixture.supervisor).startswith(("T", "t")), "signalled")
 
 
 # --- The foreground's success ---------------------------------------------------------------
@@ -453,7 +453,7 @@ def foreground_freezes_and_tells_the_agent_what_to_do(fixture):
     fixture.write_handoff(5)
     code, stdout, _ = run_main(fixture, "--handoff-wait-minutes", "7")
     check(code == 0, f"exit {code}")
-    check(process_state(fixture.supervisor).startswith("T"), "handoff-supervisor not stopped")
+    check(process_state(fixture.supervisor).startswith(("T", "t")), "handoff-supervisor not stopped")
     log_path = restart.log_path_for(fixture.handoff_directory, fixture.name)
     for line in ("Write your handoff now with the handoff skill, without --dont-restart.",
                  f"read the end of {log_path} and tell merge-lane-2 with SendMessage",
@@ -526,7 +526,7 @@ def timeout_continues_the_supervisor(fixture):
     ticks = iter([0, 0, 0, 1199, 1200, 1201, 1202])
     code, _, _ = detached_run(fixture, sleep=short_sleep, monotonic=lambda: next(ticks))
     check(code == 1, f"exit {code}")
-    check(not process_state(fixture.supervisor).startswith("T"), "not continued")
+    check(not process_state(fixture.supervisor).startswith(("T", "t")), "not continued")
     check(restart.process_is_running(fixture.claude), "agent-session was ended")
     last = fixture.log_text.strip().splitlines()[-1]
     check("NOT RESTARTED: no handoff with a restart-counter above 3" in last
@@ -543,7 +543,7 @@ def agent_session_ending_without_a_handoff_continues_the_supervisor(fixture):
         short_sleep(seconds)
     code, _, _ = detached_run(fixture, sleep=sleep)
     check(code == 1, f"exit {code}")
-    check(not process_state(fixture.supervisor).startswith("T"), "not continued")
+    check(not process_state(fixture.supervisor).startswith(("T", "t")), "not continued")
     check(f"agent-session process {fixture.claude} ended without writing a handoff"
           in fixture.log_text, fixture.log_text)
 
@@ -562,7 +562,7 @@ def a_failure_before_the_kill_continues_the_supervisor(fixture):
         raise AssertionError("the failure was not raised")
     except RuntimeError:
         pass
-    check(not process_state(fixture.supervisor).startswith("T"), "not continued")
+    check(not process_state(fixture.supervisor).startswith(("T", "t")), "not continued")
     check("NOT RESTARTED: this program failed (RuntimeError('ps vanished'))" in fixture.log_text,
           fixture.log_text)
 
@@ -603,12 +603,12 @@ def ignores_sigterm(function):
 @case
 @ignores_sigterm
 def an_agent_session_that_ignores_sigterm_gets_sigkill(fixture):
-    saved = restart.AGENT_SESSION_END_WAIT_SECONDS
-    restart.AGENT_SESSION_END_WAIT_SECONDS = 1.0
+    saved = restart.AGENT_SESSION_SIGTERM_TO_SIGKILL_WAIT_SECONDS
+    restart.AGENT_SESSION_SIGTERM_TO_SIGKILL_WAIT_SECONDS = 1.0
     try:
         code, _, _ = detached_run(fixture, sleep=sleep_that_writes_the_handoff(fixture, 4))
     finally:
-        restart.AGENT_SESSION_END_WAIT_SECONDS = saved
+        restart.AGENT_SESSION_SIGTERM_TO_SIGKILL_WAIT_SECONDS = saved
     check(code == 0, f"exit {code}")
     check(not restart.process_is_running(fixture.claude), "agent-session still running")
     check(f"process {fixture.claude} was still running 1s after SIGTERM; sent SIGKILL"
@@ -625,7 +625,7 @@ def prepare_refusal_stops_before_recovery(fixture):
     last = fixture.log_text.strip().splitlines()[-1]
     check("FAILED: resupervise-seat.py --prepare-only refused." in last
           and f"is down on {restart.socket.gethostname()}" in last
-          and f"resupervise-seat.py {fixture.name} --prepare-only; then python3" in last, last)
+          and f"resupervise-seat.py {fixture.name} --prepare-only && python3" in last, last)
 
 
 @case
@@ -654,8 +654,8 @@ def a_process_already_gone_is_not_waited_for(fixture):
             break
         time.sleep(0.05)
     lines = []
-    restart.end_process(fixture.helper, 1.0, lines.append)
-    restart.end_process(2 ** 22 + 12345, 1.0, lines.append)
+    restart.end_process_by_sigterm_then_sigkill_after_wait(fixture.helper, 1.0, lines.append)
+    restart.end_process_by_sigterm_then_sigkill_after_wait(2 ** 22 + 12345, 1.0, lines.append)
     check(lines == [], lines)
 
 
@@ -669,7 +669,7 @@ def detaching_leaves_the_session_directory_and_terminal(fixture):
         spec.loader.exec_module(module)
         from pathlib import Path
         print("before", flush=True)
-        if module.detach_into_own_session(Path({str(log_path)!r})):
+        if module.fork_child_detached_into_new_unix_session(Path({str(log_path)!r})):
             print(f"child sid={{os.getsid(0)}} pid={{os.getpid()}} cwd={{os.getcwd()}} "
                   f"stdin={{sys.stdin.read()!r}}", flush=True)
             print("child stderr", file=sys.stderr, flush=True)

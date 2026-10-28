@@ -110,8 +110,8 @@ HANDOFF_POLL_SECONDS = 2.0
 # How long tmux takes to send SIGCONT to a stopped pane process is well under this.
 FREEZE_CONFIRMATION_DELAY_SECONDS = 1.0
 # The handoff-supervisor gives an agent-session the same time to end after SIGTERM.
-AGENT_SESSION_END_WAIT_SECONDS = 20.0
-AGENT_SESSION_PROCESS_TREE_END_WAIT_SECONDS = 5.0
+AGENT_SESSION_SIGTERM_TO_SIGKILL_WAIT_SECONDS = 20.0
+AGENT_SESSION_PROCESS_TREE_SIGTERM_TO_SIGKILL_WAIT_SECONDS = 5.0
 AGENT_SEAT_NAME_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
 # recover-crashed-seats.py exits 3 when the agent-seat came up but no window opened on the Mac.
 ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_NOT_OPENED_EXIT_STATUS = 3
@@ -210,7 +210,7 @@ def refuse_when_pane_own_process(process_table, supervisor_process_id: int) -> N
             "restart this agent-seat.")
 
 
-def agent_session_process_id(process_table, supervisor_process_id: int, session_id) -> int:
+def find_agent_session_process_id_among_handoff_supervisor_children(process_table, supervisor_process_id: int, session_id) -> int:
     if not session_id:
         raise Refusal("the handoff-supervisor's state file records no session id, so its "
                       "agent-session cannot be told from its other child processes.")
@@ -259,7 +259,8 @@ def freeze_supervisor(supervisor_process_id: int, sleep=time.sleep, read_table=r
                       "set to true.")
     sleep(FREEZE_CONFIRMATION_DELAY_SECONDS)
     state = read_table().get(supervisor_process_id, (0, "gone", ""))[1]
-    if not state.startswith("T"):
+    # Linux shows a stopped process as t instead of T inside some PID namespaces, such as bwrap's.
+    if not state.startswith(("T", "t")):
         os.kill(supervisor_process_id, signal.SIGCONT)
         raise Refusal(f"handoff-supervisor {supervisor_process_id} did not stay stopped after "
                       f"SIGSTOP (ps state {state}), so SIGCONT was sent to it, and this program "
@@ -292,7 +293,7 @@ def wait_for_new_handoff(handoff_directory: Path, name: str, counter_seen: int,
         sleep(HANDOFF_POLL_SECONDS)
 
 
-def end_process(process_id: int, wait_seconds: float, log, sleep=time.sleep,
+def end_process_by_sigterm_then_sigkill_after_wait(process_id: int, wait_seconds: float, log, sleep=time.sleep,
                 monotonic=time.monotonic, read_table=read_process_table) -> None:
     try:
         os.kill(process_id, signal.SIGTERM)
@@ -349,17 +350,17 @@ def restart_after_handoff(name: str, handoff_directory: Path, checkout: Path,
         supervisor_ended = True
         os.kill(supervisor_process_id, signal.SIGKILL)
         log(f"sent SIGKILL to handoff-supervisor {supervisor_process_id}")
-        end_process(agent_session_process, AGENT_SESSION_END_WAIT_SECONDS, log,
+        end_process_by_sigterm_then_sigkill_after_wait(agent_session_process, AGENT_SESSION_SIGTERM_TO_SIGKILL_WAIT_SECONDS, log,
                     sleep, monotonic, read_table)
         log(f"agent-session process {agent_session_process} has ended")
         for process_id in agent_session_tree:
-            end_process(process_id, AGENT_SESSION_PROCESS_TREE_END_WAIT_SECONDS, log,
+            end_process_by_sigterm_then_sigkill_after_wait(process_id, AGENT_SESSION_PROCESS_TREE_SIGTERM_TO_SIGKILL_WAIT_SECONDS, log,
                         sleep, monotonic, read_table)
 
         handoff_arguments = ["--handoff-dir", str(handoff_directory)]
-        down = (f"{name} is down on {socket.gethostname()}, and its handoff waits in "
-                f"{handoff_directory}. Once the cause printed above is removed, run in a "
-                "Terminal on that machine:")
+        down = (f"The agent-seat {name} is down on {socket.gethostname()}, and its handoff "
+                f"waits in {handoff_directory}. Once the cause in the lines above this one in "
+                f"this log is removed, run in a Terminal on {socket.gethostname()}:")
         prepare_command = (f"python3 {checkout / 'scripts' / 'resupervise-seat.py'} {name} "
                            "--prepare-only")
         recover_command = f"python3 {checkout / 'scripts' / 'recover-crashed-seats.py'} {name}"
@@ -367,7 +368,7 @@ def restart_after_handoff(name: str, handoff_directory: Path, checkout: Path,
                                         [name, "--prepare-only", *handoff_arguments], log)
         if prepared != 0:
             log(f"FAILED: resupervise-seat.py --prepare-only refused. {down} "
-                f"{prepare_command}; then {recover_command}")
+                f"{prepare_command} && {recover_command}")
             return 1
         recovered = run_recovery_program(checkout, "recover-crashed-seats.py",
                                          [name, *handoff_arguments], log)
@@ -388,13 +389,14 @@ def restart_after_handoff(name: str, handoff_directory: Path, checkout: Path,
                 "started with.")
         else:
             log(f"FAILED: this program failed ({error!r}) after ending handoff-supervisor "
-                f"{supervisor_process_id}. {name} may be down on {socket.gethostname()}, with "
-                f"its handoff waiting in {handoff_directory}: run in a Terminal on that machine "
+                f"{supervisor_process_id}. The agent-seat {name} may be down on "
+                f"{socket.gethostname()}, with its handoff waiting in {handoff_directory}: run "
+                f"in a Terminal on {socket.gethostname()}: "
                 f"python3 {checkout / 'scripts' / 'recover-crashed-seats.py'} {name}")
         raise
 
 
-def detach_into_own_session(log_path: Path) -> bool:
+def fork_child_detached_into_new_unix_session(log_path: Path) -> bool:
     """Fork; return False in the foreground and True in the detached child."""
     sys.stdout.flush()
     sys.stderr.flush()
@@ -425,7 +427,7 @@ def report_refusal(refusal: Refusal, log) -> None:
         pass
 
 
-def main(argv=None, detach=detach_into_own_session, sleep=time.sleep,
+def main(argv=None, detach=fork_child_detached_into_new_unix_session, sleep=time.sleep,
          monotonic=time.monotonic, read_table=read_process_table) -> int:
     parser = argparse.ArgumentParser(
         description="Restart this agent-seat's handoff-supervisor on main's current code, "
@@ -467,7 +469,7 @@ def main(argv=None, detach=detach_into_own_session, sleep=time.sleep,
         refuse_when_pane_own_process(process_table, supervisor_process_id)
         state = supervisor.read_supervisor_state(
             supervisor.supervisor_state_path(handoff_directory, name))
-        agent_session = agent_session_process_id(
+        agent_session = find_agent_session_process_id_among_handoff_supervisor_children(
             process_table, supervisor_process_id,
             state.get(supervisor.LAUNCHED_SESSION_ID_STATE_KEY))
         counter_seen = highest_restart_counter_seen(handoff_directory, name, state)
