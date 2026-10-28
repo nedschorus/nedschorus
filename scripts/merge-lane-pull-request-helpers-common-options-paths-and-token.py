@@ -7,6 +7,13 @@ Every path option is made absolute when the arguments are parsed, before any
 script changes directory or hands a path to git -C, so a relative path means
 the same directory everywhere a script uses it.
 
+The review worktrees, pr<n>-head, pr<n>-merged and the review tools worktree
+at main, live in one directory, --merge-lane-review-worktrees-directory,
+outside the log-store: ned-box's Timeshift backup copies the log-store and
+leaves ~/.cache out. Its default is read from HOME when the arguments are
+parsed. The outputs, such as briefs and reviewer records, stay in
+--merge-lane-worktrees-and-outputs-directory.
+
 The merge account's token is read from the one file merge-gate.sh reads, so
 the gate, the retargets, the merge and every other gh call use one token.
 """
@@ -17,6 +24,7 @@ from pathlib import Path
 REPOSITORY = "nedschorus/nedschorus"
 DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY = Path(
     "/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers")
+REVIEW_WORKTREES_DIRECTORY_UNDER_HOME = Path(".cache") / "merge-lane-review-worktrees"
 
 _runner_spec = importlib.util.spec_from_file_location(
     "run_all_test_suites", Path(__file__).resolve().with_name("run-all-test-suites.py"))
@@ -49,14 +57,35 @@ def read_merge_account_token():
 
 
 def add_directory_options(parser, holds):
+    """Add the three directory options; holds names what the outputs directory holds."""
     parser.add_argument("--merge-lane-worktrees-and-outputs-directory", type=Path,
                         default=DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY,
                         help=f"holds {holds} "
                              f"(default: {DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY})")
+    parser.add_argument("--merge-lane-review-worktrees-directory", type=Path,
+                        help="holds the review worktrees pr<n>-head, pr<n>-merged and main "
+                             f"(default: ~/{REVIEW_WORKTREES_DIRECTORY_UNDER_HOME})")
     parser.add_argument("--review-tools-worktree-at-main", type=Path,
                         help="the checkout at main whose scripts run, never the pull "
                              "request's own (default: "
-                             "<merge-lane-worktrees-and-outputs-directory>/wt/main)")
+                             "<merge-lane-review-worktrees-directory>/main)")
+
+
+def directory_options_argv(arguments):
+    """Return the three directory options as arguments, for a program this one runs."""
+    return ["--merge-lane-worktrees-and-outputs-directory",
+            str(arguments.merge_lane_worktrees_and_outputs_directory),
+            "--merge-lane-review-worktrees-directory",
+            str(arguments.merge_lane_review_worktrees_directory),
+            "--review-tools-worktree-at-main", str(arguments.review_tools_worktree_at_main)]
+
+
+def pull_request_head_worktree(arguments, number):
+    return arguments.merge_lane_review_worktrees_directory / f"pr{number}-head"
+
+
+def pull_request_merged_worktree(arguments, number):
+    return arguments.merge_lane_review_worktrees_directory / f"pr{number}-merged"
 
 
 def review_tool_missing_message(arguments, relative_path):
@@ -77,11 +106,14 @@ def review_tool_missing_message(arguments, relative_path):
 
 
 def resolve_path_options(arguments):
-    """Make every Path argument absolute, then default the review tools worktree."""
+    """Default the review worktrees directory, make every Path argument absolute, then default the review tools worktree."""
+    if arguments.merge_lane_review_worktrees_directory is None:
+        arguments.merge_lane_review_worktrees_directory = (
+            Path.home() / REVIEW_WORKTREES_DIRECTORY_UNDER_HOME)
     for name, value in vars(arguments).items():
         if isinstance(value, Path):
             setattr(arguments, name, value.resolve())
     if arguments.review_tools_worktree_at_main is None:
         arguments.review_tools_worktree_at_main = (
-            arguments.merge_lane_worktrees_and_outputs_directory / "wt" / "main")
+            arguments.merge_lane_review_worktrees_directory / "main")
     return arguments

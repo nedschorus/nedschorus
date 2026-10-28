@@ -1,5 +1,6 @@
 ---
 issue: "[Memory: a daily review of both memory stores with the user](https://github.com/nedschorus/nedschorus/issues/39)"
+kind: design
 ---
 
 # Memory: a daily review of both memory stores with the user

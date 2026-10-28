@@ -909,6 +909,21 @@ check("the production plan searches ned-box's scratch worktrees, "
       len(box_checkouts) == 2
       and all("/tmp/claude-1000" in roots for roots in box_checkouts),
       box_checkouts)
+supervisor_temp_parent = re.search(
+    r'^NED_BOX_CLAUDE_CODE_TMPDIR = "([^"]+)"$',
+    (pathlib.Path(__file__).resolve().parents[1] / "nc-systems" / "handoff"
+     / "handoff-supervisor.py").read_text(encoding="utf-8"), re.M).group(1)
+check("the production plan searches ned-box's temp folders under the "
+      "handoff-supervisor's CLAUDE_CODE_TMPDIR as well as under /tmp, and "
+      "places a scratch path under either",
+      len(box_checkouts) == 2
+      and all(supervisor_temp_parent + "/claude-1000" in roots
+              for roots in box_checkouts)
+      and program.place_in_this_repository(
+          supervisor_temp_parent + "/claude-1000/-p/s/scratchpad/a.md",
+          [program.NED_BOX_SURFACES["this_repository"]])
+      == ("scratch", ["claude-1000", "-p", "s", "scratchpad", "a.md"]),
+      (supervisor_temp_parent, box_checkouts))
 check("the production log-store surface searches the whole log-store, the "
       "transcript mirror included",
       log_store == [{"name": "log-store",

@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-"""Request a handoff before context runs out, or when an approval-walk closes.
+"""Request a handoff before context runs out.
 
 It fires at a share of the context window, or when the context used plus the tokens the
-session's compactions dropped reaches a second, higher share. It also fires at a third,
-lower share of that sum when scripts/walk-files-ship.py has written the session's walk-closed
-marker, which it does on the run that ships an approval-walk's closed walk-minutes. The hook
-removes that marker whenever it reads it, except while it defers, so that a marker cannot
-fire on a later turn.
+session's compactions dropped reaches a second, higher share.
 
 Stop-hook payloads lack context usage; headless sessions lack a status line.
 The transcript supplies usage for both interactive and headless sessions."""
@@ -34,6 +30,13 @@ _transcript_records_specification = importlib.util.spec_from_file_location(
 transcript_records = importlib.util.module_from_spec(_transcript_records_specification)
 _transcript_records_specification.loader.exec_module(transcript_records)
 
+_interim_recognizer_specification = importlib.util.spec_from_file_location(
+    "claude_code_subagent_task_notification_interim_recognizer_common",
+    Path(__file__).resolve().with_name(
+        "claude-code-subagent-task-notification-interim-recognizer-common.py"))
+interim_recognizer = importlib.util.module_from_spec(_interim_recognizer_specification)
+_interim_recognizer_specification.loader.exec_module(interim_recognizer)
+
 HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
 
 # Compaction clears this shared marker because the session id survives.
@@ -43,17 +46,6 @@ FIRED_MARKER_SUFFIX = "-handoff-asked"
 def fired_marker_path(session_id: str) -> Path:
     # Read HANDOFF_DIRECTORY at call time so tests can redirect marker writes.
     return HANDOFF_DIRECTORY / f"{session_id}{FIRED_MARKER_SUFFIX}"
-
-
-HANDOFF_DUE_AT_LOWER_CONTEXT_THRESHOLD_AFTER_APPROVAL_WALK_CLOSED_MARKER_SUFFIX = (
-    "-handoff-due-at-lower-context-threshold-after-approval-walk-closed")
-
-
-def handoff_due_at_lower_context_threshold_after_approval_walk_closed_marker_path(
-        session_id: str) -> Path:
-    return HANDOFF_DIRECTORY / (
-        f"{session_id}"
-        f"{HANDOFF_DUE_AT_LOWER_CONTEXT_THRESHOLD_AFTER_APPROVAL_WALK_CLOSED_MARKER_SUFFIX}")
 
 # Caller-owned reincarnation must not replace the caller's answer with a handoff.
 REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
@@ -84,13 +76,6 @@ SHARE_WITH_COMPACTION_DROPPED = (
     "tokens its compactions dropped)"
 )
 
-WALK_CLOSED_HANDOFF_INSTRUCTION = (
-    "An approval-walk has closed, and this agent-session has used {share} of its "
-    "context window. The second number, which adds the dropped tokens to the "
-    "context used, is at or above the {walk_closed_threshold:g}% at which an "
-    "approval-walk's close starts a session-handoff. Run the /handoff skill now."
-)
-
 HANDOFF_DEFERRED_NOTICE = (
     "Context at {share} — handoff deferred while {running} run. "
     "Spawn no new subagents and start no new background tasks; the handoff "
@@ -117,7 +102,8 @@ SPAWNED_SUBAGENT_STATUS = "async_launched"
 # Check a toolUseResult key, not raw text: foreground grep output can contain the launch marker.
 BACKGROUND_TASK_LAUNCH_KEY = "backgroundTaskId"
 
-# Completion notifications use this tag across several record types.
+# Completion notifications use these tags across several record types.
+TASK_NOTIFICATION_PATTERN = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
 TASK_NOTIFICATION_TASK_ID_PATTERN = re.compile(r"<task-id>([^<]+)</task-id>")
 
 
@@ -287,7 +273,8 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
     spawned_ids = []
     launched_task_ids = []
     launched_task_age = {}
-    finished_ids = set()
+    # The last notification for a task-id decides: an interim one leaves its subagent running.
+    last_notification_is_interim = {}
     try:
         with path.open("r", encoding="utf-8", errors="replace") as handle:
             for line in handle:
@@ -314,9 +301,15 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                             launched_task_ids.append(task_id)
                             launched_task_age[task_id] = record_age_seconds(record, now)
                 if "<task-id>" in line:
-                    finished_ids.update(TASK_NOTIFICATION_TASK_ID_PATTERN.findall(line))
+                    for notification in TASK_NOTIFICATION_PATTERN.findall(line):
+                        interim = interim_recognizer.task_notification_is_interim(notification)
+                        for task_id in TASK_NOTIFICATION_TASK_ID_PATTERN.findall(notification):
+                            last_notification_is_interim[task_id] = interim
     except OSError as problem:
         raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
+
+    finished_ids = {task_id for task_id, interim in last_notification_is_interim.items()
+                    if not interim}
 
     def still_within_wait(task_id):
         age = launched_task_age[task_id]
@@ -336,12 +329,6 @@ def main(argv=None) -> int:
         "--threshold-used-plus-compaction-dropped-percentage", type=float, default=40.0,
         help="the handoff also fires when the current context plus the tokens the "
              "session's compactions dropped reaches this share",
-    )
-    parser.add_argument(
-        "--threshold-used-plus-compaction-dropped-percentage-after-approval-walk-closed",
-        type=float, default=20.0,
-        help="when an approval-walk has closed, the handoff fires when the current context "
-             "plus the tokens the session's compactions dropped reaches this share",
     )
     parser.add_argument(
         "--ceiling-used-percentage", type=float, default=65.0,
@@ -365,41 +352,24 @@ def main(argv=None) -> int:
     if not session_id:
         return 0
 
-    # Removed on every path below but deferral, which must still count the walk's close when it ends.
-    walk_closed_marker = (
-        handoff_due_at_lower_context_threshold_after_approval_walk_closed_marker_path(session_id))
-    walk_closed = walk_closed_marker.exists()
-    code, keep_walk_closed_marker = request_handoff_when_due(
-        arguments, session_id, payload.get("transcript_path", ""), walk_closed)
-    if walk_closed and not keep_walk_closed_marker:
-        walk_closed_marker.unlink()
-    return code
-
-
-def request_handoff_when_due(arguments, session_id: str, transcript_path: str,
-                             walk_closed: bool):
-    """Return (exit code, whether the walk-closed marker must be kept for a later Stop)."""
+    transcript_path = payload.get("transcript_path", "")
     reading = context_used_tokens_and_window_from_transcript(transcript_path)
     if reading is None:
-        return 0, False
+        return 0
     used_tokens, window = reading
     used = 100.0 * used_tokens / window
     share = f"{used:.0f}%"
-    instruction = HANDOFF_INSTRUCTION
     if used < arguments.threshold_used_percentage:
         used_plus_dropped = 100.0 * (
             used_tokens + compaction_dropped_tokens_from_transcript(transcript_path)) / window
+        if used_plus_dropped < arguments.threshold_used_plus_compaction_dropped_percentage:
+            return 0
         share = SHARE_WITH_COMPACTION_DROPPED.format(
             used_percentage=used, used_plus_dropped_percentage=used_plus_dropped)
-        if used_plus_dropped < arguments.threshold_used_plus_compaction_dropped_percentage:
-            if not walk_closed or used_plus_dropped < \
-                    arguments.threshold_used_plus_compaction_dropped_percentage_after_approval_walk_closed:
-                return 0, False
-            instruction = WALK_CLOSED_HANDOFF_INSTRUCTION
 
     fired_marker = fired_marker_path(session_id)
     if fired_marker.exists():
-        return 0, False
+        return 0
 
     # Reincarnation kills in-process work; defer below the ceiling so work can finish.
     if used < arguments.ceiling_used_percentage:
@@ -415,7 +385,7 @@ def request_handoff_when_due(arguments, session_id: str, transcript_path: str,
         if not count_is_known or flight:
             deferred_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred"
             if deferred_marker.exists():
-                return 0, True  # Repeating the refusal would drive idle sessions into a loop; completion notifications wake them.
+                return 0  # Repeating the refusal would drive idle sessions into a loop; completion notifications wake them.
 
             try:
                 HANDOFF_DIRECTORY.mkdir(parents=True, exist_ok=True)
@@ -432,7 +402,7 @@ def request_handoff_when_due(arguments, session_id: str, transcript_path: str,
                 else HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE.format(share=share)
             )
             print(notice, file=sys.stderr)
-            return 2, True  # exit 2 surfaces stderr to the agent as a system message
+            return 2  # exit 2 surfaces stderr to the agent as a system message
 
     try:
         # A failed marker write would repeat the handoff request every turn.
@@ -441,11 +411,11 @@ def request_handoff_when_due(arguments, session_id: str, transcript_path: str,
     except OSError:
         pass
 
-    print(instruction.format(
-        share=share,
-        walk_closed_threshold=arguments.threshold_used_plus_compaction_dropped_percentage_after_approval_walk_closed),
-        file=sys.stderr)
-    return 2, False
+    print(
+        HANDOFF_INSTRUCTION.format(share=share),
+        file=sys.stderr,
+    )
+    return 2
 
 
 if __name__ == "__main__":

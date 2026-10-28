@@ -131,6 +131,7 @@ def run_program(scratch, checkout, helpers, specifications, *options, failing_st
     completed = subprocess.run(
         [sys.executable, str(PROGRAM), number, str(specifications_file), *options,
          "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+         "--merge-lane-review-worktrees-directory", str(helpers / "wt"),
          "--review-tools-worktree-at-main", str(checkout)],
         capture_output=True, text=True,
         env={**{key: value for key, value in GIT_ENVIRONMENT.items()
@@ -157,6 +158,7 @@ def main():
         filled_in_file = (helpers / "briefs"
                           / "reviewer-brief-specifications-pr7-with-head-and-main-commits-from-origin.json")
         directory_options = ["--merge-lane-worktrees-and-outputs-directory", str(helpers),
+                             "--merge-lane-review-worktrees-directory", str(helpers / "wt"),
                              "--review-tools-worktree-at-main", str(checkout)]
         first_round = {"tag": "7a", "number": 7, "title": "t", "author": "a", "tests": [],
                        "hazards": "none", "claude_reviewer": True, "overlaps": "none"}

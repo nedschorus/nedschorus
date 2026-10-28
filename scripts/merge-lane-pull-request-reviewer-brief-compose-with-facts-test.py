@@ -110,6 +110,7 @@ def run_program(scratch, helpers, specs, *extra, gh_routes=None, token=TEST_TOKE
     return subprocess.run(
         [sys.executable, str(PROGRAM), str(specs_file),
          "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+         "--merge-lane-review-worktrees-directory", str(helpers / "wt"),
          "--review-tools-worktree-at-main", str(scratch / "main-checkout"),
          "--brief-file", str(scratch / "standing.md"),
          "--ned-box-reviewer-brief-environment-addendum-file", str(scratch / "addendum.md"),

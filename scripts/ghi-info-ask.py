@@ -252,11 +252,17 @@ Boundaries:
 - A draft-body request gets a verdict line, except that a draft that conflicts with a ruling the user made gets the ruling question: whether the ruling still binds, or still binds this draft, is the user's to settle. A question beyond the corpus gets not-about-issues even when it touches a ruling."""
 
 
+ASK_PROMPT_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE_REQUEST_SENTENCE = (
+    "If the question describes a plan, also name any issue whose design built "
+    "something the plan should reuse instead of building its own.")
+
+
 def compose_resume_ask_prompt(question: str, include_closed: bool, changed_numbers,
                               is_resume: bool) -> str:
     """§ Prompts: Resume ask prompt. The changed-entries preamble appears only
     on a resumed session whose refresh actually changed entries; the
-    asker's question rides through unrewritten."""
+    asker's question rides through unrewritten, and ASK_PROMPT_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE_REQUEST_SENTENCE
+    follows it in every ask."""
     parts = []
     if is_resume and changed_numbers:
         named = ", ".join(f"#{n}" for n in changed_numbers)
@@ -266,6 +272,7 @@ def compose_resume_ask_prompt(question: str, include_closed: bool, changed_numbe
             "moved to issues-closed.md."
         )
     parts.append(f"You are asked for a reading list. {question}")
+    parts.append(ASK_PROMPT_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE_REQUEST_SENTENCE)
     if include_closed:
         parts.append(
             "Closed history is wanted for this request: grep issues-closed.md "

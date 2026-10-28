@@ -1,6 +1,6 @@
 ---
 issue: "[Build ghi-info — the GHI knowledge agent](https://github.com/nedschorus/nedschorus/issues/46)"
-status: design
+kind: design
 design-as-of: 2026-08-11
 ---
 
@@ -182,6 +182,8 @@ Sent on every reading-list request. On a fresh session it follows the cold-start
 > \<only on resume, and only when the refresh changed entries:\> Since your last request, these mirror entries changed: #\<n\>, #\<m\>. Re-read them in the mirror before answering — an entry may have moved to issues-closed.md.
 >
 > You are asked for a reading list. \<the asker's question, relayed verbatim, e.g.: An agent is about to file an issue proposing a retry policy for the launch scripts. What should it read first?\>
+>
+> If the question describes a plan, also name any issue whose design built something the plan should reuse instead of building its own.
 >
 > \<only with --include-closed:\> Closed history is wanted for this request: grep issues-closed.md as well; closed pointers are expected, each tagged with its close date.
 

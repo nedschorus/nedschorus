@@ -1,5 +1,6 @@
 ---
 issue: "[refresh-design: when a system's code lands, bring its design, build-slice plan and overview into line — removing, never revising](https://github.com/nedschorus/nedschorus/issues/670)"
+kind: design
 ---
 
 # The refresh agent: each system's overview refreshed after main passes its nightly full test run

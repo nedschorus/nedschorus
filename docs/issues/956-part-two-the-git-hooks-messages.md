@@ -1,5 +1,6 @@
 ---
 issue: "[Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956)"
+kind: design
 ---
 
 # Part two: the messages of the git hooks that run at commit and push

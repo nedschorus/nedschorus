@@ -2,7 +2,7 @@
 """Tests for merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py.
 
 Real git in a scratch directory: a repository whose head commit is checked
-out, detached, as wt/pr7-head under a scratch worktrees and outputs directory,
+out, detached, as wt/pr7-head under a scratch review worktrees directory,
 as step 1 builds it, with the brief step 2 writes beside it. A stand-in claude
 and a stand-in gh go first on PATH, and HOME holds a mac-claude token file, so
 no case runs a model or reaches GitHub. The stand-in claude logs its
@@ -237,6 +237,7 @@ class Case:
     def command(self, tag, head, options):
         return [sys.executable, str(PROGRAM), "7", tag, head or self.head, *options,
                 "--merge-lane-worktrees-and-outputs-directory", str(self.helpers),
+                "--merge-lane-review-worktrees-directory", str(self.helpers / "wt"),
                 "--review-tools-worktree-at-main", str(self.helpers / "wt" / "main")]
 
     def run(self, mode="valid", *options, tag="7a", head=None, **environment):
