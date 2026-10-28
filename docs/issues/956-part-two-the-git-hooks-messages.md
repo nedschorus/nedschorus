@@ -309,3 +309,16 @@ First see what the conflict is with: if main has already replaced this branch's 
 ## Outcome
 
 Part two shipped as PR [The git hooks' messages say which branches went unchecked, why, and what to do](https://github.com/nedschorus/nedschorus/pull/1074), merged to main on 2026-10-05 as commit [4483efb6](https://github.com/nedschorus/nedschorus/commit/4483efb6). It builds messages 2 to 11 as approved, removes message 1 with its python3 check, and adds the shell part's branch filter, with test cases for each. The review left one question open, not a defect: if the pre-push conflict check raised an error after checking some branches, message 7 would say that no branch was checked; the review found no code path that does so. The next action on GHI 956 is part three, as the GHI-MD's "Later parts" lists.
+
+Message 11 changed again after part two, in pull requests outside this GHI. PR [Conflict report: put an edit beyond the conflict in a commit after the merge, and push both once](https://github.com/nedschorus/nedschorus/pull/1368), merged on 2026-10-14, added the lines "If the resolution forces an edit…" and "Push the merge and that commit once…"; PR [CLAUDE.md: shorten bullets and move their detail to the pages and programs that carry it](https://github.com/nedschorus/nedschorus/pull/1448), merged on 2026-10-15, added the line "When you close the pull request…". The block under message 11's "What the agent is told today" keeps the lines from before part two, the baseline its proposal changed. On main, `scripts/branch-conflict-check.py` now prints:
+
+```
+VERDICT: CONFLICT -- <commit> conflicts with origin/main.
+First see what the conflict is with: if main has already replaced this branch's work, do not merge; close the pull request and carry what main still lacks on a new nc-topic-branch cut from current main.
+When you close the pull request, name in its closing comment the commit or pull request on main that replaced the work.
+Merge origin/main into the branch by hand, with the frozen head as first parent.
+Resolve the conflict and change nothing else in the merge.
+If the resolution forces an edit beyond the conflicting lines, put that edit in one ordinary commit after the merge.
+Before pushing, rerun the nc-test-suites for what the merge touched.
+Push the merge and that commit once, and name the files you resolved in the merge's commit message and in the pull request's description.
+```

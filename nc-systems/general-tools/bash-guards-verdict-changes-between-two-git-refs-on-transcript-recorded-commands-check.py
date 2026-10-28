@@ -123,9 +123,9 @@ VERDICT_CHANGED_MESSAGE = (
     "Where the head's verdict is not the one meant, the answer is a finding instead, and the author fixes the "
     "guard. When some differences are meant and others are not, each still gets its own answer: its line, or "
     "a finding.\n"
-    "The answers go in the review of the head commit being merged; after a fix-round, that is the review of "
+    "The answers go in the review of the nc-head-commit being merged; after a fix-round, that is the review of "
     "the fix-round's head; answers in a review of an earlier head do not count, so the review of the fix-round's head repeats them.\n"
-    "merge-lane-2 holds the merge until every difference that this check, run on the head commit being merged, "
+    "merge-lane-2 holds the merge until every difference that this check, run on the nc-head-commit being merged, "
     "finds has its \"verdict change intended\" line. When no NEW GUARD REFUSES block follows, merge-lane-2 then "
     "merges despite the exit 1; when one follows, its refused commands need their \"refusal right\" lines too, "
     "as that block says. A difference answered with a finding holds the merge until the author's fix makes this "
@@ -147,10 +147,10 @@ NEW_GUARD_REFUSES_MESSAGE = (
     "example, with a made-up guard path: refusal right: scripts/example-guard-hook.py | /tmp | 'tmux kill-server'.\n"
     "Where the refusal is wrong, the answer is a finding instead, and the author then narrows the guard so that "
     "it lets that command through. The other refused commands still each get their \"refusal right\" line.\n"
-    "The answers go in the review of the head commit being merged; after a fix-round, that is the review of "
+    "The answers go in the review of the nc-head-commit being merged; after a fix-round, that is the review of "
     "the fix-round's head; answers in a review of an earlier head do not count, so the review of the fix-round's head repeats them.\n")
 NEW_GUARD_REFUSES_ONLY_ENDING = (
-    "merge-lane-2 holds the merge until every refused command that this check, run on the head commit being "
+    "merge-lane-2 holds the merge until every refused command that this check, run on the nc-head-commit being "
     "merged, lists has its \"refusal right\" line, and then merges despite the exit 1. A refusal answered with a "
     "finding holds the merge until the author's narrowed guard no longer refuses that command, so the check "
     "no longer lists it.")

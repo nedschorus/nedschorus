@@ -19,13 +19,13 @@ WHEN A DOCUMENT IS DUE. A document in a git checkout is due only when that
 checkout changed it from main: the document is not in the merge-base of the
 checkout's HEAD and refs/remotes/origin/main, as with a new file or a
 git-ignored walk-document, or its bytes differ from the copy there, through
-an uncommitted edit or a commit on the topic branch. The merge-base, not
+an uncommitted edit or a commit on the nc-topic-branch. The merge-base, not
 origin/main's tip, because a checkout behind main would otherwise be asked
 about every document main changed since. A document the checkout left alone
 is never due, whatever its records, because an agent should fast-read only
 what it can still change. The checkout that holds the document decides, not
 the payload's cwd: an agent-seat's cwd is its seat checkout, while the
-documents it changes sit in its topic branch's worktree. The ref is used as it
+documents it changes sit in its nc-topic-branch's worktree. The ref is used as it
 stands, without a fetch. When that checkout has no origin/main, or git fails,
 is killed or outlasts its time limit while comparing, or cannot run or
 outlasts its time limit while finding the document's checkout, or fails there

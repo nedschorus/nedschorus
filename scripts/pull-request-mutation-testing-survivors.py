@@ -26,12 +26,12 @@ script. That run is on the scratch worktree, given --only-suites-named with the 
 suites, --leave-recorded-inputs-and-failure-history-unchanged, so a mutant
 changes no suite's recording, and --stop-at-first-failing-suite, so a mutant
 one suite kills does not wait for the rest. The runner runs the suites in
-parallel, each starting when the runner's admission lets it (on Linux in test
-sandboxes, when the machine's CPU and memory have room: ADMISSION in the
+parallel, each starting when the runner's admission lets it (on Linux in
+nc-test-sandboxes, when the machine's CPU and memory have room: ADMISSION in the
 runner's docstring), each in its signal sandbox and, on Linux with
-bwrap, its test sandbox, each under its own time limit (see PER-SUITE TIMEOUT
+bwrap, its nc-test-sandbox, each under its own time limit (see PER-SUITE TIMEOUT
 in the runner's docstring), and passes on --python, --recorded-inputs-directory
-and, when given, --lock-file. Where suites run without test sandboxes (macOS,
+and, when given, --lock-file. Where suites run without nc-test-sandboxes (macOS,
 or Linux without bwrap), each of the runner's runs takes the machine's lock,
 and the runner exits 3 without running a suite while another test run holds it.
 On a mutant, that refusal judges no suite, so the mutant is printed as ERRORED
@@ -52,7 +52,7 @@ runner SIGTERM, on which the runner kills each running suite's process group;
 cosmic-ray's own limit, which kills only the test command's process group, is
 MUTANT_TIMEOUT_EXTRA_SECONDS_FOR_TEST_SUITE_RUNNER_TO_STOP_ITS_SUITES, 30 s,
 later,
-since a suite runs in a session of its own and, outside a test sandbox,
+since a suite runs in a session of its own and, outside an nc-test-sandbox,
 outlives a runner killed with SIGKILL.
 
 A renamed file is mutated under its new name. A mutant cosmic-ray could not
@@ -60,7 +60,7 @@ judge, because its worker raised, its suites could not be launched, a suite
 ran past its own time limit, which the runner's TIMEOUT line names, the
 suites ran past the limit on one run of them, or the runner exited nonzero without a
 suite failing by its own exit (it printed nothing, was not run to the end,
-could not write its records, or a suite's test sandbox did not start), is
+could not write its records, or a suite's nc-test-sandbox did not start), is
 printed as ERRORED and counts against the run like a survivor. cosmic-ray
 itself reports every nonzero exit of the runner as a kill; this script does
 not. On the unmutated head either a suite's own time limit or the limit on
@@ -69,7 +69,7 @@ and, for a suite's own limit, the suite.
 
 Exit codes: 0 every mutant was killed, 1 a mutant survived, errored or was
 not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
-a git step failed, the head commit is already in the base, the worktree could
+a git step failed, the nc-head-commit is already in the base, the worktree could
 not be made, or a suite fails, runs out of time or cannot be launched on the
 unmutated head), 143 or 129 stopped by SIGTERM or SIGHUP (128 plus the signal
 number), after removing the scratch worktree, git's record of it included,
@@ -170,7 +170,7 @@ def cosmic_ray_tool_paths(venv):
 
 
 def head_and_base_of_pull_request(number, checkout, environment):
-    """Return (head commit, base ref) of a pull request, fetching both."""
+    """Return (nc-head-commit, base ref) of a pull request, fetching both."""
     view = json.loads(run_or_raise(
         ["gh", "pr", "view", str(number), "--json", "headRefOid,baseRefName"],
         checkout, environment, what=f"gh pr view {number}"))
@@ -497,7 +497,7 @@ def parse_arguments(argv):
     which = parser.add_mutually_exclusive_group(required=True)
     which.add_argument("--pull-request", type=int,
                        help="the pull request to test; its head and base are read with gh and fetched")
-    which.add_argument("--head", help="the head commit to test (needs --base)")
+    which.add_argument("--head", help="the nc-head-commit to test (needs --base)")
     parser.add_argument("--base", help="the base the head is compared with (with --head)")
     parser.add_argument("--checkout", default=str(Path(__file__).resolve().parent.parent),
                         help="the checkout the worktree is made from; default, the one this file is in")

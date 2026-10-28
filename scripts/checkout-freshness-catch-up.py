@@ -1148,7 +1148,7 @@ def merges_from_main(checkout: Path):
     branch's merges. Raises GitCommandFailed when git cannot read a merge's
     second parent or cannot say whether that parent is on origin/main.
 
-    A merge of another topic branch is not the banned thing, so the second
+    A merge of another nc-topic-branch is not the banned thing, so the second
     parent is tested for being on main rather than every merge being flagged.
     A branch that carries older catch-up merges is flagged once, which is
     correct: those merges are real and the agent has not been told of them.
