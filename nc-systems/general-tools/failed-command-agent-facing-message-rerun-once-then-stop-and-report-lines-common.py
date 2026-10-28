@@ -25,6 +25,7 @@ REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT = (
 LOCK_FILE_PATH_PLACEHOLDER = "<lock file path>"
 WAIT_UP_TO_ONE_MINUTE_FOR_LOCK_FILE_TO_GO_COMMAND = (
     f'i=0; while [ -e "{LOCK_FILE_PATH_PLACEHOLDER}" ] && [ $i -lt 30 ]; do sleep 2; i=$((i+1)); done')
+LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION = "If git's error names a lock file"
 
 
 def lock_file_named_by_git_error_wait_then_rerun_instruction(then_run):
@@ -96,7 +97,7 @@ def git_failure_next_step_lines(rerun, program=None, *, include_the_misspelt_bra
             'misspelt or does not exist, ...". Pass program if the program the agent ran takes a branch, '
             "commit or path on its command line; if it takes none, pass "
             "include_the_misspelt_branch_commit_or_path_line=False instead.")
-    lines = [f"If git's error names a lock file, such as .git/index.lock, "
+    lines = [f"{LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION}, such as .git/index.lock, "
              f"{lock_file_named_by_git_error_wait_then_rerun_instruction(f'exactly {rerun}')}."]
     if include_the_misspelt_branch_commit_or_path_line:
         lines += [f"If a branch, commit or path you gave {program} on its command line is "

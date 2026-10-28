@@ -1528,7 +1528,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("in an agent-session no user attends, the install-failed refusal tells a subagent to "
           "report, does not ask to tell the user, and still says how to install by hand",
           "do not tell the user" in unattended_errors
-          and "If you are a subagent, tell the agent that dispatched you" in unattended_errors
+          and shell_reader.report_to_user_or_dispatching_agent_instruction_build("", environment={"CLAUDE_CODE_SESSION_ATTENDED": "0"}) in unattended_errors
           and "Tell the user" not in unattended_errors and "pip install" in unattended_errors
           and "pip exited 1: no network" in unattended_errors
           and "Leave this run of install-scheduled-jobs-on-this-machine undone; run it again, with "
@@ -1607,7 +1607,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("in an agent-session no user attends, that refusal tells a subagent to report, does not "
           "ask to tell the user, and gives a top-level agent its next step",
           unattended_exit == 2 and "do not tell the user" in unattended_errors
-          and "If you are a subagent, tell the agent that dispatched you" in unattended_errors
+          and shell_reader.report_to_user_or_dispatching_agent_instruction_build("", environment={"CLAUDE_CODE_SESSION_ATTENDED": "0"}) in unattended_errors
           and "go on with your task" in unattended_errors
           and "Leave this run of install-scheduled-jobs-on-this-machine undone" in unattended_errors
           and "Tell the user" not in unattended_errors, unattended_errors)
