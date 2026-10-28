@@ -487,6 +487,8 @@ def restarts_when_the_handoff_arrives(fixture):
     def table_with_this_process_under_the_agent_session():
         table = restart.read_process_table()
         table[os.getpid()] = (fixture.claude, "S", "python3 this-program")
+        # This process is the fake handoff-supervisor's parent; cut that link so the table stays a tree.
+        table[fixture.supervisor] = (1, *table[fixture.supervisor][1:])
         return table
     code, _, _ = detached_run(fixture, sleep=sleep_that_writes_the_handoff(fixture, 4),
                               read_table=table_with_this_process_under_the_agent_session)
@@ -539,20 +541,6 @@ def timeout_continues_the_supervisor(fixture):
 
 
 @case
-def agent_session_ending_without_a_handoff_continues_the_supervisor(fixture):
-    def sleep(seconds):
-        if seconds == restart.HANDOFF_POLL_SECONDS:
-            os.kill(fixture.claude, signal.SIGKILL)
-            time.sleep(0.3)
-        short_sleep(seconds)
-    code, _, _ = detached_run(fixture, sleep=sleep)
-    check(code == 1, f"exit {code}")
-    check(not process_state(fixture.supervisor).startswith(("T", "t")), "not continued")
-    check(f"agent-session process {fixture.claude} ended without writing a handoff"
-          in fixture.log_text, fixture.log_text)
-
-
-@case
 def a_failure_before_the_kill_continues_the_supervisor(fixture):
     calls = []
 
@@ -562,7 +550,8 @@ def a_failure_before_the_kill_continues_the_supervisor(fixture):
             raise RuntimeError("ps vanished")
         return restart.read_process_table()
     try:
-        detached_run(fixture, read_table=table_failing_in_the_wait)
+        detached_run(fixture, sleep=sleep_that_writes_the_handoff(fixture, 4),
+                     read_table=table_failing_in_the_wait)
         raise AssertionError("the failure was not raised")
     except RuntimeError:
         pass
@@ -744,8 +733,8 @@ def two_children_carrying_the_session_id_refuse(fixture):
 
 
 @case
-def descendants_are_listed_once_when_parent_links_loop(fixture):
-    table = {1: (3, "S", ""), 2: (1, "S", ""), 3: (2, "S", ""), 4: (2, "S", ""), 5: (9, "S", ""),
+def descendants_are_children_and_their_children_only(fixture):
+    table = {1: (7, "S", ""), 2: (1, "S", ""), 3: (2, "S", ""), 4: (2, "S", ""), 5: (9, "S", ""),
              6: (0, "S", "")}
     found = restart.descendant_process_ids(table, 1)
     check(sorted(found) == [2, 3, 4] and len(found) == 3, found)
@@ -796,6 +785,7 @@ def a_failure_before_the_kill_with_the_supervisor_gone_is_still_logged(fixture):
 
     def failing_table():
         raise RuntimeError("ps vanished")
+    fixture.write_handoff(4)
     try:
         restart.wait_for_new_session_handoff_then_kill_old_handoff_supervisor_and_agent_session_and_relaunch_agent_seat(fixture.name, fixture.handoff_directory, fixture.checkout,
                                       NO_SUCH_PROCESS_ID, fixture.claude, 3, 60, lines.append,

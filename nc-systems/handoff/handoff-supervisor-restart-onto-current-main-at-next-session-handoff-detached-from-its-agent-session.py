@@ -36,9 +36,9 @@ It then prints what the agent-session does next, and detaches.
 The detached process, which leaves the agent-seat's directory so that
 recover-crashed-seats.py does not find it there, then:
   7. waits for a session-handoff whose restart-counter is above every counter
-     seen before the freeze. If none arrives within --handoff-wait-minutes, or the
-     agent-session ends first, or this program fails before step 8, it sends
-     SIGCONT, so the old handoff-supervisor carries on as before, and stops;
+     seen before the freeze. If none arrives within --handoff-wait-minutes, or
+     this program fails before step 8, it sends SIGCONT, so the old
+     handoff-supervisor carries on as before, and stops;
   8. sends SIGKILL to the handoff-supervisor and SIGTERM to the agent-session,
      then SIGKILL to the agent-session if it is still running 20 seconds later,
      and SIGTERM to each process the agent-session had started that is still
@@ -113,8 +113,9 @@ FREEZE_CONFIRMATION_DELAY_SECONDS = 1.0
 AGENT_SESSION_SIGTERM_TO_SIGKILL_WAIT_SECONDS = 20.0
 AGENT_SESSION_PROCESS_TREE_SIGTERM_TO_SIGKILL_WAIT_SECONDS = 5.0
 AGENT_SEAT_NAME_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
-# recover-crashed-seats.py exits 3 when the agent-seat came up but no window opened on the Mac.
-ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_NOT_OPENED_EXIT_STATUS = 3
+# The value of the constant of this name in scripts/recover-crashed-seats.py, which is not
+# imported because loading that file loads its own dependencies too.
+ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS = 3
 
 
 class HandoffSupervisorRestartRefusal(Exception):
@@ -232,10 +233,8 @@ def descendant_process_ids(process_table, ancestor_process_id: int):
     descendants, frontier = [], [ancestor_process_id]
     while frontier:
         parent = frontier.pop()
-        # A process ID reused while ps reads the table can make the parent links loop.
         children = [process_id for process_id, (parent_process_id, _, _) in process_table.items()
-                    if parent_process_id == parent and process_id != ancestor_process_id
-                    and process_id not in descendants]
+                    if parent_process_id == parent]
         descendants += children
         frontier += children
     return descendants
@@ -273,9 +272,7 @@ def process_is_running(process_id: int, read_table=read_process_table) -> bool:
 
 
 def wait_for_new_handoff(handoff_directory: Path, name: str, counter_seen: int,
-                         agent_session_process: int, deadline_seconds: float,
-                         sleep=time.sleep, monotonic=time.monotonic,
-                         read_table=read_process_table):
+                         deadline_seconds: float, sleep=time.sleep, monotonic=time.monotonic):
     """Return (True, counter) when a new handoff arrives, else (False, reason)."""
     handoff_path = supervisor.handoff_file_path(handoff_directory, name)
     started = monotonic()
@@ -284,9 +281,6 @@ def wait_for_new_handoff(handoff_directory: Path, name: str, counter_seen: int,
             counter = supervisor.counter_from(supervisor.parse_handoff_file(handoff_path))
             if counter is not None and counter > counter_seen:
                 return True, counter
-        if not process_is_running(agent_session_process, read_table):
-            return False, (f"agent-session process {agent_session_process} ended without "
-                           f"writing a handoff to {handoff_path}")
         if monotonic() - started >= deadline_seconds:
             return False, (f"no handoff with a restart-counter above {counter_seen} reached "
                            f"{handoff_path} within {deadline_seconds / 60:g} minutes")
@@ -335,8 +329,7 @@ def wait_for_new_session_handoff_then_kill_old_handoff_supervisor_and_agent_sess
             f"process {agent_session_process} to write a handoff with a restart-counter above "
             f"{counter_seen}")
         arrived, detail = wait_for_new_handoff(handoff_directory, name, counter_seen,
-                                               agent_session_process, deadline_seconds,
-                                               sleep, monotonic, read_table)
+                                               deadline_seconds, sleep, monotonic)
         if not arrived:
             os.kill(supervisor_process_id, signal.SIGCONT)
             log(f"NOT RESTARTED: {detail}; sent SIGCONT to handoff-supervisor "
@@ -346,6 +339,7 @@ def wait_for_new_session_handoff_then_kill_old_handoff_supervisor_and_agent_sess
 
         agent_session_tree = [process_id for process_id in
                               descendant_process_ids(read_table(), agent_session_process)
+                              # This process stays in that tree when a subreaper adopted it.
                               if process_id != os.getpid()]
         supervisor_ended = True
         os.kill(supervisor_process_id, signal.SIGKILL)
@@ -372,7 +366,7 @@ def wait_for_new_session_handoff_then_kill_old_handoff_supervisor_and_agent_sess
             return 1
         recovered = run_recovery_program(checkout, "recover-crashed-seats.py",
                                          [name, *handoff_arguments], log)
-        if recovered in (0, ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_NOT_OPENED_EXIT_STATUS):
+        if recovered in (0, ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS):
             log(f"RESTARTED: {name} runs under a new handoff-supervisor from {checkout}")
             return 0
         log(f"FAILED: recover-crashed-seats.py did not report {name} running. {down} "
