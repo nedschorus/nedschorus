@@ -18,7 +18,7 @@ request the Mac would refuse for its text is refused here, before any
 connection is made.
 
 The environment overrides open-mac-window-from-ned-box.py reads apply here too,
-and NEDSCHORUS_NED_BOX_HOME overrides ned-box's home: the seams the nc-test-suite
+and NEDSCHORUS_NED_BOX_HOME overrides ned-box's home: the seams the test suite
 uses.
 """
 
