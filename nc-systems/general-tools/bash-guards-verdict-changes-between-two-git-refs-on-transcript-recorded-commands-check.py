@@ -506,6 +506,12 @@ def read_codex_exec(guard, command, working_directory, search_file_directory):
     return "refused" if reason else "passed", reason
 
 
+def read_ghi_md_whole_file_replacement(guard, command, working_directory, search_file_directory):
+    # The marker file is never read here: replaying a command must not consume an agent's reason.
+    replaced = guard.ghi_md_replaced_by_command(command, working_directory)
+    return ("refused", f"replaces {replaced}") if replaced else ("passed", None)
+
+
 class MarkdownChangingCheckoutProbeRunner(StubbedProbeRunner):
     """Answers the Markdown push reminder's git as a checkout whose every ref changes one Markdown file.
 
@@ -554,6 +560,7 @@ GUARDS = {
     "scripts/hand-typed-codex-exec-command-refusal-hook.py": read_codex_exec,
     "nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py":
         read_markdown_push_reminder,
+    ".claude/hooks/ghi-md-whole-file-replacement-soft-block.py": read_ghi_md_whole_file_replacement,
 }
 SEARCH_FILE_GUARD = "scripts/search-file-argument-read-as-option-guard-hook.py"
 
