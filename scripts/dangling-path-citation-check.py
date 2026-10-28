@@ -3,6 +3,16 @@
 
 With --only-citations-of-removed-paths, check only the citations of removed paths.
 
+In a changed Markdown file, a backticked file name with no "/", such as
+`handoff-supervisor.py`, is a bare-name citation: it is reported when no
+file in HEAD's tree has that name and the file's merge-base text does not
+already cite it, so only a name the change brings in is reported. A name several tracked files
+share, such as SKILL.md, passes. A name the repository's ignore rules match
+at the root or beside the citing file passes. A line carrying "(planned)"
+names files that do not exist yet, so its bare names are not checked. A
+name inside a directory git ignores cannot be told from a missing one, so it
+is reported. The removed-paths half does not check bare names.
+
 Run on a clean tree: diff line numbers come from HEAD, but citation text and
 existence checks read the working tree."""
 import argparse
@@ -46,6 +56,18 @@ PLAIN_PATH_TOKEN_SEPARATOR = re.compile(r"[\s'\"()\[\]]+")
 PROJECT_TEST_FILE_STEM_ENDING = "-test"
 PROJECT_TEST_DIRECTORY_NAME = "tests"
 
+BARE_FILE_NAME_FINDING = "bare file name no tracked file has: "
+PLANNED_FILE_MARKER = "(planned)"
+BARE_FILE_NAME_FINDING_NEXT_STEPS = (
+    f"{PROGRAM}: a bare file name names a file git tracks.\n"
+    f"If the file is planned and not yet written, put {PLANNED_FILE_MARKER} on the line, "
+    "so a reader knows it does not exist yet.\n"
+    "If the file lives outside the repository, in a directory git ignores, or is made "
+    "while a program runs, write its directory too, with a <placeholder> for the part "
+    "that varies, such as `cold-read-records/<record>/triage.md`; a path with a "
+    "placeholder is not checked.\n"
+    "Otherwise correct the name to the tracked file's name.")
+
 
 def fail_bad_invocation(detail: str):
     # SystemExit with a string exits 1, which means findings here, not an invalid invocation.
@@ -56,6 +78,46 @@ def fail_bad_invocation(detail: str):
 def carries_a_marker_the_lint_skips(token: str, lint) -> bool:
     # Check the whole token before resolution: normpath can erase a placeholder component followed by "..".
     return any(marker in token for marker in lint.SKIP_MARKERS)
+
+
+def backticked_bare_file_names_on_line(line: str, lint):
+    """Yield each backticked word with no "/" that ends in a file extension."""
+    for match in lint.BACKTICK_TOKEN.finditer(line):
+        for word in lint.PLACEHOLDER_SPAN.sub("<placeholder>", match.group(1)).split():
+            name = lint.without_line_suffix(word)
+            if "/" not in name and lint.looks_like_repo_path(name):
+                yield name
+
+
+def markdown_lines_that_can_cite(text: str, lint):
+    """Yield (line number, line) for the lines the drift lint checks for paths."""
+    skipped_markers = lint.HISTORY_MARKERS + lint.FOREIGN_ROOT_MARKERS
+    for line_number, line in lint.lines_outside_fenced_code_blocks(text.splitlines()):
+        if not any(marker in line for marker in skipped_markers):
+            yield line_number, line
+
+
+def bare_file_names_the_text_cites(text: str, lint) -> set:
+    return {name for _, line in markdown_lines_that_can_cite(text, lint)
+            for name in backticked_bare_file_names_on_line(line, lint)}
+
+
+def tracked_file_names(repository_root: pathlib.Path) -> frozenset:
+    listed = git_text(["ls-tree", "-r", "-z", "--name-only", "HEAD"], repository_root)
+    return frozenset(path.rsplit("/", 1)[-1]
+                     for path in git_output.nul_separated_fields(listed))
+
+
+def bare_file_name_findings(path: pathlib.Path, lint, tracked_names: frozenset):
+    """Yield (line number, problem) for bare names no tracked file has."""
+    # No changed-line filter: an unchanged line's names are in the merge-base text, which suppresses them.
+    for line_number, line in markdown_lines_that_can_cite(path.read_text(encoding="utf-8"), lint):
+        if PLANNED_FILE_MARKER in line:
+            continue
+        for name in backticked_bare_file_names_on_line(line, lint):
+            if name in tracked_names or lint.ignored_by_git(name, path, REPOSITORY_ROOT):
+                continue
+            yield line_number, f"{BARE_FILE_NAME_FINDING}{name}"
 
 
 def citation_tokens_on_line(line: str, citing_path: pathlib.Path, lint):
@@ -215,7 +277,8 @@ def is_project_test_file(path: pathlib.Path, repository_root: pathlib.Path) -> b
             or PROJECT_TEST_DIRECTORY_NAME in relative.parts[:-1])
 
 
-def findings_for_file(path: pathlib.Path, changed: set, lint, root_directories: tuple):
+def findings_for_file(path: pathlib.Path, changed: set, lint, root_directories: tuple,
+                      tracked_names: frozenset):
     """Yield (line number, problem) for changed lines."""
     relative = path.relative_to(REPOSITORY_ROOT)
     if lint.in_frozen_measured_data(path, REPOSITORY_ROOT):
@@ -227,6 +290,7 @@ def findings_for_file(path: pathlib.Path, changed: set, lint, root_directories: 
         for line_number, problem in lint.lint_markdown(path, REPOSITORY_ROOT):
             if line_number in changed and ("does not exist" in problem):
                 yield line_number, problem
+        yield from bare_file_name_findings(path, lint, tracked_names)
         return
     try:
         text = path.read_text(encoding="utf-8")
@@ -390,6 +454,7 @@ def run_check(argv) -> int:
         changed = {name: lines for name, lines in changed.items() if name in wanted}
 
     findings = []
+    tracked_names = tracked_file_names(REPOSITORY_ROOT)
     name_status_rows = name_status_rows_against_merge_base(merge_base, REPOSITORY_ROOT)
     removed_files = paths_this_change_removed(name_status_rows, REPOSITORY_ROOT)
     removed = removed_files + directories_this_change_emptied(removed_files, REPOSITORY_ROOT)
@@ -402,19 +467,26 @@ def run_check(argv) -> int:
         if not path.is_file():
             continue
         base_cited_paths = None
-        for line_number, problem in findings_for_file(path, changed[name], lint, root_directories):
+        for line_number, problem in findings_for_file(path, changed[name], lint,
+                                                      root_directories, tracked_names):
             # A changed line can retain old citations; compare with the file's merge-base text under its old name.
             if base_cited_paths is None:
                 base_name = merge_base_name_of_renamed_file.get(name, name)
+                base_text = file_at_merge_base(base_name, merge_base, REPOSITORY_ROOT)
                 base_cited_paths = paths_the_base_text_cites(
-                    file_at_merge_base(base_name, merge_base, REPOSITORY_ROOT),
-                    base_name, lint, REPOSITORY_ROOT)
-            if base_already_cites(cited_path_of(problem), base_cited_paths,
-                                  path, lint, REPOSITORY_ROOT):
+                    base_text, base_name, lint, REPOSITORY_ROOT)
+                base_bare_file_names = bare_file_names_the_text_cites(base_text, lint)
+            if problem.startswith(BARE_FILE_NAME_FINDING):
+                if cited_path_of(problem) in base_bare_file_names:
+                    continue
+            elif base_already_cites(cited_path_of(problem), base_cited_paths,
+                                    path, lint, REPOSITORY_ROOT):
                 continue
             findings.append(f"{name}:{line_number}: {problem}")
     for finding in findings:
         print(finding)
+    if any(BARE_FILE_NAME_FINDING in finding for finding in findings):
+        print(BARE_FILE_NAME_FINDING_NEXT_STEPS, file=sys.stderr)
     print(f"{PROGRAM}: {len(findings)} finding(s) — the lines "
           f"{len(changed)} changed file(s) touch, and what still cites the "
           f"{len(removed)} path(s) this change removed, against {arguments.base}.",
