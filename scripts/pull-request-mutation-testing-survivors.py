@@ -38,9 +38,10 @@ worktree.
 
 cosmic-ray's own limit on one run of the test command, per changed file, is
 the longest of its suites' time limits, computed as the runner computes them
-from the recordings, times the number of suites divided by the number the
-runner runs at once (its suites_run_at_once(), the same call the runner
-makes), rounded up, plus TEST_SUITE_RUNNER_START_UP_SECONDS: a backstop,
+from the recordings, times the number of rounds the runner needs for them (the
+number of suites divided by the number it runs at once, its
+suites_run_at_once(), the same call the runner makes, rounded up), plus
+TEST_SUITE_RUNNER_START_UP_SECONDS: a backstop,
 which a run passes only when admission keeps its suites waiting. --mutant-timeout-seconds, when
 given, sets that limit for every file instead.
 
