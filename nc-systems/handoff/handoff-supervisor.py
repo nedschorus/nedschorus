@@ -1143,7 +1143,7 @@ def overview_refresh_due_lines(working_directory: Path,
                   f"{handoff_architecture_overview_refresh_user_shown_mark.SYSTEM_NAME_PATTERN}, "
                   f"the system-name pattern "
                   f"nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py "
-                  f"accepts, so its architecture overview is not checked; the other systems "
+                  f"accepts, so its nc-architecture-overview is not checked; the other systems "
                   f"still are.\n"
                   f"If nc-systems/{printable} holds a system's programs, propose to the user a "
                   f"name for it that matches, to be renamed in a pull request; otherwise "

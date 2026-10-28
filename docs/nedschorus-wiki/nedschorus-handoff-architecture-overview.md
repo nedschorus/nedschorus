@@ -1,4 +1,4 @@
-# The handoff-system: architecture overview
+# The handoff-system: nc-architecture-overview
 
 This document has proposed improvements or changes: read every file in this folder whose name starts with `nedschorus-handoff-architecture-overview-proposed-improvements-or-changes-`.
 
@@ -36,7 +36,7 @@ handoff-supervisor.py ──reads <seat>-handoff.md, kills claude, runs handoff-
 - `scripts/agent-seat-transcript-worth-resuming-common.py`: the one definition, for the handoff-supervisor and `recover-crashed-seats.py`, of a transcript worth resuming.
 - `scripts/agent-binary-update-under-lock.py`: updates `claude` for a launcher or the handoff-supervisor, skipping the update when another holds `agent-binary-update.lock`.
 - `scripts/checkout-freshness-catch-up.py`, a `Stop` hook outside this system: the launch-time-git-sync uses its checks for uncommitted tracked changes and a git operation in progress.
-- `scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py`: gives an architecture overview's path and reads the commit its last line names, for the handoff-supervisor's overview refresh reminder.
+- `scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py`: gives an nc-architecture-overview's path and reads the commit its last line names, for the handoff-supervisor's overview refresh reminder.
 - `nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py`: marks the day's memory review started or done, and holds the readers the handoff-supervisor's memory review check uses.
 - `nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py`: marks that the user was shown a system's overview refresh, so the handoff-supervisor withholds that system's overview refresh reminder for the rest of the Pacific day.
 - `scripts/clean-worktrees.py`: removes worktrees under `.claude/worktrees/` whose branch has nothing main lacks and that no process uses, uncommitted files included, and merged branches, and deletes lost work-snapshots once they have been listed for long enough.
