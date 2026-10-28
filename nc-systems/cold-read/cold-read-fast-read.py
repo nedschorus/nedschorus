@@ -354,12 +354,12 @@ SONNET_BACKUP_MODEL = claude_cell.TIER_TO_CLAUDE_MODEL_CHAIN[FAST_READ_TIER][0]
 # The claude launcher sets no time limit of its own; the Sonnet backup is
 # allowed as long as one Gemini attempt.
 COLD_READ_FAST_READ_SONNET_BACKUP_RUN_ALLOWANCE_SECONDS = 30 * 60
-# Each Gemini attempt of the read on ned-box is bounded by the --print-timeout
-# the agy cell gives each model of the cold-read-tier's chain; the five
+# Each Gemini attempt of the read on ned-box is bounded by the time after
+# which the agy cell kills each model of the cold-read-tier's chain; the five
 # minutes more cover git, the shipper and the connect.
 COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS = (
     FAST_READ_ATTEMPTS * len(agy_cell.TIER_TO_AGY_MODEL_CHAIN[FAST_READ_TIER])
-    * agy_cell.COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS
+    * agy_cell.COLD_READ_AGY_CELL_PER_MODEL_RUN_KILL_AFTER_SECONDS
     + COLD_READ_FAST_READ_SONNET_BACKUP_RUN_ALLOWANCE_SECONDS + 5 * 60)
 
 

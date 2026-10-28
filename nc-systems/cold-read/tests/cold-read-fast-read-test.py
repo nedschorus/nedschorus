@@ -177,7 +177,8 @@ EMBEDDED_PROMPT_COPY_AND_SOURCE_PAIRS = (
 
 # The stub `agy`: the model from --model, the prompt from --print's value,
 # the plan from the environment, and a counter file that counts launches so
-# "fail_first_attempts": N fails the first N and succeeds after.
+# "fail_first_attempts": N fails the first N and succeeds after; "hang"
+# sleeps past any deadline a case sets.
 STUB_AGY = """#!/usr/bin/env python3
 import json, os, pathlib, sys
 argv = sys.argv
@@ -188,6 +189,9 @@ step = plan.get(model, plan.get("*", {}))
 counter_path = pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_COUNTER_PATH"])
 launches = (int(counter_path.read_text()) if counter_path.is_file() else 0) + 1
 counter_path.write_text(str(launches))
+if step.get("hang"):
+    import time
+    time.sleep(300)
 if "dump_prompt" in step:
     pathlib.Path(step["dump_prompt"]).write_text(prompt, encoding="utf-8")
 if "edit_document" in step:
@@ -892,6 +896,39 @@ with tempfile.TemporaryDirectory() as scratch:
           and not suggestions.exists(),
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
+    # --- A Gemini cell past its deadline: the Sonnet backup runs -----------
+    repository = build_scratch_repository(scratch)
+    copied_agy_cell = repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"
+    copied_agy_cell.write_text(
+        copied_agy_cell.read_text(encoding="utf-8")
+        .replace("COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n",
+                 "COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 1\n")
+        .replace("AGY_PRINT_TIMEOUT_MARGIN_SECONDS = 60\n",
+                 "AGY_PRINT_TIMEOUT_MARGIN_SECONDS = 1\n"),
+        encoding="utf-8")
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs, {"*": {"hang": True}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: after Gemini timed out\n"},
+    )
+    backup_lines = (suggestions.read_text(encoding="utf-8").splitlines()
+                    if suggestions.is_file() else [])
+    check("when the Gemini cell runs past its deadline twice, the Sonnet backup's "
+          "report is the read's",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and "STUB SONNET FAST READ: after Gemini timed out" in "\n".join(backup_lines)
+          and launches_counted(counter) == 2
+          and launches_counted(claude_counter_path(counter)) == 1,
+          f"exit {result.returncode}; stdout={result.stdout!r}; "
+          f"launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+    check("the report's backup line names the timeout as the Gemini cause",
+          len(backup_lines) > 1
+          and "timed-out — no result within 2 seconds" in backup_lines[1],
+          repr(backup_lines[:2]))
+
     # --- Chat instead of file, through the read ---------------------------
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
@@ -1384,7 +1421,7 @@ def ssh_time_limit_seconds_with_agy_cell(agy_cell_text):
 check("the ssh time limit of a read on ned-box follows the agy cell's per-model limit, "
       "the length of the fast cold-read-tier's model chain and the Sonnet backup's allowance",
       ssh_time_limit_seconds_with_agy_cell(
-          "COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 45 * 60\n"
+          "COLD_READ_AGY_CELL_PER_MODEL_RUN_KILL_AFTER_SECONDS = 45 * 60\n"
           "TIER_TO_AGY_MODEL_CHAIN = {'fast': ('model-a', 'model-b')}\n")
       == warning_module.FAST_READ_ATTEMPTS * 2 * 45 * 60
       + warning_module.COLD_READ_FAST_READ_SONNET_BACKUP_RUN_ALLOWANCE_SECONDS + 5 * 60)
