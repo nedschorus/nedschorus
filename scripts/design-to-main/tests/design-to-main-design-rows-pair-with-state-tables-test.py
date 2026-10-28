@@ -137,7 +137,7 @@ FROM_CELLS_THE_MATCHER_CANNOT_READ = {
 TRIGGER_CELL_PHRASES_NAMING_VERDICTS = {
     # Row 67: a reviewer's or the arbitrator's `reject contract`, and a
     # writer's `input-quick-check-failed` against the design-contract.
-    "a reject of, or a failed check against, the design-contract":
+    T.G_A_REJECT_OF_OR_A_FAILED_CHECK_AGAINST_THE_DESIGN_CONTRACT:
         (T.V_REJECT_CONTRACT, T.V_INPUT_QUICK_CHECK_FAILED),
 }
 
@@ -148,7 +148,7 @@ TO_CELL_PHRASE_OF_DESTINATION_MARKER = {
     T.TO_BOTH_WORK_STREAMS_RE_ENTER: "both work-streams re-enter their writing states",
     T.TO_THE_NEXT_ACCEPTANCE_CHECK: "the state's next acceptance-check",
     T.TO_WHEREVER_THAT_REVIEWING_STATES_ADVANCE_GOES:
-        "wherever that reviewing state's own `advance` goes",
+        T.TO_WHEREVER_THAT_REVIEWING_STATES_ADVANCE_GOES.replace(" advance ", " `advance` "),
     T.TO_THE_WRITER_THE_VERDICT_NAMES: "that writer anyway, fresh",
     T.TO_BOTH_WRITERS_FRESH: "both writers",
     T.TO_RESUME_DESTINATION: "the earliest state downstream of what the user changed",

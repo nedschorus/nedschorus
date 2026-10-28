@@ -19,6 +19,7 @@ WORDING_MODULES = (
     "nc-systems/general-tools/failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py",
     "nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py",
     "nc-systems/general-tools/tmux-target-or-server-does-not-exist-error-pattern-common.py",
+    "scripts/design-to-main/design-to-main-state-tables-common.py",
 )
 
 _finder_spec = importlib.util.spec_from_file_location(
