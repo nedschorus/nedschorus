@@ -403,11 +403,13 @@ def read_title_and_description(path):
         raise Refused(f"The description in {path} has no line beginning \"#root_cause\", "
                       "\"#root_cause_not_fixed\" or \"#no_defect_fixed\", so open-pull-request pushed nothing: "
                       "scripts/merge-gate.sh does not merge a pull request without one.\n"
-                      "Add one line that starts with one of these hashtags:\n"
-                      "If the change removes the root cause: #root_cause, then that cause.\n"
-                      "If the root cause stays, or none was found: #root_cause_not_fixed, then the cause "
-                      "and the reason, then, on the same line, #follow_up and the link of the issue or pull "
-                      "request that will fix it or look for it.\n"
+                      "Add a line for each defect the pull request fixes, or one line if it fixes none, "
+                      "starting each line with its hashtag:\n"
+                      "If the change removes the defect's root cause: #root_cause, then that cause.\n"
+                      "If the root cause stays, or none was found: #root_cause_not_fixed, then the cause, or "
+                      "that none was found, and the reason, then, on the same line, #follow_up and the full "
+                      "https://github.com/ link of the open issue or pull request that will fix the cause or "
+                      "look for it.\n"
                       "If the pull request fixes no defect: #no_defect_fixed.\n"
                       "Then run the same open-pull-request command again.")
     return title.strip(), description

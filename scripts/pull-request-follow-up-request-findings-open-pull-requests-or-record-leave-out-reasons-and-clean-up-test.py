@@ -295,7 +295,13 @@ def test_open_refusals():
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1")
         check("open refuses a description without a defect line",
               code == 1 and "has no line beginning \"#root_cause\", \"#root_cause_not_fixed\" or "
-                            "\"#no_defect_fixed\", so open-pull-request pushed nothing" in err, err)
+                            "\"#no_defect_fixed\", so open-pull-request pushed nothing" in err
+              and "\nAdd a line for each defect the pull request fixes, or one line if it fixes none, starting "
+                  "each line with its hashtag:\n" in err
+              and "\nIf the root cause stays, or none was found: #root_cause_not_fixed, then the cause, or that "
+                  "none was found, and the reason, then, on the same line, #follow_up and the full "
+                  "https://github.com/ link of the open issue or pull request that will fix the cause or look "
+                  "for it.\n" in err, err)
         # One path sorts before the recorded worktree's and one after, so only an exact match of paths refuses both.
         for name in ("another-worktree", "unrecorded-worktree"):
             unrecorded = case.subagent_worktree(name)
