@@ -560,6 +560,11 @@ SEAT_WINDOW_TITLE_FORMAT='[mac] #S'
 # today; a seat that should look different gets its own value chosen here.
 SEAT_ITERM2_BACKGROUND_COLOUR=FFE6EE
 
+# A tmux server keeps the working directory it starts in (-c sets only the
+# pane's), and recover-crashed-seats.py counts a server rooted in an
+# agent-home as that seat's live process; so tmux starts from $HOME.
+cd "$HOME"
+
 if [ "$ATTACH" = yes ]; then
     # iTerm2's proprietary SetColors sequence, written before tmux starts
     # because tmux does not pass it through to the terminal. Only on a
