@@ -284,12 +284,13 @@ def runner_output_with_suites_timed_out(timed_out, others=()):
 
 
 def runner_output_with_test_sandbox_not_started(suite):
-    """The suite runner's FAIL lines for a suite whose test sandbox did not start, from its code."""
+    """The suite runner's NOT RUN lines for a suite whose test sandbox did not start, from its code."""
     runner = load_test_suite_runner()
-    failed = {"suite": suite, "exit": 1, "seconds": 0.1, "skips": [],
-              "test sandbox did not start": True}
-    return (f"{runner.suite_line(failed)}\n\n1 failed:\n"
-            f"FAIL {suite} {runner.why_suite_failed(failed)} — log /tmp/a.log\n")
+    not_run = {"suite": suite, "exit": 1, "seconds": 0.1, "skips": [],
+               "test sandbox did not start": True}
+    return (f"{runner.suite_line(not_run)}\n\n1 not run, because bwrap could not build the test "
+            f"sandbox; each log says why and what to do:\n"
+            f"NOT RUN {suite} {runner.why_suite_failed(not_run)} — log /tmp/a.log\n")
 
 
 def runner_output_with_a_suite_failed_with_exit_code(suite, exit_code):

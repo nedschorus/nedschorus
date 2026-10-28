@@ -150,11 +150,13 @@ to the user (user-ruled, his "y" at 2026-10-01T04:43:20Z in the same Mac
 session, item 12 of the same walk).
 
 Exit codes: the runner's own when it ran and every step of this program
-worked — 0 every suite passed, 1 a suite failed, 2 the runner could not
-start; 2 also for a bad invocation of this program; 4 a step of this program
-failed, which the record names, the runner was killed by a signal, or it
-exited 0 or 1 without a `SUMMARY:` line, which is no verdict; 5 the record
-was not written; 6 another daily run holds this program's lock.
+worked — 0 every suite passed, 1 a suite failed, 2 no suite failed but
+the runner gave no full verdict, such as a suite whose test sandbox did not
+start or a run that could not start; 2 also for a bad invocation of this
+program; 4 a step of this program failed, which the record names, the
+runner was killed by a signal, or it exited 0 or 1 without a `SUMMARY:`
+line, which is no verdict; 5 the record was not written; 6 another daily
+run holds this program's lock.
 """
 # A machine-local failure may have no code diff, so selected suites cannot cover it.
 
