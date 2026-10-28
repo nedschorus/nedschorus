@@ -5,7 +5,7 @@ Run: python3 scripts/pull-request-mutation-testing-survivors-test.py
 Prints one line per case and exits non-zero if any case fails.
 
 No case runs the real cosmic-ray. Each case builds a scratch repository with
-a base commit and a head commit, and points --cosmic-ray-venv at a fake venv
+a base commit and a nc-head-commit, and points --cosmic-ray-venv at a fake venv
 whose cosmic-ray and cr-filter-git record every call and behave as the
 case's plan file says; with run_test_command, the fake's baseline runs the
 test command, the suite runner on fixture suites, as cosmic-ray runs it.
@@ -148,7 +148,7 @@ def git(repository, *arguments):
 
 
 def scratch_repository(directory, head_files):
-    """A repository with a base commit and a head commit adding head_files."""
+    """A repository with a base commit and a nc-head-commit adding head_files."""
     repository = Path(directory) / "repository"
     repository.mkdir()
     git(repository, "init", "-q", "-b", "main")
@@ -830,7 +830,7 @@ def run_cases():
               json.dumps(calls(control)))
 
     # ------------------------------------------------------------------
-    # A head commit already in the base, as a merged pull request's is:
+    # A nc-head-commit already in the base, as a merged pull request's is:
     # exit 2 before a worktree, not a 0-mutant success.
     # ------------------------------------------------------------------
     with tempfile.TemporaryDirectory() as scratch_name:
@@ -839,11 +839,11 @@ def run_cases():
         git(repository, "commit", "-q", "--allow-empty", "-m", "merged later")
         base_containing_head = git(repository, "rev-parse", "HEAD")
         for case_name, given_base in [
-                ("a base that contains the head commit", base_containing_head),
-                ("a base equal to the head commit", head)]:
+                ("a base that contains the nc-head-commit", base_containing_head),
+                ("a base equal to the nc-head-commit", head)]:
             completed = run_script(repository, control, "--head", head,
                                    "--base", given_base, "--cosmic-ray-venv", str(venv))
-            check(f"{case_name}: exit 2, saying the head commit is already in the base",
+            check(f"{case_name}: exit 2, saying the nc-head-commit is already in the base",
                   completed.returncode == 2
                   and f"head {head[:12]} is already in {given_base}" in completed.stderr
                   and "SUMMARY" not in completed.stdout,
