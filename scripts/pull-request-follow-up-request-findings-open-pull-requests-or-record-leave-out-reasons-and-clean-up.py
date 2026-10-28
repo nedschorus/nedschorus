@@ -24,9 +24,8 @@ start-topic-branch, in the subagent's worktree: record the branch and the worktr
 first, so remove-recorded-topic-branches-and-worktrees knows them even when a later step fails; then git fetch
 origin and git switch -c <topic-branch> origin/main.
 
-open-pull-request, on a topic branch start-topic-branch recorded, with the change committed: refuse a
-finding that does not exist or already has an answer, a branch start-topic-branch
-did not record, and a FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME at the worktree's root that is
+open-pull-request, on a topic branch start-topic-branch made, with the change committed: refuse a
+finding that does not exist or already has an answer, and a FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME at the worktree's root that is
 missing, is not a title, a blank line and a description, or whose description
 has no defect line, the rule scripts/merge-gate.sh applies, read by the same
 reader; then git push -u origin <branch>, whose pre-push hook runs the test
@@ -391,15 +390,6 @@ def open_pull_request(number, findings):
                           + ("that finding" if len(answered) == 1 else "those findings")
                           + ": each finding takes one answer."))
     branch = git(".", ["branch", "--show-current"]).strip()
-    recorded = [entry["branch"] for entry in read_json(
-        state_file(states, TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT, number), [])]
-    if branch not in recorded:
-        on = f"branch {branch}" if branch else "a detached HEAD"
-        raise Refused(f"This worktree is on {on}, which start-topic-branch did not record for pull request "
-                      f"{number}'s follow-up, so open-pull-request pushed nothing.\n"
-                      f"If you have not run start-topic-branch for this topic, run: {command(number, 'start-topic-branch <topic-branch>')}\n"
-                      "Then make and commit the change on it.\n"
-                      "If you have, switch to its branch with git switch <topic-branch>, and run open-pull-request again.")
     description_file = Path(git(".", ["rev-parse", "--show-toplevel"]).strip()) / FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME
     title, description = read_title_and_description(description_file)
     try:

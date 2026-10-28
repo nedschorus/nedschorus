@@ -279,13 +279,9 @@ def test_open_refusals():
         case.write_description("Title\n\n- **Root cause:** the old label still counts.\n")
         git(worktree, "switch", "-q", "--detach")
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1")
-        check("open refuses a detached HEAD, after accepting the merge gate's old defect label",
-              code == 1 and "This worktree is on a detached HEAD, which start-topic-branch did not record" in err, err)
-        git(worktree, "switch", "-q", "-c", "unrecorded")
-        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1")
-        check("open refuses a branch start did not record",
-              code == 1 and "This worktree is on branch unrecorded, which start-topic-branch did not record" in err, err)
-        check("no refusal pushed or called gh",
+        check("open accepts the merge gate's old defect label, and on a detached HEAD the push is FAILED",
+              code == 2 and "defect line" not in err and err.startswith("FAILED: git push -u origin  exited"), err)
+        check("no refusal or failed push pushed or called gh",
               case.gh_calls() == [] and "topic-one" not in git(case.origin, "branch"), str(case.gh_calls()))
         git(worktree, "switch", "-q", "topic-one")
         code, out, err = case.run(worktree, "record-finding-leave-out-reason", "2", "--reason", "already fixed")
