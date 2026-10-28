@@ -39,12 +39,10 @@ Each "Program:" below means: run {COMMAND} followed by the words after it.
 
 For you, the author:
 Dispatch one subagent with the Agent tool: subagent_type "fork", isolation "worktree", run_in_background true. Give it this whole text unchanged; it skips the lines under "For you, the author".
-When it has ended, Program: remove-recorded-topic-branches-and-worktrees
-Then ask the user each question its report holds, and open a pull request for each finding he rules for.
+When it has ended, ask the user its report's questions, then Program: remove-recorded-topic-branches-and-worktrees
 
 For the subagent, in your own worktree:
-1. Check each finding against origin/main; leave out any that no longer holds.
-   Leave out too any whose change would alter a design or decision of the user's, with the reason "needs the user's ruling: <question>"; end your report with each question.
+1. Check each finding against origin/main; leave out any that no longer holds, or that would change a design or decision of the user's, and end your report with a question to him on each.
 2. Group the findings you take on by topic: one pull request per topic.
 3. For each topic, Program: start-topic-branch <topic-branch>
    Make the change with its tests, and commit.

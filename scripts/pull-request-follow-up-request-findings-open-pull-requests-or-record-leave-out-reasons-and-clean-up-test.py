@@ -188,10 +188,9 @@ def test_brief_text():
     for line in (f'Each "Program:" below means: run {command} followed by the words after it.',
                  'Dispatch one subagent with the Agent tool: subagent_type "fork", isolation "worktree", '
                  'run_in_background true. Give it this whole text unchanged; it skips the lines under "For you, the author".',
-                 "When it has ended, Program: remove-recorded-topic-branches-and-worktrees\n"
-                 "Then ask the user each question its report holds, and open a pull request for each finding he rules for.",
-                 "   Leave out too any whose change would alter a design or decision of the user's, with the reason "
-                 "\"needs the user's ruling: <question>\"; end your report with each question.",
+                 "When it has ended, ask the user its report's questions, then Program: remove-recorded-topic-branches-and-worktrees",
+                 "1. Check each finding against origin/main; leave out any that no longer holds, or that would change a "
+                 "design or decision of the user's, and end your report with a question to him on each.",
                  "3. For each topic, Program: start-topic-branch <topic-branch>",
                  "   Program: open-pull-request --handled-finding-numbers <n>[,<n>...]",
                  "4. For each finding you leave out, Program: record-finding-leave-out-reason <n> --reason \"<why>\"",
@@ -199,7 +198,7 @@ def test_brief_text():
                  f"   Write {program.FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME} at your worktree's root"):
         check(f"the brief holds: {line}", line in brief, brief)
     words = len(brief.replace(BLOCK.rstrip("\n"), "").split())
-    check("the brief, findings aside, is at most 225 words", words <= 225, str(words))
+    check("the brief, findings aside, is at most 205 words", words <= 205, str(words))
 
 
 def test_no_saved_block():
