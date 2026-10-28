@@ -256,9 +256,12 @@ def run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
         return None
     socket_arguments = [] if socket_name is None else ["-L", socket_name]
     try:
+        # A server this call starts keeps this cwd (new-session -c sets only the pane's), and the
+        # occupancy check counts a server rooted in the caller's agent-home against that seat.
         return subprocess.run(
             ["tmux", *socket_arguments, *arguments_after_tmux],
             capture_output=True, text=True, timeout=30, check=False, env=environment,
+            cwd=os.path.expanduser("~"),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None

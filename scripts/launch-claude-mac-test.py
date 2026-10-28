@@ -150,6 +150,7 @@ class MacLaunchSandbox:
                    '  case "$argument" in (has-session) exit 1;; esac\n'
                    'done\n'
                    f'printf \'%s\\n\' "$@" > "{self.captures}/tmux-argv.txt"\n'
+                   f'pwd -P > "{self.captures}/tmux-working-directory.txt"\n'
                    'pane_command=""\n'
                    'for argument in "$@"; do\n'
                    '  case "$argument" in (*handoff-supervisor.py*) '
@@ -295,6 +296,10 @@ class MacLaunchSandbox:
         return (path.read_text(encoding="utf-8").splitlines()
                 if path.is_file() else [])
 
+    def tmux_working_directory(self):
+        path = self.captures / "tmux-working-directory.txt"
+        return path.read_text(encoding="utf-8").strip() if path.is_file() else ""
+
     def supervisor_environment(self):
         return environment_lines(self.captures / "supervisor-environment.txt")
 
@@ -438,6 +443,11 @@ def main() -> int:
         check("~/ root: nothing leaked into the working directory",
               not any(sandbox.workdir.iterdir()),
               sorted(str(p) for p in sandbox.workdir.iterdir()))
+        # A server started in the caller's agent-home makes the caller's own
+        # crash recovery refuse.
+        check("tmux starts in $HOME, not in the caller's working directory",
+              sandbox.tmux_working_directory() == str(sandbox.home.resolve()),
+              (sandbox.tmux_working_directory(), str(sandbox.workdir)))
 
         # --- the update step resolves the SEAT's claude, not the ambient one
         # The launcher exports ~/.local/bin ahead of the inherited PATH before

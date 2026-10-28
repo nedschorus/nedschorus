@@ -701,6 +701,34 @@ def run_tmux_has_session_answer_cases(root: Path):
     patch("run_tmux", real_run_tmux)
 
 
+def run_tmux_server_working_directory_cases(root: Path):
+    """A seat's tmux server starts in $HOME, so it is never rooted in the caller's
+    agent-home, where the occupancy check would count it against the calling seat."""
+    home = root / "server-cwd-home"
+    caller_seat_directory = root / "server-cwd-calling-seat"
+    stubs = root / "server-cwd-stubs"
+    for directory in (home, caller_seat_directory, stubs):
+        directory.mkdir()
+    recorded = root / "server-cwd-recorded.txt"
+    fake_tmux = stubs / "tmux"
+    fake_tmux.write_text(f'#!/bin/sh\npwd -P > "{recorded}"\n', encoding="utf-8")
+    fake_tmux.chmod(0o755)
+    saved_environment, saved_directory = dict(os.environ), os.getcwd()
+    try:
+        os.environ["PATH"] = f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"
+        os.environ["HOME"] = str(home)
+        os.chdir(caller_seat_directory)
+        real_run_tmux("new-session", "-d", "-s", "seat-b", "-c", str(root), "true",
+                      socket_name="seat-b")
+    finally:
+        os.chdir(saved_directory)
+        os.environ.clear()
+        os.environ.update(saved_environment)
+    started_in = recorded.read_text(encoding="utf-8").strip() if recorded.is_file() else ""
+    check("tmux runs in $HOME, not in the working directory of the seat that ran recovery",
+          started_in == str(home.resolve()), repr(started_in))
+
+
 def run_mac_window_cases(root: Path):
     """On ned-box, a seat a run brings up gets a window on the user's Mac attached to it."""
     real_launcher_path = recovery.launcher_path
@@ -3036,6 +3064,7 @@ with tempfile.TemporaryDirectory() as temporary:
     run_reach_clause_cases(root)
     run_seat_listing_cases(root)
     run_tmux_has_session_answer_cases(root)
+    run_tmux_server_working_directory_cases(root)
     run_mac_window_cases(root)
 
     # The same thing through recover_seat, on each path that can offer the
