@@ -133,9 +133,9 @@ def build_follow_up_request_forked_subagent_brief(request):
         f"Each \"Program:\" below means: run {command(number, '')}followed by the words after it.",
         "",
         "For you, the author:",
-        "Dispatch one subagent: subagent_type \"fork\", isolation \"worktree\", "
-        "run_in_background true. Give it this whole text; the lines under \"For you, the author\" are "
-        "not its.",
+        "Dispatch one subagent with the Agent tool: subagent_type \"fork\", isolation \"worktree\", "
+        "run_in_background true. Give it this whole text unchanged; it skips the lines under "
+        "\"For you, the author\".",
         "When it has ended, Program: remove-recorded-topic-branches-and-worktrees",
         "",
         "For the subagent, in your own worktree:",
@@ -291,10 +291,10 @@ def saved_follow_up_request(states, number):
         raise Refused(f"No follow-up request from merge-lane-2 is saved for pull request {number}: "
                       f"{saved} does not exist.\n"
                       "If merge-lane-2's message for that pull request has no line "
-                      f"\"#follow_up_request pull request {number}\", there is nothing for this "
-                      "program to follow up: follow up the message's findings as CLAUDE.md says.\n"
+                      f"\"#follow_up_request pull request {number}\", this program does not handle it: "
+                      "follow up the message's findings by hand, as CLAUDE.md says.\n"
                       "If the message has that line, the hook did not save the block: follow up the "
-                      "message's findings as CLAUDE.md says, and tell the user, in one sentence, that "
+                      "message's findings by hand, as CLAUDE.md says, and tell the user, in one sentence, that "
                       "the follow-up request hook did not save merge-lane-2's findings for pull request "
                       f"{number}.\n"
                       "If you are a subagent, pass that sentence to the agent that dispatched you instead.")
@@ -322,13 +322,21 @@ def answer_text(answer):
     return answer["link"] if "link" in answer else "Left out: " + answer["reason"]
 
 
+def still_unanswered_text(number, request, answers):
+    unanswered = [index for index in range(1, request.finding_count + 1) if str(index) not in answers]
+    if not unanswered:
+        return f"Every finding has an answer: run {command(number, 'finish-follow-up-request-and-print-merge-lane-2-message')}"
+    return (f"{findings_text(unanswered).capitalize()} "
+            f"{'has' if len(unanswered) == 1 else 'have'} no answer yet.")
+
+
 def refuse_unknown_or_answered(number, request, answers, findings, not_done, answered_instruction):
     unknown = [finding for finding in findings if not 1 <= finding <= request.finding_count]
     if unknown:
         raise Refused(f"merge-lane-2 sent {request.finding_count} findings for pull request {number}, "
                       f"numbered 1 to {request.finding_count}, so there "
                       f"{'is no' if len(unknown) == 1 else 'are no'} {findings_text(unknown)}, and {not_done}.\n"
-                      "Run the command again with finding numbers from the follow-up request.")
+                      f"Run the same command again with finding numbers from 1 to {request.finding_count}.")
     answered = [finding for finding in findings if str(finding) in answers]
     if answered:
         raise Refused(f"{findings_text(answered).capitalize()} of pull request {number}'s follow-up "
@@ -358,23 +366,24 @@ def read_title_and_description(path):
         raise Refused(f"{path} does not exist, so open-pull-request pushed nothing.\n"
                       "Write it at the root of your worktree: the pull request's title on the first "
                       "line, a blank line, then the description. Do not commit it.\n"
-                      "Then run open-pull-request again.")
+                      "Then run the same open-pull-request command again.")
     title, _, rest = text.partition("\n")
     blank, _, description = rest.partition("\n")
     if not title.strip() or blank.strip() or not description.strip():
         raise Refused(f"{path} is not the pull request's title on the first line, a blank line, then "
                       "the description, so open-pull-request pushed nothing.\n"
-                      "Write it in that form, and run open-pull-request again.")
+                      "Write it in that form, and run the same open-pull-request command again.")
     if not defect_line_reader.pull_request_description_defect_lines(description):
         raise Refused(f"The description in {path} has no line beginning \"#root_cause\", "
                       "\"#root_cause_not_fixed\" or \"#no_defect_fixed\", so open-pull-request pushed nothing: "
                       "scripts/merge-gate.sh does not merge a pull request without one.\n"
-                      "Add one of these lines, starting the line with the hashtag: \"#root_cause\" and "
-                      "the root cause the change removes; \"#root_cause_not_fixed\" and the root cause "
-                      "that stays, or that none was found, with the reason, then #follow_up and the link "
-                      "of the issue or pull request that will fix it or look for it; or "
-                      "\"#no_defect_fixed\" when the pull request fixes no defect.\n"
-                      "Then run open-pull-request again.")
+                      "Add one line that starts with one of these hashtags:\n"
+                      "If the change removes the root cause: #root_cause, then that cause.\n"
+                      "If the root cause stays, or none was found: #root_cause_not_fixed, then the cause "
+                      "and the reason, then, on the same line, #follow_up and the link of the issue or pull "
+                      "request that will fix it or look for it.\n"
+                      "If the pull request fixes no defect: #no_defect_fixed.\n"
+                      "Then run the same open-pull-request command again.")
     return title.strip(), description
 
 
@@ -386,9 +395,10 @@ def open_pull_request(number, findings):
     answers = record.get("answers", {})
     refuse_unknown_or_answered(
         number, request, answers, findings, "open-pull-request pushed nothing",
-        lambda answered: ("Run the command again without "
-                          + ("that finding" if len(answered) == 1 else "those findings")
-                          + ": each finding takes one answer."))
+        lambda answered: ("Each finding takes one answer: run the same command again without "
+                          + ("that finding." if len(answered) == 1 else "those findings.")
+                          + ("" if len(answered) < len(findings) else
+                             "\nIf that leaves no finding, this branch answers none: do not open its pull request.")))
     branch = git(".", ["branch", "--show-current"]).strip()
     description_file = Path(git(".", ["rev-parse", "--show-toplevel"]).strip()) / FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME
     title, description = read_title_and_description(description_file)
@@ -402,11 +412,11 @@ def open_pull_request(number, findings):
             text = (f"git push -u origin {branch} exited {failure.returncode}, so no pull request was "
                     f"opened. git's output:\n{failure.stderr.strip()}")
             hook_instruction = ("If git's output shows the pre-push hook refusing the push, do what it "
-                                "says, commit the fix, and run open-pull-request again.\n"
-                                "Otherwise run open-pull-request again once.\n")
+                                "says, commit the fix, and run the same open-pull-request command again.\n"
+                                "Otherwise run the same open-pull-request command again once.\n")
         raise StepFailed(
             text,
-            (hook_instruction or "Run open-pull-request again once.\n") +
+            (hook_instruction or "Run the same open-pull-request command again once.\n") +
             f"If the push fails the same way, tell the user, in one sentence, that git push of {branch} "
             f"fails and that the follow-up of pull request {number} is stopped until it works.\n"
             "If you are a subagent, pass that sentence to the agent that dispatched you instead.") from None
@@ -419,11 +429,9 @@ def open_pull_request(number, findings):
         answers[str(finding)] = {"link": link, "branch": branch}
     record["answers"] = answers
     write_json(answers_file, record)
-    unanswered = [index for index in range(1, request.finding_count + 1) if str(index) not in answers]
     print(f"Opened {link} for {findings_text(findings)} of pull request {number}'s follow-up "
           "request, and recorded it.")
-    print(f"Findings without an answer yet: {numbers_text(unanswered)}." if unanswered
-          else f"Every finding has an answer: run {command(number, 'finish-follow-up-request-and-print-merge-lane-2-message')}")
+    print(still_unanswered_text(number, request, answers))
 
 
 def record_finding_leave_out_reason(number, finding, reason):
@@ -443,6 +451,7 @@ def record_finding_leave_out_reason(number, finding, reason):
     record["answers"] = answers
     write_json(answers_file, record)
     print(f"Recorded finding {finding} of pull request {number}'s follow-up request as left out.")
+    print(still_unanswered_text(number, request, answers))
 
 
 def finish_follow_up_request_and_print_merge_lane_2_message(number):
@@ -455,11 +464,11 @@ def finish_follow_up_request_and_print_merge_lane_2_message(number):
     if unanswered:
         raise Refused(f"{findings_text(unanswered).capitalize()} of pull request {number}'s follow-up "
                       f"request {'has' if len(unanswered) == 1 else 'have'} no answer yet, so the follow-up is not finished.\n"
-                      "For each finding a pull request handles, run on that pull request's topic "
-                      f"branch: {command(number, OPEN_ARGUMENTS)}\n"
+                      "For each pull request, run on its topic branch, naming the findings it handles: "
+                      f"{command(number, OPEN_ARGUMENTS)}\n"
                       "For each finding you leave out, run: "
                       f"{command(number, LEAVE_OUT_ARGUMENTS)}\n"
-                      "Then run finish-follow-up-request-and-print-merge-lane-2-message again.")
+                      f"Then run: {command(number, 'finish-follow-up-request-and-print-merge-lane-2-message')}")
     print("\n".join([
         f"Every finding of pull request {number}'s follow-up request has an answer.",
         "Send merge-lane-2 this message with SendMessage:",
@@ -489,7 +498,7 @@ def remove_recorded_topic_branches_and_worktrees(number):
         if reason is not None and reason.startswith(HARNESS_LOCK_REASON_START):
             left.append(f"Worktree {path} is locked by the agent harness (lock reason: {reason}), so "
                         "remove-recorded-topic-branches-and-worktrees left it and the topic branches recorded with it: the subagent may still be running.\n"
-                        f"Wait until the subagent has ended, then run: {again}\n"
+                        "Wait until the subagent has ended.\n"
                         "If the worktree is still locked when you end your turn, tell the user, in one "
                         f"sentence, that the agent harness still locks worktree {path} of pull request "
                         f"{number}'s follow-up, so remove-recorded-topic-branches-and-worktrees could not remove it.\n"
@@ -497,7 +506,7 @@ def remove_recorded_topic_branches_and_worktrees(number):
         elif reason is not None:
             left.append(f"Worktree {path} is locked (lock reason: {reason or 'none given'}), so remove-recorded-topic-branches-and-worktrees "
                         "left it and the topic branches recorded with it.\n"
-                        "If whoever the lock reason names may still be using the worktree, leave it, "
+                        "If anyone may still be using the worktree, leave it, "
                         f"and tell the user, in one sentence, that worktree {path} of pull request "
                         f"{number}'s follow-up is locked ({reason or 'no reason given'}), so remove-recorded-topic-branches-and-worktrees left "
                         "it.\n"
@@ -505,7 +514,6 @@ def remove_recorded_topic_branches_and_worktrees(number):
                         "--short, read them, copy out any that is work to keep, and tell merge-lane-2 "
                         "about it with SendMessage.\n"
                         f"Then run: git worktree remove --force --force {path}\n"
-                        f"Then run: {again}\n"
                         "If you are a subagent, pass any sentence for the user to the agent that "
                         "dispatched you instead.")
         else:
@@ -516,8 +524,7 @@ def remove_recorded_topic_branches_and_worktrees(number):
                             "Read them, copy out of the worktree any file that is work to keep, such as a "
                             "change the subagent did not push, and tell merge-lane-2 about it with "
                             "SendMessage.\n"
-                            f"Then run: git worktree remove --force {path}\n"
-                            f"Then run: {again}")
+                            f"Then run: git worktree remove --force {path}")
             else:
                 git(".", ["worktree", "remove", path])
                 print(f"Removed worktree {path}.")
@@ -544,7 +551,8 @@ def remove_recorded_topic_branches_and_worktrees(number):
         print("\n".join(left))
         print(f"Clean-up of pull request {number}'s follow-up left {len(left)} "
               + ("worktree or branch" if len(left) == 1 else "worktrees or branches")
-              + " in place; each is above, with what to do.")
+              + " in place; each is above, with what to do.\n"
+              + f"When you have done what each says, run: {again}")
         return 1
     print(f"Clean-up of pull request {number}'s follow-up is done: every recorded worktree and topic "
           "branch is removed.")
@@ -597,9 +605,10 @@ def main(argv=None):
         return 1
     except StepFailed as failure:
         instructions = failure.instructions or (
-            "Run the same command again once.\n"
-            "If it fails the same way, tell the user, in one sentence, which file, git or gh command "
-            f"failed and that the follow-up of pull request {arguments.number} is stopped until it works.\n"
+            f"Run the same {arguments.subcommand} command again once.\n"
+            f"If it fails the same way, tell the user, in one sentence, that {arguments.subcommand} "
+            f"fails with the error above and that the follow-up of pull request {arguments.number} is "
+            "stopped until it works.\n"
             "If you are a subagent, pass that sentence to the agent that dispatched you instead.")
         print(f"FAILED: {failure}\n"
               f"{arguments.subcommand} stopped there; what it did before the failure stays done.\n"

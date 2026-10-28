@@ -38,7 +38,7 @@ EXPECTED_BRIEF = f"""merge-lane-2 merged pull request {NUMBER} and sent 2 non-bl
 Each "Program:" below means: run {COMMAND} followed by the words after it.
 
 For you, the author:
-Dispatch one subagent: subagent_type "fork", isolation "worktree", run_in_background true. Give it this whole text; the lines under "For you, the author" are not its.
+Dispatch one subagent with the Agent tool: subagent_type "fork", isolation "worktree", run_in_background true. Give it this whole text unchanged; it skips the lines under "For you, the author".
 When it has ended, Program: remove-recorded-topic-branches-and-worktrees
 
 For the subagent, in your own worktree:

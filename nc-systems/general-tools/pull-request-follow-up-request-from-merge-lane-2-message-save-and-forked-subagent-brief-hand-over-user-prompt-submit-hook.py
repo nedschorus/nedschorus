@@ -34,7 +34,7 @@ UNREADABLE_BLOCK_LINES = (
     HOOK + ": merge-lane-2's message above holds a #follow_up_request block, but {problem}, so "
     "nothing was saved, and no follow-up brief is given.\n"
     "Tell merge-lane-2 with SendMessage that its #follow_up_request block could not be read, quoting "
-    "this line, and ask it to send the block again.")
+    "the line above, and ask it to send the block again.")
 NOT_SAVED_LINES = (
     HOOK + ": merge-lane-2's message above holds a #follow_up_request block, but the hook could not "
     "save the block, so the follow-up program cannot track the "
