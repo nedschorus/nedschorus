@@ -315,3 +315,4 @@ Each with its failure branch (item 7 is a plain measurement and carries none):
 - What ghi-info does when a file an open issue links to is missing from its agent-home or lies outside the repository, to be settled when reading from the agent-home is built.
 - How ghi-info finds a proposed-improvements-or-changes-file written at create-GHI under the queue name, before the file was renamed `docs/issues/<number>-<slug>.md`, and what it does with an entry already settled, to be settled when reading those files is built.
 - Whether and when a discarded fork's transcript is deleted, to be settled from the first forked asks.
+- What ghi-info reads for an open issue whose body is not links: a placeholder body mid-filing, or a prose body written outside the write tool, to be settled when reading from the agent-home is built.
