@@ -41,16 +41,7 @@ For you, the author:
 Dispatch one subagent with the Agent tool: subagent_type "fork", isolation "worktree", run_in_background true. Give it this whole text unchanged; it skips the lines under "For you, the author".
 When it has ended, ask the user its report's questions, then Program: remove-recorded-topic-branches-and-worktrees
 
-For the subagent, in your own worktree:
-1. Check each finding against origin/main; leave out any that no longer holds, and any that would change a design or decision of the user's, ending your report with a question to him on each of these.
-2. Group the findings you take on by topic: one pull request per topic.
-3. For each topic, Program: start-topic-branch <topic-branch>
-   Make the change with its tests, and commit.
-   Write follow-up-pull-request-title-and-description.md at your worktree's root: the title, a blank line, then the description. Do not commit it.
-   Program: open-pull-request --handled-finding-numbers <n>[,<n>...]
-4. For each finding you leave out, Program: record-finding-leave-out-reason <n> --reason "<why>"
-5. Program: finish-follow-up-request-and-print-merge-lane-2-message
-   Send the message it prints to merge-lane-2 with SendMessage.
+For the subagent, in your own worktree: Program: next-step. Do what it prints, then run Program: next-step again, until it prints "Done".
 If a command refuses or fails, do what it prints."""
 SAVED = Path(".git") / "pull-request-follow-up-requests" / f"pull-request-{NUMBER}-non-blocking-findings.md"
 
