@@ -31,7 +31,7 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 - **architecture-overview** — a wiki page, `docs/nedschorus-wiki/nedschorus-<system>-architecture-overview.md`, that tells a reader who must change a system what it is for, what its components are and how they fit together, written as `docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md` says. #prose
 - **build-slice** — one numbered increment of a build plan, built and merged on its own.
 - **C-numbers** — the identifiers `C1`, `C2` … of the main-gatekeeper's decisions on the credential that pushes to main, defined in `nc-systems/main-gatekeeper/main-gatekeeper-design.md` § The credential and enforcement.
-- **code-prompt-code (aka CPC)** — a program built from both code and prompts, such as `nc-systems/cold-read/cold-read-grid.py`, which runs reviewer prompts through `claude` and `codex`.
+- **code-prompt-code (aka CPC)** — a program built from both code and prompts, such as `nc-systems/cold-read/cold-read-grid.py`, which runs reviewer prompts through `claude`, `codex` and `agy`.
 - **conversation-tail** — the verbatim tail of an agent-session's dialog, `~/.claude/handoffs/<seat>-dialog-NNNN.md`, which the handoff-supervisor writes when it replaces the agent-session, for the successor to read first.
 - **cosmetic-change** — a change to prose that alters only its formatting or its place, never what it says, as `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` defines it. #prose
 - **create-GHI** — the ghi-write-tool operation that files a new GHI for a GHI-MD that has none, refusing when an open GHI already covers the same ground.

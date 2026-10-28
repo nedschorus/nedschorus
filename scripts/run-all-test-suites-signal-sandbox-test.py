@@ -556,6 +556,13 @@ for suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX:
     check(f"the suite listed to run outside the sandbox exists: {suite}",
           (SCRIPTS_DIR.parent / suite).is_file())
 
+# Each of these runs the real agy cell launcher, whose bwrap cannot start inside bwrap.
+for suite in ("nc-systems/cold-read/tests/cold-read-agy-cell-test.py",
+              "nc-systems/cold-read/tests/cold-read-fast-read-test.py",
+              "nc-systems/cold-read/tests/cold-read-grid-test.py"):
+    check(f"a suite that starts the agy cell's bwrap runs outside the sandbox: {suite}",
+          suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX)
+
 runs_its_script, script = mutant_test_command_and_its_script(
     ["a-test.py", "b-test.py"], "/usr/bin/python3", ("/usr/bin/bwrap", "--unshare-pid"),
     {"b-test.py": "why"})

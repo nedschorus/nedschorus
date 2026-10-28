@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Run a cold-read-full-run against a cold-read-target.
 
-One invocation = one review: six cold-read-cells launched in parallel -- the
-defect-hunt pass in four ({deep, second-strongest-model} x {claude, codex}, where
-second-strongest-model is the agent-binary's second-strongest model) and the
-terminology pass in two (deep x {claude, codex}) -- every report saved
-into a cold-read-record named
+One invocation = one review: seven cold-read-cells launched in parallel -- the
+defect-hunt pass in five ({deep, second-strongest-model} x {claude, codex}, where
+second-strongest-model is the agent-binary's second-strongest model, and Gemini
+Argon at high on agy) and the terminology pass in two (deep x {claude, codex})
+-- every report saved into a cold-read-record named
 `cold-read-records/<file stem>-<YYYY-MM-DD>/`, or `SKILL-<skill name>-<YYYY-MM-DD>/` for a skill
 (a -2, -3 suffix for a second read of the document that day), progress and next-step
-instructions printed for the reviewing agent as reviews land.
+instructions printed for the reviewing agent as reviews land. A report is
+named `<runtime>-<hunt|terminology>-<cold-read-tier>.md`, or for a cell the grid
+gives a model, `<runtime>-<hunt|terminology>-<model>.md`. The Argon cell runs on
+agy's one cold-read-tier, `fast`, with the model and effort the grid gives it, so
+its report is `agy-hunt-gemini-4-argon-high.md`; its stamp says tier=fast beside
+the model and effort it ran with.
 
 Usage:
   nc-systems/cold-read/cold-read-grid.py --target docs/drafts/foo.md
@@ -150,6 +155,7 @@ RECORDS_DIR = record_names.RECORDS_DIR
 CELL_LAUNCHERS = {
     "claude": pathlib.Path(__file__).with_name("cold-read-claude-cell.py"),
     "codex": pathlib.Path(__file__).with_name("cold-read-codex-cell.py"),
+    "agy": pathlib.Path(__file__).with_name("cold-read-agy-cell.py"),
 }
 RECORD_SHIPPER = pathlib.Path(__file__).with_name("cold-read-record-ship.py")
 _record_shipper_spec = importlib.util.spec_from_file_location(
@@ -189,6 +195,26 @@ GRID_CELL_ROSTER = (
     ("terminology", "deep", "max"),
 )
 
+
+class GridCell(typing.NamedTuple):
+    """One cold-read-cell of the run; model and effort None keep the launcher's tier pin."""
+
+    runtime: str
+    cell_pass: str
+    tier: str
+    model: typing.Optional[str]
+    effort: typing.Optional[str]
+
+
+# agy serves only the fast tier, so Argon runs on it with the model and effort given here.
+GEMINI_ARGON_DEFECT_HUNT_CELL = GridCell(
+    "agy", "defect-hunt", "fast", "gemini-4-argon-high", "high")
+GRID_CELLS = tuple(
+    GridCell(runtime, cell_pass, tier, None, effort)
+    for runtime in ("claude", "codex")
+    for cell_pass, tier, effort in GRID_CELL_ROSTER
+) + (GEMINI_ARGON_DEFECT_HUNT_CELL,)
+
 # Logs, reports and captures record observations; cold reads must not revise that evidence.
 UNREVIEWABLE_TARGET_GENRE_SUFFIXES = ("-log", "-report", "-capture")
 
@@ -212,7 +238,7 @@ STOPPED_CELL_WRITE_CHECK_LINE = (
     "it, such as notes about the document under review. Ask the user about any other "
     "change you did not make, and whenever you are unsure.")
 
-ALL_LANDED_OPENING = "All six reports landed in {record_dir}, one file per reviewer."
+ALL_LANDED_OPENING = "All seven reports landed in {record_dir}, one file per reviewer."
 SOME_LANDED_OPENING = (
     "{landed} of {launched} reports landed in {record_dir}. The set is valid "
     "and incomplete: triage the reports that landed.")
@@ -281,8 +307,8 @@ FROZEN_COPY_CHANGED_STOPS_IN_A_ROW_LIMIT = 3
 # A grid report's name. Older records prefix each report with "<record name>--".
 # A fast read's record holds fast-read.md and, beside it, a copy of the target
 # marked with sentence ids, whose name matches this pattern too when the
-# target's stem starts claude- or codex-, so that copy is excluded by suffix.
-FULL_RUN_REPORT_NAME_PATTERN = re.compile(r"^(?:.*--)?(?:claude|codex)-.*\.md$")
+# target's stem starts claude-, codex- or agy-, so that copy is excluded by suffix.
+FULL_RUN_REPORT_NAME_PATTERN = re.compile(r"^(?:.*--)?(?:claude|codex|agy)-.*\.md$")
 
 
 class FullRunCountUnavailable(Exception):
@@ -648,10 +674,10 @@ def incomplete_set_marker(absent: dict, launched: int) -> str:
 
 
 def cell_report_path(
-    record_dir: pathlib.Path, runtime: str, cell_pass: str, tier: str,
+    record_dir: pathlib.Path, runtime: str, cell_pass: str, tier_or_model: str,
 ) -> pathlib.Path:
     pass_token = "hunt" if cell_pass == "defect-hunt" else cell_pass
-    return record_dir / f"{runtime}-{pass_token}-{tier}.md"
+    return record_dir / f"{runtime}-{pass_token}-{tier_or_model}.md"
 
 
 class CellAttempt(typing.NamedTuple):
@@ -712,19 +738,23 @@ def launch_cells(target: pathlib.Path, record_dir: pathlib.Path,
                  target_origin: pathlib.Path) -> dict:
     """Return {report_path: CellAttempt} for reviewers of the frozen target."""
     running = {}
-    for runtime, launcher in CELL_LAUNCHERS.items():
-        for cell_pass, tier, effort in GRID_CELL_ROSTER:
-            report_path = cell_report_path(record_dir, runtime, cell_pass, tier)
-            stderr_path = record_dir / (report_path.name + ".stderr.log")
-            command = [str(launcher), "--cell", cell_pass, "--tier", tier,
-                       "--target", str(target),
-                       "--target-origin", str(target_origin),
-                       "--report", str(report_path)]
-            # An explicit effort bypasses the launcher's tier-map default.
-            if effort:
-                command += ["--effort", effort]
-            # The reviewer writes its report; captured chat can omit findings written before tool calls.
-            running[report_path] = start_attempt(command, report_path, 1, stderr_path)
+    for cell in GRID_CELLS:
+        # A model the grid gives names the report, so the name says what ran.
+        report_path = cell_report_path(record_dir, cell.runtime, cell.cell_pass,
+                                       cell.model or cell.tier)
+        stderr_path = record_dir / (report_path.name + ".stderr.log")
+        command = [str(CELL_LAUNCHERS[cell.runtime]), "--cell", cell.cell_pass,
+                   "--tier", cell.tier,
+                   "--target", str(target),
+                   "--target-origin", str(target_origin),
+                   "--report", str(report_path)]
+        # An explicit model or effort bypasses the launcher's tier-map default.
+        if cell.model:
+            command += ["--model", cell.model]
+        if cell.effort:
+            command += ["--effort", cell.effort]
+        # The reviewer writes its report; captured chat can omit findings written before tool calls.
+        running[report_path] = start_attempt(command, report_path, 1, stderr_path)
     return running
 
 
@@ -1031,7 +1061,7 @@ def main() -> int:
               f"counting the earlier cold-read-full-runs of {target.name}: "
               f"{count_unavailable}\n"
               f"Tell the user what this line says.")
-    print(f"Launched six reviewers against {target}. Reports appear in "
+    print(f"Launched seven reviewers against {target}. Reports appear in "
           f"{record_dir} as each completes — read each as it arrives.")
 
     outcome = wait_for_cells(
@@ -1058,7 +1088,7 @@ def main() -> int:
     if original_line:
         print(original_line, flush=True)
 
-    launched = len(CELL_LAUNCHERS) * len(GRID_CELL_ROSTER)
+    launched = len(GRID_CELLS)
     if outcome.absent:
         # Keep target-changed first, and add all markers before shipping: the store refuses changed bytes.
         mark_every_report(record_dir, incomplete_set_marker(outcome.absent, launched))
@@ -1080,7 +1110,7 @@ def main() -> int:
     elif not outcome.absent:
         print(ALL_LANDED_OPENING.format(record_dir=record_dir))
         print()
-        print(COMPLETION_BODY.format(record_dir=record_dir, read_until="all six",
+        print(COMPLETION_BODY.format(record_dir=record_dir, read_until="all seven",
                                      record_absences=""))
     elif outcome.landed:
         print(SOME_LANDED_OPENING.format(landed=len(outcome.landed), launched=launched,
