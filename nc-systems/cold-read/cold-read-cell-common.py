@@ -636,8 +636,8 @@ def run_reviewer_program_in_own_process_group_until_timeout(
     signal.signal(signal.SIGTERM, exit_on_sigterm)
     process = subprocess.Popen(
         command,
-        stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        # communicate closes stdin after writing stdin_text, or at once when it is None.
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         cwd=REPO_ROOT, env=child_environment, text=True, start_new_session=True)
     try:
         try:

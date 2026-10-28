@@ -148,16 +148,17 @@ if "read_paths" in step:
 if "dump_key" in step:
     pathlib.Path(step["dump_key"]).write_text(
         json.dumps(os.environ.get("GEMINI_API_KEY")), encoding="utf-8")
-if "hang_writing_child_pid_to" in step:
-    import subprocess, time
-    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
-    with open(step["hang_writing_child_pid_to"], "a", encoding="utf-8") as handle:
-        handle.write("%d\\n" % child.pid)
-    time.sleep(300)
 if "stdout" in step:
     sys.stdout.write(step["stdout"])
 if "stderr" in step:
     sys.stderr.write(step["stderr"])
+if "hang_writing_child_pid_to" in step:
+    import subprocess, time
+    sys.stdout.flush()
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
+    with open(step["hang_writing_child_pid_to"], "a", encoding="utf-8") as handle:
+        handle.write("%d\\n" % child.pid)
+    time.sleep(300)
 sys.exit(step.get("exit", 0))
 """
 
@@ -596,7 +597,8 @@ with tempfile.TemporaryDirectory() as scratch:
     pid_file = scratch / "agy-past-its-deadline-child-pids"
     started = time.monotonic()
     result = run_agy_cell(repository, stubs,
-                          {"*": {"hang_writing_child_pid_to": str(pid_file)}}, report)
+                          {"*": {"hang_writing_child_pid_to": str(pid_file),
+                                 "stdout": "stub agy: words before the hang\n"}}, report)
     elapsed = time.monotonic() - started
     child_pids = pids_written_to(pid_file)
     check("an agy that runs past its deadline fails the cell with exit 1 and no report, "
@@ -608,6 +610,8 @@ with tempfile.TemporaryDirectory() as scratch:
           in result.stderr.splitlines()
           and "gemini-3.8-flash-medium(timed-out)" in result.stderr,
           repr(result.stderr))
+    check("what agy printed before it was killed is on the cell's stderr",
+          "stub agy: words before the hang" in result.stderr, repr(result.stderr))
     check("the process agy started is killed with agy",
           len(child_pids) == 1 and all(process_gone_within(pid, 10) for pid in child_pids),
           repr(child_pids))
@@ -641,6 +645,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("stopping a cell as the grid does kills the process agy started",
           len(child_pids) == 1 and all(process_gone_within(pid, 10) for pid in child_pids),
           repr(child_pids))
+    check("a cell stopped by SIGTERM exits 128 plus SIGTERM's number, not by SIGKILL",
+          launcher.returncode == 128 + signal.SIGTERM, repr(launcher.returncode))
     kill_left_over_processes(child_pids)
 
     # --- No sandbox program on PATH: refused, agy never started ------------
