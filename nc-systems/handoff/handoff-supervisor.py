@@ -1784,6 +1784,9 @@ class SupervisorSettings:
     # The caller must check for an unconsumed handoff before resuming, because resume skips boot-ignition.
     resume_session_id: str = ""
     appended_system_prompt_file: str = ""
+    # Unlike appended_system_prompt_file, which is "" both when the flag asked for none and
+    # when the file was missing at startup, this is the flag's value, which a restart passes on.
+    appended_system_prompt_file_as_given_by_flag: str = str(DEFAULT_APPENDED_SYSTEM_PROMPT_PATH)
     agent_update_timeout_seconds: int = AGENT_BINARY_UPDATE_TIMEOUT_SECONDS
     # Keep a real annotation: importlib callers cannot resolve this as a forward reference.
     adopted_session: Optional[AdoptedSession] = None
@@ -1880,10 +1883,10 @@ def handoff_supervisor_restart_arguments_build(settings: SupervisorSettings) -> 
         "--agent-command", settings.agent_command,
         "--agent-update-timeout-seconds", str(settings.agent_update_timeout_seconds),
     ]
-    # Empty means the file was missing at startup, and main's code may name another default.
-    if (settings.appended_system_prompt_file
-            and settings.appended_system_prompt_file != str(DEFAULT_APPENDED_SYSTEM_PROMPT_PATH)):
-        arguments += ["--agent-append-system-prompt-file", settings.appended_system_prompt_file]
+    # Main's code may name another default.
+    if settings.appended_system_prompt_file_as_given_by_flag != str(DEFAULT_APPENDED_SYSTEM_PROMPT_PATH):
+        arguments += ["--agent-append-system-prompt-file",
+                      settings.appended_system_prompt_file_as_given_by_flag]
     return arguments + [STARTED_BY_HANDOFF_SUPERVISOR_RESTARTING_ITSELF_ON_MAIN_CODE_FLAG]
 
 
@@ -2327,6 +2330,7 @@ def main(argv=None) -> int:
         first_prompt_wins_over_crashed_transcript=(
             arguments.first_prompt_file_wins_over_crashed_transcript),
         appended_system_prompt_file=appended_system_prompt_file,
+        appended_system_prompt_file_as_given_by_flag=arguments.agent_append_system_prompt_file,
         adopted_session=adopted,
         restarts_itself_on_main_code_at_each_session_handoff=True,
         started_by_handoff_supervisor_restarting_itself_on_main_code=(
