@@ -66,13 +66,13 @@ def check(case_name, condition, detail=""):
 def linux_only_cases_run_here(cases):
     """True on Linux; elsewhere prints why the cases are skipped and returns False.
 
-    Every case that builds or inspects a test sandbox, runs bwrap or reads /proc goes
+    Every case that builds or inspects an nc-test-sandbox, runs bwrap or reads /proc goes
     through this, since only Linux has them. The check at the end of this file runs this
     file and the other runner test files as if on a Mac, and fails a case that does not.
     """
     if sys.platform.startswith("linux"):
         return True
-    print(f"SKIP  [this machine cannot run it] {cases}: test sandboxes, bwrap and /proc exist only on Linux")
+    print(f"SKIP  [this machine cannot run it] {cases}: nc-test-sandboxes, bwrap and /proc exist only on Linux")
     return False
 
 
@@ -360,9 +360,9 @@ if linux_only_cases_run_here("the report's sandbox lines"):
         repository = scratch_checkout(scratch, ["a-test.py", OUTSIDE_SUITE])
         completed, report = run_runner(
             scratch, repository, f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
-        check("with the sandbox on, test-run-report.txt says each suite runs in its own test sandbox, named by the bwrap program",
+        check("with the sandbox on, test-run-report.txt says each suite runs in its own nc-test-sandbox, named by the bwrap program",
               completed.returncode == 0
-              and f"each suite runs in its own test sandbox: {fake_bin / 'bwrap'}" in report,
+              and f"each suite runs in its own nc-test-sandbox: {fake_bin / 'bwrap'}" in report,
               (completed.returncode, report[-600:]))
         check("with the sandbox on, test-run-report.txt names a suite that runs outside it, and why",
               f"{OUTSIDE_SUITE} runs WITHOUT the signal sandbox: "
@@ -492,7 +492,7 @@ if linux_only_cases_run_here("the report's sandbox lines"):
 
 with tempfile.TemporaryDirectory() as scratch_name:
     scratch = pathlib.Path(scratch_name)
-    # A checkout, since a test sandbox keeps the checkout's git directory read-only.
+    # A checkout, since an nc-test-sandbox keeps the checkout's git directory read-only.
     subprocess.run(["git", "init", "-q"], cwd=scratch, check=True)
     (scratch / "dies-test.sh").write_text("kill -TERM $$\n")
     (scratch / "exits-143-test.sh").write_text("exit 143\n")
@@ -544,7 +544,7 @@ def proc_net_unix_listing(paths):
     return "\n".join(rows) + "\n"
 
 
-if linux_only_cases_run_here("the covers over listening sockets, and a test sandbox that cannot start"):
+if linux_only_cases_run_here("the covers over listening sockets, and an nc-test-sandbox that cannot start"):
     with tempfile.TemporaryDirectory(dir=pathlib.Path.home()) as home_scratch_name, \
             tempfile.TemporaryDirectory() as scratch_name:
         home_scratch = pathlib.Path(home_scratch_name)
@@ -579,12 +579,12 @@ if linux_only_cases_run_here("the covers over listening sockets, and a test sand
                   line is not None and unreachable_path in line and vanished not in line
                   and "the run goes on" in line, line)
             check("one uncovered listening socket is named in the singular",
-                  line is not None and line.startswith("a listening socket that the test sandbox does not hide")
+                  line is not None and line.startswith("a listening socket that the nc-test-sandbox does not hide")
                   and "cannot reach it and" in line, line)
             listing.write_text(proc_net_unix_listing([unreachable_path, unreachable_path + "2"]))
             line = runner.uncovered_listening_sockets_report_line_or_none(str(listing))
             check("two uncovered listening sockets are named in the plural",
-                  line is not None and line.startswith("listening sockets that the test sandbox does not hide")
+                  line is not None and line.startswith("listening sockets that the nc-test-sandbox does not hide")
                   and "cannot reach them and" in line, line)
         else:
             print("SKIP  an unreachable socket: root can reach every path")
@@ -607,16 +607,16 @@ if linux_only_cases_run_here("the covers over listening sockets, and a test sand
                                       sandbox_prefix=(str(fake_bin / "bwrap"),),
                                       note_suite_process=lambda *arguments, **options: None)
         text = failed["log"].read_text()
-        check("a suite whose test sandbox could not start fails, with bwrap's message kept in its log",
+        check("a suite whose nc-test-sandbox could not start fails, with bwrap's message kept in its log",
               failed["exit"] != 0 and "Can't create file at /var/gone.sock" in text, text)
-        check("a suite whose test sandbox could not start says so plainly in its log, and what to do",
-              "the suite did not start: bwrap could not build its test sandbox" in text
+        check("a suite whose nc-test-sandbox could not start says so plainly in its log, and what to do",
+              "the suite did not start: bwrap could not build its nc-test-sandbox" in text
               and "run the suite again" in text, text)
         line = runner.suite_line({**failed, "admitted": False})
-        check("a suite whose test sandbox could not start says so on its FAIL line, which "
+        check("a suite whose nc-test-sandbox could not start says so on its FAIL line, which "
               "judges no suite failing",
               line.startswith("FAIL plain-test.sh did not start: bwrap could not build its "
-                              "test sandbox (exit 1)")
+                              "nc-test-sandbox (exit 1)")
               and not runner.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(line), line)
 
 
@@ -624,10 +624,10 @@ if linux_only_cases_run_here("the covers over listening sockets, and a test sand
 
 # Written out here, not read from the runner, so a runner that stops hiding one fails a case:
 # /mnt holds the backup drive's snapshots of the home directory, credentials included.
-if linux_only_cases_run_here("the fixed directories every test sandbox hides"):
+if linux_only_cases_run_here("the fixed directories every nc-test-sandbox hides"):
     fixed_pairs = list(zip(runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE, runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE[1:]))
     for directory in ("/mnt", "/media", "/var/snap"):
-        check(f"every test sandbox hides {directory} whole with an empty tmpfs",
+        check(f"every nc-test-sandbox hides {directory} whole with an empty tmpfs",
               ("--tmpfs", directory) in fixed_pairs, runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE)
 
 # --- Hiding by default: writable directories, and sockets left visible ---------
@@ -696,7 +696,7 @@ def stub_interpreter(path, loaded, status=0):
     return str(path)
 
 
-if linux_only_cases_run_here("what a suite's test sandbox shows and hides"):
+if linux_only_cases_run_here("what a suite's nc-test-sandbox shows and hides"):
     with tempfile.TemporaryDirectory(
             dir=runner.REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX) as home_name:
         home_scratch = pathlib.Path(home_name).resolve()
