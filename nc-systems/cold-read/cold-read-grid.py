@@ -22,7 +22,7 @@ it creates anything, the grid lists the cold-read-records in the log-store and
 in this checkout, counts those that froze this document, under its present
 path or an earlier one `git log --follow` shows, and hold a grid report written
 after the commit on origin/main's first-parent line that last changed the
-document -- for a merged topic branch, the merge, not the topic's own commit --
+document -- for a merged nc-topic-branch, the merge, not the topic's own commit --
 prints
 "cold-read-full-run N of 3", and refuses a fourth. A flag saying the user
 decided to run again or to change the design makes the run number 1, and the

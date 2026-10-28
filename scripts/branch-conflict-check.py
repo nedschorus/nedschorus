@@ -355,8 +355,8 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
             "message and in the pull request's description.",
             "If any file marked DELETED ON or DELETED OR RENAMED was deleted, do "
             "not merge: close the pull request with a comment naming the commit "
-            "that deleted it, and carry what %s still lacks on a new topic "
-            "branch cut from current %s, in a new pull request that names the "
+            "that deleted it, and carry what %s still lacks on a new "
+            "nc-topic-branch cut from current %s, in a new pull request that names the "
             "closed one; on that branch, carry the branch's change to each "
             "renamed file onto its new name%s."
             % (base, base,
@@ -377,13 +377,13 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
         "If the branch has a pull request, close it with a comment naming the "
         "commit that deleted each file.",
         "If %s still lacks any of the branch's work, including what its change "
-        "to each deleted file was for, carry that work on a new topic branch "
+        "to each deleted file was for, carry that work on a new nc-topic-branch "
         "cut from current %s, in a new pull request that names the closed one."
         % (base, base),
     ]
     if others:
         lines.append(
-            "On the new topic branch, start each ALSO CONFLICTS file from %s's "
+            "On the new nc-topic-branch, start each ALSO CONFLICTS file from %s's "
             "version and reapply the branch's change to it by hand." % base)
     return lines
 
@@ -592,7 +592,7 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
             % (commit_label(head_hash, runner), base),
             "First see what the conflict is with: if main has already replaced "
             "this branch's work, do not merge; close the pull request and carry "
-            "what main still lacks on a new topic branch cut from current main.",
+            "what main still lacks on a new nc-topic-branch cut from current main.",
             "When you close the pull request, name in its closing comment the "
             "commit or pull request on main that replaced the work.",
             "Merge %s into the branch by hand, with the frozen head as first "
