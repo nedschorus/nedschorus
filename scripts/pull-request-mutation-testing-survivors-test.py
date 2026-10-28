@@ -575,6 +575,13 @@ def run_cases():
            killed_with_output(runner_output_with_test_sandbox_not_started(
                "scripts/thing-test.py"))]],
          1, "0 killed, 0 survived, 1 errored"),
+        ("the ERRORED line for a mutant whose only nonzero suite's nc-test-sandbox did not start "
+         "quotes the runner's NOT RUN line, which names the suite",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           killed_with_output(runner_output_with_test_sandbox_not_started(
+               "scripts/thing-test.py"))]],
+         1, "its output says: NOT RUN scripts/thing-test.py did not start: bwrap could not "
+            "build its nc-test-sandbox"),
         ("a killed mutant with one suite failing beside an nc-test-sandbox that did not start is "
          "killed",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),

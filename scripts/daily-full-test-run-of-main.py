@@ -77,7 +77,7 @@ directory uses. The date is the date in America/Los_Angeles when the run
 started, never the machine's own zone. The record holds: this program's
 name, the machine, the date and the UTC time the run started; origin/main's
 commit; the runner's first line (checkout, commit, suite count, Python);
-every line the runner printed that opens `FAIL`; every line for a skipped
+every line the runner printed that opens `FAIL` or `NOT RUN`; every line for a skipped
 case, which the runner prints as `<suite>: SKIP ...`; the `SUMMARY:` line; the
 runner's exit code; the seconds spent waiting for the machine's lock; on
 Linux, the runner's line on the seconds its suites waited for admission; the
@@ -214,7 +214,6 @@ DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = 3600
 DAILY_FULL_TEST_RUN_RECORD_WRITE_TIMEOUT_SECONDS = 30
 
 RUNNER_SKIPPED_CASE_LINE = re.compile(r"^(?:\S+: )?SKIP\s")
-RUNNER_FAILED_SUITE_LINE_PREFIX = "FAIL "
 RUNNER_SUMMARY_LINE_PREFIX = "SUMMARY:"
 
 EXIT_STEP_OF_THIS_PROGRAM_FAILED = 4
@@ -433,7 +432,8 @@ def runner_output_lines_for_the_record(completed):
     if printed and printed[0].startswith(f"{run_all_test_suites.PROGRAM}: "):
         kept.append(printed[0])
     kept.extend(line for line in printed
-                if line.startswith(RUNNER_FAILED_SUITE_LINE_PREFIX)
+                if line.startswith((run_all_test_suites.FAILED_SUITE_LINE_PREFIX,
+                                    run_all_test_suites.NOT_RUN_SUITE_LINE_PREFIX))
                 or RUNNER_SKIPPED_CASE_LINE.match(line))
     summary = runner_summary_line(completed)
     if summary is not None:

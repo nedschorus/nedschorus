@@ -815,6 +815,9 @@ TEST_CASE_TIMES_FILE_NAME = "test-case-times.tsv"
 JUNIT_XML_FILE_NAME = "junit.xml"
 TEST_CASE_FAILURE_HISTORY_FILE_NAME = "test-case-failure-history.jsonl"
 ADMISSION_WAITED_LINE_PREFIX = "seconds suites waited for admission: "
+# Readers of the runner's output pick a suite's line out by these.
+FAILED_SUITE_LINE_PREFIX = "FAIL "
+NOT_RUN_SUITE_LINE_PREFIX = "NOT RUN "
 # The suites print one line per case opening PASS, FAIL or ok.
 TEST_CASE_LINE = re.compile(r"^\s*(?P<verdict>PASS|FAIL|ok)\b:?\s*(?P<text>.*)$")
 # A process a suite run without any sandbox leaves running can hold its output open.
@@ -3508,8 +3511,9 @@ def suite_line(result):
                        f"{result['peak_memory_bytes'] / 10**6:.0f} MB")
     if result["exit"] == 0:
         return f"PASS {result['suite']} ({detail})"
-    verdict = "NOT RUN" if result.get("test sandbox did not start") else "FAIL"
-    return f"{verdict} {result['suite']} {why_suite_failed(result)} ({detail})"
+    prefix = (NOT_RUN_SUITE_LINE_PREFIX if result.get("test sandbox did not start")
+              else FAILED_SUITE_LINE_PREFIX)
+    return f"{prefix}{result['suite']} {why_suite_failed(result)} ({detail})"
 
 
 class Report:
@@ -3938,14 +3942,14 @@ def main(argv=None, platform=None):
             report.line("")
             report.line(f"{len(failed)} failed:")
             for result in failed:
-                report.line(f"FAIL {result['suite']} {why_suite_failed(result)}"
+                report.line(f"{FAILED_SUITE_LINE_PREFIX}{result['suite']} {why_suite_failed(result)}"
                             f" — log {result['log']}")
         if not_run:
             report.line("")
             report.line(f"{len(not_run)} not run, because bwrap could not build the "
                         f"nc-test-sandbox; each log says why and what to do:")
             for result in not_run:
-                report.line(f"NOT RUN {result['suite']} {why_suite_failed(result)}"
+                report.line(f"{NOT_RUN_SUITE_LINE_PREFIX}{result['suite']} {why_suite_failed(result)}"
                             f" — log {result['log']}")
         if run_stops:
             report.line("")
