@@ -30,6 +30,13 @@ _transcript_records_specification = importlib.util.spec_from_file_location(
 transcript_records = importlib.util.module_from_spec(_transcript_records_specification)
 _transcript_records_specification.loader.exec_module(transcript_records)
 
+_interim_recognizer_specification = importlib.util.spec_from_file_location(
+    "claude_code_subagent_task_notification_interim_recognizer_common",
+    Path(__file__).resolve().with_name(
+        "claude-code-subagent-task-notification-interim-recognizer-common.py"))
+interim_recognizer = importlib.util.module_from_spec(_interim_recognizer_specification)
+_interim_recognizer_specification.loader.exec_module(interim_recognizer)
+
 HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
 
 # Compaction clears this shared marker because the session id survives.
@@ -95,7 +102,8 @@ SPAWNED_SUBAGENT_STATUS = "async_launched"
 # Check a toolUseResult key, not raw text: foreground grep output can contain the launch marker.
 BACKGROUND_TASK_LAUNCH_KEY = "backgroundTaskId"
 
-# Completion notifications use this tag across several record types.
+# Completion notifications use these tags across several record types.
+TASK_NOTIFICATION_PATTERN = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
 TASK_NOTIFICATION_TASK_ID_PATTERN = re.compile(r"<task-id>([^<]+)</task-id>")
 
 
@@ -265,7 +273,8 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
     spawned_ids = []
     launched_task_ids = []
     launched_task_age = {}
-    finished_ids = set()
+    # The last notification for a task-id decides: an interim one leaves its subagent running.
+    last_notification_is_interim = {}
     try:
         with path.open("r", encoding="utf-8", errors="replace") as handle:
             for line in handle:
@@ -292,9 +301,15 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                             launched_task_ids.append(task_id)
                             launched_task_age[task_id] = record_age_seconds(record, now)
                 if "<task-id>" in line:
-                    finished_ids.update(TASK_NOTIFICATION_TASK_ID_PATTERN.findall(line))
+                    for notification in TASK_NOTIFICATION_PATTERN.findall(line):
+                        interim = interim_recognizer.task_notification_is_interim(notification)
+                        for task_id in TASK_NOTIFICATION_TASK_ID_PATTERN.findall(notification):
+                            last_notification_is_interim[task_id] = interim
     except OSError as problem:
         raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
+
+    finished_ids = {task_id for task_id, interim in last_notification_is_interim.items()
+                    if not interim}
 
     def still_within_wait(task_id):
         age = launched_task_age[task_id]

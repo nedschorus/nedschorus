@@ -218,6 +218,56 @@ def subagent_completion_record(agent_id, record_type="attachment"):
             "message": {"role": "user", "content": notification}}
 
 
+# A real interim notification, trimmed to the fields the hook reads.
+INCIDENT_SUBAGENT_ID = "a68d25248370ee861"
+INCIDENT_INTERIM_NOTIFICATION = (
+    "<task-notification>\n"
+    "<task-id>a68d25248370ee861</task-id>\n"
+    "<tool-use-id>toolu_01ND98sByPRjfgSm7HcRmtiJ</tool-use-id>\n"
+    "<output-file>/private/tmp/claude-501/-Users-el-agents-cold-read-research/"
+    "edfee8d0-7356-4230-ab2f-89ee493a6701/tasks/a68d25248370ee861.output</output-file>\n"
+    "<status>completed</status>\n"
+    '<summary>Agent "Fix-round for PR 2045" is waiting on its own background work</summary>\n'
+    "<note>This agent stopped with background work of its own still running. It may resume "
+    "on its own when that work completes or reports, and the same task-id notifies again if "
+    "it does; the result below may be interim.</note>\n"
+    "<result>Waiting on the test run.</result>\n"
+    "<usage><subagent_tokens>284937</subagent_tokens><tool_uses>35</tool_uses>"
+    "<duration_ms>816408</duration_ms></usage>\n"
+    "</task-notification>")
+# The other interim form: the <result> says the report has not come yet.
+NOT_YET_REPORTED_INTERIM_NOTIFICATION = (
+    "<task-notification>\n"
+    "<task-id>a68d25248370ee861</task-id>\n"
+    "<status>completed</status>\n"
+    '<summary>Agent "Fix marker-before-ship in grid PR" finished</summary>\n'
+    "<result>This agent has not reported yet: it is waiting on its own background work and "
+    "will deliver its report through SubagentHandback when that finishes.\n</result>\n"
+    "</task-notification>")
+# The final notification for the same task-id.
+FINAL_NOTIFICATION_AFTER_INTERIM = (
+    "<task-notification>\n"
+    "<task-id>a68d25248370ee861</task-id>\n"
+    "<status>completed</status>\n"
+    '<summary>Agent "Fable check of decisions 4 and 5" finished</summary>\n'
+    "<note>A task-notification fires each time this agent stops with no live background "
+    "children of its own. The user can send it another message and resume it, so the same "
+    "task-id may notify more than once.</note>\n"
+    '<result>This agent\'s report was delivered to you as a message from "a68d25248370ee861" '
+    "(its SubagentHandback call). Read it there; it is not repeated here.\n</result>\n"
+    "</task-notification>")
+
+
+def notification_records(notification, timestamp="2026-10-27T21:31:58.572Z"):
+    """The enqueue and the user record the harness writes for one delivered notification."""
+    return [
+        {"type": "queue-operation", "operation": "enqueue", "timestamp": timestamp,
+         "content": notification},
+        {"type": "user", "timestamp": timestamp, "origin": {"kind": "task-notification"},
+         "message": {"role": "user", "content": notification}},
+    ]
+
+
 def monitor_start_record(task_id="b45e25tz2"):
     """A Monitor tool result: a taskId, and no agentId — not a subagent."""
     return {
@@ -522,6 +572,34 @@ with tempfile.TemporaryDirectory() as workspace:
 
     check("an absent transcript reports nothing in flight",
           hook.spawned_subagent_ids_in_flight(str(Path(workspace) / "nope.jsonl")) == [])
+
+    # An interim notification is not the subagent's end: the last notification decides.
+    interim_last = transcript_of(workspace, "interim-notification-last.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(INCIDENT_SUBAGENT_ID, "Fix-round for PR 2045"),
+        *notification_records(INCIDENT_INTERIM_NOTIFICATION),
+    ])
+    check("a subagent whose last notification is interim is in flight",
+          hook.spawned_subagent_ids_in_flight(str(interim_last)) == [INCIDENT_SUBAGENT_ID],
+          str(hook.spawned_subagent_ids_in_flight(str(interim_last))))
+    not_yet_reported_last = transcript_of(workspace, "not-yet-reported-notification-last.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(INCIDENT_SUBAGENT_ID),
+        *notification_records(NOT_YET_REPORTED_INTERIM_NOTIFICATION),
+    ])
+    check("a last notification whose result says the report has not come is interim too",
+          hook.spawned_subagent_ids_in_flight(str(not_yet_reported_last))
+          == [INCIDENT_SUBAGENT_ID],
+          str(hook.spawned_subagent_ids_in_flight(str(not_yet_reported_last))))
+    final_after_interim = transcript_of(workspace, "final-notification-after-interim.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(INCIDENT_SUBAGENT_ID),
+        *notification_records(INCIDENT_INTERIM_NOTIFICATION),
+        *notification_records(FINAL_NOTIFICATION_AFTER_INTERIM, "2026-10-27T21:45:00.000Z"),
+    ])
+    check("a final notification after an interim one takes the subagent out of flight",
+          hook.spawned_subagent_ids_in_flight(str(final_after_interim)) == [],
+          str(hook.spawned_subagent_ids_in_flight(str(final_after_interim))))
 
     # --- Which background tasks are still in flight -------------------------
     # A reincarnation kills a background Bash task with the session too. On
@@ -964,6 +1042,52 @@ with tempfile.TemporaryDirectory() as workspace:
               f"code {result.returncode}, stderr {result.stderr[:200]}")
         ceiling_marker_file.unlink(missing_ok=True)
         ceiling_deferred_marker_file.unlink(missing_ok=True)
+
+        # A subagent whose last notification is interim holds the handoff below
+        # the ceiling, and the ceiling still fires it if the subagent never ends.
+        INTERIM_PROBE_SESSION_ID = "handoff-threshold-hook-test-interim-session"
+        interim_marker_file = hook.HANDOFF_DIRECTORY / f"{INTERIM_PROBE_SESSION_ID}-handoff-asked"
+        interim_deferred_marker_file = (
+            hook.HANDOFF_DIRECTORY / f"{INTERIM_PROBE_SESSION_ID}-handoff-deferred")
+        interim_below_ceiling = transcript_of(workspace, "interim-below-ceiling.jsonl", [
+            usage_record(100_000, cache_read=450_000),  # 55%
+            subagent_spawn_record(INCIDENT_SUBAGENT_ID, "Fix-round for PR 2045"),
+            *notification_records(INCIDENT_INTERIM_NOTIFICATION),
+        ])
+        final_below_ceiling = transcript_of(workspace, "final-below-ceiling.jsonl", [
+            usage_record(100_000, cache_read=450_000),  # 55%
+            subagent_spawn_record(INCIDENT_SUBAGENT_ID, "Fix-round for PR 2045"),
+            *notification_records(INCIDENT_INTERIM_NOTIFICATION),
+            *notification_records(FINAL_NOTIFICATION_AFTER_INTERIM, "2026-10-27T21:45:00.000Z"),
+        ])
+        interim_past_ceiling = transcript_of(workspace, "interim-past-ceiling.jsonl", [
+            usage_record(100_000, cache_read=600_000),  # 70%
+            subagent_spawn_record(INCIDENT_SUBAGENT_ID, "Fix-round for PR 2045"),
+            *notification_records(INCIDENT_INTERIM_NOTIFICATION),
+        ])
+        try:
+            result = run_hook({"session_id": INTERIM_PROBE_SESSION_ID,
+                               "transcript_path": str(interim_below_ceiling)})
+            check("the hook defers while a subagent's last notification is interim",
+                  result.returncode == 2 and "handoff deferred" in result.stderr
+                  and "1 subagent(s) run" in result.stderr
+                  and not interim_marker_file.exists(),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+            interim_deferred_marker_file.unlink(missing_ok=True)
+            result = run_hook({"session_id": INTERIM_PROBE_SESSION_ID,
+                               "transcript_path": str(final_below_ceiling)})
+            check("the hook fires once the subagent's last notification is its report",
+                  result.returncode == 2 and is_handoff_instruction(result.stderr),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+            interim_marker_file.unlink(missing_ok=True)
+            result = run_hook({"session_id": INTERIM_PROBE_SESSION_ID,
+                               "transcript_path": str(interim_past_ceiling)})
+            check("above the ceiling the handoff fires though the last notification is interim",
+                  result.returncode == 2 and is_handoff_instruction(result.stderr),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+        finally:
+            interim_marker_file.unlink(missing_ok=True)
+            interim_deferred_marker_file.unlink(missing_ok=True)
 
         # --- A scan that could not finish defers, and says the count is
         # unknown (merge-lane review of #180, 2026-08-28). Firing here would
