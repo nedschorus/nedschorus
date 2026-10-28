@@ -205,6 +205,8 @@ def test_brief_text():
           brief.endswith("\n\nFor the subagent, in your own worktree: Program: next-step. Do what it prints, then run "
                          "Program: next-step again, until it prints \"Done\".\nIf a command refuses or fails, do what "
                          "it prints."), brief)
+    words = len(brief.replace(BLOCK.rstrip("\n"), "").split())
+    check("the brief, findings aside, is at most 105 words", words <= 105, str(words))
 
 
 def test_no_saved_block():
@@ -590,6 +592,10 @@ def test_three_findings():
         case.save(BLOCK + "3. a third finding\n")
         worktree = case.subagent_worktree()
         command = "finish-follow-up-request-and-print-merge-lane-2-message"
+        code, out, err = case.run(worktree, "next-step")
+        check("next-step judges every one of three findings, quoting the third",
+              code == 0 and out.startswith("Next: judge findings 1, 2 and 3, which have no answer yet:\n")
+              and "\n3. a third finding\nCheck each against origin/main.\n" in out, out + err)
         code, out, err = case.run(worktree, command)
         check("finish names three findings without an answer as 1, 2 and 3",
               code == 1 and "Findings 1, 2 and 3 of pull request 1964's follow-up request have no answer yet" in err, err)

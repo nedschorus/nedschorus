@@ -32,7 +32,8 @@ start-topic-branch, in the subagent's worktree: refuse a finding that does not e
 fetch origin and git switch -c <topic-branch> origin/main; then record the branch and the worktree's path in
 TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT, so remove-recorded-topic-branches-and-worktrees can remove them, and
 record under "started" in FINDING_ANSWERS_FILE_NAME_FORMAT that the branch takes on the findings, so next-step and
-open-pull-request know them. A branch git could not make is not recorded.
+open-pull-request know them; a finding named again moves to the new branch. A branch git could not make is not
+recorded.
 
 open-pull-request, in that worktree, with the change committed on its topic branch: without
 --handled-finding-numbers, handle the findings start-topic-branch recorded for the branch that have no answer, and
