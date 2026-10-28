@@ -10,7 +10,7 @@ before the reviewer ran.
 Usage:
   scripts/merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py
       <pull request number> <tag> <head commit>
-      [--merge-lane-worktrees-and-outputs-directory DIR] [--review-tools-worktree-at-main DIR]
+      [--merge-lane-worktrees-and-outputs-directory DIR] [--merge-lane-review-worktrees-directory DIR] [--review-tools-worktree-at-main DIR]
       [--time-limit-seconds N]
 
 The review program runs this as its fifth step, after the head test run. The
@@ -22,7 +22,7 @@ reviewer runs as
   claude -p --json-schema <schema> --output-format json --permission-mode dontAsk
       --allowedTools Read Grep Glob Bash WebFetch WebSearch
 
-in wt/pr<n>-head, which step 1 built detached at the head commit; a refused
+in pr<n>-head, which step 1 built detached at the head commit; a refused
 tool call does not wait for anyone, and is listed in the output's
 permission_denials, each of which is printed. The reviewer's environment has no
 GH_TOKEN or GITHUB_TOKEN, and GH_CONFIG_DIR is an empty directory, so gh has no
@@ -133,7 +133,7 @@ def parse_arguments(argv):
     parser.add_argument("--time-limit-seconds", type=float, default=DEFAULT_TIME_LIMIT_SECONDS,
                         help=f"how long the reviewer may run (default: "
                              f"{DEFAULT_TIME_LIMIT_SECONDS})")
-    common.add_directory_options(parser, "wt/, briefs/ and claude-reviews/")
+    common.add_directory_options(parser, "briefs/ and claude-reviews/")
     return common.resolve_path_options(parser.parse_args(argv))
 
 
@@ -275,7 +275,7 @@ def main(argv=None):
     arguments = parse_arguments(argv)
     number, tag, head = arguments.pull_request, arguments.tag, arguments.head_commit
     helpers = arguments.merge_lane_worktrees_and_outputs_directory
-    head_worktree = helpers / "wt" / f"pr{number}-head"
+    head_worktree = common.pull_request_head_worktree(arguments, number)
     here = Path(__file__).resolve().parent
     try:
         brief_file = helpers / "briefs" / f"brief-{tag}-mac-claude.md"

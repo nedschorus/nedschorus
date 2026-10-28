@@ -169,8 +169,6 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
 # edit above the line does not move it; it must be found in exactly one comment
 # or docstring line of the file that holds a marker.
 ALLOWED_DATA_LINES = {
-    ("scripts/agent-seat-due-task-raise-hook.py", 'such as "2026-10-03T09:00:00Z"'):
-        "an example of the timestamp form the due_utc field takes",
     ("scripts/transcript-mirror-to-log-store.py", "like `2026-10-03T23:40:12Z`, to MIRROR_PASS_STAMP_FILE_NAME"):
         "an example of the timestamp form the pass stamp file holds",
     ("scripts/locate-user-approval-by-question-subject-test.py", "# 2026-10-01T02:00:00Z"):

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""What the three handoff-supervisor suites beside this file share.
+"""What the handoff-supervisor suites beside this file share.
 
 Each suite loads this file by path in a process of its own, so each gets its
 own copy of the supervisor module: the cases patch the module's globals, and

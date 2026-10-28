@@ -358,6 +358,7 @@ def cause_line(program: str, cause_class: str, detail: str) -> str:
 
 
 STRAY_WRITE_CHECK_SKIPPED_PHRASE = "stray writes were not checked for this run"
+STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE = "a failure to look, not a clean result"
 STRAY_WRITE_PHRASE = "files outside its report changed while it ran"
 FELL_BACK_PHRASE = "fell back to"
 
@@ -804,15 +805,15 @@ def report_stray_writes(program: str, baseline, own_report_path=None) -> None:
     # Check every runtime and every exit path: a failed reviewer may still have edited the target.
     if baseline is None:
         print(f"{program}: {STRAY_WRITE_CHECK_SKIPPED_PHRASE} — no pre-run "
-              "snapshot of the working tree was taken. This is a failure to "
-              "look, not a clean result.", file=sys.stderr)
+              f"snapshot of the working tree was taken. This is "
+              f"{STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE}.", file=sys.stderr)
         return
     try:
         stray = stray_writes_since(baseline, own_report_path)
     except WriteDetectorUnavailable as error:
         print(f"{program}: {STRAY_WRITE_CHECK_SKIPPED_PHRASE} — git status "
-              f"failed ({error}). This is a failure to look, not a clean "
-              "result.", file=sys.stderr)
+              f"failed ({error}). This is {STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE}.",
+              file=sys.stderr)
         return
     if stray:
         # Snapshots detect changed content, not authorship; another worker may have made the edit.

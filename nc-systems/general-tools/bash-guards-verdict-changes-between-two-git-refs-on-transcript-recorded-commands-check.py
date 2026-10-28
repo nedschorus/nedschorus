@@ -42,8 +42,14 @@ At a ref whose shell reader is older than the shell reader child each pool worke
 (step 3), each guard reads each command in a new process of its own, a one-command-per-process shell
 reader, and the guard stops waiting for that process after 8 s. Either kind of timed-out reading is
 read again because a timeout can come from the machine's load rather than the guard; a reading that
-raised for any other reason is not read again. A message that differs while its verdict does not is printed, and does not change the exit status. The scratch directory is removed after an exit 0
-unless --scratch-directory named it; after an exit 1 or 2 it is kept, and its path is printed.
+raised for any other reason is not read again. A message that differs while its verdict does not is printed, and does not change the exit status.
+
+Files: the run log directory holds the files a reader needs to see why a run exited 1 or 2, each step's log
+and each mode's differences-<mode>.json. By default it is a new directory under --log-store-runs-directory, in
+the log-store on ned-box, removed after an exit 0 and kept after an exit 1 or 2. Everything else, the
+checkouts and the pairs and verdicts files, goes in a scratch directory, by default a temporary directory that
+is removed whenever the replay exits, on an exception, SIGTERM or SIGHUP too, unless its checkouts could not be
+removed. --scratch-directory names a scratch directory that is kept, and that holds the run log files too.
 """
 
 import argparse
@@ -87,6 +93,14 @@ PAIRS_PER_TASK = 200
 STEP_DEADLINE_MARGIN_SECONDS = 600
 GIT_TIMEOUT_SECONDS = 600
 PRINTED_TEXT_LENGTH = 300
+SCRATCH_OR_RUN_LOG_DIRECTORY_NOT_REMOVED_MESSAGE = (
+    "REPLAY FAILED: the paths listed below could not be removed, so this Bash guards replay exits 2; any verdicts "
+    "it printed above stand. Each path is in the replay's scratch directory, made under TMPDIR, or, after a replay that "
+    "found nothing to report, in its run log directory.\n"
+    "Remove each listed path with rm -rf <path>, because nothing else removes it, and the disk it is on can "
+    "fill.\n  ")
+DEFAULT_LOG_STORE_RUNS_DIRECTORY = (
+    "/home/nedlern/nedschorus-logs/bash-guards-replay-changed-verdict-or-failed-run-log-directories")
 VERDICT_CHANGED_MESSAGE = (
     "VERDICT CHANGED: a recorded command gets a different verdict at the head, so this check exits 1.\n"
     "The pull request's reviewer answers each difference under a \"rows whose verdict differs\" line above, in "
@@ -95,7 +109,7 @@ VERDICT_CHANGED_MESSAGE = (
     "this check reads a command, in-process, search-file main() and new-process, and each labels its own lines "
     "above. Each entry gets its own answer, naming the guard as that entry names it, so a difference two modes "
     "list gets two answers, even where the two modes name the same guard differently. When a \"rows whose verdict differs\" line counts more differences than it "
-    "lists, or an entry's command is cut short, every difference is in full in the scratch directory whose path "
+    "lists, or an entry's command is cut short, every difference is in full in the run log directory whose path "
     "this check printed first: in differences-in-process.json, differences-search-file.json and, when the "
     "new-process mode ran, differences-new-process.json, under the \"verdict\" key. Each difference there is a "
     "list of four items: [command, working directory]; the guard; the base's reading; and the head's reading. "
@@ -898,34 +912,70 @@ def replay(arguments):
             signal.signal(number, handler)
 
 
+def run_log_directory_made(runs_directory):
+    """Make and return a new run log directory under runs_directory, named by the UTC time it was made."""
+    try:
+        Path(runs_directory).mkdir(exist_ok=True)  # Not its parents: a missing log-store is this machine's.
+        return Path(tempfile.mkdtemp(prefix=time.strftime("%Y-%m-%dT%H%M%SZ-", time.gmtime()), dir=runs_directory))
+    except OSError as error:
+        raise ReplayFailed(
+            f"this Bash guards replay made no run log directory, the directory that keeps the step logs and "
+            f"differences files a reviewer reads after a changed verdict or a failed replay, because it could not "
+            f"make one under {runs_directory}: {error}.\n"
+            f"On ned-box, where the log-store is, check that {runs_directory} can be written to, then run the "
+            f"replay again.\n"
+            f"On a machine without the log-store, run the replay again with --log-store-runs-directory "
+            f"<an existing directory>, which then holds the run log directories.") from error
+
+
+def remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(scratch, run_log_directory, status):
+    """Remove the scratch directory, and the run log directory after an exit 0; return a line for each path
+    that could not be removed."""
+    could_not_remove = []
+    shutil.rmtree(scratch, onexc=lambda _, path, error: could_not_remove.append(f"{path}: {error}"))
+    if status == 0:
+        shutil.rmtree(run_log_directory, onexc=lambda _, path, error: could_not_remove.append(f"{path}: {error}"))
+    return could_not_remove
+
+
 def replay_with_sigterm_handled(arguments):
     scratch_named = arguments.scratch_directory is not None
-    scratch = Path(arguments.scratch_directory).resolve() if scratch_named else \
-        Path(tempfile.mkdtemp(prefix="bash-guards-replay-"))
-    scratch.mkdir(parents=True, exist_ok=True)
-    print(f"scratch directory: {scratch}")
-    if arguments.pairs_file:
-        pairs = json.loads(Path(arguments.pairs_file).read_text())
-    else:
-        pairs, lines_not_json = recorded_command_pairs(arguments.transcript_directory or DEFAULT_TRANSCRIPT_DIRECTORIES)
-        print(f"transcript lines naming Bash that are not JSON, skipped: {lines_not_json}")
-    if not pairs:
-        raise ReplayFailed("no recorded Bash commands were found")
-    new_process_pairs = pairs if arguments.new_process_pairs == "all" else []
-    (scratch / "pairs.json").write_text(json.dumps(pairs))
-    (scratch / "new-process-pairs.json").write_text(json.dumps(new_process_pairs))
-    print(f"pairs: {len(pairs)}; new-process pairs: {len(new_process_pairs)}")
-
-    # A file whose name starts with - is what the search-file guard looks for.
-    search_file_directory = scratch / "search-file-directory"
-    search_file_directory.mkdir(exist_ok=True)
-    (search_file_directory / "-v.txt").touch()
-    (search_file_directory / "a.txt").touch()
-
-    repository = run_git(arguments.repository, "rev-parse", "--show-toplevel")
+    scratch = run_log_directory = repository = None
     checkouts = {}
+    not_removed = []
     status = 2
+    # One try from before the scratch directory is made, so no stop or exception can come between its making and
+    # the finally that removes it.
     try:
+        if scratch_named:
+            scratch = Path(arguments.scratch_directory).resolve()
+            scratch.mkdir(parents=True, exist_ok=True)
+            run_log_directory = scratch
+        else:
+            run_log_directory = run_log_directory_made(arguments.log_store_runs_directory)
+            scratch = Path(tempfile.mkdtemp(prefix="bash-guards-replay-"))
+        print(f"run log directory: {run_log_directory}")
+        print(f"scratch directory: {scratch}")
+        if arguments.pairs_file:
+            pairs = json.loads(Path(arguments.pairs_file).read_text())
+        else:
+            pairs, lines_not_json = recorded_command_pairs(arguments.transcript_directory
+                                                           or DEFAULT_TRANSCRIPT_DIRECTORIES)
+            print(f"transcript lines naming Bash that are not JSON, skipped: {lines_not_json}")
+        if not pairs:
+            raise ReplayFailed("no recorded Bash commands were found")
+        new_process_pairs = pairs if arguments.new_process_pairs == "all" else []
+        (scratch / "pairs.json").write_text(json.dumps(pairs))
+        (scratch / "new-process-pairs.json").write_text(json.dumps(new_process_pairs))
+        print(f"pairs: {len(pairs)}; new-process pairs: {len(new_process_pairs)}")
+
+        # A file whose name starts with - is what the search-file guard looks for.
+        search_file_directory = scratch / "search-file-directory"
+        search_file_directory.mkdir(exist_ok=True)
+        (search_file_directory / "-v.txt").touch()
+        (search_file_directory / "a.txt").touch()
+
+        repository = run_git(arguments.repository, "rev-parse", "--show-toplevel")
         for label, ref in (("base", arguments.base_ref), ("head", arguments.head_ref)):
             commit = run_git(repository, "rev-parse", "--verify", ref + "^{commit}")
             checkout = scratch / f"checkout-{label}"
@@ -958,7 +1008,7 @@ def replay_with_sigterm_handled(arguments):
                                    "1" if search_file_main else "0", str(search_file_directory),
                                    str(arguments.per_pair_timeout_seconds),
                                    json.dumps(base_guard_files if label == "base" else None)],
-                                  scratch / f"verdicts-{mode.split()[0]}-{label}.log",
+                                  run_log_directory / f"verdicts-{mode.split()[0]}-{label}.log",
                                   step_deadline_seconds(len(mode_pairs), arguments.jobs,
                                                         arguments.per_pair_timeout_seconds))
                 written = json.loads(out.read_text())
@@ -994,7 +1044,7 @@ def replay_with_sigterm_handled(arguments):
                     for number, ((command, working_directory), _, reading) in enumerate(guard_refusals, 1):
                         print(f"  {number}. command: {command!r}\n     working directory: {working_directory}\n"
                               f"     head: {shortened(reading)}")
-            (scratch / f"differences-{mode.split()[0]}.json").write_text(
+            (run_log_directory / f"differences-{mode.split()[0]}.json").write_text(
                 json.dumps({"verdict": differences, "message": message_differences, "failed": mode_failed,
                             "added_guard_refusals": refusals}))
             verdict_changed = verdict_changed or bool(differences)
@@ -1016,16 +1066,27 @@ def replay_with_sigterm_handled(arguments):
     finally:
         for number in STOP_SIGNALS:
             signal.signal(number, signal.SIG_IGN)  # A second stop must not interrupt the removal.
-        not_removed = remove_checkouts(repository, checkouts.values())
+        if checkouts:
+            not_removed = remove_checkouts(repository, checkouts.values())
         if not_removed:
             print("REPLAY FAILED: these checkouts could not be removed; remove them with git worktree remove --force:\n  "
                   + "\n  ".join(not_removed))
             status = 2
-    if status == 0 and not scratch_named:
-        shutil.rmtree(scratch)
-        print(f"scratch directory removed: {scratch}")
-    else:
-        print(f"scratch directory kept: {scratch}")
+        # Not after a checkout was left: removing its files would leave git a registration with no checkout.
+        if scratch is None:
+            pass  # Nothing was made.
+        elif not scratch_named and not not_removed:
+            could_not_remove = remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(
+                scratch, run_log_directory, status)
+            if could_not_remove:
+                print(SCRATCH_OR_RUN_LOG_DIRECTORY_NOT_REMOVED_MESSAGE + "\n  ".join(could_not_remove))
+                status = 2
+            else:
+                print(f"scratch directory removed: {scratch}")
+                print(f"run log directory removed: {run_log_directory}" if status == 0 else
+                      f"run log directory kept: {run_log_directory}")
+        else:
+            print(f"scratch directory kept: {scratch}")
     return status
 
 
@@ -1059,8 +1120,12 @@ def main(argv=None):
         parser.add_argument("--new-process-pairs", choices=("all", "none"), default="all")
         # Half the processors, so the replay leaves the machine room for other agents' work.
         parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
-        parser.add_argument("--scratch-directory", help="kept after the run; by default a temporary directory, "
-                                                        "removed when no verdict changed")
+        parser.add_argument("--scratch-directory", help="kept after the replay, and holds the run log files too; "
+                                                        "by default a temporary directory, removed whenever the "
+                                                        "replay exits")
+        parser.add_argument("--log-store-runs-directory", default=DEFAULT_LOG_STORE_RUNS_DIRECTORY,
+                            help="where each replay without --scratch-directory makes its run log directory, which "
+                                 "is kept after an exit 1 or 2")
         parser.add_argument("--per-pair-timeout-seconds", type=int, default=DEFAULT_PER_PAIR_TIMEOUT_SECONDS,
                             help="how long one guard may take on one command before the reading is read again, "
                                  "and then before it counts as failed")

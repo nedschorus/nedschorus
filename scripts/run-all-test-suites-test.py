@@ -2234,6 +2234,87 @@ with tempfile.TemporaryDirectory() as scratch:
           and any(" — log " in line for line in timeout_lines),
           (second.returncode, second.stdout))
 
+# --- Only the suites named, records left unchanged, stop at the first failure ----------
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-test.py": PASSES, "b-test.py": PASSES, "c-test.py": PASSES})
+    named = run(root, "--only-suites-named", "c-test.py", "b-test.py")
+    check("--only-suites-named runs only the suites named, and the first line says how many "
+          "git lists and how many were named",
+          named.returncode == 0 and ran(root) == ["b-test.py", "c-test.py"]
+          and "3 suites listed by git; 2 named by --only-suites-named" in named.stdout,
+          (named.returncode, ran(root), named.stdout, named.stderr))
+    (root / "ran.txt").unlink()
+    unknown = run(root, "--only-suites-named", "b-test.py", "missing-test.py")
+    check("--only-suites-named naming a suite git does not list exits 2, names it, and runs "
+          "no suite",
+          unknown.returncode == 2
+          and "--only-suites-named names missing-test.py, which git does not list"
+              in unknown.stderr
+          and ran(root) == [],
+          (unknown.returncode, unknown.stderr, ran(root)))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"hangs-test.py": "time.sleep(20)\n", "quick-test.py": PASSES})
+    run(root, "--only-suites-named", "hangs-test.py", "-j", "1",
+        driver=TIME_LIMITS_SHORTENED_DRIVER)
+    stored = next((root / "recordings").glob("*/hangs-test.py.json"))
+    recorded = json.loads(stored.read_text())
+    recorded.update(exit=0, seconds=2.0)
+    stored.write_text(json.dumps(recorded))
+    before = stored.read_text()
+    shutil.rmtree(root / "logs")
+    unrecorded = run(root, "--leave-recorded-inputs-and-failure-history-unchanged", "-j", "1",
+                     driver=TIME_LIMITS_SHORTENED_DRIVER)
+    check("with --leave-recorded-inputs-and-failure-history-unchanged, a suite's limit still "
+          "comes from its recording",
+          unrecorded.returncode == 1 and any(
+              re.match(r"FAIL hangs-test\.py TIMEOUT after \d+s \(limit 4s, 2 times "
+                       r"recorded 2s\)", line) for line in lines(unrecorded.stdout)),
+          (unrecorded.returncode, unrecorded.stdout, unrecorded.stderr))
+    check("with --leave-recorded-inputs-and-failure-history-unchanged, no recording is saved "
+          "or replaced, no input recorder runs, and the run says so",
+          stored.read_text() == before
+          and not list((root / "recordings").glob("*/quick-test.py.json"))
+          and not (root / "logs" / "recorded-inputs").exists()
+          and "inputs not recorded" in unrecorded.stdout,
+          (sorted(path.name for path in (root / "recordings").rglob("*")), unrecorded.stdout))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-fails-test.py": "sys.exit(1)\n", "b-passes-test.py": PASSES})
+    first_failure_alone = run(root, "--stop-at-first-failing-suite", "-j", "1")
+    check("with --stop-at-first-failing-suite, a suite not yet started when the first suite "
+          "fails is not started, the run says so, and exits 1",
+          first_failure_alone.returncode == 1 and ran(root) == ["a-fails-test.py"]
+          and "stopped at the first failing suite, a-fails-test.py: 0 suites killed while "
+              "they ran, 1 not started" in first_failure_alone.stdout
+          and "SUMMARY: 0 passed, 1 failed, 0 stopped, 1 total" in first_failure_alone.stdout,
+          (first_failure_alone.returncode, ran(root), first_failure_alone.stdout))
+    (root / "ran.txt").unlink()
+    without_the_option = run(root, "-j", "1")
+    check("without --stop-at-first-failing-suite, the suites after a failing one still run",
+          without_the_option.returncode == 1
+          and ran(root) == ["a-fails-test.py", "b-passes-test.py"],
+          (without_the_option.returncode, ran(root), without_the_option.stdout))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    # The sleeper starts first, so it is running when the other suite fails.
+    make_repo(root, {"a-sleeps-test.py": "time.sleep(60)\n",
+                     "b-fails-test.py": "time.sleep(1)\nsys.exit(1)\n"})
+    started = time.monotonic()
+    beside = run(root, "--stop-at-first-failing-suite", "-j", "2")
+    check("with --stop-at-first-failing-suite, the suite running beside the first failing "
+          "suite is killed and reported as stopped by it, not as failed, and the run exits 1",
+          beside.returncode == 1 and time.monotonic() - started < 40
+          and "FAIL a-sleeps-test.py killed when the run was stopped by the first failing "
+              "suite, b-fails-test.py" in beside.stdout
+          and "1 failed:" in beside.stdout
+          and "SUMMARY: 0 passed, 1 failed, 1 stopped, 2 total" in beside.stdout,
+          (beside.returncode, time.monotonic() - started, beside.stdout))
+
 # --- A stopped run kills its suites -------------------------------------------
 # Each suite runs in a session of its own, so a signal to the runner's process group no
 # longer reaches it; the runner itself must kill it.
