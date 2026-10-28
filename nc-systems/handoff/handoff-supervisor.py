@@ -409,22 +409,32 @@ MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE = (
 
 # A loose-ends audit at the session-handoff, not yet built, will write the loose ends into the next-step file; until then that clause matches nothing.
 ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION = (
-    "Bring the user everything that needs the user in one approval-walk, by "
-    "/walk-me-through's steps, opened as your first action: the unanswered "
-    "items of any approval-walk in progress, open questions, concerns, "
-    "suggestions, and the loose ends the next step lists, when it lists "
-    "any. Put first the next step's own item, when it needs the user; then "
-    "items that block work, then items that change direction, then the "
-    "rest. Close each approval-walk in progress with a "
-    "line in its walk-minutes naming the new approval-walk, and give each "
-    "item you carry into it a link to its original walk-document. When the "
-    "next step is to present an item of an approval-walk in progress, this "
-    "instruction overrides it: carry that item into the new approval-walk "
-    "instead of presenting it in the old one. Do the work that does not "
-    "need the user without asking the user: your own yourself, and another "
-    "agent-seat's by sending it to that agent-seat with SendMessage. Keep "
-    "working on the previous session's work while the user answers. When "
-    "nothing needs the user, open no approval-walk and only keep working."
+    "Bring the user everything that needs the user, by /walk-me-through's "
+    "steps, as your first action: the unanswered items of any "
+    "approval-walk in progress, open questions, concerns, suggestions, "
+    "and the loose ends the next step lists, when it lists any. When an "
+    "approval-walk is in progress, continue it instead of opening a new "
+    "one: keep its name, its item numbers and its item pages, and resume "
+    "at the item that the last `#next_to_present` line of its "
+    'walk-minutes names, as /walk-me-through\'s section "Interruption and '
+    'recovery" says. Add everything else that needs the user to that '
+    "approval-walk as new items just after the item it resumes at, "
+    'numbered as its section "Re-planning" says, in this order: the next '
+    "step's own item first, when it needs the user; then items that block "
+    "work, then items that change direction, then the rest. When more "
+    "than one approval-walk is in progress, continue first the one the "
+    "next step names, or the one with the latest walk-minutes when it "
+    "names none, then the others, and add the new items to the first. "
+    "When none is in progress, open one approval-walk for everything that "
+    "needs the user, in the order just given for new items. Before you "
+    "show any item, whether it is new or comes from an approval-walk in "
+    "progress, check it against the user's earlier rulings, as "
+    '/walk-me-through\'s section "Each item" says. Do the work that does '
+    "not need the user without asking the user: your own yourself, and "
+    "another agent-seat's by sending it to that agent-seat with "
+    "SendMessage. Keep working on the previous session's work while the "
+    "user answers. When nothing needs the user, open no approval-walk and "
+    "only keep working."
 )
 
 SUPERVISOR_POINTER_SENTENCE = (
