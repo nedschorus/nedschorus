@@ -313,6 +313,7 @@ Each with its failure branch (item 7 is a plain measurement and carries none):
 ## Deferred-decisions
 
 - How the stored session is cold-started when two asks arrive together and a reincarnation trigger has fired, and which changed entries each fork is told to re-read, to be settled when the forked ask path is built.
+- How the script brings the stored agent-session up to the mirror, at most 10 minutes behind, when no ask runs in it, to be settled when the forked ask path is built.
 - Which transcript the transcript-size reincarnation trigger measures once every ask runs in a discarded fork, and how concurrent forks update the stale-match count, to be settled when the forked ask path is built.
 - How mirror refreshes and agent-home fast-forwards run by asks at the same time keep the mirror's two files consistent and do not collide on git's lock, to be settled when the forked ask path is built.
 - What ghi-info does when a file an open issue links to is missing from its agent-home or lies outside the repository, to be settled when reading from the agent-home is built.
