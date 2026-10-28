@@ -912,18 +912,26 @@ with tempfile.TemporaryDirectory() as scratch_name:
         def records_cannot_be_written(*arguments, **options):
             raise OSError(21, "Is a directory", "junit.xml")
 
-        code, printed, _ = main_with("records", **as_if_bwrap,
+        real_run_one_suite = runner.run_one_suite
+
+        def suite_ends_with(exit_code):
+            """A run_one_suite whose suite ends with exit_code, whether or not bwrap can start
+            here: inside a test sandbox, /usr/bin/bwrap cannot build another."""
+            def run(*arguments, **options):
+                result = {**real_run_one_suite(*arguments, **options), "exit": exit_code}
+                result.pop("test sandbox did not start", None)
+                return result
+            return run
+
+        suite_passes = suite_ends_with(0)
+
+        code, printed, _ = main_with("records", **as_if_bwrap, run_one_suite=suite_ends_with(1),
                                      write_case_times_suite_resources_and_junit_xml_of_run=records_cannot_be_written)
-        # The stand-in bwrap builds no real sandbox, so the suite itself fails here, and a
-        # failing suite outranks the missing records.
+        # A failing suite outranks the missing records.
         check("records that cannot be written while a suite failed end the run with exit 1, "
               "the failure's exit, naming the missing records and printing the SUMMARY",
               code == runner.EXIT_SOME_FAILED and "could not be written" in printed
               and "SUMMARY: " in printed, (code, printed[-800:]))
-        real_run_one_suite = runner.run_one_suite
-
-        def suite_passes(*arguments, **options):
-            return {**real_run_one_suite(*arguments, **options), "exit": 0}
 
         code, printed, _ = main_with("records-all-passed", **as_if_bwrap,
                                      run_one_suite=suite_passes,
