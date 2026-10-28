@@ -150,11 +150,12 @@ Each day, a program, with no model:
 
 The user hears from this job only when something needs attention, by the design in "How a daily job is handed to the user and tracked" below:
 
-- **The replay's time passes its budget.** The budget is the time that GHI's first full measured invocation sets. The message gives the time of the last full invocation, which that GHI has the replay record in the log-store, the budget, and the number of pairs in the file.
 - **A newly added pair reads differently at main from its recorded verdict.** One line per pair: the command, shortened; the working directory; the transcript where it was first seen; the recorded verdict; and main's reading.
 - **The job could not do its work.** When the log-store or a transcript cannot be read, or a guard raises or runs past its time on a new pair, the message says what the job could not read and why, and never says that nothing needs attention.
 
 On a day with none of these, the job shows the user nothing.
+
+The job does not report the replay's time. On 2026-10-28 the user approved, in reboot-test's approval-walk reboot-test-carried-items-2026-10-27 (item 17), using the test runner's recorded times instead of a times file, a budget and a daily report of any run over the budget: "The test runner already records each suite's time and stops a suite that runs past its limit", and that GHI's GHI-MD records the first passing run's time of its suite and its regeneration program's time.
 
 Open for this job: which differences from the recorded verdict are expected rather than reported, since the guard that judged the command may have been older or not yet written, and the replay stubs the git and gh probes that the force-push guard and the Markdown push reminder make; and that a transcript records that some hook refused a command, not which one.
 
