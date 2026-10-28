@@ -3450,7 +3450,8 @@ SUITE_TIMEOUT_LINE = re.compile(r"^FAIL (?P<suite>.+?) TIMEOUT after \d+s \(limi
 
 # A suite's own verdict: the runner's line ends in describe_exit(), not in a timeout, a stop
 # or a test sandbox that did not start.
-SUITE_FAILED_LINE = re.compile(r"^FAIL (?P<suite>\S.*?) (?:exit \d+|killed by \S+)(?: \(| — log )")
+SUITE_FAILED_LINE = re.compile(
+    r"^FAIL (?P<suite>\S.*?) (?:exit \d+|killed by (?:signal \d+|\S+))(?: \(| — log )")
 NOT_RUN_TO_THE_END_LINE_PREFIX = f"{PROGRAM}: not run to the end"
 
 

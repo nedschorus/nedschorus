@@ -50,10 +50,20 @@ def load_script_module():
     return module
 
 
-# cosmic-ray's limit, by default, for one suite with no recording: one round of the runner.
+# The limit on one run of the suites, by default, for one suite with no recording: one round
+# of the runner.
 DEFAULT_LIMIT_FOR_A_SUITE_WITHOUT_RECORDING = (
     load_test_suite_runner().TEST_SUITE_TIMEOUT_WITHOUT_PASSING_RECORDING_SECONDS
     + load_script_module().TEST_SUITE_RUNNER_START_UP_SECONDS)
+EXTRA_SECONDS = load_script_module(
+).MUTANT_TIMEOUT_EXTRA_SECONDS_FOR_TEST_SUITE_RUNNER_TO_STOP_ITS_SUITES
+
+
+def cosmic_ray_timeout_line_and_test_command_words_for_limit(limit):
+    """The config's timeout line and the test command's first words, for this limit."""
+    return (f"timeout = {float(limit + EXTRA_SECONDS)!r}\n",
+            [sys.executable, str(SCRIPT.resolve()),
+             load_script_module().RUN_AS_COSMIC_RAY_TEST_COMMAND_FLAG, repr(float(limit))])
 
 CONTROL_DIRECTORY_VARIABLE = "PULL_REQUEST_MUTATION_TESTING_SURVIVORS_TEST_CONTROL_DIR"
 
@@ -282,6 +292,39 @@ def runner_output_with_test_sandbox_not_started(suite):
             f"FAIL {suite} {runner.why_suite_failed(failed)} — log /tmp/a.log\n")
 
 
+def runner_output_with_a_suite_failed_with_exit_code(suite, exit_code):
+    """The suite runner's FAIL lines for a suite that ended with this exit code, from its code."""
+    runner = load_test_suite_runner()
+    failed = {"suite": suite, "exit": exit_code, "seconds": 1.0, "skips": []}
+    return (f"{runner.suite_line(failed)}\n\n1 failed:\n"
+            f"FAIL {suite} {runner.why_suite_failed(failed)} — log /tmp/a.log\n")
+
+
+def test_command_output_when_the_machine_lock_is_held(scratch):
+    """The test command's run, as cosmic-ray runs it, while another run holds the machine lock.
+
+    The test command and the suite runner are the real ones, so the case sees the streams
+    cosmic-ray sees."""
+    import fcntl
+    repository, _, _ = scratch_repository(scratch, HEAD_FILES)
+    lock_file = Path(scratch) / "machine.lock"
+    environment = dict(os.environ)
+    # Suites without a test sandbox: the path that takes the machine lock.
+    environment[load_test_suite_runner().SIGNAL_SANDBOX_INSIDE_VARIABLE] = "1"
+    with open(lock_file, "a+") as holder:
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        holder.write("pid 7, the holder in this test\n")
+        holder.flush()
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), load_script_module().RUN_AS_COSMIC_RAY_TEST_COMMAND_FLAG,
+             "60.0", sys.executable, str(SCRIPT.with_name("run-all-test-suites.py")),
+             "--checkout", str(repository), "--lock-file", str(lock_file),
+             "--recorded-inputs-directory", str(Path(scratch) / "recordings"),
+             "--only-suites-named", "scripts/thing-test.py"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment,
+            timeout=60)
+
+
 def killed_with_output(output):
     return {"worker_outcome": "normal", "output": output, "test_outcome": "killed",
             "diff": SURVIVOR_DIFF}
@@ -317,10 +360,12 @@ def run_cases():
         check("the config names the changed file as the module path",
               'module-path = "scripts/thing.py"' in config, config)
         worktree_seen = recorded[0]["cwd"] if recorded else None
-        check("the test command is one run of the suite runner beside the script, on the "
+        check("the test command is this script, stopping at the given --mutant-timeout-seconds "
+              "one run of the suite runner beside the script, on the "
               "scratch worktree, of the sibling suite only, recording nothing and stopping at "
               "the first failing suite, with the given interpreter, recordings and lock",
               test_command_words == [
+                  *cosmic_ray_timeout_line_and_test_command_words_for_limit(45)[1],
                   sys.executable, str(SCRIPT.resolve().with_name("run-all-test-suites.py")),
                   "--checkout", worktree_seen, "--python", "/usr/bin/python3",
                   "--recorded-inputs-directory", str(control / "recordings"),
@@ -332,9 +377,11 @@ def run_cases():
         check("the config sets the git filter's branch to the merge base, not the base's tip",
               f'branch = "{base}"' in config
               and "[cosmic-ray.filters.git-filter]" in config, config)
-        check("the config uses the local distributor and the given --mutant-timeout-seconds "
-              "as cosmic-ray's limit",
-              'name = "local"' in config and "timeout = 45.0" in config, config)
+        check("the config uses the local distributor, and the given --mutant-timeout-seconds "
+              "plus the runner's time to stop its suites as cosmic-ray's limit",
+              'name = "local"' in config
+              and cosmic_ray_timeout_line_and_test_command_words_for_limit(45)[0] in config,
+              config)
         check("cosmic-ray runs baseline, its dump, init, cr-filter-git, exec and dump, in order",
               [c["tool"] if c["tool"] == "cr-filter-git" else c["arguments"][0]
                for c in recorded]
@@ -434,7 +481,8 @@ def run_cases():
            {"worker_outcome": "normal", "output": "timeout", "test_outcome": "killed",
             "diff": SURVIVOR_DIFF}]],
          1, "ERRORED   scripts/thing.py:2 core/ReplaceBinaryOperator_Add_Sub (timeout: the "
-            f"suites ran past cosmic-ray's limit of {DEFAULT_LIMIT_FOR_A_SUITE_WITHOUT_RECORDING:g} s"),
+            f"suites ran past the limit of {DEFAULT_LIMIT_FOR_A_SUITE_WITHOUT_RECORDING:g} s "
+            "on one run of them"),
         ("a mutant one of whose suites ran past its own limit in the suite runner is ERRORED, "
          "not killed",
          [[work_item("scripts/thing.py", 2, "core/ReplaceBinaryOperator_Add_Sub", "a"),
@@ -495,13 +543,22 @@ def run_cases():
                "run-all-test-suites: not run to the end — admission failed: gone\n")]],
          1, "its output says: run-all-test-suites: not run to the end — admission failed: "
             "gone)"),
-        ("a killed mutant whose run the machine's lock refused is ERRORED with the refusal",
+        ("a killed mutant the test command stopped at the limit on one run of the suites is "
+         "ERRORED with the timeout, not killed",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
            killed_with_output(
-               "run-all-test-suites: not run — another run holds /tmp/test.lock: pid 7.\n"
-               "To wait for the lock, run this again with --wait-for-lock-seconds 3600.\n")]],
-         1, "its output says: run-all-test-suites: not run — another run holds "
-            "/tmp/test.lock: pid 7.)"),
+               f"{load_script_module().TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX}: it ran past "
+               f"the limit of 45 s on one run of the suites\n"
+               "FAIL scripts/thing-test.py exit 1 (0.4s)\n"
+               "run-all-test-suites: not run to the end — stopped by SIGTERM.\n")]],
+         1, "ERRORED   scripts/thing.py:2 core/NumberReplacer (timeout: the suites ran past "
+            "the limit of"),
+        ("a killed mutant whose failing suite was killed by a signal Python has no name for is "
+         "killed",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           killed_with_output(runner_output_with_a_suite_failed_with_exit_code(
+               "scripts/thing-test.py", -40))]],
+         0, "1 killed, 0 survived, 0 errored"),
         ("a killed mutant whose every suite passed but whose records could not be written "
          "is ERRORED, not killed",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
@@ -537,6 +594,84 @@ def run_cases():
             check(case_name,
                   completed.returncode == wanted_exit and wanted_text in completed.stdout,
                   f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    # The machine lock's refusal, as the real test command and suite runner print it, reaches
+    # the output cosmic-ray records, and the mutant is ERRORED with it.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        refused = test_command_output_when_the_machine_lock_is_held(scratch_name)
+    check("while another run holds the machine lock, the test command exits nonzero with the "
+          "suite runner's refusal on its standard output and nothing on its standard error",
+          refused.returncode == 3 and refused.stderr == ""
+          and "run-all-test-suites: not run — another run holds" in refused.stdout
+          and "pid 7, the holder in this test" in refused.stdout,
+          f"rc={refused.returncode} out={refused.stdout} err={refused.stderr}")
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"dump": [
+            [work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+             killed_with_output(refused.stdout)]]})
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv))
+        check("a killed mutant whose run the machine's lock refused is ERRORED with the refusal",
+              completed.returncode == 1
+              and "(no verdict: the suite runner exited nonzero but judged no suite failing, "
+                  "so this mutant was not judged; its output says: run-all-test-suites: not "
+                  "run — another run holds" in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    # Every form describe_exit() gives a suite's own exit or signal is read as a failing suite.
+    runner_module = load_test_suite_runner()
+    parse = runner_module.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal
+    unread = [code for code in range(-64, 256) if code != 0 and not all(
+        parse(line) for line in runner_output_with_a_suite_failed_with_exit_code(
+            "scripts/thing-test.py", code).splitlines() if line.startswith("FAIL "))]
+    check("each FAIL line form, for every exit code and signal describe_exit() names, is read "
+          "as a failing suite",
+          unread == [], unread)
+
+    # ------------------------------------------------------------------
+    # The test command stops a suite runner that runs past the limit on
+    # one run of the suites, and the runner ends its suite's process group.
+    # ------------------------------------------------------------------
+    with tempfile.TemporaryDirectory() as scratch_name:
+        pid_file = Path(scratch_name) / "suite.pid"
+        repository, base, head = scratch_repository(scratch_name, {
+            **HEAD_FILES, "scripts/thing-test.py":
+                f"import os, time\nopen({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
+                f"time.sleep(120)\n"})
+        venv, control = fake_venv(scratch_name, {"run_test_command": True, "dump": []})
+        started = time.monotonic()
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv), "--mutant-timeout-seconds", "15")
+        seconds = time.monotonic() - started
+        ran = (json.loads((control / "test-command-run.json").read_text())
+               if (control / "test-command-run.json").exists() else {})
+        suite_pid = int(pid_file.read_text()) if pid_file.exists() else None
+        suite_still_running = False
+        if suite_pid is not None:
+            try:
+                os.kill(suite_pid, 0)
+                suite_still_running = True
+                os.kill(suite_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        check("a baseline the test command stopped at the limit exits 2, saying the suites ran "
+              "out of time with that limit",
+              completed.returncode == 2
+              and "ran out of time on the unmutated head" in completed.stderr
+              and "the limit of 15 s on one run of them" in completed.stderr,
+              f"rc={completed.returncode} err={completed.stderr} ran={ran}")
+        check("the test command says it stopped the suite runner, and the runner says it was "
+              "stopped by SIGTERM",
+              ran.get("exit") == 2
+              and load_script_module().TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX
+              in ran.get("stdout", "")
+              and "not run to the end — stopped by SIGTERM" in ran.get("stdout", ""), ran)
+        check("a suite running when the test command stops the suite runner has ended, before "
+              "cosmic-ray's own limit",
+              suite_pid is not None and not suite_still_running
+              and seconds < 15 + EXTRA_SECONDS,
+              (suite_pid, suite_still_running, seconds))
 
     # ------------------------------------------------------------------
     # A baseline cosmic-ray passes although its suites never launched:
@@ -647,10 +782,12 @@ def run_cases():
         # passing recording, in as many rounds as the runner needs for two suites.
         runner_module = load_test_suite_runner()
         rounds = -(-2 // runner_module.suites_run_at_once(None, 2, os.cpu_count()))
-        check("by default cosmic-ray's limit is the longest suite limit times the runner's "
-              "rounds, plus its start-up",
-              f"timeout = {float(rounds * runner_module.TEST_SUITE_TIMEOUT_WITHOUT_PASSING_RECORDING_SECONDS + load_script_module().TEST_SUITE_RUNNER_START_UP_SECONDS)!r}"
-              in config, config)
+        limit = (rounds * runner_module.TEST_SUITE_TIMEOUT_WITHOUT_PASSING_RECORDING_SECONDS
+                 + load_script_module().TEST_SUITE_RUNNER_START_UP_SECONDS)
+        timeout_line, first_words = cosmic_ray_timeout_line_and_test_command_words_for_limit(limit)
+        check("by default the limit on one run of the suites is the longest suite limit times "
+              "the runner's rounds, plus its start-up",
+              timeout_line in config and words[:4] == first_words, (config, words))
 
     with tempfile.TemporaryDirectory() as scratch_name:
         files = dict(HEAD_FILES)
@@ -666,13 +803,15 @@ def run_cases():
             {"exit": 0, "seconds": 1.0, "reads": {"scripts/thing.py": "blob"}}))
         run_script(repository, control, "--head", head, "--base", base,
                    "--cosmic-ray-venv", str(venv))
-        config, _ = config_and_test_command_words(control)
+        config, words = config_and_test_command_words(control)
         runner_module = load_test_suite_runner()
         rounds = -(-2 // runner_module.suites_run_at_once(None, 2, os.cpu_count()))
+        limit = (rounds * runner_module.TEST_SUITE_TIMEOUT_MULTIPLE_OF_RECORDED_SECONDS * 900.0
+                 + load_script_module().TEST_SUITE_RUNNER_START_UP_SECONDS)
+        timeout_line, first_words = cosmic_ray_timeout_line_and_test_command_words_for_limit(limit)
         check("a suite's recorded passing seconds set its limit, and the longest limit sets "
-              "cosmic-ray's",
-              f"timeout = {float(rounds * runner_module.TEST_SUITE_TIMEOUT_MULTIPLE_OF_RECORDED_SECONDS * 900.0 + load_script_module().TEST_SUITE_RUNNER_START_UP_SECONDS)!r}"
-              in config, config)
+              "the limit on one run of the suites",
+              timeout_line in config and words[:4] == first_words, (config, words))
 
     # ------------------------------------------------------------------
     # A changed file with no suite is reported, not silently skipped.
@@ -793,10 +932,10 @@ def run_cases():
     baseline_item = {"job_id": "baseline", "mutations": []}
     for case_name, plan, flags, wanted, unwanted in [
         ("a baseline killed with cosmic-ray's timeout output exits 2, says the suites ran out "
-         "of time, gives cosmic-ray's limit and says to raise --mutant-timeout-seconds",
+         "of time, gives the limit and says to raise --mutant-timeout-seconds",
          {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output("timeout")]]},
          ("--mutant-timeout-seconds", "45"),
-         ["ran out of time on the unmutated head", "cosmic-ray's limit of 45 s",
+         ["ran out of time on the unmutated head", "the limit of 45 s on one run of them",
           "Run this again with --mutant-timeout-seconds larger than 45."], ["fail"]),
         ("a baseline killed with the suite runner's TIMEOUT line exits 2 naming the suite and "
          "its own limit",
