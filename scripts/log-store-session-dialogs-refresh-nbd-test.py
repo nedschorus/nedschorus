@@ -396,6 +396,19 @@ with tempfile.TemporaryDirectory() as workspace:
           tracker_back.returncode == 0 and "wrote 0 session dialogs" not in tracker_back.stdout
           and "## Subagent task " in box_dialog.read_text(encoding="utf-8"),
           (tracker_back.stdout, box_dialog.read_text(encoding="utf-8")[:400]))
+    recognizer_copy = programs / INTERIM_RECOGNIZER_PATH.name
+    recognizer_aside = programs / "recognizer-set-aside.py"
+    recognizer_copy.rename(recognizer_aside)
+    try:
+        without_recognizer = run(store, "--failures-only", script_path=script_copy)
+    finally:
+        recognizer_aside.rename(recognizer_copy)
+    check("an interim recognizer that cannot be read, beside a readable tracker, prints a FAILED line naming "
+          "the recognizer and not the tracker, and the pass exits 1",
+          without_recognizer.returncode == 1
+          and f"FAILED: cannot read {recognizer_copy.resolve()}" in without_recognizer.stdout
+          and f"FAILED: cannot read {tracker_copy.resolve()}" not in without_recognizer.stdout,
+          (without_recognizer.returncode, without_recognizer.stdout, without_recognizer.stderr))
 
     # A digest that cannot be read or kept is a failure: otherwise every pass would rewrite every dialog unseen.
     digest_store = Path(workspace) / "digest-store"
