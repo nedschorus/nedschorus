@@ -107,6 +107,15 @@
         },
         "ned-box": {"scheduler": "cron", "schedule": "0 7 * * *"}
       }
+    },
+    {
+      "name": "claude-code-temp-folders-of-exited-agent-sessions-delete",
+      "program": "nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py",
+      "arguments": [],
+      "output": ".claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "30 7 * * *"}
+      }
     }
   ]
 }
