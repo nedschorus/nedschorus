@@ -117,11 +117,11 @@ AGENT_SEAT_NAME_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
 ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_NOT_OPENED_EXIT_STATUS = 3
 
 
-class Refusal(Exception):
+class HandoffSupervisorRestartRefusal(Exception):
     """A reason to stop before the restart goes on."""
 
 
-def log_path_for(handoff_directory: Path, name: str) -> Path:
+def handoff_supervisor_restart_log_path_for_agent_seat(handoff_directory: Path, name: str) -> Path:
     return handoff_directory / f"{name}{LOG_FILE_SUFFIX}"
 
 
@@ -136,7 +136,7 @@ def run_git(checkout: Path, *arguments):
                           capture_output=True, text=True, check=False)
 
 
-def git_failure_text(completed) -> str:
+def failed_command_output_on_one_line(completed) -> str:
     return " ".join((completed.stderr or completed.stdout or "no output").split())
 
 
@@ -144,25 +144,25 @@ def fast_forward_checkout_to_origin_main(checkout: Path) -> str:
     """Refuse unless the checkout is on a clean main, then fast-forward it; return the new commit."""
     branch = run_git(checkout, "symbolic-ref", "--short", "HEAD")
     if branch.returncode != 0 or branch.stdout.strip() != "main":
-        found = branch.stdout.strip() if branch.returncode == 0 else git_failure_text(branch)
-        raise Refusal(f"{checkout} is not on main ({found}), so the new handoff-supervisor would "
+        found = branch.stdout.strip() if branch.returncode == 0 else failed_command_output_on_one_line(branch)
+        raise HandoffSupervisorRestartRefusal(f"{checkout} is not on main ({found}), so the new handoff-supervisor would "
                       f"not run main's code. If {checkout} holds no work of its own, run "
                       f"`git -C {checkout} switch main`.")
     status = run_git(checkout, "status", "--porcelain", "--untracked-files=no")
     if status.returncode != 0:
-        raise Refusal(f"`git status` failed in {checkout}: {git_failure_text(status)}")
+        raise HandoffSupervisorRestartRefusal(f"`git status` failed in {checkout}: {failed_command_output_on_one_line(status)}")
     if status.stdout.strip():
         changed = ", ".join(line[3:] for line in status.stdout.splitlines())
-        raise Refusal(f"{checkout} has uncommitted changes to tracked files ({changed}). "
+        raise HandoffSupervisorRestartRefusal(f"{checkout} has uncommitted changes to tracked files ({changed}). "
                       "They are not this program's to discard, and the fast-forward to "
                       "origin/main would mix them into the code the new handoff-supervisor runs.")
     fetch = run_git(checkout, "fetch", "origin", "main")
     if fetch.returncode != 0:
-        raise Refusal(f"`git fetch origin main` failed in {checkout}: {git_failure_text(fetch)}")
+        raise HandoffSupervisorRestartRefusal(f"`git fetch origin main` failed in {checkout}: {failed_command_output_on_one_line(fetch)}")
     merge = run_git(checkout, "merge", "--ff-only", "origin/main")
     if merge.returncode != 0:
-        raise Refusal(f"`git merge --ff-only origin/main` failed in {checkout}: "
-                      f"{git_failure_text(merge)}")
+        raise HandoffSupervisorRestartRefusal(f"`git merge --ff-only origin/main` failed in {checkout}: "
+                      f"{failed_command_output_on_one_line(merge)}")
     return run_git(checkout, "rev-parse", "--short", "HEAD").stdout.strip()
 
 
@@ -171,7 +171,7 @@ def read_process_table():
     completed = subprocess.run(["ps", "-A", "-ww", "-o", "pid=,ppid=,stat=,args="],
                                capture_output=True, text=True, check=False, timeout=30)
     if completed.returncode != 0:
-        raise Refusal(f"ps exited {completed.returncode}: {git_failure_text(completed)}")
+        raise HandoffSupervisorRestartRefusal(f"ps exited {completed.returncode}: {failed_command_output_on_one_line(completed)}")
     table = {}
     for line in completed.stdout.splitlines():
         words = line.split(None, 3)
@@ -186,24 +186,24 @@ def confirmed_supervisor_process_id(handoff_directory: Path, name: str) -> int:
     try:
         process_id = int(lock_path.read_text(encoding="utf-8").strip())
     except (OSError, ValueError) as error:
-        raise Refusal(f"no readable handoff-supervisor lock at {lock_path} ({error}), so no "
+        raise HandoffSupervisorRestartRefusal(f"no readable handoff-supervisor lock at {lock_path} ({error}), so no "
                       f"handoff-supervisor of {name} is known to be running.")
     command_line, ps_answered = supervisor.read_process_command_line(process_id)
     if not ps_answered:
-        raise Refusal(f"ps could not say what process {process_id}, named in {lock_path}, is.")
+        raise HandoffSupervisorRestartRefusal(f"ps could not say what process {process_id}, named in {lock_path}, is.")
     held, identity = supervisor.process_is_supervisor_for_agent(
         process_id, name, read_command_line=lambda _: (command_line, True))
     if not held:
-        raise Refusal(f"the lock {lock_path} names process {process_id}, but {identity}.")
+        raise HandoffSupervisorRestartRefusal(f"the lock {lock_path} names process {process_id}, but {identity}.")
     return process_id
 
 
-def refuse_when_pane_own_process(process_table, supervisor_process_id: int) -> None:
+def refuse_handoff_supervisor_restart_when_its_parent_process_is_tmux(process_table, supervisor_process_id: int) -> None:
     parent_process_id = process_table[supervisor_process_id][0]
     parent_command = process_table.get(parent_process_id, (0, "", ""))[2]
     first_word = (parent_command.split() or [""])[0].rpartition("/")[2]
     if first_word.startswith("tmux"):
-        raise Refusal(
+        raise HandoffSupervisorRestartRefusal(
             f"handoff-supervisor {supervisor_process_id} is its tmux pane's own process (its "
             f"parent {parent_process_id} is `{parent_command}`), and tmux sends SIGCONT to a "
             "stopped pane process at once, so SIGSTOP cannot hold it and this program cannot "
@@ -212,7 +212,7 @@ def refuse_when_pane_own_process(process_table, supervisor_process_id: int) -> N
 
 def find_agent_session_process_id_among_handoff_supervisor_children(process_table, supervisor_process_id: int, session_id) -> int:
     if not session_id:
-        raise Refusal("the handoff-supervisor's state file records no session id, so its "
+        raise HandoffSupervisorRestartRefusal("the handoff-supervisor's state file records no session id, so its "
                       "agent-session cannot be told from its other child processes.")
     matches = []
     for process_id, (parent_process_id, _, command_line) in process_table.items():
@@ -223,7 +223,7 @@ def find_agent_session_process_id_among_handoff_supervisor_children(process_tabl
                 for position, word in enumerate(words)):
             matches.append(process_id)
     if len(matches) != 1:
-        raise Refusal(f"found {len(matches)} child processes of handoff-supervisor "
+        raise HandoffSupervisorRestartRefusal(f"found {len(matches)} child processes of handoff-supervisor "
                       f"{supervisor_process_id} carrying session id {session_id}, not one.")
     return matches[0]
 
@@ -241,7 +241,7 @@ def descendant_process_ids(process_table, ancestor_process_id: int):
     return descendants
 
 
-def highest_restart_counter_seen(handoff_directory: Path, name: str, state: dict) -> int:
+def highest_restart_counter_field_value_in_session_handoff_and_handoff_supervisor_state_files(handoff_directory: Path, name: str, state: dict) -> int:
     counters = [state.get("consumed_counter")]
     handoff_path = supervisor.handoff_file_path(handoff_directory, name)
     if handoff_path.is_file():
@@ -253,7 +253,7 @@ def freeze_supervisor(supervisor_process_id: int, sleep=time.sleep, read_table=r
     try:
         os.kill(supervisor_process_id, signal.SIGSTOP)
     except PermissionError as error:
-        raise Refusal(f"SIGSTOP to handoff-supervisor {supervisor_process_id} was refused "
+        raise HandoffSupervisorRestartRefusal(f"SIGSTOP to handoff-supervisor {supervisor_process_id} was refused "
                       f"({error}). The Bash tool's sandbox blocks signals to processes outside "
                       "it: run this program again with the Bash tool's dangerouslyDisableSandbox "
                       "set to true.")
@@ -262,7 +262,7 @@ def freeze_supervisor(supervisor_process_id: int, sleep=time.sleep, read_table=r
     # Linux shows a stopped process as t instead of T inside some PID namespaces, such as bwrap's.
     if not state.startswith(("T", "t")):
         os.kill(supervisor_process_id, signal.SIGCONT)
-        raise Refusal(f"handoff-supervisor {supervisor_process_id} did not stay stopped after "
+        raise HandoffSupervisorRestartRefusal(f"handoff-supervisor {supervisor_process_id} did not stay stopped after "
                       f"SIGSTOP (ps state {state}), so SIGCONT was sent to it, and this program "
                       "cannot restart this agent-seat.")
 
@@ -289,7 +289,7 @@ def wait_for_new_handoff(handoff_directory: Path, name: str, counter_seen: int,
                            f"writing a handoff to {handoff_path}")
         if monotonic() - started >= deadline_seconds:
             return False, (f"no handoff with a restart-counter above {counter_seen} reached "
-                           f"{handoff_path} within {deadline_seconds / 60:.0f} minutes")
+                           f"{handoff_path} within {deadline_seconds / 60:g} minutes")
         sleep(HANDOFF_POLL_SECONDS)
 
 
@@ -323,7 +323,7 @@ def run_recovery_program(checkout: Path, program_name: str, arguments, log) -> i
     return completed.returncode
 
 
-def restart_after_handoff(name: str, handoff_directory: Path, checkout: Path,
+def wait_for_new_session_handoff_then_kill_old_handoff_supervisor_and_agent_session_and_relaunch_agent_seat(name: str, handoff_directory: Path, checkout: Path,
                           supervisor_process_id: int, agent_session_process: int,
                           counter_seen: int, deadline_seconds: float, log,
                           sleep=time.sleep, monotonic=time.monotonic,
@@ -412,7 +412,7 @@ def fork_child_detached_into_new_unix_session(log_path: Path) -> bool:
     return True
 
 
-def report_refusal(refusal: Refusal, log) -> None:
+def report_refusal(refusal: HandoffSupervisorRestartRefusal, log) -> None:
     print(f"{PROGRAM}: REFUSED: {refusal}\n"
           "The handoff-supervisor and your agent-session run as before, so do not write a "
           "handoff for this restart.\n"
@@ -450,7 +450,7 @@ def main(argv=None, detach=fork_child_detached_into_new_unix_session, sleep=time
         parser.error("--handoff-wait-minutes must be above 0")
     handoff_directory = arguments.handoff_dir.expanduser()
     checkout = arguments.checkout.expanduser()
-    log_path = log_path_for(handoff_directory, name)
+    log_path = handoff_supervisor_restart_log_path_for_agent_seat(handoff_directory, name)
 
     def log(line: str) -> None:
         append_to_log(log_path, name, line)
@@ -459,34 +459,34 @@ def main(argv=None, detach=fork_child_detached_into_new_unix_session, sleep=time
         try:
             log("restart requested")
         except OSError as error:
-            raise Refusal(f"cannot append to the log {log_path}: {error}")
+            raise HandoffSupervisorRestartRefusal(f"cannot append to the log {log_path}: {error}")
         commit = fast_forward_checkout_to_origin_main(checkout)
         log(f"{checkout} is on main at {commit}")
         supervisor_process_id = confirmed_supervisor_process_id(handoff_directory, name)
         process_table = read_table()
         if supervisor_process_id not in process_table:
-            raise Refusal(f"handoff-supervisor {supervisor_process_id} is not in ps's process list.")
-        refuse_when_pane_own_process(process_table, supervisor_process_id)
+            raise HandoffSupervisorRestartRefusal(f"handoff-supervisor {supervisor_process_id} is not in ps's process list.")
+        refuse_handoff_supervisor_restart_when_its_parent_process_is_tmux(process_table, supervisor_process_id)
         state = supervisor.read_supervisor_state(
             supervisor.supervisor_state_path(handoff_directory, name))
         agent_session = find_agent_session_process_id_among_handoff_supervisor_children(
             process_table, supervisor_process_id,
             state.get(supervisor.LAUNCHED_SESSION_ID_STATE_KEY))
-        counter_seen = highest_restart_counter_seen(handoff_directory, name, state)
+        counter_seen = highest_restart_counter_field_value_in_session_handoff_and_handoff_supervisor_state_files(handoff_directory, name, state)
         freeze_supervisor(supervisor_process_id, sleep, read_table)
-    except Refusal as refusal:
+    except HandoffSupervisorRestartRefusal as refusal:
         report_refusal(refusal, log)
         return 1
     try:
         detached = detach(log_path)
     except OSError as error:
         os.kill(supervisor_process_id, signal.SIGCONT)
-        report_refusal(Refusal(f"the detached process could not be started ({error!r}), so "
+        report_refusal(HandoffSupervisorRestartRefusal(f"the detached process could not be started ({error!r}), so "
                                f"SIGCONT was sent to handoff-supervisor {supervisor_process_id}."),
                        log)
         return 1
     if detached:
-        return restart_after_handoff(name, handoff_directory, checkout, supervisor_process_id,
+        return wait_for_new_session_handoff_then_kill_old_handoff_supervisor_and_agent_session_and_relaunch_agent_seat(name, handoff_directory, checkout, supervisor_process_id,
                                      agent_session, counter_seen,
                                      arguments.handoff_wait_minutes * 60, log,
                                      sleep, monotonic, read_table)

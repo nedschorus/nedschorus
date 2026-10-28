@@ -169,7 +169,7 @@ class Fixture:
 
     @property
     def log_text(self):
-        path = restart.log_path_for(self.handoff_directory, self.name)
+        path = restart.handoff_supervisor_restart_log_path_for_agent_seat(self.handoff_directory, self.name)
         return path.read_text() if path.is_file() else ""
 
     def recovery_calls(self):
@@ -270,9 +270,9 @@ def untracked_files_do_not_refuse_and_main_is_fast_forwarded(fixture):
 
 @case
 def refuses_when_git_status_fails(fixture):
-    shutil.rmtree(fixture.checkout / ".git" / "objects")
+    (fixture.checkout / ".git" / "index").write_bytes(b"not an index")
     code, _, stderr = run_main(fixture)
-    check(code == 1 and "REFUSED" in stderr, stderr)
+    check(code == 1 and "`git status` failed in" in stderr, stderr)
     check(not process_state(fixture.supervisor).startswith(("T", "t")), "signalled")
 
 
@@ -330,7 +330,7 @@ def refuses_when_ps_process_list_fails(fixture):
     try:
         restart.read_process_table()
         raise AssertionError("read_process_table did not refuse")
-    except restart.Refusal as refusal:
+    except restart.HandoffSupervisorRestartRefusal as refusal:
         check("ps exited 1: ps: broken" in str(refusal), str(refusal))
     finally:
         os.environ["PATH"] = saved_path
@@ -379,7 +379,7 @@ def finds_an_agent_session_started_with_resume(fixture):
 
 @case
 def refuses_when_the_log_cannot_be_appended(fixture):
-    restart.log_path_for(fixture.handoff_directory, fixture.name).mkdir()
+    restart.handoff_supervisor_restart_log_path_for_agent_seat(fixture.handoff_directory, fixture.name).mkdir()
     code, _, stderr = run_main(fixture)
     check(code == 1 and "cannot append to the log" in stderr, stderr)
     check(not process_state(fixture.supervisor).startswith(("T", "t")), "signalled")
@@ -436,7 +436,8 @@ def refuses_and_continues_when_detaching_fails(fixture):
 
 @case
 def rejects_a_bad_agent_seat_name_and_wait(fixture):
-    for arguments in (["bad name"], [fixture.name, "--handoff-wait-minutes", "0"]):
+    for arguments in (["bad name"], [fixture.name, "--handoff-wait-minutes", "0"],
+                      [fixture.name, "--handoff-wait-minutes", "-1"]):
         with contextlib.redirect_stderr(io.StringIO()):
             try:
                 restart.main(arguments, detach=lambda _: False)
@@ -454,7 +455,7 @@ def foreground_freezes_and_tells_the_agent_what_to_do(fixture):
     code, stdout, _ = run_main(fixture, "--handoff-wait-minutes", "7")
     check(code == 0, f"exit {code}")
     check(process_state(fixture.supervisor).startswith(("T", "t")), "handoff-supervisor not stopped")
-    log_path = restart.log_path_for(fixture.handoff_directory, fixture.name)
+    log_path = restart.handoff_supervisor_restart_log_path_for_agent_seat(fixture.handoff_directory, fixture.name)
     for line in ("Write your handoff now with the handoff skill, without --dont-restart.",
                  f"read the end of {log_path} and tell merge-lane-2 with SendMessage",
                  "If no handoff arrives within 7 minutes"):
@@ -514,7 +515,7 @@ def a_handoff_no_newer_than_one_seen_before_does_not_count(fixture):
     fixture.write_handoff(5)
     ticks = iter(range(0, 10_000, 600))
     code, _, _ = detached_run(fixture, "--handoff-wait-minutes", "20",
-                              sleep=sleep_that_writes_the_handoff(fixture, 5),
+                              sleep=sleep_that_writes_the_handoff(fixture, 2),
                               monotonic=lambda: next(ticks))
     check(code == 1, f"exit {code}")
     check("above 5 reached" in fixture.log_text, fixture.log_text)
@@ -523,14 +524,16 @@ def a_handoff_no_newer_than_one_seen_before_does_not_count(fixture):
 
 @case
 def timeout_continues_the_supervisor(fixture):
-    ticks = iter([0, 0, 0, 1199, 1200, 1201, 1202])
-    code, _, _ = detached_run(fixture, sleep=short_sleep, monotonic=lambda: next(ticks))
+    # The run ends exactly at the deadline: one tick more would raise StopIteration.
+    ticks = iter([0, 0, 30])
+    code, _, _ = detached_run(fixture, "--handoff-wait-minutes", "0.5", sleep=short_sleep,
+                              monotonic=lambda: next(ticks))
     check(code == 1, f"exit {code}")
     check(not process_state(fixture.supervisor).startswith(("T", "t")), "not continued")
     check(restart.process_is_running(fixture.claude), "agent-session was ended")
     last = fixture.log_text.strip().splitlines()[-1]
     check("NOT RESTARTED: no handoff with a restart-counter above 3" in last
-          and "within 20 minutes" in last and "sent SIGCONT" in last, last)
+          and "within 0.5 minutes" in last and "sent SIGCONT" in last, last)
     check(fixture.recovery_calls() == [], "recovery ran")
 
 
@@ -668,7 +671,7 @@ def detaching_leaves_the_session_directory_and_terminal(fixture):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         from pathlib import Path
-        print("before", flush=True)
+        print(f"before {{os.getpid()}}", flush=True)
         if module.fork_child_detached_into_new_unix_session(Path({str(log_path)!r})):
             print(f"child sid={{os.getsid(0)}} pid={{os.getpid()}} cwd={{os.getcwd()}} "
                   f"stdin={{sys.stdin.read()!r}}", flush=True)
@@ -678,7 +681,8 @@ def detaching_leaves_the_session_directory_and_terminal(fixture):
     """)
     completed = subprocess.run([sys.executable, "-c", driver], cwd=str(fixture.root),
                                input="typed", capture_output=True, text=True, timeout=30)
-    check(completed.stdout == "before\nparent\n", completed.stdout)
+    driver_process_id = completed.stdout.split()[1]
+    check(completed.stdout == f"before {driver_process_id}\nparent\n", completed.stdout)
     text = ""
     for _ in range(100):
         text = log_path.read_text() if log_path.is_file() else ""
@@ -688,9 +692,116 @@ def detaching_leaves_the_session_directory_and_terminal(fixture):
     child_line = next((line for line in text.splitlines() if line.startswith("child sid=")), "")
     words = dict(word.split("=", 1) for word in child_line.split()[1:4])
     check(words.get("sid") == words.get("pid"), f"not a new session: {text}")
+    check(words.get("pid") != driver_process_id, f"the parent took the child's part: {text}")
     check(words.get("cwd") == str(fixture.home), f"did not leave its directory: {text}")
     check("stdin=''" in child_line, f"stdin not from /dev/null: {text}")
     check("child stderr" in text, text)
+
+
+# --- Smaller parts, each on the input that tells its correct form from a near miss ----------
+
+NO_SUCH_PROCESS_ID = 2 ** 22 + 12345
+
+
+@case
+def git_failure_text_falls_back_to_stdout_then_to_a_placeholder(fixture):
+    completed = subprocess.CompletedProcess([], 1, stdout="out  put\n", stderr="")
+    check(restart.failed_command_output_on_one_line(completed) == "out put", restart.failed_command_output_on_one_line(completed))
+    completed = subprocess.CompletedProcess([], 1, stdout="", stderr="")
+    check(restart.failed_command_output_on_one_line(completed) == "no output", restart.failed_command_output_on_one_line(completed))
+
+
+@case
+def process_table_skips_short_lines_and_keeps_spaces_in_commands(fixture):
+    fake_bin = fixture.root / "fake-bin"
+    fake_bin.mkdir()
+    (fake_bin / "ps").write_text("#!/bin/sh\nprintf '  1   0 Ss\\nshort line\\n  5 1 S  python3 a  b\\n'\n")
+    (fake_bin / "ps").chmod(0o755)
+    saved_path = os.environ["PATH"]
+    os.environ["PATH"] = f"{fake_bin}:{saved_path}"
+    try:
+        table = restart.read_process_table()
+    finally:
+        os.environ["PATH"] = saved_path
+    check(table == {1: (0, "Ss", ""), 5: (1, "S", "python3 a  b")}, table)
+
+
+@case
+def a_parent_missing_from_the_table_is_not_taken_for_tmux(fixture):
+    restart.refuse_handoff_supervisor_restart_when_its_parent_process_is_tmux({10: (9, "S", "python3 handoff-supervisor.py")}, 10)
+
+
+@case
+def two_children_carrying_the_session_id_refuse(fixture):
+    table = {11: (10, "S", f"claude --session-id {SESSION_ID}"),
+             12: (10, "S", f"claude --resume {SESSION_ID}")}
+    try:
+        restart.find_agent_session_process_id_among_handoff_supervisor_children(table, 10, SESSION_ID)
+        raise AssertionError("two matches accepted")
+    except restart.HandoffSupervisorRestartRefusal as refusal:
+        check("found 2 child processes" in str(refusal), str(refusal))
+
+
+@case
+def descendants_are_listed_once_when_parent_links_loop(fixture):
+    table = {1: (3, "S", ""), 2: (1, "S", ""), 3: (2, "S", ""), 4: (2, "S", ""), 5: (9, "S", "")}
+    found = restart.descendant_process_ids(table, 1)
+    check(sorted(found) == [2, 3, 4] and len(found) == 3, found)
+
+
+@case
+def counter_seen_is_minus_one_with_no_counter_and_zero_counts(fixture):
+    check(restart.highest_restart_counter_field_value_in_session_handoff_and_handoff_supervisor_state_files(fixture.handoff_directory, fixture.name, {}) == -1,
+          "no counter")
+    check(restart.highest_restart_counter_field_value_in_session_handoff_and_handoff_supervisor_state_files(
+        fixture.handoff_directory, fixture.name, {"consumed_counter": 0}) == 0, "zero")
+
+
+@case
+def a_supervisor_gone_from_the_table_after_sigstop_is_refused(fixture):
+    calls = []
+
+    def table_losing_the_supervisor():
+        calls.append(1)
+        table = restart.read_process_table()
+        if len(calls) > 1:
+            del table[fixture.supervisor]
+        return table
+    code, _, stderr = run_main(fixture, read_table=table_losing_the_supervisor)
+    check(code == 1 and "(ps state gone)" in stderr, stderr)
+    check(not process_state(fixture.supervisor).startswith(("T", "t")), "SIGCONT was not sent")
+
+
+@case
+def sigkill_is_sent_exactly_at_the_wait_and_a_process_gone_by_then_is_no_failure(fixture):
+    sleeper = subprocess.Popen(["sleep", "60"])
+
+    def table_reaping_it_but_showing_it_running():
+        sleeper.wait()
+        return {sleeper.pid: (1, "S", "sleep 60")}
+    ticks = iter([0, 1.0])
+    lines = []
+    restart.end_process_by_sigterm_then_sigkill_after_wait(
+        sleeper.pid, 1.0, lines.append, sleep=lambda _: None, monotonic=lambda: next(ticks),
+        read_table=table_reaping_it_but_showing_it_running)
+    check(lines == [f"process {sleeper.pid} was still running 1s after SIGTERM; sent SIGKILL"],
+          lines)
+
+
+@case
+def a_failure_before_the_kill_with_the_supervisor_gone_is_still_logged(fixture):
+    lines = []
+
+    def failing_table():
+        raise RuntimeError("ps vanished")
+    try:
+        restart.wait_for_new_session_handoff_then_kill_old_handoff_supervisor_and_agent_session_and_relaunch_agent_seat(fixture.name, fixture.handoff_directory, fixture.checkout,
+                                      NO_SUCH_PROCESS_ID, fixture.claude, 3, 60, lines.append,
+                                      sleep=short_sleep, read_table=failing_table)
+        raise AssertionError("the failure was not raised")
+    except RuntimeError:
+        pass
+    check(any(line.startswith("NOT RESTARTED: this program failed") for line in lines), lines)
 
 
 def main() -> int:
