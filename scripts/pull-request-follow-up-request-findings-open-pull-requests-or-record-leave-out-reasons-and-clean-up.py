@@ -45,8 +45,9 @@ has no defect line, the rule scripts/merge-gate.sh applies, read by the same
 reader; then git push -u origin <branch>, where <branch> is the last topic branch start-topic-branch
 recorded for the worktree, whatever the worktree has checked out, and whose pre-push hook runs the test
 suites; gh pr create against main; record the pull request's link against each
-finding in FINDING_ANSWERS_FILE_NAME_FORMAT. When gh pr create refuses because a pull request for
-the branch is already open, as on a run again after gh opened it but timed out or printed no link,
+finding in FINDING_ANSWERS_FILE_NAME_FORMAT; then remove FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME, so the
+next topic branch's pull request cannot take this one's title and description. When gh pr create refuses because a
+pull request for the branch is already open, as on a run again after gh opened it but timed out or printed no link,
 that pull request's link is recorded.
 
 record-finding-leave-out-reason: record the reason against the finding; refuse a finding that does
@@ -80,7 +81,7 @@ pushes, since it pushes the last.
 Exit codes: 0 done; 1 refused, or remove-recorded-topic-branches-and-worktrees left something in place, said with
 what to do; 2 git, gh or a file failed, said on stderr, and what the subcommand
 did before the failure stays done, or the arguments are not ones the program
-takes, which argparse says on stderr.
+takes, which argparse says on stderr, followed by what to do.
 """
 
 import argparse
@@ -120,9 +121,11 @@ PUSH_TIMEOUT_SECONDS = 3600
 FETCH_TIMEOUT_SECONDS = 300
 # gh pr create's words, when a pull request for the head branch is already open, before its link.
 PULL_REQUEST_ALREADY_OPEN_WORDS = "already exists"
-OPEN_ARGUMENTS = "open-pull-request --handled-finding-numbers <n>[,<n>...]"
 START_ARGUMENTS = "start-topic-branch <topic-branch> --finding-numbers <n>[,<n>...]"
 LEAVE_OUT_ARGUMENTS = 'record-finding-leave-out-reason <n> --reason "<why>"'
+TITLE_AND_DESCRIPTION_FORM = "the pull request's title on the first line, a blank line, then the description"
+NEEDS_USER_DECISION_REASON = "\"Needs the user's decision: <what the finding would change>\""
+DO_NOT_COMMIT_LINE = "Do not commit it: it is never part of the pull request."
 # Each text this program hands an agent follows
 # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 
@@ -403,15 +406,16 @@ def read_title_and_description(path):
     text = read_text_if_present(path)
     if text is None:
         raise Refused(f"{path} does not exist, so open-pull-request pushed nothing.\n"
-                      "Write it at the root of your worktree: the pull request's title on the first "
-                      "line, a blank line, then the description. Do not commit it.\n"
+                      f"Write it at the root of your worktree: {TITLE_AND_DESCRIPTION_FORM}.\n"
+                      f"{DO_NOT_COMMIT_LINE}\n"
                       "Then run the same open-pull-request command again.")
     title, _, rest = text.partition("\n")
     blank, _, description = rest.partition("\n")
     if not title.strip() or blank.strip() or not description.strip():
-        raise Refused(f"{path} is not the pull request's title on the first line, a blank line, then "
-                      "the description, so open-pull-request pushed nothing.\n"
-                      "Write it in that form, and run the same open-pull-request command again.")
+        raise Refused(f"{path} is not {TITLE_AND_DESCRIPTION_FORM}, so open-pull-request pushed nothing.\n"
+                      "Write it in that form.\n"
+                      f"{DO_NOT_COMMIT_LINE}\n"
+                      "Then run the same open-pull-request command again.")
     if not defect_line_reader.pull_request_description_defect_lines(description):
         raise Refused(f"The description in {path} has no line beginning \"#root_cause\", "
                       "\"#root_cause_not_fixed\" or \"#no_defect_fixed\", so open-pull-request pushed nothing: "
@@ -511,6 +515,7 @@ def open_pull_request(number, findings):
     write_json(answers_file, record)
     print(f"{opened} {link} for {findings_text(findings)} of pull request {number}'s follow-up "
           "request, and recorded it.")
+    remove_file(description_file)
     print(still_unanswered_text(number, request, answers))
 
 
@@ -544,11 +549,7 @@ def finish_follow_up_request_and_print_merge_lane_2_message(number):
     if unanswered:
         raise Refused(f"{findings_text(unanswered).capitalize()} of pull request {number}'s follow-up "
                       f"request {'has' if len(unanswered) == 1 else 'have'} no answer yet, so the follow-up is not finished.\n"
-                      "For each pull request, run on its topic branch, naming the findings it handles: "
-                      f"{command(number, OPEN_ARGUMENTS)}\n"
-                      "For each finding you leave out, run: "
-                      f"{command(number, LEAVE_OUT_ARGUMENTS)}\n"
-                      f"Then run: {command(number, 'finish-follow-up-request-and-print-merge-lane-2-message')}")
+                      f"Run {command(number, 'next-step')} and do what it prints.")
     record["finished"] = True
     write_json(answers_file, record)
     print("\n".join([
@@ -579,8 +580,9 @@ def next_step(number):
         print(f"Next: topic branch {branch} takes on {findings_text(findings)}, which "
               f"{'has' if len(findings) == 1 else 'have'} no pull request yet.\n"
               "On that branch, make the change with its tests, and commit, unless you have.\n"
-              f"Write {FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME} at your worktree's root, unless you have: "
-              "the title, a blank line, then the description. Do not commit it.\n"
+              f"Write {FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME} at your worktree's root: "
+              f"{TITLE_AND_DESCRIPTION_FORM}.\n"
+              f"{DO_NOT_COMMIT_LINE}\n"
               f"Then run: {command(number, 'open-pull-request')}")
         return
     unanswered = [index for index in range(1, request.finding_count + 1) if str(index) not in answers]
@@ -590,8 +592,8 @@ def next_step(number):
             *(request.lines[index] for index in unanswered),
             "Check each against origin/main.",
             f"If a finding no longer holds, run: {command(number, LEAVE_OUT_ARGUMENTS)}",
-            "If a finding would change a design or decision of the user's, run that command too, and end your "
-            "report with a question to him on it.",
+            "If a finding would change a design or decision of the user's, run: "
+            + command(number, LEAVE_OUT_ARGUMENTS.replace('"<why>"', NEEDS_USER_DECISION_REASON)),
             "Otherwise group it with the findings of its topic, one pull request per topic, and for one topic run: "
             f"{command(number, START_ARGUMENTS)}",
         ]))
@@ -691,8 +693,16 @@ def finding_numbers(text):
     return list(dict.fromkeys(numbers))
 
 
+class ArgumentParserThatSaysWhatToDo(argparse.ArgumentParser):
+    """argparse's parser, whose error text ends with what the agent should do."""
+
+    def error(self, message):
+        super().error(f"{message}, so nothing was done.\n"
+                      "Run the same command again with arguments in the form the usage above shows.")
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(
+    parser = ArgumentParserThatSaysWhatToDo(
         description="Do the mechanical steps of following up the non-blocking findings merge-lane-2 "
                     "sent after merging a pull request.")
     parser.add_argument("number", metavar="<number>", type=int, help="the merged pull request's number")

@@ -87,7 +87,7 @@ class Case:
         git(self.repository, "config", "user.name", "test")
         git(self.repository, "config", "core.hooksPath", str(self.repository / ".git" / "hooks"))
         (self.repository / "base.txt").write_text("base\n")
-        # As the repository's own .gitignore does, so the file left after open-pull-request is no change.
+        # As the repository's own .gitignore does, so the file a refused open-pull-request leaves is no change.
         (self.repository / ".gitignore").write_text(
             "/" + program.FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME + "\n")
         git(self.repository, "add", "base.txt", ".gitignore")
@@ -306,7 +306,8 @@ def test_open_refusals():
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1,x")
         check("open refuses finding numbers it cannot read, naming the pull request number as <number>",
               code == 2 and f"{PROGRAM.name} <number> open-pull-request: error: argument --handled-finding-numbers: "
-                            "'1,x' is not finding numbers separated by commas, such as 1,3\n" in err, err)
+                            "'1,x' is not finding numbers separated by commas, such as 1,3, so nothing was done.\n"
+                            "Run the same command again with arguments in the form the usage above shows.\n" in err, err)
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "0")
         check("open refuses finding 0", code == 1 and "so there is no finding 0, and" in err, err)
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1,3")
@@ -315,8 +316,12 @@ def test_open_refusals():
                             "is no finding 3, and open-pull-request pushed nothing." in err, err)
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1")
         check("open refuses when the title and description file is missing",
-              code == 1 and f"{worktree / program.FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME} does not exist, so "
-                            "open-pull-request pushed nothing." in err, err)
+              code == 1 and err == f"REFUSED: {worktree / program.FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME} "
+                                   "does not exist, so open-pull-request pushed nothing.\n"
+                                   "Write it at the root of your worktree: the pull request's title on the first line, "
+                                   "a blank line, then the description.\n"
+                                   "Do not commit it: it is never part of the pull request.\n"
+                                   "Then run the same open-pull-request command again.\n", err)
         for label, text in (("no blank second line", "Title\nDescription\n#no_defect_fixed\n"),
                             ("no title", "\n\n#no_defect_fixed\n"),
                             ("no description", "Title\n\n")):
@@ -324,7 +329,9 @@ def test_open_refusals():
             code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1")
             check(f"open refuses a title and description file with {label}",
                   code == 1 and "is not the pull request's title on the first line, a blank line, then the "
-                                "description, so open-pull-request pushed nothing." in err, err)
+                                "description, so open-pull-request pushed nothing.\nWrite it in that form.\n"
+                                "Do not commit it: it is never part of the pull request.\n"
+                                "Then run the same open-pull-request command again.\n" in err, err)
         case.write_description("Title\n\nA description without a defect line.\n")
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1")
         check("open refuses a description without a defect line",
@@ -401,8 +408,13 @@ def test_open():
                               "--body Keeps the padding.\n\n#no_defect_fixed\n", str(calls))
         check("open records the link against the finding",
               case.answers() == {"started": {"1": "topic-one"}, "answers": {"1": {"link": LINK, "branch": "topic-one"}}}, str(case.answers()))
+        check("open removes the title and description file once the pull request is recorded", not description.exists())
         code, out, err = case.run(worktree, "start-topic-branch", "topic-two", "--finding-numbers", "2")
         case.commit_change("second.txt")
+        code, out, err = case.run(worktree, "open-pull-request")
+        check("the next topic branch's open cannot take the last pull request's title and description",
+              code == 1 and "does not exist, so open-pull-request pushed nothing." in err
+              and len(case.gh_calls()) == 1, err)
         git(worktree, "switch", "-q", "-c", "unrecorded")
         case.commit_change("unrecorded.txt")
         git(worktree, "switch", "-q", "--detach", "main")
@@ -538,14 +550,33 @@ def test_open_failures():
         case.close()
 
 
+def test_open_title_and_description_file_removal_failure():
+    case = Case()
+    try:
+        worktree = started(case)
+        case.commit_change()
+        description = case.write_description()
+        worktree.chmod(0o500)
+        code, out, err = case.run(worktree, "open-pull-request")
+        worktree.chmod(0o700)
+        check("a title and description file open-pull-request cannot remove is FAILED with exit 2, after the pull "
+              "request is opened, said and recorded",
+              code == 2 and out == f"Opened {LINK} for finding 1 of pull request 1964's follow-up request, and recorded it.\n"
+              and err.startswith(f"FAILED: could not remove {description}: ") and err.endswith(NOT_PASSING_END)
+              and case.answers()["answers"] == {"1": {"link": LINK, "branch": "topic-one"}}, out + err)
+    finally:
+        case.close()
+
+
 def test_leave_out_and_finish():
     case = Case()
     try:
         worktree = started(case)
         code, out, err = case.run(worktree, "finish-follow-up-request-and-print-merge-lane-2-message")
         check("finish refuses, naming each finding without an answer",
-              code == 1 and "Findings 1 and 2 of pull request 1964's follow-up request have no answer yet" in err
-              and f"python3 {program.PROGRAM} {NUMBER} record-finding-leave-out-reason <n> --reason \"<why>\"" in err, err)
+              code == 1 and err == "REFUSED: Findings 1 and 2 of pull request 1964's follow-up request have no answer "
+                                   "yet, so the follow-up is not finished.\n"
+                                   f"Run python3 {program.PROGRAM} {NUMBER} next-step and do what it prints.\n", err)
         code, out, err = case.run(worktree, "record-finding-leave-out-reason", "3", "--reason", "x")
         check("record-finding-leave-out-reason refuses a finding that does not exist",
               code == 1 and "so there is no finding 3, and nothing was recorded." in err, err)
@@ -567,7 +598,7 @@ def test_leave_out_and_finish():
         code, out, err = case.run(worktree, "finish-follow-up-request-and-print-merge-lane-2-message")
         check("finish names only the finding still without an answer",
               code == 1 and "Finding 2 of pull request 1964's follow-up request has no answer yet" in err
-              and err.endswith(f"\nThen run: python3 {program.PROGRAM} {NUMBER} finish-follow-up-request-and-print-merge-lane-2-message\n"), err)
+              and err.endswith(f"\nRun python3 {program.PROGRAM} {NUMBER} next-step and do what it prints.\n"), err)
         case.run(worktree, "record-finding-leave-out-reason", "2", "--reason", "a guard nothing calls for")
         code, out, err = case.run(worktree, "finish-follow-up-request-and-print-merge-lane-2-message")
         check("finish passes and prints the message for merge-lane-2",
@@ -804,8 +835,8 @@ def judge_text(*findings):
             + "Check each against origin/main.\n"
             f"If a finding no longer holds, run: python3 {program.PROGRAM} {NUMBER} record-finding-leave-out-reason "
             "<n> --reason \"<why>\"\n"
-            "If a finding would change a design or decision of the user's, run that command too, and end your report "
-            "with a question to him on it.\n"
+            f"If a finding would change a design or decision of the user's, run: python3 {program.PROGRAM} {NUMBER} "
+            "record-finding-leave-out-reason <n> --reason \"Needs the user's decision: <what the finding would change>\"\n"
             "Otherwise group it with the findings of its topic, one pull request per topic, and for one topic run: "
             f"python3 {program.PROGRAM} {NUMBER} start-topic-branch <topic-branch> --finding-numbers <n>[,<n>...]\n")
 
@@ -814,8 +845,9 @@ def branch_text(branch, findings):
     return (f"Next: topic branch {branch} takes on {findings}, which {'have' if 'and' in findings else 'has'} no pull "
             "request yet.\n"
             "On that branch, make the change with its tests, and commit, unless you have.\n"
-            f"Write {program.FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME} at your worktree's root, unless "
-            "you have: the title, a blank line, then the description. Do not commit it.\n"
+            f"Write {program.FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME} at your worktree's root: the pull "
+            "request's title on the first line, a blank line, then the description.\n"
+            "Do not commit it: it is never part of the pull request.\n"
             f"Then run: python3 {program.PROGRAM} {NUMBER} open-pull-request\n")
 
 
@@ -889,7 +921,8 @@ def test_next_step_branch_choice():
 
 
 for test in (test_help, test_block_parsing, test_brief_text, test_no_saved_block, test_start,
-             test_open_refusals, test_open, test_open_failures, test_leave_out_and_finish, test_three_findings,
+             test_open_refusals, test_open, test_open_failures, test_open_title_and_description_file_removal_failure,
+             test_leave_out_and_finish, test_three_findings,
              test_state_failures, test_clean_up, test_clean_up_goes_on_past_each_worktree_and_branch,
              test_git_failure_passing, test_clean_up_failure, test_next_step, test_next_step_branch_choice):
     test()
