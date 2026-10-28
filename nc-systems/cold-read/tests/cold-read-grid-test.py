@@ -52,7 +52,7 @@ WHAT IS PINNED HERE.
   - The read is seven cells: the defect-hunt pass on both tiers of both
     runtimes, the terminology pass (user-ruled 2026-09-05) on the
     `deep` tier of both, and the defect-hunt pass on agy, on Gemini Argon at
-    high (user-ruled 2026-10-27). The terminology cells and the agy cell run
+    high. The terminology cells and the agy cell run
     at the effort the grid pins, which the stub reads off its own command
     line; the agy cell runs inside the real sandbox program, bwrap or
     sandbox-exec, as in production.
