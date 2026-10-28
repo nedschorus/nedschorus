@@ -178,7 +178,7 @@ def changed_python_files_to_mutate(checkout, merge_base, head, environment):
 
 
 def suites_at_head(checkout, head, environment):
-    """The test suites git tracks at head."""
+    """The nc-test-suites git tracks at head."""
     listed = run_or_raise(["git", "ls-tree", "-r", "-z", "--name-only", head], checkout,
                           environment, what="git ls-tree")
     return [path for path in git_output.nul_separated_fields(listed)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run every test suite in a checkout, and report each one by its exit code.
+"""Run every nc-test-suite in a checkout, and report each one by its exit code.
 
 Usage:
   scripts/run-all-test-suites.py [--checkout DIR] [--python INTERPRETER]
@@ -2222,7 +2222,7 @@ def is_credential_environment_variable(name):
 
 
 def launch_environment_for_a_test_suite_with_git_redirecting_agent_session_attendance_and_credential_variables_removed():
-    """Return the environment every path that launches a test suite gives the suite."""
+    """Return the environment every path that launches an nc-test-suite gives the suite."""
     environment = environment_without_git_redirecting_variables()
     for variable in AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES:
         environment.pop(variable, None)

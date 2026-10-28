@@ -63,7 +63,7 @@ on ned-box only, as the cron line
 
 The environment variables named by the *_ENVIRONMENT_VARIABLE constants
 override where the log, the session records, the transcripts and the process
-table are read from: the seams the test suite uses.
+table are read from: the seams the nc-test-suite uses.
 """
 
 import argparse

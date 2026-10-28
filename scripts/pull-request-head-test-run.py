@@ -198,7 +198,7 @@ def stream_for_the_runners_output():
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         prog=PROGRAM,
-        description="Run the test suites a pull request's head reaches and file the test "
+        description="Run the nc-test-suites a pull request's head reaches and file the test "
                     "log in the log-store under the head's commit hash.")
     parser.add_argument("--checkout", default=str(REPOSITORY_ROOT))
     parser.add_argument("--since", metavar="COMMIT")

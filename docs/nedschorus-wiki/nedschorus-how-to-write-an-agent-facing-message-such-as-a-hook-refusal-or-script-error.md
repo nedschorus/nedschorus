@@ -10,7 +10,7 @@ Every agent-facing-message, the text a program in this project hands an agent wh
 - a warning or reminder a hook adds, as `additionalContext`, to what the agent reads next;
 - the `reason` field of a Stop hook that keeps the agent's turn open;
 - an error, a failing verdict or usage text that a script the agent runs prints, a git hook included; usage text the agent asked for with `--help` is not an error, and this page does not cover it;
-- the FAIL line of a test suite that enforces a project rule.
+- the FAIL line of an nc-test-suite that enforces a project rule.
 
 A line a program shows the user directly, with no agent between, says what a fact for the user says under "When the message sends the agent to the user": what stopped, on which machine, and what it costs him. The rest of this page is about messages an agent reads.
 
