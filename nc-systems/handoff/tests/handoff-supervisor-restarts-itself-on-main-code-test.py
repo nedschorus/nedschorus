@@ -346,7 +346,7 @@ def run_restart_arguments_cases(workspace: Path):
         settings_with_early_path = supervisor.SupervisorSettings(
             agent="earlypath", working_directory=workspace, handoff_directory=handoffs,
             agent_command="claude", first_prompt="",
-            appended_system_prompt_file="/a/appended-system-prompt.md")
+            appended_system_prompt_file_as_given_by_flag="/a/appended-system-prompt.md")
         early_argv = supervisor.handoff_supervisor_restart_arguments_build(settings_with_early_path)
         check("ARGV: any appended-system-prompt file other than the default is passed on",
               early_argv[-3:-1] == ["--agent-append-system-prompt-file",
@@ -355,11 +355,35 @@ def run_restart_arguments_cases(workspace: Path):
         settings_naming_the_default = supervisor.SupervisorSettings(
             agent="defaultnamed", working_directory=workspace, handoff_directory=handoffs,
             agent_command="claude", first_prompt="",
-            appended_system_prompt_file="".join(str(supervisor.DEFAULT_APPENDED_SYSTEM_PROMPT_PATH)))
+            appended_system_prompt_file_as_given_by_flag="".join(
+                str(supervisor.DEFAULT_APPENDED_SYSTEM_PROMPT_PATH)))
         default_named_argv = supervisor.handoff_supervisor_restart_arguments_build(
             settings_naming_the_default)
         check("ARGV: the default appended-system-prompt file, given as a flag, is not passed on",
               "--agent-append-system-prompt-file" not in default_named_argv, str(default_named_argv))
+
+        exit_code, settings_without_prompt = settings_main_builds(
+            ["--agent", "noprompt", "--cd", str(workspace), "--handoff-dir", str(handoffs),
+             "--agent-append-system-prompt-file", ""])
+        no_prompt_argv = (supervisor.handoff_supervisor_restart_arguments_build(
+            settings_without_prompt) if settings_without_prompt else [])
+        check("ARGV: an empty --agent-append-system-prompt-file, which asks for no appended "
+              "system prompt, is passed on so the restart does not turn the default back on",
+              exit_code == 0
+              and no_prompt_argv[-3:-1] == ["--agent-append-system-prompt-file", ""],
+              str(no_prompt_argv))
+        missing_prompt_file = str(workspace / "missing-appended-system-prompt.md")
+        exit_code, settings_with_missing_prompt = settings_main_builds(
+            ["--agent", "missingprompt", "--cd", str(workspace), "--handoff-dir", str(handoffs),
+             "--agent-append-system-prompt-file", missing_prompt_file])
+        missing_prompt_argv = (supervisor.handoff_supervisor_restart_arguments_build(
+            settings_with_missing_prompt) if settings_with_missing_prompt else [])
+        check("ARGV: a given appended-system-prompt file missing at startup is passed on, "
+              "not replaced by the default",
+              exit_code == 0 and settings_with_missing_prompt.appended_system_prompt_file == ""
+              and missing_prompt_argv[-3:-1] == ["--agent-append-system-prompt-file",
+                                                 missing_prompt_file],
+              str(missing_prompt_argv))
         check("ARGV: the restart flag is read into the settings, and passed on once",
               settings is not None
               and settings.started_by_handoff_supervisor_restarting_itself_on_main_code
