@@ -16,9 +16,11 @@ The [enforcement ladder](nedschorus-enforcement-ladder.md) orders every way of m
 
 **The block.** A PreToolUse hook refuses a whole-file replacement of an existing GHI-MD under `docs/issues/`, made with `cp`, `mv`, `tee`, a `>` redirection or the Write tool. It is a soft-block, because a deliberate rewrite of the whole file is sometimes right. Its refusal says, with the hook filling in the GHI-MD's path and the path of the marker file:
 
-> Refused: this command replaces the whole GHI-MD <path>, which can undo changes merged into it on main after your copy was written.
+> Refused: this command replaces the whole GHI-MD `<path>`, which can undo changes merged into it on main after your copy was written.
+>
 > Change the GHI-MD with the Edit tool instead, one passage at a time, so main's other changes stay.
-> If you mean to replace the whole file, write your reason into <marker path> and run the command again.
+>
+> If you mean to replace the whole file, write your reason into `<marker path>` and run the command again.
 
 **The correction.** The hook cannot see the same mistake made with the Edit tool: pasting in, passage by passage, text written days earlier. So the /ghi-write skill, which every agent follows to change a GHI-MD, says at its "Edit:" step:
 
