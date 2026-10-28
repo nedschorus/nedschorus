@@ -287,7 +287,7 @@ If the user is committing by hand, commit from a terminal outside the Claude ses
 VERDICT: CONFLICT -- <commit> conflicts with origin/main.
 Merge origin/main into the branch by hand, with the frozen head as first parent.
 Resolve the conflict and change nothing else in the merge.
-Before pushing, rerun the test suites for what the merge touched.
+Before pushing, rerun the nc-test-suites for what the merge touched.
 ```
 
 **What the agent cannot tell from the text.** CLAUDE.md's first step: see what the conflict is with. When main has replaced the branch's work without deleting the file, for example by rewriting the same function another way, a hand-merge is the wrong action.
