@@ -51,7 +51,7 @@ def check(name, condition, detail=""):
 def parse(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument("--some-file", type=Path)
-    common.add_directory_options(parser, "wt/")
+    common.add_directory_options(parser, "briefs/")
     return common.resolve_path_options(parser.parse_args(argv))
 
 
@@ -98,15 +98,30 @@ def main():
     try:
         os.chdir(scratch)
         arguments = parse(["--merge-lane-worktrees-and-outputs-directory", "helpers",
+                           "--merge-lane-review-worktrees-directory", "worktrees",
                            "--some-file", "specs/brief.json"])
         check("a relative outputs directory is made absolute against the working directory",
               arguments.merge_lane_worktrees_and_outputs_directory == scratch / "helpers",
               str(arguments.merge_lane_worktrees_and_outputs_directory))
         check("every other Path option is made absolute too",
               arguments.some_file == scratch / "specs" / "brief.json", str(arguments.some_file))
-        check("the review tools worktree defaults to the absolute outputs directory's wt/main",
-              arguments.review_tools_worktree_at_main == scratch / "helpers" / "wt" / "main",
+        check("a relative review worktrees directory is made absolute against the working "
+              "directory",
+              arguments.merge_lane_review_worktrees_directory == scratch / "worktrees",
+              str(arguments.merge_lane_review_worktrees_directory))
+        check("the review tools worktree defaults to the absolute review worktrees directory's "
+              "main",
+              arguments.review_tools_worktree_at_main == scratch / "worktrees" / "main",
               str(arguments.review_tools_worktree_at_main))
+        check("the pull request's review worktrees are pr<n>-head and pr<n>-merged in the "
+              "review worktrees directory",
+              common.pull_request_head_worktree(arguments, 7) == scratch / "worktrees" / "pr7-head"
+              and common.pull_request_merged_worktree(arguments, 7)
+              == scratch / "worktrees" / "pr7-merged")
+        check("the directory options pass on as the same three absolute options",
+              parse(common.directory_options_argv(arguments)).__dict__
+              == {**arguments.__dict__, "some_file": None},
+              repr(common.directory_options_argv(arguments)))
 
         arguments = parse(["--merge-lane-worktrees-and-outputs-directory", "helpers",
                            "--review-tools-worktree-at-main", "../elsewhere/main"])
@@ -124,6 +139,15 @@ def main():
 
         home = scratch / "home"
         os.environ["HOME"] = str(home)
+        arguments = parse([])
+        check("with no options the review worktrees directory is ~/.cache/"
+              "merge-lane-review-worktrees, under HOME when the arguments are parsed",
+              arguments.merge_lane_review_worktrees_directory
+              == home / ".cache" / "merge-lane-review-worktrees"
+              and arguments.review_tools_worktree_at_main
+              == home / ".cache" / "merge-lane-review-worktrees" / "main",
+              f"{arguments.merge_lane_review_worktrees_directory} "
+              f"{arguments.review_tools_worktree_at_main}")
         check("the token file is the one merge-gate.sh reads, under HOME at call time",
               common.merge_account_token_file()
               == home / ".config" / "nedschorus" / "ned-review-merge.token",

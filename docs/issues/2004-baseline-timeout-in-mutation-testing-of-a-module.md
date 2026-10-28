@@ -1,5 +1,6 @@
 ---
 issue: "[Baseline timeout in mutation testing of a module with many dependent test suites is reported as failing suites](https://github.com/nedschorus/nedschorus/issues/2004)"
+kind: design
 ---
 
 # Baseline timeout in mutation testing of a module with many dependent test suites is reported as failing suites

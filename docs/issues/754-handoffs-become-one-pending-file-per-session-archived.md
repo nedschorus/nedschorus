@@ -2,6 +2,7 @@
 issue: "[Handoffs become one pending file per session, archived only after a successor is up](https://github.com/nedschorus/nedschorus/issues/754)"
 status: specified, not built
 design-as-of: 2026-09-28
+kind: design
 ---
 
 # Handoffs become one pending file per session, archived only after a successor is up

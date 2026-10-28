@@ -203,7 +203,9 @@ RETRYING_PREFIX = "RETRYING:"
 AGENT_BINARY_DOWN_PREFIX = "AGENT-BINARY DOWN:"
 STOPPED_CELL_WRITE_CHECK_LINE = (
     "The {cell} cell was stopped before it could check for files it wrote outside its "
-    "report, so no such check ran; that is a failure to look, not a clean result. Before "
+    "report, so no such check ran; that is "
+    + cell_common.STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE
+    + ". Before "
     "you do anything else, read `git status` against the edits you know are your own. "
     "Undo a change git status lists, by deleting the file or directory if it is untracked or running "
     "`git restore --staged --worktree <path>` if it is tracked, only when its content shows a reviewer wrote "

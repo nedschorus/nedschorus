@@ -129,6 +129,15 @@
           "launchd_keys": {"StartCalendarInterval": {"Hour": 4, "Minute": 15}}
         }
       }
+    },
+    {
+      "name": "claude-code-temp-folders-of-exited-agent-sessions-delete",
+      "program": "nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py",
+      "arguments": [],
+      "output": ".claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "30 7 * * *"}
+      }
     }
   ]
 }

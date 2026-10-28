@@ -11,7 +11,7 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 - **/cold-read** — a skill used to improve the readability of prose.
 - **/explain** — a skill that re-explains a message the user could not follow, so he can understand the message without the agent-session's context.
 - **/ghi-write** — a skill used before any write to a GitHub issue.
-- **/handoff** — a skill that hands a session over to a new one.
+- **/handoff** — a skill that writes the session-handoff a successor agent-session starts from, used when a system message says the agent-session has used the share of its context window set as the reincarnation threshold, or the user asks for a handoff.
 - **/pull-request-review-write** — a skill used before writing or revising a review on a pull request.
 - **/sanity-check** — a skill used to improve designs.
 - **/walk-me-through** — a skill that presents complex material to the user one item or step at a time.
@@ -28,9 +28,10 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 - **agent-session** — one running conversation occupying an agent-seat. Agent-sessions end and are replaced; the agent-seat persists.
 - **approval-walk** — presenting material to the user one item at a time, under /walk-me-through, for a decision on each item; its outcomes are recorded in walk-minutes.
 - **approved-by-walk** — approved by the user item by item in an approval-walk, not by one yes to a bundle.
+- **architecture-overview** — a wiki page, `docs/nedschorus-wiki/nedschorus-<system>-architecture-overview.md`, that tells a reader who must change a system what it is for, what its components are and how they fit together, written as `docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md` says. #prose
 - **build-slice** — one numbered increment of a build plan, built and merged on its own.
 - **C-numbers** — the identifiers `C1`, `C2` … of the main-gatekeeper's decisions on the credential that pushes to main, defined in `nc-systems/main-gatekeeper/main-gatekeeper-design.md` § The credential and enforcement.
-- **code-prompt-code (aka CPC)** — a program built from both code and prompts.
+- **code-prompt-code (aka CPC)** — a program built from both code and prompts, such as `nc-systems/cold-read/cold-read-grid.py`, which runs reviewer prompts through `claude` and `codex`.
 - **conversation-tail** — the verbatim tail of an agent-session's dialog, `~/.claude/handoffs/<seat>-dialog-NNNN.md`, which the handoff-supervisor writes when it replaces the agent-session, for the successor to read first.
 - **cosmetic-change** — a change to prose that alters only its formatting or its place, never what it says, as `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` defines it. #prose
 - **create-GHI** — the ghi-write-tool operation that files a new GHI for a GHI-MD that has none, refusing when an open GHI already covers the same ground.
@@ -38,9 +39,9 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 - **design-contract** — the file beside a design listing what the component promises its component-consumers, one testable clause per observable effect.
 - **design-requirement** — one statement of what a design requires, with a name no other design-requirement in the repository has, such as `cleaner-removes-worktree-after-30-quiet-days`. A design's design-requirements are its list of them.
 - **design-to-main** — the workflow that takes an approved design to code, tests and a pull request; its design and its own glossary are in `docs/design-to-main/`. A user-ruling made for today's system, in which an agent-seat opens a pull request and merge-lane-2 reviews and merges it, does not apply to the steps inside a design-to-main run unless the user rules that it does; the pull request a run opens follows the rules of whatever reviews and merges it.
-- **detect-inform-correct (aka DIC)** — the technique used where a check before an agent acts, such as a hook's refusal, can miss a case: a program detects, after the act, an action that should not have happened, and then one of two things follows. When the program can undo the action safely, it undoes it and tells the agent, in an agent-facing-message, what it undid, why, and how to do it correctly. When only the agent can undo it safely, because the program cannot tell the action apart from other work, such as the agent's uncommitted edits in the same file or a change another program made, the program tells the agent what it detected and how to undo it, and the agent corrects it. A shell command that changed a file the instruction-file guard protects is such a case: the guard sees only Claude Code's file-editing tools, and the afterward hook cannot tell which program made the change.
+- **detect-inform-correct (aka DIC)** — the technique used where a check before an agent acts, such as a hook's refusal, can miss a case: a program detects, after the act, an action that should not have happened, and then one of two things follows. When the program can undo the action safely, it undoes it and tells the agent, in an agent-facing-message, what it undid, why, and how to do it correctly. When only the agent can undo it safely, such as after a shell command changed a guarded-file, the program tells the agent what it detected and how to undo it, and the agent corrects it.
 - **edit-GHI** — the ghi-write-tool operation that merges an edit of a filed GHI-MD into main and updates the GHI from main.
-- **failed-restart-notice** — the page the agent-crash-watcher opens in the browser on the user's Mac when it cannot restart an agent-seat, with the command to restart it himself; when the page cannot be written or the Mac refuses the page, the notice opens in a terminal window on the Mac instead.
+- **failed-restart-notice** — the notice the agent-crash-watcher shows on the user's Mac, as a browser page or else in a terminal window, when it cannot restart an agent-seat, with the command to restart it himself.
 - **fix-round** — one cycle of a pull request answering review findings, written by a forked subagent that inherits the author's full context, as one commit on top of the frozen-head.
 - **fresh-agent** — a minimal-context agent: one that has read only `CLAUDE.md`, every file `CLAUDE.md` names, every glossary (this one and the system glossaries listed at its top), its agent-instructions, and the documents selected for its task with the documents they link.
 - **fresh-reader** — a fresh-agent, or a person, reading a document with no context beyond the document and what it links.
@@ -96,4 +97,4 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 - **user-block** — a refusal that only the user's approval, quoted into the marker the refusal names, clears.
 - **user-ruling** — a decision by the user, recorded where it applies in the form (user-ruled YYYY-MM-DD), or recorded with his words and its date elsewhere, such as in walk-minutes.
 - **walk-runner** — the program that will run an approval-walk's bookkeeping: it hands the agent the current item, counts its words, and records each ruling in the walk-minutes.
-- **work-snapshot** — a git commit, kept under `refs/work-snapshots/` and never on a branch, that copies one worktree's uncommitted changes so they survive a crash.
+- **work-snapshot** — a git commit, kept under `refs/work-snapshots/` and never on a branch, that copies one worktree's uncommitted changes so they survive a crash; an agent-seat's leftover work-snapshots that hold lost work are listed in the initial-agent-instructions of its next agent-session, and by `python3 nc-systems/handoff/uncommitted-work-snapshots.py list --agent-seat <name>`.

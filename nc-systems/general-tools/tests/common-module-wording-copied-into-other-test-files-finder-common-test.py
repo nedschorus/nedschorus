@@ -62,6 +62,12 @@ def rerun_line(command):
     if not command:
         raise TypeError("pass the command the agent ran, such as the program's own name")
     return f"run exactly {command} once more, and only once more, before you stop"
+
+
+def whom_to_tell_line(words):
+    return (f"Nobody watches this agent-session, so tell no user. "
+            f"If you run as a subagent, report to the agent that started you, in these words: "
+            f"{words}")
 '''
 
 def scratch_checkout(files, untracked=None):
@@ -91,6 +97,8 @@ check("the module's wording is its constants and its functions' literal pieces o
           "stop now and tell the user what both runs printed": ["STOP_LINE"],
           "the first half of this line and the second half of this line": ["SPLIT_LINE"],
           "once more, and only once more, before you stop": ["rerun_line"],
+          "Nobody watches this agent-session, so tell no user. If you run as a subagent, report to the agent "
+          "that started you, in these words:": ["whom_to_tell_line"],
       }, pieces)
 
 found = copies_in({"tools/tests/caller-test.py": (
@@ -116,11 +124,39 @@ check("a copy split over implicitly joined literals, with other runs of whitespa
       [copy[:2] for copy in found] == [("scripts/caller-test.py", 1)], found)
 
 found = copies_in({"scripts/caller-test.py": (
-    'def expected(empty):\n'
-    '    return f"the first half of this line and {empty}the second half of this line"\n')})
-check("a test f-string whose field falls inside the piece is not counted, even where the field "
-      "could be empty",
+    'def expected(a, b):\n'
+    '    return f"the first half of {a}this line and the second {b}half of this line"\n')})
+check("a test f-string whose fields split the piece into runs under seven words is not counted, even "
+      "where the fields could be empty",
       found == [], found)
+
+found = copies_in({"scripts/caller-test.py": 'X = "Stop now and tell the user what both runs said."\n'})
+check("a test literal sharing a run of seven words or more with a piece, but not the whole piece, is named "
+      "with the run, in the module's words",
+      found == [("scripts/caller-test.py", 1, "now and tell the user what both runs", ["STOP_LINE"])], found)
+
+found = copies_in({"scripts/caller-test.py": 'X = "and tell the user what both"\n'})
+check("a run of six words shared with a piece is not counted", found == [], found)
+
+found = copies_in({"scripts/caller-test.py": 'X = "(stop now and tell the user what both runs printed)."\n'})
+check("words are compared without the punctuation at their ends, so the whole piece is named",
+      found == [("scripts/caller-test.py", 1, "stop now and tell the user what both runs printed",
+                 ["STOP_LINE"])], found)
+
+found = copies_in({"scripts/caller-test.py": (
+    'def check(text):\n'
+    '    assert "If you run as a subagent, report to the agent that started you" in text\n')})
+check("a test that asserts twelve words from the middle of a function's f-string, whose constant part runs "
+      "on over implicitly joined lines to a field at its end, is named with those words and the function",
+      found == [("scripts/caller-test.py", 2, "If you run as a subagent, report to the agent that started you",
+                 ["whom_to_tell_line"])], found)
+
+found = copies_in({"scripts/caller-test.py": (
+    'def expected(x):\n'
+    '    return f"the first half of this line and{x}the second half of this line"\n')})
+check("a field glued to the words on both sides of it ends the run before it, so the seven words before it are "
+      "named",
+      found == [("scripts/caller-test.py", 2, "the first half of this line and", ["SPLIT_LINE"])], found)
 
 found = copies_in({
     "tools/tests/stand-in-wording-common-test.py": 'PINNED = "stop now and tell the user what both runs printed"\n',

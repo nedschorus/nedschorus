@@ -1,5 +1,6 @@
 ---
 issue: "[main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)"
+kind: design
 ---
 
 # main-gatekeeper build — slice plan

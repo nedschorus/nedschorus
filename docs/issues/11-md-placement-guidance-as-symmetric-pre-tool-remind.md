@@ -1,5 +1,6 @@
 ---
 issue: "[MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedschorus/nedschorus/issues/11)"
+kind: design
 ---
 
 # MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)

@@ -82,6 +82,7 @@ def build_repositories(scratch):
 def run_program(helpers, checkout, *arguments, cwd=None):
     return subprocess.run(
         [sys.executable, str(PROGRAM), *arguments, "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+         "--merge-lane-review-worktrees-directory", str(helpers / "wt"),
          "--review-tools-worktree-at-main", str(checkout)],
         capture_output=True, text=True, cwd=cwd,
         env={**{key: value for key, value in GIT_ENVIRONMENT.items()
@@ -123,12 +124,12 @@ def main():
         check("both worktrees are made, exit 0", completed.returncode == 0
               and head_worktree.is_dir() and merged_worktree.is_dir(), detail)
         if completed.returncode == 0:
-            check("wt/pr<n>-head is at the head commit",
+            check("pr<n>-head is at the head commit",
                   git(head_worktree, "rev-parse", "HEAD") == head_commit, detail)
-            check("wt/pr<n>-head is detached",
+            check("pr<n>-head is detached",
                   git(head_worktree, "rev-parse", "--abbrev-ref", "HEAD") == "HEAD", detail)
             parents = git(merged_worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:]
-            check("wt/pr<n>-merged is a merge commit of main and the head commit",
+            check("pr<n>-merged is a merge commit of main and the head commit",
                   parents == [main_commit, head_commit], repr(parents))
             check("the merge commit is made as merge-lane-2",
                   git(merged_worktree, "log", "-1", "--format=%an") == "merge-lane-2", detail)
@@ -195,7 +196,7 @@ def main():
               and "VERDICT: CONFLICT" in confirmed.stdout,
               "no single printed command" if confirmed is None else
               f"exit {confirmed.returncode}\n{confirmed.stdout}{confirmed.stderr}")
-        check("the conflicted merge is aborted, leaving wt/pr<n>-merged clean at main",
+        check("the conflicted merge is aborted, leaving pr<n>-merged clean at main",
               git(helpers / "wt" / "pr9-merged", "status", "--porcelain") == ""
               and git(helpers / "wt" / "pr9-merged", "rev-parse", "HEAD") == later_main,
               git(helpers / "wt" / "pr9-merged", "status", "--porcelain"))

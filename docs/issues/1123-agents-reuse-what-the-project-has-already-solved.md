@@ -1,5 +1,6 @@
 ---
 issue: "[Agents reuse what the project has already solved: shared helpers, one page of reusable components, and a reuse check before, during and after the build](https://github.com/nedschorus/nedschorus/issues/1123)"
+kind: design
 ---
 
 # Agents reuse what the project has already solved: shared helpers, one page of reusable components, and a reuse check before, during and after the build
