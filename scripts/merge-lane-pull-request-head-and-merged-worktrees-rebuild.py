@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Rebuild a pull request's two detached worktrees under the worktrees and outputs directory.
+"""Rebuild a pull request's two detached worktrees under the review worktrees directory.
 
 Usage:
   scripts/merge-lane-pull-request-head-and-merged-worktrees-rebuild.py <pull request number>
-      <head commit> <main commit> [--merge-lane-worktrees-and-outputs-directory DIR] [--review-tools-worktree-at-main DIR]
+      <head commit> <main commit> [--merge-lane-worktrees-and-outputs-directory DIR] [--merge-lane-review-worktrees-directory DIR] [--review-tools-worktree-at-main DIR]
 
-Fetches the pull request's head from origin, then makes wt/pr<n>-head at the
-head commit and wt/pr<n>-merged at the main commit with the head commit merged
+Fetches the pull request's head from origin, then makes pr<n>-head at the
+head commit and pr<n>-merged at the main commit with the head commit merged
 in, as merge-lane-2, always with a merge commit. A worktree already at either
 path is removed first, with any changes in it.
 
@@ -49,12 +49,12 @@ class HeadConflictsWithMain(Exception):
 
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
-        description="Make wt/pr<n>-head at a pull request's head commit and wt/pr<n>-merged "
+        description="Make pr<n>-head at a pull request's head commit and pr<n>-merged "
                     "at that head merged onto main, both detached.")
     parser.add_argument("pull_request", type=int, help="the pull request's number")
     parser.add_argument("head_commit", help="the pull request's head commit")
     parser.add_argument("main_commit", help="the main commit to merge the head commit onto")
-    common.add_directory_options(parser, "wt/")
+    common.add_directory_options(parser, "nothing this program uses")
     return common.resolve_path_options(parser.parse_args(argv))
 
 
@@ -72,10 +72,9 @@ def git(directory, *arguments):
 def main(argv=None):
     arguments = parse_arguments(argv)
     number = arguments.pull_request
-    worktrees = arguments.merge_lane_worktrees_and_outputs_directory / "wt"
     checkout = arguments.review_tools_worktree_at_main
-    head_worktree = worktrees / f"pr{number}-head"
-    merged_worktree = worktrees / f"pr{number}-merged"
+    head_worktree = common.pull_request_head_worktree(arguments, number)
+    merged_worktree = common.pull_request_merged_worktree(arguments, number)
     try:
         git(checkout, "fetch", "-q", "origin", f"pull/{number}/head")
         for worktree in (head_worktree, merged_worktree):
