@@ -671,6 +671,15 @@ if linux_only_cases_run_here("the covers over listening sockets, and a test sand
               line.startswith("NOT RUN plain-test.sh did not start: bwrap could not build its "
                               "test sandbox (exit 1)")
               and not runner.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(line), line)
+        # A sandbox program that names no suite process and still exits 0.
+        (fake_bin / "bwrap").write_text("#!/bin/sh\nexit 0\n")
+        passed = runner.run_one_suite(scratch, sys.executable, "plain-test.sh", scratch,
+                                      sandbox_prefix=(str(fake_bin / "bwrap"),),
+                                      note_suite_process=lambda *arguments, **options: None)
+        check("a suite that exits 0 though no suite process was named is PASS, not NOT RUN",
+              passed["exit"] == 0 and not passed.get("test sandbox did not start")
+              and runner.suite_line({**passed, "admitted": False}).startswith(
+                  "PASS plain-test.sh"), passed)
 
 
 # --- Hiding by default: fixed directories ----------------------------------------

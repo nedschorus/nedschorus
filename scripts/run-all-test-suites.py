@@ -2927,7 +2927,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         result["timeout"] = {"limit": timed_out[0], "recorded": timed_out[1]}
     if stopped_by is not None and exit_code != 0:
         result["stopped by"] = stopped_by
-    if sandbox_started is False:
+    if sandbox_started is False and exit_code != 0:
         result["test sandbox did not start"] = True
     if statistics is not None:
         with statistics:
