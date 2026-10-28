@@ -50,23 +50,25 @@ DETACHED_DENY_MESSAGE = (
 UNBORN_DENY_MESSAGE = (
     "Refusing to write {path}: this session's checkout is a repository with no commits yet. "
     "HEAD names the branch {branch}, but that branch does not exist until something is "
-    "committed, so this is not the seat you were meant to be working in — most often it is a "
-    "stray `git init` directory. Check you are in the right checkout. If this really is where "
-    "the work belongs, make the first commit (git commit --allow-empty -m 'initial') and "
-    "resubmit. If the user has approved writing from this exact state, quote his approval "
-    "words into {marker} at the checkout root and resubmit — create it with a shell command "
-    "(printf/echo), because writing it with the Write tool would be refused by this same "
-    "guard."
+    "committed, so this is most often a stray `git init` directory, not the checkout you "
+    "were meant to work in.\n"
+    "Check that you are in the right checkout.\n"
+    "If this really is where the work belongs, make the first commit (git commit "
+    "--allow-empty -m 'initial'), then try the write again.\n"
+    "If the user has approved writing from this exact state, quote his approval words into "
+    "{marker} at the checkout root with a shell command (printf or echo), then try the "
+    "write again; the marker is used up by the one call it approves, and the Write tool "
+    "cannot create the marker, because this guard refuses that Write."
 )
 
 REFERENCE_DENY_MESSAGE = (
-    "Refusing to write {path}: this session sits in the machine's reference checkout — the "
-    "main worktree other agents read as the truth about main. Work belongs in your own "
-    "worktree; use it and leave this copy as reference. If this write IS legitimate work "
-    "in this checkout — merge-lane resolving conflicts, with the user's approval — "
-    "quote his approval words into {marker} at the checkout root and resubmit; the marker "
-    "is consumed by the one call it approves. Create the marker with a shell command "
-    "(printf/echo): writing it with the Write tool would be refused by this same guard."
+    "Refusing to write {path}: this session sits in the machine's reference checkout, the "
+    "main worktree other agents read as the truth about main.\n"
+    "Do the work in your own worktree, and leave this checkout as it is.\n"
+    "If the user has approved this write in this checkout, quote his approval words into "
+    "{marker} at the checkout root with a shell command (printf or echo), then try the write again; the "
+    "marker is used up by the one call it approves, and the Write tool cannot create the "
+    "marker, because this guard refuses that Write."
 )
 
 COULD_NOT_CHECK_MESSAGE = (
@@ -81,13 +83,15 @@ COULD_NOT_CHECK_MESSAGE = (
 )
 
 CROSS_REFERENCE_DENY_MESSAGE = (
-    "Refusing to write {path}: it lands inside the machine's reference checkout — the main "
-    "worktree other agents read as the truth about main — while this session is seated "
-    "elsewhere. Work belongs in your own worktree; if this write must land there, land it "
-    "through a branch and merge-lane instead. If it IS legitimate direct work — "
-    "merge-lane resolving conflicts, with the user's approval — quote his approval words "
-    "into {marker} at the root of your own checkout and resubmit; the marker is consumed "
-    "by the one call it approves."
+    "Refusing to write {path}: it is inside the machine's reference checkout, the main "
+    "worktree other agents read as the truth about main, and this session works in another "
+    "checkout.\n"
+    "Do the work in your own worktree.\n"
+    "If the change must reach the reference checkout, send it through a branch and "
+    "merge-lane.\n"
+    "If the user has approved writing {path} directly, quote his approval words into "
+    "{marker} at the root of your own "
+    "checkout, then try the write again; the marker is used up by the one call it approves."
 )
 
 
