@@ -591,10 +591,10 @@ def remove_recorded_topic_branches_and_worktrees(number):
                    accepted_exit_codes=(0, 1)).strip():
             continue
         if not git(".", ["for-each-ref", "--contains", "refs/heads/" + branch, "refs/remotes/origin/"]).strip():
-            commits = git(".", ["log", "--oneline", "refs/remotes/origin/main..refs/heads/" + branch]).rstrip("\n")
+            commits = git(".", ["log", "--oneline", "refs/heads/" + branch, "--not", "--remotes=origin"]).rstrip("\n")
             left.append(f"Branch {branch} holds commits on no branch of origin, so remove-recorded-topic-branches-and-worktrees left it:\n"
                         f"{commits}\n"
-                        f"Read them with git log -p origin/main..{branch}, copy out any that is work to keep, "
+                        f"Read them with git log -p {branch} --not --remotes=origin, copy out any that is work to keep, "
                         "and tell merge-lane-2 about it with SendMessage.\n"
                         f"Then run: git branch -D {branch}")
             continue

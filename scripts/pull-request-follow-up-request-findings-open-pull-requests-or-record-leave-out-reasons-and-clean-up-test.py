@@ -664,6 +664,8 @@ def test_clean_up_goes_on_past_each_worktree_and_branch():
         git(case.repository, "worktree", "lock", "--reason", "kept by the user", str(worktrees["locked"]))
         case.worktree = worktrees["clean-one"]
         case.commit_change()
+        git(worktrees["clean-one"], "push", "-q", "origin", "branch-clean-one")
+        case.commit_change("unpushed.txt")
         git(worktrees["clean-two"], "push", "-q", "origin", "branch-clean-two")
         code, out, err = case.run(case.repository, command)
         branches = git(case.repository, "branch")
@@ -671,6 +673,10 @@ def test_clean_up_goes_on_past_each_worktree_and_branch():
               code == 1 and not worktrees["clean-one"].exists() and not worktrees["clean-two"].exists()
               and "Deleted branch branch-clean-two." in out and "branch-clean-two" not in branches
               and "Branch branch-clean-one holds commits on no branch of origin" in out
+              and len(out.split("Branch branch-clean-one holds commits on no branch of origin, so "
+                                "remove-recorded-topic-branches-and-worktrees left it:\n")[1].split("\nRead them")[0]
+                      .splitlines()) == 1
+              and "Read them with git log -p branch-clean-one --not --remotes=origin, copy out" in out
               and "branch-locked" in branches and worktrees["locked"].exists()
               and "left 2 worktrees or branches in place" in out, out + err)
         git(case.repository, "worktree", "unlock", str(worktrees["locked"]))
