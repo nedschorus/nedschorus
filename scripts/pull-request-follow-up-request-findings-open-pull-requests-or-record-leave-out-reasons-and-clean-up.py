@@ -625,8 +625,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Do the mechanical steps of following up the non-blocking findings merge-lane-2 "
                     "sent after merging a pull request.")
-    parser.add_argument("number", type=int, help="the merged pull request's number")
-    subcommands = parser.add_subparsers(dest="subcommand", required=True)
+    parser.add_argument("number", metavar="<number>", type=int, help="the merged pull request's number")
+    # Without prog, argparse builds it by wrapping the usage line, which can break it onto two lines.
+    subcommands = parser.add_subparsers(dest="subcommand", required=True, prog=f"{parser.prog} <number>")
     start_parser = subcommands.add_parser(
         "start-topic-branch", help="in the subagent's worktree: make a topic branch from origin/main and record it")
     start_parser.add_argument("branch", metavar="topic-branch")

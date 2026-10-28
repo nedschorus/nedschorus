@@ -150,6 +150,8 @@ class Case:
 
 def test_help():
     completed = subprocess.run([sys.executable, str(PROGRAM), "--help"], capture_output=True, text=True)
+    check("--help shows the pull request number as <number>, as the other texts do",
+          "<number>" in completed.stdout, completed.stdout)
     check("--help exits 0 and names every subcommand",
           completed.returncode == 0 and all(name in completed.stdout for name in
                                             ("start-topic-branch", "open-pull-request", "record-finding-leave-out-reason", "finish-follow-up-request-and-print-merge-lane-2-message", "remove-recorded-topic-branches-and-worktrees")),
@@ -273,6 +275,10 @@ def test_open_refusals():
     try:
         worktree = started(case)
         case.commit_change()
+        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1,x")
+        check("open refuses finding numbers it cannot read, naming the pull request number as <number>",
+              code == 2 and f"{PROGRAM.name} <number> open-pull-request: error: argument --handled-finding-numbers: "
+                            "'1,x' is not finding numbers separated by commas, such as 1,3\n" in err, err)
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "0")
         check("open refuses finding 0", code == 1 and "so there is no finding 0, and" in err, err)
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1,3")
