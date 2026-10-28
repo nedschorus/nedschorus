@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run mutation testing with cosmic-ray on the lines a pull request changed, and print the survivors.
+"""Run nc-mutation-testing with cosmic-ray on the lines a pull request changed, and print the survivors.
 
 Usage:
   scripts/pull-request-mutation-testing-survivors.py --pull-request N

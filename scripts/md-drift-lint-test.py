@@ -29,7 +29,7 @@ LINT_SCRIPT = Path(__file__).with_name("md-drift-lint.py")
 # sys.dont_write_bytecode keeps one from being written either. The two cover
 # different halves of the same hazard and both are needed.
 #
-# Mutation testing this lint -- change PLACEHOLDER_SPAN, rerun, read which
+# nc-mutation-testing of this lint -- change PLACEHOLDER_SPAN, rerun, read which
 # case fails -- is how its exclusions are checked, and a stale .pyc makes it
 # report a clean, plausible, entirely wrong table. Python decides a cached
 # .pyc is current by (mtime, size) at one-second resolution, so two mutations
