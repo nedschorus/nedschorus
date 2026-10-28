@@ -57,10 +57,10 @@ copy's sha256 (`target_sha256=`), so the bytes a report reviewed are named in
 the report itself. At the
 end of the run the cold-read-record is shipped to the log-store on ned-box by
 nc-systems/cold-read/cold-read-record-ship.py, whatever the run's outcome, and the shipper's
-one line is printed as `record:`; a shipping failure is reported, never fatal
-(user-ruled 2026-09-07): the run still finishes and keeps its reports, and it
-exits 1 when the shipper's line is anything but `shipped:`, a refusal
-included, because the record did not reach the log-store. The one run that ships nothing is the one that could
+one line is printed as `record:` (user-ruled 2026-09-07). When the shipper's
+line is anything but `shipped:`, a refusal included, the run still finishes
+and keeps its reports, and then it exits 1, because the record did not reach
+the log-store. The one run that ships nothing is the one that could
 not freeze the target: it exits 2 before any cold-read-cell launches, so its
 record holds the reference check alone and no report to keep.
 

@@ -132,8 +132,11 @@ def cold_read_fast_read_scratch_repository_whose_stub_agy_answers_in_chat(scratc
     """A scratch repository holding a copy of nc-systems/cold-read/, and the
     environment under which that copy's cold-read-fast-read.py reads a
     document with stub models and ships its record to `ship_destination`.
-    Returns (the copy's cold-read-fast-read.py, that environment)."""
-    scratch = Path(scratch)
+    Returns (the copy's cold-read-fast-read.py, that environment), the path
+    resolved, because the copy derives its record directory from its own
+    resolved path, and a temporary directory can sit under a symlink, as
+    /var/folders does under /private on the Mac."""
+    scratch = Path(scratch).resolve()
     repository = scratch / "fast-read-scratch-checkout"
     repository.mkdir(parents=True)
     commit_seeded_cold_read_scratch_repository(repository)

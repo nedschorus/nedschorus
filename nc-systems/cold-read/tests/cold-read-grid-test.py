@@ -1595,6 +1595,20 @@ with tempfile.TemporaryDirectory() as scratch:
           record_directory is not None
           and frozen_target_path_in_scratch_repository(repository, record_directory).is_file())
 
+    # --- A store that refuses the record: the run finishes, exits 1 ----------
+    # The store already holds this record's name with other bytes, so the
+    # add-only shipper refuses it, and the record did not reach the store.
+    unreachable_record_name = record_directory.name
+    repository = build_scratch_repository(scratch, "checkout-store-refuses")
+    seed_log_store_record(repository, unreachable_record_name, [])
+    result = run_grid(repository, stubs)
+    record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
+    check("a store holding the record's name with other bytes prints record: REFUSED, "
+          "the run finishes all six, and exits 1",
+          len(record_lines) == 1 and record_lines[0].startswith("record: REFUSED:")
+          and result.returncode == 1 and "All six reports landed" in result.stdout,
+          f"exit {result.returncode}; {record_lines!r}; stderr={result.stderr[-400:]!r}")
+
     # --- A changed target is still shipped: it is evidence -------------------
     repository = build_scratch_repository(scratch, "checkout-changed-still-shipped")
     result = run_grid(repository, stubs, {

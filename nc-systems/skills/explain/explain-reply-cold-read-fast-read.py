@@ -4,12 +4,12 @@
 Usage: nc-systems/skills/explain/explain-reply-cold-read-fast-read.py < <draft>
 
 Pipe a draft beginning with `The user wrote:` and containing a line
-`The reply to him:` followed by the reply. Exit 0 means a report was printed,
-1 means the fast read failed or timed out, and 64 means invalid input. A fast
-read that names its report and exits 1 only because its record did not reach
-the log-store, which its stderr says in a `record:` line saying FAILED or
-REFUSED, has its report printed like any other, with that line and what to
-do about it, and exit 0.
+`The reply to him:` followed by the reply. This program exits 0 when it
+printed a report, 1 when the fast read failed or timed out, and 64 on invalid
+input. The fast read may name its report and exit 1 only because its record
+did not reach the log-store, which its stderr says in a `record:` line saying
+FAILED or REFUSED. Then this program prints the report like any other, with
+that line and what to do about it, and this program exits 0.
 
 Every output line requiring action must carry its own instruction, because
 the explain skill delegates output handling to this program.

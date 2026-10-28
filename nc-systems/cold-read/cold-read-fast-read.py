@@ -82,9 +82,9 @@ also gets `target/<repository path>`, the exact bytes the reviewer read,
 frozen before the cold-read-cell launches, and once the report has landed the
 directory is shipped to the log-store on ned-box by
 nc-systems/cold-read/cold-read-record-ship.py, whose one line is printed on stderr as
-`record:` (user-ruled 2026-09-07; a shipping failure never fails the read:
-the report is kept and its path printed, and the read exits 1 because the
-record did not reach the log-store).
+`record:` (user-ruled 2026-09-07). When shipping fails, the report is still
+kept and its path printed, and then the read exits 1, because the record did
+not reach the log-store.
 The cold-read-cell launcher pre-clears the report path, so a suggestions file
 left by an earlier read is replaced, never appended to.
 
@@ -181,7 +181,8 @@ AGY_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-agy-cell.py")
 CLAUDE_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-claude-cell.py")
 # The program that copies a cold-read-record to the log-store on ned-box.
 # Its one line goes to stderr, since this program's stdout is the report path
-# and nothing else, and a shipping failure never fails the read.
+# and nothing else; when it is not `shipped:`, the report is still printed and
+# then the read exits 1.
 RECORD_SHIPPER = pathlib.Path(__file__).with_name("cold-read-record-ship.py")
 # The shipper's one line opens with this only when the record reached the
 # log-store; REFUSED and FAILED both leave it on disk alone.
@@ -1078,7 +1079,8 @@ def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> None:
 
 def ship_record(record_dir: pathlib.Path) -> str:
     """The shipper's one line, or a FAILED line of this program's own when
-    it could not run. Reported on stderr by the caller, never fatal."""
+    it could not run. The caller prints it on stderr, and exits 1 when it is
+    not `shipped:`, after the report path is printed."""
     try:
         completed = subprocess.run(
             [sys.executable, str(RECORD_SHIPPER), str(record_dir)],

@@ -305,6 +305,10 @@ def main() -> int:
 
         # Oracle: exit code and stdout from the real fast read, whose record
         # cannot reach the log-store. Red: its exit 1 read as no fast read.
+        # The scratch is reached through a symlink, as a Mac temporary
+        # directory is through /var -> /private/var.
+        (scratch / "real-fast-read-target").mkdir()
+        (scratch / "real-fast-read").symlink_to(scratch / "real-fast-read-target")
         fast_read_copy, fast_read_environment = (
             cold_read_scratch_fixture.cold_read_fast_read_scratch_repository_whose_stub_agy_answers_in_chat(
                 scratch / "real-fast-read", "nobody@no-such-host.invalid:/tmp/no-store"))
