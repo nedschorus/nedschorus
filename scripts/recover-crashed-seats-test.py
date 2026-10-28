@@ -1206,6 +1206,34 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a seat with no home directory refuses",
           verdict == "refuse" and "no seat directory" in detail, (verdict, detail))
 
+    if os.geteuid() == 0:
+        skip("a transcript folder that cannot be listed refuses", "root can list any folder")
+    else:
+        for recorded_exit in (False, True):
+            workspace = Workspace(root / f"w-transcript-folder-unreadable-{recorded_exit}")
+            all_dead()
+            capture_launches(workspace)
+            write_transcript(workspace.project_directory(), "resume-me", "real work", records=4)
+            if recorded_exit:
+                recovery.supervisor.record_agent_exit_in_supervisor_state(
+                    workspace.handoffs / f"{workspace.name}-supervisor-state.json",
+                    {"consumed_counter": None, "launched_session_id": "resume-me",
+                     "generation": 3}, 0)
+            workspace.project_directory().chmod(0o000)
+            try:
+                verdict, detail = workspace.assess()
+                report = workspace.recover()
+            finally:
+                workspace.project_directory().chmod(0o755)
+            check(f"a transcript folder that cannot be listed refuses, naming it and the error, "
+                  f"rather than starting fresh (recorded exit: {recorded_exit})",
+                  verdict == "refuse" and str(workspace.project_directory()) in detail
+                  and "Permission denied" in detail, (verdict, detail))
+            check(f"a transcript folder that cannot be listed is reported REFUSED and launches "
+                  f"nothing (recorded exit: {recorded_exit})",
+                  report.startswith(f"{workspace.name}: REFUSED — ") and not workspace.launches,
+                  (report, workspace.launches))
+
     # --- defer to boot-ignition when a handoff genuinely waits --------------
     workspace = Workspace(root / "w3")
     all_dead()

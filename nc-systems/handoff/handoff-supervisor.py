@@ -2014,8 +2014,17 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             and not settings.first_prompt_wins_over_crashed_transcript
             and adopted is None and ignition_plan is None
             and agent_exit_record_from_supervisor_state(state) is None):
-        by_hand_session_id, by_hand_detail = worth_resuming.newest_real_transcript(
-            project_directory_for_working_directory(settings.working_directory))
+        project_directory = project_directory_for_working_directory(settings.working_directory)
+        try:
+            by_hand_session_id, by_hand_detail = worth_resuming.newest_real_transcript(project_directory)
+        except OSError as error:
+            # A fresh session's transcript would become the newest and bury the crashed one.
+            print(f"handoff-supervisor: startup stopped: whether this seat has a transcript "
+                  f"worth resuming could not be decided, because {project_directory} could not "
+                  f"be read: {error.filename}: {error.strerror}.\n"
+                  f"When that folder's permissions are fixed, start the seat again.",
+                  file=sys.stderr)
+            return 5
         if by_hand_session_id is not None:
             print("handoff-supervisor: no waiting handoff and no recorded exit — "
                   f"resuming this seat's last transcript {by_hand_session_id} "

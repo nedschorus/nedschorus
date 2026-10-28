@@ -897,8 +897,14 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     if waiting_handoff is not None:
         return waiting_handoff
 
-    session_id, found = newest_real_transcript(
-        harness_project_directory(seat_directory, projects_root))
+    project_directory = harness_project_directory(seat_directory, projects_root)
+    try:
+        session_id, found = newest_real_transcript(project_directory)
+    except OSError as error:
+        # Refused even with a recorded exit, whose restart offer names the transcript to resume.
+        return "refuse", (
+            f"the transcript crash recovery would resume could not be chosen from "
+            f"{project_directory}: {error.filename}: {error.strerror}")
 
     # A waiting handoff takes precedence; otherwise a recorded exit requires an operator restart.
     exit_record = supervisor.agent_exit_record_from_supervisor_state(
