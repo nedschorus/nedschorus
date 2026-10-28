@@ -189,8 +189,8 @@ def test_brief_text():
                  'Dispatch one subagent with the Agent tool: subagent_type "fork", isolation "worktree", '
                  'run_in_background true. Give it this whole text unchanged; it skips the lines under "For you, the author".',
                  "When it has ended, ask the user its report's questions, then Program: remove-recorded-topic-branches-and-worktrees",
-                 "1. Check each finding against origin/main; leave out any that no longer holds, or that would change a "
-                 "design or decision of the user's, and end your report with a question to him on each.",
+                 "1. Check each finding against origin/main; leave out any that no longer holds, and any that would change "
+                 "a design or decision of the user's, ending your report with a question to him on each of these.",
                  "3. For each topic, Program: start-topic-branch <topic-branch>",
                  "   Program: open-pull-request --handled-finding-numbers <n>[,<n>...]",
                  "4. For each finding you leave out, Program: record-finding-leave-out-reason <n> --reason \"<why>\"",

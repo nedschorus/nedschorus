@@ -42,7 +42,7 @@ Dispatch one subagent with the Agent tool: subagent_type "fork", isolation "work
 When it has ended, ask the user its report's questions, then Program: remove-recorded-topic-branches-and-worktrees
 
 For the subagent, in your own worktree:
-1. Check each finding against origin/main; leave out any that no longer holds, or that would change a design or decision of the user's, and end your report with a question to him on each.
+1. Check each finding against origin/main; leave out any that no longer holds, and any that would change a design or decision of the user's, ending your report with a question to him on each of these.
 2. Group the findings you take on by topic: one pull request per topic.
 3. For each topic, Program: start-topic-branch <topic-branch>
    Make the change with its tests, and commit.
