@@ -65,7 +65,7 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
     base_resolves and head_resolves override `resolves` for one side, so a case
     can make exactly one rev unresolvable. Without that, both guards see a
     failure, the first one returns, and the second is never exercised -- which
-    is how the head guard went unpinned until mutation testing found it.
+    is how the head guard went unpinned until nc-mutation-testing found it.
 
     gh_head is the pushed head GitHub answers about, and defaults to the hash
     the fake git resolves HEAD to -- the matching case, so a case that says

@@ -4,7 +4,7 @@
 A probe is run as a suite by scripts/run-all-test-suites.py's own run_one_suite,
 the path every suite takes: in a cgroup scope at low priority, with the input
 recorder, in a checkout that is a linked worktree, as merge-lane-2's head test
-runs and mutation testing use. The probe tries every escape. Each target is one
+runs and nc-mutation-testing use. The probe tries every escape. Each target is one
 this file made for the purpose: a file in the real home directory, a tmux server
 on a socket of its own, a listening socket in the session's runtime directory, a
 sleeper process, a scratch repository. If a protection were missing, the worst a
