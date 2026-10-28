@@ -131,8 +131,9 @@ skill owns each kind.
 WHO CALLS IT. nc-systems/cold-read/cold-read-grid.py at the end of every run, whatever the
 outcome; the agent after writing triage.md (the cold-read skill's step
 7); nc-systems/cold-read/cold-read-fast-read.py when it writes into cold-read-records/.
-A shipping failure never fails the cold read: the caller prints this
-program's one line and goes on. `--all` ships every directory under
+Whenever this program's line is not `shipped:`, a calling program prints the
+line, finishes its run and keeps its reports, and then exits 1, or the nonzero
+code its run has for another reason. `--all` ships every directory under
 cold-read-records/ in this checkout, continuing past a refused or failed one
 and listing them at the end; being add-only it is safe over directories
 already in the store, which is how a seat catches up after the box was down,

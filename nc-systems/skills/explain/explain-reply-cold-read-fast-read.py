@@ -4,8 +4,12 @@
 Usage: nc-systems/skills/explain/explain-reply-cold-read-fast-read.py < <draft>
 
 Pipe a draft beginning with `The user wrote:` and containing a line
-`The reply to him:` followed by the reply. Exit 0 means a report was printed,
-1 means the fast read failed or timed out, and 64 means invalid input.
+`The reply to him:` followed by the reply. This program exits 0 when it
+printed a report, 1 when the fast read failed or timed out, and 64 on invalid
+input. The fast read may name its report and exit 1 only because its record
+did not reach the log-store, which its stderr says in a `record:` line saying
+FAILED or REFUSED. Then this program prints the report like any other, with
+that line and what to do about it, and this program exits 0.
 
 Every output line requiring action must carry its own instruction, because
 the explain skill delegates output handling to this program.
@@ -185,7 +189,13 @@ def main() -> int:
         return print_failure(
             f"none; stopped after {FAST_READ_TIMEOUT_SECONDS} seconds", stderr)
     report_line = last_nonempty_line(stdout)
-    if exit_code != 0 or not report_line or report_line.startswith("FAILED"):
+    # Exit 1 means other failures too, so only the record line says the record was all that failed.
+    only_the_record_not_shipped = exit_code == 1 and any(
+        line[len(RECORD_SHIP_LINE_PREFIX):].strip().startswith(
+            (RECORD_SHIP_FAILED_MARKER, RECORD_SHIP_REFUSED_MARKER))
+        for line in record_ship_lines(stderr))
+    if ((exit_code != 0 and not only_the_record_not_shipped)
+            or not report_line or report_line.startswith("FAILED")):
         return print_failure(report_line or last_nonempty_line(stderr), stderr)
     report_path = pathlib.Path(report_line)
     try:
