@@ -156,6 +156,16 @@ def test_help():
           completed.returncode == 0 and all(name in completed.stdout for name in
                                             ("start-topic-branch", "open-pull-request", "record-finding-leave-out-reason", "finish-follow-up-request-and-print-merge-lane-2-message", "remove-recorded-topic-branches-and-worktrees")),
           completed.stdout)
+    for label, arguments, words in (
+            ("no subcommand", (), "required: subcommand"),
+            ("open-pull-request without --handled-finding-numbers", ("open-pull-request",),
+             "required: --handled-finding-numbers"),
+            ("record-finding-leave-out-reason without --reason", ("record-finding-leave-out-reason", "1"),
+             "required: --reason")):
+        completed = subprocess.run([sys.executable, str(PROGRAM), str(NUMBER), *arguments],
+                                   capture_output=True, text=True)
+        check(f"{label} is refused by argparse with exit 2",
+              completed.returncode == 2 and words in completed.stderr, completed.stderr)
 
 
 def test_block_parsing():
@@ -370,7 +380,10 @@ def test_open():
         case.commit_change("unrecorded.txt")
         git(worktree, "switch", "-q", "--detach", "main")
         case.write_description("Title\n\n- **Root cause:** the old label still counts.\n")
-        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "2")
+        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "2",
+                                  FAKE_GH_CREATE_OUTPUT=f"see {OPEN_LINK}\n{LINK}")
+        check("open records the last link gh pr create prints",
+              case.answers()["answers"]["2"]["link"] == LINK, str(case.answers()))
         check("open of the last finding says every finding has an answer",
               code == 0 and f"Every finding has an answer: run python3 {program.PROGRAM} {NUMBER} finish-follow-up-request-and-print-merge-lane-2-message" in out, out + err)
         check("open accepts the merge gate's old defect label, and on a detached HEAD pushes the last "
@@ -544,6 +557,33 @@ def test_leave_out_and_finish():
         case.close()
 
 
+def test_three_findings():
+    case = Case()
+    try:
+        case.save(BLOCK + "3. a third finding\n")
+        worktree = case.subagent_worktree()
+        command = "finish-follow-up-request-and-print-merge-lane-2-message"
+        code, out, err = case.run(worktree, command)
+        check("finish names three findings without an answer as 1, 2 and 3",
+              code == 1 and "Findings 1, 2 and 3 of pull request 1964's follow-up request have no answer yet" in err, err)
+        code, out, err = case.run(worktree, "record-finding-leave-out-reason", "2", "--reason", "b")
+        check("record-finding-leave-out-reason names the first and the last finding still without an answer",
+              code == 0 and out.endswith("\nFindings 1 and 3 have no answer yet.\n"), out + err)
+        check("the answers file is JSON indented by 2",
+              (case.states() / f"pull-request-{NUMBER}-follow-up-finding-answers.json").read_text()
+              == json.dumps(case.answers(), indent=2) + "\n")
+        case.run(worktree, "record-finding-leave-out-reason", "1", "--reason", "a")
+        code, out, err = case.run(worktree, command)
+        check("finish refuses while the last of three findings has no answer",
+              code == 1 and "Finding 3 of pull request 1964's follow-up request has no answer yet" in err, out + err)
+        case.run(worktree, "record-finding-leave-out-reason", "3", "--reason", "c")
+        code, out, err = case.run(worktree, command)
+        check("finish lists the answer of every one of three findings",
+              code == 0 and out.endswith("\n1. Left out: a\n2. Left out: b\n3. Left out: c\n"), out + err)
+    finally:
+        case.close()
+
+
 def test_state_failures():
     case = Case()
     try:
@@ -617,6 +657,7 @@ def test_clean_up():
               code == 1 and f"Worktree {worktree} is locked by the agent harness (lock reason: claude agent "
                             "agent-a1b2 (pid 4242)), so remove-recorded-topic-branches-and-worktrees left it" in out
               and "Wait until the subagent has ended.\n" in out
+              and "left 1 worktree or branch in place;" in out
               and out.endswith(f"\nWhen you have done what each says, run: python3 {program.PROGRAM} {NUMBER} remove-recorded-topic-branches-and-worktrees\n")
               and worktree.exists() and "topic-one" in git(case.repository, "branch"), out + err)
         git(case.repository, "worktree", "unlock", str(worktree))
@@ -722,7 +763,7 @@ def test_clean_up_failure():
 
 
 for test in (test_help, test_block_parsing, test_brief_text, test_no_saved_block, test_start,
-             test_open_refusals, test_open, test_open_failures, test_leave_out_and_finish,
+             test_open_refusals, test_open, test_open_failures, test_leave_out_and_finish, test_three_findings,
              test_state_failures, test_clean_up, test_clean_up_goes_on_past_each_worktree_and_branch,
              test_git_failure_passing, test_clean_up_failure):
     test()
