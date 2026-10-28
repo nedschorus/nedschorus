@@ -293,14 +293,16 @@ def test_open_refusals():
         check("open refuses a description without a defect line",
               code == 1 and "has no line beginning \"#root_cause\", \"#root_cause_not_fixed\" or "
                             "\"#no_defect_fixed\", so open-pull-request pushed nothing" in err, err)
-        unrecorded = case.subagent_worktree("unrecorded-worktree")
-        case.write_description()
-        code, out, err = case.run(unrecorded, "open-pull-request", "--handled-finding-numbers", "1")
-        check("open refuses in a worktree start-topic-branch recorded no branch for",
-              code == 1 and f"REFUSED: start-topic-branch recorded no topic branch in {unrecorded} for pull "
-                            "request 1964's follow-up, so open-pull-request has no branch to push, and pushed "
-                            f"nothing.\nRun python3 {program.PROGRAM} {NUMBER} start-topic-branch <topic-branch> "
-                            "in this worktree" in err, err)
+        # One path sorts before the recorded worktree's and one after, so only an exact match of paths refuses both.
+        for name in ("another-worktree", "unrecorded-worktree"):
+            unrecorded = case.subagent_worktree(name)
+            case.write_description()
+            code, out, err = case.run(unrecorded, "open-pull-request", "--handled-finding-numbers", "1")
+            check(f"open refuses in a worktree start-topic-branch recorded no branch for ({name})",
+                  code == 1 and f"REFUSED: start-topic-branch recorded no topic branch in {unrecorded} for pull "
+                                "request 1964's follow-up, so open-pull-request has no branch to push, and pushed "
+                                f"nothing.\nRun python3 {program.PROGRAM} {NUMBER} start-topic-branch <topic-branch> "
+                                "in this worktree" in err, err)
         case.worktree = worktree
         check("no refusal pushed or called gh",
               case.gh_calls() == [] and "topic-one" not in git(case.origin, "branch"), str(case.gh_calls()))

@@ -31,8 +31,8 @@ FOLLOW_UP_PROGRAM_PATH = (Path(__file__).resolve().parents[2] / "scripts"
 # Each text this hook hands an agent follows
 # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 UNREADABLE_BLOCK_LINES = (
-    HOOK + ": merge-lane-2's message above holds a #follow_up_request block, but {problem}, so "
-    "nothing was saved, and no follow-up brief is given.\n"
+    HOOK + ": merge-lane-2's message above holds a #follow_up_request block that the hook could not "
+    "read, so nothing was saved, and no follow-up brief is given.\n"
     "Tell merge-lane-2 with SendMessage that its #follow_up_request block could not be read because "
     "{problem}, and ask it to send the block again.")
 NOT_SAVED_LINES = (
