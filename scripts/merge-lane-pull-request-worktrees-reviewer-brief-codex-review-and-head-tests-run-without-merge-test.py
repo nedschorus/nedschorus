@@ -90,7 +90,7 @@ def commit_file(repository, name):
 
 
 def build_repositories(scratch):
-    """Return (checkout, main commit, head commit reviewed before, head commit, merge base)."""
+    """Return (checkout, main commit, nc-head-commit reviewed before, nc-head-commit, merge base)."""
     origin = scratch / "origin.git"
     author = scratch / "author"
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True,
@@ -104,7 +104,7 @@ def build_repositories(scratch):
     checkout = scratch / "checkout"
     subprocess.run(["git", "clone", "-q", str(origin), str(checkout)], check=True,
                    env=GIT_ENVIRONMENT)
-    # The checkout fetched the earlier head commit in the earlier round.
+    # The checkout fetched the earlier nc-head-commit in the earlier round.
     git(checkout, "fetch", "-q", "origin", "refs/pull/7/head")
     head_commit = commit_file(author, "topic-round-2.txt")
     git(author, "checkout", "-q", "main")
@@ -218,11 +218,11 @@ def main():
                                           "reviewed_before": head_reviewed_before[:10]}],
             "--head-commit-reviewed-before", head_reviewed_before[:12])
         detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}"
-        check("a fix-round's Codex base is the full head commit reviewed before, and "
+        check("a fix-round's Codex base is the full nc-head-commit reviewed before, and "
               "abbreviated commits in the file and the option are accepted",
               completed.returncode == 0 and len(calls) == 5
               and calls[2]["argv"] == ["7", head_reviewed_before, *directory_options]
-              and "(head commit reviewed before)" in completed.stdout, detail)
+              and "(nc-head-commit reviewed before)" in completed.stdout, detail)
         filled_in = json.loads(filled_in_file.read_text())
         check("a head named in the file is replaced by its full commit in the filled-in copy",
               filled_in[0]["head"] == head_commit and filled_in[0]["main"] == main_commit,
@@ -357,7 +357,7 @@ def main():
               "not the generic one",
               "If the commit is right, fetch it into" in completed.stdout
               and completed.stdout.rstrip().endswith(
-                  "run this again with --head-commit-reviewed-before set to the head commit "
+                  "run this again with --head-commit-reviewed-before set to the nc-head-commit "
                   "that was reviewed before.")
               and generic_instruction not in completed.stdout, completed.stdout)
         completed, _, _ = run_program(scratch, checkout, helpers, "[{not json")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Post the Claude reviewer's review of a pull request as mac-claude, then read it back from GitHub.
 
-Did the review get posted on the named head commit, as the verdict says? Exits 0
+Did the review get posted on the named nc-head-commit, as the verdict says? Exits 0
 if the review was posted and read back as expected, 2 otherwise.
 
 Usage:
@@ -24,7 +24,7 @@ under a heading, as `path:line: comment`. A file whose diff GitHub does not
 show, such as a binary file, takes no inline comments.
 
 The review is posted as mac-claude, with the token in
-~/.config/nedschorus/mac-claude.token, on the head commit given. Its body
+~/.config/nedschorus/mac-claude.token, on the nc-head-commit given. Its body
 starts with a line APPROVE or REQUEST_CHANGES, so the verdict shows even when
 the review is posted as a comment. The review's event is the verdict when the
 pull request's author is ned-review-merge, because GitHub refuses an approving
@@ -208,7 +208,7 @@ def parse_arguments(argv):
     parser.add_argument("--pull-request", type=int, required=True,
                         help="the pull request's number")
     parser.add_argument("--head-commit", required=True,
-                        help="the full hash of the head commit the review is on")
+                        help="the full hash of the nc-head-commit the review is on")
     parser.add_argument("review_file", type=Path,
                         help="the review: a JSON object with verdict, body and comments")
     return parser.parse_args(argv)

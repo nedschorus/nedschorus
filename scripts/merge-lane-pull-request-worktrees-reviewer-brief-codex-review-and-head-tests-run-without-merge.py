@@ -121,7 +121,7 @@ def parse_arguments(argv):
                              "fills them in from origin; a head or main the file does name "
                              "must be origin's commit for that field")
     parser.add_argument("--head-commit-reviewed-before",
-                        help="for a fix-round, the head commit reviewed before; the Codex "
+                        help="for a fix-round, the nc-head-commit reviewed before; the Codex "
                              "review runs from it instead of from the merge base")
     common.add_directory_options(parser, "briefs/, cx/, hr/, claude-reviews/ and tripwire-bin/")
     return common.resolve_path_options(parser.parse_args(argv))
@@ -229,9 +229,9 @@ def main(argv=None):
                     instruction=f"If the commit is right, fetch it into {checkout} and run "
                                 f"this again.\n"
                                 f"If the commit is wrong, run this again with "
-                                f"--head-commit-reviewed-before set to the head commit that "
+                                f"--head-commit-reviewed-before set to the nc-head-commit that "
                                 f"was reviewed before.")
-            base, base_kind = head_reviewed_before, "head commit reviewed before"
+            base, base_kind = head_reviewed_before, "nc-head-commit reviewed before"
         else:
             base, base_kind = git(checkout, "merge-base", main_commit, head_commit), "merge base"
         try:
