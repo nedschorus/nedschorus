@@ -556,7 +556,7 @@ with tempfile.TemporaryDirectory() as frozen_workspace:
           findings == [], str(findings))
 
 
-# An architecture overview gets the overview checks of
+# An nc-architecture-overview gets the overview checks of
 # docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md on
 # top of the ordinary ones; any other Markdown file does not.
 OVERVIEW_NAME = "docs/nedschorus-wiki/nedschorus-demo-architecture-overview.md"
@@ -609,7 +609,7 @@ with tempfile.TemporaryDirectory() as overview_workspace:
                            encoding="utf-8")
         findings = [problem for _, problem in lint.lint_markdown(
             outside, root, architecture_overview_checks=True)]
-        check("a file outside the repository is not taken for an architecture overview",
+        check("a file outside the repository is not taken for an nc-architecture-overview",
               findings == [], str(findings))
     findings = problems_for(
         "- `scripts/unregistered-hook.py`, a `Stop` hook: does a thing.\n", root,
@@ -627,7 +627,7 @@ with tempfile.TemporaryDirectory() as overview_workspace:
     findings = problems_for(
         "- `scripts/unregistered-hook.py`, a `Stop` hook: does a thing.\n", root,
         "docs/nedschorus-wiki/ordinary-page.md")
-    check("a file that is not an architecture overview gets no hook check",
+    check("a file that is not an nc-architecture-overview gets no hook check",
           findings == [], str(findings))
 
     findings = problems_for(
