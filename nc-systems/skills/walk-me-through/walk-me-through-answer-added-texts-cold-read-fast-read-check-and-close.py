@@ -620,7 +620,7 @@ def other_spellings(name):
     parts = [part.lower() for part in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+", name)]
     if len(parts) < 2:
         return []
-    return sorted({separator.join(parts) for separator in ("-", "_", "")} - {name})
+    return sorted({separator.join(parts) for separator in ("-", "_", "")})
 
 
 def files_naming(top, name, item, kind):

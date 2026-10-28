@@ -1444,6 +1444,11 @@ def test_a_removal_is_refused_while_an_untouched_file_still_names_what_it_remove
     check("kind 3 is refused when an untouched file names the removed thing in another spelling",
           *refused(not_asked_case("item 3 of 7", {"docs/tools.md": "Run `old-reader.py`.\n"}), 3,
                    "`old_reader`, named on its `#not_asked_unused` line, is still named in docs/tools.md"))
+    for spelling in ("OLD_READER_PATH = 1", "use_old_reader_cache()", "Old_Reader()"):
+        check(f"kind 3 is refused when an untouched file holds the removed name in another case or inside a longer "
+              f"name: {spelling}",
+              *refused(not_asked_case("item 3 of 7", {"tools/other.py": f"{spelling}\n"}), 3,
+                       "`old_reader`, named on its `#not_asked_unused` line, is still named in tools/other.py"))
     check("kind 3 with no unused line is refused when it touches a file that is not Markdown",
           *refused(not_asked_case("item 2 of 7"), 3, "it has no `#not_asked_unused` line, and `#not_asked_touches` "
                                                      "names tools/counter.py, tools/counter-test.py"))
