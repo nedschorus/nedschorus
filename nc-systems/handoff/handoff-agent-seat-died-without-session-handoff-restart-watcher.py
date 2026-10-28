@@ -56,7 +56,10 @@ a browser tab stays findable where one more terminal window is easily lost.
 When the page cannot be written, or the Mac refuses it (its mount of ned-box's
 home is missing, or its clone does not yet know the request), the notice opens
 instead in a terminal window on his Mac, with
-scripts/open-mac-window-from-ned-box.py running --show-notice. A refused seat gets one notice until
+scripts/open-mac-window-from-ned-box.py running --show-notice. Each notice is
+also written as an alert, with the shared user-alerts module, which the
+walk-me-through hook brings into his approval-walk on ned-box; an alert that
+cannot be written is logged, and the page or window still opens. A refused seat gets one notice until
 it is seen running again or restarted, however long the refusal lasts. The cases it leaves
 alone stay silent, logged only: a stop on purpose, and a seat not seen running
 since the machine booted. A restart it carries out shows no
@@ -105,6 +108,11 @@ _ned_box_home_specification = importlib.util.spec_from_file_location(
     REPOSITORY / "nc-systems" / "general-tools" / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 ned_box_home_path_constants = importlib.util.module_from_spec(_ned_box_home_specification)
 _ned_box_home_specification.loader.exec_module(ned_box_home_path_constants)
+_user_alerts_specification = importlib.util.spec_from_file_location(
+    "user_alerts_pending_and_claimed_files_write_claim_release_and_delete_common",
+    REPOSITORY / "nc-systems" / "general-tools" / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
+user_alerts = importlib.util.module_from_spec(_user_alerts_specification)
+_user_alerts_specification.loader.exec_module(user_alerts)
 
 LOG_DIRECTORY = Path(ned_box_home_path_constants.NED_BOX_HOME) / "nedschorus-logs" / PROGRAM
 STATE_DIRECTORY = Path("~/.local/state/nedschorus").expanduser()
@@ -254,6 +262,23 @@ RECOVERY_REFUSES_NOTICE_TEMPLATE = (
     "Record: {record}\n"
 )
 
+# Each notice's alert: its title, by the notice's kind, and what an agent on ned-box can do about it.
+FAILED_RESTART_NOTICE_KIND_TO_USER_ALERT_TITLE_TEMPLATE = {
+    "second-crash": "{seat} crashed twice within an hour, and the crash watcher left it down",
+    "recovery-failed": "{seat} is down: the crash watcher could not restart it",
+    "assessment-failed": "The crash watcher cannot check {seat}",
+    "run-failed": "The crash watcher on ned-box failed and is watching no agent-seat",
+    "waiting-handoff": "{seat} is down with a handoff no supervisor acted on",
+    "recorded-exit": "{seat} is down: its supervisor recorded its exit and stopped",
+    "leftover-shell": "{seat} is down: a leftover shell holds its tmux session",
+    "recovery-refuses": "{seat} is down, and recovery refuses it",
+}
+FAILED_RESTART_NOTICE_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO = (
+    "An agent on ned-box can read the record the notice names, find out why, fix what the notice asks an agent "
+    "to fix, and restart the agent-seat by running on ned-box the command the notice gives after "
+    "`ssh -t nedlern@ned-box`, answering its question as the notice says. Only the notice's "
+    "launch-claude-ubuntu command, which opens the agent-seat's window on the Mac, needs the user at his Mac.")
+
 SHOW_NOTICE_CLOSE_PROMPT = "Press Enter to close this window."
 
 # A notice's indented line is a command when it starts like one of these; every one runs on the Mac.
@@ -397,8 +422,10 @@ class Watcher:
                  transcripts_directory, recover, open_window, show_notice_words,
                  stopped_on_purpose=None, recorded_exit_question=None, open_seat_window=None,
                  seat_session_alive=None, assess_as_though_leftover_shell_closed=None,
-                 down_agent_seat_records_stopped_on_purpose=None, open_page=None):
+                 down_agent_seat_records_stopped_on_purpose=None, open_page=None, user_alert_write_to_pending=None):
         self.state = state
+        # (title, notice text, action) -> alert id: writes the notice's alert. None writes none.
+        self.user_alert_write_to_pending = user_alert_write_to_pending
         # path -> (exit code, output): opens a notice's HTML page in the Mac's browser. None
         # shows every notice in a terminal window instead.
         self.open_page = open_page
@@ -452,12 +479,25 @@ class Watcher:
                   f"(on ned-box: {self.decisions_path})")
         text = template.format(seat=seat, record=record, mac_launcher=MAC_LAUNCHER, **fields)
         path.write_text(text, encoding="utf-8")
+        self.write_alert(seat, kind, path, text)
         notice = {"path": str(path)}
         page = self.write_notice_page(seat, path, text)
         if page is not None:
             notice["page"] = str(page)
         self.show(notice)
         return notice
+
+    def write_alert(self, seat, kind, notice_path: Path, text):
+        if self.user_alert_write_to_pending is None:
+            return
+        try:
+            alert_id = self.user_alert_write_to_pending(FAILED_RESTART_NOTICE_KIND_TO_USER_ALERT_TITLE_TEMPLATE[kind].format(seat=seat), text,
+                                             FAILED_RESTART_NOTICE_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO)
+        except OSError as error:
+            self.log(seat, "user alert not written; the notice's page or window still opens",
+                     notice=str(notice_path), error=f"{type(error).__name__}: {error}")
+            return
+        self.log(seat, "user alert written", notice=str(notice_path), alert=alert_id)
 
     def write_notice_page(self, seat, notice_path: Path, text):
         """Write the notice's HTML page; return its path, or None to show the text instead."""
@@ -847,7 +887,8 @@ def report_run_failure(error_text, state_directory: Path, log_directory: Path):
                       assess=None, died_at_about=None, transcripts_directory=None,
                       recover=None, open_window=open_mac_window,
                       show_notice_words=show_notice_words_for_window,
-                      open_page=open_mac_browser_page)
+                      open_page=open_mac_browser_page,
+                      user_alert_write_to_pending=user_alerts.user_alert_write_to_pending)
     watcher.log(None, "run failed", error=error_text)
     for notice in list(state["pending_notices"]):
         watcher.show(notice)
@@ -949,6 +990,7 @@ def watch(environment, state_directory: Path, log_directory: Path) -> int:
         transcripts_directory=transcripts_directory, recover=recover,
         open_window=open_mac_window, show_notice_words=show_notice_words_for_window,
         open_page=open_mac_browser_page,
+        user_alert_write_to_pending=user_alerts.user_alert_write_to_pending,
         stopped_on_purpose=stopped_on_purpose_predicate(supervisor, handoff_directory),
         recorded_exit_question=recovery.restart_question_for_a_seat_with_a_recorded_exit,
         open_seat_window=recovery.agent_seat_mac_window_open_unless_tmux_client_already_attached,

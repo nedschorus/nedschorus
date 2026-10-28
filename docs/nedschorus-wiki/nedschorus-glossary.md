@@ -93,6 +93,7 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 - **test-design** — the document, written from a design and its design-contract, listing one test-requirement per design-requirement a test must observe, each with the coverage-type of the test that will cover it.
 - **test-requirement** — one line of a test-design: one design-requirement, the coverage-type and names of the tests that check it, or `no-tests` with the reason.
 - **topic-worktree** — a linked worktree made together with its own topic branch, the branch being cut from `origin/main`, in which an agent does the work of that one topic branch.
+- **user-alert** — a JSON file a program on ned-box writes into `~/.local/state/nedschorus/user-alerts/pending/` when it hits a failure only the user can fix; the next prompt he types in a ned-box agent-session claims it, and the agent turns it into the next item of his approval-walk.
 - **user-approved-change** — a specific change the user approved before an agent makes it, approved-by-walk or approved in conversation, as `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` defines it.
 - **user-block** — a refusal that only the user's approval, quoted into the marker the refusal names, clears.
 - **user-ruling** — a decision by the user, recorded where it applies in the form (user-ruled YYYY-MM-DD), or recorded with his words and its date elsewhere, such as in walk-minutes.
