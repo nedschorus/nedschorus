@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Tests for cold-read-agy-cell.py — the Antigravity leg's pins, its one
-quirk and its Gemini API key, driven through a stub `agy` so no model is ever
+quirk and its Google login, driven through a stub `agy` so no model is ever
 called.
 
 WHAT IS PINNED HERE.
@@ -46,13 +46,10 @@ WHAT IS PINNED HERE.
     (user-ruled 2026-09-29). With no sandbox program on PATH the launcher
     refuses, exit 64, and never starts agy.
 
-  - The Gemini API key. With GEMINI_API_KEY unset, agy is given the key
-    read from .config/nedschorus/gemini-api.key in the scratch home, with
-    its trailing newline stripped, and the key is not printed. A key the
-    caller set reaches agy unchanged though the file holds another. With the
-    file missing, not UTF-8 text, or empty, agy runs without a key, fails the
-    way the real agy does, and the cell's cause line is logged-out, naming the
-    file and why it gave no key, with no traceback and no byte of the file.
+  - The Google login. A GEMINI_API_KEY the caller set never reaches agy,
+    and a key file at .config/nedschorus/gemini-api.key in the scratch home
+    is not read. When agy prints what the real agy prints with no login, the
+    cell exits 1 and its cause line is logged-out, saying how to log agy in.
 
   - Every case runs the launcher with HOME at that scratch home, so no run
     of this suite scans or masks the real home's credential files.
@@ -111,7 +108,7 @@ SHORT_CHAT_REMARK = "I have written the report to the path you gave me.\n"
 # "near_miss" writes the report one directory away from where it was asked,
 # "stdout" is the model's chat text, "dump_argv" and "dump_prompt" are paths
 # to record what the stub was launched with, "dump_key" is a path to record
-# GEMINI_API_KEY as agy received it, "stderr" is text for stderr, and "exit"
+# GEMINI_API_KEY as agy received it (null when absent), "stderr" is text for stderr, and "exit"
 # is the code to exit
 # with. The report path arrives by environment, as in the other cell tests,
 # so a reworded template cannot unhook the stub.
@@ -475,68 +472,48 @@ with tempfile.TemporaryDirectory() as scratch:
     check("inside the cell, agy's own login file is still read",
           cell_reads.get(str(agy_login_canary)) == canary_text, repr(cell_reads))
 
-    # --- The Gemini API key ---------------------------------------------------
+    # --- The Google login, not a Gemini API key -------------------------------
     gemini_api_key_file = scratch_home_for(stubs) / ".config" / "nedschorus" / "gemini-api.key"
     gemini_api_key_file.parent.mkdir(parents=True, exist_ok=True)
-    # agy's own words when it has no key, as the real agy printed them on ned-box.
-    agy_missing_key_stderr = (
-        'modelProvider is set to "gemini" in settings.json, but the GEMINI_API_KEY '
-        "environment variable is not set. Set GEMINI_API_KEY to your Gemini API key, "
-        'or remove "modelProvider" from settings.json to use the default backend.\n')
+    gemini_api_key_file.write_text("test-key-from-file\n", encoding="utf-8")
 
     def received_key(dump):
         return json.loads(dump.read_text(encoding="utf-8")) if dump.is_file() else "NOT RUN"
 
-    gemini_api_key_file.write_text("test-key-from-file\n", encoding="utf-8")
-    repository = build_scratch_repository(scratch)
-    report = report_path_for(repository, "key-from-file")
-    key_dump = scratch / "key-from-file-key.json"
-    result = run_agy_cell(repository, stubs,
-                          {"*": {"report": "STUB AGY REVIEW\n", "dump_key": str(key_dump)}},
-                          report)
-    check("with GEMINI_API_KEY unset, the cell exits 0",
-          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
-    check("with GEMINI_API_KEY unset, agy is given the key file's key, newline stripped",
-          received_key(key_dump) == "test-key-from-file", repr(received_key(key_dump)))
-    check("the key read from the file is not printed",
-          "test-key-from-file" not in result.stdout + result.stderr, repr(result.stderr))
-
-    repository = build_scratch_repository(scratch)
-    report = report_path_for(repository, "key-from-caller")
-    key_dump = scratch / "key-from-caller-key.json"
-    result = run_agy_cell(repository, stubs,
-                          {"*": {"report": "STUB AGY REVIEW\n", "dump_key": str(key_dump)}},
-                          report, gemini_api_key="test-key-from-caller")
-    check("with GEMINI_API_KEY set, agy is given the caller's key, not the file's",
-          received_key(key_dump) == "test-key-from-caller", repr(received_key(key_dump)))
-
-    for case_slug, prepare_key_file, problem in (
-            ("key-file-missing", lambda: gemini_api_key_file.unlink(),
-             "No such file or directory"),
-            ("key-file-not-utf8", lambda: gemini_api_key_file.write_bytes(b"\xff\xfekey\n"),
-             "the file is not UTF-8 text"),
-            ("key-file-empty", lambda: gemini_api_key_file.write_text("\n", encoding="utf-8"),
-             "the file is empty")):
-        prepare_key_file()
+    for case_slug, caller_key in (("key-from-caller", "test-key-from-caller"),
+                                  ("key-file-only", None)):
         repository = build_scratch_repository(scratch)
         report = report_path_for(repository, case_slug)
         key_dump = scratch / f"{case_slug}-key.json"
         result = run_agy_cell(repository, stubs,
-                              {"*": {"dump_key": str(key_dump),
-                                     "stderr": agy_missing_key_stderr, "exit": 1}},
-                              report)
-        check(f"{case_slug}: agy runs without a key and the cell exits 1",
-              received_key(key_dump) is None and result.returncode == 1,
-              f"key={received_key(key_dump)!r}; exit {result.returncode}")
-        expected_cause_line = (
-            f"cold-read-agy-cell: cause: logged-out — GEMINI_API_KEY is not set, and "
-            f"{gemini_api_key_file} gave no key: {problem}")
-        check(f"{case_slug}: the cause line names the key file and why it gave no key",
-              expected_cause_line in result.stderr.splitlines(), repr(result.stderr))
-        check(f"{case_slug}: no traceback, and no byte of the file, is printed",
-              "Traceback" not in result.stderr and "0xff" not in result.stderr,
-              repr(result.stderr))
+                              {"*": {"report": "STUB AGY REVIEW\n", "dump_key": str(key_dump)}},
+                              report, gemini_api_key=caller_key)
+        check(f"{case_slug}: the cell exits 0 and agy is given no GEMINI_API_KEY",
+              result.returncode == 0 and received_key(key_dump) is None,
+              f"exit {result.returncode}; key={received_key(key_dump)!r}; "
+              f"stderr={result.stderr!r}")
     gemini_api_key_file.unlink()
+
+    # What the real agy 1.4.7 printed on ned-box with ~/.gemini hidden; the URL is shortened.
+    agy_logged_out_stderr = (
+        "Authentication required. Please visit the URL to log in:\n"
+        "  https://accounts.google.com/o/oauth2/auth?access_type=offline&state=x\n"
+        "\n"
+        "Waiting for authentication (timeout 60s)...\n"
+        "Or, paste the authorization code here and press Enter:\n"
+        "Error: authentication timed out.\n"
+        "error: authentication failed or timed out\n")
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "logged-out")
+    result = run_agy_cell(repository, stubs,
+                          {"*": {"stderr": agy_logged_out_stderr, "exit": 1}}, report)
+    check("logged-out: the cell exits 1",
+          result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
+    expected_cause_line = (
+        "cold-read-agy-cell: cause: logged-out — agy has no Google login on this "
+        "machine; the user logs in by running agy in a terminal there")
+    check("logged-out: the cause line says agy has no Google login and how to log in",
+          expected_cause_line in result.stderr.splitlines(), repr(result.stderr))
 
     # --- No sandbox program on PATH: refused, agy never started ------------
     repository = build_scratch_repository(scratch)

@@ -93,17 +93,14 @@ logged in with the real files masked.
 With no such sandbox on the machine, this program refuses before agy runs:
 agy is never run unguarded.
 
-THE GEMINI API KEY. agy's settings name the Gemini model provider, so agy
-needs GEMINI_API_KEY in its environment. When the variable is unset or empty,
-this program reads the key from the file ~/.config/nedschorus/gemini-api.key,
-a fixed path and not one an environment variable can change, strips the
-surrounding whitespace, and gives the key to agy's environment alone; a value
-the caller set is passed on unchanged. The file is read here, outside the
-sandbox, because the sandbox masks ~/.config/nedschorus/. When the variable is
-unset or empty and the file is missing, unreadable, not UTF-8 text, or empty once stripped,
-agy runs
-without a key and fails, and the cell's cause line names the file and why it
-gave no key. The key itself is never printed.
+AGY USES THE USER'S GOOGLE LOGIN, NOT A GEMINI API KEY. A key is billed per
+call; the login draws on the user's subscription. agy's login lives under
+~/.gemini/, which the sandbox leaves readable. This program removes
+GEMINI_API_KEY from agy's environment, so that a key the caller holds cannot
+move agy's calls onto per-call billing. When agy finds no login, it prints
+a line starting with AGY_MISSING_GOOGLE_LOGIN_STDERR_LINE_PREFIX, waits a
+minute for a login that cannot come headless, and exits 1; the cell's cause
+line is then logged-out, saying how to log agy in.
 
 WHY THIS LEG'S STAMP CARRIES NO `tokens=` FIELD. The Antigravity CLI prints
 no "tokens used" line the way the Codex CLI does, so the field is omitted
@@ -141,10 +138,9 @@ TIER_TO_REASONING_EFFORT = {
 COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60
 AGY_PRINT_TIMEOUT = f"{COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS // 60}m"
 
-GEMINI_API_KEY_FILE = pathlib.Path.home() / ".config" / "nedschorus" / "gemini-api.key"
-AGY_MISSING_GEMINI_API_KEY_LINE_PREFIX = (
-    'modelProvider is set to "gemini" in settings.json, '
-    "but the GEMINI_API_KEY environment variable is not set")
+AGY_MISSING_GOOGLE_LOGIN_STDERR_LINE_PREFIX = "Authentication required."
+AGY_LOGGED_OUT_CAUSE_DETAIL = ("agy has no Google login on this machine; "
+                               "the user logs in by running agy in a terminal there")
 
 # Exclude brief acknowledgements from stdout report recovery.
 STDOUT_REVIEW_MINIMUM_WORDS = 120
@@ -157,30 +153,16 @@ def stdout_is_a_review(runtime_stdout: str) -> str:
     return ""
 
 
-def agy_environment_and_key_file_problem(environment) -> tuple:
-    """Return (agy's environment, why GEMINI_API_KEY_FILE gave no key or None)."""
-    if environment.get("GEMINI_API_KEY"):
-        return dict(environment), None
-    try:
-        key = GEMINI_API_KEY_FILE.read_text(encoding="utf-8").strip()
-    except OSError as error:
-        return dict(environment), error.strerror or str(error)
-    except UnicodeDecodeError:
-        # The error's own text quotes a byte of the file, which may be key.
-        return dict(environment), "the file is not UTF-8 text"
-    if not key:
-        return dict(environment), "the file is empty"
-    return {**environment, "GEMINI_API_KEY": key}, None
+def agy_environment_copy_without_gemini_api_key(environment) -> dict:
+    """Return a copy of environment without GEMINI_API_KEY."""
+    return {name: value for name, value in environment.items() if name != "GEMINI_API_KEY"}
 
 
-def missing_key_failure_texts(key_file_problem):
-    """Return the recognised-failure callback naming the key file agy lacked."""
-    detail = (f"GEMINI_API_KEY is not set, and {GEMINI_API_KEY_FILE} gave no key: "
-              f"{key_file_problem}")
-    def recognised_failure_texts_for_model(model: str) -> list:
-        return [common.RecognisedFailureText(
-            "logged-out", AGY_MISSING_GEMINI_API_KEY_LINE_PREFIX, detail)]
-    return recognised_failure_texts_for_model
+def logged_out_failure_texts(model: str) -> list:
+    """Return the recognised failure text for agy without a Google login."""
+    return [common.RecognisedFailureText(
+        "logged-out", AGY_MISSING_GOOGLE_LOGIN_STDERR_LINE_PREFIX,
+        AGY_LOGGED_OUT_CAUSE_DETAIL)]
 
 
 def credential_sandbox_program(platform: str = sys.platform):
@@ -268,7 +250,6 @@ def main() -> int:
               f"{PROGRAM}: if you cannot install it, run this cold read on the Mac.",
               file=sys.stderr)
         return common.EXIT_BAD_INVOCATION
-    agy_environment, key_file_problem = agy_environment_and_key_file_problem(os.environ)
     return common.run_cell(
         program=PROGRAM, runtime="agy", description=__doc__,
         model_help="explicit Antigravity model id (effort suffix included, "
@@ -277,9 +258,8 @@ def main() -> int:
         tier_to_effort=TIER_TO_REASONING_EFFORT,
         invocation_builder=invocation_builder,
         recover_report_from_stdout=stdout_is_a_review,
-        recognised_failure_texts_for_model=(
-            missing_key_failure_texts(key_file_problem) if key_file_problem else None),
-        child_environment=agy_environment,
+        recognised_failure_texts_for_model=logged_out_failure_texts,
+        child_environment=agy_environment_copy_without_gemini_api_key(os.environ),
     )
 
 
