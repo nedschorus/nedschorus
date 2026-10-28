@@ -5,8 +5,6 @@ kind: design
 
 # Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user
 
-This GHI has proposed improvements or changes: read every file in this folder whose name starts with `1058-daily-maintenance-in-one-daily-step-starting-with-proposed-improvements-or-changes-`.
-
 Gather the project's regular maintenance into one list of maintenance jobs, each run as often as it needs, which is daily for most of the jobs below, and each handed to the user as the section "How a daily job is handed to the user and tracked (decided)" says. The list began as the noon step, whose only job was the review of the memory stores, and its second job is to check every page of the wiki against the things the pages describe, fix the obvious errors, and list the rest for the user. That the wiki check is one of the maintenance jobs is decided, and how a job runs is settled under Deferred-decisions item 1.
 
 ## Why
@@ -276,11 +274,11 @@ The design:
 - **A job shown to an agent-session that ends without an answer goes back to due.** If the agent-session the job was shown to ends in any other way, by a crash or being closed, with no answer recorded, the program that started that agent-session sees it exit and sets the state back to due. The next run of the scheduled job then starts a new agent-session for the job. So a job handed out and never answered is never silently lost.
 - **A program changes a state file only under a file lock.** Two runs at the same moment therefore cannot both take the same job.
 - **Storage is a file with a lock.** The state may move into the agent-seat database of GHI [A small service on ned-box keeps one record of every agent-seat on both machines](https://github.com/nedschorus/nedschorus/issues/972) if that database is built.
-- **It replaces the current marks.** For every job the daily step covers, this design replaces the "started" and "done" mark scripts used today, `nc-systems/handoff/daily-memory-review-mark.py` and `nc-systems/handoff/daily-overview-refresh-reminder-mark.py`.
+- **It replaces the current marks.** For every job the daily step covers, this design replaces the "started" and "done" mark scripts used today, `nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py` and `nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py`.
 
 ## How a daily job reads the Mac (decided)
 
-Every daily job runs on ned-box, including a job that must read something on the Mac, such as the memory review, which reads the Mac's memory store, or a job that reads facts about the Mac's setup. ned-box's key to the Mac runs only one fixed command there, `scripts/mac-request-from-ned-box-forced-command.py`, which today accepts the verbs `open-window` and `read-agent-seat-task-lists`. Each thing a daily job must read on the Mac gets a helper of its own: one more verb that the fixed command accepts. Each helper only reads, and accepts only the exact words it expects. When the Mac is asleep or cannot be reached, the job's agent-session writes "Mac not checked today", with the reason, in its record, never reports the Mac as fine, and tries again the next day. The user ruled this on 2026-10-20 (user-ruled 2026-10-20, approval-walk agent-instructions-editor-every-open-decision-2026-10-15, item 24), approving with "A" the recommendation "add a read-only helper to the fixed command for each thing a daily job must read on the Mac". The walk-minutes are `docs/walk/agent-instructions-editor-every-open-decision-2026-10-15-minutes.md` in the agent-instructions-editor agent-seat's checkout on ned-box.
+Every daily job runs on ned-box, including a job that must read something on the Mac, such as the memory review, which reads the Mac's memory store, or a job that reads facts about the Mac's setup. ned-box's key to the Mac runs only one fixed command there, `scripts/mac-request-from-ned-box-forced-command.py`, which today accepts the verbs `open-window`, `open-agent-seat-window`, `open-in-typora`, `open-in-browser` and `read-agent-seat-task-lists`. Each thing a daily job must read on the Mac gets a helper of its own: one more verb that the fixed command accepts. Each helper only reads, and accepts only the exact words it expects. When the Mac is asleep or cannot be reached, the job's agent-session writes "Mac not checked today", with the reason, in its record, never reports the Mac as fine, and tries again the next day. The user ruled this on 2026-10-20 (user-ruled 2026-10-20, approval-walk agent-instructions-editor-every-open-decision-2026-10-15, item 24), approving with "A" the recommendation "add a read-only helper to the fixed command for each thing a daily job must read on the Mac". The walk-minutes are `docs/walk/agent-instructions-editor-every-open-decision-2026-10-15-minutes.md` in the agent-instructions-editor agent-seat's checkout on ned-box.
 
 ## How the maintenance jobs resume, pace their work and file their reports (decided)
 
@@ -318,3 +316,43 @@ The pop-up page of GHI [Agents put each question for the user on a page that pop
 ## Next action
 
 Settle the questions above that are still open with the user, then build the second job of the daily step, the report of agent-seats far behind main, the check for a pending ned-box reboot or firmware update, the program that lists documents due for a cold-read-fast-read, the check for a missing library or tool, the weekly count of hook firings and of programs nothing names, the daily check of every agent-seat's open tasks that the check at filing missed, the daily check for names a reader cannot understand away from where they are defined, the daily and session-handoff check for branches whose commits are in no pull request, the regular search for duplicated code, the regular sweep for program files no test covers, the weekly search for rules agents keep breaking, the weekly check of the tool-design standard, the task-list review at each session-handoff, the daily check of file names, the daily check of the glossaries against the code, the weekly measure of how agents follow CLAUDE.md, their tests, the per-job state files with their lock, the reset of a shown job to due when its agent-session ends without the user's answer, the maintenance report directory, and the scheduled job that starts each due job's agent-session.
+
+## Provisional additions (not yet vetted by the user)
+
+The three jobs below were proposed by merge-lane-2 and approved by the user on 2026-10-23 at about 04:35Z in merge-lane-2's window: he answered "1y 2y" to the throwaway disk use job and the rulings job, and asked for the structured output job in his words: "structured output - I'm suggestion we occassionally review the repo for systems (new systems in particular) that should use structured output, perhaps once a week." How often each runs, beyond his "perhaps once a week" for the third, and how each fits the design in "How a daily job is handed to the user and tracked (decided)" are not yet put to him.
+
+### Throwaway disk use: checkouts and scratch directories left by finished pull requests
+
+Throwaway directories pile up until they slow ned-box. On 2026-10-22 merge-lane-2's pull-request checkouts under `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/wt/` held 556 checkouts, about 377,000 files and 8.4 GB. ned-box's hourly Timeshift snapshot hard-links every file in the log-store, and the 18:00 snapshot ran for 2.5 hours and blocked the next two, by MD-skills' measurement from the logs `/var/log/timeshift/2026-10-22_18-00-0*_backup.log` and `/var/log/timeshift/2026-10-22_19-00-0*_backup.log` on ned-box. The user removed 550 of the checkouts on 2026-10-23 at about 04:05Z, leaving 207 MB. On 2026-10-23 at about 00:20Z, `/tmp` on ned-box also held 35 `bash-guards-replay-*` directories, 4.8 GB in all.
+
+What it reads: the log-store, `/home/nedlern/nedschorus-logs/`, `/tmp`, and the agent-homes on both machines, the Mac's through the read-only helpers of "How a daily job reads the Mac (decided)"; and GitHub, for whether each directory's pull request is open, merged or closed.
+
+What it does: it lists each checkout or scratch directory left by a pull request that has merged or closed, with its kind, such as a merge-lane-2 pull-request checkout or a `bash-guards-replay-*` directory, its size and its file count. It removes those of a kind the user has approved as removable, and only those. Claude Code's auto-mode classifier, the check that decides whether an agent running in auto mode may run a command without asking the user, refused an agent's bulk removal of such directories as "Irreversible Local Destruction". So the removal is proposed to be done by a program the scheduled job runs, not by an agent's command, and the program removes only kinds listed in a file of approved kinds that only the user's answer adds to; the file's path and format are for the build to choose, and it starts empty. A kind not yet on that list is shown to the user, with its sizes, as a proposal to add it.
+
+What the user sees: the space removed, each new kind proposed for removal, and the log-store's growth since the last run in files and GB.
+
+When it cannot check a place, such as the Mac asleep, GitHub unreachable or a directory it cannot read, it says which place it did not check and why, and never reports that nothing was left behind.
+
+### Rulings merged on the author's word: checking them against the Mac transcript mirror
+
+When a pull request cites a user ruling that merge-lane-2 cannot yet find in the Mac transcript mirror, merge-lane-2 merges on the authoring agent-seat's word and keeps a task to check the ruling after the next mirror copy, as the section "Rulings a pull request cites" of merge-lane-2's seat-brief says. Nothing reminds it to do the check: seven such checks had piled up unchecked on merge-lane-2's task list since 2026-10-11.
+
+What it reads: each pending check, with the pull request and the ruling it cites; and the mirror, the copy of the Mac's transcripts at `nedlern@ned-box:/home/nedlern/nedschorus-logs/transcripts/mac/projects`, searched with `scripts/locate-user-approval-by-question-subject.py`, which also searches the walk-minutes, ned-box's transcripts, commit messages and pull requests.
+
+What it does: for each pending check, it searches for the ruling. A ruling found as the pull request cited it closes the check. A ruling found but different from what the pull request cited is a mismatch. A ruling not found stays pending until the next run.
+
+What the user sees: only the mismatches, each with the pull request, the ruling as cited and the ruling as found. On a run with no mismatch he sees nothing, unless a check could not be made.
+
+When the search program exits 1, because a place could not be searched or was searched only in part, the job says which ruling it could not check and what the program printed, and never counts that ruling as checked.
+
+### Structured output, weekly: programs that parse an agent's prose
+
+A program that reads an agent's free-text answer with regular expressions or prefixes breaks when the agent words its answer differently. The three runtimes the project uses can each constrain an agent's final answer to a schema: `claude -p --json-schema`, `codex exec --output-schema`, and `agy --json-schema`.
+
+What it reads: the repository at main, new systems in particular, meaning programs added since the last run; and the last run's list of candidates.
+
+What it does: it finds each program that launches an agent and parses its prose answer where a schema-constrained final answer would do, with the commits and issues that record a misparse there, and leaves out a program whose agent is interactive or whose output no program parses. A first survey, made on 2026-10-23, found seven candidates, among them ghi-info's answers in `scripts/ghi-info-ask.py` and the cold-read restater judge: `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-2/research/structured-output-candidates-2026-10-23.md`.
+
+What the user sees: each new candidate, with the program, the lines that parse the answer, the failures recorded there, and the runtime option that fits; and each candidate where a user ruling stands in the way, such as his ruling that the Codex review cell uses Codex's built-in review and never a custom prompt.
+
+When it could not read a file or launch its search, it says which part of the repository it did not review and why, and never reports that no candidate was found.

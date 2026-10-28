@@ -193,7 +193,7 @@ GIT_FAILURE_AGENT_FACING_MESSAGE_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CH
     "A later run of this hook checks only the file that run's Edit or Write touched, so check "
     "{path} by running the command printed on its own line below this paragraph. If git's error "
     "above names no lock file, run that "
-    "command now. If git's error names a lock file, {wait_for_lock_file}. The command "
+    "command now. {lock_file_condition}, {wait_for_lock_file}. The command "
     "prints nothing when there is nothing new to tell you about the file. Otherwise it prints JSON "
     "whose hookSpecificOutput.additionalContext field holds one of two texts: this hook's warning, "
     "whose instructions you follow; or, when git fails again, a git-failure message like this one, "
@@ -543,6 +543,7 @@ def main() -> int:
             GIT_FAILURE_CAUSE_LINE.format(failure=failure),
             GIT_FAILURE_AGENT_FACING_MESSAGE_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW.format(
                 path=file_path, rerun=rerun,
+                lock_file_condition=freshness.next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION,
                 wait_for_lock_file=freshness.next_step_lines
                 .lock_file_named_by_git_error_wait_then_rerun_instruction("the command below this paragraph")),
             freshness.next_step_lines

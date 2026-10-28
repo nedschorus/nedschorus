@@ -100,8 +100,9 @@ REMINDER_TEMPLATE = (
     "document whose cited code changed after the document's design-as-of "
     "date. Each exits 0 when it finds nothing and 1 when it reports a "
     "finding.\n"
-    "If either program reports a finding, fix the finding in a new commit "
-    "after this push, and push that commit once."
+    "If either program reports a finding, do not push a correction on its "
+    "own: put the fix in the pull request's next fix-round, or, if the pull "
+    "request merges with no fix-round, in a new pull request."
 )
 
 NOT_CHECKED_OUT_LINE_TEMPLATE = (

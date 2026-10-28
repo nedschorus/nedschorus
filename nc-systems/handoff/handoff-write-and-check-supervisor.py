@@ -94,6 +94,13 @@ _transcript_mirror_spec = importlib.util.spec_from_file_location(
 transcript_mirror = importlib.util.module_from_spec(_transcript_mirror_spec)
 _transcript_mirror_spec.loader.exec_module(transcript_mirror)
 
+_interim_recognizer_spec = importlib.util.spec_from_file_location(
+    "claude_code_subagent_task_notification_interim_recognizer_common",
+    REPOSITORY_ROOT / "scripts" / "claude-code-subagent-task-notification-interim-recognizer-common.py"
+)
+interim_recognizer = importlib.util.module_from_spec(_interim_recognizer_spec)
+_interim_recognizer_spec.loader.exec_module(interim_recognizer)
+
 
 NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
 NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
@@ -120,8 +127,11 @@ DEFAULT_AGENT_NAME_RULE_TEXT = (
 # Number each subagent field: the reader takes only the first occurrence of a key.
 SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
 
-# Only spawn and resume imply ongoing work; unrecognized notification statuses count as ended.
-STILL_WORKING_SUBAGENT_LAST_EVENTS = ("spawned", "resumed")
+# An interim task-notification carries <status>completed</status>, so it gets an event of its own.
+WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT = "waiting on its own background work"
+
+# Only these imply ongoing work; unrecognized notification statuses count as ended.
+STILL_WORKING_SUBAGENT_LAST_EVENTS = ("spawned", "resumed", WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT)
 
 # Prefilter megabytes of tool output before parsing possible subagent events.
 SUBAGENT_EVENT_RECORD_MARKERS = ("async_launched", "resumedAgentId", "<task-notification>")
@@ -290,6 +300,9 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
             status = re.search(r"<status>(.*?)</status>", notification)
             if status is None:
                 continue
+            event = (WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT
+                     if interim_recognizer.task_notification_is_interim(notification)
+                     else status.group(1))
             # One notification can assign a single status to several task IDs.
             for task_id in re.findall(r"<task-id>(.*?)</task-id>",
                                       notification):
@@ -297,8 +310,8 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
                 if entry is None:
                     continue
                 # Repeated notifications are echoes, not new events; preserve the first arrival time.
-                if status.group(1) != entry["last_event"]:
-                    entry["last_event"] = status.group(1)
+                if event != entry["last_event"]:
+                    entry["last_event"] = event
                     entry["last_event_at"] = stamp
     return roster
 
