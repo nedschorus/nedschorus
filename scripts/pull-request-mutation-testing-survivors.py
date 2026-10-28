@@ -331,7 +331,7 @@ def outcomes_from_dump(dump_text, mutant_timeout_seconds, runner):
                        f"suite, in the pull request's description"))
         elif (worker_outcome not in WORKER_OUTCOMES_THAT_ERRORED
               and test_outcome == "killed"
-              and runner.run_all_test_suites_output_judges_a_suite_failing(
+              and runner.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(
                   result.get("output") or "")):
             counts["killed"] += 1
         elif (worker_outcome not in WORKER_OUTCOMES_THAT_ERRORED

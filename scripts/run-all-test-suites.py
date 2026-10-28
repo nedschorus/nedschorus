@@ -3454,7 +3454,7 @@ SUITE_FAILED_LINE = re.compile(r"^FAIL (?P<suite>\S.*?) (?:exit \d+|killed by \S
 NOT_RUN_TO_THE_END_LINE_PREFIX = f"{PROGRAM}: not run to the end"
 
 
-def run_all_test_suites_output_judges_a_suite_failing(text):
+def run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(text):
     """True when the runner ran to its end and a suite failed by its own exit or signal.
 
     A nonzero exit without that, such as an empty output, a run cut short, or records that

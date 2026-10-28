@@ -617,7 +617,7 @@ if linux_only_cases_run_here("the covers over listening sockets, and a test sand
               "judges no suite failing",
               line.startswith("FAIL plain-test.sh did not start: bwrap could not build its "
                               "test sandbox (exit 1)")
-              and not runner.run_all_test_suites_output_judges_a_suite_failing(line), line)
+              and not runner.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(line), line)
 
 
 # --- Hiding by default: fixed directories ----------------------------------------
