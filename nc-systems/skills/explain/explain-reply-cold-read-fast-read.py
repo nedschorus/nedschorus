@@ -4,7 +4,8 @@
 Usage: nc-systems/skills/explain/explain-reply-cold-read-fast-read.py < <draft>
 
 Pipe a draft beginning with `The user wrote:` and containing a line
-`The reply to him:` followed by the reply. This program exits 0 when it
+`The reply to him:` followed by the reply. The fast read is
+nc-systems/cold-read/cold-read-fast-read.py. This program exits 0 when it
 printed a report, 1 when the fast read failed or timed out, and 64 on invalid
 input. The fast read may name its report and exit 1 only because its record
 did not reach the log-store, which its stderr says in a `record:` line saying
