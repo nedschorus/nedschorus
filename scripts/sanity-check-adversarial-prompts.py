@@ -2045,17 +2045,18 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
     run_log.detach()
 
     if saved_count:
-        shipped = print_run_completion(out_dir)
+        ok = print_run_completion(out_dir) and ok
     else:
-        shipped = print_completion_of_run_that_saved_no_report(out_dir)
+        print_completion_of_run_that_saved_no_report(out_dir)
     if GIT_CHECKS_FAILED_AFTER_A_CELL:
         return 2
-    return 0 if ok and REVIEW_COPY_NOT_REMOVED is None and shipped else 1
+    return 0 if ok and REVIEW_COPY_NOT_REMOVED is None else 1
 
 
-def print_completion_of_run_that_saved_no_report(out_dir: pathlib.Path, ship=None) -> bool:
-    """Ship the record of a run whose every launched agent failed, say
-    where its log is, and return whether the record reached the log-store.
+def print_completion_of_run_that_saved_no_report(out_dir: pathlib.Path, ship=None):
+    """Ship the record of a run whose every launched agent failed, and say
+    where its log is. Whether the record reached the log-store cannot change
+    the exit, which is 1 because the agents failed; the `record:` line says it.
 
     Such a run used to ship nothing and name its record nowhere, so the
     requesting agent could not find the log the run had just saved, the one
@@ -2071,7 +2072,6 @@ def print_completion_of_run_that_saved_no_report(out_dir: pathlib.Path, ship=Non
           "skipped; there is nothing to triage. Do what the lines under each "
           f"FAILED: line above say; this run's log, which keeps them, is in {out_dir}.",
           flush=True)
-    return record_line.startswith(RECORD_SHIPPED_LINE_PREFIX)
 
 
 def print_run_completion(out_dir: pathlib.Path, ship=None) -> bool:
