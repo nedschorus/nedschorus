@@ -348,10 +348,17 @@ def run_cases():
             [work_item("scripts/thing.py", 1, "core/AddNot", "e"), None],
         ]})
         advanced_base = advance_base_past_merge_base(repository, base)
+        # A temporary directory reached through a symbolic link, as macOS's /var is, so a
+        # scratch worktree path the script did not resolve differs from the cwd recorded.
+        temporary_directory = Path(scratch_name) / "temporary-directory"
+        temporary_directory.mkdir()
+        temporary_directory_link = Path(scratch_name) / "temporary-directory-link"
+        temporary_directory_link.symlink_to(temporary_directory)
         completed = run_script(repository, control, "--head", head, "--base", advanced_base,
                                "--cosmic-ray-venv", str(venv),
                                "--python", "/usr/bin/python3",
-                               "--mutant-timeout-seconds", "45")
+                               "--mutant-timeout-seconds", "45",
+                               extra_environment={"TMPDIR": str(temporary_directory_link)})
         out = completed.stdout
         config, test_command_words = config_and_test_command_words(control)
         recorded = calls(control)
@@ -360,6 +367,10 @@ def run_cases():
         check("the config names the changed file as the module path",
               'module-path = "scripts/thing.py"' in config, config)
         worktree_seen = recorded[0]["cwd"] if recorded else None
+        check("the scratch worktree is made in the temporary directory reached through the link",
+              worktree_seen is not None
+              and Path(worktree_seen).is_relative_to(temporary_directory.resolve()),
+              worktree_seen)
         check("the test command is this script, stopping at the given --mutant-timeout-seconds "
               "one run of the suite runner beside the script, on the "
               "scratch worktree, of the sibling suite only, recording nothing and stopping at "

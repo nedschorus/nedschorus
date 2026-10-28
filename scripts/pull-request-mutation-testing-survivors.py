@@ -602,7 +602,9 @@ def main_with_stop_signals_raising_system_exit(argv):
         recorded_inputs_directory = (arguments.recorded_inputs_directory
                                      or runner.DEFAULT_RECORDED_INPUTS_DIRECTORY)
         with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as scratch_name:
-            scratch = Path(scratch_name)
+            # Resolved, as the cwd of every process run there reports it: on macOS the temporary
+            # directory is under /var, a symbolic link to /private/var.
+            scratch = Path(scratch_name).resolve()
             worktree = scratch / "worktree"
             try:
                 run_or_raise(["git", "worktree", "add", "--detach", str(worktree),
