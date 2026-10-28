@@ -42,7 +42,7 @@ Dispatch one subagent with the Agent tool: subagent_type "fork", isolation "work
 When it has ended, Program: remove-recorded-topic-branches-and-worktrees
 
 For the subagent, in your own worktree:
-1. Run git fetch origin, then check each finding against origin/main; leave out any that no longer holds.
+1. Check each finding against origin/main; leave out any that no longer holds.
 2. Group the findings you take on by topic: one pull request per topic.
 3. For each topic, Program: start-topic-branch <topic-branch>
    Make the change with its tests, and commit.
@@ -146,7 +146,8 @@ def test_unreadable_block():
     try:
         code, _, context, err = run(message(f"#follow_up_request pull request {NUMBER}\n1. a\n3. b\n"), repository)
         check("a block with bad numbering exits 0 with a context naming the problem",
-              code == 0 and context is not None and "could not be read" in context
+              code == 0 and context is not None
+              and "could not be read because the lines after `#follow_up_request pull request" in context
               and "numbered 1, 2, 3" in context and "SendMessage" in context, repr(context) + err)
         check("nothing is saved for an unreadable block", not (repository / SAVED).exists())
     finally:

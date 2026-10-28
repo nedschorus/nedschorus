@@ -37,11 +37,19 @@ BLOCK = (f"#follow_up_request pull request {NUMBER}\n"
          "1. Codex P2 (:519-520): keep the padding when rebuilding code spans.\n"
          "2. mac-claude (inline at :713): send every R through repeat_line.\n")
 LINK = "https://github.com/nedschorus/nedschorus/pull/2001"
+OPEN_LINK = "https://github.com/nedschorus/nedschorus/pull/2002"
+ALREADY_OPEN = f'a pull request for branch "topic-one" into branch "main" already exists:\n{OPEN_LINK}'
+NOT_PASSING_END = ("that the follow-up of pull request 1964 is stopped until it is fixed.\n"
+                   "If you are a subagent, pass that sentence to the agent that dispatched you instead.\n")
 DESCRIPTION = "Keep code span padding\n\nKeeps the padding.\n\n#no_defect_fixed\n"
 FAKE_GH = """#!/bin/sh
 printf '%s\\036' "$*" >> "$FAKE_GH_LOG"
 [ -n "$FAKE_GH_KILLED" ] && kill -"$FAKE_GH_KILLED" $$
 [ -n "$FAKE_GH_CREATE_FAILS_SILENTLY" ] && exit 1
+if [ -n "$FAKE_GH_CREATE_ERROR" ]; then
+    printf '%s\n' "$FAKE_GH_CREATE_ERROR" >&2
+    exit 1
+fi
 if [ -n "$FAKE_GH_CREATE_FAILS" ]; then
     echo "GraphQL: something went wrong" >&2
     exit 1
@@ -227,17 +235,24 @@ def test_start():
         check("a second topic branch is recorded too",
               code == 0 and [record["branch"] for record in case.topic_branches()] == ["topic-one", "topic-two"],
               err + str(case.topic_branches()))
+        origin_url = git(worktree, "remote", "get-url", "origin")
         git(worktree, "remote", "set-url", "origin", str(case.root / "missing.git"))
         code, out, err = case.run(worktree, "start-topic-branch", "topic-three")
-        check("a fetch that fails is FAILED with exit 2, and the branch stays recorded for remove-recorded-topic-branches-and-worktrees",
+        check("a fetch that fails is FAILED with exit 2, to be run again once, and records no branch",
               code == 2 and err.startswith("FAILED: git fetch origin") and "Run the same start-topic-branch command again once." in err
               and "that start-topic-branch fails with the error above" in err
               and "start-topic-branch stopped there; what it did before the failure stays done." in err
-              and case.topic_branches()[-1]["branch"] == "topic-three", err)
-        code, out, err = case.run(worktree, "start-topic-branch", "topic-three")
-        check("start run again after a failure records the branch once",
-              [record["branch"] for record in case.topic_branches()].count("topic-three") == 1,
-              str(case.topic_branches()))
+              and [record["branch"] for record in case.topic_branches()] == ["topic-one", "topic-two"], err)
+        git(worktree, "remote", "set-url", "origin", origin_url)
+        code, out, err = case.run(worktree, "start-topic-branch", "topic-one")
+        check("a branch that already exists is FAILED with exit 2, telling the agent to choose another name, "
+              "not to run it again",
+              code == 2 and "a branch named 'topic-one' already exists" in err
+              and "If git says the branch already exists or is not a valid branch name, run python3 "
+                  f"{program.PROGRAM} {NUMBER} start-topic-branch <another topic-branch>\n" in err
+              and "again once" not in err and err.endswith(NOT_PASSING_END)
+              and git(worktree, "branch", "--show-current") == "topic-two"
+              and [record["branch"] for record in case.topic_branches()] == ["topic-one", "topic-two"], err)
     finally:
         case.close()
 
@@ -278,14 +293,17 @@ def test_open_refusals():
         check("open refuses a description without a defect line",
               code == 1 and "has no line beginning \"#root_cause\", \"#root_cause_not_fixed\" or "
                             "\"#no_defect_fixed\", so open-pull-request pushed nothing" in err, err)
-        case.write_description("Title\n\n- **Root cause:** the old label still counts.\n")
-        git(worktree, "switch", "-q", "--detach")
-        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1")
-        check("open accepts the merge gate's old defect label, and on a detached HEAD the push is FAILED",
-              code == 2 and "defect line" not in err and err.startswith("FAILED: git push -u origin  exited"), err)
-        check("no refusal or failed push pushed or called gh",
+        unrecorded = case.subagent_worktree("unrecorded-worktree")
+        case.write_description()
+        code, out, err = case.run(unrecorded, "open-pull-request", "--handled-finding-numbers", "1")
+        check("open refuses in a worktree start-topic-branch recorded no branch for",
+              code == 1 and f"REFUSED: start-topic-branch recorded no topic branch in {unrecorded} for pull "
+                            "request 1964's follow-up, so open-pull-request has no branch to push, and pushed "
+                            f"nothing.\nRun python3 {program.PROGRAM} {NUMBER} start-topic-branch <topic-branch> "
+                            "in this worktree" in err, err)
+        case.worktree = worktree
+        check("no refusal pushed or called gh",
               case.gh_calls() == [] and "topic-one" not in git(case.origin, "branch"), str(case.gh_calls()))
-        git(worktree, "switch", "-q", "topic-one")
         code, out, err = case.run(worktree, "record-finding-leave-out-reason", "2", "--reason", "already fixed")
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1,2")
         check("open refuses a finding that already has an answer, quoting the answer",
@@ -300,8 +318,10 @@ def test_open_refusals():
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1,2")
         check("open names several answered findings in the plural",
               code == 1 and "Findings 1 and 2 of pull request 1964's follow-up request already have an answer" in err
-              and "without those findings.\nIf that leaves no finding, this branch answers none: do not open "
-                  "its pull request.\n" in err, err)
+              and "without those findings.\nIf that leaves no finding, do not open this branch's pull request: "
+                  "other answers already cover what it handles. Go on with the next topic, and leave the branch: "
+                  "remove-recorded-topic-branches-and-worktrees shows its commits to the author, who decides "
+                  "whether to keep them.\n" in err, err)
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1,x")
         check("open refuses finding numbers that are not numbers", code == 2 and "such as 1,3" in err, err)
     finally:
@@ -330,10 +350,18 @@ def test_open():
               case.answers() == {"answers": {"1": {"link": LINK, "branch": "topic-one"}}}, str(case.answers()))
         code, out, err = case.run(worktree, "start-topic-branch", "topic-two")
         case.commit_change("second.txt")
-        case.write_description()
+        git(worktree, "switch", "-q", "-c", "unrecorded")
+        case.commit_change("unrecorded.txt")
+        git(worktree, "switch", "-q", "--detach", "main")
+        case.write_description("Title\n\n- **Root cause:** the old label still counts.\n")
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "2")
         check("open of the last finding says every finding has an answer",
               code == 0 and f"Every finding has an answer: run python3 {program.PROGRAM} {NUMBER} finish-follow-up-request-and-print-merge-lane-2-message" in out, out + err)
+        check("open accepts the merge gate's old defect label, and on a detached HEAD pushes the last "
+              "recorded topic branch, not what is checked out",
+              git(case.origin, "rev-parse", "topic-two") == git(worktree, "rev-parse", "topic-two")
+              and "unrecorded" not in git(case.origin, "branch")
+              and case.gh_calls()[-1].startswith("pr create --base main --head topic-two "), str(case.gh_calls()))
     finally:
         case.close()
 
@@ -363,15 +391,31 @@ def test_open_failures():
         try:
             program.open_pull_request(NUMBER, [1])
         except program.StepFailed as error:
-            check("a push that does not finish in time is a StepFailed with the push's own instructions",
+            check("a push that does not finish in time is a StepFailed a run again may pass, with the usual instructions",
                   str(error) == "git push -u origin topic-one failed (did not finish within 0.5 s), so no pull request was opened."
-                  and "pre-push hook" not in error.instructions
-                  and error.instructions.startswith("Run the same open-pull-request command again once.\n"), error.instructions)
+                  and error.instructions is None and error.passing, repr(error.instructions))
         else:
-            check("a push that does not finish in time is a StepFailed with the push's own instructions", False)
+            check("a push that does not finish in time is a StepFailed a run again may pass, with the usual instructions", False)
         finally:
-            os.chdir(original_directory)
             program.PUSH_TIMEOUT_SECONDS = original_timeout
+        original_run_git = program.git_output.run_git
+
+        def push_cannot_start(directory, arguments, **options):
+            if arguments[0] == "push":
+                raise program.git_output.GitCommandFailed(arguments, directory, None, "could not start git: injected")
+            return original_run_git(directory, arguments, **options)
+        program.git_output.run_git = push_cannot_start
+        try:
+            program.open_pull_request(NUMBER, [1])
+        except program.StepFailed as error:
+            check("a push that cannot start is a StepFailed a run again does not pass",
+                  "could not start git: injected" in str(error) and error.instructions is None and not error.passing,
+                  str(error))
+        else:
+            check("a push that cannot start is a StepFailed a run again does not pass", False)
+        finally:
+            program.git_output.run_git = original_run_git
+            os.chdir(original_directory)
         hook.unlink()
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_CREATE_FAILS="1")
         check("gh pr create that fails is FAILED with exit 2, naming the call without its description, recording nothing",
@@ -379,12 +423,26 @@ def test_open_failures():
               and "Run the same open-pull-request command again once." in err and case.answers() is None
               and description.exists(), err)
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_CREATE_OUTPUT="no link here")
-        check("gh pr create that prints no link is FAILED with exit 2",
-              code == 2 and "gh pr create printed no pull request link" in err and case.answers() is None, err)
+        check("gh pr create that prints no link is FAILED with exit 2, saying how to check for the pull request",
+              code == 2 and "FAILED: gh pr create exited 0 but printed no pull request link, so the pull request "
+                            "may be open: 'Creating pull request\\nno link here'\n" in err
+              and "Check whether it is open with: gh pr list --head topic-one --json url --jq '.[].url'\n" in err
+              and "the follow-up of pull request 1964 is stopped until it is recorded." in err
+              and case.answers() is None, err)
+        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1",
+                                  FAKE_GH_CREATE_ERROR="a pull request for branch \"topic-one\" into branch \"main\" already exists:")
+        check("gh pr create that says a pull request already exists but names none is FAILED, to be run again once",
+              code == 2 and "FAILED: gh pr create exited 1: a pull request for branch" in err
+              and "Run the same open-pull-request command again once." in err and case.answers() is None, err)
+        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1",
+                                  FAKE_GH_CREATE_ERROR=f"HTTP 502: bad gateway {OPEN_LINK}")
+        check("gh pr create that fails naming a link, without saying a pull request is open, is FAILED",
+              code == 2 and "FAILED: gh pr create exited 1: HTTP 502" in err and case.answers() is None, err)
         for signal_number in ("9", "1"):
             code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_KILLED=signal_number)
-            check(f"a gh killed by signal {signal_number} is FAILED with exit 2, recording nothing",
+            check(f"a gh killed by signal {signal_number} is FAILED with exit 2, to be run again once, recording nothing",
                   code == 2 and f"FAILED: gh pr create was killed by signal {signal_number}: it printed no error text\n" in err
+                  and "Run the same open-pull-request command again once." in err
                   and case.answers() is None, err)
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_CREATE_FAILS_SILENTLY="1")
         check("a gh that exits nonzero without error text is FAILED, saying it printed none",
@@ -393,7 +451,9 @@ def test_open_failures():
         git_only.mkdir()
         (git_only / "git").symlink_to(shutil.which("git"))
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", PATH=str(git_only))
-        check("a gh that cannot start is FAILED with exit 2", code == 2 and "could not start gh" in err, err)
+        check("a gh that cannot start is FAILED with exit 2, not to be run again",
+              code == 2 and "could not start gh" in err and "again once" not in err
+              and err.endswith(NOT_PASSING_END), err)
         (case.bin / "gh").write_text("#!/bin/sh\nsleep 5\n")
         original_timeout = program.GH_TIMEOUT_SECONDS
         program.GH_TIMEOUT_SECONDS = 0.5
@@ -402,13 +462,20 @@ def test_open_failures():
         try:
             program.gh(["pr", "list"])
         except program.StepFailed as error:
-            check("a gh that does not finish in time is a StepFailed", "did not finish within 0.5 s" in str(error),
-                  str(error))
+            check("a gh that does not finish in time is a StepFailed a run again may pass",
+                  "did not finish within 0.5 s" in str(error) and error.passing, str(error))
         else:
-            check("a gh that does not finish in time is a StepFailed", False)
+            check("a gh that does not finish in time is a StepFailed a run again may pass", False)
         finally:
             os.environ["PATH"] = saved_path
             program.GH_TIMEOUT_SECONDS = original_timeout
+        (case.bin / "gh").write_text(FAKE_GH)
+        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1",
+                                  FAKE_GH_CREATE_ERROR=ALREADY_OPEN)
+        check("gh pr create that refuses a second pull request records the one already open, as a run again "
+              "after a lost link does",
+              code == 0 and f"Found already open {OPEN_LINK} for finding 1 of pull request 1964's follow-up request, and recorded it.\n" in out
+              and case.answers() == {"answers": {"1": {"link": OPEN_LINK, "branch": "topic-one"}}}, out + err)
     finally:
         case.close()
 
@@ -470,7 +537,9 @@ def test_state_failures():
         check("outside a git checkout the program is FAILED with exit 2",
               code == 2 and out == "" and err.startswith("FAILED: git rev-parse")
               and f" in {outside} failed" in err
-              and "Run the same finish-follow-up-request-and-print-merge-lane-2-message command again once." in err, err)
+              and "\nTell the user, in one sentence, that finish-follow-up-request-and-print-merge-lane-2-message "
+                  "fails with the error above and " in err
+              and "again once" not in err and err.endswith(NOT_PASSING_END), err)
         saved = case.save()
         saved.write_text("not a block\n")
         code, out, err = case.run(case.repository, "finish-follow-up-request-and-print-merge-lane-2-message")
@@ -494,7 +563,9 @@ def test_state_failures():
         answers = case.states() / f"pull-request-{NUMBER}-follow-up-finding-answers.json"
         answers.write_text("{not json")
         code, out, err = case.run(case.repository, "finish-follow-up-request-and-print-merge-lane-2-message")
-        check("an answers file that is not JSON is FAILED", code == 2 and "is not the JSON this program writes" in err, err)
+        check("an answers file that is not JSON is FAILED, not to be run again",
+              code == 2 and "is not the JSON this program writes" in err and "again once" not in err
+              and err.endswith(NOT_PASSING_END), err)
         answers.unlink()
         answers.mkdir()
         (answers / "inside").write_text("x")
@@ -590,9 +661,28 @@ def test_clean_up_goes_on_past_each_worktree_and_branch():
         code, out, err = case.run(case.repository, command)
         check("a lock without a reason is named as such",
               code == 1 and "is locked (lock reason: none given)" in out
-              and "of pull request 1964's follow-up is locked (no reason given)" in out, out + err)
+              and "of pull request 1964's follow-up is locked (lock reason: none given), so" in out, out + err)
     finally:
         case.close()
+
+
+def test_git_failure_passing():
+    directory = tempfile.mkdtemp(prefix="follow-up-program-git-test-")
+    try:
+        cases = (("a git call that does not finish in time", ["-c", "alias.wait=!sleep 5", "wait"],
+                  {"timeout_seconds": 0.5}, True),
+                 ("a git call that exits nonzero", ["rev-parse", "--show-toplevel"], {}, False),
+                 ("a git call marked passing that exits nonzero", ["rev-parse", "--show-toplevel"],
+                  {"passing": True}, True))
+        for label, arguments, options, passing in cases:
+            try:
+                program.git(directory, arguments, **options)
+            except program.StepFailed as error:
+                check(f"{label} is a StepFailed with passing {passing}", error.passing is passing, str(error))
+            else:
+                check(f"{label} is a StepFailed with passing {passing}", False)
+    finally:
+        shutil.rmtree(directory)
 
 
 def test_clean_up_failure():
@@ -602,7 +692,8 @@ def test_clean_up_failure():
         (case.repository / ".git" / "worktrees" / worktree.name / "index").write_text("not an index")
         code, out, err = case.run(case.repository, "remove-recorded-topic-branches-and-worktrees")
         check("a git command remove-recorded-topic-branches-and-worktrees cannot run is FAILED with exit 2",
-              code == 2 and err.startswith("FAILED: git status --short") and "Run the same remove-recorded-topic-branches-and-worktrees command again once." in err,
+              code == 2 and err.startswith("FAILED: git status --short") and "again once" not in err
+              and err.endswith(NOT_PASSING_END),
               out + err)
     finally:
         case.close()
@@ -611,7 +702,7 @@ def test_clean_up_failure():
 for test in (test_help, test_block_parsing, test_brief_text, test_no_saved_block, test_start,
              test_open_refusals, test_open, test_open_failures, test_leave_out_and_finish,
              test_state_failures, test_clean_up, test_clean_up_goes_on_past_each_worktree_and_branch,
-             test_clean_up_failure):
+             test_git_failure_passing, test_clean_up_failure):
     test()
 
 print(f"FAILED: {len(failures)} failed" if failures else "PASSED: 0 failed")
