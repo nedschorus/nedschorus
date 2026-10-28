@@ -65,18 +65,16 @@ CHILD_EXIT_TIMEOUT_SECONDS = 30
 IGNORED_SIGNAL_GRACE_SECONDS = 2
 
 
-def ignore_sighup():
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)
-
-
 @contextlib.contextmanager
 def child_holding_directory(sighup_ignored=False):
     """The running child, its first stdout line and its directory; the child is killed if still running."""
+    # Set explicitly: a child left to inherit would get SIG_IGN when this test runs under nohup.
+    sighup_disposition = signal.SIG_IGN if sighup_ignored else signal.SIG_DFL
     with tempfile.TemporaryDirectory() as scratch:
         directory = Path(scratch) / "held"
         child = subprocess.Popen([sys.executable, "-c", CHILD, str(MODULE_PATH), str(directory)],
                                  stdout=subprocess.PIPE, text=True,
-                                 preexec_fn=ignore_sighup if sighup_ignored else None)
+                                 preexec_fn=lambda: signal.signal(signal.SIGHUP, sighup_disposition))
         try:
             yield child, child.stdout.readline().strip(), directory
         finally:
@@ -110,6 +108,19 @@ for signal_number in (signal.SIGTERM, signal.SIGHUP):
           f"and the process exits 128 plus the signal number",
           ready == "ready" and returncode == 128 + signal_number and not left,
           stop_detail(ready, returncode, left))
+
+suite_sighup = signal.signal(signal.SIGHUP, signal.SIG_IGN)
+try:
+    with child_holding_directory() as (child, ready, directory):
+        child.send_signal(signal.SIGHUP)
+        returncode = exit_code_within(child, CHILD_EXIT_TIMEOUT_SECONDS)
+        left = directory.exists()
+finally:
+    signal.signal(signal.SIGHUP, suite_sighup)
+check("when this suite runs with SIGHUP ignored, as under nohup, SIGHUP still ends a child "
+      "started without SIGHUP ignored, exiting 128 plus the signal number",
+      ready == "ready" and returncode == 128 + signal.SIGHUP and not left,
+      stop_detail(ready, returncode, left))
 
 with child_holding_directory(sighup_ignored=True) as (child, ready, directory):
     child.send_signal(signal.SIGHUP)
