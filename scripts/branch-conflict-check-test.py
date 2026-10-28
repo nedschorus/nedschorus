@@ -413,7 +413,7 @@ case("CONFLICT text is one instruction per line, naming the commit", lines == [
     "VERDICT: CONFLICT -- %s conflicts with origin/main." % HEAD_LABEL,
     "First see what the conflict is with: if main has already replaced "
     "this branch's work, do not merge; close the pull request and carry "
-    "what main still lacks on a new topic branch cut from current main.",
+    "what main still lacks on a new nc-topic-branch cut from current main.",
     "When you close the pull request, name in its closing comment the "
     "commit or pull request on main that replaced the work.",
     "Merge origin/main into the branch by hand, with the frozen head as "
@@ -595,7 +595,7 @@ def conflict_block(base="origin/main", label=HEAD_LABEL):
         "VERDICT: CONFLICT -- %s conflicts with %s." % (label, base),
         "First see what the conflict is with: if main has already replaced "
         "this branch's work, do not merge; close the pull request and carry "
-        "what main still lacks on a new topic branch cut from current main.",
+        "what main still lacks on a new nc-topic-branch cut from current main.",
         "When you close the pull request, name in its closing comment the "
         "commit or pull request on main that replaced the work.",
         "Merge %s into the branch by hand, with the frozen head as first "
@@ -895,11 +895,11 @@ CLOSE_NAMING_DELETION = (
     "commit that deleted each file.")
 CARRY_WHAT_MAIN_LACKS = (
     "If origin/main still lacks any of the branch's work, including what its "
-    "change to each deleted file was for, carry that work on a new topic "
-    "branch cut from current origin/main, in a new pull request that names the "
+    "change to each deleted file was for, carry that work on a new "
+    "nc-topic-branch cut from current origin/main, in a new pull request that names the "
     "closed one.")
 REAPPLY_ALSO_CONFLICTS = (
-    "On the new topic branch, start each ALSO CONFLICTS file from "
+    "On the new nc-topic-branch, start each ALSO CONFLICTS file from "
     "origin/main's version and reapply the branch's change to it by hand.")
 
 # The one block that replaces the lines above whenever a file may have been
@@ -929,7 +929,7 @@ HAND_MERGE_STEPS = (
 CLOSE_IF_ANY_DELETED = (
     "If any file marked DELETED ON or DELETED OR RENAMED was deleted, do not "
     "merge: close the pull request with a comment naming the commit that "
-    "deleted it, and carry what origin/main still lacks on a new topic branch "
+    "deleted it, and carry what origin/main still lacks on a new nc-topic-branch "
     "cut from current origin/main, in a new pull request that names the "
     "closed one; on that branch, carry the branch's change to each renamed "
     "file onto its new name.")
@@ -1621,7 +1621,7 @@ def real_repository_cases(root):
          ])
 
     # Both kinds at once: the deletion decides, and the ordinary conflict is
-    # named so the new topic branch reapplies that change too.
+    # named so the new nc-topic-branch reapplies that change too.
     status, lines, _ = run_here("--head", "deleted-and-conflict-topic")
     case("real: a deleted file plus an ordinary conflict exits 1",
          status == CHECK.EXIT_CONFLICT)
