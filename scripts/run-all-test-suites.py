@@ -571,7 +571,8 @@ a suite runs reads or sources; an ignored file; anything outside the checkout (a
 tool upgrade, leftover machine state). The daily full run covers all of
 these.
 
-EXIT. 0 when every suite exited 0; 1 when any suite failed; 2 when no suite
+EXIT. 0 when every suite exited 0; 1 when any suite failed, even in a run
+that was then stopped or not run to the end; 2 when no suite
 failed but the run gave no full verdict: a suite was not run because its
 test sandbox did not start, the run was not run to the end, its records
 could not be written, or the run could not start (not a checkout's top
@@ -3434,6 +3435,13 @@ def describe_exit(code):
         return f"killed by signal {-code}"
 
 
+def suite_failed(result):
+    """Whether the suite failed: it exited nonzero, and neither a stop nor its test sandbox
+    failing to start ended it."""
+    return (result["exit"] != 0 and not result.get("stopped by")
+            and not result.get("test sandbox did not start"))
+
+
 def why_suite_failed(result):
     """What a failed or not-run suite's line says after its path: why, or how it exited."""
     if result.get("stopped by"):
@@ -3898,7 +3906,8 @@ def main(argv=None, platform=None):
                         report.line("Fix what it names, then run this again. The suites already "
                                     "running finish first.")
                         report.close()
-                        return EXIT_COULD_NOT_RUN
+                        return (EXIT_SOME_FAILED if any(map(suite_failed, results))
+                                else EXIT_COULD_NOT_RUN)
                     results.append(result)
                     report.line(suite_line(result))
                     if result.get("output_note"):
@@ -3917,15 +3926,13 @@ def main(argv=None, platform=None):
             report.close()
             if run_record is not None:
                 run_record.finish()
-            return EXIT_COULD_NOT_RUN
+            return EXIT_SOME_FAILED if any(map(suite_failed, results)) else EXIT_COULD_NOT_RUN
 
         results.sort(key=lambda result: result["suite"])
         # Here only --stop-at-first-failing-suite stops a suite: a stop signal returned above.
         stopped = [result for result in results if result.get("stopped by")]
         not_run = [result for result in results if result.get("test sandbox did not start")]
-        failed = [result for result in results
-                  if result["exit"] != 0 and not result.get("stopped by")
-                  and not result.get("test sandbox did not start")]
+        failed = [result for result in results if suite_failed(result)]
         skipping = [result for result in results if result["skips"]]
         if failed:
             report.line("")

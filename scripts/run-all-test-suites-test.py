@@ -2359,6 +2359,42 @@ with tempfile.TemporaryDirectory() as scratch:
           and "FAIL sleeps-test.py killed when the run was stopped by SIGTERM" in stopped_output,
           (stub_pids, gone, runner_process.returncode, stopped_output))
 
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    # The failing suite ends at once; the sleeper names its process only after that.
+    make_repo(root, {"a-fails-test.py": "sys.exit(1)\n",
+                     "b-sleeps-test.py": "time.sleep(3)\n" + SLEEPS_WITH_A_CHILD})
+    environment = dict(os.environ, **{RAN_FILE_VARIABLE: str(root / "ran.txt")})
+    runner_process = subprocess.Popen(
+        [sys.executable, str(PROGRAM), "--checkout", str(root / "repo"), "-j", "2",
+         "--log-dir", str(root / "logs"), "--lock-file", str(root / "run.lock"),
+         "--recorded-inputs-directory", str(root / "recordings")],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=environment,
+        stdin=subprocess.DEVNULL)
+    pids_file = root / "pids.txt"
+    deadline = time.monotonic() + 60
+    while not (pids_file.exists() and len(pids_file.read_text().split()) == 2) \
+            and time.monotonic() < deadline:
+        time.sleep(0.1)
+    stub_pids = [int(pid) for pid in pids_file.read_text().split()] if pids_file.exists() else []
+    time.sleep(1)
+    runner_process.send_signal(signal.SIGTERM)
+    try:
+        stopped_output, _ = runner_process.communicate(timeout=30)
+    except subprocess.TimeoutExpired:
+        runner_process.kill()
+        stopped_output, _ = runner_process.communicate()
+    for pid in stub_pids:
+        if not process_gone_within(pid, 10):
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+    check("a runner sent SIGTERM after a suite failed says what stopped it and exits 1, "
+          "not 2, so no caller reads the failure as a run without a verdict",
+          len(stub_pids) == 2 and runner_process.returncode == 1
+          and "FAIL a-fails-test.py" in stopped_output
+          and "not run to the end — stopped by SIGTERM" in stopped_output,
+          (stub_pids, runner_process.returncode, stopped_output))
+
 # A command put in the background in a subshell starts with SIGINT ignored, and an
 # ignored signal passes on to every process it starts; a suite that interrupts itself
 # must still be interrupted.
