@@ -49,7 +49,7 @@ Usage:
                 once a suite fails, kill the suites running beside it, as a
                 stop signal does, and start no other; the run exits 1, and
                 each suite killed is reported as stopped, not as failed. A
-                suite whose test sandbox did not start does not stop the run
+                suite whose nc-test-sandbox did not start does not stop the run
   --only-suites-named SUITE [SUITE ...]
                 run only these suites, each named by its path from the
                 checkout's top directory, as git lists it; a name git does
@@ -80,7 +80,7 @@ refused.
 
 HOW EACH SUITE IS JUDGED. By its exit code, and nothing else: 0 is PASS,
 anything else is FAIL, and a suite killed by a signal is FAIL naming the
-signal. The one exception is a suite whose test sandbox bwrap could not
+signal. The one exception is a suite whose nc-test-sandbox bwrap could not
 build: no test ran, so it is NOT RUN, not FAIL, and its recording keeps
 bwrap's exit, so the next selective run selects it again. The suites print
 at least four different success wordings, so no text can be trusted to mean pass or fail. Each suite runs as
@@ -574,7 +574,7 @@ these.
 EXIT. 0 when every suite exited 0; 1 when any suite failed, even in a run
 that was then stopped or not run to the end; 2 when no suite
 failed but the run gave no full verdict: a suite was not run because its
-test sandbox did not start, the run was not run to the end, its records
+nc-test-sandbox did not start, the run was not run to the end, its records
 could not be written, or the run could not start (not a checkout's top
 directory, no suites listed, git or the interpreter unusable, a COMMIT git
 cannot resolve, a suite --only-suites-named names that git does not list);
@@ -3436,7 +3436,7 @@ def describe_exit(code):
 
 
 def suite_failed(result):
-    """Whether the suite failed: it exited nonzero, and neither a stop nor its test sandbox
+    """Whether the suite failed: it exited nonzero, and neither a stop nor its nc-test-sandbox
     failing to start ended it."""
     return (result["exit"] != 0 and not result.get("stopped by")
             and not result.get("test sandbox did not start"))
@@ -3942,8 +3942,8 @@ def main(argv=None, platform=None):
                             f" — log {result['log']}")
         if not_run:
             report.line("")
-            report.line(f"{len(not_run)} not run, because bwrap could not build the test "
-                        f"sandbox; each log says why and what to do:")
+            report.line(f"{len(not_run)} not run, because bwrap could not build the "
+                        f"nc-test-sandbox; each log says why and what to do:")
             for result in not_run:
                 report.line(f"NOT RUN {result['suite']} {why_suite_failed(result)}"
                             f" — log {result['log']}")

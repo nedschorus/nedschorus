@@ -530,11 +530,11 @@ if linux_only_cases_run_here("the report's sandbox lines"):
                   f"listed with its log under the suites not run, and counted as not run",
                   completed.returncode == expected_exit
                   and any(line.startswith(f"NOT RUN {unstartable} did not start: bwrap could "
-                                          f"not build its test sandbox (exit 1) (")
+                                          f"not build its nc-test-sandbox (exit 1) (")
                           for line in report.splitlines())
                   and any(line.startswith(f"NOT RUN {unstartable} did not start: ")
                           and " — log " in line for line in report.splitlines())
-                  and "1 not run, because bwrap could not build the test sandbox" in report
+                  and "1 not run, because bwrap could not build the nc-test-sandbox" in report
                   and not any(line.startswith(f"FAIL {unstartable}")
                               for line in report.splitlines())
                   and summary in report
