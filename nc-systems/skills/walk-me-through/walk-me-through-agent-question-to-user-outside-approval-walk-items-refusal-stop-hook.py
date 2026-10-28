@@ -114,6 +114,7 @@ Agent-facing messages follow
 docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 """
 import datetime
+import functools
 import importlib.util
 import json
 import os
@@ -263,10 +264,17 @@ def normalized(line):
 
 CLOSING_LINE_LABEL = re.compile(rf"Item (?P<number>{walk_finder.NUMBER}) of (?P<total>\d+)(?:, .+)?", re.S)
 CLOSING_LINE_AFTER_LINK = " · " + answer_hook.ANSWER_LETTERS_TEXT
-CLOSING_LINE_PARSER = walk_finder.markdown_parser()
-# The link target is not compared, but the parser refuses a link whose scheme it distrusts, such as `file:`, and
-# walks have linked items to `file://` pages.
-CLOSING_LINE_PARSER.validateLink = lambda url: True
+
+
+# Built on first use, not at import: building it can install markdown-it-py under HOME, which must not happen
+# before run's stays-silent check.
+@functools.cache
+def closing_line_parser():
+    parser = walk_finder.markdown_parser()
+    # The link target is not compared, but the parser refuses a link whose scheme it distrusts, such as `file:`, and
+    # walks have linked items to `file://` pages.
+    parser.validateLink = lambda url: True
+    return parser
 
 
 def normalized_lines(lines):
@@ -330,7 +338,7 @@ def shown_item_lines(reply_lines, document_lines, units):
 def is_closing_line(line, waiting_numbers, total):
     """Whether line is the closing line of a waiting item of the open walk, whose total is total, as the module
     docstring's THE TEXT CHECKED says."""
-    (inline,) = CLOSING_LINE_PARSER.parseInline(line.strip())
+    (inline,) = closing_line_parser().parseInline(line.strip())
     tokens = inline.children
     if not tokens or tokens[0].type != "link_open":
         return False
