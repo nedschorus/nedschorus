@@ -373,7 +373,8 @@ def finds_an_agent_session_started_with_resume(fixture):
              11: (10, "S", f"claude --resume {SESSION_ID} prompt"),
              12: (10, "S", f"claude --session-id {SESSION_ID}x"),
              13: (99, "S", f"claude --session-id {SESSION_ID}"),
-             14: (10, "S", "claude --session-id")}
+             14: (10, "S", "claude --session-id"),
+             15: (5, "S", f"claude --session-id {SESSION_ID}")}
     check(restart.find_agent_session_process_id_among_handoff_supervisor_children(table, 10, SESSION_ID) == 11, "not found by --resume")
 
 
@@ -744,7 +745,8 @@ def two_children_carrying_the_session_id_refuse(fixture):
 
 @case
 def descendants_are_listed_once_when_parent_links_loop(fixture):
-    table = {1: (3, "S", ""), 2: (1, "S", ""), 3: (2, "S", ""), 4: (2, "S", ""), 5: (9, "S", "")}
+    table = {1: (3, "S", ""), 2: (1, "S", ""), 3: (2, "S", ""), 4: (2, "S", ""), 5: (9, "S", ""),
+             6: (0, "S", "")}
     found = restart.descendant_process_ids(table, 1)
     check(sorted(found) == [2, 3, 4] and len(found) == 3, found)
 
