@@ -295,6 +295,10 @@ in the nedschorus repository, which this machine also clones:
   copy of each version its checkout's branch HEAD did not hold, and the record
   of which versions the user approved, written by
   `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`
+- `bash-guards-replay-changed-verdict-or-failed-run-log-directories/` -- the
+  Bash guards replay's step logs and differences files, one directory per
+  replay that exited 1 or 2, written by
+  `nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py`
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file
