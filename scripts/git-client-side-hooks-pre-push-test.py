@@ -277,6 +277,37 @@ print(%r)
 sys.exit(1)
 """ % (FAKE_FAILING_SUITE_LINE, FAKE_FAILED_SUMMARY)
 
+# A suite whose nc-test-sandbox did not start, as the real runner reports one: a line as it
+# finishes, and a line with its log at the end.
+FAKE_NOT_RUN_SUITE_PROGRESS_LINE = ("NOT RUN scripts/fake-not-run-test.py did not start: bwrap "
+                                    "could not build its nc-test-sandbox (exit 1) (0.1s)")
+FAKE_NOT_RUN_SUITE_LINE = ("NOT RUN scripts/fake-not-run-test.py did not start: bwrap could not "
+                           "build its nc-test-sandbox (exit 1) — log /fake/fake-not-run-test.log")
+FAKE_NOT_RUN_SUMMARY = "SUMMARY: 2 passed, 0 failed, 1 not run, 3 total; 0 cases skipped in 0 suites"
+FAKE_FAILED_AND_NOT_RUN_SUMMARY = ("SUMMARY: 1 passed, 1 failed, 1 not run, 3 total; 0 cases "
+                                   "skipped in 0 suites")
+FAKE_NOT_RUN_SECTION = """\
+print(%r)
+print("")
+print("1 not run, because bwrap could not build the nc-test-sandbox; each log says why and what to do:")
+print(%r)
+""" % (FAKE_NOT_RUN_SUITE_PROGRESS_LINE, FAKE_NOT_RUN_SUITE_LINE)
+
+FAKE_TEST_SUITES_RUNNER_SUITE_NOT_RUN = FAKE_TEST_SUITES_RUNNER_PREAMBLE + FAKE_NOT_RUN_SECTION + """\
+print(%r)
+sys.exit(2)
+""" % FAKE_NOT_RUN_SUMMARY
+
+FAKE_TEST_SUITES_RUNNER_FAILS_AND_SUITE_NOT_RUN = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+print("FAIL scripts/fake-failing-test.py exit 1 (0.1s)")
+print("")
+print("1 failed:")
+print(%r)
+""" % FAKE_FAILING_SUITE_LINE + FAKE_NOT_RUN_SECTION + """\
+print(%r)
+sys.exit(1)
+""" % FAKE_FAILED_AND_NOT_RUN_SUMMARY
+
 FAKE_TEST_SUITES_RUNNER_LOCKED = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
 print(%r, file=sys.stderr)
 print(%r, file=sys.stderr)
@@ -1298,6 +1329,19 @@ def run_selective_test_run_cases(scratch):
     check("a failing suite: the refusal does not offer --no-verify",
           "--no-verify" not in result.stderr, result.describe())
 
+    hooks = make_layout(scratch, "layout-selective-fails-and-not-run",
+                        test_suites_runner_text=FAKE_TEST_SUITES_RUNNER_FAILS_AND_SUITE_NOT_RUN)
+    failing_and_not_run = Scenario(scratch, "selective-fails-and-not-run", hooks)
+    result = failing_and_not_run.push("origin", "clean")
+    refusal = lines_from(result.stderr, SELECTIVE_TEST_RUN_REFUSED)
+    check("a failing suite and a suite not run: the push is refused, naming the failing suite "
+          "and the suite not run, each with its log, then the whole report's path",
+          was_refused(result)
+          and refusal[:4] == [SELECTIVE_TEST_RUN_REFUSED + FAKE_FAILED_AND_NOT_RUN_SUMMARY,
+                              FAKE_FAILING_SUITE_LINE, FAKE_NOT_RUN_SUITE_LINE,
+                              "The whole report: %s/test-run-report.txt" % FAKE_LOG_DIRECTORY],
+          result.describe())
+
     def not_run_case(label, runner_text, expected_cause, tell_user, budget=None,
                      include_test_suites_runner=True, extra_environment=None):
         hooks = make_layout(scratch, "layout-selective-" + label,
@@ -1358,6 +1402,20 @@ def run_selective_test_run_cases(scratch):
         + FAKE_SANDBOX_REFUSAL_FIRST_LINE, tell_user=True)
     check("sandbox cannot start: everything the runner printed on stderr is shown",
           FAKE_SANDBOX_REFUSAL_LAST_LINE in outcome.stderr.splitlines(), outcome.describe())
+    _, outcome = not_run_case(
+        "a suite not run", FAKE_TEST_SUITES_RUNNER_SUITE_NOT_RUN,
+        "the selective test run gave no verdict, because it exited 2", tell_user=True)
+    check("a suite not run: the suite is named with its log, then the whole report's path, "
+          "above the message",
+          lines_from(outcome.stderr, "pre-push: these suites were not run")[:4]
+          == ["pre-push: these suites were not run; each log says why and what to do:",
+              FAKE_NOT_RUN_SUITE_LINE,
+              "The whole report: %s/test-run-report.txt" % FAKE_LOG_DIRECTORY,
+              "pre-push: the selective test run gave no verdict, because it exited 2"
+              + SELECTIVE_TEST_RUN_NOT_RUN_END + "."],
+          outcome.describe())
+    check("a suite not run: the line printed as the suite finished, without its log, is not "
+          "repeated", FAKE_NOT_RUN_SUITE_PROGRESS_LINE not in outcome.stderr, outcome.describe())
     not_run_case("killed", FAKE_TEST_SUITES_RUNNER_KILLED,
                  "the selective test run gave no verdict, because it was killed by signal 9",
                  tell_user=True)
