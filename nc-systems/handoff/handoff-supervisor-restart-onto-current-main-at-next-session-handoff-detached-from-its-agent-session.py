@@ -230,11 +230,18 @@ def find_agent_session_process_id_among_handoff_supervisor_children(process_tabl
 
 
 def descendant_process_ids(process_table, ancestor_process_id: int):
+    # Each process ID leaves not_yet_placed when it is found, so the walk ends within one pass per
+    # process even when the comparison below is mutated by nc-mutation-testing; a walk that can
+    # revisit process IDs grows memory without limit, and systemd-oomd then ends agent-seats.
+    not_yet_placed = {process_id: entry for process_id, entry in process_table.items()
+                      if process_id != ancestor_process_id}
     descendants, frontier = [], [ancestor_process_id]
     while frontier:
         parent = frontier.pop()
-        children = [process_id for process_id, (parent_process_id, _, _) in process_table.items()
+        children = [process_id for process_id, (parent_process_id, _, _) in not_yet_placed.items()
                     if parent_process_id == parent]
+        for process_id in children:
+            del not_yet_placed[process_id]
         descendants += children
         frontier += children
     return descendants

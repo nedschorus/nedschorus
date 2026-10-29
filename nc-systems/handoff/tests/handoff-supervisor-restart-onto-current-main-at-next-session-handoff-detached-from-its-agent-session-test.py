@@ -741,6 +741,13 @@ def descendants_are_children_and_their_children_only(fixture):
 
 
 @case
+def descendant_walk_ends_on_a_table_whose_parent_links_loop(fixture):
+    table = {1: (3, "S", ""), 2: (1, "S", ""), 3: (2, "S", "")}
+    found = restart.descendant_process_ids(table, 1)
+    check(sorted(found) == [2, 3], found)
+
+
+@case
 def counter_seen_is_minus_one_with_no_counter_and_zero_counts(fixture):
     check(restart.highest_restart_counter_field_value_in_session_handoff_and_handoff_supervisor_state_files(fixture.handoff_directory, fixture.name, {}) == -1,
           "no counter")
