@@ -193,6 +193,59 @@ with tempfile.TemporaryDirectory() as scratch:
     check("passes: a bare cd goes to the home directory, outside the checkout",
           got is None, got)
 
+    more_refused_commands = {
+        "tee after --": "cat x | tee -- docs/issues/46-ghi-info-agent-design.md",
+        "cp with -S's value attached, holding a t":
+            "cp -S.txt x.md docs/issues/46-ghi-info-agent-design.md",
+        "cp inside ( ... ) after a cd there":
+            "(cd docs && cp x.md issues/46-ghi-info-agent-design.md)",
+        "cp in a child shell inside one that ran the cd":
+            "(cd docs; (cp x.md issues/46-ghi-info-agent-design.md))",
+        "cp after a command that is only an assignment":
+            "X=1; cp x.md docs/issues/46-ghi-info-agent-design.md",
+        "cp after cd -P, an option before the directory":
+            "cd -P docs && cp x.md issues/46-ghi-info-agent-design.md",
+    }
+    for case_name, command in more_refused_commands.items():
+        got = bash_refusal(checkout, command)
+        check(f"refused: {case_name}", got == refusal, got)
+    got = bash_refusal(checkout, "env cp docs/issues/46-ghi-info-agent-design.md")
+    check("passes: cp behind a wrapper with one operand", got is None, got)
+    for other_tool in ("Agent", "mcp__files__write"):
+        got = refusal_for(checkout, other_tool, {
+            "file_path": str(ghi_md), "command": "cp x.md docs/issues/46-ghi-info-agent-design.md"})
+        check(f"passes: {other_tool}, a tool that is neither Bash nor Write, even with their "
+              "fields", got is None, got)
+    saved_directory = Path.cwd()
+    try:
+        import os
+        os.chdir(checkout)
+        code, output = run_hook({"tool_name": "Bash", "tool_input": {
+            "command": "cp x.md docs/issues/46-ghi-info-agent-design.md"}})
+    finally:
+        os.chdir(saved_directory)
+    got = output and output["hookSpecificOutput"].get("permissionDecisionReason")
+    check("refused: a payload without cwd is read from the hook's own directory",
+          code == 0 and got == refusal, (code, output))
+
+    replay_check = Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools" / (
+        "bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-"
+        "check.py")
+    _replay_spec = importlib.util.spec_from_file_location("bash_guards_replay_check", replay_check)
+    replay = importlib.util.module_from_spec(_replay_spec)
+    _replay_spec.loader.exec_module(replay)
+    marker.write_text("A reason the replay must not consume.\n")
+    reading = replay.read_ghi_md_whole_file_replacement(
+        hook, "cp x.md docs/issues/46-ghi-info-agent-design.md", str(checkout), None)
+    check("the Bash-guard replay reads a refused command as refused, naming the GHI-MD",
+          reading == ("refused", f"replaces {ghi_md}"), reading)
+    check("the Bash-guard replay leaves the marker file in place", marker.exists())
+    reading = replay.read_ghi_md_whole_file_replacement(
+        hook, "cp x.md docs/notes.md", str(checkout), None)
+    check("the Bash-guard replay reads a passed command as passed", reading == ("passed", None),
+          reading)
+    marker.unlink()
+
     got = refusal_for(checkout, "Edit", {"file_path": str(ghi_md), "old_string": "a",
                                          "new_string": "b"})
     check("passes: the Edit tool on the GHI-MD", got is None, got)

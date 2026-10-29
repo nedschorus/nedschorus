@@ -18,17 +18,21 @@ refusal names, at the root of the agent-session's checkout, and runs the
 command again. The marker clears that one call and is consumed by it.
 
 WHAT IT LETS THROUGH, because nothing is replaced: `tee -a`, `>>` and `&>>`,
-which append; `cp` or `mv` of a GHI-MD to another place; `cp -T` or `mv -T`
-onto a directory, which fails.
+which append; `cp` or `mv` of a GHI-MD to another place.
+
+HOW IT READS `cp` AND `mv`: the target is the `-t`/`--target-directory`
+value, or else the last operand; a target that is a directory receives each
+source under its own name. `-T` is not read, so `cp -T <file> docs/issues`,
+which cp refuses, can be refused here too.
 
 WHAT IT CANNOT SEE: other programs that write files, such as `install`,
 `rsync`, `dd`, `sed -i`, `git checkout -- <path>`, `git restore`, or a Python
 or heredoc script; a target named through a variable, a glob or a command
-substitution, which is read as written; a relative target after a `cd` whose
-directory is a variable or another unreadable word, which passes; and the same
-command limits as the other Bash guards that use the shared shell module
-(`sh -c`, `eval`, `ssh`). A target is resolved against the agent-session's
-working directory and each literal `cd` before it, as bash would.
+substitution, which is read as written and so names no existing file; a
+relative target after a `cd` to such a word, which passes for the same reason;
+and the same command limits as the other Bash guards that use the shared shell
+module (`sh -c`, `eval`, `ssh`). A target is resolved against the
+agent-session's working directory and each `cd` before it, as bash would.
 """
 
 import importlib.util
@@ -80,12 +84,12 @@ PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
     "origin/main -- <that file>: each difference you did not mean to make is a change on main "
     "that the command undid, so put it back with the Edit tool.")
 
-# Read from `cp --help` and `mv --help`, GNU coreutils 9.4: the options whose
-# value may stand as the next word. Other long options take theirs after `=`.
-COPY_OR_MOVE_SHORT_OPTIONS_TAKING_A_VALUE = "tS"
-COPY_OR_MOVE_LONG_OPTIONS_TAKING_A_VALUE = ("--target-directory", "--suffix")
+# A short-option cluster holding cp's or mv's -t, with the value attached or
+# not; `-S` takes a value too, so a `t` after it is part of that value.
+SHORT_TARGET_DIRECTORY_OPTION_PATTERN = re.compile(r"-[^-St]*t(.*)")
+LONG_TARGET_DIRECTORY_OPTION = "--target-directory"
 TRUNCATING_REDIRECTION_PATTERN = re.compile(r"(?:\d*|&)>\|?")
-# `>&word` and `N>&word` write to the file word unless word is a descriptor or `-`.
+# `>&word` and `N>&word` write to the file word unless word is a descriptor.
 DUPLICATING_REDIRECTION_PATTERN = re.compile(r"\d*>&")
 
 
@@ -98,118 +102,80 @@ def is_existing_ghi_md(path):
 
 
 def path_in(directory, word):
-    """The path word names, read from directory, or None when directory is unknown."""
+    """The path word names, read from directory."""
     word = shell_reader.shell_word_tilde_prefix_expand_as_bash_would(word)
-    if os.path.isabs(word):
-        return Path(os.path.normpath(word))
-    if directory is None:
-        return None
     return Path(os.path.normpath(os.path.join(directory, word)))
 
 
 def copy_or_move_targets(arguments, directory):
     """The files a `cp` or `mv` with these arguments writes, as paths."""
     target_directory = None
-    no_target_directory = False
     operands = []
-    index = 0
-    while index < len(arguments):
-        word = arguments[index]
-        index += 1
+    words = iter(arguments)
+    for word in words:
         if word == "--":
-            operands.extend(arguments[index:])
+            operands.extend(words)
             break
-        if word.startswith("--"):
-            name, has_value, value = word.partition("=")
-            if name == "--no-target-directory":
-                no_target_directory = True
-            elif name in COPY_OR_MOVE_LONG_OPTIONS_TAKING_A_VALUE:
-                if not has_value:
-                    value = arguments[index] if index < len(arguments) else ""
-                    index += 1
-                if name == "--target-directory":
-                    target_directory = value
-            continue
-        if word.startswith("-") and len(word) > 1:
-            for position, letter in enumerate(word[1:], start=1):
-                if letter == "T":
-                    no_target_directory = True
-                if letter in COPY_OR_MOVE_SHORT_OPTIONS_TAKING_A_VALUE:
-                    value = word[position + 1:]
-                    if not value:
-                        value = arguments[index] if index < len(arguments) else ""
-                        index += 1
-                    if letter == "t":
-                        target_directory = value
-                    break
-            continue
-        operands.append(word)
+        short_target = SHORT_TARGET_DIRECTORY_OPTION_PATTERN.fullmatch(word)
+        if word == LONG_TARGET_DIRECTORY_OPTION or (short_target and not short_target.group(1)):
+            target_directory = next(words, None)
+        elif short_target:
+            target_directory = short_target.group(1)
+        elif word.startswith(LONG_TARGET_DIRECTORY_OPTION + "="):
+            target_directory = word.partition("=")[2]
+        elif not word.startswith("-"):
+            operands.append(word)
     if target_directory is not None:
-        destination, sources = path_in(directory, target_directory), operands
+        destination, sources = target_directory, operands
     elif len(operands) >= 2:
-        destination, sources = path_in(directory, operands[-1]), operands[:-1]
+        destination, sources = operands[-1], operands[:-1]
     else:
         return []
-    if destination is None:
-        return []
-    if target_directory is None and (no_target_directory or not destination.is_dir()):
+    destination = path_in(directory, destination)
+    if not destination.is_dir():
         return [destination]
     return [destination / os.path.basename(os.path.normpath(source)) for source in sources]
 
 
 def tee_targets(arguments, directory):
     """The files a `tee` with these arguments writes over, as paths; none when it appends."""
-    operands = []
-    for index, word in enumerate(arguments):
-        if word == "--":
-            operands.extend(arguments[index + 1:])
-            break
-        if word == "--append" or (word.startswith("-") and not word.startswith("--")
-                                  and "a" in word[1:]):
-            return []
-        if word.startswith("-") and len(word) > 1:
-            continue
-        operands.append(word)
-    return [path for path in (path_in(directory, word) for word in operands) if path]
+    options_end = arguments.index("--") if "--" in arguments else len(arguments)
+    options = [word for word in arguments[:options_end] if word.startswith("-")]
+    if any(word == "--append" or (not word.startswith("--") and "a" in word)
+           for word in options):
+        return []
+    operands = ([word for word in arguments[:options_end] if not word.startswith("-")]
+                + arguments[options_end + 1:])
+    return [path_in(directory, word) for word in operands]
 
 
 def redirection_targets(redirects, directory):
     """The files these redirections write over, as paths."""
-    targets = []
-    for operator, target in redirects:
-        truncates = TRUNCATING_REDIRECTION_PATTERN.fullmatch(operator) or (
-            DUPLICATING_REDIRECTION_PATTERN.fullmatch(operator)
-            and target and not target.isdigit() and target != "-")
-        if truncates and target:
-            path = path_in(directory, target)
-            if path is not None:
-                targets.append(path)
-    return targets
+    return [path_in(directory, target) for operator, target in redirects
+            if target and (TRUNCATING_REDIRECTION_PATTERN.fullmatch(operator) or (
+                DUPLICATING_REDIRECTION_PATTERN.fullmatch(operator)
+                and not target.isdigit()))]
 
 
 def replaced_paths_in_command(command, working_directory):
     """Every path the command's cp, mv, tee and redirections write over, in order."""
-    commands = shell_reader.simple_commands(command)
     # A child shell's cd does not change the directory of the shell around it.
     directories = {(): working_directory}
     paths = []
-    for words in commands:
-        enclosing = words.child_shell
-        while enclosing not in directories:
-            enclosing = enclosing[:-1]
-        directory = directories[enclosing]
+    for words in shell_reader.simple_commands(command):
+        shells = words.child_shell
+        directory = next(directories[shells[:depth]] for depth in range(len(shells), -1, -1)
+                         if shells[:depth] in directories)
         paths.extend(redirection_targets(words.redirects, directory))
         index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
         if index is None:
             continue
         arguments = words[index + 1:]
         if shell_reader.is_program(words[index], "cd"):
-            target = arguments[0] if arguments else os.path.expanduser("~")
-            directory = (None if target == "-" or re.search(r"[$`*?\[]", target)
-                         else path_in(directory, target))
-            directories[words.child_shell] = None if directory is None else str(directory)
-        elif shell_reader.is_program(words[index], "cp") or shell_reader.is_program(
-                words[index], "mv"):
+            # The last word, so that an option such as -P is not read as the directory.
+            target = arguments[-1] if arguments else os.path.expanduser("~")
+            directories[shells] = str(path_in(directory, target))
+        elif any(shell_reader.is_program(words[index], name) for name in ("cp", "mv")):
             paths.extend(copy_or_move_targets(arguments, directory))
         elif shell_reader.is_program(words[index], "tee"):
             paths.extend(tee_targets(arguments, directory))
@@ -243,9 +209,7 @@ def main(stdin=sys.stdin):
         return 0
     tool_name = payload.get("tool_name")
     tool_input = payload.get("tool_input") or {}
-    working_directory = payload.get("cwd")
-    if not isinstance(working_directory, str) or not working_directory:
-        working_directory = os.getcwd()
+    working_directory = payload.get("cwd") or os.getcwd()
     if tool_name == "Write":
         file_path = tool_input.get("file_path") or ""
         candidates = [path_in(working_directory, file_path)] if file_path else []
