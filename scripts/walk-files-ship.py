@@ -52,9 +52,10 @@ closes, not only a record kept as first written. The rules are PER FILE:
   APPENDED TO: the walk text, and it alone. A stored walk text whose bytes
     are an exact PREFIX of the local one -- the local file only had content
     added after it -- is replaced instead of refused. A walk text grows as
-    its items are presented, so shipping mid-walk and again at the close is
-    ordinary; refusing the grown file would leave the store holding only the
-    items presented before the first shipment.
+    its items are presented, so a shipment before the close, which WHO CALLS
+    IT allows, followed by the close's own is ordinary; refusing the grown
+    file would leave the store holding only the items presented before the
+    first shipment.
     THE TEST IS THE BYTES, never lines and never a diff: the stored size says
     how many leading bytes of the local file to hash, and they must hash to
     the sha256 the store reported for the whole stored file. Identical bytes
@@ -67,8 +68,8 @@ closes, not only a record kept as first written. The rules are PER FILE:
     overwriting the store with a stale copy, and a stale copy that also grew
     is exactly that. A store listing that reports a digest and no size cannot
     be tested and is refused.
-  REPLACED: the minutes and the dispositions, each on its own. One the
-    store does not hold yet is added, and counted as added on the stdout
+  REPLACED: the minutes and the dispositions, each on its own. A minutes
+    or dispositions file the store does not hold yet is added, and counted as added on the stdout
     line, with no stderr line. A stored copy
     with different bytes is overwritten, and each displaced copy's sha256 is
     announced on its own stderr line, as scripts/seat-shared-file-ship.py
@@ -81,7 +82,7 @@ closes, not only a record kept as first written. The rules are PER FILE:
     announced the same way, on a stderr line of its own. Each such stderr
     line also names the walk in which the user decided the rule that allowed
     the replacement; that walk's walk-minutes are at
-    nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/<that walk's name>-minutes.md.
+    nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/<the walk the stderr line names>-minutes.md.
     The copy passes
     --ignore-times, for the reason rsync_one_file in
     scripts/seat-shared-file-ship.py records:
@@ -137,7 +138,9 @@ never the dispositions': the minutes are the record of the rulings and what a
 resumed walk reads.
 
 WHO CALLS IT. The agent running a walk, when the walk's closing sentence is
-delivered, and again if the walk is reopened and closed. The stdout line
+delivered, and again if the walk is reopened and closed. It may also run
+it before the close, such as before a handoff, so that the store holds the
+walk so far; the close's run then ships the grown files. The stdout line
 ends with the minutes' citation in scp form, which is the link that closing
 sentence wants; OUTPUT says which FAILED lines carry no citation.
 
