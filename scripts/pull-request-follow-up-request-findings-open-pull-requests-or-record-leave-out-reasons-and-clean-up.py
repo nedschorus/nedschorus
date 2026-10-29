@@ -28,7 +28,8 @@ no answer, to judge each against origin/main and either run record-finding-leave
 and run start-topic-branch; and, every finding answered, finish-follow-up-request-and-print-merge-lane-2-message and
 the message to merge-lane-2. The judging and the change stay with the subagent.
 
-start-topic-branch, in the subagent's worktree: refuse a finding that does not exist or already has an answer; git
+start-topic-branch, in the subagent's worktree: refuse a finding that does not exist or already has an answer, and a
+worktree with uncommitted changes to tracked files, which git switch could refuse to carry over; git
 fetch origin and git switch -c <topic-branch> origin/main; then record the branch and the worktree's path in
 TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT, so remove-recorded-topic-branches-and-worktrees can remove them, and
 record under "started" in FINDING_ANSWERS_FILE_NAME_FORMAT that the branch takes on the findings, so next-step and
@@ -379,6 +380,12 @@ def start_topic_branch(number, branch, findings):
         lambda answered: "Each finding takes one answer: run the same command again without "
                          + ("that finding." if len(answered) == 1 else "those findings."))
     worktree = git(".", ["rev-parse", "--show-toplevel"]).strip()
+    # rstrip, not strip: a line git status prints for an unstaged change starts with a space.
+    changed = git(".", ["status", "--porcelain", "--untracked-files=no"]).rstrip("\n")
+    if changed:
+        raise Refused(f"{worktree} has uncommitted changes to tracked files, so no topic branch was made:\n"
+                      f"{changed}\n"
+                      "Commit or remove them, then run the same start-topic-branch command again.")
     branches_file = state_file(states, TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT, number)
     records = read_json(branches_file, [])
     git(".", ["fetch", "origin"], passing=True, timeout_seconds=FETCH_TIMEOUT_SECONDS)

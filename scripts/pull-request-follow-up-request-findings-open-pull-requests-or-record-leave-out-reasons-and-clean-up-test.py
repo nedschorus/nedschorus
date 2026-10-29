@@ -270,6 +270,22 @@ def test_start():
               and git(worktree, "branch", "--show-current") == "topic-two"
               and [record["branch"] for record in case.topic_branches()] == ["topic-one", "topic-two"]
               and case.answers() == {"started": {"1": "topic-two", "2": "topic-two"}}, err)
+        (worktree / "base.txt").write_text("changed\n")
+        (worktree / "untracked.txt").write_text("untracked\n")
+        code, out, err = case.run(worktree, "start-topic-branch", "topic-dirty", "--finding-numbers", "1")
+        check("start refuses a worktree with uncommitted changes to tracked files with exit 1, naming each, "
+              "before making or recording a branch",
+              code == 1 and err == f"REFUSED: {worktree} has uncommitted changes to tracked files, so no topic "
+                                   "branch was made:\n M base.txt\nCommit or remove them, then run the same "
+                                   "start-topic-branch command again.\n"
+              and git(worktree, "branch", "--show-current") == "topic-two"
+              and [record["branch"] for record in case.topic_branches()] == ["topic-one", "topic-two"]
+              and case.answers() == {"started": {"1": "topic-two", "2": "topic-two"}}, err)
+        git(worktree, "checkout", "--", "base.txt")
+        code, out, err = case.run(worktree, "start-topic-branch", "topic-untracked", "--finding-numbers", "1")
+        check("start goes on in a worktree whose only change is an untracked file",
+              code == 0 and git(worktree, "branch", "--show-current") == "topic-untracked", err)
+        (worktree / "untracked.txt").unlink()
         case.run(worktree, "record-finding-leave-out-reason", "2", "--reason", "fixed")
         for label, findings, words in (
                 ("a finding that does not exist", "3", "so there is no finding 3, and no topic branch was made.\n"),
@@ -281,7 +297,7 @@ def test_start():
             code, out, err = case.run(worktree, "start-topic-branch", "topic-four", "--finding-numbers", findings)
             check(f"start refuses {label} with exit 1, before making or recording a branch",
                   code == 1 and words in err and "topic-four" not in git(worktree, "branch")
-                  and len(case.topic_branches()) == 2, err)
+                  and len(case.topic_branches()) == 3, err)
         case.run(worktree, "record-finding-leave-out-reason", "1", "--reason", "fixed too")
         code, out, err = case.run(worktree, "start-topic-branch", "topic-four", "--finding-numbers", "1,2")
         check("start names several answered findings in the plural",
