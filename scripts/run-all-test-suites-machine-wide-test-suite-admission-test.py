@@ -115,9 +115,9 @@ with tempfile.TemporaryDirectory() as scratch_name:
 
     # --- The thresholds -------------------------------------------------------
     for cpu, available, admitted_expected, label in (
-            (49.9, 10 * GB + 1, True, "CPU just under 50% and memory just above 10 GB"),
-            (50.0, 40 * GB, False, "CPU at 50%"),
-            (80.0, 40 * GB, False, "CPU above 50%"),
+            (54.9, 10 * GB + 1, True, "CPU just under 55% and memory just above 10 GB"),
+            (55.0, 40 * GB, False, "CPU at 55%"),
+            (80.0, 40 * GB, False, "CPU above 55%"),
             (10.0, 10 * GB, False, "available memory at 10 GB"),
             (10.0, 2 * GB, False, "available memory below 10 GB")):
         directory = scratch / f"thresholds-{cpu}-{available}"
@@ -136,7 +136,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
               (waited == 0) == admitted_expected, (waited, said))
         if not admitted_expected:
             check(f"the run says what its suite waits for at {label}",
-                  said and ("CPU" in said[0] if cpu >= 50 else "memory" in said[0]), said)
+                  said and ("CPU" in said[0] if cpu >= 55 else "memory" in said[0]), said)
 
     # --- The ceiling of suites at once --------------------------------------
     directory = scratch / "ceiling"
