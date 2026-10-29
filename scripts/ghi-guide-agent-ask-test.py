@@ -1145,6 +1145,7 @@ with tempfile.TemporaryDirectory() as temporary:
                 plain_exit_code = ghi_ask.main(["a short question"])
         finally:
             patch("DEFAULT_SEAT_DIR", seat_orig)
+            ghi_ask.subprocess.run = subprocess_run_orig
         check("off the box, a question given as an argument still rides the "
               "remote command, with nothing on stdin",
               plain_exit_code == 0 and remote.get("input") is None
@@ -1197,6 +1198,7 @@ with tempfile.TemporaryDirectory() as temporary:
                       (exit_code, hint[-500:]))
         finally:
             patch("DEFAULT_SEAT_DIR", seat_orig)
+            ghi_ask.subprocess.run = subprocess_run_orig
 
         # Off the box, an ssh call that times out or cannot start is reported
         # as the ssh call failing, naming the machine, never as the machine
@@ -1228,8 +1230,64 @@ with tempfile.TemporaryDirectory() as temporary:
                       (exit_code, caller_error.getvalue()))
         finally:
             patch("DEFAULT_SEAT_DIR", seat_orig)
+            ghi_ask.subprocess.run = subprocess_run_orig
     finally:
         patch("ask", ask_orig)
+
+
+# --- the seat directory, state file and state key, unpatched ----------------
+# Every case above patches DEFAULT_SEAT_DIR or reads STATE_FILE_NAME and the
+# state key back from the module, so a changed value would pass them all.
+# These cases hold each value to what lies outside this program: the seat the
+# box-side shell enters, the .gitignore entries, and state files already on disk.
+import subprocess as real_subprocess
+
+with tempfile.TemporaryDirectory() as home:
+    environment = {key: value for key, value in os.environ.items()
+                   if key != "NEDSCHORUS_AGENTS_ROOT"}
+    environment["HOME"] = home
+    import_and_print_default_seat_dir = (
+        "import importlib.util, sys\n"
+        "spec = importlib.util.spec_from_file_location('ask', sys.argv[1])\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(module)\n"
+        "print(module.DEFAULT_SEAT_DIR)\n")
+    local = real_subprocess.run(
+        [sys.executable, "-c", import_and_print_default_seat_dir, str(SCRIPT_PATH)],
+        capture_output=True, text=True, env=environment, check=False, timeout=60)
+    seat_line = ghi_ask.build_remote_command("q", False, "x/y").splitlines()[0]
+    box_side = real_subprocess.run(
+        ["/bin/sh", "-c", seat_line + '\nprintf %s "$seat"'],
+        capture_output=True, text=True, env=environment, check=False, timeout=60)
+    check("with no agents-root variable, the default seat directory is the one "
+          "the box-side shell enters, so an ask on ned-box runs in the seat "
+          "an ask over ssh would reach",
+          local.returncode == 0 and box_side.returncode == 0
+          and local.stdout.strip() == box_side.stdout
+          and box_side.stdout.startswith(home + "/"),
+          (local, box_side))
+
+repository_root = SCRIPT_PATH.resolve().parent.parent
+for file_name in (ghi_ask.STATE_FILE_NAME, ghi_ask.LOCK_FILE_NAME,
+                  ghi_ask.STATE_FILE_NAME + ".tmp"):
+    ignored = real_subprocess.run(
+        ["git", "-C", str(repository_root), "check-ignore", "-q", file_name],
+        capture_output=True, text=True, check=False, timeout=60)
+    check(f".gitignore ignores {file_name}, so it never shows as an untracked "
+          "file in the seat's checkout",
+          ignored.returncode == 0, (ignored.returncode, ignored.stderr))
+
+with tempfile.TemporaryDirectory() as directory:
+    seat = Path(directory)
+    (seat / ".ghi-guide-agent-state.json").write_text(
+        json.dumps({"ghi_guide_agent_session_id": "sess-ON-DISK",
+                    "closes_since_birth": 2, "recent_matches": []}) + "\n",
+        encoding="utf-8")
+    on_disk = ghi_ask.load_state(seat / ghi_ask.STATE_FILE_NAME)
+    check("a state file the deployed ask script wrote is found and keeps its "
+          "session, so the seat resumes rather than cold-starting",
+          on_disk[ghi_ask.GHI_GUIDE_AGENT_SESSION_ID_STATE_KEY] == "sess-ON-DISK"
+          and on_disk["closes_since_birth"] == 2, on_disk)
 
 
 print()
