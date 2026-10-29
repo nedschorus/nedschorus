@@ -14,9 +14,11 @@ import fcntl
 import importlib.util
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
@@ -333,6 +335,31 @@ def run_cases():
               and fixture.state_json()["last_tested_main_commit"] == start,
               f"rc={completed.returncode} err={completed.stderr}")
 
+    # A run stopped after one survivor's task is opened keeps that task in the state, so the
+    # next run, which tries the merge again, opens no second task for it.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n", author="alpha")
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        merge = fixture.commit("scripts/thing.py",
+                               "def double(x):\n    return x + x\nVALUE = 1\n", author="nobody")
+        alpha_list = fixture.seat("alpha")
+        plan = {merge: {"json": verdict(survived=[survivor(), survivor(3, "core/NumberReplacer")])}}
+        completed = fixture.run(plan)
+        check("a run stopped at the second survivor's task records the first task in the state",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and task_files(alpha_list) == ["1.json"]
+              and list(fixture.state_json()["tasks_opened"].values())
+              == [{"agent_seat": "alpha", "task_id": 1}]
+              and fixture.state_json()["last_tested_main_commit"] == start,
+              (completed.returncode, task_files(alpha_list), fixture.state_json()))
+        fixture.seat(job.SURVIVOR_TASK_AGENT_SEAT_WHEN_LINE_AUTHOR_IS_RETIRED_OR_UNKNOWN)
+        completed = fixture.run(plan)
+        check("the next run opens no second task for the first survivor",
+              completed.returncode == 0 and task_files(alpha_list) == ["1.json"],
+              (completed.returncode, task_files(alpha_list), completed.stderr))
+
     # A state file that cannot be read, or names a commit not on origin/main.
     with tempfile.TemporaryDirectory() as scratch:
         fixture = Fixture(scratch)
@@ -416,23 +443,37 @@ def run_cases():
               and "FAILED: [Errno 21] Is a directory" in fixture.records()[0].read_text(),
               f"rc={completed.returncode} err={completed.stderr}")
 
-    # A mutation testing program that ignores SIGTERM at the limit is killed.
+    # A mutation testing program that ignores SIGTERM at the limit is killed. It would sleep
+    # an hour, so without the kill run_mutation_testing() would not return within the bound; the
+    # program writes its pid so the test can kill it itself then, instead of hanging.
     with tempfile.TemporaryDirectory() as scratch:
         program = Path(scratch) / "ignores-sigterm.py"
-        program.write_text("import signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-                           "print('still going', flush=True)\ntime.sleep(60)\n")
+        pid_file = Path(scratch) / "pid"
+        program.write_text("import os, signal, sys, time\n"
+                           "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                           f"open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
+                           "print('still going', flush=True)\ntime.sleep(3600)\n")
         arguments = job.parse_arguments(["--mutation-testing-program", str(program),
                                          "--merge-timeout-seconds", "1"])
         cleanup_seconds = job.SECONDS_FOR_MUTATION_TESTING_PROGRAM_TO_CLEAN_UP_AFTER_SIGTERM
         job.SECONDS_FOR_MUTATION_TESTING_PROGRAM_TO_CLEAN_UP_AFTER_SIGTERM = 1
+        result = []
+        runner = threading.Thread(target=lambda: result.append(job.run_mutation_testing(
+            arguments, "a" * 40, "b" * 40, Path(scratch) / "out.json")), daemon=True)
         try:
-            exit_code, stdout, _ = job.run_mutation_testing(arguments, "a" * 40, "b" * 40,
-                                                            Path(scratch) / "out.json")
+            runner.start()
+            runner.join(timeout=60)
         finally:
             job.SECONDS_FOR_MUTATION_TESTING_PROGRAM_TO_CLEAN_UP_AFTER_SIGTERM = cleanup_seconds
+        returned_within_bound = not runner.is_alive()
+        if not returned_within_bound and pid_file.exists():
+            os.kill(int(pid_file.read_text()), signal.SIGKILL)
+            runner.join(timeout=30)
+        exit_code, stdout, _ = result[0] if result else ("no result", "", "")
         check("a mutation testing program still running after SIGTERM and the time to clean up "
               "is killed, and reported as past the limit with its output kept",
-              exit_code is None and "still going" in stdout, (exit_code, stdout))
+              returned_within_bound and exit_code is None and "still going" in stdout,
+              (returned_within_bound, exit_code, stdout))
 
     # agent_seat_task_list_new_pending_task_write: a task file Claude Code wrote under the chosen id at the same moment is kept.
     with tempfile.TemporaryDirectory() as scratch:

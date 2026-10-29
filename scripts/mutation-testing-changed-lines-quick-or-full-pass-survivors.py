@@ -27,7 +27,8 @@ that are failure-handling code: an `except` clause, and an `if` statement,
 or attribute named `returncode`, or ending in `exit_code` or `exit_status`),
 each from its first line to its last. A changed file with no changed line of
 failure-handling code is not mutated, and is printed as NO FAILURE-HANDLING
-CHANGE. Its mutants are tested with the full mutation pass's suites less the
+CHANGE. The quick mutation pass's mutants are tested with the full mutation
+pass's suites less the
 repository-wide checks, which check one rule across a whole class of the
 repository's files and are listed in REPOSITORY_WIDE_CHECKS, and less
 every suite whose recorded inputs read every Python file git tracked at the

@@ -329,7 +329,9 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
             f"limit of {arguments.merge_timeout_seconds:g} s and was stopped; its last line: "
             f"{said}. The next run tries this merge again.\n"
             f"If it runs past the limit again, run it by hand on ned-box to see how long it "
-            f"takes: {command_shown}")
+            f"takes: {command_shown}\n"
+            f"If it finishes, raise DEFAULT_MERGE_TIMEOUT_SECONDS in scripts/{PROGRAM}.py above "
+            f"that time, in a pull request; until then this merge stops every run.")
     if exit_code not in MUTATION_TESTING_EXITS_WITH_A_VERDICT:
         raise StepFailed(
             f"merge {merge[:12]} ({merge_subject}): the mutation testing program exited "
@@ -461,8 +463,8 @@ def main_under_lock(arguments):
                 raise StepFailed(
                     f"the last tested commit {last}, from {state_file}, is not an ancestor of "
                     f"origin/main {main_commit}, so the merges since it cannot be listed.\n"
-                    f"Set last_tested_main_commit in that file to the commit on origin/main "
-                    f"from which merges should be tested, then run this program again on ned-box: {RUN_BY_HAND}")
+                    f"Set last_tested_main_commit in that file to the last commit on origin/main "
+                    f"already mutation-tested; the merges after it are tested. Then run this program again on ned-box: {RUN_BY_HAND}")
             merges = git_or_raise(arguments.clone, "rev-list", "--first-parent", "--reverse",
                                   f"{last}..{main_commit}").split()
             if merges and not (arguments.cosmic_ray_venv / "bin" / "cosmic-ray").is_file():
