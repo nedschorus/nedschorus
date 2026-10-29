@@ -1,5 +1,6 @@
 ---
 issue: "[The pull request head test run takes its suite sandbox lists from main instead of the merged tree it tests](https://github.com/nedschorus/nedschorus/issues/1660)"
+kind: design
 ---
 
 # The pull request head test run takes its suite sandbox lists from main instead of the merged tree it tests

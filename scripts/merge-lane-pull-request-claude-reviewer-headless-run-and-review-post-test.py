@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Tests for merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py.
 
-Real git in a scratch directory: a repository whose head commit is checked
-out, detached, as wt/pr7-head under a scratch worktrees and outputs directory,
+Real git in a scratch directory: a repository whose nc-head-commit is checked
+out, detached, as wt/pr7-head under a scratch review worktrees directory,
 as step 1 builds it, with the brief step 2 writes beside it. A stand-in claude
 and a stand-in gh go first on PATH, and HOME holds a mac-claude token file, so
 no case runs a model or reaches GitHub. The stand-in claude logs its
@@ -237,6 +237,7 @@ class Case:
     def command(self, tag, head, options):
         return [sys.executable, str(PROGRAM), "7", tag, head or self.head, *options,
                 "--merge-lane-worktrees-and-outputs-directory", str(self.helpers),
+                "--merge-lane-review-worktrees-directory", str(self.helpers / "wt"),
                 "--review-tools-worktree-at-main", str(self.helpers / "wt" / "main")]
 
     def run(self, mode="valid", *options, tag="7a", head=None, **environment):
@@ -534,9 +535,9 @@ def main():
               lambda: case.code == 2 and not case.claude_calls, case.detail)
         case = Case(scratch)
         case.run("valid", head="0" * 40)
-        check("a head worktree not at the head commit refuses with exit 2 before the reviewer runs",
+        check("a head worktree not at the nc-head-commit refuses with exit 2 before the reviewer runs",
               lambda: case.code == 2 and not case.claude_calls
-              and "is not at the head commit" in case.stdout, case.detail)
+              and "is not at the nc-head-commit" in case.stdout, case.detail)
 
         def schema_matches_the_step():
             schema = json.loads(SCHEMA.read_text())

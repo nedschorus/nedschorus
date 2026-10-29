@@ -1,6 +1,6 @@
 ---
 issue: "[Build ghi-info — the GHI knowledge agent](https://github.com/nedschorus/nedschorus/issues/46)"
-status: design
+kind: design
 design-as-of: 2026-08-11
 ---
 
@@ -20,7 +20,18 @@ Issue [Build ghi-info — the GHI knowledge agent](https://github.com/nedschorus
 - **The write tool:** `scripts/ghi-issue-write.py`, with its create and edit operations. It has no comment operation: the user ruled on 2026-09-24 that agents write no issue comments.
 - **The redirect hook:** `.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py`. It refuses a hand-typed write rather than rewriting it into the tool as § The GHI write path describes; its docstring says why.
 - **The corpus migration:** done 2026-09-27, when every open issue's body became the links to its files (by a one-time migration program, deleted once the migration finished).
-- **Not built:** the maintenance sweep and fixer spawning (§ Maintenance and fixers).
+- **Not built:** the maintenance sweep and fixer spawning (§ Maintenance and fixers); the decisions in § Decided and not yet built; the refresh's second feed and each entry's activity-relative freshness (§ The GHI mirror); the killed-ask message that tells the asker to ask with fewer tasks (§ The ask path); and the rule for reading a GHI-MD in the `ghi-write` skill (§ The GHI write path).
+
+## Decided and not yet built
+
+The user ruled these on 2026-10-20 and confirmed them on 2026-10-28. None of them is built. Today's `scripts/ghi-info-ask.py` starts a throwaway agent-session of its own for an ask that finds another ask running, and its cold-start prompt tells ghi-info to answer from the mirror only, so ghi-info reads neither the files an issue links to nor its proposed-improvements-or-changes-files. The mirror already holds no copy of either: today's `scripts/ghi-mirror-refresh.py` writes each open issue's body, which is the links to its files, and its comments.
+
+1. **No ask waits.** When two asks arrive together, each runs in a fork of ghi-info's stored agent-session (§ The ask path, step 2).
+2. **ghi-info reads each issue's GHI-MD text from its own agent-home, `~/agents/ghi-info`, a checkout of the repository.** The mirror holds no copy (§ The GHI mirror).
+3. **ghi-info reads its earlier proposed-improvements-or-changes-files about each issue in the log-store.** These are the files in which its questions about the user's rulings are recorded. The mirror holds no copy (§ The GHI mirror).
+4. **The stored agent-session holds the current state of every open GHI, refreshed by script at most 10 minutes behind** (§ The GHI mirror, Refresh cadence).
+5. **A linked file of at most 16,000 characters is read whole; a longer one up to its first second-level heading plus its headings, the rest on demand** (§ The GHI mirror).
+6. **The mirror shows the 18 old ruling-question comments as one line each, and each mirror entry's time is the later of GitHub's updated time and its files' last commit on main** (§ The GHI mirror).
 
 Build considerations beyond this design: the md-review rider, item 9 of `git show ad2c5156:md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md`. § Verify at build lists the assumptions to test, each with its failure branch.
 
@@ -32,21 +43,23 @@ The first build of the domain-knowledge-agent class defined in [26-dynamic-agent
 2. **Maintain.** Cross-links between issues, and link integrity across the issue–MD boundary in both directions: every GHI→MD reference resolves on main; every GHI-MD backlinks its correct GHI(s). Link repairs are `ghi-info`'s own writes — its only write class. Detected problems beyond links — a GHI-MD stale relative to its issue, a body over the length limit — spawn fixers (§ Maintenance and fixers).
 3. **Adjudicate writes.** The write tool consults `ghi-info` with the draft's title and the text of its GHI-MD — plus, for edits, the target issue number, which is excluded from the comparison. The reply is one line: `verdict: too-similar #n` / `related #n,#m` / `unrelated`. A malformed reply is treated as unavailable (fail-open). From the verdict the tool composes the author-facing reply: **too-similar** (duplicate, overlapping, conflicting) — the write is refused with a merge instruction: read #n, then merge this content into it by editing it; **related but compatible** — the write proceeds, and the reply names the GHIs to become familiar with; **unrelated** — plain success.
 
-Out of scope: routing (queue vs GHI vs pair vs bare MD — `ghi-write`'s judgment; terms defined in [nedschorus-ai-native-software-development.md](../wiki/nedschorus-ai-native-software-development-objective.md) § Project organization); authoring issue or MD substance; anything beyond the issue corpus — asked about the wiki or the code, it returns a fixed `out-of-scope` reply. Whether an old ruling still binds is never `ghi-info`'s to decide. Its reply names the ruling and the doubt (`escalate:`), and the question travels up the chain unswallowed: the caller resolves it if it can, and otherwise it lands as one `queue-drain-candidate`-labeled issue — the same escalation surface as a blocked fix — for whoever can attend to it, agent or human.
+Out of scope: routing (queue vs GHI vs pair vs bare MD — `ghi-write`'s judgment; terms defined in [nedschorus-ai-native-software-development-objective.md](../nedschorus-wiki/nedschorus-ai-native-software-development-objective.md) § Project organization); authoring issue or MD substance; anything beyond the issue corpus — asked about the wiki or the code, it returns a fixed `not-about-issues` reply. Whether an old ruling still binds is never `ghi-info`'s to decide. Its reply names the ruling and the doubt (`ask-user-about-ruling:`), and the question travels up the chain unswallowed: `scripts/ghi-info-ask.py` tells the caller that ghi-info found a ruling of the user's that it cannot tell still applies. If the caller files or edits the GHI, `scripts/ghi-issue-write.py` records the question in the log-store on ned-box and tells the caller to dispatch a subagent to settle the question; otherwise the caller asks the user whether that ruling still applies and puts the question on its task list.
 
 ## The GHI mirror (ghi-mirror)
 
 `<checkout>/ghi-mirror/`, gitignored; regenerated by `scripts/ghi-mirror-refresh.py` on any machine. The authoritative copy lives in `ghi-info`'s checkout on the box. GitHub is the source of truth; the mirror is derived data.
 
-Two files, split by state: `issues-open.md` — every open issue near-raw (number, title, labels, updated time, the text of its paired GHI-MDs, comments); `issues-closed.md` — one line per closed issue: number, title, close reason, closed date.
+Two files, split by state: `issues-open.md` — every open issue near-raw (number, title, labels, updated time, body, comments, with the 18 old ruling-question comments shown as one line each); `issues-closed.md` — one line per closed issue: number, title, close reason, closed date.
 
-**Under link-only-GHI an open issue's body is a list of links, so the mirror inlines what they point at.** `render_open` writes the text of each of the issue's GHI-MDs in place of the body it used to write, and the agent, its prompts and its rules are untouched. It inlines the issue's GHI-MDs and stops: a link found inside a file is not followed, or the mirror becomes the transitive closure of everything the corpus cites and has no edge. A closed issue's files are never inlined — forgetting closed work is what the two-file split is for (user-ruled 2026-09-19). Measured 2026-09-19: the 23 GHI-MDs of open issues are 565,000 characters, the 81 open bodies 321,000, and a mirror inlining files for all 81 open issues about 810,000 characters, near 200,000 tokens. This is the § Deliberately not in version 1 position that the context window is the database; its regrowth trigger is unchanged. When the corpus does outgrow the window, the shape is several `ghi-info` agents each holding a slice, asked in parallel and their answers combined; older slices change rarely, so most refreshes touch one (user-proposed 2026-09-19, recorded not built). Routine relatedness checks grep the open file; the closed file joins the search for an absence claim (a "no issue covers X" receipt is invalid unless both files were searched) or an explicit precedent hunt.
+**Under link-only-GHI an open issue's body is a list of links, and ghi-info reads the files they point at from its agent-home.** Those files are the issue's GHI-MD and any supporting documents in the repository that the body links to. The mirror holds no copy of any of them. `scripts/ghi-info-ask.py` fast-forwards ghi-info's agent-home to origin/main before each ask, so the text ghi-info reads is main's; when the fast-forward fails, the ask goes ahead on what the agent-home holds. A file of at most 16,000 characters is read whole, a longer one up to its first second-level heading plus its headings, the rest on demand. ghi-info reads the files the body links to and stops: a link found inside a file is not followed, or what ghi-info reads becomes the transitive closure of everything the corpus cites and has no edge. A closed issue's files are never read — forgetting closed work is what the two-file split is for (user-ruled 2026-09-19). Measured 2026-09-19: the 23 GHI-MDs of open issues are 565,000 characters, the 81 open bodies 321,000, and the mirror together with the files of all 81 open issues about 810,000 characters, near 200,000 tokens. This is the § Deliberately not in version 1 position that the context window is the database; its regrowth trigger is unchanged. When the corpus does outgrow the window, the shape is several `ghi-info` agents each holding a slice, asked in parallel and their answers combined; older slices change rarely, so most refreshes touch one (user-proposed 2026-09-19, recorded not built). Routine relatedness checks grep the open file; the closed file joins the search for an absence claim (a "no issue covers X" receipt is invalid unless both files were searched) or an explicit precedent hunt.
 
-**Refresh cadence.** Per ask: a delta — one `updated:>` query against the mirror's newest entry re-fetches changed issues, moving entries between files on state change; comments are fetched only for changed issues (one call per issue). At every session reincarnation the mirror is rewritten whole from a full fetch: anything the delta cannot see — a deletion, a same-second boundary clip — is purged then, so delta blind spots are bounded by the reincarnation cadence. Mirror writes go temp-then-rename, so concurrent refreshes are safe. Measured 2026-08-07 against the live repo: a full pull of all 45 issues with bodies took 0.82 s; `updated:>` returned exactly the issues touched since a timestamp.
+**ghi-info reads its earlier proposed-improvements-or-changes-files about an issue in the log-store.** When ghi-info answers a draft with a question about a ruling of the user's, `scripts/ghi-issue-write.py` writes the question to a proposed-improvements-or-changes-file in the log-store directory `nedlern@ned-box:/home/nedlern/nedschorus-logs/ghi-info-proposed-improvements-or-changes/`, named for the GHI-MD. ghi-info, which runs on ned-box, reads the proposed-improvements-or-changes-files about an issue there; the mirror holds no copy of them.
+
+**Refresh cadence.** The stored agent-session holds the current state of every open GHI, refreshed by script at most 10 minutes behind. Per ask: a delta — one `updated:>` query against the mirror's newest entry re-fetches changed issues, moving entries between files on state change; comments are fetched only for changed issues (one call per issue). At every session reincarnation the mirror is rewritten whole from a full fetch: anything the delta cannot see — a deletion, a same-second boundary clip — is purged then, so delta blind spots are bounded by the reincarnation cadence. Mirror writes go temp-then-rename, so concurrent refreshes are safe. Measured 2026-08-07 against the live repo: a full pull of all 45 issues with bodies took 0.82 s; `updated:>` returned exactly the issues touched since a timestamp.
 
 **The second feed:** the refresh fetches origin and reads `git log origin/main` — pair-MD edits touch no issue timestamp, and they enter the corpus when they land on main.
 
-**Currency.** Each entry carries its updated time plus an activity-relative freshness — project events since this issue last moved; activity, not calendar time, is the aging clock. Supersession is the marker literal `Superseded-by: #<n>`, written at change time by the author who knows. The sweep greps the marker and verifies its targets; detecting *unmarked* same-ground pairs is similarity judgment, which belongs to `ghi-info` — the write-time adjudication catches new instances.
+**Currency.** Each entry carries its time, the later of GitHub's updated time and its files' last commit on main, plus an activity-relative freshness — project events since this issue last moved; activity, not calendar time, is the aging clock. Supersession is the marker literal `Superseded-by: #<n>`, written at change time by the author who knows. The sweep greps the marker and verifies its targets; detecting *unmarked* same-ground pairs is similarity judgment, which belongs to `ghi-info` — the write-time adjudication catches new instances.
 
 ## The ghi-info session
 
@@ -54,16 +67,16 @@ Two files, split by state: `issues-open.md` — every open issue near-raw (numbe
 
 **Lifecycle:** active while taking a turn, otherwise exited — a session id, transcript, and the mirror persist; no process does. No idle state exists for this class.
 
-**Context:** a cold start loads `issues-open.md` whole; closed issues enter a turn only by grep. A resumed session's context drifts — the mirror refreshes every turn, but entries loaded earlier stay in context, and the agent cannot reliably notice on its own; the wrapper notices for it (§ The ask path). Reincarnation fires on the first of three script-observable triggers: closes since session birth, the stale-match rate, transcript size. Reincarnation errs eager: an eager reincarnation costs one cheap reload; a lazy one costs silently wrong answers.
+**Context:** a cold start loads `issues-open.md` whole, and the files its open issues link to, from the agent-home; closed issues enter a turn only by grep. A resumed session's context drifts — the mirror refreshes every turn, but entries loaded earlier stay in context, and the agent cannot reliably notice on its own; the wrapper notices for it (§ The ask path). Reincarnation fires on the first of three script-observable triggers: closes since session birth, the stale-match rate, transcript size. Reincarnation errs eager: an eager reincarnation costs one cheap reload; a lazy one costs silently wrong answers.
 
 ## The ask path (ghi-info-ask)
 
 `scripts/ghi-info-ask.py`, run by any agent — and by `ghi-write` step 1. The write tool's adjudication consult rides this same wrapper (user-ruled 2026-08-11): one stored session, one refresh-and-resume machinery, every request form riding it (reading-list asks, adjudication consults, link-repair requests). In order:
 
 1. Run the mirror refresh (delta).
-2. Resume the stored session; cold-start when none exists or a reincarnation trigger has fired. If another ask holds the session, cold-start a throwaway session instead — nothing waits, nothing shares a transcript.
+2. Run the ask in a fork of the stored session: `claude -p --resume <stored session> --fork-session`. The fork starts with the stored session's whole context, answers the ask, takes step 4's drift notice when there is one, and is then discarded, so the stored session is left as it was. Every ask gets a fork of its own, so when two asks arrive together neither waits for the other, and no two share a transcript. Cold-start the stored session first when none exists or a reincarnation trigger has fired.
 3. Prompt: the question — plus, on resume, the changed-issue numbers with the instruction to re-read those entries from the mirror before answering. `--include-closed` marks a deliberate closed-history question (precedent, absence): `ghi-info` greps the closed file, and closed pointers are expected.
-4. Post-check: every returned pointer is verified against the mirror — plain script work; the fact is established here, never by the agent. An unexpected closed pointer triggers one drift notice back to `ghi-info`, carrying the fact and asking only for a judgment redo: "#31 closed on <date> — the mirror is current; re-read its entry in `issues-closed.md`, including any `Superseded-by:` link, and give a corrected reading list." One recheck per ask; the agent reads only mirror files and never calls GitHub. Whatever remains is delivered with truthful tags ("#31 (closed 2026-08-08)"); note lines are plain sentences. Replies that are not reading lists — `escalate:`, `out-of-scope` — pass through to the caller verbatim; the caller owns the escalation and must not swallow it. Unexpected closed pointers count toward the stale-match trigger; expected ones do not.
+4. Post-check: every returned pointer is verified against the mirror — plain script work; the fact is established here, never by the agent. An unexpected closed pointer triggers one drift notice back to the fork that gave the reply, carrying the fact and asking only for a judgment redo: "#31 closed on <date> — the mirror is current; re-read its entry in `issues-closed.md`, including any `Superseded-by:` link, and give a corrected reading list." One recheck per ask; the agent reads only the mirror, the files its open issues link to in its agent-home and its proposed-improvements-or-changes-files in the log-store, and never calls GitHub. Whatever remains is delivered with truthful tags ("#31 (closed 2026-08-08)"); note lines are plain sentences. Replies that are not reading lists — `ask-user-about-ruling:`, `not-about-issues` — pass through to the caller verbatim; the caller owns the escalation and must not swallow it. Unexpected closed pointers count toward the stale-match trigger; expected ones do not.
 5. Print the list.
 
 One overall timeout (inside the hook budget); a killed run is a named failure. Auth is the box's two credentials — its `gh` login and its long-lived Claude token (interactive logins expire unattended). Precedent: nedsmessenger runs this pattern live (`~/Projects/nedsmessenger/adapter/adapter.py`, `ask_claude` — headless `claude -p --resume`, answer off the exit stream; NM runs three watchdogs where version 1 here starts with one timeout).
@@ -86,7 +99,7 @@ GHI authors write with `gh` as trained for create, edit, and close; comments are
 
 **The sequence is resumable.** Steps 3 to 5 are three separate remote operations and any of them can fail. Run again on the same file and the tool finds the issue it already created, from the pairing it recorded at step 3, and continues from the step that failed. It never files a second issue for one file.
 
-The tool is a script, not the `ghi-info` agent: it calls the agent once, at step 2, and does every other step itself. It runs in the agent's checkout on ned-box, re-executing over ssh when called from the Mac, as `scripts/ghi-info-ask.py` already does, and the file's content travels with the call the way an ask's question does. Before any write it fetches and fast-forwards; a dirty checkout, or one that will not fast-forward, refuses the write. A read may fall back to stale disk; a write never does.
+The tool is a script, not the `ghi-info` agent: it calls the agent once, at step 2, and does every other step itself. It runs from the author's own checkout, on either machine, and does its git work in a throwaway worktree cut from a just-fetched origin/main and removed afterwards (user-ruled 2026-09-20), so a write cannot run against stale or dirty disk. Only step 2's consult, through `scripts/ghi-info-ask.py`, and the recording of a ruling question in the log-store reach ned-box. A read may fall back to stale disk; a write never does.
 
 **Editing an issue** is editing its GHI-MD, through `scripts/ghi-issue-write.py edit <path>`. No author ever writes an issue body. The tool rewrites it from the pairing whenever the file set changes — a file added, a file moved into its system's directory when code starts — and leaves it alone otherwise. The change lands through the tool's pull request; the tool refuses on conflict, under the 2026-09-08 ruling — no retry, no lock, no merge; show the diff and hand it back. The tool absorbs that guard (user-ruled 2026-09-15). When the edit changes the file's first heading, the tool updates the issue's title to match, which is a title-only edit and passes the hook.
 
@@ -96,7 +109,7 @@ The tool is a script, not the `ghi-info` agent: it calls the agent once, at step
 
 Accepted residual: an issue can change between verdict and write.
 
-**Comments:** `gh issue comment` — and `close --comment` — are denied with a teaching reply: a comment cannot be mechanically rewritten into the body edit the revision convention requires ([nedschorus-ai-native-software-development.md](../wiki/nedschorus-ai-native-software-development-objective.md) § Project organization) — where the content lands, and what it supersedes, only the author knows. The reply teaches both paths: integrate into the body by edit, or resubmit through the tool's comment verb naming an event kind from the fixed catalog (instance outcome, ruling challenge; growth only by explicit ruling; "completion" is not a comment event — it collapsed into close-with-reason plus the body edit recording the outcome, user-ruled 2026-08-12). One lost turn per attempt, accepted.
+**Comments:** `gh issue comment` — and `close --comment` — are denied with a teaching reply: a comment cannot be mechanically rewritten into the body edit the revision convention requires ([nedschorus-ai-native-software-development-objective.md](../nedschorus-wiki/nedschorus-ai-native-software-development-objective.md) § Project organization) — where the content lands, and what it supersedes, only the author knows. The reply teaches one path: record the content in the issue's GHI-MD and land it with `scripts/ghi-issue-write.py edit`; the tool has no comment operation (user-ruled 2026-09-24). A completion is recorded the same way, then the issue is closed with its reason (user-ruled 2026-08-12). One lost turn per attempt, accepted.
 
 **Close** is a state change with a reason (completed / not planned); plain `close` and `reopen` pass the hook untouched and the delta feed carries them. **Non-body edits** (labels, title-only, milestones) pass through — accepted residual: a rename could disguise a duplicate. **Delete** is denied — close instead; the record is append-forward.
 
@@ -151,16 +164,17 @@ Every prompt this design depends on, verbatim (user-ruled 2026-08-09/11): a prom
 
 ### Cold-start prompt (ghi-info session birth)
 
-Delivered as the first prompt of a fresh session — cold start fires when no stored session exists or a reincarnation trigger has fired (ghi-info-ask step 2). The ask itself follows, worded per the resume-ask prompt. `<mirror-path>` is wrapper-filled.
+Delivered as the first prompt of a fresh session — cold start fires when no stored session exists or a reincarnation trigger has fired (ghi-info-ask step 2). The ask itself follows, worded per the resume-ask prompt. `<mirror-path>` and `<question-files-path>` are wrapper-filled.
 
 > You are ghi-info: this project's knowledge agent over its GitHub-issue corpus. Other agents send you one request at a time; you answer it from the corpus you hold in context and stop. You are the judgment layer — every mechanical fact (fetching, counting, verifying) is script work done for you before a request reaches you.
 >
-> You run inside a checkout of the project repository; your knowledge is the local mirror in it at \<mirror-path\>, regenerated by script and refreshed before every request:
+> You run inside a checkout of the project repository, which a script tries to bring up to date with its main branch before every request; when it cannot, the checkout may hold older text. Your knowledge is the local mirror in it at \<mirror-path\>, regenerated by script and refreshed before every request, the files its open issues link to, and your earlier questions:
 >
-> - issues-open.md — every open issue in full: number, title, labels, updated time, body, comments. Read this file whole now, before anything else.
+> - issues-open.md — every open issue: number, title, labels, updated time, body, comments. An issue's body is the links to its files. Read this file whole now, before anything else; then read, from this checkout, each file an open issue's body links to. Read a file of at most 16,000 characters whole; of a longer one, read up to its first second-level heading and its headings, and the rest when a request needs it. Do not follow a link found inside one of those files.
 > - issues-closed.md — one line per closed issue. Do not load it whole; grep it only when a request asks about closed history.
+> - \<question-files-path\> — the questions you raised earlier about the user's rulings, each in a file named for the GHI-MD it is about. Read the files about an issue before you answer a request about that issue.
 >
-> GitHub is the source of truth; the mirror is your working copy of it. Answer from the mirror only — never fetch issue state from GitHub (no gh queries, no API, no web). The facts a request states are already established by script; your job is only the judgment.
+> GitHub is the source of truth; the mirror is your working copy of it. Answer from these files only — never fetch issue state from GitHub (no gh queries, no API, no web). The facts a request states are already established by script; your job is only the judgment.
 >
 > Requests arrive in four forms:
 >
@@ -171,9 +185,9 @@ Delivered as the first prompt of a fresh session — cold start fires when no st
 >
 > Boundaries:
 >
-> - Asked a question about anything beyond the issue corpus — the wiki, the code, anything else — reply exactly: out-of-scope.
-> - Whether an old ruling still binds is never yours to judge. Reply: escalate: \<one sentence naming the ruling and the doubt\>.
-> - These boundary replies apply to questions. A draft-body request always gets a verdict line — conflict with a ruled issue is exactly what too-similar covers. A question beyond the corpus gets out-of-scope even when it touches a ruling.
+> - Asked a question about anything beyond the issue corpus — the wiki, the code, anything else — reply exactly: not-about-issues.
+> - Whether an old ruling still binds is never yours to judge. Reply: ask-user-about-ruling: #\<issue\> \<one sentence naming the ruling and the doubt\>, where #\<issue\> is the issue that holds the ruling. Every ruling question starts with that issue number.
+> - These boundary replies apply to questions. A draft-body request always gets a verdict line — conflict with a ruled issue is exactly what too-similar covers. A question beyond the corpus gets not-about-issues even when it touches a ruling.
 
 ### Resume ask prompt (ghi-info-ask step 3)
 
@@ -183,11 +197,13 @@ Sent on every reading-list request. On a fresh session it follows the cold-start
 >
 > You are asked for a reading list. \<the asker's question, relayed verbatim, e.g.: An agent is about to file an issue proposing a retry policy for the launch scripts. What should it read first?\>
 >
+> If the question describes a plan, also name any issue whose design built something the plan should reuse instead of building its own.
+>
 > \<only with --include-closed:\> Closed history is wanted for this request: grep issues-closed.md as well; closed pointers are expected, each tagged with its close date.
 
 ### Adjudication request (write tool step 2 → ghi-info)
 
-Sent by the write tool for every body-bearing create or edit, before the write. Rides the same wrapper as asks (§ The ask path) — hence the same changed-entries preamble, dropped whole on cold start or an empty delta. The draft's title and the text of its GHI-MD pass through verbatim. A missing or malformed reply means the write proceeds without adjudication (fail-open) — the tool's behavior, not the prompt's. That includes any `escalate:` or `out-of-scope` reply — accepted residual: adjudication never escalates; ruling questions surface on the ask path.
+Sent by the write tool for every body-bearing create or edit, before the write. Rides the same wrapper as asks (§ The ask path) — hence the same changed-entries preamble, dropped whole on cold start or an empty delta. The draft's title and the text of its GHI-MD pass through verbatim. A missing or malformed reply means the write proceeds without adjudication (fail-open) — the tool's behavior, not the prompt's. That includes any `ask-user-about-ruling:` or `not-about-issues` reply — accepted residual: adjudication never escalates; ruling questions surface on the ask path.
 
 > \<only on resume, and only when the refresh changed entries:\> Since your last request, these mirror entries changed: #\<n\>, #\<m\>. Re-read them in the mirror before answering.
 >
@@ -239,7 +255,7 @@ Every deny path shares one shape — refused, the reason, the way(s) forward —
 
 **Comment denial** (`gh issue comment`, `close --comment`):
 
-> Refused: comments do not land as comments here. The revision convention keeps the body current, and a comment cannot be mechanically rewritten into the body edit that convention requires — where the content lands, and what it supersedes, only you know. Two ways forward: integrate the content into the issue body by edit; or, if this is a genuine event — instance outcome, ruling challenge — resubmit through the tool's comment verb naming that event kind. A completion is neither: record the outcome in the body by edit, then close the issue with its reason.
+> Refused: comments do not land as comments here. The revision convention keeps the body current, and a comment cannot be mechanically rewritten into the body edit that convention requires — where the content lands, and what it supersedes, only you know. Record what the comment would say in the issue's GHI-MD, then open the edit's pull request with: python3 scripts/ghi-issue-write.py edit \<path\>. A completion is recorded the same way, then the issue is closed with its reason.
 >
 > If you believe this refusal is wrong, reconsider once against its stated reason. Still convinced, write your reasoning into .ghi-issue-write-reconsidered at the repository root and resubmit — the marker passes exactly one write and is consumed by it.
 
@@ -293,3 +309,14 @@ Each with its failure branch (item 7 is a plain measurement and carries none):
 **Constants** live as named values at the top of the owning script — no config file in version 1; starting values, tuned in live use: closes-since-birth reincarnation threshold 20; stale-match 2 in the last 10 answers; transcript threshold set at build from NM's working values; ask timeout 5 minutes, inside the hook budget; one drift recheck per ask.
 
 **Pinned to what landed:** commit [b9d8b4e](https://github.com/nedschorus/nedschorus/commit/b9d8b4e9e4ce8af26269dc03d1df325fe16051bb) on 2026-09-22 — `scripts/ghi-info-ask.py` as merged by PR [ghi-info-ask's state key names the session it holds](https://github.com/nedschorus/nedschorus/pull/637).
+
+## Deferred-decisions
+
+- How the stored session is cold-started when two asks arrive together and a reincarnation trigger has fired, and which changed entries each fork is told to re-read, to be settled when the forked ask path is built.
+- How the script brings the stored agent-session up to the mirror, at most 10 minutes behind, when no ask runs in it, to be settled when the forked ask path is built.
+- Which transcript the transcript-size reincarnation trigger measures once every ask runs in a discarded fork, and how concurrent forks update the stale-match count, to be settled when the forked ask path is built.
+- How mirror refreshes and agent-home fast-forwards run by asks at the same time keep the mirror's two files consistent and do not collide on git's lock, to be settled when the forked ask path is built.
+- What ghi-info does when a file an open issue links to is missing from its agent-home or lies outside the repository, to be settled when reading from the agent-home is built.
+- How ghi-info finds a proposed-improvements-or-changes-file written at create-GHI under the queue name, before the file was renamed `docs/issues/<number>-<slug>.md`, and what it does with an entry already settled, to be settled when reading those files is built.
+- Whether and when a discarded fork's transcript is deleted, to be settled from the first forked asks.
+- What ghi-info reads for an open issue whose body is not links: a placeholder body mid-filing, or a prose body written outside the write tool, to be settled when reading from the agent-home is built.

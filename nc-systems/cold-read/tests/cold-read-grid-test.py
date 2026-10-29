@@ -477,7 +477,7 @@ with tempfile.TemporaryDirectory() as scratch:
           not_checked_lines != [],
           f"stdout was {result.stdout!r}")
     check("the lifted line keeps the words that distinguish it from a clean run",
-          any("failure to look, not a clean result" in line
+          any(cell_common.STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE in line
               for line in not_checked_lines),
           f"lifted lines were {not_checked_lines!r}")
     check("every cell that could not be checked is named",
@@ -690,9 +690,9 @@ with tempfile.TemporaryDirectory() as scratch:
                   f"The {line.split(': ', 1)[1].split('.md', 1)[0]} cell was stopped")
               for line in unchecked_lines),
           repr(unchecked_lines))
-    check("the not-checked line says it is a failure to look, not a clean result",
+    check("the not-checked line says the missing check is not a clean result, in cell-common's words",
           unchecked_lines != []
-          and all("failure to look, not a clean result" in line for line in unchecked_lines),
+          and all(cell_common.STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE in line for line in unchecked_lines),
           repr(unchecked_lines))
 
     # --- An original that moves while reviewers are still reading ------------
@@ -1581,19 +1581,33 @@ with tempfile.TemporaryDirectory() as scratch:
           and (store_copy / "triage.md").is_file(),
           f"exit {third_ship.returncode}; stdout={third_ship.stdout!r}")
 
-    # --- A store that cannot be reached does not fail the read ----------------
+    # --- A store that cannot be reached: the run finishes, exits 1 ------------
     repository = build_scratch_repository(scratch, "checkout-store-unreachable")
     result = run_grid(repository, stubs, {
         RECORD_SHIP_DESTINATION_VARIABLE: "nobody@no-such-host.invalid:/tmp/no-store"})
     record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
-    check("an unreachable store prints record: FAILED and the run exits 0 all the same",
+    check("an unreachable store prints record: FAILED, the run finishes all six, and exits 1",
           len(record_lines) == 1 and record_lines[0].startswith("record: FAILED:")
-          and result.returncode == 0,
+          and result.returncode == 1 and "All six reports landed" in result.stdout,
           f"exit {result.returncode}; {record_lines!r}")
     record_directory = record_directory_of(repository)
     check("the record, frozen target included, stays on disk for a later ship",
           record_directory is not None
           and frozen_target_path_in_scratch_repository(repository, record_directory).is_file())
+
+    # --- A store that refuses the record: the run finishes, exits 1 ----------
+    # The store already holds this record's name with other bytes, so the
+    # add-only shipper refuses it, and the record did not reach the store.
+    unreachable_record_name = record_directory.name
+    repository = build_scratch_repository(scratch, "checkout-store-refuses")
+    seed_log_store_record(repository, unreachable_record_name, [])
+    result = run_grid(repository, stubs)
+    record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
+    check("a store holding the record's name with other bytes prints record: REFUSED, "
+          "the run finishes all six, and exits 1",
+          len(record_lines) == 1 and record_lines[0].startswith("record: REFUSED:")
+          and result.returncode == 1 and "All six reports landed" in result.stdout,
+          f"exit {result.returncode}; {record_lines!r}; stderr={result.stderr[-400:]!r}")
 
     # --- A changed target is still shipped: it is evidence -------------------
     repository = build_scratch_repository(scratch, "checkout-changed-still-shipped")
@@ -1603,6 +1617,16 @@ with tempfile.TemporaryDirectory() as scratch:
     record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
     check("a run whose frozen copy moved ships its marked record and exits 3",
           result.returncode == 3 and record_lines and record_lines[0].startswith("record: shipped:"),
+          f"exit {result.returncode}; {record_lines!r}")
+
+    repository = build_scratch_repository(scratch, "checkout-changed-store-unreachable")
+    result = run_grid(repository, stubs, {
+        "COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET": "1",
+        RECORD_SHIP_DESTINATION_VARIABLE: "nobody@no-such-host.invalid:/tmp/no-store",
+        **END_OF_RUN_COMPARISON_ONLY})
+    record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
+    check("a run whose frozen copy moved exits 3 though its record did not arrive either",
+          result.returncode == 3 and record_lines and record_lines[0].startswith("record: FAILED:"),
           f"exit {result.returncode}; {record_lines!r}")
 
     # --- The cells read the frozen copy, never the live document -------------
@@ -2019,7 +2043,7 @@ with tempfile.TemporaryDirectory() as scratch:
               and "refusing cold-read-full-run" not in result.stderr,
               f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
-    # A change merged from a topic branch lands at the merge, not at the
+    # A change merged from an nc-topic-branch lands at the merge, not at the
     # topic's commit: runs between the two reviewed that change and do not count.
     repository = build_scratch_repository(scratch, "full-run-count-merged-topic")
     git_in = lambda *arguments, when=None: subprocess.run(

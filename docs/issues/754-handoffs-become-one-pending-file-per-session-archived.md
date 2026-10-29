@@ -2,6 +2,7 @@
 issue: "[Handoffs become one pending file per session, archived only after a successor is up](https://github.com/nedschorus/nedschorus/issues/754)"
 status: specified, not built
 design-as-of: 2026-09-28
+kind: design
 ---
 
 # Handoffs become one pending file per session, archived only after a successor is up
@@ -43,7 +44,7 @@ This section carries the specification as written on 2026-08-31. Line numbers ar
 
 It is easy to run these together. The specification's own first draft did, and so did the argument the merge-lane seat first put to the user.
 
-- **`restart-counter:`** is a field of the handoff file, mirrored as `consumed_counter` in the handoff-supervisor's state file. It has exactly one job, novelty: has the handoff-supervisor already acted on this file? The writer, `nc-systems/handoff/handoff-write-and-check-supervisor.py`, sets it in `next_restart_counter` (line 167) to one more than the higher of the file's value and the state's, so the new value reads as new even when the file is missing, malformed, or older than what was consumed.
+- **`restart-counter:`** is a field of the handoff file, mirrored as `consumed_counter` in the handoff-supervisor's state file. It has exactly one job, novelty: has the handoff-supervisor already acted on this file? The writer, `nc-systems/handoff/handoff-write-and-check-supervisor.py`, sets it in `next_restart_counter` to one more than the higher of the file's value and the state's, so the new value reads as new even when the file is missing, malformed, or older than what was consumed.
 - **`generation`** lives only in the state file (`fresh_supervisor_state`, `nc-systems/handoff/handoff-supervisor.py:395`). It names the archives: the handoff copy `<seat>-handoff-<NNNN>.md` at `nc-systems/handoff/handoff-supervisor.py:1871` and the conversation-tail `<seat>-dialog-<NNNN>.md` at `:1859`. It is also what orders pruning, in `prune_old_generations` (`:1181`). `restart-counter` appears in no file name anywhere.
 
 That split is what makes the change clean. Naming the archives and ordering the pruning were never `restart-counter`'s jobs, so retiring it costs neither. Its only job is novelty, and consume by removal retires that.
@@ -89,7 +90,7 @@ Removed: the `restart-counter:` field and `counter_from`, `next_restart_counter`
 Two things are narrowed rather than removed, and a builder should not delete them outright:
 
 - **`generation`** stops being an identifier but survives as the printed reincarnation count.
-- **`--claim`** and `claiming_directory()` in the writer lose their stated reason. The writer's docstring gives it as a handoff lost unread because two agent-seats sharing a name overwrote one file, observed 2026-08-16 (`nc-systems/handoff/handoff-write-and-check-supervisor.py:17` to `:22`). Files named for their session no longer collide. But the agent-seat's name still selects the handoff-supervisor's state file and lock, so the refusal narrows rather than vanishes: what it still guards against is two agent-seats sharing one name, and with it one state file and one lock.
+- **`--claim`** and `claiming_directory()` in the writer lose their stated reason. The writer's docstring gives it as a handoff lost unread because two agent-seats sharing a name overwrote one file, observed 2026-08-16 (the paragraph on `--claim` in the module docstring of `nc-systems/handoff/handoff-write-and-check-supervisor.py`). Files named for their session no longer collide. But the agent-seat's name still selects the handoff-supervisor's state file and lock, so the refusal narrows rather than vanishes: what it still guards against is two agent-seats sharing one name, and with it one state file and one lock.
 
 ## What has changed on main since 2026-08-31
 
@@ -112,7 +113,7 @@ The search: `git grep -n -E "restart-counter|restart_counter|consumed_counter|co
 | file | what it does with the counter | `restart-counter` or `counter_from` | `next_restart_counter` | `consumed_counter` | `prune_old_generations` or `GENERATIONS_KEPT` |
 |---|---|---|---|---|---|
 | `nc-systems/handoff/handoff-supervisor.py` | defines `counter_from` (`:836`); holds `consumed_counter` in its state; `wait_for_handoff`'s novelty test (`:1742` to `:1746`); marks consumed on resume at startup (`:1981`), on boot ignition and its `dont-restart` branch (`:2001`, `:2006`, `:2024`), on the in-loop `dont-restart` answer (`:2193`) and on every reincarnation (`:2213`) | 9 | 0 | 13 | 7 |
-| `nc-systems/handoff/handoff-write-and-check-supervisor.py` | `consumed_counter_from_state` (`:156`), `next_restart_counter` (`:167`), writes the field (`:570`) | 5 | 2 | 3 | 0 |
+| `nc-systems/handoff/handoff-write-and-check-supervisor.py` | `consumed_counter_from_state`, `next_restart_counter`, writes the field in `write_handoff_file` | 5 | 2 | 3 | 0 |
 | `scripts/resupervise-seat.py` | `handoff_is_waiting` (`:119`): refuses a handoff with no readable counter, and one not above the consumed counter | 6 | 0 | 1 | 0 |
 | `scripts/recover-crashed-seats.py` | `assess_seat`: refuses a handoff with no readable counter; above the consumed counter it is `seat-asked-to-be-consulted` or `defer-to-boot-ignition` | 3 | 0 | 1 | 0 |
 | `scripts/restart-live-seats-at-login.py` | no direct use; runs `scripts/recover-crashed-seats.py` for each seat (`recovery_command_for_seat`) | 0 | 0 | 0 | 0 |
@@ -131,7 +132,7 @@ These came up while the specification was rechecked on 2026-09-28. They are not 
 1. **Startup paths.** What each does to a pending file: the resume at startup (`nc-systems/handoff/handoff-supervisor.py:1971`), which consumes today; boot ignition and its `dont-restart` branch (`:1987`); adoption, which consumes nothing; and the resume by hand (`:2043`), which runs only when nothing waits. The specification asks for this and does not answer it.
 2. **What "a successor is up" means, and what happens when it never is.** `launch_agent_session` returning a process, the successor's transcript appearing, or something else. Consuming moves to that point. When the successor fails to come up, the pending file stays, so something has to stop the handoff-supervisor relaunching from it without limit, as the resume budget `CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET` does for resumes.
 3. **Finding a seat's own pending file when seat names share a prefix.** `pending/<seat>-*.md` for the seat `merge-lane` also matches `pending/merge-lane-backlog-<session-id>.md`. Both seats exist on the Mac today, as do `reboot-test` and `reboot-test-2` (their state files are in `~/.claude/handoffs/` there, listed 2026-09-28). The handoff-supervisor cannot name the file exactly (change 3 above). So it needs a name it can match exactly, such as a session id matched in full after the seat's name, or a directory per seat under `pending/`.
-4. **A session with no id.** The writer writes `written-by-session: unknown` when `CLAUDE_CODE_SESSION_ID` is unset (`nc-systems/handoff/handoff-write-and-check-supervisor.py:576`). Every such session would write the same pending file name.
+4. **A session with no id.** The writer writes `written-by-session: unknown` when `CLAUDE_CODE_SESSION_ID` is unset (`write_handoff_file` in `nc-systems/handoff/handoff-write-and-check-supervisor.py`). Every such session would write the same pending file name.
 5. **The archive's name and the conversation-tail's.** The specification names neither (change 6 above). Handoffs are small enough to keep forever. The `-complete.md` companion holds a whole dialog, so whether conversation-tails are still pruned is a separate choice.
 6. **`dont-restart` after a no.** Under this specification the pending file stays, and the next launch by hand reaches the restart question again. `scripts/recover-crashed-seats.py` already leaves such a seat down for the same reason, user-ruled 2026-09-17 in PR [recover-crashed-seats: a seat whose waiting handoff asks to be consulted is not launched](https://github.com/nedschorus/nedschorus/pull/445). A build should confirm that this is the behaviour wanted, and say how an operator discards a pending handoff he does not want acted on.
 7. **The old file during phase 1.** When a new handoff-supervisor consumes a pending file, the old `<seat>-handoff.md` with its counter still stands beside it. Unless the new handoff-supervisor also keeps recording `consumed_counter` as today, anything still reading the old file, an old handoff-supervisor or a recovery tool run from a checkout that is behind, would read that handoff as still waiting. The specification's claim that every combination of old and new works depends on this.

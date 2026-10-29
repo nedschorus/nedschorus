@@ -513,6 +513,17 @@ def main() -> int:
         check("detached: tmux gets mouse mode on",
               tmux_argv_sets_mouse_mode_on(result["tmux_argv"]),
               result["tmux_argv"])
+        # A pane command that ends with the supervisor call lets the pane's
+        # shell exec into it, and tmux, then its parent, wakes it from a
+        # `kill -STOP` at once.
+        detached_pane_commands = [argument for argument
+                                  in result["tmux_argv"].splitlines()
+                                  if "handoff-supervisor.py" in argument]
+        check("detached: the pane command ends with `; exit $?`, so the shell "
+              "stays the supervisor's parent",
+              len(detached_pane_commands) == 1
+              and detached_pane_commands[0].endswith("; exit $?"),
+              detached_pane_commands)
         check("default root: tmux -c arrives tilde-EXPANDED (P1 resolved it)",
               result["pane_directory"] == f"{harness.home}/agents/seat-a",
               result["pane_directory"])

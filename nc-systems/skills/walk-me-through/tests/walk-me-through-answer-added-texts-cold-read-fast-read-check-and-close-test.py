@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Cases for the program that carries out the user's answer that makes a
-change in an open approval-walk: its check step, which fast-reads each `#new`
-text of the waiting item that has not had a fast read, and its close step.
+change in an open approval-walk: its check step, which fast-reads each text
+the answer adds to the waiting item, `#new` or `#new_if_d`, that has not had a
+fast read, and its close step.
 
 Each case runs the program as a subprocess in a scratch checkout this suite
 made. cold-read-fast-read.py is replaced by a stand-in this suite writes, so no
-case calls a model. The exit code is asserted on every case.
+case calls a model, except one case that runs a copy of the real
+cold-read-fast-read.py with stub models, to show the check reads that
+program's own output. The exit code is asserted on every case.
 """
 
 import contextlib
@@ -35,6 +38,12 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 PROGRAM = (Path(__file__).resolve().parents[1]
            / "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py")
+_cold_read_scratch_fixture_spec = importlib.util.spec_from_file_location(
+    "cold_read_scratch_repository_test_fixture",
+    Path(__file__).resolve().parents[3] / "cold-read" / "tests"
+    / "cold-read-scratch-repository-test-fixture.py")
+cold_read_scratch_fixture = importlib.util.module_from_spec(_cold_read_scratch_fixture_spec)
+_cold_read_scratch_fixture_spec.loader.exec_module(cold_read_scratch_fixture)
 SUITE_ROOT = Path(tempfile.mkdtemp(prefix="answer-added-texts-fast-read-check-test-")).resolve()
 WALK_NAME = "poem-page-2026-10-12"
 FAILURE_PREFIX = "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close "
@@ -69,11 +78,22 @@ record = Path(os.environ["STAND_IN_RECORDS"]) / (target.stem + "-2026-10-17")
 print(record / "fast-read.md")
 if mode == "path-then-exit":
     sys.exit(4)
+if mode == "path-then-exit-1":
+    sys.exit(1)
 if mode == "target-changed":
     sys.stderr.write("cold-read-fast-read: #cold_read_target_changed_during_run: the target changed while it was read.\n")
-if mode == "record-not-shipped":
+if mode in ("record-not-shipped", "record-not-shipped-then-exit-4", "record-not-shipped-then-killed"):
     sys.stderr.write("cold-read-fast-read: record: FAILED: ned-box could not be reached (ssh exit 255); "
                      "the record stays on disk.\n")
+    sys.stdout.flush()
+    sys.stderr.flush()
+    if mode == "record-not-shipped-then-killed":
+        import signal
+        os.kill(os.getpid(), signal.SIGTERM)
+    sys.exit(4 if mode == "record-not-shipped-then-exit-4" else 1)
+if mode == "record-refused":
+    sys.stderr.write("cold-read-fast-read: record: REFUSED: already in the store with different content.\n")
+    sys.exit(1)
 '''
 
 WALK_DOCUMENT = """# A walk
@@ -87,6 +107,10 @@ The opening sentence changes. It says now:
 and will say:
 
 #new "The page lists one poem per job an agent does."
+
+If the sentence stays, a note follows it:
+
+#new_if_d "A note says why the sentence stays."
 
 - #new “Each row names the mistake it prevents.”
 
@@ -160,12 +184,13 @@ class Case:
         (record / "fast-read.md").write_text("findings\n")
         return record
 
-    def run(self, step, *flags, mode="", counts_log=None):
-        environment = dict(os.environ, STAND_IN_MODE=mode, STAND_IN_CALLS=str(self.calls),
+    def run(self, step, *flags, mode="", counts_log=None, fast_read_program=None, environment=None):
+        environment = dict(environment or os.environ, STAND_IN_MODE=mode, STAND_IN_CALLS=str(self.calls),
                            STAND_IN_RECORDS=str(self.records), TMPDIR=str(self.temporary_directory))
         return subprocess.run(
             [sys.executable, str(PROGRAM), step, *flags, "--cwd", str(self.checkout),
-             "--cold-read-records", str(self.records), "--fast-read-program", str(self.stand_in),
+             "--cold-read-records", str(self.records),
+             "--fast-read-program", str(fast_read_program or self.stand_in),
              "--counts-log", str(counts_log or self.counts_log)],
             capture_output=True, text=True, env=environment, cwd=self.checkout)
 
@@ -205,6 +230,49 @@ def test_missing_fast_reads_are_run_and_reported():
           and "Read each fast-read report" not in again.stdout, described(again))
     check("check removes the scratch directory of each cold-read-fast-read it ran",
           not case.left_in_temporary_directory(), case.left_in_temporary_directory())
+
+
+NEW_TEXTS = "The page lists one poem per job an agent does.\nEach row names the mistake it prevents.\n"
+NEW_IF_D_TEXT = "A note says why the sentence stays.\n"
+
+
+def test_each_answer_fast_reads_only_the_texts_it_adds():
+    for flags, read in ((("--obvious",), NEW_TEXTS), (("--after-advisor",), NEW_TEXTS),
+                        (("--option", "2"), NEW_TEXTS), (("--option", "3"), NEW_TEXTS),
+                        (("--disapproved",), NEW_IF_D_TEXT),
+                        (("--part-answer", "1=AO"), NEW_TEXTS),
+                        (("--part-answer", "1=D", "--part-answer", "2=D"), NEW_IF_D_TEXT),
+                        (("--part-answer", "1=A", "--part-answer", "2=D"),
+                         "The page lists one poem per job an agent does.\n" + NEW_IF_D_TEXT
+                         + "Each row names the mistake it prevents.\n")):
+        case = Case()
+        result = case.run("check", *flags)
+        check(f"check {' '.join(flags)} fast-reads only the texts that answer adds",
+              result.returncode == 0 and case.calls.read_text() == read,
+              described(result) + repr(case.calls.read_text()))
+    case = Case()
+    result = case.run("check", "--disapproved")
+    lines = result.stdout.split("\n")
+    check("on D the status line names the `#new_if_d` mark and its scratch file, and the counts hold the one text",
+          lines[0].startswith('`#new_if_d` text 1, "A note says why the sentence stays.": fast read had to be run (')
+          and f"{WALK_NAME}-item-3-of-9-new-if-d-1-2026-10-17)." in lines[0]
+          and "\n- `#new_if_d` text 1, " in case.minutes.read_text()
+          and "texts=1\talready_done=0\thad_to_be_run=1" in case.counts_log.read_text(), described(result))
+    case = Case()
+    result = case.run("check", "--part-answer", "1=A", "--part-answer", "2=D")
+    check("each mark's texts are numbered on their own, in the walk-document's order",
+          [line.split(",")[0] for line in result.stdout.split("\n")[:3]]
+          == ["`#new` text 1", "`#new_if_d` text 1", "`#new` text 2"], described(result))
+    case = Case(next_to_present="item 5 of 9")
+    result = case.run("check", "--disapproved")
+    check("D on an item with no `#new_if_d` line runs no fast read",
+          result.returncode == 0 and result.stdout.split("\n")[0] == "no proposed text marked"
+          and case.calls.read_text() == "", described(result))
+    case = Case()
+    result = case.run("check", "--disapproved", mode="record-not-shipped")
+    check("an unshipped record of a `#new_if_d` text names that mark",
+          result.returncode == 2 and "the fast read of `#new_if_d` text 1 did not ship its record" in result.stdout,
+          described(result))
 
 
 def test_a_fast_read_already_done_is_not_run_again():
@@ -344,13 +412,63 @@ def test_counts_that_cannot_be_logged_are_reported():
           and "item 4 of 9: the user answered approved (" in case.minutes.read_text(), described(result))
 
 
+def test_a_fast_read_that_names_a_report_and_exits_1_without_a_record_line_is_a_failure():
+    case = Case()
+    before = case.minutes.read_text()
+    result = case.run("check", mode="path-then-exit-1")
+    check("a fast read that names a report and exits 1 with no record line on stderr is reported as FAILED",
+          result.returncode == 1 and result.stdout.startswith("FAILED: ") and "exited 1" in result.stdout
+          and case.minutes.read_text() == before, described(result))
+
+
+def test_a_record_line_does_not_excuse_an_exit_other_than_1():
+    for mode, exit_code in (("record-not-shipped-then-exit-4", 4), ("record-not-shipped-then-killed", -15)):
+        case = Case()
+        before = case.minutes.read_text()
+        result = case.run("check", mode=mode)
+        check(f"a fast read that did not ship its record but exits {exit_code} is reported as FAILED",
+              result.returncode == 1 and result.stdout.startswith("FAILED: ")
+              and f"exited {exit_code} " in result.stdout
+              and "its stderr: cold-read-fast-read: record: FAILED: ned-box could not be reached" in result.stdout
+              and case.minutes.read_text() == before, described(result))
+
+
+def test_a_fast_read_whose_record_was_refused_is_used_and_reported():
+    case = Case()
+    result = case.run("check", mode="record-refused")
+    note = "cold-read-fast-read: record: REFUSED: already in the store with different content."
+    check("a fast read that exits 1 because the store refused its record is used, and the refusal reported, "
+          "with exit 2",
+          result.returncode == 2
+          and result.stdout.split("\n")[0].endswith(f"The fast read also said: {note}")
+          and "did not ship its record: " + note in result.stdout
+          and "with a -2 suffix" in result.stdout
+          and "the user answered approved" in case.minutes.read_text(), described(result))
+
+
+def test_the_real_fast_read_whose_record_did_not_ship_is_used():
+    case = Case()
+    fast_read_program, environment = (
+        cold_read_scratch_fixture.cold_read_fast_read_scratch_repository_whose_stub_agy_answers_in_chat(
+            case.root, "nobody@no-such-host.invalid:/tmp/no-store"))
+    result = case.run("check", fast_read_program=fast_read_program, environment=environment)
+    records = fast_read_program.parents[2] / "cold-read-records"
+    check("the real fast read, exiting 1 because its record could not reach the log-store, is used: the item's "
+          "answer is recorded, each status line names its report, and the record line is reported, with exit 2",
+          result.returncode == 2
+          and result.stdout.count(f"fast read had to be run ({records}/") == 2
+          and result.stdout.count("did not ship its record: cold-read-fast-read: record: FAILED: ") == 2
+          and "the user answered approved" in case.minutes.read_text()
+          and len(list(records.glob("*/fast-read.md"))) == 2, described(result))
+
+
 def test_a_fast_read_whose_record_was_not_shipped_is_reported():
     case = Case()
     result = case.run("check", mode="record-not-shipped")
     note = ("cold-read-fast-read: record: FAILED: ned-box could not be reached (ssh exit 255); the record stays "
             "on disk.")
-    check("a fast read that exits 0 but did not ship its record has its line in the status line, in the minutes, "
-          "and in what to do, with exit 2",
+    check("a fast read that exits 1 because it did not ship its record is used, and has its line in the status "
+          "line, in the minutes, and in what to do, with exit 2",
           result.returncode == 2
           and result.stdout.split("\n")[0].endswith(f"The fast read also said: {note}")
           and "The minutes record the answer, but the fast read of `#new` text 1 did not ship its record: "

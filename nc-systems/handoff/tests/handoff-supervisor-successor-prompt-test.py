@@ -507,20 +507,30 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     # fixture can quietly take the wording's guard away.
     check("the one-approval-walk instruction is word for word what the user approved",
           supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION == (
-              "Bring the user everything that needs the user in one approval-walk, by "
-              "/walk-me-through's steps, opened as your first action: the unanswered "
-              "items of any approval-walk in progress, open questions, concerns, "
-              "suggestions, and the loose ends the next step lists, when it lists "
-              "any. Put first the next step's own item, when it needs the user; then "
-              "items that block work, then items that change direction, then the "
-              "rest. Close each approval-walk in progress with a "
-              "line in its walk-minutes naming the new approval-walk, and give each "
-              "item you carry into it a link to its original walk-document. When the "
-              "next step is to present an item of an approval-walk in progress, this "
-              "instruction overrides it: carry that item into the new approval-walk "
-              "instead of presenting it in the old one. Do the work that does not "
-              "need the user without asking the user: your own yourself, and another "
-              "agent-seat's by sending it to that agent-seat with SendMessage. Keep working on the previous session's work while the "
+              "Bring the user everything that needs the user, by /walk-me-through's "
+              "steps, as your first action: the unanswered items of any "
+              "approval-walk in progress, open questions, concerns, suggestions, "
+              "and the loose ends the next step lists, when it lists any. When an "
+              "approval-walk is in progress, continue it instead of opening a new "
+              "one: keep its name, its item numbers and its item pages, and resume "
+              "at the item that the last `#next_to_present` line of its "
+              'walk-minutes names, as /walk-me-through\'s section "Interruption and '
+              'recovery" says. Add everything else that needs the user to that '
+              "approval-walk as new items just after the item it resumes at, "
+              'numbered as its section "Re-planning" says, in this order: the next '
+              "step's own item first, when it needs the user; then items that block "
+              "work, then items that change direction, then the rest. When more "
+              "than one approval-walk is in progress, continue first the one the "
+              "next step names, or the one with the latest walk-minutes when it "
+              "names none, then the others, and add the new items to the first. "
+              "When none is in progress, open one approval-walk for everything that "
+              "needs the user, in the order just given for new items. Before you "
+              "show any item, whether it is new or comes from an approval-walk in "
+              "progress, check it against the user's earlier rulings, as "
+              '/walk-me-through\'s section "Each item" says. Do the work that does '
+              "not need the user without asking the user: your own yourself, and "
+              "another agent-seat's by sending it to that agent-seat with "
+              "SendMessage. Keep working on the previous session's work while the "
               "user answers. When nothing needs the user, open no approval-walk and "
               "only keep working."),
           repr(supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION))
@@ -608,13 +618,13 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
           + repr(synced_prompt.split("branch-conflict-check.py describes.", 1)[-1])
           + "; expected: " + repr(expected_rest_after_the_branch_state_line))
     # The supervisor's other ignition shape composes the same instruction at a
-    # second call site (`BootRecoveryIgnitionPlan.compose`), and nothing pinned
+    # second call site (`IgnitionPlanWithoutConversationTail.compose`), and nothing pinned
     # what that one produced: measured 2026-09-21, the same appended sentence
     # there left handoff-supervisor-test at 234 PASS / 0 FAIL and
     # recover-crashed-seats-test at 345 passed / 0 failed. The whole prompt is
     # pinned, so an append anywhere in it -- inside the constant or after it --
     # fails here.
-    boot_recovery_prompt = supervisor.BootRecoveryIgnitionPlan(
+    boot_recovery_prompt = supervisor.IgnitionPlanWithoutConversationTail(
         "finish the supervisor").compose(
             "launch-time-git-sync: fixture-branch is 3 commit(s) behind main")
     check("the boot-recovery prompt is exactly its next step, the recovery note, and the branch-state line",
@@ -1068,7 +1078,7 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
     plan = supervisor.DialogIgnitionPlan(root / "extract.md", {})
     for shape, prompt in (
             ("dialog", plan.compose(report)),
-            ("boot-recovery", supervisor.BootRecoveryIgnitionPlan("next").compose(report))):
+            ("boot-recovery", supervisor.IgnitionPlanWithoutConversationTail("next").compose(report))):
         check(f"after a launch-time-git-sync git failure, the {shape} prompt gives the next steps and "
               "no rebase instruction, which would contradict their stop",
               report in prompt and supervisor.BRANCH_STATE_INSTRUCTION not in prompt, prompt)
@@ -1370,7 +1380,7 @@ def run_overview_refresh_due_cases(workspace: Path):
                 "2026-09-28 — the widget as it landed.")
 
     def checked_line(sha):
-        # As the page on writing an architecture overview spells it: the full sha twice.
+        # As the page on writing an nc-architecture-overview spells it: the full sha twice.
         return (f"**Checked against:** commit [{sha}]"
                 f"(https://github.com/nedschorus/nedschorus/commit/{sha})")
 
@@ -2293,7 +2303,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     check("the dialog plan hands its overview lines to the prompt it composes",
           plan_prompt == prompt and prompt != "", repr(plan_prompt))
     try:
-        boot_recovery_prompt = supervisor.BootRecoveryIgnitionPlan(
+        boot_recovery_prompt = supervisor.IgnitionPlanWithoutConversationTail(
             "finish the supervisor").compose(
                 "launch-time-git-sync: fixture-branch is 3 commit(s) behind main", (line,))
     except TypeError:
@@ -2825,7 +2835,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
                      "are your whole context.) "
                      + supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION + " ")
     try:
-        boot_recovery_prompt = supervisor.BootRecoveryIgnitionPlan("finish the review").compose(
+        boot_recovery_prompt = supervisor.IgnitionPlanWithoutConversationTail("finish the review").compose(
             launch_time_git_sync_report, (overview_line,), (memory_line,))
     except TypeError:
         boot_recovery_prompt = ""
@@ -2859,9 +2869,9 @@ def run_memory_review_due_prompt_cases(workspace: Path):
     settings.handoff_path.write_text(
         "written-at: 2026-09-30T00:00:00Z\nnext-step: resume the audit\nrestart-counter: 5\n",
         encoding="utf-8")
+    # No earlier session recorded, so the recovery note is the one without a transcript.
     supervisor.write_supervisor_state(
-        settings.state_path,
-        {"consumed_counter": 4, "launched_session_id": "no-such-session", "generation": 4})
+        settings.state_path, {"consumed_counter": 4, "generation": 4})
     launched_prompts = []
 
     def launch_recording(agent_command, session_id, working_directory, prompt, **_):
@@ -3048,6 +3058,62 @@ def run_boot_ignition_without_a_conversation_tail_cases(workspace: Path):
           len(unrecorded.launched_prompts) == 1
           and unrecorded.launched_prompts[0].startswith("resume the audit"),
           repr(unrecorded.launched_prompts))
+
+
+def run_generation_continues_past_numbered_files_on_disk_cases(workspace: Path):
+    """A supervisor whose state file holds a generation below numbered files
+    left on disk, as a state file read as fresh leaves it, numbers the
+    successor's conversation-tail above them, so the pruner, which keeps the
+    two highest numbers, keeps the file the successor's prompt names."""
+    agent = "generationbelowfiles"
+    handoff_directory = workspace / agent
+    handoff_directory.mkdir(parents=True)
+    settings = supervisor.SupervisorSettings(
+        agent=agent, working_directory=workspace, handoff_directory=handoff_directory,
+        agent_command="unused-stub-agent", first_prompt="")
+    for name in ("dialog-0007.md", "dialog-0007-complete.md", "dialog-0020.md",
+                 "dialog-0020-complete.md", "handoff-0006.md", "handoff-0007.md"):
+        (handoff_directory / f"{agent}-{name}").write_text("left from an earlier count",
+                                                            encoding="utf-8")
+    settings.handoff_path.write_text(
+        "written-at: 2026-10-26T00:00:00Z\nnext-step: resume the audit\n"
+        "restart-counter: 5\nwritten-by-session: retiring-session\n", encoding="utf-8")
+    supervisor.write_supervisor_state(
+        settings.state_path,
+        {"consumed_counter": 4, "launched_session_id": "retiring-session", "generation": 3})
+    launched_prompts = []
+
+    def writing_extract_dialog(session_id, working_directory, output_path):
+        output_path.write_text("the retiring session's dialog", encoding="utf-8")
+        return True
+
+    def launch_recording(agent_command, session_id, working_directory, prompt, **_):
+        launched_prompts.append(prompt)
+        return StubLaunchedSession(0)
+
+    with supervisor_names_replaced(
+            extract_dialog=writing_extract_dialog,
+            launch_agent_session=launch_recording,
+            launch_time_git_sync=lambda working_directory: "launch-time-git-sync: stubbed",
+            memory_review_due_lines=lambda: (),
+            stdin_isatty=False), \
+            contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        supervisor.supervise_sessions(settings)
+    successor_extract = handoff_directory / f"{agent}-dialog-0021.md"
+    remaining = sorted(item.name for item in handoff_directory.glob(f"{agent}-*-0*.md"))
+    check("GENERATION PAST FILES ON DISK: the successor's prompt names its conversation-tail, "
+          "numbered above the highest file on disk",
+          len(launched_prompts) == 1 and str(successor_extract) in launched_prompts[0],
+          repr(launched_prompts)[:600])
+    check("GENERATION PAST FILES ON DISK: the conversation-tail and handoff copy just written "
+          "survive the pruning, and the lowest-numbered leftovers go",
+          remaining == [f"{agent}-dialog-0020-complete.md", f"{agent}-dialog-0020.md",
+                        f"{agent}-dialog-0021.md",
+                        f"{agent}-handoff-0007.md", f"{agent}-handoff-0021.md"],
+          str(remaining))
+    state = supervisor.read_supervisor_state(settings.state_path)
+    check("GENERATION PAST FILES ON DISK: the state file records the generation just written",
+          state.get("generation") == 21, str(state))
 
 
 def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
@@ -3366,6 +3432,7 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_memory_review_due_prompt_cases(workspace)
     run_boot_ignition_case(workspace)
     run_boot_ignition_without_a_conversation_tail_cases(workspace)
+    run_generation_continues_past_numbered_files_on_disk_cases(workspace)
     run_first_prompt_file_cases(workspace)
     run_multi_line_next_step_cases(workspace, recent_timestamp)
     run_launch_and_retention_cases(workspace, recent_timestamp)

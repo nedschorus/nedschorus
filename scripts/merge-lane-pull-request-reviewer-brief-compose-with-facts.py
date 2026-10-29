@@ -3,7 +3,7 @@
 
 Usage:
   scripts/merge-lane-pull-request-reviewer-brief-compose-with-facts.py <brief specifications file>
-      [--merge-lane-worktrees-and-outputs-directory DIR] [--review-tools-worktree-at-main DIR] [--brief-file PATH]
+      [--merge-lane-worktrees-and-outputs-directory DIR] [--merge-lane-review-worktrees-directory DIR] [--review-tools-worktree-at-main DIR] [--brief-file PATH]
       [--ned-box-reviewer-brief-environment-addendum-file PATH] [--instructions-file PATH]
       [--merge-lane-pull-request-reviewer-scratch-directories-parent-directory DIR]
 
@@ -14,8 +14,8 @@ reviewed_before, previous_reviews, new_commits and answer.
 Each brief is three parts: the standing text, composed by --review-tools-worktree-at-main's
 scripts/compose-pull-request-reviewer-brief.py with the reviewing
 instructions inserted; the ned-box environment addendum; and a section of
-facts, which git reads in --review-tools-worktree-at-main and in the worktrees
-and outputs directory's wt/pr<n>-merged, and gh reads from GitHub as the merge
+facts, which git reads in --review-tools-worktree-at-main and in the review
+worktrees directory's pr<n>-merged, and gh reads from GitHub as the merge
 account. Among the facts are the merged pull requests whose not-fixed line, in
 either form, links to an issue the pull request closes, as GitHub lists them,
 or to the pull request itself: the reviewer judges whether this pull request
@@ -83,7 +83,7 @@ def parse_arguments(argv):
                     "specifications file: standing text, ned-box addendum, then facts.")
     parser.add_argument("brief_specifications_file", type=Path,
                         help="a JSON list of brief specifications")
-    common.add_directory_options(parser, "wt/; the briefs are written there")
+    common.add_directory_options(parser, "briefs/")
     parser.add_argument("--brief-file", type=Path, default=DEFAULT_BRIEF_FILE,
                         help=f"the brief's standing text (default: {DEFAULT_BRIEF_FILE})")
     parser.add_argument("--ned-box-reviewer-brief-environment-addendum-file", type=Path,
@@ -190,7 +190,7 @@ def compose(spec, arguments, review_tools_worktree, instructions_file, merged_pu
     head, main = spec["head"], spec["main"]
     helpers = arguments.merge_lane_worktrees_and_outputs_directory
     merge_base = git(review_tools_worktree, "merge-base", main, head)
-    merged_tree = git(helpers / "wt" / f"pr{number}-merged", "rev-parse", "HEAD^{tree}")
+    merged_tree = git(common.pull_request_merged_worktree(arguments, number), "rev-parse", "HEAD^{tree}")
     standing = run([sys.executable,
                     str(review_tools_worktree / "scripts" / "compose-pull-request-reviewer-brief.py"),
                     "--pull-request", str(number),
@@ -200,13 +200,13 @@ def compose(spec, arguments, review_tools_worktree, instructions_file, merged_pu
     scratch.mkdir(parents=True, exist_ok=True)
     facts = ["## This pull request (facts from merge-lane-2)", "",
              f"- Pull request: #{number}, \"{spec['title']}\", author `{spec['author']}`.",
-             f"- Head commit: `{head}`.",
+             f"- nc-head-commit: `{head}`.",
              f"- Merge base: `{merge_base}`.",
              f"- Main's tip when commissioned: `{main}`.",
              f"- Merged tree (head merged onto main by merge-lane-2): `{merged_tree}`.",
              f"- Your scratch directory: `{scratch}`. Use it as `<your scratchpad>`."]
     if "reviewed_before" in spec:
-        facts.append(f"- This head commit is a fix-round. Head commit reviewed before: "
+        facts.append(f"- This nc-head-commit is a fix-round. nc-head-commit reviewed before: "
                      f"`{spec['reviewed_before']}` ({spec['previous_reviews']}). "
                      f"{spec['new_commits']}")
         facts.append("- Files the new commit touches: "
@@ -220,7 +220,7 @@ def compose(spec, arguments, review_tools_worktree, instructions_file, merged_pu
                      + files_touched_text(review_tools_worktree, merge_base, head) + ".")
         facts.append("- Test files the change touches: "
                      + ", ".join(f"`{t}`" for t in spec["tests"]) + ".")
-        facts.append("- First round: no head commit was reviewed before.")
+        facts.append("- First round: no nc-head-commit was reviewed before.")
     facts.append("- Other open pull requests changing the same files: "
                  + spec.get("overlaps", "none") + ".")
     closing_issues, description = pull_request_closing_issues_and_description(

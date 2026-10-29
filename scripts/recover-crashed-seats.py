@@ -230,8 +230,8 @@ REINCARNATION_OPENER_MARKER = "the dialog from the session you are continuing"
 # Anchor the opener to avoid matching its text quoted in a hand-written brief.
 REINCARNATION_OPENER_PATTERN = re.compile(
     r"Read .+? — (?:it is )?" + re.escape(REINCARNATION_OPENER_MARKER))
-# Boot ignition without a dialog also consumes the handoff and retires the parent.
-BOOT_RECOVERY_IGNITION_MARKER = "(Recovered at supervisor boot:"
+# An ignition without a conversation-tail, at boot or at a handoff, also consumes the handoff and retires the parent.
+IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER = "the previous session's conversation-tail is unavailable"
 
 
 def default_agents_root() -> Path:
@@ -256,9 +256,12 @@ def run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
         return None
     socket_arguments = [] if socket_name is None else ["-L", socket_name]
     try:
+        # A server this call starts keeps this cwd (new-session -c sets only the pane's), and the
+        # occupancy check counts a server rooted in the caller's agent-home against that seat.
         return subprocess.run(
             ["tmux", *socket_arguments, *arguments_after_tmux],
             capture_output=True, text=True, timeout=30, check=False, env=environment,
+            cwd=os.path.expanduser("~"),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -506,7 +509,7 @@ def is_unreplied_reincarnation_successor(transcript_path: Path) -> bool:
     """Return whether a handoff successor has no substantive turns."""
     first_turn = first_user_turn_text(transcript_path)
     return ((REINCARNATION_OPENER_PATTERN.match(first_turn) is not None
-             or BOOT_RECOVERY_IGNITION_MARKER in first_turn)
+             or IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER in first_turn)
             and substantive_turn_count(transcript_path) == 0)
 
 
@@ -756,9 +759,12 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
     )
     if first_prompt_file is not None:
         supervisor_command += f" --first-prompt-file {shlex.quote(str(first_prompt_file))}"
+    # A pane command that ends with the supervisor call lets the pane's shell exec into it;
+    # tmux, then its parent, wakes it at once after a `kill -STOP`. The pane still closes
+    # with the supervisor's exit status.
     completed = run_tmux(
         "new-session", "-d", "-s", name, "-c", str(seat_directory),
-        supervisor_command, socket_name=name, environment=environment,
+        f"{supervisor_command}; exit $?", socket_name=name, environment=environment,
     )
     return 1 if completed is None else completed.returncode
 
@@ -1348,8 +1354,10 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return 2
 
-    agents_root = (Path(arguments.agents_root).expanduser() if arguments.agents_root
-                   else default_agents_root())
+    # Absolute before run_tmux, which runs tmux from $HOME, sees a seat directory under it.
+    agents_root = Path(os.path.abspath(
+        Path(arguments.agents_root).expanduser() if arguments.agents_root
+        else default_agents_root()))
     handoff_directory = (Path(arguments.handoff_dir).expanduser() if arguments.handoff_dir
                          else default_handoff_directory())
     projects_root = (Path(arguments.projects_root).expanduser() if arguments.projects_root

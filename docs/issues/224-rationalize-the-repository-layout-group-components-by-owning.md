@@ -1,8 +1,9 @@
 ---
-issue: "[Rationalize the repository layout: group components by owning system under nc-systems/, and a hook dispatcher](https://github.com/nedschorus/nedschorus/issues/224)"
+issue: "[Rationalize the repository layout: group components by owning system under nc-systems/](https://github.com/nedschorus/nedschorus/issues/224)"
+kind: design
 ---
 
-# Rationalize the repository layout: group components by owning system under nc-systems/, and a hook dispatcher
+# Rationalize the repository layout: group components by owning system under nc-systems/
 
 The repository is laid out by file type, so no system is findable in one place. Everything about one system is scattered across `scripts/`, `docs/`, `.claude/`, and sometimes an unmerged branch. An agent asked "what is the recovery system, and what works today" cannot answer it by listing a directory.
 
@@ -30,11 +31,11 @@ Alphabetical order actively scatters these groups: the recovery system's two hal
 
 3. **`nc-systems/` carries a repository map**: one line per system, written so an agent grepping can tell whether to open a system at all. Its shape was first ruled in GHI [built-in-process-planned documents: design docs convert to a pointer map of built / in process / planned, with a skill that verifies and updates them](https://github.com/nedschorus/nedschorus/issues/219), whose BIPP document kind is now retired; the map's requirement stands — a map, not a summary.
 
-4. **Hooks reach their systems through a dispatcher.** `.claude/settings.json` registers 6 handlers directly, four `PreToolUse` ones belonging to four systems. One entry per event running each system's own handler by convention lets a system own its hook without `settings.json` changing. A generated `settings.json` is rejected: a second copy of the truth that drifts from its sources.
+4. **Each Claude Code hook stays named in `.claude/settings.json`, and there is no hook dispatcher** (user-ruled 2026-10-28, below). When a hook moves to its system's directory, `.claude/settings.json` names it by its new path. A generated `settings.json` is rejected: a second copy of the truth that drifts from its sources.
 
 ## Relationship to the layer design
 
-GHI [Layer-design draft held on branch repo-boundary-and-runtime-layers: land or discard](https://github.com/nedschorus/nedschorus/issues/79) holds a parked draft on branch [repo-boundary-and-runtime-layers](https://github.com/nedschorus/nedschorus/tree/repo-boundary-and-runtime-layers) sorting components by where each must be when used. A different axis, not a competing answer: a component has an owning system and a delivery layer independently. They collide only at hooks and skills, which sit where the harness reads them; the dispatcher above reconciles that. The draft's claim that disk layout is cheap to change is contradicted by the three citation breaks above, and GHI [Layer-design draft held on branch repo-boundary-and-runtime-layers: land or discard](https://github.com/nedschorus/nedschorus/issues/79) is itself an instance, parked where no reader looks.
+GHI [Layer-design draft held on branch repo-boundary-and-runtime-layers: land or discard](https://github.com/nedschorus/nedschorus/issues/79) holds a parked draft on branch [repo-boundary-and-runtime-layers](https://github.com/nedschorus/nedschorus/tree/repo-boundary-and-runtime-layers) sorting components by where each must be when used. A different axis, not a competing answer: a component has an owning system and a delivery layer independently. They collide only at hooks and skills, which Claude Code finds through fixed places: `.claude/settings.json` names each hook by its path, wherever the hook lives, and a skill keeps only its `SKILL.md` in `.claude/skills/` (2026-09-23, below). The draft's claim that disk layout is cheap to change is contradicted by the three citation breaks above, and GHI [Layer-design draft held on branch repo-boundary-and-runtime-layers: land or discard](https://github.com/nedschorus/nedschorus/issues/79) is itself an instance, parked where no reader looks.
 
 ## Rulings since filing (user-ruled 2026-09-07/08, reboot-test seat)
 
@@ -69,7 +70,7 @@ From the three walks that settled the file-naming page, `docs/nedschorus-wiki/ne
 From the walk ghi-224-migration-order-and-open-questions-2026-09-30, minutes at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/ghi-224-migration-order-and-open-questions-2026-09-30-minutes.md`. Its numbers come from the migration inventory, measured on main 27a0ef30 on 2026-09-29 and rechecked on 2026-09-30.
 
 - **What a commit cannot fix is done by hand at each merge** (item 1). Each move's pull request lists its steps on the two machines, and the MD-skills seat runs them the moment it merges: re-run the two restart-at-login installers, edit both crontabs that run the transcript mirror, give merge-lane-2 its new paths, and reset `core.hooksPath` on both reference clones, then prove the git hooks run with a commit the identity check refuses. Running handoff-supervisors are not restarted. A forwarder at each of `scripts/handoff-extract-conversation.py` and `scripts/clean-worktrees.py` runs the file at its new path; each lands in the pull request that moves its file, and both are deleted once `ps` on both machines shows no supervisor started before the handoff move.
-- **A system's own hook moves with its system** (item 2). `.claude/hooks/` keeps the guards and the ghi-issue redirect; the 2026-10-01 ruling below renames it `.claude/guard-hooks/`. Until a dispatcher exists, `.claude/settings.json` points at each moved hook; the dispatcher stays an open question below.
+- **A system's own hook moves with its system** (item 2). `.claude/hooks/` keeps the guards and the ghi-issue redirect; the 2026-10-01 ruling below renames it `.claude/guard-hooks/`. `.claude/settings.json` names each moved hook by its new path. The ruling left the dispatcher open; the 2026-10-28 ruling below drops it, so that is how a moved hook is named for good.
 - **A design moves when its issue closes** (item 3), not when its code first lands as the 2026-09-29 rule above says: until its issue closes, a design stays in `docs/issues/`. A GHI-MD that is not a design stays in `docs/issues/`, and a queue file stays in its queue until the user approves it. So the 12 design-to-main agent-instructions stay in `docs/agents/queue/`, and no design moves in this migration: `docs/issues/120-recover-crashed-seats-design.md` also serves the open GHI [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedschorus/nedschorus/issues/242). For the designs that move later, the ghi-write tool learns to find a design in its code's `docs/` by its `issue:` line: PR [The ghi-write tool finds a landed design in its system's docs/, filed by its issue: line](https://github.com/nedschorus/nedschorus/pull/849).
 - **Four placements and three names** (item 4). `cold-read-reviewer-test-cases/` goes to `nc-systems/skills/cold-read/tests/cold-read-reviewer-test-cases/`; `scripts/design-to-main/scenarios/` to `nc-systems/design-to-main/tests/scenarios/`; `.claude/skills/skills-glossary.md` to `nc-systems/skills/docs/skills-glossary.md`; and `scripts/ghi-issue-write.py` goes with the other `ghi-*.py` programs to `nc-systems/github-issues/`. The three systems the page does not name are `nc-systems/github-issues/`, `nc-systems/getting-work-onto-main/` and `nc-systems/backup-and-recovery/`.
 - **The user reviews files by where they sit** (item 5). His words: "So its not a block, it's a human review", then "Have you considered that we place the MD files or prose that I want to review in different directories than the non-reviewed MD files or prose." The file-naming page's section "Files the user reviews" lists those files and the draft places where agents write freely, and `.claude/hooks/instruction-file-guard.py` enforces the list: PR [The instruction-file guard protects the files the user reviews, by where they sit](https://github.com/nedschorus/nedschorus/pull/852). Design-contracts and test-designs reach him through design-to-main instead. The same item renamed component-contract to design-contract: PR [component-contract is renamed design-contract everywhere](https://github.com/nedschorus/nedschorus/pull/837).
@@ -83,12 +84,17 @@ From the walk nedschorus-file-naming-and-location-standards-2026-09-30, follow-u
 
 - **`.claude/hooks/` is renamed `.claude/guard-hooks/` and holds all six guards**, the hooks that refuse an action before it happens, the ghi-issue redirect among them. Every other hook lives in its own system's directory, or in `nc-systems/general-tools/` when it belongs to no system. The rename is a pull request of its own in this migration, which also rewrites the file-naming page's Hook row (MD-skills task #135). Which hooks are guards is rechecked against `.claude/settings.json` when it is built. Its place in item 8's order is not set yet.
 
+## Ruling of 2026-10-28 UTC (user-ruled, MD-skills seat)
+
+From the walk md-skills-seat-open-questions-from-item-2-carried-over-approval-walk-2026-10-28, item 1 of 13, answered "A"; minutes at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/md-skills-seat-open-questions-from-item-2-carried-over-approval-walk-2026-10-28-minutes.md`.
+
+- **The hook dispatcher is dropped; each Claude Code hook stays named in `.claude/settings.json`.** This answers the open question of the dispatcher's ordering and blocking rules when several systems handle one event: Claude Code's own behaviour sets them. Every command hook that matches an event runs at the same time and none waits for another; on an event whose hooks can refuse, such as `PreToolUse`, any one of them may refuse the action, and on one whose hooks cannot, such as `PostToolUse`, none can ([Claude Code hooks reference](https://code.claude.com/docs/en/hooks)). When the user ruled, `.claude/settings.json` had 34 hook entries, against 6 when this issue was filed. The cost the user accepted: every new hook edits `.claude/settings.json`, a file the instruction-file guard protects.
+
 ## Next action
 
 The MD-skills seat moves the systems in the order ruled on 2026-09-30, one pull request each. The review-rule pull request, PR [The instruction-file guard protects the files the user reviews, by where they sit](https://github.com/nedschorus/nedschorus/pull/852), is first; walk-me-through is next.
 
-Open questions for the user, not settled here:
-- the dispatcher's ordering and blocking rules when several systems handle one event;
+Open question for the user, not settled here:
 - design-to-main's `skills/` subdirectory, proposed and not overruled on 2026-09-07/08, against the 2026-09-23 ruling that every skill's files other than its `SKILL.md` live under `nc-systems/skills/<skill name>/`.
 
 ## Search receipt
