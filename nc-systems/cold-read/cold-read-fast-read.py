@@ -1253,8 +1253,8 @@ def ultra_quota_line(error_line: str) -> str:
             else f"{ULTRA_QUOTA_LINE_OPENING} Gemini gave no reset time.")
 
 
-def fast_clarify_cell_failure_cause(launcher: pathlib.Path, exit_code: int,
-                                    output: str) -> str:
+def cold_read_cell_failure_cause(launcher: pathlib.Path, exit_code: int,
+                                 output: str) -> str:
     """One line naming why a cell failed: Gemini's spending cap, or else the
     Ultra sign-in's quota with its reset time, when `launcher` is the agy
     launcher and agy's error line in `output` names it, else the launcher's
@@ -1329,22 +1329,18 @@ def what_should_be_code_section(target: pathlib.Path, scratch: pathlib.Path) -> 
                  f"{COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_CELL_TIMEOUT_SECONDS / 60:g} "
                  f"minutes, so this program stopped the cell")
     else:
-        cause = fast_clarify_cell_failure_cause(CLAUDE_CELL_LAUNCHER, exit_code, output_text)
+        cause = cold_read_cell_failure_cause(CLAUDE_CELL_LAUNCHER, exit_code, output_text)
     rerun = shlex.join(["python3", str(pathlib.Path(__file__).resolve()),
                         "--target", str(target)])
     failure = (f"Question 4 was not answered: the {WHAT_SHOULD_BE_CODE_CELL} cell, which "
                f"asks Question 4 of {WHAT_SHOULD_BE_CODE_MODEL}, failed ({cause}). "
                f"Questions 1 to 3 are answered in the report's sections before this one "
                f"and stand on their own.\n"
-               f"If you need Question 4's answer and the cause above gives a time when a "
-               f"limit resets: wait until then, and run this command once, which reads "
-               f"the whole document again into a new report:\n{rerun}\n"
-               f"If you need Question 4's answer and the cause gives no reset time: run "
-               f"that command once now.\n"
-               f"If the new report's Question 4 section also says Question 4 was not "
-               f"answered, or you do not need the answer: go on without it, and tell "
-               f"whoever asked for the cold-read-fast-read that the document has no "
-               f"Question 4 answer.")
+               f"If you need Question 4's answer: run this command once, after the reset "
+               f"time if the cause above names one; it reads the whole document again "
+               f"into a new report:\n{rerun}\n"
+               f"If that report's Question 4 section also says Question 4 was not "
+               f"answered, or you do not need the answer: go on without it.")
     print(f"{PROGRAM}: {failure}", file=sys.stderr)
     return f"\n{WHAT_SHOULD_BE_CODE_HEADING}\n\n{failure}\n"
 
@@ -1472,7 +1468,7 @@ def main() -> int:
                 AGY_CELL_LAUNCHER, marked_copy, report, prompt_file)
             if exit_code == 0:
                 return fast_read_report_finish_and_print_path(**finish, backup_line="")
-            gemini_cause = fast_clarify_cell_failure_cause(AGY_CELL_LAUNCHER, exit_code, output)
+            gemini_cause = cold_read_cell_failure_cause(AGY_CELL_LAUNCHER, exit_code, output)
             if exit_code == EXIT_BAD_INVOCATION:
                 print(f"{PROGRAM}: the cell launcher refused the invocation "
                       f"(exit {EXIT_BAD_INVOCATION}); not retried, because the "
@@ -1504,7 +1500,7 @@ def main() -> int:
                              f"failed ({gemini_cause}), so {SONNET_BACKUP_MODEL} read "
                              "this document instead, as the provenance stamp says."),
                 quota_line=ultra_quota_line(quota_error_line) if quota_error_line else "")
-        sonnet_cause = fast_clarify_cell_failure_cause(CLAUDE_CELL_LAUNCHER, exit_code, output)
+        sonnet_cause = cold_read_cell_failure_cause(CLAUDE_CELL_LAUNCHER, exit_code, output)
     if bare_references:
         print(f"{PROGRAM}: bare issue, pull request or task numbers in this walk "
               f"draft: {len(bare_references)}. The read failed, so no suggestions "
