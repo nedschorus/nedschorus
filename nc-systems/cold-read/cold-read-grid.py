@@ -74,7 +74,17 @@ at once, with the same model -- no cold-read-cell is special (user-ruled
 with its CAUSE, the `cause:` line the cold-read-cell program prints
 (nc-systems/cold-read/cold-read-cell-common.py, classify_failed_attempt) or, when it left
 none, one the cold-read-grid names itself: `RETRYING:` at the first failure,
-`FAILED (exit N):` at the second, after which the report is ABSENT. When
+`FAILED (exit N):` at the second, after which the report is ABSENT. Two
+first failures are not retried and go straight to `FAILED` and absence: a
+cause the user can clear (cell_common.USER_CLEARABLE_CAUSE_CLASSES), which a
+retry would only meet again, and an attempt stopped at the time limit. The
+time limit is 4 hours per attempt, counted on time.monotonic(), which leaves
+out time the machine was asleep on both Linux (CLOCK_MONOTONIC) and macOS
+(mach_absolute_time), so a Mac that sleeps overnight does not trip it; the
+attempt is stopped with its children and its cause is `timed-out — timed out
+after 4 hours`. The `FAILED` line of an attempt whose cause the user can
+clear ends with "Tell the user: ...", once per agent-binary and cause, so
+the user hears of it while the other cold-read-cells run. When
 every cold-read-cell of one agent-binary has landed or is absent for the same
 agent-binary-wide cause, one `AGENT-BINARY DOWN:` line says so. Every run closes
 with one closing text built from what landed: all landed, some landed (the
@@ -82,10 +92,10 @@ set is valid and incomplete, and is triaged), none landed, or the
 cold-read-target changed, whatever else happened. When any report is absent
 every .md file in the record is marked `<!-- INCOMPLETE SET: ... -->`, and
 when an absent report's cause is one the user can clear the closing text
-ends "Tell the user: ...". A cause changes what is reported, never what is
-decided: the retry, the absence, the closing text and the exit code turn
-only on whether a report landed. No timeout: a cold-read-cell that hangs
-holds the run (user-ruled 2026-09-17: add one if a hang is ever seen).
+ends "Tell the user: ...", which repeats each such cause as the run's
+summary. Apart from the retry, a cause changes what is reported, never what
+is decided: the absence, the closing text and the exit code turn only on
+whether a report landed.
 
 AN EDIT TO THE ORIGINAL STOPS NOTHING.
 Every cold-read-cell reads the frozen copy, so an edit to the original leaves
@@ -264,6 +274,11 @@ TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE = "COLD_READ_GRID_TARGET_CHECK_INTERVAL_
 # Tests shorten the poll so stub cells that finish at once are not waited on for seconds.
 CELL_POLL_INTERVAL_OVERRIDE_VARIABLE = "COLD_READ_GRID_CELL_POLL_INTERVAL_SECONDS"
 CELL_POLL_INTERVAL_DEFAULT_SECONDS = 5.0
+# Tests shorten the limit so a timed-out attempt is seen in seconds.
+CELL_ATTEMPT_TIMEOUT_OVERRIDE_VARIABLE = "COLD_READ_GRID_CELL_ATTEMPT_TIMEOUT_SECONDS"
+CELL_ATTEMPT_TIMEOUT_DEFAULT_SECONDS = 4 * 60 * 60
+TIMED_OUT_CAUSE_CLASS = "timed-out"
+TIMED_OUT_CAUSE_DETAIL = "timed out after 4 hours"
 
 
 def record_clock_reading() -> datetime.datetime:
@@ -671,6 +686,7 @@ class CellAttempt(typing.NamedTuple):
     process: typing.Optional[subprocess.Popen]
     stderr_path: pathlib.Path
     start_error: str
+    started_at: float
 
 
 class AbsentReport(typing.NamedTuple):
@@ -704,6 +720,9 @@ def runtime_of(cell_name: str) -> str:
 def start_attempt(command: list, report_path: pathlib.Path, attempt: int,
                   stderr_path: pathlib.Path) -> CellAttempt:
     """Launch a cell with output logged; return an attempt even if startup fails."""
+    # time.monotonic() stops while the machine sleeps, on Linux and on macOS alike;
+    # time.clock_gettime(CLOCK_MONOTONIC) would count a Mac's sleep.
+    started_at = time.monotonic()
     with open(stderr_path, "w", encoding="utf-8") as err:
         try:
             process = subprocess.Popen(  # pylint: disable=consider-using-with
@@ -712,8 +731,9 @@ def start_attempt(command: list, report_path: pathlib.Path, attempt: int,
             )
         except OSError as error:
             err.write(f"cold-read-grid: could not start {command[0]}: {error}\n")
-            return CellAttempt(report_path, command, attempt, None, stderr_path, str(error))
-    return CellAttempt(report_path, command, attempt, process, stderr_path, "")
+            return CellAttempt(report_path, command, attempt, None, stderr_path, str(error),
+                               started_at)
+    return CellAttempt(report_path, command, attempt, process, stderr_path, "", started_at)
 
 
 def launch_cells(target: pathlib.Path, record_dir: pathlib.Path,
@@ -819,10 +839,13 @@ def wait_for_cells(running: dict,
                    target_move: typing.Callable[[], typing.Optional[tuple]],
                    target_check_interval_seconds: float = 0.0,
                    cell_poll_interval_seconds: float = CELL_POLL_INTERVAL_DEFAULT_SECONDS,
+                   cell_attempt_timeout_seconds: float = CELL_ATTEMPT_TIMEOUT_DEFAULT_SECONDS,
                    ) -> RunOutcome:
-    """Retry failed cells once and wait for reports, absences or a changed target."""
+    """Retry failed cells once, unless the cause is user-clearable or the attempt
+    timed out, and wait for reports, absences or a changed target."""
     # A successful exit alone does not prove a review exists; require a nonempty report.
     outcome = RunOutcome([], {}, {}, [], None)
+    told_the_user = set()
     last_target_check = time.monotonic()
     cells_by_runtime = {}
     for report_path in running:
@@ -833,6 +856,14 @@ def wait_for_cells(running: dict,
         for report_path in list(running):
             attempt = running[report_path]
             code = None if attempt.process is None else attempt.process.poll()
+            timed_out = (attempt.process is not None and code is None
+                         and time.monotonic() - attempt.started_at >= cell_attempt_timeout_seconds)
+            if timed_out:
+                stop_process_tree(attempt.process)
+                code = attempt.process.returncode
+                print(f"WRITE CHECK DID NOT RUN: {report_path.name} — "
+                      f"{STOPPED_CELL_WRITE_CHECK_LINE.format(cell=cell_name_of(report_path))}",
+                      flush=True)
             if attempt.process is not None and code is None:
                 continue
             del running[report_path]
@@ -848,9 +879,12 @@ def wait_for_cells(running: dict,
                 print(f"saved: {report_path}", flush=True)
                 outcome.landed.append(name)
             else:
-                cause_class, detail = cause_of_failed_attempt(attempt, code, log_lines)
+                # A stopped attempt's exit status is the signal, which says nothing of why.
+                cause_class, detail = ((TIMED_OUT_CAUSE_CLASS, TIMED_OUT_CAUSE_DETAIL) if timed_out
+                                       else cause_of_failed_attempt(attempt, code, log_lines))
                 cause = f"{cause_class}{cell_common.CAUSE_SEPARATOR}{detail}"
-                if attempt.attempt == 1:
+                if (attempt.attempt == 1 and not timed_out
+                        and cause_class not in cell_common.USER_CLEARABLE_CAUSE_CLASSES):
                     kept = report_path.with_name(report_path.name + ".attempt-1.stderr.log")
                     attempt.stderr_path.rename(kept)
                     print(f"{RETRYING_PREFIX} {name}{cell_common.CAUSE_SEPARATOR}{cause} "
@@ -859,10 +893,17 @@ def wait_for_cells(running: dict,
                     running[report_path] = start_attempt(attempt.command, report_path, 2, retry_log)
                 else:
                     exit_text = "none" if attempt.process is None else str(code)
-                    print(f"FAILED (exit {exit_text}): {name}{cell_common.CAUSE_SEPARATOR}"
-                          f"{cause} (stderr kept: {attempt.stderr_path})", flush=True)
-                    outcome.absent[name] = AbsentReport(
+                    report = AbsentReport(
                         name, runtime_of(name), cause_class, detail, attempt.stderr_path)
+                    # On the FAILED line, so the Monitor that watches FAILED delivers it.
+                    tell = ""
+                    if (cause_class in cell_common.USER_CLEARABLE_CAUSE_CLASSES
+                            and (report.runtime, cause_class) not in told_the_user):
+                        told_the_user.add((report.runtime, cause_class))
+                        tell = f". Tell the user: {user_clearable_cause_text(report)}."
+                    print(f"FAILED (exit {exit_text}): {name}{cell_common.CAUSE_SEPARATOR}"
+                          f"{cause} (stderr kept: {attempt.stderr_path}){tell}", flush=True)
+                    outcome.absent[name] = report
             announce_agent_binary_down(cells_by_runtime, outcome)
         if running and time.monotonic() - last_target_check >= target_check_interval_seconds:
             last_target_check = time.monotonic()
@@ -892,9 +933,13 @@ def tell_the_user_sentence(absent: dict) -> str:
     if not causes:
         return ""
     return "Tell the user: " + "; ".join(
-        f"{report.runtime} {report.cause_class}{cell_common.CAUSE_SEPARATOR}"
-        f"{report.detail} (log: {report.log_path})"
-        for report in causes.values()) + "."
+        user_clearable_cause_text(report) for report in causes.values()) + "."
+
+
+def user_clearable_cause_text(report: AbsentReport) -> str:
+    """One cause the user can clear, with the log that shows it."""
+    return (f"{report.runtime} {report.cause_class}{cell_common.CAUSE_SEPARATOR}"
+            f"{report.detail} (log: {report.log_path})")
 
 
 def absence_lines(outcome: RunOutcome) -> str:
@@ -1047,7 +1092,9 @@ def main() -> int:
         lambda: moved_frozen_copy(frozen_target, target_before),
         float(os.environ.get(TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE) or 0),
         float(os.environ.get(CELL_POLL_INTERVAL_OVERRIDE_VARIABLE)
-              or CELL_POLL_INTERVAL_DEFAULT_SECONDS))
+              or CELL_POLL_INTERVAL_DEFAULT_SECONDS),
+        float(os.environ.get(CELL_ATTEMPT_TIMEOUT_OVERRIDE_VARIABLE)
+              or CELL_ATTEMPT_TIMEOUT_DEFAULT_SECONDS))
     # Retain the poll result if the changed bytes were restored before the final comparison.
     move = moved_frozen_copy(frozen_target, target_before) or outcome.moved_mid_run
     target_changed = move is not None
