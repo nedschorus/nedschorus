@@ -252,7 +252,7 @@ report_path = (pathlib.Path(re.search(r"Write your report to (\\S+), once", prom
                else pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"]))
 report_path.parent.mkdir(parents=True, exist_ok=True)
 report_path.write_text(plan["report"], encoding="utf-8")
-""".replace("QUESTION_4_MODEL", script_under_test_module().WHAT_SHOULD_BE_CODE_MODEL)
+""".replace("QUESTION_4_MODEL", script_under_test_module().WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID)
 # What the stub answers to Question 4 when a case plans nothing else.
 QUESTION_4_STUB_ANSWER = "STUB OPUS QUESTION 4: No issues\n"
 # The words Gemini's agy prints when the project's monthly spending cap is
@@ -947,7 +947,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- Question 4: What should be code ----------------------------------
     question_4_module = script_under_test_module()
-    question_4_heading = question_4_module.WHAT_SHOULD_BE_CODE_HEADING
+    question_4_heading = question_4_module.WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING
     coverage_heading = question_4_module.SENTENCE_COVERAGE_HEADING
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
@@ -992,7 +992,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the Question 4 cell is told to write its report into a scratch file, not into "
           "the checkout",
           f"Write your report to {repository}" not in received_question_4_prompt
-          and question_4_module.WHAT_SHOULD_BE_CODE_ANSWER_FILE_NAME
+          and question_4_module.WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_FILE_NAME
           in received_question_4_prompt,
           repr(received_question_4_prompt[-500:]))
     check("the claude launcher names no stray write, since Question 4 runs after the "
@@ -1026,8 +1026,8 @@ with tempfile.TemporaryDirectory() as scratch:
     copied_fast_read = repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py"
     copied_fast_read.write_text(
         copied_fast_read.read_text(encoding="utf-8").replace(
-            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_CELL_TIMEOUT_SECONDS = 30 * 60\n",
-            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_CELL_TIMEOUT_SECONDS = 5\n"),
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n",
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 5\n"),
         encoding="utf-8")
     suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
     hanging_stub_pid_file = scratch / "hanging-question-4-stub.pid"
@@ -1088,16 +1088,6 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and records_text.count(question_4_heading) == 1
           and QUESTION_4_STUB_ANSWER.strip() in records_text,
           f"exit {result.returncode}; report={records_text!r}")
-
-    already_reaped = subprocess.Popen(["true"], start_new_session=True)
-    already_reaped.wait()
-    try:
-        question_4_module.process_group_kill(already_reaped)
-        killing_a_gone_group_raised = ""
-    except OSError as error:
-        killing_a_gone_group_raised = repr(error)
-    check("killing the process group of a cell that has already exited raises nothing",
-          not killing_a_gone_group_raised, killing_a_gone_group_raised)
 
     # --- The embedded instructions: two cases, and why both are needed ---
     # The case below and the one after it are a pair. The first proves the
@@ -1579,14 +1569,14 @@ check("the ssh time limit of a read on ned-box follows the agy cell's per-model 
           "TIER_TO_AGY_MODEL_CHAIN = {'fast': ('model-a', 'model-b')}\n")
       == warning_module.FAST_READ_ATTEMPTS * 2 * 45 * 60
       + warning_module.COLD_READ_FAST_READ_SONNET_BACKUP_RUN_ALLOWANCE_SECONDS + 5 * 60
-      + warning_module.COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_CELL_TIMEOUT_SECONDS)
+      + warning_module.COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS)
 check("the Question 4 prompt carries the fast-clarify prompt's reading rules whole, "
       "from their first sentence to their last",
-      warning_module.READER_RULES.startswith(warning_module.READER_RULES_FIRST_WORDS)
-      and warning_module.READER_RULES.endswith(warning_module.READER_RULES_LAST_WORDS)
-      and "Never open a credential file" in warning_module.READER_RULES
-      and warning_module.READER_RULES in warning_module.WHAT_SHOULD_BE_CODE_PROMPT_TEMPLATE,
-      repr(warning_module.READER_RULES[:200]))
+      warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES.startswith(warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES_OPENING_WORDS)
+      and warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES.endswith(warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES_CLOSING_WORDS)
+      and "Never open a credential file" in warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES
+      and warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES in warning_module.WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE,
+      repr(warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES[:200]))
 class_of = warning_module.full_run_class_of_target
 root = warning_module.REPO_ROOT
 check("a skill is in the class",
