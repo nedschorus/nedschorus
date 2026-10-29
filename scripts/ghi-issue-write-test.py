@@ -517,40 +517,48 @@ def run_cases(scratch: Path):
 
     # --- A title names the work: no date; a path is allowed -------------
 
-    title_refusal_lines = [
-        "Remove the date from this file's first heading; the heading "
-        "becomes the issue's title.",
-        "Put the date in the text below the heading.",
-        "Then rerun the same command."]
-    for case_name, heading, refused in [
-            ("a heading carrying an ISO date is refused",
-             "Sweep the bare words, under the 2026-09-15 rule", True),
-            ("a dated heading in parentheses is refused",
-             "Stamp the launch time (user-ruled 2026-08-27)", True),
+    def title_refusal_lines(date):
+        return [
+            f"Not filed: this file's first heading carries the date {date}; "
+            "the heading becomes the issue's title, and a title carries no "
+            "date.",
+            f"Remove {date} from the first heading; when the date matters, "
+            "put it in the text below the heading.",
+            "Then rerun the same command."]
+    # The refusal quotes the date it matched, so an agent holding a heading
+    # with other numbers in it knows which characters to remove.
+    for case_name, heading, refused_date in [
+            ("a heading carrying an ISO date is refused, quoting the date",
+             "Sweep the bare words, under the 2026-09-15 rule", "2026-09-15"),
+            ("a dated heading in parentheses is refused, quoting the date",
+             "Stamp the launch time (user-ruled 2026-08-27)", "2026-08-27"),
+            ("a heading with a version number and a date quotes the date",
+             "Codex 3.8 notes from 2026-10-01", "2026-10-01"),
             ("a heading that only names the work passes",
-             "Build sanity-checker", False),
+             "Build sanity-checker", None),
             ("a version number is not read as a date",
-             "Codex/Gemini 3.8 notes", False),
+             "Codex/Gemini 3.8 notes", None),
             ("a longer run of digits is not read as a date",
-             "Ticket 12026-09-150 notes", False),
+             "Ticket 12026-09-150 notes", None),
             ("a directory named from the repository root passes",
-             "Group the components under nc-systems/", False),
+             "Group the components under nc-systems/", None),
             ("a file path passes",
-             "Ship the records: docs/ship-records.py and the runner", False),
+             "Ship the records: docs/ship-records.py and the runner", None),
             ("a path under the home directory passes",
-             "Reviewers never open ~/.config/gh", False),
+             "Reviewers never open ~/.config/gh", None),
             ("an absolute path passes",
-             "Move /home/nedlern/logs aside", False)]:
+             "Move /home/nedlern/logs aside", None)]:
         try:
             tool.refuse_heading_with_date(heading)
             outcome = None
         except tool.Refused as refusal:
             outcome = refusal
         check(case_name,
-              (outcome is not None) == refused
+              (outcome is not None) == (refused_date is not None)
               and (outcome is None
                    or (outcome.code == 64
-                       and str(outcome).splitlines() == title_refusal_lines)),
+                       and str(outcome).splitlines()
+                       == title_refusal_lines(refused_date))),
               repr(outcome))
 
     titled = written(scratch, "titled.md",
@@ -563,7 +571,7 @@ def run_cases(scratch: Path):
     except tool.Refused as refusal:
         check("create refuses a dated heading before filing anything",
               refusal.code == 64
-              and str(refusal).splitlines() == title_refusal_lines
+              and str(refusal).splitlines() == title_refusal_lines("2026-08-27")
               and not refusing.ran("gh issue create")
               and not refusing.ran(ASK),
               f"code {refusal.code}: {refusal}; {refusing.commands()}")
@@ -647,7 +655,8 @@ def run_cases(scratch: Path):
                               "--repo", REPO])
         check(case_name,
               code == 64 and "would file" not in printed.getvalue()
-              and complaint.getvalue().splitlines() == title_refusal_lines,
+              and complaint.getvalue().splitlines()
+              == title_refusal_lines("2026-08-27"),
               f"code {code}, {printed.getvalue()!r}, "
               f"{complaint.getvalue()!r}")
 

@@ -722,11 +722,14 @@ def refuse_heading_with_date(heading: str):
     already filed under such a title can still be edited, and a filing
     resumed after an earlier run is never refused for a title GitHub
     already holds."""
-    if ISO_DATE_IN_HEADING.search(heading):
+    date = ISO_DATE_IN_HEADING.search(heading)
+    if date:
         raise Refused(
-            "Remove the date from this file's first heading; "
-            "the heading becomes the issue's title.\n"
-            "Put the date in the text below the heading.\n"
+            f"Not filed: this file's first heading carries the date "
+            f"{date.group()}; the heading becomes the issue's title, and a "
+            f"title carries no date.\n"
+            f"Remove {date.group()} from the first heading; when the date "
+            f"matters, put it in the text below the heading.\n"
             "Then rerun the same command.", 64)
 
 def slug(title: str) -> str:
