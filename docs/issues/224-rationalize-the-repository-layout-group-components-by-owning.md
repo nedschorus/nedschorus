@@ -1,9 +1,9 @@
 ---
-issue: "[Rationalize the repository layout: group components by owning system under nc-systems/, and a hook dispatcher](https://github.com/nedschorus/nedschorus/issues/224)"
+issue: "[Rationalize the repository layout: group components by owning system under nc-systems/](https://github.com/nedschorus/nedschorus/issues/224)"
 kind: design
 ---
 
-# Rationalize the repository layout: group components by owning system under nc-systems/, and a hook dispatcher
+# Rationalize the repository layout: group components by owning system under nc-systems/
 
 The repository is laid out by file type, so no system is findable in one place. Everything about one system is scattered across `scripts/`, `docs/`, `.claude/`, and sometimes an unmerged branch. An agent asked "what is the recovery system, and what works today" cannot answer it by listing a directory.
 
