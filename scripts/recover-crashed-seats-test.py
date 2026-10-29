@@ -2026,7 +2026,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # and both branch-state call sites are pinned whole]
     # (https://github.com/nedschorus/nedschorus/pull/590) added. Look there,
     # not here, before trusting that a wording change is guarded.
-    boot_recovery_prompt = supervisor_module.BootRecoveryIgnitionPlan(
+    boot_recovery_prompt = supervisor_module.IgnitionPlanWithoutConversationTail(
         "Finish the walk.").compose("")
     workspace = Workspace(root / "r27")
     all_dead()
@@ -2059,6 +2059,22 @@ with tempfile.TemporaryDirectory() as temporary:
           dialog_prompt[:120])
     check("REVIEW-2: a brief that only quotes the opener is not a handoff successor",
           not recovery.is_unreplied_reincarnation_successor(quoted))
+
+    # A handoff whose session-dialog could not be extracted starts a successor
+    # with the same plan, which names the occasion and the transcript.
+    for transcript_name in ("present", "absent"):
+        transcript = root / "r29-transcripts" / f"{transcript_name}.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        if transcript_name == "present":
+            transcript.write_text("{}\n", encoding="utf-8")
+        handoff_recovery_prompt = supervisor_module.IgnitionPlanWithoutConversationTail(
+            "Finish the walk.", "a handoff", "retiring-session", transcript).compose("")
+        successor = write_transcript(root / "r29-transcripts", f"handoff-recovery-{transcript_name}",
+                                     handoff_recovery_prompt, records=1)
+        check(f"REVIEW-3: a successor started at a handoff without a conversation-tail, its "
+              f"transcript {transcript_name}, is recognized",
+              recovery.is_unreplied_reincarnation_successor(successor),
+              handoff_recovery_prompt[:200])
 
     # --- recover into a window (nedschorus#242 change 6, #116 build step 3) --
     # --open-iterm-window-per-seat launches the seat ATTACHED in its own iTerm
