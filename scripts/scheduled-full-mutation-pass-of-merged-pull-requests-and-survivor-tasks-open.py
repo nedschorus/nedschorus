@@ -73,8 +73,9 @@ printed on standard output instead, and the run exits EXIT_RECORD_NOT_WRITTEN.
 SCHEDULE. Installed on ned-box by
 nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py from
 scheduled-jobs-on-each-machine.json, with both output streams appended to
-~/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log,
-which, with the record, is where its failures are read.
+its log, which, with the record, is where its failures are read:
+
+    30 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py >> /home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log 2>&1
 
 Exit codes: 0 every merge since the last run was mutation-tested and its
 survivors given tasks, or the first run wrote the state file;
