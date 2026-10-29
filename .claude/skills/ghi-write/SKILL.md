@@ -1,6 +1,6 @@
 ---
 name: ghi-write
-description: Use when you are about to write anything that touches a GitHub issue in this project, before the write — filing a new issue, changing what an issue says, commenting on an issue, closing one, or promoting queue material into an issue — and when deciding whether material should become an issue or a task, because routing that decision is part of the skill. Asks ghi-guide-agent whether an issue already covers the subject, routes the material to an issue, a queue, the task list, its own commit or pull request, or its canonical location, and says how the issue's GHI-MD is written and checked. Not for merely reading or citing an issue.
+description: Use when the user says to make, file, update or close a GHI, and whenever you are about to write anything that touches a GitHub issue in this project, before the write — filing an issue, changing what one says, commenting on one, closing one, or promoting queue material into one — and when deciding whether material should become an issue or a task. Asks ghi-guide-agent whether an issue already covers the subject, routes the material to an issue, a queue, the task list, its own commit or pull request, or its canonical location, and says how the issue's GHI-MD is written and checked. Not for merely reading or citing an issue.
 ---
 
 # ghi-write
