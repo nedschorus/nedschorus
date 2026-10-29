@@ -31,7 +31,7 @@ Owned elsewhere, listed so the builder knows not to wait on them here:
 
 - **What the gate's pull request carries**, the single candidate commit or the topic branch: the gatekeeper's, issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3). The run's record no longer depends on it (design section 9).
 - **Which reviewers compose a cold-read run, and passing the user's rulings file to it**: the cold-read-research seat's. Until the cold-read run takes a rulings file, a writer's in-state cold read runs without them.
-- **The repository layout** the component's directory follows: issue [Rationalize the repository layout: group components by owning system under nc-systems/, one built-in-process-planned document each, and a hook dispatcher](https://github.com/nedschorus/nedschorus/issues/224).
+- **The repository layout** the component's directory follows: issue [Rationalize the repository layout: group components by owning system under nc-systems/](https://github.com/nedschorus/nedschorus/issues/224).
 
 ## Progress
 
