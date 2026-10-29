@@ -316,8 +316,9 @@ def run_missing_launcher_case(workspace: Path):
     # which transcript is worth resuming from scripts/ (issue 242 change 5).
     # Both are resolved from the repository root, so the isolated copy needs
     # the repository's SHAPE around it rather than two files beside it.
-    # The modules the supervisor loads from scripts/ are read from its own
-    # source, so a new import there needs no change here.
+    # The files the supervisor names under scripts/ are read from its own
+    # source, so a new import there needs no change here, whether it loads the
+    # file directly or through a path constant.
     supervisor_home = workspace / "nc-systems" / "handoff"
     supervisor_home.mkdir(parents=True)
     for supervisor_file in ("handoff-supervisor.py", "handoff-user-review-of-agent-memory-stores-mark.py",
@@ -347,7 +348,7 @@ def run_missing_launcher_case(workspace: Path):
     scripts_home = workspace / "scripts"
     scripts_home.mkdir(parents=True, exist_ok=True)
     for supervisor_import in re.findall(
-            r'SCRIPTS_DIRECTORY / "([\w-]+\.py)"\)',
+            r'SCRIPTS_DIRECTORY / "([\w-]+\.py)"',
             SUPERVISOR_SCRIPT.read_text(encoding="utf-8")):
         (scripts_home / supervisor_import).write_text(
             RESUPERVISE_SCRIPT.with_name(supervisor_import)
