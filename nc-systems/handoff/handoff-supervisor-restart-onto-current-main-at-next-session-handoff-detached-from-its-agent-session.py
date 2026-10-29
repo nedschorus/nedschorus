@@ -3,13 +3,14 @@
 
 A handoff-supervisor that does not restart itself at a session-handoff keeps the
 code it started with, so after a change to handoff-supervisor.py merges, it has to
-be ended and a new one started from the waiting session-handoff. An agent-seat cannot do that from its own agent-session
-by hand, because one step ends that agent-session. This program does it in a
-process detached from the agent-session, so it keeps running after the
-agent-session is ended. It is written for the Mac, where no other agent-seat can
-act as the operator. It also runs on ned-box: there step 10's
-recover-crashed-seats.py starts the agent-seat in a new detached tmux session
-itself, instead of through launch-claude-mac.
+be ended and a new one started from the waiting session-handoff. An agent-seat
+cannot do that from its own agent-session by hand, because ending the
+agent-session ends whoever is doing it. This program does it in a process
+detached from the agent-session, so it keeps running after the agent-session is
+ended. It is written for the Mac, where no other agent-seat can act as the
+operator. It also runs on ned-box, where recover-crashed-seats.py starts the
+agent-seat in a new detached tmux session itself, instead of through
+launch-claude-mac.
 
 The agent-seat's own agent-session starts it, outside the Bash tool's sandbox,
 which on the Mac blocks signals to processes outside it:
@@ -17,57 +18,57 @@ which on the Mac blocks signals to processes outside it:
   python3 ~/Projects/nedschorus/nc-systems/handoff/handoff-supervisor-restart-onto-current-main-at-next-session-handoff-detached-from-its-agent-session.py <agent-seat name>
       [--handoff-wait-minutes M] [--checkout DIR] [--handoff-dir DIR]
 
---handoff-wait-minutes is how long step 7 waits for the handoff (default 20);
---checkout is the clone step 1 fast-forwards and steps 9 and 10 run from
-(default ~/Projects/nedschorus); --handoff-dir is where the handoff, the lock,
-the state file and the log are (default ~/.claude/handoffs).
+--handoff-wait-minutes is how long the detached process waits for the handoff
+(default 20); --checkout is the clone this program fast-forwards and runs the
+recovery programs from (default ~/Projects/nedschorus); --handoff-dir is where
+the handoff, the lock, the state file and this program's log are (default
+~/.claude/handoffs). This program's log is
+~/.claude/handoffs/<name>-handoff-supervisor-restart-log.txt.
 
-In the foreground, before it signals anything, it:
-  1. refuses unless ~/Projects/nedschorus (--checkout) is on main with no
-     uncommitted change to a tracked file, then fast-forwards it to origin/main,
-     so the new handoff-supervisor and the two recovery programs run main's code;
-     untracked files are allowed, because `git merge --ff-only` itself refuses
-     when one would be overwritten;
-  2. reads the handoff-supervisor's process ID from its lock file and confirms
-     with ps that the process is handoff-supervisor.py --agent <name>;
-  3. refuses when the handoff-supervisor is the tmux pane's own process, because
-     tmux sends SIGCONT to a stopped pane process at once, so kill -STOP cannot
-     hold it; the refusal points the agent to the steps in the section
-     "Restarting an agent-seat's handoff-supervisor onto main's code" of the
-     handoff-system's nc-architecture-overview, which another agent-seat on
-     ned-box, or a helper agent on the Mac, runs instead;
-  4. finds the agent-session as the handoff-supervisor's child process whose
-     command carries the session id the handoff-supervisor recorded in its state
-     file;
-  5. checks that its log, ~/.claude/handoffs/<name>-handoff-supervisor-restart-log.txt,
-     can be appended to;
-  6. sends SIGSTOP to the handoff-supervisor and confirms with ps a second later
-     that it is still stopped; if it is not, it sends SIGCONT and refuses.
-It then prints what the agent-session does next, and detaches.
+In the foreground, in this order, this program:
+  - appends a first line to its log, and refuses if it cannot;
+  - refuses unless the checkout is on main with no uncommitted change to a
+    tracked file, then fetches origin and fast-forwards the checkout to
+    origin/main, so the new handoff-supervisor and the two recovery programs run
+    main's code (untracked files are allowed, because a fast-forward itself
+    refuses when one would be overwritten);
+  - reads the handoff-supervisor's process ID from its lock file, and confirms
+    with ps that the process is handoff-supervisor.py --agent <name>;
+  - refuses when the handoff-supervisor is its tmux pane's own process, because
+    tmux sends SIGCONT to a stopped pane process at once; the refusal says what
+    to do instead on each machine;
+  - finds the agent-session: the handoff-supervisor's child process whose
+    command carries the session id the handoff-supervisor recorded in its state
+    file;
+  - sends SIGSTOP to the handoff-supervisor and confirms with ps a second later
+    that it is still stopped; if it is not, or ps fails, this program sends the
+    handoff-supervisor SIGCONT and refuses.
+It then prints what the agent-session does next, and detaches. A refusal sends no
+signal, except the SIGCONT that undoes a SIGSTOP.
 
-The detached process, which leaves the agent-seat's directory so that
-recover-crashed-seats.py does not find it there, then:
-  7. waits for a session-handoff whose restart-counter is above every counter
-     seen before the SIGSTOP. If none arrives within --handoff-wait-minutes, or
-     this program fails before step 8, this program sends SIGCONT, so the old
-     handoff-supervisor carries on as before, and then this program stops;
-  8. sends SIGKILL to the handoff-supervisor and SIGTERM to the agent-session,
-     then SIGKILL to the agent-session if it is still running 20 seconds later.
-     It then ends, one at a time, each process the agent-session had started:
-     every process below the agent-session in the ps table, which is read once,
-     just before the SIGKILL to the handoff-supervisor, such as an MCP server the
-     agent-session runs. Each one that is
-     still running gets SIGTERM, then SIGKILL if that same process is still
-     running 5 seconds later. This is because recover-crashed-seats.py refuses
-     while a process runs in the agent-seat's directory;
-  9. runs resupervise-seat.py <name> --prepare-only, which refuses unless the
-     handoff waits and no handoff-supervisor is alive, and removes the agent-seat's
-     tmux session; and, if that succeeds,
- 10. runs recover-crashed-seats.py <name>, which finds the handoff waiting and
-     starts the agent-seat once, detached, with launch-claude-mac --no-attach on
-     the Mac. resupervise-seat.py without --prepare-only is not used: it ends by
-     running the launcher attached, which needs a terminal this process does not
-     have.
+The detached process leaves the agent-seat's directory, so that
+recover-crashed-seats.py does not find it there, and then:
+  - waits for a session-handoff whose restart-counter is above every counter
+    seen before the SIGSTOP. If none arrives within --handoff-wait-minutes, or
+    this program fails before it ends the handoff-supervisor, this program sends
+    the handoff-supervisor SIGCONT, so that it carries on as before, and this
+    program exits;
+  - reads the ps table once, then sends SIGKILL to the handoff-supervisor and
+    SIGTERM to the agent-session, and SIGKILL to the agent-session if it still
+    runs 20 seconds later;
+  - ends, one at a time, each process that ps table shows below the
+    agent-session, such as an MCP server the agent-session runs: SIGTERM, then
+    SIGKILL if that process still runs 5 seconds later, because
+    recover-crashed-seats.py refuses while a process runs in the agent-seat's
+    directory;
+  - runs resupervise-seat.py <name> --prepare-only, which refuses unless the
+    handoff waits and no handoff-supervisor is alive, and removes the agent-seat's
+    tmux session; and, if that succeeds,
+  - runs recover-crashed-seats.py <name>, which finds the handoff waiting and
+    starts the agent-seat once, detached, with launch-claude-mac --no-attach on
+    the Mac. resupervise-seat.py without --prepare-only is not used: it ends by
+    running the launcher attached, which needs a terminal this process does not
+    have.
 
 Process IDs are read only from the lock file, the state file and ps, never by a
 name pattern: every agent-seat runs as the same Unix user, so a pattern would
@@ -75,17 +76,19 @@ reach the other agent-seats too. The processes the agent-session started are
 found by walking down from its process ID through the parent process IDs ps
 lists.
 
-Every step is appended, with a UTC time, to
-~/.claude/handoffs/<name>-handoff-supervisor-restart-log.txt, beside
+Every step is appended, with a UTC time, to this program's log, beside
 recover-crashed-seats.py's own log; the detached process's stdout and stderr go
 there too. The last line of each restart starts with RESTARTED, NOT RESTARTED or
-FAILED. A NOT RESTARTED line means this program stopped before ending the old
-handoff-supervisor: it refused in the foreground, no handoff arrived in time,
-or it failed before step 8. The old handoff-supervisor then runs on, with
-SIGCONT sent to it if it had been stopped, on the code it started with. A
-FAILED line means the old handoff-supervisor was ended and no new one
-was confirmed: the agent-seat stays down, with its handoff waiting on disk, until
-someone reads the log and runs recover-crashed-seats.py again.
+FAILED. NOT RESTARTED means this program stopped before ending the old
+handoff-supervisor: it refused in the foreground, no handoff arrived in time, or
+it failed before ending the handoff-supervisor. The old handoff-supervisor then
+runs on, sent SIGCONT if it had been stopped, on the code it started with.
+RESTARTED means recover-crashed-seats.py exited 0, or 3, which means the
+agent-seat started but no window opened on the Mac. FAILED means the old
+handoff-supervisor was ended and then resupervise-seat.py --prepare-only refused,
+recover-crashed-seats.py exited with any other status, or this program failed:
+the agent-seat stays down, with its handoff waiting on disk, until someone reads
+the log and runs the commands its FAILED line gives.
 
 This program does not tell merge-lane-2. The foreground output gives the agent
 a sentence to copy into the next step of the session-handoff it then writes,
@@ -233,10 +236,14 @@ def refuse_handoff_supervisor_restart_when_its_parent_process_is_tmux(process_ta
             f"handoff-supervisor {supervisor_process_id} is its tmux pane's own process (its "
             f"parent {parent_process_id} is `{parent_command}`), and tmux sends SIGCONT to a "
             "stopped pane process at once, so SIGSTOP cannot hold it and this program cannot "
-            "restart this agent-seat. Restart it instead by the steps in the section "
-            "\"Restarting an agent-seat's handoff-supervisor onto main's code\" of "
-            "docs/nedschorus-wiki/nedschorus-handoff-architecture-overview.md: on ned-box another "
-            "agent-seat runs them, and on the Mac a helper agent does, as that section says.")
+            "restart this agent-seat. On ned-box, ask another agent-seat to restart this "
+            "agent-seat's handoff-supervisor by the steps in the section \"Restarting an "
+            "agent-seat's handoff-supervisor onto main's code\" of "
+            "docs/nedschorus-wiki/nedschorus-handoff-architecture-overview.md, and do not run "
+            "them yourself, because they end this agent-session. On the Mac, SIGSTOP cannot hold "
+            "this handoff-supervisor, so write your session-handoff as usual: at that "
+            "session-handoff the handoff-supervisor restarts itself on main's code, and if that "
+            "restart fails, the handoff-supervisor tells your successor.")
 
 
 def find_agent_session_process_id_among_handoff_supervisor_children(process_table, supervisor_process_id: int, session_id) -> int:
@@ -298,7 +305,9 @@ def freeze_supervisor(supervisor_process_id: int, sleep=time.sleep, read_table=r
         os.kill(supervisor_process_id, signal.SIGCONT)
         raise HandoffSupervisorRestartRefusal(f"ps failed after SIGSTOP to handoff-supervisor {supervisor_process_id} "
                       f"({error}); since this program cannot tell whether SIGSTOP held the "
-                      "handoff-supervisor, it sent it SIGCONT. Run this program once more.")
+                      "handoff-supervisor, this program sent the handoff-supervisor SIGCONT. Run "
+                      "this program once more; if ps fails again, stop and tell the user what this "
+                      "program printed.")
     # Linux shows a stopped process as t instead of T inside some PID namespaces, such as bwrap's.
     if not state.startswith(("T", "t")):
         os.kill(supervisor_process_id, signal.SIGCONT)
