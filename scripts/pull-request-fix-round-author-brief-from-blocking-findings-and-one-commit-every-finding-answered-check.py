@@ -8,7 +8,7 @@ Usage:
 The round is set by merge-lane-2's latest review that requests changes, together with every later
 review of merge-lane-2's that comments on the same commit, where merge-lane-2 can add or re-post
 blockers. That commit is the frozen-head. The blocking findings are those reviews' inline comments
-whose body starts BLOCKING_MARKER; the bodies' free text is never parsed for findings. A blocker
+whose body starts with a match of BLOCKING_MARKER_PATTERN; the bodies' free text is never parsed for findings. A blocker
 re-posted with the same path, line and body counts once. A review's stated **Blocking: N** is
 checked against its own marked comments, or, when it has none, against those of the later reviews,
 which then re-post its blockers.
@@ -49,7 +49,9 @@ git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 MERGE_LANE_2_REVIEWER_LOGIN = "ned-review-merge"
-BLOCKING_MARKER = "**Blocks.**"
+# Reviewers spell the mark several ways, such as "**Blocks.**", "**Blocks:**", "**Blocks**" or "**Blocks** (...)"; no instruction fixes one.
+BLOCKING_MARKER_PATTERN = re.compile(r"\*\*Blocks\b[^*\n]*\*\*")
+BLOCKING_MARKER_DESCRIPTION = "the bold word **Blocks**"
 BLOCKING_COUNT_PATTERN = re.compile(r"\*\*Blocking:\s*(\d+)\*\*")
 ANSWER_START_PATTERN = re.compile(r"^(\d+)\.\s+(\S.*)$")
 GH_TIMEOUT_SECONDS = 60
@@ -202,7 +204,7 @@ def finding_identity(comment):
 
 def marked(comments):
     return [comment for comment in comments
-            if (comment.get("body") or "").lstrip().startswith(BLOCKING_MARKER)]
+            if BLOCKING_MARKER_PATTERN.match((comment.get("body") or "").lstrip())]
 
 
 def without_reposts(comments):
@@ -229,7 +231,7 @@ def blocking_findings(number, reviews):
     if not findings:
         total = sum(len(comments) for comments in comments_by_review)
         raise Refused(f"merge-lane-2's review {named} requests changes, but none of {whose} "
-                      f"{total} inline comments starts with {BLOCKING_MARKER}, the mark this "
+                      f"{total} inline comments starts with {BLOCKING_MARKER_DESCRIPTION}, the mark this "
                       "program reads blocking findings by.\n"
                       + ask + "; do not guess them from the reviews' text.")
     for index, review in enumerate(reviews):
@@ -243,7 +245,7 @@ def blocking_findings(number, reviews):
             where = ("its own inline comments" if own or len(reviews) == 1
                      else "the inline comments of the reviews after it")
             raise Refused(f"merge-lane-2's review {review.get('html_url')} says **Blocking: {stated.group(1)}**, "
-                          f"but {len(counted)} of {where} start with {BLOCKING_MARKER}"
+                          f"but {len(counted)} of {where} start with {BLOCKING_MARKER_DESCRIPTION}"
                           + (f" ({named})" if len(reviews) > 1 else "") + ".\n"
                           + ask + ", and both counts.")
     return findings
