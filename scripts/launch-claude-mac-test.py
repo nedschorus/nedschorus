@@ -645,6 +645,16 @@ def main() -> int:
         check("detached: tmux gets mouse mode on and copy-command pbcopy",
               tmux_argv_sets_mouse_mode_and_pbcopy(sandbox.tmux_argv()),
               sandbox.tmux_argv())
+        # A pane command that ends with the supervisor call lets the pane's
+        # shell exec into it, and tmux, then its parent, wakes it from a
+        # `kill -STOP` at once.
+        detached_pane_commands = [argument for argument in sandbox.tmux_argv()
+                                  if "handoff-supervisor.py" in argument]
+        check("detached: the pane command ends with `; exit $?`, so the shell "
+              "stays the supervisor's parent",
+              len(detached_pane_commands) == 1
+              and detached_pane_commands[0].endswith("; exit $?"),
+              detached_pane_commands)
         check("task list: the pin reaches the supervisor as nedschorus-<seat>-tasks",
               sandbox.supervisor_environment().get("CLAUDE_CODE_TASK_LIST_ID")
               == "nedschorus-seat-a-tasks",
