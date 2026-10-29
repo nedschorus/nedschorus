@@ -1351,8 +1351,10 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return 2
 
-    agents_root = (Path(arguments.agents_root).expanduser() if arguments.agents_root
-                   else default_agents_root())
+    # Absolute before run_tmux, which runs tmux from $HOME, sees a seat directory under it.
+    agents_root = Path(os.path.abspath(
+        Path(arguments.agents_root).expanduser() if arguments.agents_root
+        else default_agents_root()))
     handoff_directory = (Path(arguments.handoff_dir).expanduser() if arguments.handoff_dir
                          else default_handoff_directory())
     projects_root = (Path(arguments.projects_root).expanduser() if arguments.projects_root

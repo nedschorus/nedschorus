@@ -449,6 +449,21 @@ def main() -> int:
               sandbox.tmux_working_directory() == str(sandbox.home.resolve()),
               (sandbox.tmux_working_directory(), str(sandbox.workdir)))
 
+        # --- relative root: resolved against the caller's directory, not the
+        # $HOME the launcher changes to before it starts tmux
+        sandbox = MacLaunchSandbox(root / "relative-root")
+        result = sandbox.run("relative agents")
+        tmux_argv = sandbox.tmux_argv()
+        seat_directory = f"{sandbox.workdir}/relative agents/seat-t"
+        check("relative root: tmux -c is the seat directory under the caller's directory",
+              result.returncode == 0
+              and any(previous == "-c" and current == seat_directory
+                      for previous, current in zip(tmux_argv, tmux_argv[1:])),
+              (result.returncode, result.stderr[:300], tmux_argv))
+        check("relative root: the seat directory was created under the caller's directory",
+              Path(seat_directory).is_dir()
+              and not (sandbox.home / "relative agents").exists(), seat_directory)
+
         # --- the update step resolves the SEAT's claude, not the ambient one
         # The launcher exports ~/.local/bin ahead of the inherited PATH before
         # it checks for or updates Claude Code, so the copy it updates is the

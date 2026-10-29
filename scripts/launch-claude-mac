@@ -72,12 +72,15 @@ AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}"
 # expanduser()s the same value; a ~user/ form is refused, because this
 # script would mkdir a literal ~user directory while those tools resolve
 # that user's real home — one seat, silently split across two directories.
+# A relative root is resolved here, against the caller's directory, because
+# the launcher later changes directory to $HOME before it starts tmux.
 case "$AGENTS_ROOT" in
     ("~"[!/]*)
         echo "launch-claude-mac: ~user agents roots are not supported — the shell and the fleet's Python tools resolve them to different directories, splitting the seat. Use an absolute path." >&2
         exit 2 ;;
     ("~") AGENTS_ROOT="$HOME" ;;
     ("~/"*) AGENTS_ROOT="$HOME${AGENTS_ROOT#?}" ;;
+    ([!/]*) AGENTS_ROOT="$PWD/$AGENTS_ROOT" ;;
 esac
 
 # The supervisor lives in its own system directory one level up, so the

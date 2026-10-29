@@ -2885,6 +2885,25 @@ with tempfile.TemporaryDirectory() as temporary:
         check("AGENTS ROOT: on macOS, --agents-root still chooses the seat launched",
               exit_code == 0 and seat_directories_launched == [workspace.seat_directory],
               (exit_code, seat_directories_launched))
+        # run_tmux runs tmux from $HOME, so a relative root left relative would name a
+        # seat directory under $HOME, not under the caller's directory.
+        seat_directories_launched.clear()
+        relative_root_arguments = [
+            workspace.name, "--agents-root", workspace.agents_root.name,
+            "--handoff-dir", str(workspace.handoffs),
+            "--projects-root", str(workspace.projects)]
+        saved_directory = os.getcwd()
+        try:
+            os.chdir(workspace.agents_root.parent)
+            with redirect_stdout(io.StringIO()):
+                exit_code = recovery.main(relative_root_arguments)
+        finally:
+            os.chdir(saved_directory)
+        check("AGENTS ROOT: a relative --agents-root resolves against the caller's directory",
+              exit_code == 0 and seat_directories_launched == [workspace.seat_directory]
+              and workspace.seat_directory.is_absolute()
+              and workspace.agents_root.parent != Path.home(),
+              (exit_code, seat_directories_launched))
     finally:
         patch("launcher_path", launcher_path_before_agents_root_cases)
         patch("agents_root_is_movable_on_this_machine", lambda: True)
