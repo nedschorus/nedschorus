@@ -40,7 +40,7 @@ THE SEQUENCE, and what makes each step safe to run twice:
 
   1. Validate   the file exists, opens with a heading, and is not already
                 filed under an issue whose filing finished; a new filing's
-                heading carries no date or file path.
+                heading carries no date.
   2. Adjudicate ask ghi-info whether an open issue already covers this.
                 Fail-open: unreachable means the write proceeds. A ruling
                 question is written to a proposed-improvements-or-changes-
@@ -177,7 +177,7 @@ its name wherever it sits — and does four things:
                 only where main holds the file under the same name.
   4. Title      when the edit CHANGED the file's first heading, and the
                 issue has one filed GHI-MD; such a heading is refused
-                before step 3 if it carries a date or a file path.
+                before step 3 if it carries a date.
   5. Link       the body to the filed GHI-MDs on main, as create's step 5
                 writes it in the first place.
 
@@ -325,8 +325,8 @@ Exit codes:
   64  the caller's input is wrong: no such file, no heading, filed when
       create wants it unfiled or unfiled when edit wants it filed,
       already on main under an issue, a filing of the same heading already
-      in flight, a heading about to become a title that carries a date or
-      a file path, a path this tool does not write, a name carrying a number
+      in flight, a heading about to become a title that carries a date,
+      a path this tool does not write, a name carrying a number
       that names no issue — one no issue has, or one a pull request has, or
       a bad command line. argparse's own errors are given this code rather
       than its 2, which this list has no entry for and a caller could not
@@ -701,169 +701,35 @@ def first_heading(file_text: str) -> str:
 # is the form every dated title on the repository carries, and a bare year
 # or a version number is not a date a title goes stale by.
 ISO_DATE_IN_HEADING = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)")
-# The last segment of a path that names a file: a dot, then an extension
-# that starts with a letter, so "v1.3" and "3.8" are not read as one.
-FILE_EXTENSION_AT_END = re.compile(r"\.[A-Za-z][A-Za-z0-9]*$")
-# Punctuation a heading wraps round a path, stripped before the path is
-# judged. The dot is stripped from the end only, below, so a leading one,
-# as in .claude/, survives.
-PUNCTUATION_AROUND_A_HEADING_WORD = "`'\"()[]{},;:!?"
 
 
-def tracked_paths_at_head(repository_root: Path, runner) -> list:
-    """Every path git tracks at the checkout's HEAD, which is what the path
-    half of the heading check measures a slashed word against.
-
-    TRACKED AT HEAD, NOT WHAT THE DIRECTORY HOLDS. The check first listed
-    the repository root's directory, so an untracked or ignored entry
-    counted, and one heading got two verdicts: merge-lane-2's checkout
-    holds walk-ledgers/ and cold-read-records/, which others do not (review
-    of PR [GHI titles name the work](https://github.com/nedschorus/nedschorus/pull/829)).
-    Two checkouts at one commit now answer alike. An empty answer on
-    failure, such as a HEAD with no commit yet, and on a listing that times
-    out, because a path the check cannot see is let through rather than a
-    filing stopped. The timeout is caught here although every other git
-    call in this program lets one end the run with exit 1: this call only
-    decides whether to refuse, and the reviews of PR [GHI heading check runs
-    after the duplicate refusals](https://github.com/nedschorus/nedschorus/pull/838)
-    found this docstring promising "let through" while a timeout stopped
-    the run. A checkout with no commit yet tracks nothing, so its listing's
-    128 is that answer; any other failed listing is printed on stderr before
-    it is let through, so the agent checks the heading itself."""
-    arguments = ["git", "ls-tree", "-r", "--name-only", "-z", "HEAD"]
-    try:
-        completed = runner(arguments, timeout=30, cwd=str(repository_root),
-                           check=False)
-    except subprocess.TimeoutExpired:
-        return []
-    if completed.returncode != 0:
-        try:
-            unborn = head_is_unborn(repository_root, runner)
-        except (Refused, subprocess.TimeoutExpired):
-            unborn = False
-        if unborn:
-            return []
-        said = ((completed.stderr or completed.stdout or "").strip()
-                or "no detail")
-        print(f"{shlex.join(arguments)} exited {completed.returncode}: "
-              f"{said}\n"
-              "So the file's first heading was not checked for a file path, "
-              "and this run went on without that check.\n"
-              "Check that heading yourself: it becomes the issue's title, "
-              "which carries no file path (step 4 of "
-              ".claude/skills/ghi-write/SKILL.md).\n"
-              "If it names none, nothing more is needed.\n"
-              "If it names one and this run created the issue on GitHub, "
-              "or edited an issue created earlier, wait until the pull "
-              "request this run opened has merged, then pull main.\n"
-              "Next rerun the command the run's last line gives, which "
-              "finishes the filing or the edit.\n"
-              "Then move the path into the text below the heading in the "
-              "issue's GHI-MD as main holds it, and run this program's edit "
-              "operation on that file, which renames the issue after the "
-              "corrected heading unless other files are named with the "
-              "issue's number (the edit line of "
-              ".claude/skills/ghi-write/SKILL.md).\n"
-              "If it names one and this run created no issue, because it "
-              "was a dry run or because it stopped before filing, move the "
-              "path into the text below the heading, then run the same "
-              "command again.",
-              file=sys.stderr)
-        return []
-    return git_output.nul_separated_fields(completed.stdout)
-
-
-def date_or_file_path_in_heading(heading: str, tracked_paths) -> str:
-    """The first date or file path in a heading, or "" when it carries
-    neither.
-
-    A GHI's title is the file's first heading, and it names the work in full
-    words and nothing else: its status, ruling, date, provenance or path go
-    in the text below it (user-ruled 2026-09-30, item 4 of the walk
-    open-questions-concerns-and-recommendations-2026-09-30, "y"; the
-    /ghi-write skill's step 4 says so). Of the four, a date and a path are
-    the two a program can tell from ordinary words, so those are the two
-    refused; status and rulings are left to the skill. Both go stale while
-    the title is cited everywhere: 15 of the 138 issue titles on
-    2026-09-30 carried a date and 11 a path, and three of those paths no
-    longer exist on main.
-
-    NARROW ON PURPOSE, because a false refusal stops a filing, while a path
-    let through only escapes a rule the skill already states. A date is the
-    full ISO form. A path is a word holding a slash that is also one of:
-    rooted at the home directory (`~/`); absolute with at least two
-    segments, so a slash command such as /cold-read passes; a root entry
-    alone, such as nc-systems/, or a root entry and a second segment that
-    together name something tracked, such as docs/agents; or ended by an
-    extension some tracked file carries, such as .md or .py.
-    `tracked_paths` is `tracked_paths_at_head`'s list, empty when there is
-    no checkout, and then only the first two forms and the date are judged.
-
-    WHY THE TRACKED TREE decides the last two forms: the review of PR
-    [GHI titles name the work](https://github.com/nedschorus/nedschorus/pull/829)
-    found ordinary headings the first version refused, "The config/state
-    split" and "Separate docs/code review" because config and docs are
-    root entries, and "Support Deno/Node.js", "Codex/claude.ai parity" and
-    "Opus 4.x/5.x" because any extension counted. None of the 138 titles
-    tripped either, but model versions and products are what this
-    project's titles name. Measured over the 138 titles on 2026-09-30, the
-    narrower check still refuses 10 of the 11 paths, letting through only
-    docs/wiki, which main no longer tracks, and passes every slashed word
-    that is not a path —
-    turn/start, red/green, A/B, README/principles, missing-origin/main,
-    /save-MD-as-draft — and a program named without its directory, such as
-    recover-crashed-seats.py, carries no slash and passes too."""
-    date = ISO_DATE_IN_HEADING.search(heading)
-    if date:
-        return date.group(0)
-    root_entries = {path.split("/")[0] for path in tracked_paths}
-    first_two_segments = {"/".join(path.split("/")[:2])
-                          for path in tracked_paths}
-    extensions = {extension.group(0) for extension in
-                  (FILE_EXTENSION_AT_END.search(path.rsplit("/", 1)[-1])
-                   for path in tracked_paths) if extension}
-    for word in heading.split():
-        candidate = word.strip(PUNCTUATION_AROUND_A_HEADING_WORD).rstrip(".")
-        if "/" not in candidate:
-            continue
-        segments = [segment for segment in candidate.split("/") if segment]
-        if not segments:
-            continue
-        extension = FILE_EXTENSION_AT_END.search(segments[-1])
-        if (candidate.startswith("~/")
-                or (candidate.startswith("/") and len(segments) >= 2)
-                or (not candidate.startswith("/")
-                    and segments[0] in root_entries
-                    and (len(segments) == 1
-                         or "/".join(segments[:2]) in first_two_segments))
-                or (extension and extension.group(0) in extensions)):
-            return candidate
-    return ""
-
-
-def refuse_heading_with_date_or_file_path(heading: str, repository_root,
-                                          runner):
+def refuse_heading_with_date(heading: str):
     """Refuses, before anything is filed or landed, a heading that is about
-    to become an issue's title while carrying a date or a file path — see
-    `date_or_file_path_in_heading` for what counts and why. Called by
-    `create` for a new filing, after the refusals for a filing in flight and
-    one already on main, so a rerun on a source that is either is told that
-    and not to change the heading, which would file a second issue; by
-    `create --dry-run`, which judges the heading as a new filing's real run
-    does but reads neither GitHub nor main (see `main`); and by
+    to become an issue's title while carrying a date in the full ISO form.
+
+    The title names the work and carries no status, ruling, date or
+    provenance (step 4 of .claude/skills/ghi-write/SKILL.md). Of those, a
+    date is the one a program can tell from ordinary words, and it goes
+    stale while the title is cited everywhere. A file or directory path is
+    allowed in a title.
+
+    Called by `create` for a new filing, after the refusals for a filing in
+    flight and one already on main, so a rerun on a source that is either is
+    told that and not to change the heading, which would file a second
+    issue; by `create --dry-run`, which judges the heading as a new filing's
+    real run does but reads neither GitHub nor main (see `main`); and by
     `edit` only when step 4 will set the title to the heading, so an issue
     already filed under such a title can still be edited, and a filing
     resumed after an earlier run is never refused for a title GitHub
-    already holds. `repository_root` is None only for the dry run of a file
-    outside any checkout. The tracked tree is read only for a heading
-    holding a slash, since only a slashed word can be a path."""
-    tracked = (tracked_paths_at_head(repository_root, runner)
-               if repository_root is not None and "/" in heading else [])
-    if date_or_file_path_in_heading(heading, tracked):
+    already holds."""
+    date = ISO_DATE_IN_HEADING.search(heading)
+    if date:
         raise Refused(
-            "Remove the date or file path from this file's first heading; "
-            "the heading becomes the issue's title.\n"
-            "Put the date or path in the text below the heading.\n"
+            f"Not filed: this file's first heading carries the date "
+            f"{date.group()}; the heading becomes the issue's title, and a "
+            f"title carries no date.\n"
+            f"Remove {date.group()} from the first heading; when the date "
+            f"matters, put it in the text below the heading.\n"
             "Then rerun the same command.", 64)
 
 def slug(title: str) -> str:
@@ -2135,7 +2001,7 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
         refuse_if_filing_is_in_flight(repo, issues, title, runner)
         refuse_if_already_landed_on_main(repo, text, title, repository_root,
                                          runner)
-        refuse_heading_with_date_or_file_path(title, repository_root, runner)
+        refuse_heading_with_date(title)
         if earlier_ruling_question(slug(title), text, runner, report) is None:
             conflict = adjudicate(repo, title, text, repository_root, runner,
                                   report)
@@ -3039,7 +2905,7 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
     # is the title the issue already has.
     if title_follows_heading_in_this_edit(document_before_this_edit, title,
                                           paths, issue):
-        refuse_heading_with_date_or_file_path(title, repository_root, runner)
+        refuse_heading_with_date(title)
     # What lands: the author's file carrying the `issue:` line this tool
     # derives. Built here and not at the top of the run, because that line
     # cites the issue by TITLE, and the title is GitHub's — the one this
@@ -3161,13 +3027,12 @@ def main_with_stop_signals_raising_system_exit(argv):
         if arguments.operation == "create" and arguments.dry_run:
             # The one path that needs no checkout: a file outside one can
             # still be validated, and create's own root lookup comes later.
-            # The heading is judged as a new filing's real run judges it,
-            # against the checkout's tracked tree where there is one.
+            # The heading is judged as a new filing's real run judges it.
             #
             # A NEW FILING'S, because the dry run reads neither GitHub nor
             # main, so it cannot see a source whose filing is in flight, is
             # already on main, or resumes by its pairing key: for such a
-            # source with a dated or pathed heading it prints the heading
+            # source with a dated heading it prints the heading
             # refusal where the real run would refuse otherwise or resume,
             # and an agent that followed it would change the heading, which
             # none of the three checks would then match, and file a second
@@ -3177,13 +3042,9 @@ def main_with_stop_signals_raising_system_exit(argv):
             # run fetch main and call gh, and it promises to change neither
             # git nor GitHub; and none of the three states can hold a heading
             # this check refuses unless a filing started before 2026-09-30
-            # left one, or a path in a filed heading became tracked later.
+            # left one.
             text, title = validate(path)
-            try:
-                dry_run_root = repository_root_of(path.parent)
-            except Refused:
-                dry_run_root = None
-            refuse_heading_with_date_or_file_path(title, dry_run_root, run)
+            refuse_heading_with_date(title)
             report(f"would file: {title}")
             report(f"pairing key: {pairing_key(text)}")
             report(f"would land at: {GHI_MD_DIRECTORY}/<number>-"

@@ -82,7 +82,10 @@ suite failing by its own exit (it printed nothing, was not run to the end,
 could not write its records, or a suite's nc-test-sandbox did not start), is
 printed as ERRORED and counts against the run like a survivor. cosmic-ray
 itself reports every nonzero exit of the runner as a kill; this script does
-not. On the unmutated head either a suite's own time limit or the limit on
+not. A mutant one of whose suites had a process killed at the suite's memory
+ceiling (MEMORY CEILING in the runner's docstring), as a mutant that allocates
+without end does, is killed: it fails that suite in seconds, and the rest of
+the machine keeps its memory. On the unmutated head either a suite's own time limit or the limit on
 one run of the suites stops the script with exit 2 and a message saying the suites ran out of time, with the limit,
 and, for a suite's own limit, the suite.
 
