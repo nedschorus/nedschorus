@@ -1,6 +1,6 @@
 # File naming and location standards
 
-The naming and location standards for this project's files. Where internal or external systems dictate the name or location of files we follow those dictates. Our standards only cover this project's systems. `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md` says how to choose the words of every name, file names included, and CLAUDE.md points there; this page gives the patterns and locations for each kind of file. Our skills and scripts may specify their own file names and locations. This document complements, not replaces, those other methods and instructions. 
+The naming and location standards for this project's files. Where a tool this project did not write, such as Claude Code, Git or GitHub, fixes a file's name or location, we follow the tool. These standards cover every other file in the repository. Where a skill or a program names the files it writes differently, this page still sets the pattern, and the migration of GHI [Rationalize the repository layout: group components by owning system under nc-systems/](https://github.com/nedschorus/nedschorus/issues/224) brings each into line. Until it does, a file that a skill's or a program's code reads stays where that code reads it. `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md` says how to choose the words of every name, file names included, and CLAUDE.md points there; this page gives the patterns and locations for each kind of file.
 
 ## Terms this page uses
 
