@@ -200,8 +200,9 @@ STOP_SIGNAL_SCRATCH_NOT_REMOVED_LINES = (
     "{program} check: a {signal} stopped this check step while a cold-read-fast-read was running, so the "
     "walk-minutes do not record the user's answer, and the scratch directory {directory}, which held the text "
     "sent to that cold-read-fast-read, could not be removed: {error}\n"
-    "Run `rm -rf {directory}`, because nothing else removes that directory, and the disk it is on can fill.\n"
-    "Then run the same `python3 {program_path} check` command again, with the same answer, so that the "
+    "Run `chmod -R u+rwX {quoted_directory} && rm -rf {quoted_directory}`, because nothing else removes that "
+    "directory, and the disk it is on can fill.\n"
+    "Then run the same `python3 {quoted_program_path} check` command again, with the same answer, so that the "
     "walk-minutes record his answer.")
 CHECK_MINUTES = "{item}: the user answered {answered}{hashtag} ({date_and_time}), which makes its change. Fast reads:"
 CHECK_DEFERRED_MINUTES = "{item}: the user answered deferred ({date_and_time}), which makes no change."
@@ -389,10 +390,12 @@ STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
 @contextlib.contextmanager
 def scratch_directory_removed_on_every_exit():
     """Make a scratch directory and yield its path; remove it when the block ends, however the block ends. A
-    SIGTERM or SIGHUP during the block removes it and then ends the program as that signal's default does.
+    SIGTERM or SIGHUP during the block removes it and then ends the program as that signal's default does; one
+    the program was started with ignored, as under nohup, stays ignored.
 
     The handler raises nothing: an exception raised inside subprocess's own code, between Popen._wait()'s lock
     acquire and its try, leaves the lock held, and the wait() that subprocess.run() then makes blocks forever.
+    stop-signal-sigterm-or-sighup-raises-system-exit-so-cleanup-runs-common.py raises, so it does not fit here.
     """
     made = []
 
@@ -402,15 +405,22 @@ def scratch_directory_removed_on_every_exit():
                 shutil.rmtree(directory)
             except OSError as error:
                 print(STOP_SIGNAL_SCRATCH_NOT_REMOVED_LINES.format(
-                    program=PROGRAM, signal=signal.Signals(number).name, program_path=Path(__file__).resolve(),
-                    directory=directory, error=error), file=sys.stderr)
+                    program=PROGRAM, signal=signal.Signals(number).name,
+                    quoted_program_path=shlex.quote(str(Path(__file__).resolve())), directory=directory,
+                    quoted_directory=shlex.quote(directory), error=error), file=sys.stderr)
         signal.signal(number, signal.SIG_DFL)
         os.kill(os.getpid(), number)
 
-    previous = {number: signal.signal(number, remove_then_end) for number in STOP_SIGNALS}
+    previous = {number: signal.signal(number, remove_then_end)
+                for number in STOP_SIGNALS if signal.getsignal(number) != signal.SIG_IGN}
     try:
-        scratch = tempfile.mkdtemp(prefix=PROGRAM + "-")
-        made.append(scratch)
+        # Blocked until the path is in made, so a stop signal between the two cannot leave the directory behind.
+        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
+        try:
+            scratch = tempfile.mkdtemp(prefix=PROGRAM + "-")
+            made.append(scratch)
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
         yield scratch
     finally:
         for directory in made:

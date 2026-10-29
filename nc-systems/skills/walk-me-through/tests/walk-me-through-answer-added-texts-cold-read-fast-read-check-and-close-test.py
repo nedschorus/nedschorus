@@ -4,8 +4,9 @@ change in an open approval-walk: its check step, which fast-reads each text
 the answer adds to the waiting item, `#new` or `#new_if_d`, that has not had a
 fast read, and its close step.
 
-Each case runs the program as a subprocess in a scratch checkout this suite
-made. cold-read-fast-read.py is replaced by a stand-in this suite writes, so no
+Most cases run the program as a subprocess in a scratch checkout this suite
+made; the rest load it into this process, in a forked child where a signal
+must end the process. cold-read-fast-read.py is replaced by a stand-in this suite writes, so no
 case calls a model, except one case that runs a copy of the real
 cold-read-fast-read.py with stub models, to show the check reads that
 program's own output. The exit code is asserted on every case.
@@ -62,6 +63,8 @@ if mode.startswith("stopped-unremovable "):
     (target.parent / "locked").mkdir()
     (target.parent / "locked" / "file").write_text("x")
     (target.parent / "locked").chmod(0o500)
+if mode.startswith("signalled-then-reports "):
+    os.kill(os.getppid(), getattr(signal, mode.split()[1]))
 if mode.startswith("stopped"):
     os.kill(os.getppid(), getattr(signal, mode.split()[1]))
     time.sleep(2)  # The check is stopped while it waits for this fast read.
@@ -153,7 +156,7 @@ class Case:
 
     counter = 0
 
-    def __init__(self, next_to_present="item 3 of 9", document=WALK_DOCUMENT):
+    def __init__(self, next_to_present="item 3 of 9", document=WALK_DOCUMENT, temporary_directory_name="tmp"):
         Case.counter += 1
         self.root = SUITE_ROOT / f"case-{Case.counter}"
         self.checkout = self.root / "checkout"
@@ -171,7 +174,7 @@ class Case:
         self.calls.write_text("")
         self.stand_in = self.root / "cold-read-fast-read-stand-in.py"
         self.stand_in.write_text(STAND_IN)
-        self.temporary_directory = self.root / "tmp"
+        self.temporary_directory = self.root / temporary_directory_name
         self.temporary_directory.mkdir()
 
     def left_in_temporary_directory(self):
@@ -184,15 +187,23 @@ class Case:
         (record / "fast-read.md").write_text("findings\n")
         return record
 
-    def run(self, step, *flags, mode="", counts_log=None, fast_read_program=None, environment=None):
+    def run(self, step, *flags, mode="", counts_log=None, fast_read_program=None, environment=None,
+            ignored_signal=None):
         environment = dict(environment or os.environ, STAND_IN_MODE=mode, STAND_IN_CALLS=str(self.calls),
                            STAND_IN_RECORDS=str(self.records), TMPDIR=str(self.temporary_directory))
+
+        def stop_signal_dispositions():
+            # Set explicitly: a child left to inherit would get SIG_IGN when this suite runs under nohup.
+            for number in (signal.SIGTERM, signal.SIGHUP):
+                signal.signal(number, signal.SIG_IGN if number == ignored_signal else signal.SIG_DFL)
+
         return subprocess.run(
             [sys.executable, str(PROGRAM), step, *flags, "--cwd", str(self.checkout),
              "--cold-read-records", str(self.records),
              "--fast-read-program", str(fast_read_program or self.stand_in),
              "--counts-log", str(counts_log or self.counts_log)],
-            capture_output=True, text=True, env=environment, cwd=self.checkout)
+            capture_output=True, text=True, env=environment, cwd=self.checkout,
+            preexec_fn=stop_signal_dispositions)
 
 
 def described(result):
@@ -342,30 +353,45 @@ def test_a_check_stopped_by_sigterm_or_sighup_removes_its_scratch_directory_and_
               not case.left_in_temporary_directory(), case.left_in_temporary_directory())
 
 
-def test_a_scratch_directory_a_stop_signal_cannot_remove_is_reported_with_the_command_that_removes_it():
+def test_a_check_started_with_a_stop_signal_ignored_keeps_ignoring_it():
     for number in (signal.SIGTERM, signal.SIGHUP):
         case = Case()
+        result = case.run("check", mode=f"signalled-then-reports {number.name}", ignored_signal=number)
+        check(f"a check started with {number.name} ignored, as under nohup, is not ended by a {number.name} during "
+              f"its cold-read-fast-read, and records the answer",
+              result.returncode == 0 and "the user answered approved" in case.minutes.read_text()
+              and not case.left_in_temporary_directory(), described(result))
+
+
+def test_a_scratch_directory_a_stop_signal_cannot_remove_is_reported_with_the_command_that_removes_it():
+    for number in (signal.SIGTERM, signal.SIGHUP):
+        # A space in the path shows the command quotes the directory.
+        case = Case(temporary_directory_name="scratch root")
         result = case.run("check", mode=f"stopped-unremovable {number.name}")
         left = [case.temporary_directory / name for name in case.left_in_temporary_directory()]
-        for directory in left:
-            (directory / "locked").chmod(0o700)
+        command = re.search(r"Run `(.+?)`", result.stderr)
         check(f"a scratch directory a {number.name} cannot remove is named, with the command that removes it, "
               f"and the check still ends as {number.name} does",
-              result.returncode == -number and len(left) == 1
+              result.returncode == -number and len(left) == 1 and command is not None
               and f"a {number.name} stopped this check step" in result.stderr
               and f"the scratch directory {left[0]}, which held the text" in result.stderr
-              and f"Run `rm -rf {left[0]}`" in result.stderr
-              and f"Then run the same `python3 {PROGRAM} check` command again, with the same answer"
-              in result.stderr,
+              and f"Then run the same `python3 {shlex.quote(str(PROGRAM))} check` command again, with the same "
+                  f"answer" in result.stderr,
               described(result))
         check(f"the {number.name} message names no answer's flags, and gives a reason for the removal that "
               f"holds wherever TMPDIR points",
               "flag" not in result.stderr and "/tmp has a quota" not in result.stderr
               and "the disk it is on can fill" in result.stderr,
               described(result))
-        removal = subprocess.run(["rm", "-rf", str(left[0])] if left else ["false"], capture_output=True, text=True)
-        check("the command the message gives removes the scratch directory",
-              removal.returncode == 0 and not case.left_in_temporary_directory(), case.left_in_temporary_directory())
+        removal = subprocess.run(["sh", "-c", command.group(1) if command else "false"], capture_output=True,
+                                 text=True)
+        check(f"the command the {number.name} message gives, run as printed, removes the scratch directory it "
+              f"left unremovable",
+              removal.returncode == 0 and not case.left_in_temporary_directory(),
+              f"exit {removal.returncode}, stderr {removal.stderr!r}, left {case.left_in_temporary_directory()}")
+        for directory in left:
+            if (directory / "locked").exists():
+                (directory / "locked").chmod(0o700)  # Else the suite's own removal leaves it behind.
 
 
 def test_a_fast_read_that_raises_partway_leaves_no_scratch_directory_and_restores_the_stop_signal_handlers():
@@ -391,6 +417,86 @@ def test_a_fast_read_that_raises_partway_leaves_no_scratch_directory_and_restore
     after_handlers = [signal.getsignal(number) for number in (signal.SIGTERM, signal.SIGHUP)]
     check("run_fast_read puts back the SIGTERM and SIGHUP handlers its caller had",
           all(after is before for after, before in zip(after_handlers, before_handlers)), after_handlers)
+
+
+def test_a_stop_signal_right_after_the_scratch_directory_is_made_removes_it():
+    """The signal cannot be timed into that window from outside, so a stand-in mkdtemp sends it to its own
+    process right after making the directory, in a forked child, since the signal ends that process."""
+    program = load_program()
+    case = Case()
+
+    def mkdtemp_then_stopped(**keywords):
+        directory = tempfile.mkdtemp(dir=case.temporary_directory, **keywords)
+        os.kill(os.getpid(), signal.SIGTERM)
+        return directory
+
+    child = os.fork()
+    if child == 0:
+        try:
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            program.tempfile = types.SimpleNamespace(mkdtemp=mkdtemp_then_stopped)
+            with program.scratch_directory_removed_on_every_exit():
+                pass
+        finally:
+            os._exit(0)
+    _, status = os.waitpid(child, 0)
+    check("a SIGTERM right after the scratch directory is made, before it is registered for removal, removes it "
+          "and ends the process as SIGTERM does",
+          os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGTERM
+          and not case.left_in_temporary_directory(), f"status {status}, left {case.left_in_temporary_directory()}")
+
+
+def test_the_check_command_a_stop_signal_message_gives_quotes_the_programs_path():
+    """The program's real path holds no character a shell splits on, so a forked child gives the loaded program a
+    path with a space, and a removal that fails, then sends itself SIGTERM."""
+    program = load_program()
+    program.__file__ = str(SUITE_ROOT / "a checkout" / PROGRAM.name)
+    case = Case()
+
+    def rmtree_failing(_):
+        raise OSError("Permission denied")
+
+    read_end, write_end = os.pipe()
+    child = os.fork()
+    if child == 0:
+        try:
+            os.dup2(write_end, 2)
+            tempfile.tempdir = str(case.temporary_directory)
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            program.shutil = types.SimpleNamespace(rmtree=rmtree_failing)
+            with program.scratch_directory_removed_on_every_exit():
+                os.kill(os.getpid(), signal.SIGTERM)
+        finally:
+            os._exit(0)
+    os.close(write_end)
+    with os.fdopen(read_end) as stderr:
+        message = stderr.read()
+    os.waitpid(child, 0)
+    check("the check command a stop signal's message gives names the program's path quoted for the shell",
+          f"Then run the same `python3 {shlex.quote(program.__file__)} check` command again" in message, message)
+
+
+def test_a_scratch_directory_that_cannot_be_made_leaves_the_stop_signals_unblocked_and_their_handlers_restored():
+    program = load_program()
+
+    def mkdtemp_failing(**_):
+        raise OSError("Disk quota exceeded")
+
+    program.tempfile = types.SimpleNamespace(mkdtemp=mkdtemp_failing)
+    before_handlers = [signal.getsignal(number) for number in (signal.SIGTERM, signal.SIGHUP)]
+    try:
+        with program.scratch_directory_removed_on_every_exit():
+            pass
+        raised = None
+    except OSError as error:
+        raised = error
+    blocked = signal.pthread_sigmask(signal.SIG_BLOCK, [])
+    after_handlers = [signal.getsignal(number) for number in (signal.SIGTERM, signal.SIGHUP)]
+    check("a scratch directory that cannot be made raises to the caller, leaves SIGTERM and SIGHUP unblocked, and "
+          "puts back the handlers its caller had",
+          raised is not None and signal.SIGTERM not in blocked and signal.SIGHUP not in blocked
+          and all(after is before for after, before in zip(after_handlers, before_handlers)),
+          f"raised {raised!r}, blocked {blocked}, handlers {after_handlers}")
 
 
 def test_a_fast_read_that_names_a_report_but_exits_nonzero_is_a_failure():
