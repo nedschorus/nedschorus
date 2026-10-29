@@ -408,6 +408,20 @@ def brief_cases(root, repository, base, frozen_head):
                                                  body="Noted.")]) | comments_route(12, []))
     check("brief: a comment-only review after the third changes-requested review keeps the advisor sentence",
           code == 0 and out.count(ADVISOR_SENTENCE) == 1, err + out)
+    for uncounted_state in ["COMMENTED", "DISMISSED"]:
+        uncounted = review(state=uncounted_state, commit_id=base, review_id=8, body="Held for the user.")
+        code, out, err = run(root, repository, routes_for(
+            frozen_head, [review(commit_id=base, review_id=9), uncounted,
+                          review(commit_id=frozen_head, review_id=11)]))
+        check(f"brief: a {uncounted_state} review of an earlier commit does not make the second "
+              "changes-requested review's brief ask for the advisor",
+              code == 0 and "advisor" not in out, err + out)
+        code, out, err = run(root, repository, routes_for(
+            frozen_head, [review(commit_id=base, review_id=9), uncounted, review(commit_id=base, review_id=10),
+                          review(commit_id=frozen_head, review_id=11)]))
+        check(f"brief: a {uncounted_state} review of an earlier commit leaves the advisor sentence "
+              "on the third changes-requested review's brief",
+              code == 0 and out.count(ADVISOR_SENTENCE) == 1, err + out)
     code, out, err = run(root, repository, routes_for(
         frozen_head, earlier_rounds(3) + [review(commit_id=frozen_head, review_id=11)]))
     check("brief: the fourth changes-requested review's brief does not ask for the advisor",
@@ -450,7 +464,7 @@ def brief_cases(root, repository, base, frozen_head):
         code, out, err = run(root, repository, routes_for(
             frozen_head, [review(commit_id=frozen_head, body="**Blocking: 1**")],
             comments=[comment("hook.py", f"{spelling} the spelling under test.")]))
-        check(f"brief: a comment starting {spelling.strip()!r} is a blocking finding",
+        check(f"brief: a comment starting {spelling!r} is a blocking finding",
               code == 0 and "Blocking findings (1)" in out and "the spelling under test" in out, err + out)
 
     mixed = [comment("a.py", "**Blocks.** first.", comment_id=21),
