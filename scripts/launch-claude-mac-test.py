@@ -457,7 +457,8 @@ def main() -> int:
         seat_directory = f"{sandbox.workdir}/relative agents/seat-t"
         check("relative root: tmux -c is the seat directory under the caller's directory",
               result.returncode == 0
-              and any(previous == "-c" and current == seat_directory
+              and any(previous == "-c"
+                      and Path(current).resolve() == Path(seat_directory).resolve()
                       for previous, current in zip(tmux_argv, tmux_argv[1:])),
               (result.returncode, result.stderr[:300], tmux_argv))
         check("relative root: the seat directory was created under the caller's directory",
