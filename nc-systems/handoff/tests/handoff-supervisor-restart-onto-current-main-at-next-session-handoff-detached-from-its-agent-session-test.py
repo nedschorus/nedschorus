@@ -249,7 +249,14 @@ def refuses_when_checkout_is_not_on_main(fixture):
 def refuses_when_checkout_has_detached_head(fixture):
     git(fixture.checkout, "switch", "--detach")
     code, _, stderr = run_main(fixture)
-    check_refused_untouched(fixture, code, stderr, "is not on main")
+    check_refused_untouched(fixture, code, stderr, "is not on main (fatal: ref HEAD is not a symbolic ref)")
+
+
+@case
+def refuses_on_a_branch_whose_name_sorts_after_main(fixture):
+    git(fixture.checkout, "switch", "-c", "topic")
+    code, _, stderr = run_main(fixture)
+    check_refused_untouched(fixture, code, stderr, "is not on main (topic)")
 
 
 @case
@@ -541,6 +548,16 @@ def timeout_continues_the_supervisor(fixture):
 
 
 @case
+def timeout_counts_when_the_clock_steps_past_the_deadline(fixture):
+    ticks = iter([0, 0, 45])
+    code, _, _ = detached_run(fixture, "--handoff-wait-minutes", "0.5", sleep=short_sleep,
+                              monotonic=lambda: next(ticks))
+    check(code == 1, f"exit {code}")
+    check(not process_state(fixture.supervisor).startswith(("T", "t")), "not continued")
+    check("NOT RESTARTED" in fixture.log_text.strip().splitlines()[-1], fixture.log_text)
+
+
+@case
 def a_failure_before_the_kill_continues_the_supervisor(fixture):
     calls = []
 
@@ -784,6 +801,29 @@ def sigkill_is_sent_exactly_at_the_wait_and_a_process_gone_by_then_is_no_failure
         read_table=table_reaping_it_but_showing_it_running)
     check(lines == [f"process {sleeper.pid} was still running 1s after SIGTERM; sent SIGKILL"],
           lines)
+
+
+@case
+def a_process_that_ends_within_the_wait_gets_no_sigkill_on_a_clock_far_from_zero(fixture):
+    sleeper = subprocess.Popen(["sleep", "60"])
+    reads = []
+
+    def table_showing_it_running_twice_then_gone():
+        reads.append(1)
+        if len(reads) <= 2:
+            return {sleeper.pid: (1, "S", "sleep 60")}
+        return {}
+    ticks = iter([1000.0, 1001.0, 1002.0])
+    lines = []
+    try:
+        restart.end_process_by_sigterm_then_sigkill_after_wait(
+            sleeper.pid, 20.0, lines.append, sleep=lambda _: None, monotonic=lambda: next(ticks),
+            read_table=table_showing_it_running_twice_then_gone)
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+    check(lines == [], lines)
+    check(len(reads) == 3, f"{len(reads)} process-table reads")
 
 
 @case
