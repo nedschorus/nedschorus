@@ -352,7 +352,8 @@ A STOPPED RUN KILLS ITS SUITES. Since each suite runs in a session of its own,
 a signal sent to the runner's process group no longer reaches them. So once its
 suites start, the runner handles SIGTERM, SIGHUP and SIGINT: it kills every
 running suite as a timeout does, starts no other, prints a line naming the
-signal, and exits 2; a signal that comes after the last suite ended stops
+signal, and exits as EXIT says: 1 when a suite had already failed, otherwise 2;
+a signal that comes after the last suite ended stops
 nothing, and the run is reported as usual. A signal the runner was started
 with ignored, as SIGHUP is under nohup and SIGINT is for a command put in the
 background in a subshell, stops nothing: it gets a handler that does nothing.
