@@ -18,15 +18,19 @@ The cycle, per reincarnation:
      The handoff is still unconsumed, so the fresh process carries out steps
      3 to 6 below at startup, as after a reboot: it extracts the dialog
      (step 3), and only when the dialog cannot be extracted does it start
-     the successor from the handoff's next-step alone. Started with
+     the successor from the handoff's next-step and the recovery note step 3
+     describes. Started with
      --started-by-handoff-supervisor-restarting-itself-on-main-code, the fresh
      process prints that the restart worked. When the checkout cannot be
      fast-forwarded, or os.execv fails, this process prints why, carries on
      with the code it started with, and the successor's initial agent
      instructions say why too.
   3. Extract its dialog to disk before anything else proceeds. When the
-     extraction fails, the successor starts with the handoff's next step as
-     its prompt, told where the retiring session's transcript is.
+     extraction fails, the successor's prompt is the handoff's next step,
+     then a recovery note saying the session-dialog could not be extracted
+     and where the retiring session's transcript is, or that it was not
+     found, then the instruction to put items needing the user in one
+     approval-walk, then the lines step 6 lists.
   4. Each generation opens the same launcher-pinned task list.
   5. Print one queue-status line — to the console only. It does not ride
      the initial agent instructions (user-ruled 2026-08-29: "Also useless is the
@@ -1944,7 +1948,8 @@ def successor_session_id_and_ignition_plan_without_conversation_tail(
         settings: SupervisorSettings, retiring_session_id: Optional[str],
         handoff_fields: dict, occasion: str):
     """Return (successor_session_id, ignition_plan) for a successor whose prompt is the
-    handoff's next step, printing why there is no conversation-tail.
+    handoff's next step followed by a recovery note and the launch's other lines,
+    printing why there is no conversation-tail.
 
     retiring_session_id is the session whose extraction failed, or None when no
     earlier session was recorded; occasion names when the supervisor started it.
