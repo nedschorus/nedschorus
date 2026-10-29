@@ -328,16 +328,21 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
             f"merge {merge[:12]} ({merge_subject}): the mutation testing program ran past the "
             f"limit of {arguments.merge_timeout_seconds:g} s and was stopped; its last line: "
             f"{said}. The next run tries this merge again.\n"
-            f"If it runs past the limit again, run it by hand on ned-box to see how long it "
-            f"takes: {command_shown}\n"
+            f"If the next run stops on this merge at the limit again, run the mutation testing "
+            f"program by hand on ned-box to see how long it takes: {command_shown}\n"
             f"If it finishes, raise DEFAULT_MERGE_TIMEOUT_SECONDS in scripts/{PROGRAM}.py above "
-            f"that time, in a pull request; until then this merge stops every run.")
+            f"that time, in a pull request; until then this merge stops every run.\n"
+            f"If it has not finished after 24 hours, stop it and skip this merge: in the JSON "
+            f"file {state_file}, set the key last_tested_main_commit to {merge} and leave the "
+            f"other keys as they are. The next run then tests the merges after it, and this "
+            f"merge's lines stay untested.")
     if exit_code not in MUTATION_TESTING_EXITS_WITH_A_VERDICT:
         raise StepFailed(
             f"merge {merge[:12]} ({merge_subject}): the mutation testing program exited "
-            f"{exit_code} with no verdict: {said}. The next run tries this merge again.\n"
-            f"If it fails the same way again, run it by hand on ned-box, do what its message "
-            f"says, and fix the cause: {command_shown}")
+            f"{exit_code} without saying whether each mutant was killed: {said}. The next run "
+            f"tries this merge again.\n"
+            f"If it fails the same way again, run this command by hand on ned-box, do what it "
+            f"prints, and fix the cause: {command_shown}")
     try:
         result = json.loads(json_file.read_text(encoding="utf-8"))
         survived, errored = result["survived"], result["errored"]
@@ -464,7 +469,7 @@ def main_under_lock(arguments):
                     f"the last tested commit {last}, from {state_file}, is not an ancestor of "
                     f"origin/main {main_commit}, so the merges since it cannot be listed.\n"
                     f"Set last_tested_main_commit in that file to the last commit on origin/main "
-                    f"already mutation-tested; the merges after it are tested. Then run this program again on ned-box: {RUN_BY_HAND}")
+                    f"already mutation-tested; the next run tests the merges after it. Then run this program again on ned-box: {RUN_BY_HAND}")
             merges = git_or_raise(arguments.clone, "rev-list", "--first-parent", "--reverse",
                                   f"{last}..{main_commit}").split()
             if merges and not (arguments.cosmic_ray_venv / "bin" / "cosmic-ray").is_file():

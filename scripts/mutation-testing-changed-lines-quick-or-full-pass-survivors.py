@@ -22,10 +22,12 @@ scripts/run-all-test-suites.py keeps), plus the file's sibling
 `<name>-test.py` or `<name>-test.sh` when there is one.
 
 THE QUICK MUTATION PASS, run before a push, mutates only the changed lines
-that are failure-handling code: an `except` clause, and an `if` statement,
-`while` loop or conditional expression whose test reads an exit code (a name
-or attribute named `returncode`, or ending in `exit_code` or `exit_status`),
-each from its first line to its last. A changed file with no changed line of
+that are failure-handling code: the changed lines inside an `except` clause,
+or inside an `if` statement, `while` loop or conditional expression whose test
+reads an exit code (a name or attribute named `returncode`, or ending in
+`exit_code` or `exit_status`), each such clause or statement counted from its
+first line to its last. Its lines the change did not touch are not mutated.
+A changed file with no changed line of
 failure-handling code is not mutated, and is printed as NO FAILURE-HANDLING
 CHANGE. The quick mutation pass's mutants are tested with the full mutation
 pass's suites less the
@@ -91,10 +93,12 @@ one run of the suites stops the script with exit 2 and a message saying the suit
 and, for a suite's own limit, the suite.
 
 --survived-and-errored-mutants-json-file, when given, names a file this
-script writes after its SUMMARY line, as one JSON object: "head",
-"merge_base", "survived" and "errored", each a list of mutants with
-"module_path", "line", "operator", "diff" and "reason", and
-"files_with_no_suite". A file that cannot be written exits 2.
+script writes after its SUMMARY line, as one JSON object: "head" and
+"merge_base", the two commits compared; "survived" and "errored", each a list
+of mutants with "module_path", "line", "operator", "diff" and "reason", where
+"line" is the line a `# pragma: no mutate` comment must end to skip that
+mutant; and "files_with_no_suite", a list of paths. A file that cannot be
+written exits 2.
 
 Exit codes: 0 every mutant was killed, 1 a mutant survived, errored or was
 not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
@@ -429,11 +433,19 @@ def is_recorded_output_of_a_run_stopped_at_mutant_timeout(output):
         line.startswith(TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX) for line in output.splitlines())
 
 
+def line_cr_filter_pragma_reads(mutation):
+    """The line whose `# pragma: no mutate` skips this mutation: cosmic-ray 8.7.0's
+    cr-filter-pragma reads the mutation's last line, or the line before it when the
+    mutation ends at the start of a line, not its first line."""
+    line, column = mutation["end_pos"]
+    return line - 1 if column == 0 else line
+
+
 def mutant_description(item, result, reason=""):
     mutation = item["mutations"][0]
     return {
         "module_path": mutation["module_path"],
-        "line": mutation["start_pos"][0],
+        "line": line_cr_filter_pragma_reads(mutation),
         "operator": mutation["operator_name"],
         "diff": result.get("diff") or "",
         "reason": reason,

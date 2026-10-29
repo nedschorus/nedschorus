@@ -292,9 +292,12 @@ def run_cases():
     for case_name, step, timeout_seconds, wanted in [
         ("the mutation testing program exits 2",
          {"exit": 2, "stderr": "mutation-testing: not run — cosmic-ray is missing"}, None,
-         "exited 2 with no verdict: mutation-testing: not run — cosmic-ray is missing"),
+         "exited 2 without saying whether each mutant was killed: mutation-testing: not run — "
+         "cosmic-ray is missing"),
         ("the mutation testing program runs past the limit",
          {"sleep": 30, "json": verdict()}, 1, "ran past the limit of 1 s and was stopped"),
+        ("a merge that runs past the limit says how to skip it",
+         {"sleep": 30, "json": verdict()}, 1, "stop it and skip this merge: in the JSON file "),
         ("the mutation testing program writes no JSON file",
          {"exit": 0}, None, "but its JSON file"),
         ("the JSON file lacks a key",
@@ -382,7 +385,8 @@ def run_cases():
         check("a state file naming a commit not on origin/main: exit 4, saying how to fix it",
               completed.returncode == job.EXIT_STEP_FAILED
               and "is not an ancestor of origin/main" in completed.stderr
-              and "Set last_tested_main_commit" in completed.stderr, completed.stderr)
+              and "Set last_tested_main_commit" in completed.stderr
+              and "the next run tests the merges after it" in completed.stderr, completed.stderr)
 
     # No cosmic-ray venv, with merges to test.
     with tempfile.TemporaryDirectory() as scratch:

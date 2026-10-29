@@ -411,6 +411,17 @@ def run_quick_mutation_pass_cases():
           "not an if on another name",
           survivors.failure_handling_line_ranges(source) == [(4, 5), (6, 7), (8, 8), (11, 14)],
           survivors.failure_handling_line_ranges(source))
+    # cosmic-ray 8.7.0's cr-filter-pragma skips a mutation when its LAST line carries the
+    # pragma, or the line before when the mutation ends at a line's start; the survivor
+    # task names "line", so "line" must be that line.
+    pragma_lines = [
+        survivors.mutant_description(
+            {"mutations": [{"module_path": "scripts/thing.py", "operator_name": "core/AddNot",
+                            "start_pos": start, "end_pos": end}]}, {})["line"]
+        for start, end in (([10, 7], [11, 12]), ([10, 4], [12, 0]), ([10, 4], [10, 9]))]
+    check("a mutant's line is the line cr-filter-pragma reads: its last line, or the line "
+          "before when it ends at a line's start, not its first line",
+          pragma_lines == [11, 11, 10], pragma_lines)
     with tempfile.TemporaryDirectory() as scratch_name:
         repository, _, _ = scratch_repository(scratch_name, QUICK_HEAD_FILES)
         old_head, new_head = commit_on_top(
