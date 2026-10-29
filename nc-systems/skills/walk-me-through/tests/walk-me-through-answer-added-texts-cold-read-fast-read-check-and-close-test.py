@@ -856,24 +856,31 @@ def test_how_a_minutes_line_without_a_deciding_tag_is_read():
     walk_finder = program.load_walk_finder()
     parser = walk_finder.markdown_parser()
     for line, expected, case_name in (
-            ("Item 2 of 5: the user deferred it until Friday.\n", (set(), {"2": 1}),
-             "an untagged line with deferred later in it records a deferral"),
+            ("Item 2 of 5: the user deferred it until Friday.\n", (set(), {}),
+             "an untagged line whose deferred is not its first word records no deferral"),
+            ("Item 2 of 5: deferred until Friday.\n", (set(), {"2": 1}),
+             "an untagged line whose first word is deferred records a deferral"),
             ("Item 2 of 5: the approved wording waits. <open>\n", (set(), {}),
              "an `<open>` line holding a deciding word records no decision"),
-            ("Item 2 of 5: the user approved it.\n", ({"2"}, {}),
-             "an untagged line holding a deciding word records a decision"),
-            ("Items 3 to 4 of 5: respelled; item 3 cites the approved definition.\n", (set(), {}),
-             "an untagged line whose only deciding word follows `the` records no decision"),
-            ("Item 2 of 5: an Accepted text and a rejected one, The approved one too.\n", (set(), {}),
-             "deciding words after `an`, `a` and `the` record no decision, whatever their case"),
-            ("Items 3 to 4 of 5: each approved.\n", ({"3", "4"}, {}),
-             "a deciding word after `each`, standing as a pronoun, records a decision"),
-            ("Item 2 of 5: this approved.\n", ({"2"}, {}),
-             "a deciding word after `this`, standing as a pronoun, records a decision"),
-            ("Item 2 of 5: the approved text stays, and the user approved it.\n", ({"2"}, {}),
-             "an untagged line with one deciding word after `the` and one not records a decision"),
-            ("Item 2 of 5: the change waits for the deferred migration.\n", (set(), {}),
-             "an untagged line whose only `deferred` follows `the` records no deferral")):
+            ("Item 2 of 5: approved, wording to follow. <open>\n", (set(), {}),
+             "an `<open>` line whose first word is a deciding word records no decision"),
+            ("Item 2 of 5: the user approved it.\n", (set(), {}),
+             "an untagged line whose deciding word is not its first word records no decision"),
+            ("Items 5.2.1-5.2.3 of 24 revised at the advisor call (5.2.1 reframed as the cold read he approved "
+             "today; 5.2.2 notes the sanity-check cites it).\n", (set(), {}),
+             "an untagged note on several items whose deciding word is inside a parenthesis records no decision"),
+            ("Items 5.2.1-5.2.12 of 27 rulings: a subagent applies them. 5.2.2 and 5.2.5 deferred; 5.2.6 D.\n",
+             (set(), {}), "an untagged note on several items whose deferred is not its first word records no deferral"),
+            ("Item 2 of 5: approved.\n", ({"2"}, {}),
+             "an untagged line whose first word is approved records a decision"),
+            ("Item 2 of 5: Disapproved, the filter is added.\n", ({"2"}, {}),
+             "an untagged line whose first word is disapproved, whatever its case, records a decision"),
+            ("- Item 2, 2026-10-21: accepted.\n", ({"2"}, {}),
+             "an untagged line whose first word after its date is accepted records a decision"),
+            ("Items 3 to 4 of 5: rejected.\n", ({"3", "4"}, {}),
+             "an untagged line whose first word is rejected records a decision of every item it opens with"),
+            ("Item 2 of 5: approved, as the earlier ruling said. <settled by earlier ruling>\n", ({"2"}, {}),
+             "a line whose only tag is not an outcome tag is read by its first word")):
         decided, deferrals = program.minutes_record(walk_finder, line, parser)
         check(case_name, (decided, dict(deferrals)) == expected, repr((decided, deferrals)))
 
@@ -1201,6 +1208,58 @@ def test_a_note_naming_later_items_with_approved_as_a_modifier_does_not_skip_the
     check("after a dotted part is approved, a note naming later items whose `approved` follows `the` leaves them "
           "unrecorded, so the item after the part comes next, not the summary item",
           closed.returncode == 0 and marker(case) == "#next_to_present item 3 of 6",
+          described(closed) + case.minutes.read_text())
+
+
+# Item 5.2.2, once deferred, sits just before the summary item, as the walk-runner moves a deferred item.
+SUB_ITEMS_DOCUMENT = """# A walk whose item 5.2 has sub-items
+
+## Item 5.2 of 24: keep find-missing-file, and build find-info
+
+Recommendation: approve.
+
+## Item 5.2.1 of 24: approve the cold read's corrections as a group
+
+## Item 5.2.3 of 24: change the rule
+
+## Item 5.2.4 of 24: moving an agent-seat between machines is in scope
+
+## Item 6 of 24: an issue's title follows its first heading
+
+## Item 5.2.2 of 24: a deferred session-handoff can wait forever
+
+## Item 7 of 24: Summary
+"""
+
+
+def test_a_note_on_unanswered_sub_items_does_not_skip_them_or_count_as_a_second_deferral():
+    case = Case(next_to_present="item 5.2 of 24", document=SUB_ITEMS_DOCUMENT)
+    case.minutes.write_text(
+        "# Minutes\n\n#next_to_present item 5.2 of 24\n"
+        "Items 5.2.1-5.2.3 revised at the advisor call (5.2.1 reframed as the cold read he approved today; 5.2.2 "
+        "notes the sanity-check cites it; 5.2.3 recommendation back to keeping the section).\n"
+        "#next_to_present item 5.2 of 24\n")
+    case.run("check")
+    closed = case.run("close")
+    check("after item 5.2 is approved, a note on its unanswered sub-items that says `he approved` inside a "
+          "parenthesis leaves them unrecorded, so the first sub-item comes next",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 5.2.1 of 24",
+          described(closed) + case.minutes.read_text())
+    case = Case(next_to_present="item 6 of 24", document=SUB_ITEMS_DOCUMENT)
+    case.minutes.write_text(
+        "# Minutes\n\n"
+        + "".join(f"item {n} of 24: approved; every text the change adds has had a fast read. <accepted>\n"
+                  for n in ("5.2", "5.2.1"))
+        + "item 5.2.2 of 24: deferred; it moves to just before the summary item. <open>\n"
+        + "".join(f"item {n} of 24: approved; every text the change adds has had a fast read. <accepted>\n"
+                  for n in ("5.2.3", "5.2.4"))
+        + "Items 5.2.1-5.2.4 of 24 rulings: a subagent applies them to one branch. 5.2.2 deferred; 5.2.3 D.\n"
+        "#next_to_present item 6 of 24\n")
+    case.run("check")
+    closed = case.run("close")
+    check("a note on several items that says one of them was deferred is not a second deferral of it, so the "
+          "once-deferred item is named before the summary item instead of leaving the walk",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 5.2.2 of 24",
           described(closed) + case.minutes.read_text())
 
 
