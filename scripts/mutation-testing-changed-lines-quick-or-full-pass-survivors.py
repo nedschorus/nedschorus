@@ -126,8 +126,8 @@ EXIT_COULD_NOT_RUN = 2
 
 COSMIC_RAY_TOOLS = ("cosmic-ray", "cr-filter-git", "cr-filter-pragma", "cr-filter-lines")
 
-QUICK_MUTATION_PASS_FLAG = "--quick-mutation-pass"
-FULL_MUTATION_PASS_FLAG = "--full-mutation-pass"
+QUICK_MUTATION_PASS_COMMAND_LINE_FLAG = "--quick-mutation-pass"
+FULL_MUTATION_PASS_COMMAND_LINE_FLAG = "--full-mutation-pass"
 
 # Each checks one rule across a whole class of the repository's files, so its recording reads
 # nearly every module; the quick mutation pass leaves it out.
@@ -312,7 +312,7 @@ def failure_handling_line_ranges(source):
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
-def changed_line_numbers_at_head(checkout, merge_base, head, path, environment):
+def line_numbers_at_head_of_lines_changed_since_merge_base(checkout, merge_base, head, path, environment):
     """The numbers, at head, of the lines the change added or changed in the file."""
     diff = run_or_raise(["git", "--literal-pathspecs", "diff", "--unified=0", "--no-color",
                          "--no-ext-diff", merge_base, head, "--", path],
@@ -633,10 +633,10 @@ def remove_worktree(checkout, worktree, environment):
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     which_pass = parser.add_mutually_exclusive_group(required=True)
-    which_pass.add_argument(QUICK_MUTATION_PASS_FLAG, action="store_true",
+    which_pass.add_argument(QUICK_MUTATION_PASS_COMMAND_LINE_FLAG, action="store_true",
                             help="mutate only the changed failure-handling code, without the "
                                  "repository-wide checks; the pass to run before a push")
-    which_pass.add_argument(FULL_MUTATION_PASS_FLAG, action="store_true",
+    which_pass.add_argument(FULL_MUTATION_PASS_COMMAND_LINE_FLAG, action="store_true",
                             help="mutate every changed line, with every suite that reads the "
                                  "file; the pass the daily maintenance-job runs")
     which = parser.add_mutually_exclusive_group(required=True)
@@ -768,7 +768,7 @@ def main_with_stop_signals_raising_system_exit(argv):
                     if arguments.quick_mutation_pass:
                         failure_handling_ranges = failure_handling_line_ranges_of_file(
                             worktree, path)
-                        changed = changed_line_numbers_at_head(checkout, merge_base, head,
+                        changed = line_numbers_at_head_of_lines_changed_since_merge_base(checkout, merge_base, head,
                                                                path, environment)
                         if not any(first <= number <= last for number in changed
                                    for first, last in failure_handling_ranges):

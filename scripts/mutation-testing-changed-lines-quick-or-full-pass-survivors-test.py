@@ -230,8 +230,8 @@ def script_command_and_environment(repository, control, *flags, path_override=No
         environment["PATH"] = path_override
     environment.update(extra_environment or {})
     # The full mutation pass, unless the case names a pass: it mutates every changed line.
-    passes = (load_script_module().QUICK_MUTATION_PASS_FLAG,
-              load_script_module().FULL_MUTATION_PASS_FLAG)
+    passes = (load_script_module().QUICK_MUTATION_PASS_COMMAND_LINE_FLAG,
+              load_script_module().FULL_MUTATION_PASS_COMMAND_LINE_FLAG)
     if not any(flag in passes for flag in flags):
         flags = (passes[1], *flags)
     # Never the real machine lock or admission, which the suite runner the test command runs
@@ -413,7 +413,7 @@ def run_quick_mutation_pass_cases():
             repository, "scripts/handler.py",
             HANDLER_SOURCE.replace("    return x + x\n", "    return 2 * x\n").replace(
                 "        return -1\n", "        return -2\n        # and more\n"))
-        changed = survivors.changed_line_numbers_at_head(repository, old_head, new_head,
+        changed = survivors.line_numbers_at_head_of_lines_changed_since_merge_base(repository, old_head, new_head,
                                                         "scripts/handler.py", None)
         check("the changed lines are the head's numbers of every line changed or added",
               changed == {5, 15, 16}, changed)
@@ -1337,7 +1337,7 @@ def run_cases():
         try:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(printed):
                 status = survivors_module.main([
-                    survivors_module.FULL_MUTATION_PASS_FLAG,
+                    survivors_module.FULL_MUTATION_PASS_COMMAND_LINE_FLAG,
                     "--checkout", str(repository),
                     "--recorded-inputs-directory", str(control / "recordings"),
                     "--lock-file", str(control / "machine.lock"),

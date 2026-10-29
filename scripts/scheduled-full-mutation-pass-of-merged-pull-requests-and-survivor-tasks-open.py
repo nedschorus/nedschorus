@@ -50,7 +50,7 @@ the keys id, subject, description, status, blocks and blockedBy. The
 agent-seat is the author `git blame` gives the mutant's line at the merge,
 since each agent-seat commits under its own name. When that agent-seat has no
 task list directory or no checkout under --agent-seats-directory, as after it
-is retired, the task goes on the task list of TASK_LIST_OWNER_FOR_RETIRED_OR_UNKNOWN_AUTHORS.
+is retired, the task goes on the task list of SURVIVOR_TASK_AGENT_SEAT_WHEN_LINE_AUTHOR_IS_RETIRED_OR_UNKNOWN.
 The id is one more than the highest of the list's task ids and its
 `.highwatermark`, as Claude Code numbers a new task; the file is linked into
 place only where no file of that name exists, and the `.highwatermark` is
@@ -108,14 +108,14 @@ DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
 RECORDS_DIRECTORY_NAME = "scheduled-full-mutation-pass-runs-of-merged-pull-requests"
 LOG_STORE_HOST = "nedlern@ned-box"
 DEFAULT_STATE_DIRECTORY = (Path.home() / ".local" / "state" / "nedschorus"
-                           / "scheduled-full-mutation-pass-of-merged-pull-requests")
+                           / "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open")
 STATE_FILE_NAME = "state.json"
-LOCK_FILE_NAME = "scheduled-full-mutation-pass-of-merged-pull-requests.lock"
+LOCK_FILE_NAME = "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.lock"
 DEFAULT_TASK_LISTS_DIRECTORY = Path.home() / ".claude" / "tasks"
 DEFAULT_AGENT_SEATS_DIRECTORY = Path.home() / "agents"
 DEFAULT_COSMIC_RAY_VENV = Path.home() / ".local" / "share" / "nedschorus" / "cosmic-ray-venv"
 COSMIC_RAY_VERSION = "8.7.0"
-TASK_LIST_OWNER_FOR_RETIRED_OR_UNKNOWN_AUTHORS = "merge-lane-2"
+SURVIVOR_TASK_AGENT_SEAT_WHEN_LINE_AUTHOR_IS_RETIRED_OR_UNKNOWN = "merge-lane-2"
 TASK_FILE_NAME_PATTERN = re.compile(r"[1-9][0-9]*\.json")
 TASK_HIGH_WATER_MARK_FILE_NAME = ".highwatermark"
 DEFAULT_MERGE_TIMEOUT_SECONDS = 6 * 3600
@@ -215,11 +215,11 @@ def task_list_owner(author, task_lists_directory, agent_seats_directory):
     if (task_lists_directory / f"nedschorus-{author}-tasks").is_dir() \
             and (agent_seats_directory / author).is_dir():
         return author, None
-    return (TASK_LIST_OWNER_FOR_RETIRED_OR_UNKNOWN_AUTHORS,
+    return (SURVIVOR_TASK_AGENT_SEAT_WHEN_LINE_AUTHOR_IS_RETIRED_OR_UNKNOWN,
             f"its author, {author}, has no task list or no checkout on ned-box")
 
 
-def open_task(list_directory, subject, description):
+def agent_seat_task_list_new_pending_task_write(list_directory, subject, description):
     """Write a new pending task into the list; return its id. Raises OSError."""
     if not list_directory.is_dir():
         raise FileNotFoundError(f"the task list directory {list_directory} does not exist")
@@ -364,7 +364,7 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
                                          record_citation)
         list_directory = arguments.task_lists_directory / f"nedschorus-{owner}-tasks"
         try:
-            task_id = open_task(list_directory, subject, description)
+            task_id = agent_seat_task_list_new_pending_task_write(list_directory, subject, description)
         except OSError as error:
             raise StepFailed(
                 f"merge {merge[:12]}: no task could be opened on {owner}'s task list for the "

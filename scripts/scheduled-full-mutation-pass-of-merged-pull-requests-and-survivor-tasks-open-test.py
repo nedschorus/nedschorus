@@ -275,7 +275,7 @@ def run_cases():
         merge = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
                                author="retired")
         fixture.seat("retired", with_checkout=False)
-        merge_lane = fixture.seat(job.TASK_LIST_OWNER_FOR_RETIRED_OR_UNKNOWN_AUTHORS)
+        merge_lane = fixture.seat(job.SURVIVOR_TASK_AGENT_SEAT_WHEN_LINE_AUTHOR_IS_RETIRED_OR_UNKNOWN)
         completed = fixture.run({merge: {"json": verdict(survived=[survivor()])}})
         task = json.loads((merge_lane / "1.json").read_text()) \
             if (merge_lane / "1.json").exists() else {}
@@ -430,7 +430,7 @@ def run_cases():
               "is killed, and reported as past the limit with its output kept",
               exit_code is None and "still going" in stdout, (exit_code, stdout))
 
-    # open_task: a task file Claude Code wrote under the chosen id at the same moment is kept.
+    # agent_seat_task_list_new_pending_task_write: a task file Claude Code wrote under the chosen id at the same moment is kept.
     with tempfile.TemporaryDirectory() as scratch:
         list_directory = Path(scratch)
         (list_directory / ".highwatermark").write_text("not a number")
@@ -444,10 +444,10 @@ def run_cases():
 
         job.os.link = link_racing_claude_code
         try:
-            task_id = job.open_task(list_directory, "subject", "description")
+            task_id = job.agent_seat_task_list_new_pending_task_write(list_directory, "subject", "description")
         finally:
             job.os.link = real_link
-        check("open_task: an id taken at the same moment is skipped, its file kept, a "
+        check("agent_seat_task_list_new_pending_task_write: an id taken at the same moment is skipped, its file kept, a "
               "high-water mark that is not a number ignored, and no partial file left",
               task_id == 4 and json.loads((list_directory / "3.json").read_text())["by"]
               == "claude code"
