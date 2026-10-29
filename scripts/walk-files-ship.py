@@ -5,13 +5,11 @@ Usage:
   scripts/walk-files-ship.py <walk name>
   scripts/walk-files-ship.py docs/walk/<walk name>-minutes.md    (any one of its files)
 
-WHY (user-ruled 2026-09-18, item 7 of the walk
-cold-read-and-walk-file-names-and-dispositions; nedschorus#335). A walk-me-through
-walk writes its files into docs/walk/, gitignored since PR #308, and until this
-program every walk file in the store was put there by hand at the walk's close,
-the interim rule the .gitignore comment stated. The minutes are the record of
-the user's rulings and the mechanism by which an interrupted walk resumes, so a
-directory nothing preserves is the wrong place for their only copy.
+WHY. A walk-me-through walk writes its files into docs/walk/, which is
+gitignored, so neither Git nor anything else preserves them there. The
+minutes are the record of the user-rulings and the mechanism by which an
+interrupted walk resumes, so a directory nothing preserves is the wrong place
+for their only copy.
 
 WHAT A WALK'S FILES ARE. Five, flat in docs/walk/ and flat in the store's
 walk/, each named by the walk's name and a role suffix
@@ -25,21 +23,20 @@ walk/, each named by the walk's name and a role suffix
   <name>-dispositions.md   a cold-read walk's fifth file, written at its close
                            and updated after it as the findings' status moves
 
-The five paths are built from the name; nothing here globs docs/walk/<name>*,
-because one walk's name can be a prefix of another's. A walk lacking its walk
+The five paths are built from the name, never found by a glob of
+docs/walk/<name>*, because one walk's name can be a prefix of another's; a
+glob of <name>-*.md is used only for the stderr note below. A walk lacking its walk
 text or its minutes is not shippable (exit 64). A missing draft or suggestions
 file is noted on stderr and the rest ships. Dispositions ships when present.
 Other files that begin with the walk's name are noted on stderr and not
-shipped; they are either another walk's or a shape the ruling did not name.
+shipped; they are either another walk's or a file none of the five roles
+covers.
 
-THE RULES. The first ruling (item 7 above) said "draft, suggestions and walk
-text add-only like records; the minutes are the one file it replaces", and
-this program shipped dispositions add-only because that ruling listed nothing
-else. The user then ruled (2026-09-18, walk
-skill-sentences-and-shipper-questions-2026-09-18, item 5) that the
-dispositions file is replaced exactly like the minutes, because a cold-read
-walk's dispositions "is not just a historical log to be preserved, it is a
-sometimes updated status file". The rules are PER FILE:
+THE RULES. The minutes and the dispositions are replaced in the store; the
+draft, the suggestions and the walk text are add-only, as a
+cold-read-record's files are. The dispositions are replaced because a
+cold-read walk's dispositions file is a status file updated after the walk
+closes, not only a record kept as first written. The rules are PER FILE:
 
   ADD-ONLY: draft, suggestions, walk text. A file not yet in the
     store is added; one already there with the same bytes is left alone; one
@@ -47,21 +44,18 @@ sometimes updated status file". The rules are PER FILE:
     opens REFUSED:, names each such file with the store's sha256 and the local
     one, and the exit is 2 -- while the other files still ship. The record
     shipper refuses a whole record before copying anything. A walk differs
-    because the ruling says to run this "again if the walk is reopened and
-    closed", and a reopened walk that re-planned has a changed walk text; a
-    whole-walk refusal would then never deliver the one thing the second run
-    exists for, the minutes. The walk text has one exception, APPENDED TO
+    because the walk-me-through skill runs this program again whenever a
+    walk is reopened and closed, and a reopened walk that re-planned has a
+    changed walk text; a whole-walk refusal would then never deliver the one
+    thing the second shipment exists for, the minutes. The walk text has one exception, APPENDED TO
     below; draft and suggestions have none.
   APPENDED TO: the walk text, and it alone. A stored walk text whose bytes
     are an exact PREFIX of the local one -- the local file only had content
-    added after it -- is replaced instead of refused (user-ruled 2026-09-21,
-    item 3 of the walk md-skills-seat-questions-and-concerns-2026-09-21). A
-    walk text grows as its items are presented, so shipping mid-walk and
-    again at the close is ordinary, and the close refused a file nothing had
-    rewritten: the store's copy of the walk
-    md-skills-seat-open-decisions-2026-09-20 held 134 lines of the local
-    copy's 341, not one of the 134 changed, and the store held four of that
-    walk's fifteen items until it was re-shipped under this rule.
+    added after it -- is replaced instead of refused. A walk text grows as
+    its items are presented, so a shipment before the close, which WHO CALLS
+    IT allows, followed by the close's own is ordinary; refusing the grown
+    file would leave the store holding only the items presented before the
+    first shipment.
     THE TEST IS THE BYTES, never lines and never a diff: the stored size says
     how many leading bytes of the local file to hash, and they must hash to
     the sha256 the store reported for the whole stored file. Identical bytes
@@ -73,8 +67,10 @@ sometimes updated status file". The rules are PER FILE:
     and "the local file is longer": the refusal exists to catch a session
     overwriting the store with a stale copy, and a stale copy that also grew
     is exactly that. A store listing that reports a digest and no size cannot
-    be tested and is refused, as before.
-  REPLACED: the minutes and the dispositions, each on its own. A stored copy
+    be tested and is refused.
+  REPLACED: the minutes and the dispositions, each on its own. A minutes
+    or dispositions file the store does not hold yet is added, and counted as added on the stdout
+    line, with no stderr line. A stored copy
     with different bytes is overwritten, and each displaced copy's sha256 is
     announced on its own stderr line, as scripts/seat-shared-file-ship.py
     announces a replacement, so a fresh session shipping an older local copy
@@ -82,17 +78,20 @@ sometimes updated status file". The rules are PER FILE:
     found by digest in the store's Timeshift snapshots while one taken before
     the replacement is still kept; the line states no cadence, for the reason
     scripts/seat-shared-file-ship.py's docstring records under THE SNAPSHOT
-    CADENCE IS NOT A PROMISE. An appended-to walk
-    text is announced on the same line in the same form, its own ruling
-    named. The copy passes
-    --ignore-times, for the reason that program's rsync_one_file records:
+    CADENCE IS NOT A PROMISE. A walk text replaced under APPENDED TO is
+    announced the same way, on a stderr line of its own. Each such stderr
+    line also names the walk in which the user decided the rule that allowed
+    the replacement; that walk's walk-minutes are at
+    nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/<the walk the stderr line names>-minutes.md.
+    The copy passes
+    --ignore-times, for the reason rsync_one_file in
+    scripts/seat-shared-file-ship.py records:
     openrsync on this Mac silently skips a same-size, same-second revision
     otherwise.
   FAIL LOUDLY: an unreachable ned-box prints a line opening FAILED and exits 1
     with the files still on disk; ssh runs in batch mode with a connect
     timeout. Shipping is the only thing between a walk's rulings and their
-    loss, so a failure to ship is never a clean result -- the rule
-    report_stray_writes states in nc-systems/cold-read/cold-read-cell-common.py.
+    loss, so a failure to ship is never reported as a clean result.
 
 TWO SHIPMENTS OF ONE WALK AT ONCE. The rules above are decided on the
 store's listing, and the copy takes seconds over ssh; a second shipment of the
@@ -120,29 +119,56 @@ replace step renames nothing while another staging directory for the same
 walk exists, and the line is FAILED naming it (see NO LOCK; A CHECK INSTEAD
 in the record shipper's replace_with_staged_files).
 
+A LEFTOVER STAGING DIRECTORY. A shipment that is killed, or loses ned-box
+partway, can leave its staging directory behind; nothing removes it later.
+Only the replace step looks for another staging directory, and it runs
+whenever the minutes or the dispositions differ from the store's copy or
+are not in the store yet, or the walk text was only added to. So a leftover
+one stops nearly every later shipment of that walk, with the FAILED line
+above; a shipment whose minutes, dispositions and walk text the store
+already holds unchanged does not look, and is not stopped. The stderr line
+printed with it says what to do: when no other shipment of the walk is
+running, which `pgrep -af walk-files-ship` on both machines shows, delete
+the directory the FAILED line names and run this program again. The
+directory is on ned-box, so from the Mac delete it with
+`ssh nedlern@ned-box 'rm -rf -- <the path the FAILED line names>'`.
+
 The minutes' citation at the end of the stdout line is the minutes' still,
 never the dispositions': the minutes are the record of the rulings and what a
 resumed walk reads.
 
 WHO CALLS IT. The agent running a walk, when the walk's closing sentence is
-delivered, and again if the walk is reopened and closed. The one stdout line
+delivered, and again if the walk is reopened and closed. It may also run
+it before the close, such as before a handoff, so that the store holds the
+walk so far; the close's run then ships the grown files. The stdout line
 ends with the minutes' citation in scp form, which is the link that closing
-sentence wants.
+sentence wants; OUTPUT says which FAILED lines carry no citation.
 
 WHAT THIS IS: the THIRD CALLER of nc-systems/cold-read/cold-read-record-ship.py, imported by
 importlib the way scripts/seat-shared-file-ship.py and
 scripts/sanity-check-record-ship.py import it, so the store's location, the ssh
 and rsync invocations and the store's README stay defined in one place (the
 user, 2026-09-11: "I don't want 3 varients of the same thing"). The copy host
-and the citation host are kept apart as the seats shipper keeps them: on
+and the citation host are kept apart as scripts/seat-shared-file-ship.py
+keeps them: on
 ned-box the copy is local and the citation still names the host.
 
-OUTPUT. Exactly one line on stdout -- `shipped:`, `REFUSED:` or `FAILED:` --
-ending, when anything reached the store, with the minutes' citation. Everything
-else is on stderr. Exit 0 when every file shipped or was already there, 2 when
-any add-only file was refused, 1 when the store could not be reached or written,
-or a file does not hold this run's bytes after the copy, 64 for a bad
-invocation.
+OUTPUT. Exactly one line on stdout, opening `shipped:`, `REFUSED:` or
+`FAILED:`. Everything else is on stderr. The line ends with the minutes'
+citation whenever the shipment judged every file: `shipped:`, even when
+nothing was copied because every file was already there with the same
+bytes; `REFUSED:`; and the `FAILED:` line that names files not holding this
+shipment's bytes. A `FAILED:` line that stops the shipment before then says what stopped the shipment and carries no citation:
+a bad invocation, a store that could not be reached, prepared or listed, a
+copy or placing step that failed, another staging directory, or ssh or rsync
+that could not be started.
+
+Exit 0 when every file shipped or was already there; 2 when an add-only file
+was refused; 1 when the store could not be reached or written, or a file does
+not hold this shipment's bytes after the copy; 64 for a bad invocation. When
+both 1 and 2 apply, 1 wins and the line opens `FAILED:`. A `FAILED:` line
+that names files not holding this shipment's bytes lists the refused files
+after them; an earlier `FAILED:` line names no refused file.
 
 THE DESTINATION is the record shipper's one constant with the kind swapped to
 `walk/`. Its environment override, COLD_READ_RECORD_SHIP_DESTINATION, moves this
