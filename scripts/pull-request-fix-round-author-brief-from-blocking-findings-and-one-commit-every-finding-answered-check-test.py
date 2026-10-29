@@ -445,6 +445,36 @@ def brief_cases(root, repository, base, frozen_head):
     check("brief: a review with no **Blocks.** comment refuses with exit 1",
           code == 1 and "none of its 1 inline comments" in err, err)
 
+    for spelling in ["**Blocks.**", "**Blocks:**", "**Blocks**", "**Blocks** (fast-read hold)",
+                     "**Blocks the merge.**", "  **Blocks.**"]:
+        code, out, err = run(root, repository, routes_for(
+            frozen_head, [review(commit_id=frozen_head, body="**Blocking: 1**")],
+            comments=[comment("hook.py", f"{spelling} the spelling under test.")]))
+        check(f"brief: a comment starting {spelling.strip()!r} is a blocking finding",
+              code == 0 and "Blocking findings (1)" in out and "the spelling under test" in out, err + out)
+
+    mixed = [comment("a.py", "**Blocks.** first.", comment_id=21),
+             comment("b.py", "**Blocks.** second.", comment_id=22),
+             comment("c.py", "**Blocks** (cold-read-fast-read hold on the docstring) third.", comment_id=23),
+             comment("d.py", "**Blocks** (cold-read-fast-read hold on the progress line) fourth.", comment_id=24),
+             comment("e.py", "Non-blocking. A note.", comment_id=25)]
+    code, out, err = run(root, repository, routes_for(
+        frozen_head, [review(commit_id=frozen_head, body="Four findings block.\n\n**Blocking: 4**")],
+        comments=mixed))
+    check("brief: a review mixing **Blocks.** and **Blocks** (...) counts all four, as pull request 2145's did",
+          code == 0 and "Blocking findings (4)" in out
+          and all(word in out for word in ["first.", "second.", "third.", "fourth."])
+          and "A note." not in out, err + out)
+
+    for body in ["**Blocking** is not the mark.", "**Blockset** is not the mark.",
+                 "**Blocks unclosed is not bold.", "Note: **Blocks.** in the middle is not the mark.",
+                 "**Blocks\nacross a line** is not the mark."]:
+        code, out, err = run(root, repository, routes_for(
+            frozen_head, [review(commit_id=frozen_head, body="no count stated")],
+            comments=[comment("hook.py", body)]))
+        check(f"brief: a comment starting {body.splitlines()[0][:20]!r} is not a blocking finding",
+              code == 1 and "none of its 1 inline comments starts with the bold word **Blocks**" in err, err)
+
     code, out, err = run(root, repository, routes_for(
         frozen_head, [review(commit_id=frozen_head, body="**Blocking: 3**")]))
     check("brief: a stated blocking count that differs from the marked comments refuses",
