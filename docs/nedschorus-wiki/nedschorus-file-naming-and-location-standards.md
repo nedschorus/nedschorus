@@ -13,7 +13,7 @@ The naming and location standards for this project's files. Where a tool this pr
 
 The MD-skills agent-seat moves each file on main that is not where, or not named as, this page says, under GHI [Rationalize the repository layout: group components by owning system under nc-systems/](https://github.com/nedschorus/nedschorus/issues/224), one system per pull request, repointing in the same commit every citation in the repository. A new file goes where this page says. A system gets its own directory under `nc-systems/` in the pull request that adds its first production code; test code alone does not earn one.
 
-A file in a queue directory is named as it will be at its canonical location, apart from the issue number a GHI-MD gains when its GHI is filed, so promoting it is a `git mv`.
+A file in a queue directory is named as it will be in its final location, apart from the issue number a GHI-MD gains when its GHI is filed. A GHI-MD moves to its final location through the ghi-write-tool once its cold read is done; any other file moves to it by `git mv` in a pull request once the user approves it.
 
 - **Skill prompt, the text a skill's own reviewer or cell runs**
   - **Location:** `nc-systems/skills/<skill name>/`, where `<skill name>` is the skill's name without its slash, such as `cold-read`
