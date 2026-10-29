@@ -149,5 +149,83 @@ with tempfile.TemporaryDirectory() as directory:
           and "1 matching user message(s)" in run.stdout,
           f"exit {run.returncode}: {run.stdout}{run.stderr}")
 
+def typed_with(text, **fields):
+    record = typed(text)
+    record.update(fields)
+    return record
+
+
+with tempfile.TemporaryDirectory() as directory:
+    path = write_transcript(directory, [
+        typed_with("go on", origin={"kind": "human"}),
+        typed_with("Another Claude session sent a message: done", origin={"kind": "peer"}),
+        typed_with("<channel source=\"reviewer\">x</channel> trailing", origin={"kind": "channel"}),
+        typed_with("<task-notification>x</task-notification> trailing", origin={"kind": "task-notification"}),
+        typed_with("Stop hook feedback:\nrefused", isMeta=True),
+        typed_with("Review this file for a range of defects.", entrypoint="sdk-cli"),
+        typed_with("no origin field at all"),
+        typed_with("origin is not a dict", origin=None),
+        agent("ok"),
+    ])
+    texts = user_texts(path)
+    check("a user turn whose origin is not human, or that is meta or a claude -p prompt, is not the user's",
+          texts == ["go on", "no origin field at all"], texts)
+
+with tempfile.TemporaryDirectory() as directory:
+    path = write_transcript(directory, [
+        typed_with("This session is being continued from a previous conversation that ran out of context."),
+        typed_with("Read /h/.claude/handoffs/a-dialog-0002.md — the dialog from the session you are continuing, "
+                   "written at 10:00", origin={"kind": "human"}),
+        typed_with("Read /h/.claude/handoffs/a-dialog-0001.md — it is the dialog from the session you are "
+                   "continuing", origin={"kind": "human"}),
+        typed_with("Next step.\n\n(Recovered at supervisor boot: the previous session's conversation-tail is "
+                   "unavailable; this next-step and the repository are your whole context.)",
+                   origin={"kind": "human"}),
+        typed_with("I said: Read the file — the dialog from the session you are continuing is long",
+                   origin={"kind": "human"}),
+    ])
+    texts = user_texts(path)
+    check("a compaction summary and a handoff successor's opening prompt are not the user's",
+          texts == ["I said: Read the file — the dialog from the session you are continuing is long"], texts)
+
+with tempfile.TemporaryDirectory() as directory:
+    path = write_transcript(directory, [
+        typed("start"),
+        queued("y"),
+        typed("y"),
+    ])
+    texts = user_texts(path)
+    check("the same words typed right after a queued message, with no interrupt between, are a second message",
+          texts == ["start", "y", "y"], texts)
+
+_recover_spec = importlib.util.spec_from_file_location(
+    "recover_crashed_seats", SEARCH_SCRIPT.with_name("recover-crashed-seats.py"))
+recover_module = importlib.util.module_from_spec(_recover_spec)
+_recover_spec.loader.exec_module(recover_module)
+check("the handoff opener constants equal recover-crashed-seats.py's",
+      (search_module.REINCARNATION_OPENER_MARKER, search_module.REINCARNATION_OPENER_PATTERN.pattern,
+       search_module.IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER)
+      == (recover_module.REINCARNATION_OPENER_MARKER, recover_module.REINCARNATION_OPENER_PATTERN.pattern,
+          recover_module.IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER))
+
+with tempfile.TemporaryDirectory() as directory:
+    path = write_transcript(directory, [
+        typed("start"),
+        queued("stop"),
+        interrupt_notice(),
+        typed("stop"),
+        agent("Stopped."),
+    ])
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    whole = search_module.TurnReader()
+    whole_turns = [whole.turn(record) for record in records]
+    first_half = search_module.TurnReader()
+    turns = [first_half.turn(record) for record in records[:3]]
+    resumed = search_module.TurnReader(json.loads(json.dumps(first_half.state())))
+    turns += [resumed.turn(record) for record in records[3:]]
+    check("a reader resumed from its saved state reads the rest as one reader would",
+          turns == whole_turns and [t for t in turns if t] == [("user", "start"), ("user", "stop"),
+                                                                ("agent", "Stopped.")], turns)
+
 print(f"{'FAILED' if failures else 'all cases passed'}: {len(failures)} failure(s)")
 sys.exit(1 if failures else 0)
