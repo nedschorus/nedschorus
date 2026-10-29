@@ -309,6 +309,7 @@ def run_cases():
                   f"advanced, so the next run tries the merge again",
                   completed.returncode == job.EXIT_STEP_FAILED
                   and wanted in record and wanted in completed.stderr
+                  and f"merge {merge[:12]} (change scripts/thing.py): " in record
                   and "The next run tries this merge again" in record
                   and fixture.state_json()["last_tested_main_commit"] == start,
                   f"rc={completed.returncode} record={record} err={completed.stderr}")
@@ -326,7 +327,8 @@ def run_cases():
         completed = fixture.run({merge: {"json": verdict(survived=[survivor()])}})
         check("a task that cannot be opened stops the run at that merge, exit 4, naming the list",
               completed.returncode == job.EXIT_STEP_FAILED
-              and "no task could be opened on merge-lane-2's task list" in completed.stderr
+              and f"merge {merge[:12]}: no task could be opened on merge-lane-2's task list"
+              in completed.stderr
               and "nedschorus-merge-lane-2-tasks does not exist" in completed.stderr
               and fixture.state_json()["last_tested_main_commit"] == start,
               f"rc={completed.returncode} err={completed.stderr}")
@@ -374,7 +376,9 @@ def run_cases():
         completed = fixture.run()
         check("a failed fetch: exit 4, and the record names the git command",
               completed.returncode == job.EXIT_STEP_FAILED
-              and "git fetch --quiet origin main failed" in fixture.records()[0].read_text(),
+              and "git fetch --quiet origin main failed" in fixture.records()[0].read_text()
+              and "does not appear to be a git repository" in fixture.records()[0].read_text()
+              and "Could not read from remote repository" in fixture.records()[0].read_text(),
               f"rc={completed.returncode} err={completed.stderr}")
 
     # Another run holds the lock.

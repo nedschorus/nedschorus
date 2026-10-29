@@ -270,7 +270,7 @@ def tracked_python_files_at(commit, checkout, environment, cache):
     """The Python files git tracks at the commit, or None when git cannot list them."""
     if commit not in cache:
         listed = run(["git", "ls-tree", "-r", "-z", "--name-only", commit], checkout, environment)
-        cache[commit] = None if listed.returncode != 0 else {
+        cache[commit] = None if listed.returncode else {
             path for path in git_output.nul_separated_fields(listed.stdout) if path.endswith(".py")}
     return cache[commit]
 

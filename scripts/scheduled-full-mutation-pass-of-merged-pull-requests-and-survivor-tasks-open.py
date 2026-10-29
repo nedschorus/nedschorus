@@ -160,10 +160,10 @@ def git(clone, *arguments):
 
 def git_or_raise(clone, *arguments):
     completed = git(clone, *arguments)
-    if completed.returncode != 0:
+    if completed.returncode:
         raise StepFailed(
             f"git {' '.join(arguments)} failed in {clone} (exit {completed.returncode}): "
-            f"{(completed.stderr.strip().splitlines() or ['no detail'])[-1]}. "
+            f"{' '.join(completed.stderr.split()) or 'no detail'}. "
             f"Fix what git reports, then run this program again on ned-box: {RUN_BY_HAND}")
     return completed.stdout.strip()
 
@@ -457,7 +457,7 @@ def main_under_lock(arguments):
             last = state["last_tested_main_commit"]
             record.append(f"after: {last}")
             if git(arguments.clone, "merge-base", "--is-ancestor", last,
-                   main_commit).returncode != 0:
+                   main_commit).returncode:
                 raise StepFailed(
                     f"the last tested commit {last}, from {state_file}, is not an ancestor of "
                     f"origin/main {main_commit}, so the merges since it cannot be listed.\n"
