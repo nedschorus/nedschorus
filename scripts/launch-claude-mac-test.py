@@ -408,7 +408,8 @@ class AnotherUpdateHoldsTheLock:
 
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="launch-claude-mac-test-") as scratch:
-        root = Path(scratch)
+        # Resolved, as the cwd the launcher reports is, where TMPDIR is reached through a link.
+        root = Path(scratch).resolve()
 
         # --- ~user root: refused before anything runs ----------------------
         sandbox = MacLaunchSandbox(root / "tilde-user")
@@ -448,6 +449,21 @@ def main() -> int:
         check("tmux starts in $HOME, not in the caller's working directory",
               sandbox.tmux_working_directory() == str(sandbox.home.resolve()),
               (sandbox.tmux_working_directory(), str(sandbox.workdir)))
+
+        # --- relative root: resolved against the caller's directory, not the
+        # $HOME the launcher changes to before it starts tmux
+        sandbox = MacLaunchSandbox(root / "relative-root")
+        result = sandbox.run("relative agents")
+        tmux_argv = sandbox.tmux_argv()
+        seat_directory = f"{sandbox.workdir}/relative agents/seat-t"
+        check("relative root: tmux -c is the seat directory under the caller's directory",
+              result.returncode == 0
+              and any(previous == "-c" and current == seat_directory
+                      for previous, current in zip(tmux_argv, tmux_argv[1:])),
+              (result.returncode, result.stderr[:300], tmux_argv))
+        check("relative root: the seat directory was created under the caller's directory",
+              Path(seat_directory).is_dir()
+              and not (sandbox.home / "relative agents").exists(), seat_directory)
 
         # --- the update step resolves the SEAT's claude, not the ambient one
         # The launcher exports ~/.local/bin ahead of the inherited PATH before
@@ -629,6 +645,16 @@ def main() -> int:
         check("detached: tmux gets mouse mode on and copy-command pbcopy",
               tmux_argv_sets_mouse_mode_and_pbcopy(sandbox.tmux_argv()),
               sandbox.tmux_argv())
+        # A pane command that ends with the supervisor call lets the pane's
+        # shell exec into it, and tmux, then its parent, wakes it from a
+        # `kill -STOP` at once.
+        detached_pane_commands = [argument for argument in sandbox.tmux_argv()
+                                  if "handoff-supervisor.py" in argument]
+        check("detached: the pane command ends with `; exit $?`, so the shell "
+              "stays the supervisor's parent",
+              len(detached_pane_commands) == 1
+              and detached_pane_commands[0].endswith("; exit $?"),
+              detached_pane_commands)
         check("task list: the pin reaches the supervisor as nedschorus-<seat>-tasks",
               sandbox.supervisor_environment().get("CLAUDE_CODE_TASK_LIST_ID")
               == "nedschorus-seat-a-tasks",

@@ -72,12 +72,15 @@ AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}"
 # expanduser()s the same value; a ~user/ form is refused, because this
 # script would mkdir a literal ~user directory while those tools resolve
 # that user's real home — one seat, silently split across two directories.
+# A relative root is resolved here, against the caller's directory, because
+# the launcher later changes directory to $HOME before it starts tmux.
 case "$AGENTS_ROOT" in
     ("~"[!/]*)
         echo "launch-claude-mac: ~user agents roots are not supported — the shell and the fleet's Python tools resolve them to different directories, splitting the seat. Use an absolute path." >&2
         exit 2 ;;
     ("~") AGENTS_ROOT="$HOME" ;;
     ("~/"*) AGENTS_ROOT="$HOME${AGENTS_ROOT#?}" ;;
+    ([!/]*) AGENTS_ROOT="$PWD/$AGENTS_ROOT" ;;
 esac
 
 # The supervisor lives in its own system directory one level up, so the
@@ -581,7 +584,10 @@ if [ "$ATTACH" = yes ]; then
         set-option -g set-titles on \; set-option -g set-titles-string "$SEAT_WINDOW_TITLE_FORMAT" \; \
         set-option -g mouse on \; set-option -s copy-command pbcopy
 fi
-tmux -L "$SEAT_TMUX_SOCKET" new-session -d -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND" \; \
+# The trailing `exit $?` stops the pane's shell from exec'ing into the
+# supervisor: with tmux as its direct parent, tmux wakes it at once after a
+# `kill -STOP`. The pane still closes with the supervisor's exit status.
+tmux -L "$SEAT_TMUX_SOCKET" new-session -d -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND; exit \$?" \; \
         set-option -g set-titles on \; set-option -g set-titles-string "$SEAT_WINDOW_TITLE_FORMAT" \; \
         set-option -g mouse on \; set-option -s copy-command pbcopy 2>/dev/null \
     || echo "launch-claude-mac: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-mac $AGENT_NAME)"

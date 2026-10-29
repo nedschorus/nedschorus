@@ -40,6 +40,16 @@ WHAT IS PINNED HERE.
     report. A stub `claude` is first on PATH in every case, failing unless
     the case plans a report, so no case reaches the real claude.
 
+  - Question 4, What should be code. Once Questions 1 to 3 have a report,
+    one more cell asks Question 4 of the document itself through the claude
+    cell launcher on claude-opus-5-5 at high effort, and its answer, under
+    its own stamp, is the report's one Question 4 section, before the
+    sentence coverage, on both routes. When that cell fails or runs past its
+    time limit, after which the model it started is killed, the section and
+    stderr say so, and the read still exits 0 with Questions 1 to 3. When
+    Questions 1 to 3 fail, Question 4 is not asked. The stub `claude` answers
+    Question 4 in every case unless the case plans otherwise.
+
   - The chat-instead-of-file quirk carries through: a model that answers a
     review-length text in chat and writes no file still gives the read a
     report, and the launcher's recovery line is on the read's stderr.
@@ -212,25 +222,59 @@ sys.exit(step.get("exit", 0))
 """
 
 # The stub `claude`, which the claude cell launcher runs for the Sonnet
-# backup. It is on PATH in every case, so no case reaches the real claude, and
-# with no plan it fails, so a case that does not plan the backup sees it fail.
-# "report" writes the report and succeeds; "fail_stderr" is what a failure
-# prints.
+# backup and for Question 4. It is on PATH in every case, so no case reaches
+# the real claude. Launched with Question 4's model, it follows the Question 4
+# plan, counts in a counter of its own and writes the report path its prompt
+# names; otherwise, with no plan it fails, so a case that does not plan the
+# backup sees it fail. "report" writes the report and succeeds; "fail_stderr"
+# is what a failure prints; "dump_prompt" saves the prompt; "pid_file" saves
+# the stub's process ID; "hang" sleeps past any deadline a case sets;
+# "concurrent_read_answer" exits 0 without writing its own report, after
+# writing that text where a concurrent fast read, in a temporary directory of
+# its own, would write its Question 4 answer; it saves that directory, then
+# that file, one per line, to the file "concurrent_read_answer_path_file" names.
 STUB_CLAUDE = """#!/usr/bin/env python3
-import json, os, pathlib, sys
+import json, os, pathlib, re, sys, tempfile, time
 argv = sys.argv
-sys.stdin.read()
-plan = json.loads(os.environ.get("COLD_READ_CLAUDE_CELL_TEST_STUB_PLAN", "{}"))
-counter_path = pathlib.Path(os.environ["COLD_READ_CLAUDE_CELL_TEST_STUB_COUNTER_PATH"])
+prompt = sys.stdin.read()
+model = argv[argv.index("--model") + 1] if "--model" in argv else ""
+asks_question_4 = model == "QUESTION_4_MODEL"
+plan = json.loads(os.environ.get(
+    "COLD_READ_CLAUDE_CELL_TEST_STUB_QUESTION_4_PLAN" if asks_question_4
+    else "COLD_READ_CLAUDE_CELL_TEST_STUB_PLAN", "{}"))
+counter_path = pathlib.Path(os.environ["COLD_READ_CLAUDE_CELL_TEST_STUB_COUNTER_PATH"]
+                            + ("-question-4" if asks_question_4 else ""))
 launches = (int(counter_path.read_text()) if counter_path.is_file() else 0) + 1
 counter_path.write_text(str(launches))
+if "dump_prompt" in plan:
+    pathlib.Path(plan["dump_prompt"]).write_text(prompt, encoding="utf-8")
+if "pid_file" in plan:
+    pathlib.Path(plan["pid_file"]).write_text(str(os.getpid()), encoding="utf-8")
+if plan.get("hang"):
+    time.sleep(300)
+own_report = (pathlib.Path(re.search(r"Write your report to (\\S+), once", prompt).group(1))
+              if asks_question_4 else None)
+if "concurrent_read_answer" in plan:
+    temporary_root = pathlib.Path(os.path.realpath(tempfile.gettempdir()))
+    own = pathlib.Path(os.path.realpath(own_report))
+    own_scratch = next(parent for parent in own.parents if parent.parent == temporary_root)
+    concurrent_scratch = pathlib.Path(tempfile.mkdtemp(prefix="cold-read-fast-read-"))
+    concurrent = concurrent_scratch / own.relative_to(own_scratch)
+    concurrent.parent.mkdir(parents=True, exist_ok=True)
+    concurrent.write_text(plan["concurrent_read_answer"], encoding="utf-8")
+    pathlib.Path(plan["concurrent_read_answer_path_file"]).write_text(
+        f"{concurrent_scratch}\\n{concurrent}\\n", encoding="utf-8")
+    sys.exit(0)
 if "report" not in plan:
     sys.stderr.write(plan.get("fail_stderr", "stub claude: simulated failure\\n"))
     sys.exit(1)
-report_path = pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"])
+report_path = (own_report if asks_question_4
+               else pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"]))
 report_path.parent.mkdir(parents=True, exist_ok=True)
 report_path.write_text(plan["report"], encoding="utf-8")
-"""
+""".replace("QUESTION_4_MODEL", script_under_test_module().WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID)
+# What the stub answers to Question 4 when a case plans nothing else.
+QUESTION_4_STUB_ANSWER = "STUB OPUS QUESTION 4: No issues\n"
 # The words Gemini's agy prints when the project's monthly spending cap is
 # reached, as a real failing read on ned-box printed them.
 GEMINI_SPENDING_CAP_STDERR = (
@@ -309,7 +353,7 @@ def build_scratch_repository(scratch):
 def run_fast_read(repository, stub_directory, plan, expected_report, target_argument,
                   counter_path, ship_destination=None,
                   record_clock=FIXED_RECORD_CLOCK_FOR_TESTS, agent_session_id=None,
-                  current_directory=None, claude_plan=None):
+                  current_directory=None, claude_plan=None, question_4_plan=None):
     """The read as a subprocess, with the stub agy first on PATH, run from
     `current_directory`, by default `repository`.
 
@@ -337,6 +381,9 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(expected_report)
     environment["COLD_READ_AGY_CELL_TEST_STUB_COUNTER_PATH"] = str(counter_path)
     environment["COLD_READ_CLAUDE_CELL_TEST_STUB_PLAN"] = json.dumps(claude_plan or {})
+    environment["COLD_READ_CLAUDE_CELL_TEST_STUB_QUESTION_4_PLAN"] = json.dumps(
+        question_4_plan if question_4_plan is not None else {"report": QUESTION_4_STUB_ANSWER})
+    question_4_counter_path(counter_path).unlink(missing_ok=True)
     environment["COLD_READ_CLAUDE_CELL_TEST_STUB_COUNTER_PATH"] = str(
         claude_counter_path(counter_path))
     environment[RECORD_SHIP_DESTINATION_VARIABLE] = (
@@ -363,6 +410,11 @@ def agent_session_written_beside(report):
 def claude_counter_path(counter_path):
     """Where the stub claude counts its launches, beside the stub agy's counter."""
     return counter_path.with_name(counter_path.name + "-claude")
+
+
+def question_4_counter_path(counter_path):
+    """Where the stub claude counts its Question 4 launches."""
+    return pathlib.Path(str(claude_counter_path(counter_path)) + "-question-4")
 
 
 def launches_counted(counter_path):
@@ -946,6 +998,184 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the launcher's recovery line is on the read's stderr",
           STDOUT_RECOVERY_PHRASE in result.stderr, repr(result.stderr))
 
+    # --- Question 4: What should be code ----------------------------------
+    question_4_module = script_under_test_module()
+    question_4_heading = question_4_module.WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING
+    coverage_heading = question_4_module.SENTENCE_COVERAGE_HEADING
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    question_4_prompt_dump = scratch / "received-question-4-prompt.txt"
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n"}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"report": QUESTION_4_STUB_ANSWER,
+                         "dump_prompt": str(question_4_prompt_dump)},
+    )
+    report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
+    question_4_part = report_text.partition(question_4_heading)[2]
+    check("Question 4 is asked once, after the fast-clarify cell, and its answer is the "
+          "report's one Question 4 section, between Questions 1 to 3 and the sentence "
+          "coverage",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and launches_counted(question_4_counter_path(counter)) == 1
+          and report_text.count(question_4_heading) == 1
+          and report_text.index("STUB FAST READ: questions 1 to 3")
+          < report_text.index(question_4_heading)
+          < report_text.index(QUESTION_4_STUB_ANSWER.strip())
+          < report_text.index(coverage_heading),
+          f"exit {result.returncode}; question 4 launches="
+          f"{launches_counted(question_4_counter_path(counter))}; report={report_text!r}; "
+          f"stderr={result.stderr!r}")
+    check("the Question 4 section opens with its own provenance stamp: claude-opus-5-5 "
+          "at high effort",
+          question_4_part.lstrip("\n").startswith("<!-- provenance: runtime=claude "
+                                                  "model=claude-opus-5-5 effort=high "
+                                                  "cell=what-should-be-code "),
+          repr(question_4_part[:300]))
+    received_question_4_prompt = (question_4_prompt_dump.read_text(encoding="utf-8")
+                                  if question_4_prompt_dump.is_file() else "")
+    draft_path = str((repository / walk_draft_relative).resolve())
+    check("the Question 4 cell receives the embedded template, the user's question word "
+          "for word, about the document itself rather than its marked copy",
+          received_question_4_prompt.startswith(f"Read {draft_path} in full")
+          and question_4_module.WHAT_SHOULD_BE_CODE_QUESTION in received_question_4_prompt
+          and "{TARGET_PATH}" not in received_question_4_prompt
+          and "{REPORT_PATH}" not in received_question_4_prompt,
+          repr(received_question_4_prompt[:300]))
+    check("the Question 4 cell is told to write its report into a scratch file, not into "
+          "the checkout",
+          f"Write your report to {repository}" not in received_question_4_prompt
+          and question_4_module.WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_FILE_NAME
+          in received_question_4_prompt,
+          repr(received_question_4_prompt[-500:]))
+    check("the claude launcher names no stray write, since Question 4 runs after the "
+          "fast-clarify cell's report is written",
+          cell_common.STRAY_WRITE_PHRASE not in result.stderr, repr(result.stderr))
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n"}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"fail_stderr": "stub claude: the opus cause\n"},
+    )
+    report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
+    question_4_part = report_text.partition(question_4_heading)[2]
+    check("when the Question 4 cell fails, the read still delivers Questions 1 to 3, "
+          "exit 0, its stdout the report's path",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and "STUB FAST READ: questions 1 to 3" in report_text,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+    check("the progress line says that, if Question 4 fails, its section says why",
+          "and its Question 4 section says why Question 4 was not answered." in result.stderr,
+          repr(result.stderr))
+    check("the Question 4 section and stderr say Question 4 was not answered, with "
+          "the cell's cause",
+          "Question 4 was not answered" in question_4_part
+          and "the opus cause" in question_4_part
+          and "Question 4 was not answered" in result.stderr
+          and question_4_part.index("Question 4 was not answered")
+          < question_4_part.index(coverage_heading),
+          f"section={question_4_part!r}; stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch)
+    copied_fast_read = repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py"
+    copied_fast_read.write_text(
+        copied_fast_read.read_text(encoding="utf-8").replace(
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n",
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 5\n"),
+        encoding="utf-8")
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    hanging_stub_pid_file = scratch / "hanging-question-4-stub.pid"
+    hanging_stub_pid_file.unlink(missing_ok=True)
+    import time
+    hanging_read_started_at = time.monotonic()
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n"}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"hang": True, "report": QUESTION_4_STUB_ANSWER,
+                         "pid_file": str(hanging_stub_pid_file)},
+    )
+    hanging_read_seconds = time.monotonic() - hanging_read_started_at
+    # The stub sleeps 300 s, so a read that took longer may have waited for the
+    # sleep to end rather than killed the stub at the 5 s limit.
+    check("a Question 4 cell past its time limit is killed, not waited for: the read "
+          "returns before the hanging stub's sleep could have ended",
+          hanging_read_seconds < 300, f"{hanging_read_seconds:.0f} s")
+    report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
+    check("when the Question 4 cell runs past its time limit, the section says it gave "
+          "no answer within the limit, and the read still exits 0 with Questions 1 to 3",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and "Question 4 was not answered" in report_text
+          and f"no answer within {5 / 60:g} minutes" in report_text
+          and f"for up to {5 / 60:g} minutes" in result.stderr
+          and QUESTION_4_STUB_ANSWER.strip() not in report_text,
+          f"exit {result.returncode}; report={report_text!r}; stderr={result.stderr!r}")
+    hanging_stub_pid = (int(hanging_stub_pid_file.read_text())
+                        if hanging_stub_pid_file.is_file() else None)
+
+    def process_is_running(pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    for _ in range(50):
+        if hanging_stub_pid is None or not process_is_running(hanging_stub_pid):
+            break
+        time.sleep(0.1)
+    check("the model the Question 4 cell started is killed with it at the time limit",
+          hanging_stub_pid is not None and not process_is_running(hanging_stub_pid),
+          f"pid {hanging_stub_pid}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    concurrent_answer = "STUB CONCURRENT READ: another document's Question 4 answer\n"
+    concurrent_answer_path_file = scratch / "concurrent-read-question-4-answer.paths"
+    concurrent_answer_path_file.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n"}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"concurrent_read_answer": concurrent_answer,
+                         "concurrent_read_answer_path_file": str(concurrent_answer_path_file)},
+    )
+    report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
+    concurrent_paths = (concurrent_answer_path_file.read_text(encoding="utf-8").split("\n")
+                        if concurrent_answer_path_file.is_file() else [])
+    check("when the Question 4 cell exits 0 without an answer, the read neither takes nor "
+          "removes the answer a concurrent fast read wrote in its own temporary directory",
+          result.returncode == 0 and "Question 4 was not answered" in report_text
+          and concurrent_answer.strip() not in report_text
+          and len(concurrent_paths) > 1 and pathlib.Path(concurrent_paths[1]).is_file(),
+          f"exit {result.returncode}; concurrent paths {concurrent_paths}; report={report_text!r}")
+    if concurrent_paths:
+        shutil.rmtree(concurrent_paths[0], ignore_errors=True)
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs, {"*": {"fail_first_attempts": 99}},
+        suggestions, walk_draft_relative, counter,
+    )
+    check("when Questions 1 to 3 fail, Question 4 is not asked",
+          result.returncode == 1 and launches_counted(question_4_counter_path(counter)) == 0,
+          f"exit {result.returncode}; question 4 launches="
+          f"{launches_counted(question_4_counter_path(counter))}")
+
+    repository = build_scratch_repository(scratch)
+    records_report = (repository / "cold-read-records" / f"a-design-{record_stamp}"
+                      / "fast-read.md")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
+        records_report, "docs/drafts/a-design.md", counter,
+    )
+    records_text = records_report.read_text(encoding="utf-8") if records_report.is_file() else ""
+    check("a read on the records route carries the Question 4 section in its fast-read.md",
+          result.returncode == 0 and records_text.count(question_4_heading) == 1
+          and QUESTION_4_STUB_ANSWER.strip() in records_text,
+          f"exit {result.returncode}; report={records_text!r}")
+
     # --- The embedded instructions: two cases, and why both are needed ---
     # The case below and the one after it are a pair. The first proves the
     # runtime uses the text embedded in the script: that text, and not the
@@ -1419,12 +1649,21 @@ def ssh_time_limit_seconds_with_agy_cell(agy_cell_text):
 
 
 check("the ssh time limit of a read on ned-box follows the agy cell's per-model limit, "
-      "the length of the fast cold-read-tier's model chain and the Sonnet backup's allowance",
+      "the length of the fast cold-read-tier's model chain, the Sonnet backup's allowance "
+      "and the Question 4 cell's time limit",
       ssh_time_limit_seconds_with_agy_cell(
           "COLD_READ_AGY_CELL_PER_MODEL_RUN_KILL_AFTER_SECONDS = 45 * 60\n"
           "TIER_TO_AGY_MODEL_CHAIN = {'fast': ('model-a', 'model-b')}\n")
       == warning_module.FAST_READ_ATTEMPTS * 2 * 45 * 60
-      + warning_module.COLD_READ_FAST_READ_SONNET_BACKUP_RUN_ALLOWANCE_SECONDS + 5 * 60)
+      + warning_module.COLD_READ_FAST_READ_SONNET_BACKUP_RUN_ALLOWANCE_SECONDS + 5 * 60
+      + warning_module.COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS)
+check("the Question 4 prompt carries the fast-clarify prompt's reading rules whole, "
+      "from their first sentence to their last",
+      warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES.startswith(warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES_OPENING_WORDS)
+      and warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES.endswith(warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES_CLOSING_WORDS)
+      and "Never open a credential file" in warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES
+      and warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES in warning_module.WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE,
+      repr(warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES[:200]))
 class_of = warning_module.full_run_class_of_target
 root = warning_module.REPO_ROOT
 check("a skill is in the class",

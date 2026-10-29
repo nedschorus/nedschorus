@@ -63,7 +63,7 @@ def cosmic_ray_timeout_line_and_test_command_words_for_limit(limit):
     """The config's timeout line and the test command's first words, for this limit."""
     return (f"timeout = {float(limit + EXTRA_SECONDS)!r}\n",
             [sys.executable, str(SCRIPT.resolve()),
-             load_script_module().RUN_AS_COSMIC_RAY_TEST_COMMAND_FLAG, repr(float(limit))])
+             load_script_module().COSMIC_RAY_TEST_COMMAND_RUN_TEST_SUITE_RUNNER_STOPPED_AFTER_SECONDS_FLAG, repr(float(limit))])
 
 CONTROL_DIRECTORY_VARIABLE = "PULL_REQUEST_MUTATION_TESTING_SURVIVORS_TEST_CONTROL_DIR"
 
@@ -284,18 +284,23 @@ def runner_output_with_suites_timed_out(timed_out, others=()):
 
 
 def runner_output_with_test_sandbox_not_started(suite):
-    """The suite runner's FAIL lines for a suite whose nc-test-sandbox did not start, from its code."""
+    """The suite runner's NOT RUN lines for a suite whose nc-test-sandbox did not start, from its code."""
     runner = load_test_suite_runner()
-    failed = {"suite": suite, "exit": 1, "seconds": 0.1, "skips": [],
-              "test sandbox did not start": True}
-    return (f"{runner.suite_line(failed)}\n\n1 failed:\n"
-            f"FAIL {suite} {runner.why_suite_failed(failed)} — log /tmp/a.log\n")
+    not_run = {"suite": suite, "exit": 1, "seconds": 0.1, "skips": [],
+               "test sandbox did not start": True}
+    return (f"{runner.suite_line(not_run)}\n\n1 not run, because bwrap could not build the "
+            f"nc-test-sandbox; each log says why and what to do:\n"
+            f"NOT RUN {suite} {runner.why_suite_failed(not_run)} — log /tmp/a.log\n")
 
 
-def runner_output_with_a_suite_failed_with_exit_code(suite, exit_code):
-    """The suite runner's FAIL lines for a suite that ended with this exit code, from its code."""
+def runner_output_with_a_suite_failed_with_exit_code(suite, exit_code, out_of_memory=None):
+    """The suite runner's FAIL lines for a suite that ended with this exit code, from its code.
+
+    out_of_memory, when given, is the result's "out of memory" entry: the kernel killed
+    processes of the suite at its memory ceiling."""
     runner = load_test_suite_runner()
-    failed = {"suite": suite, "exit": exit_code, "seconds": 1.0, "skips": []}
+    failed = {"suite": suite, "exit": exit_code, "seconds": 1.0, "skips": [],
+              **({"out of memory": out_of_memory} if out_of_memory else {})}
     return (f"{runner.suite_line(failed)}\n\n1 failed:\n"
             f"FAIL {suite} {runner.why_suite_failed(failed)} — log /tmp/a.log\n")
 
@@ -316,7 +321,7 @@ def test_command_output_when_the_machine_lock_is_held(scratch):
         holder.write("pid 7, the holder in this test\n")
         holder.flush()
         return subprocess.run(
-            [sys.executable, str(SCRIPT), load_script_module().RUN_AS_COSMIC_RAY_TEST_COMMAND_FLAG,
+            [sys.executable, str(SCRIPT), load_script_module().COSMIC_RAY_TEST_COMMAND_RUN_TEST_SUITE_RUNNER_STOPPED_AFTER_SECONDS_FLAG,
              "60.0", sys.executable, str(SCRIPT.with_name("run-all-test-suites.py")),
              "--checkout", str(repository), "--lock-file", str(lock_file),
              "--recorded-inputs-directory", str(Path(scratch) / "recordings"),
@@ -570,6 +575,13 @@ def run_cases():
            killed_with_output(runner_output_with_a_suite_failed_with_exit_code(
                "scripts/thing-test.py", -40))]],
          0, "1 killed, 0 survived, 0 errored"),
+        ("a killed mutant whose suite had a process killed at its memory ceiling, as a "
+         "mutant that allocates without end does, is killed",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           killed_with_output(runner_output_with_a_suite_failed_with_exit_code(
+               "scripts/thing-test.py", -9,
+               {"processes killed": 1, "ceiling": 4 * 10**9}))]],
+         0, "1 killed, 0 survived, 0 errored"),
         ("a killed mutant whose every suite passed but whose records could not be written "
          "is ERRORED, not killed",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
@@ -585,6 +597,13 @@ def run_cases():
            killed_with_output(runner_output_with_test_sandbox_not_started(
                "scripts/thing-test.py"))]],
          1, "0 killed, 0 survived, 1 errored"),
+        ("the ERRORED line for a mutant whose only nonzero suite's nc-test-sandbox did not start "
+         "quotes the runner's NOT RUN line, which names the suite",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           killed_with_output(runner_output_with_test_sandbox_not_started(
+               "scripts/thing-test.py"))]],
+         1, "its output says: NOT RUN scripts/thing-test.py did not start: bwrap could not "
+            "build its nc-test-sandbox"),
         ("a killed mutant with one suite failing beside an nc-test-sandbox that did not start is "
          "killed",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),

@@ -9,7 +9,8 @@ A partial append can leave a torn record that prevents subsequent records from b
 The runner's output is copied to stderr line by line as it arrives, so a run stopped before
 it ends still shows its progress; stdout keeps only the SUMMARY line and where the record went.
 
-Exit codes: 0 suites passed, 1 suite failed, 2 refused or unable to start, 4 failed step,
+Exit codes: 0 suites passed, 1 suite failed, 2 refused, unable to start, or no suite failed but
+one did not run because its test sandbox did not start, 4 failed step,
 5 record not written, 7 uncaught exception. Local logs and the record remain available for recovery."""
 
 import argparse
@@ -319,7 +320,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
               and daily.runner_summary_line(completed) is None):
             steps_failed.append((
                 f"{run_all_test_suites.PROGRAM} exited {completed.returncode} and printed "
-                f"no {daily.RUNNER_SUMMARY_LINE_PREFIX} line, which is no verdict",
+                f"no {run_all_test_suites.SUMMARY_LINE_PREFIX} line, which is no verdict",
                 "Read the runner's stderr in the record, then run this again."))
         if completed.returncode in (run_all_test_suites.EXIT_ALL_PASSED,
                                     run_all_test_suites.EXIT_SOME_FAILED):
@@ -347,7 +348,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
             record_lines.extend(printed)
             if summary is None:
                 record_lines.append(
-                    f"the runner printed no {daily.RUNNER_SUMMARY_LINE_PREFIX} line; its "
+                    f"the runner printed no {run_all_test_suites.SUMMARY_LINE_PREFIX} line; its "
                     f"stderr:")
                 record_lines.extend(f"  {line}"
                                     for line in completed.stderr.strip().splitlines())

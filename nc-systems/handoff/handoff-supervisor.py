@@ -17,14 +17,22 @@ The cycle, per reincarnation:
      (os.execv, so the process ID stays, and the lock file keeps naming it).
      The handoff is still unconsumed, so the fresh process carries out steps
      3 to 6 below at startup, as after a reboot: it extracts the dialog
-     (step 3), and only when the dialog cannot be extracted does it start
-     the successor from the handoff's next-step alone. Started with
+     (step 3); when the dialog cannot be extracted, the successor starts with
+     no conversation-tail, and has the recovery note step 3 describes
+     instead. Started with
      --started-by-handoff-supervisor-restarting-itself-on-main-code, the fresh
      process prints that the restart worked. When the checkout cannot be
      fast-forwarded, or os.execv fails, this process prints why, carries on
      with the code it started with, and the successor's initial agent
      instructions say why too.
-  3. Extract its dialog to disk before anything else proceeds.
+  3. Extract its dialog to disk before anything else proceeds. When the
+     extraction fails, the successor's prompt is the handoff's next step,
+     then a recovery note saying the session-dialog could not be extracted
+     and where the retiring session's transcript is, or that it was not
+     found, then the instruction to put items needing the user in one
+     approval-walk, then the lines step 6 says the initial agent
+     instructions carry, such as the launch-time-git-sync's line and the
+     leftover work-snapshots.
   4. Each generation opens the same launcher-pinned task list.
   5. Print one queue-status line — to the console only. It does not ride
      the initial agent instructions (user-ruled 2026-08-29: "Also useless is the
@@ -927,17 +935,36 @@ class DialogIgnitionPlan:
 
 
 @dataclass
-class BootRecoveryIgnitionPlan:
-    """A launch-time prompt for a handoff whose transcript cannot be extracted."""
+class IgnitionPlanWithoutConversationTail:
+    """A launch-time prompt for a handoff that has no conversation-tail to give the successor."""
     next_step: str
+    occasion: str = "supervisor boot"
+    # Set when an extraction was tried and failed; the successor can still read the transcript.
+    unextracted_session_id: str = ""
+    unextracted_transcript_path: Optional[Path] = None
 
     def compose(self, launch_time_git_sync_report: str,
                 overview_refresh_due: tuple = (),
                 memory_review_due: tuple = ()) -> str:
+        if self.unextracted_transcript_path is None:
+            recovery_note = ("the previous session's conversation-tail is unavailable; "
+                             "this next-step and the repository are your whole context.")
+        elif self.unextracted_transcript_path.is_file():
+            recovery_note = (
+                "the previous session's conversation-tail is unavailable, because the "
+                f"handoff-supervisor could not extract session {self.unextracted_session_id}'s "
+                "session-dialog; this next-step and the repository are your context, and "
+                f"that session's transcript is {self.unextracted_transcript_path}, which you "
+                "can read when the next-step leaves out something you need.")
+        else:
+            recovery_note = (
+                "the previous session's conversation-tail is unavailable, because the "
+                f"handoff-supervisor could not extract session {self.unextracted_session_id}'s "
+                "session-dialog, and that session's transcript is not at "
+                f"{self.unextracted_transcript_path}; this next-step and the repository are "
+                "your whole context.")
         prompt = (
-            f"{self.next_step}\n\n(Recovered at supervisor boot: the previous "
-            "session's conversation-tail is unavailable; this next-step and the "
-            "repository are your whole context.) "
+            f"{self.next_step}\n\n(Recovered at {self.occasion}: {recovery_note}) "
             + ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION
         )
         if launch_time_git_sync_report:
@@ -1831,7 +1858,8 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
     """Return (successor_session_id, ignition_plan), or (None, None) if extraction fails.
 
     Pass retiring_session_id as retiring_session_id_from_handoff_writer_or_tracked_launch
-    returns it. Each caller decides whether a failed extraction stops the relaunch.
+    returns it. On (None, None), callers start the successor with
+    successor_session_id_and_ignition_plan_without_conversation_tail.
     """
     extract_path = settings.handoff_directory / f"{settings.agent}-dialog-{generation:04d}.md"
     extracted = extract_dialog(retiring_session_id, settings.working_directory, extract_path)
@@ -1863,10 +1891,11 @@ STARTED_BY_HANDOFF_SUPERVISOR_RESTARTING_ITSELF_ON_MAIN_CODE_FLAG = (
 HANDOFF_SUPERVISOR_NOT_RESTARTED_ON_MAIN_CODE_TEMPLATE = (
     "The handoff-supervisor of this agent-seat did not restart itself on main's current "
     "code at this session-handoff. It still runs the code it started with, so changes "
-    "merged to main since it started reach this agent-seat only when the handoff-supervisor "
-    "restarts. The handoff-supervisor's reason: \"{report}\". Tell the user that the "
-    "handoff-supervisor did not restart itself on main's code, and quote its reason, "
-    "because the handoff-supervisor restarts only from a checkout, {checkout}, that "
+    "merged to main since it started, to the handoff-supervisor and to the instructions it "
+    "gives each successor, reach this agent-seat only when the handoff-supervisor restarts. "
+    "Its reason: \"{report}\". Tell the user now that the handoff-supervisor did not "
+    "restart itself on main's code, quote its reason, and name the checkout {checkout}. "
+    "The handoff-supervisor restarts itself at a session-handoff only when that checkout "
     "fast-forwards to main or is current with it."
 )
 
@@ -1916,6 +1945,30 @@ def handoff_supervisor_restart_itself_on_main_code_or_return_failure_report(
     except OSError as error:
         return f"os.execv failed: {type(error).__name__}: {error}"
     return "os.execv returned without replacing the process"
+
+
+def successor_session_id_and_ignition_plan_without_conversation_tail(
+        settings: SupervisorSettings, retiring_session_id: Optional[str],
+        handoff_fields: dict, occasion: str):
+    """Return (successor_session_id, ignition_plan) for a successor whose prompt is the
+    handoff's next step followed by a recovery note and the launch's other lines,
+    printing why there is no conversation-tail.
+
+    retiring_session_id is the session whose extraction failed, or None when no
+    earlier session was recorded; occasion names when the supervisor started it.
+    """
+    transcript_path = (
+        project_directory_for_working_directory(settings.working_directory)
+        / f"{retiring_session_id}.jsonl" if retiring_session_id else None)
+    plan = IgnitionPlanWithoutConversationTail(
+        next_step_from(handoff_fields), occasion, retiring_session_id or "", transcript_path)
+    why_no_conversation_tail = (
+        f"session {retiring_session_id}'s dialog could not be extracted"
+        if retiring_session_id else "no earlier session was recorded")
+    print("handoff-supervisor: starting a fresh agent-session from an unconsumed "
+          "handoff, with its next step as the prompt; there is no conversation-tail "
+          f"because {why_no_conversation_tail}")
+    return str(uuid.uuid4()), plan
 
 
 def supervise_sessions(settings: SupervisorSettings) -> int:
@@ -1997,15 +2050,12 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 if retiring_session_id else (None, None)
             )
             if successor_session_id is None:
-                # When the retiring transcript is unavailable, the next step still provides work to carry forward.
-                successor_session_id = str(uuid.uuid4())
-                ignition_plan = BootRecoveryIgnitionPlan(next_step_from(boot_fields))
-                why_no_conversation_tail = (
-                    f"session {retiring_session_id}'s dialog could not be extracted"
-                    if retiring_session_id else "no earlier session was recorded")
-                print("handoff-supervisor: starting a fresh agent-session from an unconsumed "
-                      "handoff, with its next step as the prompt; there is no conversation-tail "
-                      f"because {why_no_conversation_tail}")
+                successor_session_id, ignition_plan = (
+                    successor_session_id_and_ignition_plan_without_conversation_tail(
+                        settings, retiring_session_id, boot_fields,
+                        "a handoff"
+                        if settings.started_by_handoff_supervisor_restarting_itself_on_main_code
+                        else "supervisor boot"))
             else:
                 print("handoff-supervisor: starting a fresh agent-session from an unconsumed handoff left by a previous cycle")
             state["consumed_counter"] = boot_counter
@@ -2173,16 +2223,15 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             print("handoff-supervisor: not restarted on main's code, carrying on with the code "
                   f"this process started with: {not_restarted_on_main_code_report}")
 
+        retiring_session_id = retiring_session_id_from_handoff_writer_or_tracked_launch(
+            session_id, handoff_fields)
         successor_session_id, ignition_plan = carry_over_to_successor(
-            settings, retiring_session_id_from_handoff_writer_or_tracked_launch(session_id, handoff_fields),
-            handoff_fields, generation
+            settings, retiring_session_id, handoff_fields, generation
         )
         if successor_session_id is None:
-            print("handoff-supervisor: not relaunching (the transcript is intact — recover by hand)",
-                  file=sys.stderr)
-            # Leave the handoff unconsumed so recovery still prefers boot-ignition to the exit record.
-            record_agent_exit_in_supervisor_state(settings.state_path, state, process.returncode)
-            return 0
+            successor_session_id, ignition_plan = (
+                successor_session_id_and_ignition_plan_without_conversation_tail(
+                    settings, retiring_session_id, handoff_fields, "a handoff"))
 
         state["consumed_counter"] = counter_from(handoff_fields)
         session_id = successor_session_id

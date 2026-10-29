@@ -104,6 +104,7 @@ Prints one line per case and exits non-zero if any case fails.
 """
 
 import ast
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -111,6 +112,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 SYSTEM_DIRECTORY = REPO_ROOT / "nc-systems" / "cold-read"
 NAMES_MODULE = SYSTEM_DIRECTORY / "cold-read-record-names-common.py"
+NAMES_MODULE_RELATIVE_PATH = "nc-systems/cold-read/cold-read-record-names-common.py"
+THIS_SUITE_RELATIVE_PATH = "nc-systems/cold-read/tests/" + Path(__file__).name
+_rule_failure_lines_spec = importlib.util.spec_from_file_location(
+    "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py")
+RULE_FAILURE_LINES = importlib.util.module_from_spec(_rule_failure_lines_spec)
+_rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)
 # Programs outside nc-systems/cold-read/ that find cold-read-records.
 RECORD_FINDING_HOOKS = (
     REPO_ROOT / "scripts" / "cold-read-fast-read-due-for-linked-document-reminder-hook.py",)
@@ -392,10 +401,38 @@ for node in ast.walk(module_tree):
                        if isinstance(target, ast.Name))
     elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
         defined.add(node.target.id)
+def owned_names_missing_failure_detail(missing):
+    return "\n".join([
+        f"{NAMES_MODULE_RELATIVE_PATH} is missing {missing}, which OWNED_NAMES in "
+        f"{THIS_SUITE_RELATIVE_PATH} lists as defined only there; the cold-read programs read these "
+        f"names from that module, and a program that reads a missing one fails.",
+        "If your change renamed one of those names in the module on purpose, rename it in "
+        "OWNED_NAMES and in every program under nc-systems/cold-read/ that reads it.",
+        "If your change deleted one of those names on purpose and no program under "
+        "nc-systems/cold-read/ reads it, remove it from OWNED_NAMES.",
+        "If your change renamed or deleted one of those names by mistake, put its definition back "
+        "in the module.",
+        RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
+
+
 missing = sorted(OWNED_NAMES - defined)
 check("the shared module defines every name it owns",
-      not missing,
-      f"{NAMES_MODULE.name} is missing {missing}")
+      not missing, owned_names_missing_failure_detail(missing))
+check("a name the module no longer defines fails with the rule and one fix per cause",
+      owned_names_missing_failure_detail(["fresh_record_directory"]).split("\n") == [
+          "nc-systems/cold-read/cold-read-record-names-common.py is missing "
+          "['fresh_record_directory'], which OWNED_NAMES in "
+          "nc-systems/cold-read/tests/cold-read-record-names-common-test.py lists as defined only "
+          "there; the cold-read programs read these names from that module, and a program that "
+          "reads a missing one fails.",
+          "If your change renamed one of those names in the module on purpose, rename it in "
+          "OWNED_NAMES and in every program under nc-systems/cold-read/ that reads it.",
+          "If your change deleted one of those names on purpose and no program under "
+          "nc-systems/cold-read/ reads it, remove it from OWNED_NAMES.",
+          "If your change renamed or deleted one of those names by mistake, put its definition "
+          "back in the module.",
+          RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
+      owned_names_missing_failure_detail(["fresh_record_directory"]))
 
 # Every program that binds an owned name must have loaded the module under
 # some name of its own, or the check above cannot tell a reference from a
@@ -413,10 +450,35 @@ check("every program that binds an owned name loads the shared module",
       f"{NAMES_MODULE.name}; load it the way the cold-read-cells load theirs")
 
 # The module is a module: importing it must not run a program.
+COMMAND_LINE_ENTRY_POINT_FAILURE_DETAIL = "\n".join([
+    f'{NAMES_MODULE_RELATIVE_PATH} contains the text "__main__"; the module is kept to '
+    f"definitions the cold-read programs import, with no command-line use of its own.",
+    "If your change added a command-line entry point to the module, move it into a program file "
+    "of its own.",
+    'If "__main__" appears only in a comment or a docstring, reword that text.',
+    RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
+
+
+def looks_runnable(module_text):
+    return "__main__" in module_text
+
+
 check("the shared module has no command-line entry point",
-      "__main__" not in NAMES_MODULE.read_text(),
-      f"{NAMES_MODULE.name} looks runnable; it is imported by five programs "
-      f"and should do nothing on its own")
+      not looks_runnable(NAMES_MODULE.read_text()), COMMAND_LINE_ENTRY_POINT_FAILURE_DETAIL)
+check("a module given a __main__ block fails the entry-point case",
+      looks_runnable('def f():\n    pass\n\nif __name__ == "__main__":\n    f()\n'),
+      "the planted __main__ block was not seen")
+check("the entry-point failure says what was found, why the module stays import-only, and one "
+      "fix per cause",
+      COMMAND_LINE_ENTRY_POINT_FAILURE_DETAIL.split("\n") == [
+          'nc-systems/cold-read/cold-read-record-names-common.py contains the text "__main__"; '
+          "the module is kept to definitions the cold-read programs import, with no command-line "
+          "use of its own.",
+          "If your change added a command-line entry point to the module, move it into a program "
+          "file of its own.",
+          'If "__main__" appears only in a comment or a docstring, reword that text.',
+          RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
+      COMMAND_LINE_ENTRY_POINT_FAILURE_DETAIL)
 
 print()
 if failures:
