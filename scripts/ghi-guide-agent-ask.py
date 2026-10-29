@@ -984,9 +984,12 @@ def main(argv=None) -> int:
               f"'git -C ~/Projects/nedschorus worktree add {seat_dir} ghi-guide-agent'`, "
               f"or, when git says that branch does not exist, with `ssh "
               f"nedlern@{NED_BOX_HOSTNAME} 'git -C ~/Projects/nedschorus worktree add -b "
-              f"ghi-guide-agent {seat_dir} origin/main'`; then retry the ask. Until it "
-              f"exists every ask fails: if you are filing or editing a GHI, go on down the "
-              f"ask's fallback ladder in .claude/skills/ghi-write/SKILL.md.",
+              f"ghi-guide-agent {seat_dir} origin/main'`; then run "
+              f"scripts/ghi-guide-agent-ask.py again, once. If the agent-home cannot be "
+              f"created, or the second ask fails too: when you are filing or editing a GHI, "
+              f"go on down the ask's fallback ladder in .claude/skills/ghi-write/SKILL.md; "
+              f"otherwise go on without ghi-guide-agent's answer, and tell the user that "
+              f"ghi-guide-agent cannot answer until its agent-home exists on ned-box.",
               file=sys.stderr)
         return 1
 
