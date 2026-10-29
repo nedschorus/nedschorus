@@ -113,11 +113,10 @@ def copy_or_move_targets(arguments, directory):
     operands = []
     words = iter(arguments)
     for word in words:
+        short_target = SHORT_TARGET_DIRECTORY_OPTION_PATTERN.fullmatch(word)
         if word == "--":
             operands.extend(words)
-            break
-        short_target = SHORT_TARGET_DIRECTORY_OPTION_PATTERN.fullmatch(word)
-        if word == LONG_TARGET_DIRECTORY_OPTION or (short_target and not short_target.group(1)):
+        elif word == LONG_TARGET_DIRECTORY_OPTION or (short_target and not short_target.group(1)):
             target_directory = next(words, None)
         elif short_target:
             target_directory = short_target.group(1)
@@ -139,13 +138,18 @@ def copy_or_move_targets(arguments, directory):
 
 def tee_targets(arguments, directory):
     """The files a `tee` with these arguments writes over, as paths; none when it appends."""
-    options_end = arguments.index("--") if "--" in arguments else len(arguments)
-    options = [word for word in arguments[:options_end] if word.startswith("-")]
-    if any(word == "--append" or (not word.startswith("--") and "a" in word)
-           for word in options):
+    options, operands = [], []
+    words = iter(arguments)
+    for word in words:
+        if word == "--":
+            operands.extend(words)
+        elif word.startswith("-"):
+            options.append(word)
+        else:
+            operands.append(word)
+    if "--append" in options or any(not word.startswith("--") and "a" in word
+                                    for word in options):
         return []
-    operands = ([word for word in arguments[:options_end] if not word.startswith("-")]
-                + arguments[options_end + 1:])
     return [path_in(directory, word) for word in operands]
 
 
@@ -163,9 +167,10 @@ def replaced_paths_in_command(command, working_directory):
     directories = {(): working_directory}
     paths = []
     for words in shell_reader.simple_commands(command):
-        shells = words.child_shell
-        directory = next(directories[shells[:depth]] for depth in range(len(shells), -1, -1)
-                         if shells[:depth] in directories)
+        shells = enclosing = words.child_shell
+        while enclosing not in directories:
+            enclosing = enclosing[:-1]
+        directory = directories[enclosing]
         paths.extend(redirection_targets(words.redirects, directory))
         index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
         if index is None:
@@ -203,7 +208,7 @@ def deny(reason):
 def main(stdin=sys.stdin):
     try:
         payload = json.load(stdin)
-    except (json.JSONDecodeError, ValueError):
+    except ValueError:
         return 0
     if not isinstance(payload, dict):
         return 0

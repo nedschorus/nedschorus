@@ -26,7 +26,10 @@ HOOK_SCRIPT = Path(__file__).with_name("ghi-md-whole-file-replacement-soft-block
 _spec = importlib.util.spec_from_file_location("ghi_md_whole_file_replacement_soft_block",
                                                HOOK_SCRIPT)
 hook = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(hook)
+try:
+    _spec.loader.exec_module(hook)
+except SystemExit:
+    sys.exit("FAIL  importing the hook ran it, as only running it as a script should")
 
 failures = []
 
@@ -205,10 +208,27 @@ with tempfile.TemporaryDirectory() as scratch:
             "X=1; cp x.md docs/issues/46-ghi-info-agent-design.md",
         "cp after cd -P, an option before the directory":
             "cd -P docs && cp x.md issues/46-ghi-info-agent-design.md",
+        "cp after --, onto a target whose name begins with -":
+            "cp -- x.md -/../docs/issues/46-ghi-info-agent-design.md",
+        "cp -t of a source whose name sorts before --":
+            "cp +x.md -t docs/issues draft/46-ghi-info-agent-design.md",
+        "cp --target-directory with the directory as the next word":
+            "cp --target-directory docs/issues draft/46-ghi-info-agent-design.md",
+        "cp of several sources into docs/issues/, the GHI-MD's name not first":
+            "cp draft/x.md draft/46-ghi-info-agent-design.md docs/issues/",
+        "tee after --, onto a target whose name begins with -":
+            "cat x | tee -- -/../docs/issues/46-ghi-info-agent-design.md",
+        "cp after a wrapper with no program": "env; cp x.md docs/issues/46-ghi-info-agent-design.md",
+        "cp two child shells below the shell that ran its cd":
+            "(cd docs; (cd issues; (cp x.md 46-ghi-info-agent-design.md)))",
+        "cp in a child shell of a child shell that ran no cd":
+            "( (cp x.md docs/issues/46-ghi-info-agent-design.md) )",
     }
     for case_name, command in more_refused_commands.items():
         got = bash_refusal(checkout, command)
         check(f"refused: {case_name}", got == refusal, got)
+    got = bash_refusal(checkout, "cat x | tee +x.md -a docs/issues/46-ghi-info-agent-design.md")
+    check("passes: tee -a after a file whose name sorts before --", got is None, got)
     got = bash_refusal(checkout, "env cp docs/issues/46-ghi-info-agent-design.md")
     check("passes: cp behind a wrapper with one operand", got is None, got)
     for other_tool in ("Agent", "mcp__files__write"):
