@@ -44,7 +44,9 @@ checkout's cold-read-records/ and in the log-store's. The log-store's
 cold-read-records directory is the path in cold-read-record-ship.py's
 LOG_STORE_RECORDS_DESTINATION, read on ned-box as it is and on the Mac through
 the Mac's mount of ned-box's home. For each text with none, it saves the text to
-a scratch file and runs cold-read-fast-read.py --target on that file. Then it
+a scratch file and runs cold-read-fast-read.py --target on that file; the
+scratch file's directory is removed when the fast read ends, whatever ends it,
+SIGTERM and SIGHUP included, since the cold-read-record keeps its own copy. Then it
 writes the answer line, which names each part's answer in part number order
 when --part-answer is given, and one status line per text, naming its mark and
 its number, from 1 in the walk-document's order, among the item's texts with
@@ -114,11 +116,14 @@ docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-h
 """
 import argparse
 import collections
+import contextlib
 import datetime
 import importlib.util
 import os
 import re
 import shlex
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -191,6 +196,13 @@ FAST_READ_FAILED_LINES = (
     "Tell the user the line above, and ask whether to run `python3 {program} check{flags}` again or "
     "answer the item another way.",
 )
+STOP_SIGNAL_SCRATCH_NOT_REMOVED_LINES = (
+    "{program} check: a {signal} stopped this check step while a cold-read-fast-read was running, so the "
+    "walk-minutes do not record the user's answer, and the scratch directory {directory}, which held the text "
+    "sent to that cold-read-fast-read, could not be removed: {error}\n"
+    "Run `rm -rf {directory}`, because nothing else removes that directory, and the disk it is on can fill.\n"
+    "Then run the same `python3 {program_path} check` command again, with the same answer, so that the "
+    "walk-minutes record his answer.")
 CHECK_MINUTES = "{item}: the user answered {answered}{hashtag} ({date_and_time}), which makes its change. Fast reads:"
 CHECK_DEFERRED_MINUTES = "{item}: the user answered deferred ({date_and_time}), which makes no change."
 CLOSE_TOOK_EFFECT_MINUTES = "{item}: {answered}; every text the change adds has had a fast read. {outcome}"
@@ -371,14 +383,53 @@ def fast_read_record_holding(text, record_directories):
     return None
 
 
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
+
+
+@contextlib.contextmanager
+def scratch_directory_removed_on_every_exit():
+    """Make a scratch directory and yield its path; remove it when the block ends, however the block ends. A
+    SIGTERM or SIGHUP during the block removes it and then ends the program as that signal's default does.
+
+    The handler raises nothing: an exception raised inside subprocess's own code, between Popen._wait()'s lock
+    acquire and its try, leaves the lock held, and the wait() that subprocess.run() then makes blocks forever.
+    """
+    made = []
+
+    def remove_then_end(number, _):
+        for directory in made:
+            try:
+                shutil.rmtree(directory)
+            except OSError as error:
+                print(STOP_SIGNAL_SCRATCH_NOT_REMOVED_LINES.format(
+                    program=PROGRAM, signal=signal.Signals(number).name, program_path=Path(__file__).resolve(),
+                    directory=directory, error=error), file=sys.stderr)
+        signal.signal(number, signal.SIG_DFL)
+        os.kill(os.getpid(), number)
+
+    previous = {number: signal.signal(number, remove_then_end) for number in STOP_SIGNALS}
+    try:
+        scratch = tempfile.mkdtemp(prefix=PROGRAM + "-")
+        made.append(scratch)
+        yield scratch
+    finally:
+        for directory in made:
+            shutil.rmtree(directory)
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+
+
 def run_fast_read(text, name, fast_read_program):
     """Fast-read the text from a scratch file; return (the report's directory, the lines the fast read printed
-    on stderr about an unshipped record or a changed target), or raise FastReadFailed."""
-    scratch = Path(tempfile.mkdtemp(prefix=PROGRAM + "-"))
-    target = scratch / f"{name}.md"
-    target.write_text(text + "\n", encoding="utf-8")
-    result = subprocess.run([sys.executable, str(fast_read_program), "--target", str(target)],
-                            capture_output=True, text=True)
+    on stderr about an unshipped record or a changed target), or raise FastReadFailed.
+
+    The scratch directory is removed on every exit, SIGTERM and SIGHUP included: the fast read keeps its own copy
+    of the text in its record's target/, which is where a later check looks for it."""
+    with scratch_directory_removed_on_every_exit() as scratch:
+        target = Path(scratch) / f"{name}.md"
+        target.write_text(text + "\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, str(fast_read_program), "--target", str(target)],
+                                capture_output=True, text=True)
     lines = result.stdout.strip().split("\n")
     failed = [line for line in lines if line.startswith("FAILED")]
     if failed:
