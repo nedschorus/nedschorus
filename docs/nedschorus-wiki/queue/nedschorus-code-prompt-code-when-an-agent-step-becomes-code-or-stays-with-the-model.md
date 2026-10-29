@@ -4,15 +4,15 @@ This page is for an agent that writes or reviews a text giving steps to a model 
 
 ## Where to look
 
-Look hardest at a text that adds or changes standing instructions for an agent, and at an approval-walk item that proposes one. Of the 107 times from July to October 2026 that the user asked an agent whether what it had just shown him could be code-prompt-code, 84 answered an approval-walk item, and since 2026-10-15, 45 of 64 answered a text that said it added or changed an instruction, or that named `CLAUDE.md`, a skill or an `-instructions.md` file. No test that code can run on a text, such as its length, its numbered steps or its verbs, picked out those texts in more than about 7% of the texts it matched, so no hook tells you when to look: you judge. The figures are from cold-read-research's study, `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-research/cpc-trigger-research-2026-10-28/cpc-trigger-research.md`.
+Look hardest at a text that adds or changes standing instructions for an agent, whether one line of an existing file or a whole new file, and at an approval-walk item that proposes such a text. Of the 107 times from July to October 2026 that the user asked an agent whether what it had just shown him could be code-prompt-code, 84 answered an approval-walk item, and since 2026-10-15, 45 of 64 answered a text that said it added or changed an instruction, or that named `CLAUDE.md`, a skill or an `-instructions.md` file. No test that code can run on a text, such as its length, its numbered steps or its verbs, picked out those texts in more than about 7% of the texts it matched, so no hook tells you when to look: you judge. The figures are from cold-read-research's study, `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-research/cpc-trigger-research-2026-10-28/cpc-trigger-research.md`.
 
-A message a program prints to an agent gives the agent steps just as a Markdown file does, and no cold-read-fast-read reads it. In the 11 days from 2026-10-18 to 2026-10-28, 68 merged pull requests added such a message to a `.py` or `.sh` file, by cold-read-research's count in `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-research/cpc-trigger-research-2026-10-28/cpc-question-measurement-2026-10-29.md`. Treat each one as you would a prompt.
+A message a program prints to an agent gives the agent steps just as a Markdown file does, and no cold-read-fast-read reads it. In the 11 days from 2026-10-18 to 2026-10-28, 68 merged pull requests added such a message to a `.py` or `.sh` file, by cold-read-research's count in `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-research/cpc-trigger-research-2026-10-28/cpc-question-measurement-2026-10-29.md`. When you write such a message, or review a pull request that adds one, go through its steps as you would a prompt's.
 
 ## The split
 
 A step is one hand-off of one piece of work to one actor; a sentence that makes three hand-offs is three steps. For each step, `docs/agents/sanity-checker-mechanization-adversarial-prompt.md` draws the line this project uses, in its two bullets beginning "The model handles" and "Code handles": the model keeps what needs interpretation, such as understanding ambiguous intent, classifying material whose meaning matters, and drafting open-ended text; code takes validation, parsing, calculation, state, sequencing, retries, filtering and formats. That prompt's four questions, Encode, Constrain, Externalize and Verify, are the way to go through a text step by step.
 
-When a step moves into code, the program does only the normal case and hands every other case back to the agent with a message saying what failed, as the principle in [Move mechanical agent chores into programs and hooks](https://github.com/nedschorus/nedschorus/issues/1036) says. What is left in the text for the agent is then two things: the judgment the program cannot make, and what to do with what the program hands back.
+When a step moves into code, the program does only the normal case and hands every other case back to the agent with a message saying what failed, as the principle in [Move mechanical agent chores into programs and hooks](https://github.com/nedschorus/nedschorus/issues/1036) says. What is left in the text for the agent is then two things: the judgment the program cannot make, and what to do with what the program hands back. Stopping on a case the program does not handle, and saying what failed, is reporting, not a guard: the limit on guards in the next section does not apply to it.
 
 ## When code is the wrong answer
 
@@ -21,9 +21,9 @@ Asked of any text, "what here could be code?" finds something: cold-read-researc
 - **The step needs judgment.** Deciding whether a review finding still holds, or which findings belong in one pull request, is interpretation; code can carry the step's order and record its answer, but not make the call.
 - **The step already works.** "A step that works reliably today, costs little, and fails loudly is not a finding", in the words of the mechanization prompt.
 - **The code would be a guard, a validation or a retry against a failure nobody has seen.** `CLAUDE.md` allows one only when the failure has happened, or is foreseeable within 30 days, and would lose or damage work, stop other work, or go unnoticed.
-- **The text gives no steps.** Of 20 approval-walk items that cold-read-research judged by hand, 16 were summaries, definitions, judgment calls, or proposals already made in code.
+- **The text gives no steps.** Of 20 approval-walk items that cold-read-research judged by hand, 16 were summaries, definitions, questions put to the user for his judgment, or proposals already made in code.
 
-The first case decided this page's own design: no pattern in a text predicts that the user will ask for code-prompt-code, so this page teaches the judgment with examples, instead of a hook that would tell an agent when to think of code. The third case is the second example below.
+The first case decided this page's own design: no pattern in a text predicts that the user will ask for code-prompt-code, so this page teaches the judgment with examples, instead of a hook that would tell an agent when to think of code. The third case is the last example below, "A hook's refusal message, and the retry left out".
 
 A rule that stays as text waits there only until a program enforces it, as rung 6 of `docs/nedschorus-wiki/nedschorus-enforcement-ladder.md` says.
 
@@ -31,7 +31,7 @@ A rule that stays as text waits there only until a program enforces it, as rung 
 
 ### The prompt for answering a pull request's non-blocking findings
 
-After merge-lane-2 merges a pull request, it can send the author non-blocking findings to follow up. A program prints the prompt a subagent follows to answer them. In both versions below, "Program:" stands for that program's command, which the cited file defines. Both versions, and what the program prints, are saved at `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/prime-intellect/cpc-page-follow-up-brief-before-and-after-from-cold-read-research-2026-10-29.md`; the program was not on main when this page was written.
+After merge-lane-2 merges a pull request, it can send the author non-blocking findings to follow up. A program prints the prompt a subagent follows to answer them. Both versions of that prompt below, and what the program prints, are saved at `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/prime-intellect/cpc-page-follow-up-brief-before-and-after-from-cold-read-research-2026-10-29.md`, which also gives the program's command; in both versions, "Program:" stands for that command. The program was not on main when this page was written.
 
 Before, the subagent was told to carry out five steps in order, with a loop over topics:
 
@@ -46,7 +46,7 @@ Before, the subagent was told to carry out five steps in order, with a loop over
 > 5. Program: finish-follow-up-request-and-print-merge-lane-2-message
 >    Send the message it prints to merge-lane-2 with SendMessage.
 
-The user asked "could this be more code prompt codey?", and on 2026-10-28 approved this after, as item 2.1 of cold-read-research's approval-walk cold-read-research-carried-items-2026-10-28:
+The user asked "could this be more code prompt codey?", and on 2026-10-28 approved this after, as item 2.1 of cold-read-research's approval-walk cold-read-research-carried-items-2026-10-28, whose walk-document is on the Mac at `/Users/el/agents/cold-read-research/docs/walk/cold-read-research-carried-items-2026-10-28.md`:
 
 > For the subagent, in your own worktree: Program: next-step. Do what it prints, then run Program: next-step again, until it prints "Done".
 
@@ -54,6 +54,8 @@ The user asked "could this be more code prompt codey?", and on 2026-10-28 approv
 
 > Next: topic branch <topic-branch> takes on findings <n> and <n>, which have no pull request yet.
 > On that branch, make the change with its tests, and commit, unless you have.
+
+The prompt can be one line because each step the program prints carries that step's own instructions, such as the step that opens "Next: judge findings <n> and <n>, which have no answer yet".
 
 What moved into code: the order of the steps, the loop over topics, the record of which findings are answered, the fetch, and the default for `--handled-finding-numbers`. What stayed with the model: judging whether a finding still holds or needs the user's decision, grouping the findings by topic, and writing the change and its pull request description.
 
@@ -67,13 +69,13 @@ The user answered: "2.1 sounds reasonable, but this looks like it should be a sc
 
 ### A hook's refusal message, and the retry left out
 
-On 2026-10-17, agent-instructions-editor put to the user, as item 10 of an approval-walk, a new message for `.claude/hooks/session-location-write-guard.py` to print when git failed while the guard checked a write from a detached HEAD. The message told the agent to run `git status` and then tell four cases apart, starting:
+On 2026-10-17, agent-instructions-editor put to the user, as item 10 of the approval-walk agent-instructions-editor-every-open-decision-2026-10-15, a new message for `.claude/hooks/session-location-write-guard.py` to print when git failed while the guard checked a write from a detached HEAD. The message told the agent to run `git status` and then tell four cases apart, starting:
 
 > Run git status: it says whether a rebase, merge, cherry-pick or revert is stopped here.
 > If git status fails too: tell the user what it printed; until git works in this checkout, this guard refuses every write from a detached HEAD here.
 > If an operation is stopped here: try the write again, because this guard checks again on every call. [...]
 
-The user asked "could this be CPC?" (line 5984 of `nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine/ned-box/projects/-home-nedlern-agents-agent-instructions-editor/fd3dde6d-34c5-4198-9aa4-1209e4d8b1a6.jsonl`). The agent's answer moved telling the cases apart into the guard: when git fails, the guard checks again by itself, and only when git fails both times does the agent get a message, which shrank to three lines. The same answer named the cost, a retry and a test for each outcome, against a failure nobody had yet seen, and recommended leaving the retry out until one was. The user's answer, at lines 6003 to 6039 of the same file, led to the rule in `CLAUDE.md` that the third case above quotes, added the same day in commit 6d6ad8bb4: a guard is worth building against a failure foreseeable within the next 30 days, and "there isn't much reason to guard against quickly and easily corrected failures like the one you just cited, as long as the agent will notice that error." The guard on main, `.claude/hooks/session-location-write-guard.py`, has no retry.
+The user asked "could this be CPC?" (line 5984 of `nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine/ned-box/projects/-home-nedlern-agents-agent-instructions-editor/fd3dde6d-34c5-4198-9aa4-1209e4d8b1a6.jsonl`). The agent's answer proposed moving the telling apart into the guard: when git failed, the guard would check again by itself, and only when git failed both times would the agent get a message, shrunk to three lines. The same answer named the cost, a retry and a test for each outcome, against a failure nobody had yet seen, and recommended leaving the retry out until one was. The user's answer, at lines 6003 to 6039 of the same file, led to the rule in `CLAUDE.md` that the third case above quotes, added the same day in commit 6d6ad8bb4: a guard is worth building against a failure foreseeable within the next 30 days, and "there isn't much reason to guard against quickly and easily corrected failures like the one you just cited, as long as the agent will notice that error." The guard on main, `.claude/hooks/session-location-write-guard.py`, has no retry.
 
 ## Related pages
 
