@@ -175,9 +175,10 @@ WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE below, whose reading rules are cut 
 FAST_CLARIFY_PROMPT_TEMPLATE. Its answer, under its own provenance stamp,
 becomes the report's `## Question 4: What should be code` section, placed
 before the sentence coverage section, so the report has four sections. It
-runs after the fast-clarify cell, not beside it, because on the walk route
-that cell's report is in the checkout, where the claude launcher would name
-it as a stray write. When the cell fails, or gives no answer within
+runs after the fast-clarify cell, not beside it: the claude launcher reports
+as a stray write any file in the checkout that changes while it runs, and on
+the walk route the fast-clarify cell writes its report there; run afterwards,
+that report already exists when the launcher starts. When the cell fails, or gives no answer within
 COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS, after which
 its process group is killed, the section and a line on stderr say so and
 why, and the read still delivers Questions 1 to 3 with the exit it would
@@ -331,6 +332,11 @@ WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_COLD_READ_TIER = "deep"
 WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_SCRATCH_FILE_NAME = (
     "cold-read-fast-read-embedded-what-should-be-code-prompt.md")
 WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_FILE_NAME = "cold-read-fast-read-what-should-be-code-answer.md"
+# The answer sits one directory below the scratch directory because the
+# launcher's misplaced-report recovery searches the report's grandparent for
+# a file of the same name; directly in the scratch directory, that would be
+# the shared temporary root, where a concurrent fast read writes its own.
+WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_DIRECTORY_NAME = "what-should-be-code-answer"
 WHAT_SHOULD_BE_CODE_QUESTION_LAUNCHER_OUTPUT_SCRATCH_FILE_NAME = (
     "cold-read-fast-read-what-should-be-code-launcher-output.txt")
 # Opus 5.5 defect-hunt cells at xhigh, a larger task than one question at
@@ -1287,7 +1293,9 @@ def what_should_be_code_section(target: pathlib.Path, scratch: pathlib.Path) -> 
     so and why, also printed on stderr. A failed cell never fails the read."""
     prompt_file = scratch / WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_SCRATCH_FILE_NAME
     prompt_file.write_text(WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE, encoding="utf-8")
-    answer = scratch / WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_FILE_NAME
+    answer_directory = scratch / WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_DIRECTORY_NAME
+    answer_directory.mkdir()
+    answer = answer_directory / WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_FILE_NAME
     launcher_output = scratch / WHAT_SHOULD_BE_CODE_QUESTION_LAUNCHER_OUTPUT_SCRATCH_FILE_NAME
     command = [
         sys.executable, str(CLAUDE_CELL_LAUNCHER),
@@ -1302,7 +1310,8 @@ def what_should_be_code_section(target: pathlib.Path, scratch: pathlib.Path) -> 
           f"be code, about {target}, of {WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID} at "
           f"{WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_EFFORT} effort, for up to "
           f"{COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS / 60:g} minutes. "
-          f"If Question 4 fails, the report still holds Questions 1 to 3.",
+          f"If the Question 4 cell fails or runs past that time, the report still holds "
+          f"Questions 1 to 3.",
           file=sys.stderr)
     # A file, not a pipe: the launcher's output is read only after it exits.
     with launcher_output.open("w", encoding="utf-8") as output:
@@ -1355,9 +1364,9 @@ def fast_read_report_finish_and_print_path(
     the path. Returns 0, or 1 when the record did not reach the log-store,
     whether or not Question 4 was answered."""
     # Asked only once Questions 1 to 3 have a report to hold the answer, and
-    # not beside the fast-clarify cell: on the walk route that cell's report
-    # sits in the checkout, where the claude launcher would name it as a
-    # stray write.
+    # not beside the fast-clarify cell: the claude launcher reports as a stray
+    # write any file in the checkout that changes while it runs, and on the
+    # walk route that cell's report is written there.
     question_4_section = what_should_be_code_section(target, scratch)
     # Before anything reads or ships it: put each original sentence under
     # the restatement claiming its id, and say which sentences no

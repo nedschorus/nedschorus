@@ -224,9 +224,13 @@ sys.exit(step.get("exit", 0))
 # names; otherwise, with no plan it fails, so a case that does not plan the
 # backup sees it fail. "report" writes the report and succeeds; "fail_stderr"
 # is what a failure prints; "dump_prompt" saves the prompt; "pid_file" saves
-# the stub's process ID; "hang" sleeps past any deadline a case sets.
+# the stub's process ID; "hang" sleeps past any deadline a case sets;
+# "concurrent_read_answer" exits 0 without writing its own report, after
+# writing that text where a concurrent fast read, in a temporary directory of
+# its own, would write its Question 4 answer; it saves that directory, then
+# that file, one per line, to the file "concurrent_read_answer_path_file" names.
 STUB_CLAUDE = """#!/usr/bin/env python3
-import json, os, pathlib, re, sys, time
+import json, os, pathlib, re, sys, tempfile, time
 argv = sys.argv
 prompt = sys.stdin.read()
 model = argv[argv.index("--model") + 1] if "--model" in argv else ""
@@ -244,11 +248,23 @@ if "pid_file" in plan:
     pathlib.Path(plan["pid_file"]).write_text(str(os.getpid()), encoding="utf-8")
 if plan.get("hang"):
     time.sleep(300)
+own_report = (pathlib.Path(re.search(r"Write your report to (\\S+), once", prompt).group(1))
+              if asks_question_4 else None)
+if "concurrent_read_answer" in plan:
+    temporary_root = pathlib.Path(os.path.realpath(tempfile.gettempdir()))
+    own = pathlib.Path(os.path.realpath(own_report))
+    own_scratch = next(parent for parent in own.parents if parent.parent == temporary_root)
+    concurrent_scratch = pathlib.Path(tempfile.mkdtemp(prefix="cold-read-fast-read-"))
+    concurrent = concurrent_scratch / own.relative_to(own_scratch)
+    concurrent.parent.mkdir(parents=True, exist_ok=True)
+    concurrent.write_text(plan["concurrent_read_answer"], encoding="utf-8")
+    pathlib.Path(plan["concurrent_read_answer_path_file"]).write_text(
+        f"{concurrent_scratch}\\n{concurrent}\\n", encoding="utf-8")
+    sys.exit(0)
 if "report" not in plan:
     sys.stderr.write(plan.get("fail_stderr", "stub claude: simulated failure\\n"))
     sys.exit(1)
-report_path = (pathlib.Path(re.search(r"Write your report to (\\S+), once", prompt).group(1))
-               if asks_question_4
+report_path = (own_report if asks_question_4
                else pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"]))
 report_path.parent.mkdir(parents=True, exist_ok=True)
 report_path.write_text(plan["report"], encoding="utf-8")
@@ -1032,12 +1048,20 @@ with tempfile.TemporaryDirectory() as scratch:
     suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
     hanging_stub_pid_file = scratch / "hanging-question-4-stub.pid"
     hanging_stub_pid_file.unlink(missing_ok=True)
+    import time
+    hanging_read_started_at = time.monotonic()
     result = run_fast_read(
         repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n"}},
         suggestions, walk_draft_relative, counter,
         question_4_plan={"hang": True, "report": QUESTION_4_STUB_ANSWER,
                          "pid_file": str(hanging_stub_pid_file)},
     )
+    hanging_read_seconds = time.monotonic() - hanging_read_started_at
+    # The stub sleeps 300 s, so a read that took longer may have waited for the
+    # sleep to end rather than killed the stub at the 5 s limit.
+    check("a Question 4 cell past its time limit is killed, not waited for: the read "
+          "returns before the hanging stub's sleep could have ended",
+          hanging_read_seconds < 300, f"{hanging_read_seconds:.0f} s")
     report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
     check("when the Question 4 cell runs past its time limit, the section says it gave "
           "no answer within the limit, and the read still exits 0 with Questions 1 to 3",
@@ -1060,11 +1084,33 @@ with tempfile.TemporaryDirectory() as scratch:
     for _ in range(50):
         if hanging_stub_pid is None or not process_is_running(hanging_stub_pid):
             break
-        import time
         time.sleep(0.1)
     check("the model the Question 4 cell started is killed with it at the time limit",
           hanging_stub_pid is not None and not process_is_running(hanging_stub_pid),
           f"pid {hanging_stub_pid}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    concurrent_answer = "STUB CONCURRENT READ: another document's Question 4 answer\n"
+    concurrent_answer_path_file = scratch / "concurrent-read-question-4-answer.paths"
+    concurrent_answer_path_file.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n"}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"concurrent_read_answer": concurrent_answer,
+                         "concurrent_read_answer_path_file": str(concurrent_answer_path_file)},
+    )
+    report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
+    concurrent_paths = (concurrent_answer_path_file.read_text(encoding="utf-8").split("\n")
+                        if concurrent_answer_path_file.is_file() else [])
+    check("when the Question 4 cell exits 0 without an answer, the read neither takes nor "
+          "removes the answer a concurrent fast read wrote in its own temporary directory",
+          result.returncode == 0 and "Question 4 was not answered" in report_text
+          and concurrent_answer.strip() not in report_text
+          and len(concurrent_paths) > 1 and pathlib.Path(concurrent_paths[1]).is_file(),
+          f"exit {result.returncode}; concurrent paths {concurrent_paths}; report={report_text!r}")
+    if concurrent_paths:
+        shutil.rmtree(concurrent_paths[0], ignore_errors=True)
 
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
