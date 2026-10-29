@@ -441,7 +441,9 @@ def provenance_stamp_of(report):
 
 
 with tempfile.TemporaryDirectory() as scratch:
-    scratch = Path(scratch)
+    # Resolved, as the paths the cells build from their cwd are, where TMPDIR is reached
+    # through a link.
+    scratch = Path(scratch).resolve()
     stubs = scratch / "stub-bin"
 
     # --- The already-dirty file the reviewer edits -------------------------

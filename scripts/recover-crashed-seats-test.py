@@ -1163,7 +1163,8 @@ def run_came_up_cases(root: Path):
 
 
 with tempfile.TemporaryDirectory() as temporary:
-    root = Path(temporary)
+    # Resolved, as os.getcwd() is, where TMPDIR is reached through a link.
+    root = Path(temporary).resolve()
 
     # --- refusals, and seats already running ---------------------------------
     # A seat found running is not refused (user-ruled 2026-09-16, on the

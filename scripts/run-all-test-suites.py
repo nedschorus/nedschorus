@@ -98,9 +98,12 @@ that run as the same account.
 THE SIGNAL SANDBOX IS ALSO EACH SUITE'S NC-TEST-SANDBOX, built when the
 suite starts and gone when it ends. It hides by default, because a list of
 files or sockets to cover misses every one not on it and every one made after
-the list. The file system is read-only, except: a private /tmp, which TMPDIR
-and TMUX_TMPDIR name, so no tmux server or socket of an agent-seat is
-reachable; a private /dev and System V IPC; the home directory, an empty
+the list. The file system is read-only, except: a private /tmp, which
+TMUX_TMPDIR names, so no tmux server or socket of an agent-seat is
+reachable, and in it TEST_SANDBOX_TMPDIR_SYMLINK_PATH, which TMPDIR names, a
+symbolic link to a directory beside it, as macOS's /var is a link to
+/private/var, so a suite that mixes a path built from TMPDIR with its
+resolved form fails here as it would on the Mac; a private /dev and System V IPC; the home directory, an empty
 tmpfs the suite may write, into which only the paths in
 TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY are bound, read-only, each with the
 reason suites need it, so no credential in the home directory is there; the
@@ -704,9 +707,16 @@ TEST_SUITE_CREDENTIAL_ENVIRONMENT_VARIABLE_PATTERNS = (
     "*_TOKEN", "*_TOKEN_*", "*_API_KEY", "*_SECRET", "*_SECRET_*", "*PASSWORD*",
     "*_CREDENTIALS",
 )
+# TMPDIR is reached through a symbolic link, as macOS's /var is a link to /private/var, so a
+# suite that compares a path built from TMPDIR with the resolved path a process reports,
+# such as its cwd, fails on ned-box as it would on the Mac.
+TEST_SANDBOX_TMPDIR_SYMLINK_PATH = "/tmp/nc-test-sandbox-tmpdir-symlink"
+TEST_SANDBOX_TMPDIR_SYMLINK_TARGET_DIRECTORY_PATH = "/tmp/nc-test-sandbox-tmpdir-symlink-target"
 TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE = (
     "--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/dev/shm", "--proc", "/proc",
-    "--tmpfs", "/tmp", "--tmpfs", "/run",
+    "--tmpfs", "/tmp", "--dir", TEST_SANDBOX_TMPDIR_SYMLINK_TARGET_DIRECTORY_PATH,
+    "--symlink", TEST_SANDBOX_TMPDIR_SYMLINK_TARGET_DIRECTORY_PATH, TEST_SANDBOX_TMPDIR_SYMLINK_PATH,
+    "--tmpfs", "/run",
     *(("--tmpfs", XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX,
        "--setenv", "XDG_RUNTIME_DIR", XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX)
       if os.path.isdir(XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX)
@@ -719,7 +729,7 @@ TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE = (
     *(argument for directory in TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS
       if os.path.isdir(directory) for argument in ("--tmpfs", directory)),
     "--unshare-pid", "--unshare-ipc", "--die-with-parent",
-    "--setenv", "TMPDIR", "/tmp", "--setenv", "TMUX_TMPDIR", "/tmp",
+    "--setenv", "TMPDIR", TEST_SANDBOX_TMPDIR_SYMLINK_PATH, "--setenv", "TMUX_TMPDIR", "/tmp",
     *(argument for variable in TEST_SANDBOX_OUTSIDE_SOCKET_VARIABLES
       for argument in ("--unsetenv", variable)))
 SIGNAL_SANDBOX_INSIDE_VARIABLE = "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX"

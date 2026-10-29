@@ -68,7 +68,8 @@ def make_checkout(root: Path):
 
 
 with tempfile.TemporaryDirectory() as temporary_directory:
-    tmp = Path(temporary_directory)
+    # Resolved, as the marker path the hook reports is, where TMPDIR is reached through a link.
+    tmp = Path(temporary_directory).resolve()
 
     # The session's own checkout: a directory with a .git directory.
     workspace = tmp / "workspace"
