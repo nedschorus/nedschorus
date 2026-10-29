@@ -99,6 +99,9 @@ def expected_refusal(checkout):
 
 
 with tempfile.TemporaryDirectory() as scratch:
+    # The refusal names the marker by its resolved path, and the test sandbox's
+    # temporary directory is reached through a symbolic link.
+    scratch = str(Path(scratch).resolve())
     checkout = make_checkout(scratch)
     ghi_md = checkout / "docs" / "issues" / "46-ghi-info-agent-design.md"
     refusal = expected_refusal(checkout)
