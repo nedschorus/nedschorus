@@ -30,7 +30,9 @@ The cycle, per reincarnation:
      then a recovery note saying the session-dialog could not be extracted
      and where the retiring session's transcript is, or that it was not
      found, then the instruction to put items needing the user in one
-     approval-walk, then the lines step 6 lists.
+     approval-walk, then the lines step 6 says the initial agent
+     instructions carry, such as the launch-time-git-sync's line and the
+     leftover work-snapshots.
   4. Each generation opens the same launcher-pinned task list.
   5. Print one queue-status line — to the console only. It does not ride
      the initial agent instructions (user-ruled 2026-08-29: "Also useless is the
