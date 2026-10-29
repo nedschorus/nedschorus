@@ -759,9 +759,12 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
     )
     if first_prompt_file is not None:
         supervisor_command += f" --first-prompt-file {shlex.quote(str(first_prompt_file))}"
+    # A pane command that ends with the supervisor call lets the pane's shell exec into it;
+    # tmux, then its parent, wakes it at once after a `kill -STOP`. The pane still closes
+    # with the supervisor's exit status.
     completed = run_tmux(
         "new-session", "-d", "-s", name, "-c", str(seat_directory),
-        supervisor_command, socket_name=name, environment=environment,
+        f"{supervisor_command}; exit $?", socket_name=name, environment=environment,
     )
     return 1 if completed is None else completed.returncode
 

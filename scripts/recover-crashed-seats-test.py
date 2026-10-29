@@ -212,6 +212,13 @@ def real_subprocess_run_help():
         [sys.executable, str(SUPERVISOR_SCRIPT), "--help"],
         capture_output=True, text=True).stdout
 
+def shell_words(command: str) -> list:
+    """Return the command's words as a shell splits them, with each `;` a word of its own."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    return list(lexer)
+
+
 def patch(monkey_target, value):
     setattr(recovery, monkey_target, value)
 
@@ -2524,13 +2531,18 @@ with tempfile.TemporaryDirectory() as temporary:
         recovery.launcher_path = real_launcher_path
         recovery.run_tmux = real_run_tmux
     box_command = tmux_commands[0][0][-1] if tmux_commands else ""
-    box_tokens = shlex.split(box_command)
+    box_tokens = shell_words(box_command)
     check("A: the box branch composes --handoff-dir into the supervisor command",
           str(workspace.handoffs) in box_tokens
           and str(workspace.seat_directory) in box_tokens
           and "abc-123" in box_tokens
           and "--handoff-dir" in box_tokens,
           box_command)
+    # A pane command that ends with the supervisor call lets the pane's shell exec into it,
+    # and tmux, then its parent, wakes it from a `kill -STOP` at once.
+    check("A: the box branch's detached pane command ends with `; exit $?`, so the shell "
+          "stays the supervisor's parent",
+          box_command.endswith("; exit $?"), box_command)
 
     # A recovery run from another agent-session's shell must not hand that agent-session's
     # Claude Code, tmux or supervisor variables to the seat it launches, on either branch.
@@ -2682,7 +2694,7 @@ with tempfile.TemporaryDirectory() as temporary:
         recovery.launcher_path = real_launcher_path
         recovery.run_tmux = real_run_tmux
     check("F1: an apostrophe handoff dir survives the box command's shell parse",
-          str(apostrophe_handoffs) in shlex.split(tmux_commands[0][0][-1]),
+          str(apostrophe_handoffs) in shell_words(tmux_commands[0][0][-1]),
           tmux_commands[0][0][-1])
 
     # PR #134 review finding 2: a --handoff-dir that does not exist yet must
@@ -2773,7 +2785,7 @@ with tempfile.TemporaryDirectory() as temporary:
     command_line = next((line for line in detached_capture.splitlines()
                          if "handoff-supervisor.py" in line), "")
     try:
-        command_tokens = shlex.split(command_line)
+        command_tokens = shell_words(command_line)
         parse_problem = ""
     except ValueError as error:
         command_tokens, parse_problem = [], str(error)
