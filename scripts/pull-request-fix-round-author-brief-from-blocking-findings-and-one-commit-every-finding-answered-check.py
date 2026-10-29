@@ -14,7 +14,8 @@ checked against its own marked comments, or, when it has none, against those of 
 which then re-post its blockers.
 
 Without --check, run in the author's checkout: refuse when the pull request's head has moved past
-the frozen-head, else print the brief: the frozen-head, each blocking finding word for word, how to
+the frozen-head, else print the brief: the frozen-head, ADVISOR_FIX_ROUND_INSTRUCTION when the
+round is merge-lane-2's third changes-requested review and on no other, each blocking finding word for word, how to
 dispatch the fix-round subagent in a git worktree of its own and push from it, the round's rules,
 and the --check command to finish with, which the subagent runs in its own worktree.
 
@@ -91,6 +92,10 @@ WORKTREE_REMOVAL_INSTRUCTION = (
     "locked worktree).\n"
     "   2. Once the worktree is removed, run: git branch -D {local_branch}")
 PULL_REQUEST_FIELDS = ("url", "headRefOid", "headRefName")
+ADVISOR_FIX_ROUND_NUMBER = 3
+ADVISOR_FIX_ROUND_INSTRUCTION = (
+    "This is the pull request's third fix-round, its last before merge-lane-2 brings it to the user: "
+    "before you change anything, call the advisor with the blocking findings and the fix you plan.")
 
 
 class Refused(Exception):
@@ -167,7 +172,8 @@ def pull_request(number):
 
 
 def round_reviews(number, reviewer_login):
-    """merge-lane-2's latest changes-requested review, then its later reviews of the same commit."""
+    """merge-lane-2's latest changes-requested review, then its later reviews of the same commit;
+    and the round's number, which counts merge-lane-2's changes-requested reviews."""
     reviews = gh_json_lines(["api", "--paginate", f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews",
                              "--jq", ".[]"])
     own = [review for review in reviews
@@ -182,7 +188,7 @@ def round_reviews(number, reviewer_login):
         round_set = own[requested[-1]:]
         if all(review.get("state") == "COMMENTED"
                and review.get("commit_id") == round_set[0].get("commit_id") for review in round_set[1:]):
-            return round_set
+            return round_set, len(requested)
     latest = own[-1]
     on_commit = f" on commit {latest.get('commit_id')}" if latest.get("state") == "COMMENTED" else ""
     raise Refused(f"merge-lane-2's latest review of pull request {number} ({latest.get('html_url')}) "
@@ -256,17 +262,18 @@ def finding_place(comment):
 
 def round_facts(number, reviewer_login):
     url, head, branch = pull_request(number)
-    reviews = round_reviews(number, reviewer_login)
+    reviews, fix_round_number = round_reviews(number, reviewer_login)
     review = reviews[0]
     frozen_head = review.get("commit_id")
     if not frozen_head:
         raise StepFailed(f"merge-lane-2's review {review.get('html_url')} carries no commit_id")
     return (url, head, branch, review_links(reviews), review.get("id"), frozen_head,
-            blocking_findings(number, reviews))
+            blocking_findings(number, reviews), fix_round_number)
 
 
 def print_brief(number, reviewer_login):
-    url, head, branch, review_link, review_id, frozen_head, findings = round_facts(number, reviewer_login)
+    (url, head, branch, review_link, review_id, frozen_head, findings,
+     fix_round_number) = round_facts(number, reviewer_login)
     if head != frozen_head:
         raise Refused(f"Pull request {url} has head {head}, but merge-lane-2 reviewed {frozen_head}; "
                       "a commit was pushed after the review, so this fix-round has already pushed.\n"
@@ -276,6 +283,10 @@ def print_brief(number, reviewer_login):
         f"Fix-round brief for pull request {url}",
         f"Frozen-head: {frozen_head}",
         f"merge-lane-2's review: {review_link}",
+    ]
+    if fix_round_number == ADVISOR_FIX_ROUND_NUMBER:
+        lines += ["", ADVISOR_FIX_ROUND_INSTRUCTION]
+    lines += [
         "",
         f"Blocking findings ({len(findings)}), word for word:",
     ]
@@ -442,7 +453,8 @@ def unnamed_files(base, fix_commit, findings):
 
 
 def check_round(number, reviewer_login, answers_path, commit_name, after_conflict_merge):
-    url, head, _branch, review_link, _review_id, frozen_head, findings = round_facts(number, reviewer_login)
+    (url, head, _branch, review_link, _review_id, frozen_head, findings,
+     _fix_round_number) = round_facts(number, reviewer_login)
     answers = read_answers(answers_path or default_answers_path(number), len(findings))
     commit = git(["rev-parse", "--verify", f"{commit_name}^{{commit}}"]).strip()
     git(["cat-file", "-e", f"{frozen_head}^{{commit}}"])
