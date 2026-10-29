@@ -968,6 +968,66 @@
       "stderr": "gh: Not Found (HTTP 404)\n",
       "gh_version": "gh version 2.102.0 (2026-09-30)",
       "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-667-files-channel-paginated.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/pulls/667/files",
+        "--paginate"
+      ],
+      "captured_at_utc": "2026-10-29T01:14:06Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-1325-files-channel-paginated.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/pulls/1325/files",
+        "--paginate"
+      ],
+      "captured_at_utc": "2026-10-29T01:14:07Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-1784-files-channel-paginated.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/pulls/1784/files",
+        "--paginate"
+      ],
+      "captured_at_utc": "2026-10-29T01:14:07Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-1784-pr-view-base.json",
+      "command": [
+        "gh",
+        "pr",
+        "view",
+        "1784",
+        "--repo",
+        "nedschorus/nedschorus",
+        "--json",
+        "baseRefName"
+      ],
+      "captured_at_utc": "2026-10-29T01:14:08Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
     }
   ]
 }

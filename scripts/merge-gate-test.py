@@ -126,6 +126,7 @@ Run: python3 scripts/merge-gate-test.py
 """
 
 import datetime
+import importlib.util
 import json
 import os
 import re
@@ -134,6 +135,16 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+# Before anything runs git: a run started with GIT_DIR set, or with another
+# variable that redirects git, must still build the removed-path cases'
+# repositories where the suite says.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().with_name("git-redirecting-environment-removal-test-fixture.py"))
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 GATE = Path(__file__).with_name("merge-gate.sh")
 DESCRIPTION_DEFECT_LINE_READER = Path(__file__).with_name(
@@ -156,12 +167,14 @@ with open(os.environ["MERGE_GATE_TEST_GH_CALL_LOG"], "a") as log:
     log.write(json.dumps({"argv": argv, "gh_token": os.environ.get("GH_TOKEN")}) + "\n")
 routes = json.load(open(os.environ["MERGE_GATE_TEST_GH_ROUTES"]))
 if argv[:2] == ["pr", "view"]:
-    key = "body" if argv[argv.index("--json") + 1] == "body" else "state"
+    fields = argv[argv.index("--json") + 1]
+    key = {"body": "body", "baseRefName": "base"}.get(fields, "state")
 elif argv[:1] == ["api"] and re.fullmatch(r"repos/[^/]+/[^/]+/issues/[0-9]+", argv[1]):
     key = "link " + argv[1]
 elif argv[:1] == ["api"]:
     endpoint = argv[1]
     channel = ("reviews" if endpoint.endswith("/reviews") else
+               "files" if endpoint.endswith("/files") else
                "issue" if "/issues/" in endpoint else
                "inline" if endpoint.endswith("/comments") else "unknown")
     key = channel + (":paginated" if "--paginate" in argv else ":first-page")
@@ -252,6 +265,9 @@ DESCRIPTION_WITH_ROOT_CAUSE = "nedschorus-nedschorus-1364-pr-view-body.json"
 QUIET_INLINE = captured_channel_routes("inline", "nedschorus-nedschorus-665-inline-channel")
 QUIET_ISSUE = captured_channel_routes("issue", "nedschorus-nedschorus-665-issue-channel")
 CLEAN = captured_value("cli-cli-14475-pr-view-state.json", "mergeStateStatus")
+# The files a pull request changes, served to every case that arranges none:
+# this capture lists two files changed and none removed or renamed.
+FILES_THAT_REMOVE_NOTHING = captured_channel_routes("files", "nedschorus-nedschorus-667-files-channel")
 
 
 def review(channel_capture, review_id):
@@ -330,7 +346,7 @@ def gate_copy(text):
 
 def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=None,
              wrapper=None, arguments=None, jq_failing_filter=None, description_reader_fails=False,
-             cwd=None):
+             cwd=None, environment_overrides=None):
     case_dir = Path(tempfile.mkdtemp(dir=scratch))
     home = case_dir / "home"
     token_dir = home / ".config" / "nedschorus"
@@ -350,6 +366,8 @@ def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=
         (stand_in_dir / "python3").chmod(0o755)
     routes = dict(routes)
     routes.setdefault("body", {"stdout_file": str(captured(DESCRIPTION_WITH_ROOT_CAUSE))})
+    for route, arranged in FILES_THAT_REMOVE_NOTHING.items():
+        routes.setdefault(route, arranged)
     routes_file = case_dir / "routes.json"
     routes_file.write_text(json.dumps(routes))
     call_log = case_dir / "gh-calls.jsonl"
@@ -366,6 +384,7 @@ def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=
                            MERGE_GATE_TEST_REAL_JQ=shutil.which("jq"))
     if description_reader_fails:
         environment.update(MERGE_GATE_TEST_REAL_PYTHON3=shutil.which("python3"))
+    environment.update(environment_overrides or {})
     if arguments is None:
         arguments = [str(pr), expected, since]
     if wrapper:
@@ -1477,6 +1496,205 @@ def case_description_unparsable(gate):
         JQ_ERROR_ABOVE, f"\n{RERUN_ONCE_JQ}\n"), run.summary()
 
 
+# ---------------------------------------------------------------------------
+# The removed-path citation check. A pull request whose files listing shows a
+# file removed or renamed is checked by the gate: it fetches the base branch
+# and the pull request's head from origin into the checkout it runs from, and
+# runs that checkout's dangling-path-citation-check.py against a temporary
+# worktree at the approved commit. Each case builds that checkout for real: a
+# bare origin holding main and refs/pull/<n>/head, and a clone of it whose
+# scripts/ holds the gate under test and the check with the modules it loads.
+# The captured listings say only whether the gate runs the check: the 1325
+# capture lists two files removed, the 1784 capture two renamed. The approved commit is the
+# fixture's, put in the state's headRefOid and the approval's commit_id.
+# ---------------------------------------------------------------------------
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+CITATION_CHECK_FILES = (
+    "scripts/dangling-path-citation-check.py",
+    "scripts/md-drift-lint.py",
+    "scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py",
+    "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
+    "nc-systems/general-tools/"
+    "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+FILES_REMOVED = captured_channel_routes("files", "nedschorus-nedschorus-1325-files-channel")
+FILES_RENAMED = captured_channel_routes("files", "nedschorus-nedschorus-1784-files-channel")
+BASE_BRANCH = {"base": {"stdout_file": str(captured("nedschorus-nedschorus-1784-pr-view-base.json"))}}
+BASE_BRANCH_NAME = captured_value("nedschorus-nedschorus-1784-pr-view-base.json", "baseRefName")
+CITING_LINE = "docs/citing.md:1: cites docs/old-page.md, which this change removed"
+
+
+def fixture_git(directory, *arguments):
+    return subprocess.run(["git", *arguments], cwd=directory, capture_output=True, text=True,
+                          check=True).stdout.strip()
+
+
+def removed_path_fixture(gate, change, push_head=True, with_check=True, approve_unpushed=False):
+    """The checkout the gate runs from, and the approved commit: main holds
+    docs/old-page.md and docs/citing.md, which cites it; the pull request's
+    head is main plus `change`, a function of the author's checkout."""
+    root = Path(tempfile.mkdtemp(dir=scratch))
+    origin, author, checkout = root / "origin.git", root / "author", root / "checkout"
+    fixture_git(root, "init", "-q", "--bare", str(origin))
+    fixture_git(root, "init", "-q", str(author))
+    fixture_git(author, "config", "user.email", "test@nedschorus.invalid")
+    fixture_git(author, "config", "user.name", "test")
+    (author / "docs").mkdir()
+    (author / "docs" / "old-page.md").write_text("# The old page\n")
+    (author / "docs" / "citing.md").write_text("See `docs/old-page.md`.\n")
+    fixture_git(author, "add", "-A")
+    fixture_git(author, "commit", "-qm", "main")
+    fixture_git(author, "push", "-q", str(origin), f"HEAD:refs/heads/{BASE_BRANCH_NAME}")
+    change(author)
+    fixture_git(author, "add", "-A")
+    fixture_git(author, "commit", "-qm", "the pull request")
+    head = fixture_git(author, "rev-parse", "HEAD")
+    if push_head:
+        fixture_git(author, "push", "-q", str(origin), f"HEAD:refs/pull/{BASE_PR}/head")
+    if approve_unpushed:
+        # An approved commit origin does not hold, so no worktree can be made at it.
+        fixture_git(author, "commit", "-q", "--allow-empty", "-m", "never pushed")
+        head = fixture_git(author, "rev-parse", "HEAD")
+    fixture_git(root, "clone", "-q", str(origin), str(checkout))
+    (checkout / "scripts").mkdir()
+    shutil.copyfile(gate, checkout / "scripts" / "merge-gate.sh")
+    shutil.copyfile(DESCRIPTION_DEFECT_LINE_READER,
+                    checkout / "scripts" / DESCRIPTION_DEFECT_LINE_READER.name)
+    for relative in CITATION_CHECK_FILES if with_check else ():
+        (checkout / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(REPOSITORY_ROOT / relative, checkout / relative)
+    return checkout, head
+
+
+def removed_path_run(gate, change, files, base_route=None, environment_overrides=None,
+                     **fixture_options):
+    checkout, head = removed_path_fixture(gate, change, **fixture_options)
+    routes = base_routes(headRefOid=head)
+    routes.update(channel_routes("reviews", channel_prefix(
+        BASE_REVIEWS, BASE_APPROVAL["id"], {BASE_APPROVAL["id"]: {"commit_id": head}})))
+    routes.update(files)
+    routes.update(base_route or BASE_BRANCH)
+    run = run_gate(checkout / "scripts" / "merge-gate.sh", BASE_PR, head,
+                   BASE_APPROVAL["submitted_at"], routes,
+                   environment_overrides=environment_overrides)
+    worktrees = fixture_git(checkout, "worktree", "list", "--porcelain").count("worktree ")
+    return run, head, worktrees
+
+
+def delete_the_old_page(author):
+    (author / "docs" / "old-page.md").unlink()
+
+
+def rename_the_old_page(author):
+    (author / "docs" / "old-page.md").rename(author / "docs" / "new-page.md")
+
+
+def rename_the_old_page_and_its_citation(author):
+    rename_the_old_page(author)
+    (author / "docs" / "citing.md").write_text("See `docs/new-page.md`.\n")
+
+
+def case_removed_file_still_cited_refuses(gate):
+    run, head, worktrees = removed_path_run(gate, delete_the_old_page, FILES_REMOVED)
+    return (refused_with(run, BASE_PR, f"GATE REFUSED (#{BASE_PR}): pull request {BASE_PR} removes "
+                         f"or renames a file, and these lines of its approved commit {head} still "
+                         "cite a path it removed:\n", f"\n{CITING_LINE}\n",
+                         "\nHave the pull request's author correct each line")
+            and worktrees == 1, f"{run.summary()}; {worktrees} worktree(s) left")
+
+
+def case_renamed_file_still_cited_refuses(gate):
+    run, head, worktrees = removed_path_run(gate, rename_the_old_page, FILES_RENAMED)
+    return (refused_with(run, BASE_PR, f"\n{CITING_LINE}\n") and worktrees == 1,
+            f"{run.summary()}; {worktrees} worktree(s) left")
+
+
+def case_renamed_file_with_its_citation_corrected_passes(gate):
+    run, head, worktrees = removed_path_run(gate, rename_the_old_page_and_its_citation,
+                                            FILES_RENAMED)
+    return (passed_pinned_to(run, BASE_PR, head) and worktrees == 1,
+            f"{run.summary()}; {worktrees} worktree(s) left")
+
+
+def case_citation_check_missing_could_not_run(gate):
+    run, head, worktrees = removed_path_run(gate, delete_the_old_page, FILES_REMOVED,
+                                            with_check=False)
+    return (could_not_run_after_gh(run, BASE_PR, "/dangling-path-citation-check.py exited 2 when "
+                                   f"the gate ran it on pull request {BASE_PR}'s approved commit {head}")
+            and "gate passed" not in run.stdout and worktrees == 1,
+            f"{run.summary()}; {worktrees} worktree(s) left")
+
+
+def case_head_fetch_fails_could_not_run(gate):
+    run, head, worktrees = removed_path_run(gate, delete_the_old_page, FILES_REMOVED,
+                                            push_head=False)
+    return (could_not_run_after_gh(run, BASE_PR, f"git could not fetch its base branch "
+                                   f"{BASE_BRANCH_NAME} and its head from origin")
+            and "gate passed" not in run.stdout, run.summary())
+
+
+def case_gate_outside_a_checkout_could_not_run(gate):
+    """A gate copy in a directory outside any git checkout, for a pull request that removes a
+    file. Copied first, because the suite's first pass runs the gate in this repository."""
+    routes = base_routes()
+    routes.update(FILES_REMOVED)
+    routes.update(BASE_BRANCH)
+    run = run_gate(gate_copy(gate.read_text()), BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], routes)
+    return (could_not_run_after_gh(run, BASE_PR, f"pull request {BASE_PR} removes or renames a "
+                                   "file, and the gate is not in a git checkout")
+            and "gate passed" not in run.stdout, run.summary())
+
+
+def case_base_branch_read_fails(gate):
+    failing = {"base": {"stdout_file": str(scratch_file("-empty.json", "")),
+                        "stderr": "HTTP 502: Bad Gateway\n", "exit": 1}}
+    run, head, worktrees = removed_path_run(gate, delete_the_old_page, FILES_REMOVED,
+                                            base_route=failing)
+    return could_not_run_after_gh(
+        run, BASE_PR, f"GATE COULD NOT RUN: could not read pull request {BASE_PR}'s base branch",
+        f"\n{RERUN_ONCE_GH}\n"), run.summary()
+
+
+def case_base_branch_unparsable(gate):
+    # gh exits 0 but prints a captured channel, a list, which has no baseRefName.
+    listed = {"base": {"stdout_file": str(captured(
+        "nedschorus-nedschorus-665-inline-channel-paginated.json"))}}
+    run, head, worktrees = removed_path_run(gate, delete_the_old_page, FILES_REMOVED,
+                                            base_route=listed)
+    return could_not_run_after_gh(
+        run, BASE_PR, f"GATE COULD NOT RUN: could not parse pull request {BASE_PR}'s base branch",
+        JQ_ERROR_ABOVE), run.summary()
+
+
+def case_temporary_directory_fails(gate):
+    missing = scratch / "no-such-temporary-directory"
+    run, head, worktrees = removed_path_run(gate, delete_the_old_page, FILES_REMOVED,
+                                            environment_overrides={"TMPDIR": str(missing)})
+    return (could_not_run_after_gh(run, BASE_PR, "could not make a temporary directory for pull "
+                                   f"request {BASE_PR}'s worktree")
+            and "gate passed" not in run.stdout, run.summary())
+
+
+def case_worktree_at_the_approved_commit_fails(gate):
+    run, head, worktrees = removed_path_run(gate, delete_the_old_page, FILES_REMOVED,
+                                            approve_unpushed=True)
+    return (could_not_run_after_gh(run, BASE_PR, f"could not make a worktree of", f"at the approved "
+                                   f"commit {head} of pull request {BASE_PR}")
+            and "gate passed" not in run.stdout and worktrees == 1,
+            f"{run.summary()}; {worktrees} worktree(s) left")
+
+
+def case_files_listing_read_fails(gate):
+    routes = base_routes()
+    routes.update({"files:paginated": {"stdout_file": str(scratch_file("-empty.json", "")),
+                                       "stderr": "HTTP 502: Bad Gateway\n", "exit": 1}})
+    run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], routes)
+    return could_not_run_after_gh(
+        run, BASE_PR, f"GATE COULD NOT RUN: could not read the files pull request {BASE_PR} changes",
+        f"\n{RERUN_ONCE_GH}\n"), run.summary()
+
+
+
 CASES = [
     ("A1 everything in order passes, pinned to the approval's commit", case_a1_pass_control),
     ("LIVE CHAIN: PR 665 as the chain gates it, approved only by ned-review-merge, passes",
@@ -1605,6 +1823,24 @@ CASES = [
      case_follow_up_issue_form_link_to_this_pull_request_in_other_letter_case),
     ("H7 a /pull/ #follow_up link whose number is an issue refuses",
      case_follow_up_pull_request_link_whose_number_is_an_issue),
+    ("I1 a pull request that removes a file a line still cites refuses, naming the line",
+     case_removed_file_still_cited_refuses),
+    ("I1 a pull request that renames a file a line still cites refuses",
+     case_renamed_file_still_cited_refuses),
+    ("I2 a pull request that renames a file and corrects its citation passes",
+     case_renamed_file_with_its_citation_corrected_passes),
+    ("I3 a citation check that fails to run could not run, never passes",
+     case_citation_check_missing_could_not_run),
+    ("I3 a fetch of the pull request's head that fails could not run",
+     case_head_fetch_fails_could_not_run),
+    ("I3 a gate outside a git checkout could not run on a pull request that removes a file",
+     case_gate_outside_a_checkout_could_not_run),
+    ("I3 a files listing that cannot be read could not run", case_files_listing_read_fails),
+    ("I3 a base branch that cannot be read could not run", case_base_branch_read_fails),
+    ("I3 a base branch that cannot be parsed could not run", case_base_branch_unparsable),
+    ("I3 a temporary directory that cannot be made could not run", case_temporary_directory_fails),
+    ("I3 a worktree that cannot be made at the approved commit could not run",
+     case_worktree_at_the_approved_commit_fails),
 ]
 
 
@@ -1794,6 +2030,52 @@ MUTATIONS = [
      [('<<<"$body_read")\n[ $? -eq 0 ] || cannot "$DESCRIPTION_UNPARSABLE"',
        '<<<"$body_read")\n: || cannot "$DESCRIPTION_UNPARSABLE"')],
      [case_description_unparsable]),
+    ("without the removed-path citation check's refusal",
+     [('    1) fail "pull request $PR removes or renames a file', '    1) : "pull request $PR removes or renames a file')],
+     [case_removed_file_still_cited_refuses, case_renamed_file_still_cited_refuses]),
+    ("a citation check that fails to run read as a pass",
+     [('    *) cannot "python3 $CITATION_CHECK exited', '    *) : "python3 $CITATION_CHECK exited')],
+     [case_citation_check_missing_could_not_run]),
+    ("a removed file not read as removing a path",
+     [('select(.status == "removed" or .status == "renamed")', 'select(.status == "renamed")')],
+     [case_removed_file_still_cited_refuses]),
+    ("a renamed file not read as removing a path",
+     [('select(.status == "removed" or .status == "renamed")', 'select(.status == "removed")')],
+     [case_renamed_file_still_cited_refuses]),
+    ("the check run against the gate's own checkout, not the pull request's worktree",
+     [(' --checkout "$pull_request_worktree")', ' --checkout "$checkout")')],
+     [case_removed_file_still_cited_refuses]),
+    ("the temporary worktree left behind",
+     [("  trap 'git -C \"$checkout\" worktree remove", "  : 'git -C \"$checkout\" worktree remove")],
+     [case_renamed_file_with_its_citation_corrected_passes]),
+    ("without the fetch check",
+     [('  [ $? -eq 0 ] || cannot "pull request $PR removes or renames a file, and git could not fetch',
+       '  : || cannot "pull request $PR removes or renames a file, and git could not fetch')],
+     [case_head_fetch_fails_could_not_run]),
+    ("without the checkout check",
+     [('  [ $? -eq 0 ] || cannot "pull request $PR removes or renames a file, and the gate is not in a git checkout',
+       '  : || cannot "pull request $PR removes or renames a file, and the gate is not in a git checkout')],
+     [case_gate_outside_a_checkout_could_not_run]),
+    ("without the base branch's read check",
+     [('[ $? -eq 0 ] || cannot "could not read pull request $PR\'s base branch',
+       ': || cannot "could not read pull request $PR\'s base branch')],
+     [case_base_branch_read_fails]),
+    ("without the base branch's parse check",
+     [('[ $? -eq 0 ] || cannot "could not parse pull request $PR\'s base branch',
+       ': || cannot "could not parse pull request $PR\'s base branch')],
+     [case_base_branch_unparsable]),
+    ("without the temporary directory check",
+     [('[ $? -eq 0 ] || cannot "could not make a temporary directory',
+       ': || cannot "could not make a temporary directory')],
+     [case_temporary_directory_fails]),
+    ("without the worktree check",
+     [('  [ $? -eq 0 ] || cannot "could not make a worktree of',
+       '  : || cannot "could not make a worktree of')],
+     [case_worktree_at_the_approved_commit_fails]),
+    ("without the files listing's read check",
+     [('[ $? -eq 0 ] || cannot "could not read the files pull request',
+       ': || cannot "could not read the files pull request')],
+     [case_files_listing_read_fails]),
 ]
 
 

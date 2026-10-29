@@ -6,8 +6,9 @@
 #
 # EXIT CODES. 0 the merge may proceed; 1 the gate REFUSES, a named reason on
 # stderr; 2 the gate COULD NOT RUN -- bad invocation, missing jq or gh,
-# unreadable token, a read from GitHub that failed or could not be parsed, or a
-# failed run of the description reader.
+# unreadable token, a read from GitHub that failed or could not be parsed, a
+# failed run of the description reader, or, for a pull request that removes or
+# renames a file, a failed fetch, worktree or run of the citation check.
 # 1 and 2 are distinguished because the fleet's near-miss shape is a gate
 # that could not run being read as a gate that passed.
 #
@@ -146,7 +147,7 @@ if [ $# -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
   echo "$MERGE_ACCOUNT and exits 0 only when every requirement is met, printing a merge"
   echo "command pinned to the commit the latest approving review covered."
   echo "Exit codes: 0 the merge may proceed; 1 the gate refuses, with the reason on stderr;"
-  echo "2 the gate could not run: bad invocation, missing jq or gh, unreadable token, or a failed read."
+  echo "2 the gate could not run: bad invocation, missing jq or gh, unreadable token, a failed read, or a failed run of a program it needs."
   exit 0
 fi
 [ $# -eq 3 ] || cannot "merge-gate.sh takes exactly three arguments and was given $#." \
@@ -386,6 +387,51 @@ for ((line_index = 0; line_index < not_fixed_count; line_index++)); do
       "$FOLLOW_UP_EDIT_ONLY" "$FOLLOW_UP_RERUN" ;;
   esac
 done
+
+# A pull request that removes or renames a file must leave no line citing the
+# old path. Main's copy of the check, beside this gate, runs against a
+# temporary worktree at the approved commit, so a pull request cannot change
+# the check to pass itself.
+files_raw=$(gh api "repos/$REPO/pulls/$PR/files" --paginate)
+[ $? -eq 0 ] || cannot "could not read the files pull request $PR changes; any error gh printed is just above this line." "$RERUN_ONCE_GH"
+removes_a_path=$(jq -s '[.[][] | select(.status == "removed" or .status == "renamed")] | length > 0' <<<"$files_raw")
+[ $? -eq 0 ] || cannot "could not parse the files pull request $PR changes" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+if [ "$removes_a_path" = "true" ]; then
+  RERUN_ONCE_GIT="Run the gate again once; if it fails the same way, tell the user every line the gate printed, and leave pull request https://github.com/$REPO/pull/$PR unmerged."
+  base_read=$(gh pr view "$PR" --repo "$REPO" --json baseRefName)
+  [ $? -eq 0 ] || cannot "could not read pull request $PR's base branch; any error gh printed is just above this line." "$RERUN_ONCE_GH"
+  base_ref=$(jq -er '.baseRefName | strings' <<<"$base_read")
+  [ $? -eq 0 ] || cannot "could not parse pull request $PR's base branch" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+  gate_directory=$(dirname "${BASH_SOURCE[0]}")
+  CITATION_CHECK="$gate_directory/dangling-path-citation-check.py"
+  checkout=$(git -C "$gate_directory" rev-parse --show-toplevel)
+  [ $? -eq 0 ] || cannot "pull request $PR removes or renames a file, and the gate is not in a git checkout, so it cannot check what still cites the old paths; any error git printed is just above this line." \
+    "Run the gate as scripts/merge-gate.sh in a checkout of $REPO at main, as the merge program does from its --review-tools-worktree-at-main." \
+    "If you ran it that way, tell the user every line the gate printed, and leave pull request https://github.com/$REPO/pull/$PR unmerged."
+  git -C "$checkout" fetch --quiet origin "refs/heads/$base_ref" "refs/pull/$PR/head"
+  [ $? -eq 0 ] || cannot "pull request $PR removes or renames a file, and git could not fetch its base branch $base_ref and its head from origin into $checkout, so the gate cannot check what still cites the old paths; any error git printed is just above this line." \
+    "$RERUN_ONCE_GIT"
+  pull_request_worktree_parent=$(mktemp -d)
+  [ $? -eq 0 ] || cannot "could not make a temporary directory for pull request $PR's worktree; any error mktemp printed is just above this line." "$RERUN_ONCE_GIT"
+  pull_request_worktree="$pull_request_worktree_parent/pull-request-$PR"
+  # Every later exit, refusal included, removes the worktree.
+  trap 'git -C "$checkout" worktree remove --force "$pull_request_worktree" >/dev/null 2>&1; rm -rf "$pull_request_worktree_parent"; git -C "$checkout" worktree prune' EXIT
+  git -C "$checkout" worktree add --quiet --detach "$pull_request_worktree" "$approved_sha"
+  [ $? -eq 0 ] || cannot "could not make a worktree of $checkout at the approved commit $approved_sha of pull request $PR; any error git printed is just above this line." \
+    "$RERUN_ONCE_GIT"
+  citation_findings=$(python3 "$CITATION_CHECK" --only-citations-of-removed-paths --base "origin/$base_ref" --checkout "$pull_request_worktree")
+  citation_check_exit=$?
+  case "$citation_check_exit" in
+    0) : ;;
+    1) fail "pull request $PR removes or renames a file, and these lines of its approved commit $approved_sha still cite a path it removed:" \
+         "$citation_findings" \
+         "Have the pull request's author correct each line to the path's new name, or remove the citation, in the pull request's next fix-round." \
+         "The fix moves the nc-head-commit, which then needs its own approving review; run the gate again once it has one." ;;
+    *) cannot "python3 $CITATION_CHECK exited $citation_check_exit when the gate ran it on pull request $PR's approved commit $approved_sha, so the gate cannot tell whether a line still cites a path the pull request removes; any error python3 or that program printed is just above this line." \
+         "If that error names a git command that failed, run the gate again once; if it fails the same way, tell the user every line the gate printed, and leave pull request https://github.com/$REPO/pull/$PR unmerged." \
+         "Otherwise tell the user every line the gate printed, leave pull request https://github.com/$REPO/pull/$PR unmerged, and do not repair the checkout, that program or python3 yourself." ;;
+  esac
+fi
 
 echo "gate passed (#$PR): approved commit $approved_sha by $approver at $approval_at, $decision, $merge_state, no new channel activity since $SINCE"
 # The pin (--match-head-commit) is what makes the approval binding: GitHub

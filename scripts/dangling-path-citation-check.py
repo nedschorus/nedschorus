@@ -2,6 +2,8 @@
 """Check new citations and citations of removed paths for dangling references.
 
 With --only-citations-of-removed-paths, check only the citations of removed paths.
+With --checkout, check another checkout than the one this program is in, so a
+caller can run main's copy of this program against a pull request's head.
 
 Run on a clean tree: diff line numbers come from HEAD, but citation text and
 existence checks read the working tree."""
@@ -215,16 +217,17 @@ def is_project_test_file(path: pathlib.Path, repository_root: pathlib.Path) -> b
             or PROJECT_TEST_DIRECTORY_NAME in relative.parts[:-1])
 
 
-def findings_for_file(path: pathlib.Path, changed: set, lint, root_directories: tuple):
+def findings_for_file(path: pathlib.Path, changed: set, lint, root_directories: tuple,
+                      repository_root: pathlib.Path):
     """Yield (line number, problem) for changed lines."""
-    relative = path.relative_to(REPOSITORY_ROOT)
-    if lint.in_frozen_measured_data(path, REPOSITORY_ROOT):
+    relative = path.relative_to(repository_root)
+    if lint.in_frozen_measured_data(path, repository_root):
         return
     # Skip test fixtures only forward; backward checks must still catch stale module citations.
-    if is_project_test_file(path, REPOSITORY_ROOT):
+    if is_project_test_file(path, repository_root):
         return
     if path.suffix == ".md":
-        for line_number, problem in lint.lint_markdown(path, REPOSITORY_ROOT):
+        for line_number, problem in lint.lint_markdown(path, repository_root):
             if line_number in changed and ("does not exist" in problem):
                 yield line_number, problem
         return
@@ -236,9 +239,9 @@ def findings_for_file(path: pathlib.Path, changed: set, lint, root_directories: 
         if line_number not in changed:
             continue
         for token in plain_path_citations(line, root_directories, lint):
-            if lint.ignored_by_git(token, path, REPOSITORY_ROOT):
+            if lint.ignored_by_git(token, path, repository_root):
                 continue
-            if not (REPOSITORY_ROOT / token).exists():
+            if not (repository_root / token).exists():
                 yield line_number, f"path does not exist: {token}"
 
 
@@ -374,6 +377,9 @@ def run_check(argv) -> int:
         description="Every repository path cited on a line this change touches exists.")
     parser.add_argument("--base", default="origin/main",
                         help="what to diff against (default: origin/main)")
+    parser.add_argument("--checkout", type=pathlib.Path, default=REPOSITORY_ROOT,
+                        help="the checkout whose HEAD and working tree are checked "
+                             "(default: the checkout this program is in)")
     parser.add_argument("files", nargs="*", metavar="FILE",
                         help="limit the check to these paths (default: the diff's)")
     parser.add_argument("--only-citations-of-removed-paths", action="store_true",
@@ -382,36 +388,38 @@ def run_check(argv) -> int:
     arguments = parser.parse_args(argv)
 
     lint = load_md_drift_lint()
-    root_directories = repository_root_directories(REPOSITORY_ROOT)
-    merge_base = merge_base_with_head(arguments.base, REPOSITORY_ROOT)
+    checkout = arguments.checkout.resolve()
+    root_directories = repository_root_directories(checkout)
+    merge_base = merge_base_with_head(arguments.base, checkout)
     changed = ({} if arguments.only_citations_of_removed_paths
-               else changed_lines_by_file(merge_base, REPOSITORY_ROOT))
+               else changed_lines_by_file(merge_base, checkout))
     if arguments.files:
         wanted = {str(pathlib.Path(name)) for name in arguments.files}
         changed = {name: lines for name, lines in changed.items() if name in wanted}
 
     findings = []
-    name_status_rows = name_status_rows_against_merge_base(merge_base, REPOSITORY_ROOT)
-    removed_files = paths_this_change_removed(name_status_rows, REPOSITORY_ROOT)
-    removed = removed_files + directories_this_change_emptied(removed_files, REPOSITORY_ROOT)
+    name_status_rows = name_status_rows_against_merge_base(merge_base, checkout)
+    removed_files = paths_this_change_removed(name_status_rows, checkout)
+    removed = removed_files + directories_this_change_emptied(removed_files, checkout)
     merge_base_name_of_renamed_file = merge_base_names_of_renamed_files(name_status_rows)
     for citing, line_number, problem in citations_of_removed_paths(
-            removed, REPOSITORY_ROOT, lint):
+            removed, checkout, lint):
         findings.append(f"{citing}:{line_number}: {problem}")
     for name in sorted(changed):
-        path = REPOSITORY_ROOT / name
+        path = checkout / name
         if not path.is_file():
             continue
         base_cited_paths = None
-        for line_number, problem in findings_for_file(path, changed[name], lint, root_directories):
+        for line_number, problem in findings_for_file(path, changed[name], lint, root_directories,
+                                                       checkout):
             # A changed line can retain old citations; compare with the file's merge-base text under its old name.
             if base_cited_paths is None:
                 base_name = merge_base_name_of_renamed_file.get(name, name)
                 base_cited_paths = paths_the_base_text_cites(
-                    file_at_merge_base(base_name, merge_base, REPOSITORY_ROOT),
-                    base_name, lint, REPOSITORY_ROOT)
+                    file_at_merge_base(base_name, merge_base, checkout),
+                    base_name, lint, checkout)
             if base_already_cites(cited_path_of(problem), base_cited_paths,
-                                  path, lint, REPOSITORY_ROOT):
+                                  path, lint, checkout):
                 continue
             findings.append(f"{name}:{line_number}: {problem}")
     for finding in findings:

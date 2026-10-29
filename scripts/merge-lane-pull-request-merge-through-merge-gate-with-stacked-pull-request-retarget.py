@@ -19,7 +19,7 @@ worktree not there is left alone.
 
 The merge command deletes the pull request's branch, and GitHub closes every
 open pull request whose base branch is deleted. The retarget is here, not in
-merge-gate.sh, because the gate only reads GitHub and its callers may run it
+merge-gate.sh, because the gate changes nothing on GitHub and its callers may run it
 without merging; a retarget belongs just before a merge that is about to run.
 
 Every gh call runs with GH_TOKEN read from the merge account's token file,

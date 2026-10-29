@@ -1145,6 +1145,19 @@ with tempfile.TemporaryDirectory() as workspace:
           code == 1 and "scripts/caller.py:1: cites scripts/tool-that-moves.py" in out
           and "never-built" not in out, f"{code} {out!r} {err!r}")
 
+    # merge-gate.sh runs main's copy of this program, from its own checkout,
+    # against a pull request's head in another checkout.
+    elsewhere = Path(workspace) / "elsewhere"
+    elsewhere.mkdir()
+    completed = subprocess.run(
+        [sys.executable, str(CHECK_SCRIPT), "--only-citations-of-removed-paths",
+         "--base", flag_base, "--checkout", str(root)],
+        cwd=elsewhere, capture_output=True, text=True, check=False)
+    check("with --checkout a copy outside the checkout reports the citation of the renamed path",
+          completed.returncode == 1
+          and "scripts/caller.py:1: cites scripts/tool-that-moves.py" in completed.stdout,
+          f"{completed.returncode} {completed.stdout!r} {completed.stderr!r}")
+
 
 # --- the suite run fails on a pure rename that leaves a citation behind -----
 # The branch renames a cited program and changes no Markdown file, so nothing
