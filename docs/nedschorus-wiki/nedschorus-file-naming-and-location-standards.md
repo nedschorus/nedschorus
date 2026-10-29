@@ -7,8 +7,7 @@ The naming and location standards for this project's files. Where a tool this pr
 `docs/nedschorus-wiki/nedschorus-glossary.md` defines the project-terms. `.claude/skills/skills-glossary.md`, `docs/design-to-main/design-to-main-glossary.md` and `nc-systems/main-gatekeeper/main-gatekeeper-glossary.md` define the system-terms of the skills, of design-to-main and of the main-gatekeeper. We avoid spaces in directory and file names, using a hyphen, `-`, instead.
 
 - **stem**: a filename without its extension.
-- **suffix**, on this page: the last hyphen-separated part of the filename
-  stem, written with its hyphen, such as `-draft`, not the extension `.md`.
+- **suffix**: the closing part of a filename stem that marks the file's kind, written with its leading hyphen and without the extension, such as `-draft`, `-test-design` or `-nbd`; a stem need not have one.
 
 ## Desired locations or file names for various components
 
