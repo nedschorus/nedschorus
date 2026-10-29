@@ -311,7 +311,22 @@ reports what its suites wait for. A failure to decide, such as a machine
 reading that fails or a slot file that cannot be opened, stops the run with
 exit 2. Every suite runs at nice 10, in a cgroup scope of its own
 (`systemd-run --user --scope`), whose counters give the suite's CPU seconds
-and peak memory, every process it starts included. The
+and peak memory, every process it starts included.
+
+MEMORY CEILING, where suites run in cgroup scopes. A suite's scope may hold
+TEST_SUITE_MEMORY_CEILING_BYTES, 4 GB, or what
+TEST_SUITE_MEMORY_CEILING_BYTES_OF_SUITES_THAT_NEED_MORE gives it, every process
+it starts and the files it writes to its tmpfs /tmp included, and no swap. A
+process that would pass it is killed by the kernel, the largest in the scope
+first, and the rest of the suite runs on, so a runaway allocation, such as a
+mutant that turns a loop endless, ends alone instead of taking the machine's
+memory from every other process on it. A suite with a process killed this way
+fails: its FAIL line says OUT OF MEMORY and names the ceiling, and a suite
+that still exited 0 is reported as killed by SIGKILL, which its process was.
+There is no ceiling on macOS, on Linux without bwrap, systemd-run, setpriv or
+bash, where suites run without cgroup scopes, nor of its own on a suite that a
+suite's nested run starts inside bwrap, where systemd-run cannot reach the
+session bus: such a suite counts against the outer suite's ceiling. The
 run records the machine's CPU use, available memory and load every second in
 machine-cpu-and-memory-readings.tsv in its log directory, each suite's kind, admission wait,
 CPU seconds and peak memory in test-suite-resource-use.tsv, each case line's time in
@@ -852,10 +867,32 @@ TEST_SUITE_CGROUP_STATISTICS_WRAPPER = (
     '"$@" 3>&-\n'
     'status=$?\n'
     '{ cat "/sys/fs/cgroup$cgroup/cpu.stat" && '
-    'printf "memory.peak %s\\n" "$(cat "/sys/fs/cgroup$cgroup/memory.peak")"; } >&3 2>&1\n'
+    'printf "memory.peak %s\\n" "$(cat "/sys/fs/cgroup$cgroup/memory.peak")" && '
+    'sed -n "/^oom_kill /p" "/sys/fs/cgroup$cgroup/memory.events"; } >&3 2>&1\n'
     'exit $status\n')
-TEST_SUITE_CGROUP_SCOPE_COMMAND = (
-    "systemd-run", "--user", "--scope", "--quiet", "--expand-environment=no", "--")
+# Each well above the largest peak memory its suites' scopes record, and no higher, since
+# a runaway holds the machine's memory until it reaches its ceiling.
+TEST_SUITE_MEMORY_CEILING_BYTES = 4 * 10**9
+TEST_SUITE_MEMORY_CEILING_BYTES_OF_SUITES_THAT_NEED_MORE = {
+    "scripts/daily-full-test-run-of-main-test.py": 24 * 10**9,
+}
+
+
+def test_suite_memory_ceiling_bytes(suite):
+    return TEST_SUITE_MEMORY_CEILING_BYTES_OF_SUITES_THAT_NEED_MORE.get(
+        suite, TEST_SUITE_MEMORY_CEILING_BYTES)
+
+
+def test_suite_cgroup_scope_command(memory_ceiling_bytes=TEST_SUITE_MEMORY_CEILING_BYTES):
+    """systemd-run's command that starts a suite in a cgroup scope of its own under a memory ceiling.
+
+    OOMPolicy=continue, because systemd's default stops the whole scope at the first kill,
+    the counting shell included, so the suite's counters and the reason it failed are lost."""
+    return ("systemd-run", "--user", "--scope", "--quiet", "--expand-environment=no",
+            "-p", f"MemoryMax={memory_ceiling_bytes}", "-p", "MemorySwapMax=0",
+            "-p", "OOMPolicy=continue", "--")
+
+
 # Where the shell that keeps the counters stands between this program and bwrap, it is
 # killed when this program dies, so bwrap's --die-with-parent still ends the suite.
 TEST_SUITE_COUNTER_SHELL_DIES_WITH_THIS_PROGRAM = ("setpriv", "--pdeathsig", "KILL")
@@ -2013,10 +2050,10 @@ def why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(which=sh
     for program in ("systemd-run", "setpriv", "bash"):
         if which(program) is None:
             return f"{program} is not on PATH"
-    trial_line = " ".join((*TEST_SUITE_CGROUP_SCOPE_COMMAND,
+    trial_line = " ".join((*test_suite_cgroup_scope_command(),
                            *TEST_SUITE_COUNTER_SHELL_DIES_WITH_THIS_PROGRAM))
     try:
-        trial = runner([*TEST_SUITE_CGROUP_SCOPE_COMMAND,
+        trial = runner([*test_suite_cgroup_scope_command(),
                         *TEST_SUITE_COUNTER_SHELL_DIES_WITH_THIS_PROGRAM, "true"],
                        stdin=subprocess.DEVNULL,
                        capture_output=True, text=True,
@@ -2029,13 +2066,15 @@ def why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(which=sh
     return None
 
 
-def command_prefix_running_one_suite_in_its_cgroup_scope(statistics_descriptor, in_bwrap):
-    """The command prefix that runs a suite in a cgroup scope of its own and keeps its counters.
+def command_prefix_running_one_suite_in_its_cgroup_scope(statistics_descriptor, in_bwrap,
+                                                         memory_ceiling_bytes):
+    """The command prefix that runs a suite in a cgroup scope of its own, under memory_ceiling_bytes,
+    and keeps its counters.
 
     The counters are written to statistics_descriptor, an open file the caller passes on.
     A suite outside bwrap outlives a killed run, as before, and the shell, which waits
     for it, outlives the run with it, so the run's record still sees the suite running."""
-    return (*TEST_SUITE_CGROUP_SCOPE_COMMAND,
+    return (*test_suite_cgroup_scope_command(memory_ceiling_bytes),
             *(TEST_SUITE_COUNTER_SHELL_DIES_WITH_THIS_PROGRAM if in_bwrap else ()),
             "bash", "-c", TEST_SUITE_CGROUP_STATISTICS_WRAPPER, str(statistics_descriptor))
 
@@ -2049,6 +2088,14 @@ def cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(text):
         return (int(fields["usage_usec"]) / 10**6, int(fields["memory.peak"]), None)
     except (KeyError, ValueError):
         return None, None, f"the suite's cgroup counters could not be read: {text.strip()[:200]!r}"
+
+
+def processes_killed_at_memory_ceiling_from_suite_cgroup_statistics(text):
+    """How many of the suite's processes the kernel killed at its scope's memory ceiling."""
+    for line in text.splitlines():
+        if line.startswith("oom_kill "):
+            return int(line.split()[1])
+    return 0
 
 
 def copy_suite_output_to_log_noting_each_case_line(stream, log, started, cases, failures):
@@ -2833,12 +2880,14 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                           *sandbox_prefix[1:])
     resource_prefix = ()
     statistics = None
+    memory_ceiling_bytes = test_suite_memory_ceiling_bytes(suite)
     if in_cgroup_scope:
         # A file with no name, so nothing a suite can reach stands where the counters go.
         statistics = tempfile.TemporaryFile()
         resource_prefix += command_prefix_running_one_suite_in_its_cgroup_scope(
             statistics.fileno(),
-            does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix))
+            does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix),
+            memory_ceiling_bytes)
     if nice:
         resource_prefix += ("nice", "-n", str(TEST_SUITE_NICE_INCREMENT))
     # bwrap, and the shell that keeps the cgroup counters, exit 128+N when the suite is
@@ -2925,6 +2974,15 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
             log.write(TEST_SANDBOX_DID_NOT_START_NOTE)
     if exit_reports_signal_as_128_plus and 128 < exit_code <= 128 + SIGNAL_NUMBER_LIMIT:
         exit_code = -(exit_code - 128)
+    counters = ""
+    if statistics is not None:
+        with statistics:
+            statistics.seek(0)
+            counters = statistics.read().decode("utf-8", "replace")
+    killed_at_memory_ceiling = processes_killed_at_memory_ceiling_from_suite_cgroup_statistics(
+        counters)
+    if killed_at_memory_ceiling and exit_code == 0:
+        exit_code = -signal.SIGKILL
     result = {
         "suite": suite,
         "exit": exit_code,
@@ -2944,10 +3002,10 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         result["stopped by"] = stopped_by
     if sandbox_started is False and exit_code != 0:
         result["test sandbox did not start"] = True
+    if killed_at_memory_ceiling:
+        result["out of memory"] = {"processes killed": killed_at_memory_ceiling,
+                                   "ceiling": memory_ceiling_bytes}
     if statistics is not None:
-        with statistics:
-            statistics.seek(0)
-            counters = statistics.read().decode("utf-8", "replace")
         result["cpu_seconds"], result["peak_memory_bytes"], result["resources_note"] = \
             cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(counters)
     return result
@@ -3464,6 +3522,11 @@ def why_suite_failed(result):
         return (f"did not start: bwrap could not build its nc-test-sandbox "
                 f"({describe_exit(result['exit'])})")
     timeout = result.get("timeout")
+    out_of_memory = result.get("out of memory")
+    if timeout is None and out_of_memory:
+        return (f"{describe_exit(result['exit'])}, OUT OF MEMORY: the kernel killed "
+                f"{out_of_memory['processes killed']} of its processes at its memory ceiling of "
+                f"{out_of_memory['ceiling'] / 10**9:g} GB")
     if timeout is None:
         return describe_exit(result["exit"])
     recorded = timeout["recorded"]
@@ -3483,7 +3546,8 @@ SUITE_TIMEOUT_LINE = re.compile(r"^FAIL (?P<suite>.+?) TIMEOUT after \d+s \(limi
 # A suite's own verdict: the runner's line ends in describe_exit(), not in a timeout, a stop
 # or an nc-test-sandbox that did not start.
 SUITE_FAILED_LINE = re.compile(
-    r"^FAIL (?P<suite>\S.*?) (?:exit \d+|killed by (?:signal \d+|\S+))(?: \(| — log )")
+    r"^FAIL (?P<suite>\S.*?) (?:exit \d+|killed by (?:signal \d+|\S+))"
+    r"(?:, OUT OF MEMORY: [^(]*?)?(?: \(| — log )")
 NOT_RUN_TO_THE_END_LINE_PREFIX = f"{PROGRAM}: not run to the end"
 
 
