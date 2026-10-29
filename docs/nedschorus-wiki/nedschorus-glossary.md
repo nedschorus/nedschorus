@@ -30,7 +30,7 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 - **approved-by-walk** — approved by the user item by item in an approval-walk, not by one yes to a bundle.
 - **build-slice** — one numbered increment of a build plan, built and merged on its own.
 - **C-numbers** — the identifiers `C1`, `C2` … of the main-gatekeeper's decisions on the credential that pushes to main, defined in `nc-systems/main-gatekeeper/main-gatekeeper-design.md` § The credential and enforcement.
-- **code-prompt-code (aka CPC)** — a program built from both code and prompts, such as `nc-systems/cold-read/cold-read-grid.py`, which runs reviewer prompts through `claude` and `codex`.
+- **code-prompt-code (aka CPC)** — a program whose code does every step that needs no judgment, such as sequencing, saving and reading state, validation and retries, and hands an agent a prompt only for work that needs judgment, then checks the form of what the agent returns, such as its required sections, before its code uses it. Example: `nc-systems/cold-read/cold-read-grid.py`, which runs reviewer prompts through `claude` and `codex`.
 - **conversation-tail** — the verbatim tail of an agent-session's dialog, `~/.claude/handoffs/<seat>-dialog-NNNN.md`, which the handoff-supervisor writes when it replaces the agent-session, for the successor to read first.
 - **cosmetic-change** — a change to prose that alters only its formatting or its place, never what it says, as `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` defines it. #prose
 - **create-GHI** — the ghi-write-tool operation that files a new GHI for a GHI-MD that has none, refusing when an open GHI already covers the same ground.
