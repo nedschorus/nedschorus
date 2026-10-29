@@ -171,7 +171,7 @@ QUESTION 4, WHAT SHOULD BE CODE. The fast-clarify cell answers Questions 1
 to 3. Once it, or the Sonnet backup, has written the report, a second cell
 asks Question 4 of the cold-read-target itself, not the marked copy, through
 the claude launcher on claude-opus-5-5 at high effort, with
-WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE below, whose reading rules are cut from
+COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE below, whose reading rules are cut from
 FAST_CLARIFY_PROMPT_TEMPLATE. Its answer, under its own provenance stamp,
 becomes the report's `## Question 4: What should be code` section, placed
 before the sentence coverage section, so the report has four sections. It
@@ -311,7 +311,7 @@ FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES = FAST_CLARIFY_PROMPT_TEMPLATE[
     FAST_CLARIFY_PROMPT_TEMPLATE.index(FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES_OPENING_WORDS):
     FAST_CLARIFY_PROMPT_TEMPLATE.index(FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES_CLOSING_WORDS)
     + len(FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES_CLOSING_WORDS)]
-WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE = (
+COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE = (
     "Read {TARGET_PATH} in full, including any YAML frontmatter, and answer one "
     "question about it. " + FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES + " Read all of them, then answer the "
     "question for each document. The question is numbered 4 because another "
@@ -1292,7 +1292,7 @@ def what_should_be_code_section(target: pathlib.Path, scratch: pathlib.Path) -> 
     provenance stamp and answer, or, when the cell failed, a paragraph saying
     so and why, also printed on stderr. A failed cell never fails the read."""
     prompt_file = scratch / WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_SCRATCH_FILE_NAME
-    prompt_file.write_text(WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE, encoding="utf-8")
+    prompt_file.write_text(COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE, encoding="utf-8")
     answer_directory = scratch / WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_DIRECTORY_NAME
     answer_directory.mkdir()
     answer = answer_directory / WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_FILE_NAME

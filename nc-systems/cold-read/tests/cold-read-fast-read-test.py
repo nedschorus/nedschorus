@@ -110,6 +110,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import datetime
 from pathlib import Path
 
@@ -1051,7 +1052,6 @@ with tempfile.TemporaryDirectory() as scratch:
     suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
     hanging_stub_pid_file = scratch / "hanging-question-4-stub.pid"
     hanging_stub_pid_file.unlink(missing_ok=True)
-    import time
     hanging_read_started_at = time.monotonic()
     result = run_fast_read(
         repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n"}},
@@ -1625,7 +1625,7 @@ check("the Question 4 prompt carries the fast-clarify prompt's reading rules who
       warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES.startswith(warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES_OPENING_WORDS)
       and warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES.endswith(warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES_CLOSING_WORDS)
       and "Never open a credential file" in warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES
-      and warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES in warning_module.WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE,
+      and warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES in warning_module.COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE,
       repr(warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES[:200]))
 class_of = warning_module.full_run_class_of_target
 root = warning_module.REPO_ROOT
