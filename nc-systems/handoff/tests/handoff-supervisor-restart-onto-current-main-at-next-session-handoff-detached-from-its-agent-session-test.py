@@ -788,6 +788,20 @@ def a_supervisor_gone_from_the_table_after_sigstop_is_refused(fixture):
 
 
 @case
+def a_ps_failure_after_sigstop_continues_the_supervisor(fixture):
+    calls = []
+
+    def table_failing_after_the_freeze():
+        calls.append(1)
+        if len(calls) > 1:
+            raise subprocess.TimeoutExpired(["ps"], 30)
+        return restart.read_process_table()
+    code, _, stderr = run_main(fixture, read_table=table_failing_after_the_freeze)
+    check(code == 1 and "ps failed after SIGSTOP" in stderr and "SIGCONT was sent" in stderr, stderr)
+    check(not process_state(fixture.supervisor).startswith(("T", "t")), "SIGCONT was not sent")
+
+
+@case
 def sigkill_is_sent_exactly_at_the_wait_and_a_process_gone_by_then_is_no_failure(fixture):
     sleeper = subprocess.Popen(["sleep", "60"])
 

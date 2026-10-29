@@ -7,7 +7,9 @@ be ended and a new one started from the waiting session-handoff. An agent-seat c
 by hand, because one step ends that agent-session. This program does it in a
 process detached from the agent-session, so it keeps running after the
 agent-session is ended. It is written for the Mac, where no other agent-seat can
-act as the operator, and it works the same way on ned-box.
+act as the operator. It also runs on ned-box: there step 10's
+recover-crashed-seats.py starts the agent-seat in a new detached tmux session
+itself, instead of through launch-claude-mac.
 
 The agent-seat's own agent-session starts it, outside the Bash tool's sandbox,
 which on the Mac blocks signals to processes outside it:
@@ -40,11 +42,13 @@ recover-crashed-seats.py does not find it there, then:
      this program fails before step 8, it sends SIGCONT, so the old
      handoff-supervisor carries on as before, and stops;
   8. sends SIGKILL to the handoff-supervisor and SIGTERM to the agent-session,
-     then SIGKILL to the agent-session if it is still running 20 seconds later,
-     and SIGTERM to each process the agent-session had started that is still
-     running, by process ID, then SIGKILL to it if it is still running 5 seconds
-     later, because recover-crashed-seats.py refuses while a process runs in the
-     agent-seat's directory;
+     then SIGKILL to the agent-session if it is still running 20 seconds later.
+     It then ends, one at a time, each process the agent-session had started:
+     every process below the agent-session in the ps table, read just before
+     the SIGKILL, such as an MCP server the agent-session runs. Each one that is
+     still running gets SIGTERM, then SIGKILL if that same process is still
+     running 5 seconds later. This is because recover-crashed-seats.py refuses
+     while a process runs in the agent-seat's directory;
   9. runs resupervise-seat.py <name> --prepare-only, which refuses unless the
      handoff waits and no handoff-supervisor is alive, and removes the agent-seat's
      tmux session; and, if that succeeds,
@@ -56,19 +60,28 @@ recover-crashed-seats.py does not find it there, then:
 
 Process IDs are read only from the lock file, the state file and ps, never by a
 name pattern: every agent-seat runs as the same Unix user, so a pattern would
-reach the other agent-seats too.
+reach the other agent-seats too. The processes the agent-session started are
+found by walking down from its process ID through the parent process IDs ps
+lists.
 
 Every step is appended, with a UTC time, to
 ~/.claude/handoffs/<name>-handoff-supervisor-restart-log.txt, beside
 recover-crashed-seats.py's own log; the detached process's stdout and stderr go
 there too. The last line of each restart starts with RESTARTED, NOT RESTARTED or
-FAILED. A FAILED line means the old handoff-supervisor was ended and no new one
+FAILED. A NOT RESTARTED line means this program stopped before ending the old
+handoff-supervisor: it refused in the foreground, no handoff arrived in time,
+or it failed before step 8. The old handoff-supervisor then runs on, with
+SIGCONT sent to it if it had been stopped, on the code it started with. A
+FAILED line means the old handoff-supervisor was ended and no new one
 was confirmed: the agent-seat stays down, with its handoff waiting on disk, until
 someone reads the log and runs recover-crashed-seats.py again.
 
-This program does not tell merge-lane-2. The agent-session's handoff carries
-that instruction to its successor: the foreground output tells the agent to name
-the log file in its handoff's next step.
+This program does not tell merge-lane-2. The foreground output gives the agent
+a sentence to copy into the next step of the session-handoff it then writes,
+so that its successor reads the log and tells merge-lane-2, for example:
+"FIRST ACTION: read the end of ~/.claude/handoffs/cold-read-research-handoff-supervisor-restart-log.txt
+and tell merge-lane-2 with SendMessage what its last line says about the
+handoff-supervisor restart."
 
 What can go wrong: a handoff written with --dont-restart is still taken as the
 signal, and recover-crashed-seats.py then does not relaunch the agent-seat, at
@@ -264,7 +277,13 @@ def freeze_supervisor(supervisor_process_id: int, sleep=time.sleep, read_table=r
                       "it: run this program again with the Bash tool's dangerouslyDisableSandbox "
                       "set to true.")
     sleep(FREEZE_CONFIRMATION_DELAY_SECONDS)
-    state = read_table().get(supervisor_process_id, (0, "gone", ""))[1]
+    try:
+        state = read_table().get(supervisor_process_id, (0, "gone", ""))[1]
+    except Exception as error:
+        os.kill(supervisor_process_id, signal.SIGCONT)
+        raise HandoffSupervisorRestartRefusal(f"ps failed after SIGSTOP to handoff-supervisor {supervisor_process_id} "
+                      f"({error}), so SIGCONT was sent to it, and this program cannot confirm "
+                      "the freeze.")
     # Linux shows a stopped process as t instead of T inside some PID namespaces, such as bwrap's.
     if not state.startswith(("T", "t")):
         os.kill(supervisor_process_id, signal.SIGCONT)
