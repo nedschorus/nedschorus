@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for pull-request-mutation-testing-survivors.py.
+"""Tests for mutation-testing-changed-lines-quick-or-full-pass-survivors.py.
 
-Run: python3 scripts/pull-request-mutation-testing-survivors-test.py
+Run: python3 scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors-test.py
 Prints one line per case and exits non-zero if any case fails.
 
 No case runs the real cosmic-ray. Each case builds a scratch repository with
@@ -31,7 +31,7 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
-SCRIPT = Path(__file__).with_name("pull-request-mutation-testing-survivors.py")
+SCRIPT = Path(__file__).with_name("mutation-testing-changed-lines-quick-or-full-pass-survivors.py")
 
 
 def load_test_suite_runner():
@@ -43,7 +43,7 @@ def load_test_suite_runner():
 
 
 def load_script_module():
-    spec = importlib.util.spec_from_file_location("pull_request_mutation_testing_survivors",
+    spec = importlib.util.spec_from_file_location("mutation_testing_changed_lines_quick_or_full_pass_survivors",
                                                   str(SCRIPT))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -65,7 +65,7 @@ def cosmic_ray_timeout_line_and_test_command_words_for_limit(limit):
             [sys.executable, str(SCRIPT.resolve()),
              load_script_module().COSMIC_RAY_TEST_COMMAND_RUN_TEST_SUITE_RUNNER_STOPPED_AFTER_SECONDS_FLAG, repr(float(limit))])
 
-CONTROL_DIRECTORY_VARIABLE = "PULL_REQUEST_MUTATION_TESTING_SURVIVORS_TEST_CONTROL_DIR"
+CONTROL_DIRECTORY_VARIABLE = "MUTATION_TESTING_CHANGED_LINES_QUICK_OR_FULL_PASS_SURVIVORS_TEST_CONTROL_DIR"
 
 FAKE_COSMIC_RAY_SOURCE = f'''#!/usr/bin/env python3
 import json, os, pathlib, re, shlex, subprocess, sys
@@ -82,6 +82,8 @@ with (control / "calls.log").open("a") as log:
                           "session_attended": os.environ.get("CLAUDE_CODE_SESSION_ATTENDED")}}) + "\\n")
 if tool == "cr-filter-git":
     sys.exit(plan.get("filter_exit", 0))
+if tool in ("cr-filter-pragma", "cr-filter-lines"):
+    sys.exit(plan.get(tool + "_exit", 0))
 command = arguments[0]
 if command == "baseline":
     config_text = pathlib.Path(arguments[-1]).read_text()
@@ -182,7 +184,7 @@ def advance_base_past_merge_base(repository, merge_base):
 def fake_venv(directory, plan):
     venv = Path(directory) / "venv"
     (venv / "bin").mkdir(parents=True)
-    for tool in ("cosmic-ray", "cr-filter-git"):
+    for tool in ("cosmic-ray", "cr-filter-git", "cr-filter-pragma", "cr-filter-lines"):
         path = venv / "bin" / tool
         path.write_text(FAKE_COSMIC_RAY_SOURCE)
         path.chmod(0o755)
@@ -227,6 +229,11 @@ def script_command_and_environment(repository, control, *flags, path_override=No
     if path_override is not None:
         environment["PATH"] = path_override
     environment.update(extra_environment or {})
+    # The full mutation pass, unless the case names a pass: it mutates every changed line.
+    passes = (load_script_module().QUICK_MUTATION_PASS_FLAG,
+              load_script_module().FULL_MUTATION_PASS_FLAG)
+    if not any(flag in passes for flag in flags):
+        flags = (passes[1], *flags)
     # Never the real machine lock or admission, which the suite runner the test command runs
     # would share with every run on the machine.
     return ([sys.executable, str(SCRIPT), "--checkout", str(repository),
@@ -331,6 +338,253 @@ def killed_with_output(output):
             "diff": SURVIVOR_DIFF}
 
 
+HANDLER_SOURCE = """import subprocess
+
+
+def double(x):
+    return x + x
+
+
+def status(command):
+    completed = subprocess.run(command, check=False)
+    if completed.returncode != 0:
+        return "failed"
+    try:
+        return int("7")
+    except ValueError:
+        return -1
+"""
+
+QUICK_HEAD_FILES = {
+    "scripts/handler.py": HANDLER_SOURCE,
+    "scripts/handler-test.py": "import sys\nsys.exit(0)\n",
+}
+
+
+def commit_on_top(repository, path, text):
+    """Commit one more change on the repository's head; return (the old head, the new head)."""
+    old_head = git(repository, "rev-parse", "HEAD")
+    (repository / path).write_text(text)
+    git(repository, "add", "-A")
+    git(repository, "commit", "-q", "-m", "on top")
+    return old_head, git(repository, "rev-parse", "HEAD")
+
+
+def write_recording(control, repository, suite, recording):
+    root = git(repository, "rev-list", "--max-parents=0", "HEAD")
+    recordings = control / "recordings" / root[:16]
+    recordings.mkdir(parents=True, exist_ok=True)
+    (recordings / (suite.replace("/", "__") + ".json")).write_text(json.dumps(recording))
+
+
+def suites_named(control):
+    _, words = config_and_test_command_words(control)
+    return words[words.index("--only-suites-named") + 1:] if words else []
+
+
+def run_quick_mutation_pass_cases():
+    survivors = load_script_module()
+
+    # ------------------------------------------------------------------
+    # What counts as failure-handling code, and which lines a change made.
+    # ------------------------------------------------------------------
+    source = ("def f(completed, runner_exit_code, code, process):\n"
+              "    try:\n"
+              "        g()\n"
+              "    except OSError:\n"
+              "        h()\n"
+              "    while runner_exit_code != 0:\n"
+              "        g()\n"
+              "    word = 'failed' if completed.returncode else 'passed'\n"
+              "    if code:\n"
+              "        g()\n"
+              "    if process.exit_status == 3:\n"
+              "        g()\n"
+              "    else:\n"
+              "        h()\n")
+    check("failure-handling code: each except clause, and each while, conditional expression "
+          "and if statement whose test reads an exit code, from its first line to its last; "
+          "not an if on another name",
+          survivors.failure_handling_line_ranges(source) == [(4, 5), (6, 7), (8, 8), (11, 14)],
+          survivors.failure_handling_line_ranges(source))
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, _, _ = scratch_repository(scratch_name, QUICK_HEAD_FILES)
+        old_head, new_head = commit_on_top(
+            repository, "scripts/handler.py",
+            HANDLER_SOURCE.replace("    return x + x\n", "    return 2 * x\n").replace(
+                "        return -1\n", "        return -2\n        # and more\n"))
+        changed = survivors.changed_line_numbers_at_head(repository, old_head, new_head,
+                                                        "scripts/handler.py", None)
+        check("the changed lines are the head's numbers of every line changed or added",
+              changed == {5, 15, 16}, changed)
+
+    # ------------------------------------------------------------------
+    # The quick mutation pass on a new file: only its failure-handling lines are mutated.
+    # ------------------------------------------------------------------
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, QUICK_HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"dump": [
+            [work_item("scripts/handler.py", 10, "core/ReplaceComparisonOperator_NotEq_Eq", "a"),
+             result("survived", diff=SURVIVOR_DIFF)]]})
+        json_file = Path(scratch_name) / "mutants.json"
+        completed = run_script(repository, control, "--quick-mutation-pass", "--head", head,
+                               "--base", base, "--cosmic-ray-venv", str(venv),
+                               "--survived-and-errored-mutants-json-file", str(json_file))
+        config, _ = config_and_test_command_words(control)
+        recorded = calls(control)
+        check("quick mutation pass: a survivor makes the exit 1",
+              completed.returncode == 1,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+        check("quick mutation pass: the config's line filter keeps the file's failure-handling "
+              "lines",
+              '[cosmic-ray.filters.line-filter]\nlines = { "scripts/handler.py" = '
+              '["10-11", "14-15"] }\n' in config, config)
+        check("quick mutation pass: cr-filter-lines runs with the config after cr-filter-git "
+              "and cr-filter-pragma, before exec",
+              [c["tool"] if c["tool"].startswith("cr-filter") else c["arguments"][0]
+               for c in recorded]
+              == ["baseline", "dump", "init", "cr-filter-git", "cr-filter-pragma",
+                  "cr-filter-lines", "exec", "dump"]
+              and recorded[5]["arguments"][:2] == ["--config", recorded[5]["arguments"][1]]
+              and recorded[5]["arguments"][1].endswith(".toml"), json.dumps(recorded))
+        check("quick mutation pass: the summary counts failure-handling lines and files with "
+              "no failure-handling change",
+              "SUMMARY: 1 mutants on changed failure-handling lines of 1 file(s): 0 killed, "
+              "1 survived, 0 errored, 0 not run; 0 changed file(s) with no failure-handling "
+              "change; 0 changed file(s) with no suite" in completed.stdout, completed.stdout)
+        written = json.loads(json_file.read_text()) if json_file.exists() else {}
+        check("the JSON file holds the head, the merge base and each survivor",
+              written.get("head") == head and written.get("merge_base") == base
+              and written.get("survived") == [{
+                  "module_path": "scripts/handler.py", "line": 10,
+                  "operator": "core/ReplaceComparisonOperator_NotEq_Eq",
+                  "diff": SURVIVOR_DIFF, "reason": ""}]
+              and written.get("errored") == [] and written.get("files_with_no_suite") == [],
+              written)
+
+    # A JSON file that cannot be written: exit 2, after the summary.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, QUICK_HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"dump": []})
+        completed = run_script(repository, control, "--quick-mutation-pass", "--head", head,
+                               "--base", base, "--cosmic-ray-venv", str(venv),
+                               "--survived-and-errored-mutants-json-file",
+                               str(Path(scratch_name) / "missing-directory" / "mutants.json"))
+        check("a JSON file that cannot be written: exit 2, and the message says what to do",
+              completed.returncode == 2 and "SUMMARY:" in completed.stdout
+              and "were not written to" in completed.stderr
+              and "Give --survived-and-errored-mutants-json-file a path" in completed.stderr,
+              f"rc={completed.returncode} err={completed.stderr}")
+
+    # A change with no failure-handling line is not mutated in the quick pass.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, _, _ = scratch_repository(scratch_name, QUICK_HEAD_FILES)
+        base, head = commit_on_top(repository, "scripts/handler.py",
+                                   HANDLER_SOURCE.replace("x + x", "2 * x"))
+        venv, control = fake_venv(scratch_name, {"dump": []})
+        completed = run_script(repository, control, "--quick-mutation-pass", "--head", head,
+                               "--base", base, "--cosmic-ray-venv", str(venv))
+        check("quick mutation pass: a file whose changed lines hold no failure-handling code is "
+              "not mutated, is named so, and leaves the exit 0",
+              completed.returncode == 0 and calls(control) == []
+              and "NO FAILURE-HANDLING CHANGE  scripts/handler.py" in completed.stdout
+              and "1 changed file(s) with no failure-handling change" in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} calls={calls(control)}")
+
+    # Suites: the quick pass leaves out the repository-wide checks and every suite whose
+    # recording read every Python file tracked at its commit; the full pass keeps them.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        files = dict(QUICK_HEAD_FILES)
+        repository_wide_check = survivors.REPOSITORY_WIDE_CHECKS[0]
+        for suite in ("scripts/reader-test.py", "scripts/all-reader-test.py",
+                      "scripts/unknown-commit-reader-test.py", repository_wide_check):
+            files[suite] = "import sys\nsys.exit(0)\n"
+        repository, base, head = scratch_repository(scratch_name, files)
+        every_python_file = {path: "blob" for path in files if path.endswith(".py")}
+        venv, control = fake_venv(scratch_name, {"dump": []})
+        write_recording(control, repository, "scripts/reader-test.py",
+                        {"exit": 0, "commit": head, "reads": {"scripts/handler.py": "blob"}})
+        write_recording(control, repository, "scripts/all-reader-test.py",
+                        {"exit": 0, "commit": head, "reads": every_python_file})
+        write_recording(control, repository, "scripts/unknown-commit-reader-test.py",
+                        {"exit": 0, "commit": "f" * 40, "reads": every_python_file})
+        write_recording(control, repository, repository_wide_check,
+                        {"exit": 0, "commit": head, "reads": {"scripts/handler.py": "blob"}})
+        completed = run_script(repository, control, "--quick-mutation-pass", "--head", head,
+                               "--base", base, "--cosmic-ray-venv", str(venv))
+        check("quick mutation pass: a repository-wide check, and a suite that read every Python "
+              "file tracked at its recording's commit, are left out; a suite whose recording's "
+              "commit git cannot list is kept",
+              sorted(suites_named(control)) == ["scripts/handler-test.py",
+                                                "scripts/reader-test.py",
+                                                "scripts/unknown-commit-reader-test.py"],
+              (suites_named(control), completed.stdout, completed.stderr))
+        full_directory = Path(scratch_name) / "full"
+        full_directory.mkdir()
+        venv_full, control_full = fake_venv(full_directory, {"dump": []})
+        (control_full / "recordings").symlink_to(control / "recordings")
+        run_script(repository, control_full, "--full-mutation-pass", "--head", head,
+                   "--base", base, "--cosmic-ray-venv", str(venv_full))
+        check("full mutation pass: the repository-wide check and the suite that read every "
+              "Python file are kept",
+              sorted(suites_named(control_full)) == sorted([
+                  "scripts/handler-test.py", "scripts/reader-test.py",
+                  "scripts/all-reader-test.py", "scripts/unknown-commit-reader-test.py",
+                  repository_wide_check]), suites_named(control_full))
+
+    # A file whose only suites are left out has no suite in the quick pass.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository_wide_check = survivors.REPOSITORY_WIDE_CHECKS[0]
+        files = {"scripts/lonely.py": HANDLER_SOURCE,
+                 repository_wide_check: "import sys\nsys.exit(0)\n"}
+        repository, base, head = scratch_repository(scratch_name, files)
+        venv, control = fake_venv(scratch_name, {"dump": []})
+        write_recording(control, repository, repository_wide_check,
+                        {"exit": 0, "commit": head, "reads": {"scripts/lonely.py": "blob"}})
+        completed = run_script(repository, control, "--quick-mutation-pass", "--head", head,
+                               "--base", base, "--cosmic-ray-venv", str(venv))
+        check("quick mutation pass: a file read only by left-out suites has NO SUITE, exit 1, "
+              "and the message says how to give it one",
+              completed.returncode == 1 and calls(control) == []
+              and "NO SUITE  scripts/lonely.py: once the repository-wide checks" in completed.stdout
+              and "python3 scripts/run-all-test-suites.py --only-suites-named <the suite's path>"
+              in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout}")
+
+    # A changed file that is not valid Python cannot be searched for failure-handling code.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, {
+            "scripts/broken.py": "def broken(:\n"})
+        venv, control = fake_venv(scratch_name, {"dump": []})
+        completed = run_script(repository, control, "--quick-mutation-pass", "--head", head,
+                               "--base", base, "--cosmic-ray-venv", str(venv))
+        check("quick mutation pass: a changed file that is not valid Python exits 2, naming it "
+              "and the check to pass, and removes the worktree",
+              completed.returncode == 2
+              and "scripts/broken.py at the head is not valid Python" in completed.stderr
+              and "python3 -m py_compile scripts/broken.py" in completed.stderr
+              and len(worktrees_of(repository)) == 1,
+              f"rc={completed.returncode} err={completed.stderr}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        worktree = Path(scratch_name)
+        (worktree / "latin.py").write_bytes(b"NAME = '\xe9'\n")
+        try:
+            survivors.failure_handling_line_ranges_of_file(worktree, "latin.py")
+            refused = ""
+        except survivors.CouldNotRun as refusal:
+            refused = str(refusal)
+        check("quick mutation pass: a changed file that is not UTF-8 is refused as not valid "
+              "Python", "latin.py at the head is not valid Python" in refused, refused)
+
+    # Every listed repository-wide check is a suite in this repository.
+    repository_root = SCRIPT.resolve().parent.parent
+    missing = [suite for suite in survivors.REPOSITORY_WIDE_CHECKS
+               if not (repository_root / suite).is_file()]
+    check("every suite REPOSITORY_WIDE_CHECKS names exists, so a renamed check is not "
+          "silently kept in the quick mutation pass", missing == [], missing)
+
+
 def run_cases():
     # ------------------------------------------------------------------
     # The config written, the worktree used, and survivors parsed.
@@ -394,11 +648,15 @@ def run_cases():
               'name = "local"' in config
               and cosmic_ray_timeout_line_and_test_command_words_for_limit(45)[0] in config,
               config)
-        check("cosmic-ray runs baseline, its dump, init, cr-filter-git, exec and dump, in order",
-              [c["tool"] if c["tool"] == "cr-filter-git" else c["arguments"][0]
+        check("cosmic-ray runs baseline, its dump, init, cr-filter-git, cr-filter-pragma, exec "
+              "and dump, in order, and the full mutation pass runs no cr-filter-lines",
+              [c["tool"] if c["tool"].startswith("cr-filter") else c["arguments"][0]
                for c in recorded]
-              == ["baseline", "dump", "init", "cr-filter-git", "exec", "dump"],
+              == ["baseline", "dump", "init", "cr-filter-git", "cr-filter-pragma", "exec",
+                  "dump"],
               json.dumps(recorded))
+        check("the full mutation pass's config has no line filter",
+              "line-filter" not in config, config)
         check("cosmic-ray runs in a worktree at the head, not in the checkout",
               recorded and all(c["head"] == head and Path(c["cwd"]).resolve()
                                != repository.resolve() for c in recorded),
@@ -1059,7 +1317,7 @@ def run_cases():
         repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
         venv, control = fake_venv(scratch_name, {"dump": []})
         spec = importlib.util.spec_from_file_location(
-            "pull_request_mutation_testing_survivors", str(SCRIPT))
+            "mutation_testing_changed_lines_quick_or_full_pass_survivors", str(SCRIPT))
         survivors_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(survivors_module)
         load_runner_for_refusal = survivors_module.load_test_suite_runner
@@ -1079,6 +1337,7 @@ def run_cases():
         try:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(printed):
                 status = survivors_module.main([
+                    survivors_module.FULL_MUTATION_PASS_FLAG,
                     "--checkout", str(repository),
                     "--recorded-inputs-directory", str(control / "recordings"),
                     "--lock-file", str(control / "machine.lock"),
@@ -1091,9 +1350,9 @@ def run_cases():
               "the runner's reason under this program's name",
               status == survivors_module.EXIT_COULD_NOT_RUN
               and printed.getvalue() == (
-                  "pull-request-mutation-testing-survivors: not run — injected root-commit "
+                  "mutation-testing-changed-lines-quick-or-full-pass-survivors: not run — injected root-commit "
                   "failure\n" + survivors_module.load_test_suite_runner()
-                  .git_failure_next_step_lines("pull-request-mutation-testing-survivors.py")
+                  .git_failure_next_step_lines("mutation-testing-changed-lines-quick-or-full-pass-survivors.py")
                   + "\n"), (status, printed.getvalue()))
 
     # ------------------------------------------------------------------
@@ -1179,10 +1438,12 @@ def run_cases():
     else:
         print("SKIP  the signal sandbox cases: bwrap is used only on Linux")
 
+    run_quick_mutation_pass_cases()
+
     # ------------------------------------------------------------------
     # Path listings: names git would C-quote without -z come back as stored.
     # ------------------------------------------------------------------
-    spec = importlib.util.spec_from_file_location("pull_request_mutation_testing_survivors",
+    spec = importlib.util.spec_from_file_location("mutation_testing_changed_lines_quick_or_full_pass_survivors",
                                                   SCRIPT)
     survivors = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(survivors)
@@ -1264,13 +1525,14 @@ def run_cases():
     # ------------------------------------------------------------------
     # Bad invocations.
     # ------------------------------------------------------------------
-    completed = subprocess.run([sys.executable, str(SCRIPT), "--head", "abc"],
+    completed = subprocess.run([sys.executable, str(SCRIPT), "--quick-mutation-pass",
+                                "--head", "abc"],
                                capture_output=True, text=True, check=False)
     check("--head without --base exits 2 and says why",
           completed.returncode == 2 and "--head needs --base" in completed.stderr,
           completed.stderr)
-    completed = subprocess.run([sys.executable, str(SCRIPT), "--pull-request", "1",
-                                "--base", "main"],
+    completed = subprocess.run([sys.executable, str(SCRIPT), "--full-mutation-pass",
+                                "--pull-request", "1", "--base", "main"],
                                capture_output=True, text=True, check=False)
     check("--base with --pull-request exits 2 and says why",
           completed.returncode == 2 and "--base goes with --head" in completed.stderr,

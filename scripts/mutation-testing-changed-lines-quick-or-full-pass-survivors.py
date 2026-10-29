@@ -1,20 +1,39 @@
 #!/usr/bin/env python3
-"""Run nc-mutation-testing with cosmic-ray on the lines a pull request changed, and print the survivors.
+"""Run nc-mutation-testing with cosmic-ray on the lines a change made, in its quick or its full pass, and print the survivors.
 
 Usage:
-  scripts/pull-request-mutation-testing-survivors.py --pull-request N
-  scripts/pull-request-mutation-testing-survivors.py --head COMMIT --base COMMIT
+  scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py
+      (--quick-mutation-pass | --full-mutation-pass)
+      (--pull-request N | --head COMMIT --base COMMIT)
       [--checkout DIR] [--cosmic-ray-venv DIR] [--python INTERPRETER]
       [--recorded-inputs-directory DIR] [--mutant-timeout-seconds S]
-      [--lock-file PATH]
+      [--lock-file PATH] [--survived-and-errored-mutants-json-file PATH]
 
 The head is checked out in a detached scratch worktree, because cosmic-ray
 edits each mutant into the file on disk; the worktree is removed afterwards,
 whatever happens. Each changed Python file that is not itself a suite is
-mutated on its changed lines only, against the merge base, and each mutant
-is tested with every suite whose recorded inputs read that file (the
-recordings scripts/run-all-test-suites.py keeps), plus the file's sibling
+mutated on its changed lines only, against the merge base. A line that ends
+in a `# pragma: no mutate` comment is never mutated: that comment records
+why no test can kill the mutants of its line.
+
+THE FULL MUTATION PASS mutates every changed line, and tests each mutant
+with every suite whose recorded inputs read that file (the recordings
+scripts/run-all-test-suites.py keeps), plus the file's sibling
 `<name>-test.py` or `<name>-test.sh` when there is one.
+
+THE QUICK MUTATION PASS, run before a push, mutates only the changed lines
+that are failure-handling code: an `except` clause, and an `if` statement,
+`while` loop or conditional expression whose test reads an exit code (a name
+or attribute named `returncode`, or ending in `exit_code` or `exit_status`),
+each from its first line to its last. A changed file with no changed line of
+failure-handling code is not mutated, and is printed as NO FAILURE-HANDLING
+CHANGE. Its mutants are tested with the full mutation pass's suites less the
+repository-wide checks, which check one rule across a whole class of the
+repository's files and are listed in REPOSITORY_WIDE_CHECKS, and less
+every suite whose recorded inputs read every Python file git tracked at the
+commit the recording was made at. Those suites still run on the unmutated
+code before a push and every day on main, and against mutants in the full
+mutation pass.
 
 The test command cosmic-ray runs, for the baseline on the unmutated head and
 for each mutant, is this script, given
@@ -67,21 +86,31 @@ not. On the unmutated head either a suite's own time limit or the limit on
 one run of the suites stops the script with exit 2 and a message saying the suites ran out of time, with the limit,
 and, for a suite's own limit, the suite.
 
+--survived-and-errored-mutants-json-file, when given, names a file this
+script writes after its SUMMARY line, as one JSON object: "head",
+"merge_base", "survived" and "errored", each a list of mutants with
+"module_path", "line", "operator", "diff" and "reason", and
+"files_with_no_suite". A file that cannot be written exits 2.
+
 Exit codes: 0 every mutant was killed, 1 a mutant survived, errored or was
 not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
 a git step failed, the nc-head-commit is already in the base, the worktree could
-not be made, or a suite fails, runs out of time or cannot be launched on the
+not be made, a changed file the quick mutation pass reads is not valid Python,
+the JSON file could not be written, or a suite fails, runs out of time or
+cannot be launched on the
 unmutated head), 143 or 129 stopped by SIGTERM or SIGHUP (128 plus the signal
 number), after removing the scratch worktree, git's record of it included,
 and the scratch directory.
 """
 
 import argparse
+import ast
 import hashlib
 import importlib.util
 import json
 import math
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -89,13 +118,35 @@ import sys
 import tempfile
 from pathlib import Path
 
-PROGRAM = "pull-request-mutation-testing-survivors"
+PROGRAM = "mutation-testing-changed-lines-quick-or-full-pass-survivors"
 
 EXIT_EVERY_MUTANT_KILLED = 0
 EXIT_SURVIVORS_OR_UNTESTED_FILES = 1
 EXIT_COULD_NOT_RUN = 2
 
-COSMIC_RAY_TOOLS = ("cosmic-ray", "cr-filter-git")
+COSMIC_RAY_TOOLS = ("cosmic-ray", "cr-filter-git", "cr-filter-pragma", "cr-filter-lines")
+
+QUICK_MUTATION_PASS_FLAG = "--quick-mutation-pass"
+FULL_MUTATION_PASS_FLAG = "--full-mutation-pass"
+
+# Each checks one rule across a whole class of the repository's files, so its recording reads
+# nearly every module; the quick mutation pass leaves it out.
+REPOSITORY_WIDE_CHECKS = (
+    "nc-systems/general-tools/tests/common-module-wording-copied-into-other-test-files-guard-for-each-wording-module-test.py",
+    "scripts/code-comments-carry-no-history-markers-test.py",
+    "scripts/edited-file-path-within-checkout-root-and-git-check-ignore-defined-once-test.py",
+    "scripts/every-repository-program-help-option-test.py",
+    "scripts/git-redirecting-environment-variables-defined-once-test.py",
+    "scripts/git-redirecting-environment-variables-removed-by-every-caller-test.py",
+    "scripts/python-files-carry-no-try-except-pass-ruff-s110-test.py",
+    "scripts/registered-hook-messages-carry-no-citations-test.py",
+    "scripts/supervisor-file-names-defined-once-test.py",
+    "scripts/test-suites-run-directly-ignore-git-redirecting-environment-test.py",
+    "scripts/test-suites-source-scan-for-skipped-case-prints-run-all-test-suites-cannot-count-test.py",
+)
+
+# A name or attribute that holds a process's exit code, as this project's code names one.
+EXIT_CODE_NAME = re.compile(r"(?:^|_)(?:returncode|exit_code|exit_status)$")
 TEST_SUITE_RUNNER_START_UP_SECONDS = 5
 # The runner acts on SIGTERM within RUN_STOP_SIGNAL_CHECK_SECONDS, then waits up to
 # TEST_SUITE_OUTPUT_DRAIN_SECONDS for each killed suite's output.
@@ -215,6 +266,77 @@ def suites_for_file(path, suites_at_head, recordings_directory, runner):
     return chosen
 
 
+def tracked_python_files_at(commit, checkout, environment, cache):
+    """The Python files git tracks at the commit, or None when git cannot list them."""
+    if commit not in cache:
+        listed = run(["git", "ls-tree", "-r", "-z", "--name-only", commit], checkout, environment)
+        cache[commit] = None if listed.returncode != 0 else {
+            path for path in git_output.nul_separated_fields(listed.stdout) if path.endswith(".py")}
+    return cache[commit]
+
+
+def quick_mutation_pass_suites(suites, recordings_directory, runner, checkout, environment,
+                               tracked_python_files_cache):
+    """The suites less the repository-wide checks and every suite whose recording read every
+    Python file git tracked at the commit it was recorded at."""
+    chosen = []
+    for suite in suites:
+        if suite in REPOSITORY_WIDE_CHECKS:
+            continue
+        recording = runner.load_recording(recordings_directory, suite)
+        commit = recording.get("commit") if isinstance(recording, dict) else None
+        # A commit this clone lacks leaves the suite in: it only costs time.
+        tracked = (tracked_python_files_at(commit, checkout, environment,
+                                           tracked_python_files_cache)
+                   if isinstance(commit, str) else None)
+        if tracked and tracked <= set(recording.get("reads", {})):
+            continue
+        chosen.append(suite)
+    return chosen
+
+
+def reads_an_exit_code(expression):
+    return any(EXIT_CODE_NAME.search(node.attr if isinstance(node, ast.Attribute) else node.id)
+               for node in ast.walk(expression) if isinstance(node, (ast.Attribute, ast.Name)))
+
+
+def failure_handling_line_ranges(source):
+    """(first line, last line) of each except clause, and of each if, while or conditional
+    expression whose test reads an exit code."""
+    return sorted(
+        (node.lineno, node.end_lineno) for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ExceptHandler)
+        or (isinstance(node, (ast.If, ast.While, ast.IfExp)) and reads_an_exit_code(node.test)))
+
+
+HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def changed_line_numbers_at_head(checkout, merge_base, head, path, environment):
+    """The numbers, at head, of the lines the change added or changed in the file."""
+    diff = run_or_raise(["git", "--literal-pathspecs", "diff", "--unified=0", "--no-color",
+                         "--no-ext-diff", merge_base, head, "--", path],
+                        checkout, environment, what=f"git diff of {path}")
+    changed = set()
+    for line in diff.splitlines():
+        hunk = HUNK_HEADER.match(line)
+        if hunk:
+            start = int(hunk[1])
+            changed.update(range(start, start + int(hunk[2] if hunk[2] is not None else 1)))
+    return changed
+
+
+def failure_handling_line_ranges_of_file(worktree, path):
+    try:
+        return failure_handling_line_ranges((worktree / path).read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError) as error:
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — {path} at the head is not valid Python ({error}), so the "
+            f"quick mutation pass cannot find its failure-handling code.\n"
+            f"Fix the file so python3 -m py_compile {shlex.quote(path)} passes, then run "
+            f"this again.") from error
+
+
 def run_test_suite_runner_with_its_stderr_on_stdout_stopped_before_cosmic_ray_limit(
         seconds, command):
     """Run the suite runner's command, its standard error on standard output; past `seconds`,
@@ -262,7 +384,12 @@ def default_mutant_timeout_seconds_from_test_suites_own_time_limits(
 
 
 def cosmic_ray_config_text(module_path, test_command, merge_base,
-                           mutant_timeout_seconds):
+                           mutant_timeout_seconds, failure_handling_ranges=None):
+    """cosmic-ray's config; with failure_handling_ranges, cr-filter-lines keeps only those lines."""
+    line_filter = "" if failure_handling_ranges is None else (
+        "\n[cosmic-ray.filters.line-filter]\n"
+        f"lines = {{ {json.dumps(module_path)} = "
+        f"{json.dumps([f'{first}-{last}' for first, last in failure_handling_ranges])} }}\n")
     return (
         "[cosmic-ray]\n"
         f"module-path = {json.dumps(module_path)}\n"
@@ -274,7 +401,8 @@ def cosmic_ray_config_text(module_path, test_command, merge_base,
         "name = \"local\"\n"
         "\n"
         "[cosmic-ray.filters.git-filter]\n"
-        f"branch = {json.dumps(merge_base)}\n")
+        f"branch = {json.dumps(merge_base)}\n"
+        + line_filter)
 
 
 OUTCOME_KEYS = ("killed", "survived", "errored", "no mutation", "skipped",
@@ -431,8 +559,11 @@ def baseline_refusal(path, suites, baseline, baseline_results, mutant_timeout_se
 
 def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
                            arguments, environment, runner, recorded_inputs_directory,
-                           recordings_directory, in_test_sandboxes):
-    """Run cosmic-ray on one file's changed lines; return (counts, survivors, errored)."""
+                           recordings_directory, in_test_sandboxes,
+                           failure_handling_ranges=None):
+    """Run cosmic-ray on one file's changed lines; return (counts, survivors, errored).
+
+    With failure_handling_ranges, only the changed lines inside them are mutated."""
     name = scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(path)
     config = scratch / f"{name}.toml"
     session = scratch / f"{name}.sqlite"
@@ -446,7 +577,8 @@ def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
                                mutant_timeout_seconds),
         merge_base,
         mutant_timeout_seconds
-        + MUTANT_TIMEOUT_EXTRA_SECONDS_FOR_TEST_SUITE_RUNNER_TO_STOP_ITS_SUITES))
+        + MUTANT_TIMEOUT_EXTRA_SECONDS_FOR_TEST_SUITE_RUNNER_TO_STOP_ITS_SUITES,
+        failure_handling_ranges))
     cosmic_ray = [tools["cosmic-ray"]]
     baseline = run([*cosmic_ray, "baseline", "--session-file",
                     str(baseline_session), str(config)], worktree, environment)
@@ -476,6 +608,11 @@ def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
                  environment, what=f"cosmic-ray init for {path}")
     run_or_raise([tools["cr-filter-git"], "--config", str(config), str(session)],
                  worktree, environment, what=f"cr-filter-git for {path}")
+    run_or_raise([tools["cr-filter-pragma"], str(session)],
+                 worktree, environment, what=f"cr-filter-pragma for {path}")
+    if failure_handling_ranges is not None:
+        run_or_raise([tools["cr-filter-lines"], "--config", str(config), str(session)],
+                     worktree, environment, what=f"cr-filter-lines for {path}")
     run_or_raise([*cosmic_ray, "exec", str(config), str(session)], worktree,
                  environment, what=f"cosmic-ray exec for {path}")
     return outcomes_from_dump(run_or_raise(
@@ -495,6 +632,13 @@ def remove_worktree(checkout, worktree, environment):
 
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    which_pass = parser.add_mutually_exclusive_group(required=True)
+    which_pass.add_argument(QUICK_MUTATION_PASS_FLAG, action="store_true",
+                            help="mutate only the changed failure-handling code, without the "
+                                 "repository-wide checks; the pass to run before a push")
+    which_pass.add_argument(FULL_MUTATION_PASS_FLAG, action="store_true",
+                            help="mutate every changed line, with every suite that reads the "
+                                 "file; the pass the daily maintenance-job runs")
     which = parser.add_mutually_exclusive_group(required=True)
     which.add_argument("--pull-request", type=int,
                        help="the pull request to test; its head and base are read with gh and fetched")
@@ -514,6 +658,8 @@ def parse_arguments(argv):
                         help="the limit on one run of a file's suites; default, the "
                              "longest suite's own limit times the runner's rounds, plus its "
                              "start-up")
+    parser.add_argument("--survived-and-errored-mutants-json-file", default=None,
+                        help="a file to write the survived and errored mutants to, as JSON")
     arguments = parser.parse_args(argv)
     if arguments.head is not None and arguments.base is None:
         parser.error("--head needs --base")
@@ -591,6 +737,10 @@ def main_with_stop_signals_raising_system_exit(argv):
 
         totals = dict.fromkeys(OUTCOME_KEYS, 0)
         untested = []
+        no_failure_handling_change = []
+        all_survivors = []
+        all_errored = []
+        tracked_python_files_cache = {}
         # As the runner decides it, since the runner's rounds of suites set the limit.
         in_test_sandboxes = sys.platform.startswith("linux") and \
             runner.does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(
@@ -614,10 +764,38 @@ def main_with_stop_signals_raising_system_exit(argv):
                 for path in files:
                     suites = suites_for_file(path, suites_listed_at_head,
                                              recordings_directory, runner)
+                    failure_handling_ranges = None
+                    if arguments.quick_mutation_pass:
+                        failure_handling_ranges = failure_handling_line_ranges_of_file(
+                            worktree, path)
+                        changed = changed_line_numbers_at_head(checkout, merge_base, head,
+                                                               path, environment)
+                        if not any(first <= number <= last for number in changed
+                                   for first, last in failure_handling_ranges):
+                            no_failure_handling_change.append(path)
+                            print(f"NO FAILURE-HANDLING CHANGE  {path}: none of its changed "
+                                  f"lines is in an except clause, or in an if, while or "
+                                  f"conditional expression that tests an exit code, so the "
+                                  f"quick mutation pass does not mutate it; nothing to do "
+                                  f"for it")
+                            continue
+                        suites = quick_mutation_pass_suites(
+                            suites, recordings_directory, runner, checkout, environment,
+                            tracked_python_files_cache)
                     if not suites:
                         untested.append(path)
-                        print(f"NO SUITE  {path}: no recorded suite reads it and it "
-                              f"has no sibling suite, so its changed lines are untested")
+                        if arguments.quick_mutation_pass:
+                            print(f"NO SUITE  {path}: once the repository-wide checks and "
+                                  f"the suites that read every tracked Python file are left "
+                                  f"out, no recorded suite reads it and it has no sibling "
+                                  f"suite, so its changed failure-handling code is untested.\n"
+                                  f"Write a suite that makes that code handle its failure, "
+                                  f"run it once with python3 scripts/run-all-test-suites.py "
+                                  f"--only-suites-named <the suite's path>, which records "
+                                  f"what it reads, commit it, then run this again.")
+                        else:
+                            print(f"NO SUITE  {path}: no recorded suite reads it and it "
+                                  f"has no sibling suite, so its changed lines are untested")
                         continue
                     print(f"MUTATING  {path} with {', '.join(suites)}", flush=True)
                     outside = runner.SUITES_RUN_WITHOUT_ANY_SANDBOX
@@ -628,7 +806,9 @@ def main_with_stop_signals_raising_system_exit(argv):
                     counts, survivors, errored = mutation_test_one_file(
                         path, suites, worktree, scratch, tools, merge_base, arguments,
                         environment, runner, recorded_inputs_directory, recordings_directory,
-                        in_test_sandboxes)
+                        in_test_sandboxes, failure_handling_ranges)
+                    all_survivors += survivors
+                    all_errored += errored
                     for key in totals:
                         totals[key] += counts[key]
                     for label, mutants in (("SURVIVED", survivors),
@@ -646,11 +826,30 @@ def main_with_stop_signals_raising_system_exit(argv):
         return EXIT_COULD_NOT_RUN
 
     tested = totals["killed"] + totals["survived"] + totals["errored"]
-    print(f"SUMMARY: {tested} mutants on changed lines of {len(files) - len(untested)} "
+    lines_mutated = ("changed failure-handling lines" if arguments.quick_mutation_pass
+                     else "changed lines")
+    no_failure_handling_change_count = (
+        f"{len(no_failure_handling_change)} changed file(s) with no failure-handling change; "
+        if arguments.quick_mutation_pass else "")
+    print(f"SUMMARY: {tested} mutants on {lines_mutated} of "
+          f"{len(files) - len(untested) - len(no_failure_handling_change)} "
           f"file(s): {totals['killed']} killed, {totals['survived']} survived, "
           f"{totals['errored']} errored, {totals['not run']} not run; "
-          f"{len(untested)} changed file(s) "
+          f"{no_failure_handling_change_count}{len(untested)} changed file(s) "
           f"with no suite; head {head[:12]}, merge base {merge_base[:12]}")
+    if arguments.survived_and_errored_mutants_json_file is not None:
+        try:
+            Path(arguments.survived_and_errored_mutants_json_file).write_text(json.dumps({
+                "head": head, "merge_base": merge_base, "survived": all_survivors,
+                "errored": all_errored, "files_with_no_suite": untested}, indent=1) + "\n",
+                encoding="utf-8")
+        except OSError as error:
+            print(f"{PROGRAM}: the survived and errored mutants were not written to "
+                  f"{arguments.survived_and_errored_mutants_json_file}: {error}. The lines "
+                  f"above are this run's whole result.\n"
+                  f"Give --survived-and-errored-mutants-json-file a path in a directory you "
+                  f"can write to, and run this again.", file=sys.stderr)
+            return EXIT_COULD_NOT_RUN
     if totals["survived"] or totals["errored"] or totals["not run"] or untested:
         return EXIT_SURVIVORS_OR_UNTESTED_FILES
     return EXIT_EVERY_MUTANT_KILLED
