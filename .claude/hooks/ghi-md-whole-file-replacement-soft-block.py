@@ -161,16 +161,22 @@ def redirection_targets(redirects, directory):
                 and not target.isdigit()))]
 
 
+def directory_of_shell(directories, shells):
+    """The working directory of the child shell shells, inherited from the nearest shell around it
+    that ran a cd, and recorded in directories."""
+    if shells not in directories:
+        directories[shells] = directory_of_shell(directories, shells[:-1])
+    return directories[shells]
+
+
 def replaced_paths_in_command(command, working_directory):
     """Every path the command's cp, mv, tee and redirections write over, in order."""
     # A child shell's cd does not change the directory of the shell around it.
     directories = {(): working_directory}
     paths = []
     for words in shell_reader.simple_commands(command):
-        shells = enclosing = words.child_shell
-        while enclosing not in directories:
-            enclosing = enclosing[:-1]
-        directory = directories[enclosing]
+        shells = words.child_shell
+        directory = directory_of_shell(directories, shells)
         paths.extend(redirection_targets(words.redirects, directory))
         index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
         if index is None:
