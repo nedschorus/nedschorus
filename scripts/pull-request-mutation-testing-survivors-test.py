@@ -284,12 +284,13 @@ def runner_output_with_suites_timed_out(timed_out, others=()):
 
 
 def runner_output_with_test_sandbox_not_started(suite):
-    """The suite runner's FAIL lines for a suite whose nc-test-sandbox did not start, from its code."""
+    """The suite runner's NOT RUN lines for a suite whose nc-test-sandbox did not start, from its code."""
     runner = load_test_suite_runner()
-    failed = {"suite": suite, "exit": 1, "seconds": 0.1, "skips": [],
-              "test sandbox did not start": True}
-    return (f"{runner.suite_line(failed)}\n\n1 failed:\n"
-            f"FAIL {suite} {runner.why_suite_failed(failed)} — log /tmp/a.log\n")
+    not_run = {"suite": suite, "exit": 1, "seconds": 0.1, "skips": [],
+               "test sandbox did not start": True}
+    return (f"{runner.suite_line(not_run)}\n\n1 not run, because bwrap could not build the "
+            f"nc-test-sandbox; each log says why and what to do:\n"
+            f"NOT RUN {suite} {runner.why_suite_failed(not_run)} — log /tmp/a.log\n")
 
 
 def runner_output_with_a_suite_failed_with_exit_code(suite, exit_code):
@@ -585,6 +586,13 @@ def run_cases():
            killed_with_output(runner_output_with_test_sandbox_not_started(
                "scripts/thing-test.py"))]],
          1, "0 killed, 0 survived, 1 errored"),
+        ("the ERRORED line for a mutant whose only nonzero suite's nc-test-sandbox did not start "
+         "quotes the runner's NOT RUN line, which names the suite",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           killed_with_output(runner_output_with_test_sandbox_not_started(
+               "scripts/thing-test.py"))]],
+         1, "its output says: NOT RUN scripts/thing-test.py did not start: bwrap could not "
+            "build its nc-test-sandbox"),
         ("a killed mutant with one suite failing beside an nc-test-sandbox that did not start is "
          "killed",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),

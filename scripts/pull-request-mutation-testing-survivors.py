@@ -317,7 +317,8 @@ def runner_output_described(output, runner):
     if not output.strip():
         return "was empty"
     lines = [line for line in output.splitlines()
-             if line.startswith((f"{runner.PROGRAM}: not run", "FAIL "))]
+             if line.startswith((f"{runner.PROGRAM}: not run", runner.FAILED_SUITE_LINE_PREFIX,
+                                 runner.NOT_RUN_SUITE_LINE_PREFIX))]
     if not lines:
         return f"ended: {output.strip().splitlines()[-1]}"
     return f"says: {' | '.join(dict.fromkeys(lines))}"

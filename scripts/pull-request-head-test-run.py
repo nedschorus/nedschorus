@@ -9,7 +9,8 @@ A partial append can leave a torn record that prevents subsequent records from b
 The runner's output is copied to stderr line by line as it arrives, so a run stopped before
 it ends still shows its progress; stdout keeps only the SUMMARY line and where the record went.
 
-Exit codes: 0 suites passed, 1 suite failed, 2 refused or unable to start, 4 failed step,
+Exit codes: 0 suites passed, 1 suite failed, 2 refused, unable to start, or no suite failed but
+one did not run because its test sandbox did not start, 4 failed step,
 5 record not written, 7 uncaught exception. Local logs and the record remain available for recovery."""
 
 import argparse

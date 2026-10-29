@@ -293,7 +293,7 @@ def printed_command(text, prefix):
     return None
 
 
-def run_runner(scratch, repository, path):
+def run_runner(scratch, repository, path, extra_arguments=()):
     environment = {name: value for name, value in os.environ.items()
                    if name != runner.SIGNAL_SANDBOX_INSIDE_VARIABLE}
     environment["PATH"] = path
@@ -301,7 +301,7 @@ def run_runner(scratch, repository, path):
         [sys.executable, "-c", ADMISSION_OPENED_DRIVER, str(RUNNER_PATH), "--checkout", str(repository),
          "--log-dir", str(scratch / "logs"),
          "--lock-file", str(scratch / "run.lock"),
-         "--recorded-inputs-directory", str(scratch / "recordings")],
+         "--recorded-inputs-directory", str(scratch / "recordings"), *extra_arguments],
         capture_output=True, text=True, env=environment, stdin=subprocess.DEVNULL, check=False)
     report_file = scratch / "logs" / runner.REPORT_FILE_NAME
     report = report_file.read_text() if report_file.exists() else ""
@@ -488,6 +488,59 @@ if linux_only_cases_run_here("the report's sandbox lines"):
               "one argument although its path holds a space",
               printed_command(not_top, "and its value with: ") == ["--checkout", str(repository)], not_top)
 
+        # A bwrap that cannot build one suite's test sandbox, as when a path it must bind
+        # over vanished, while it builds the run's trial sandbox and every other suite's.
+        unstartable = "unstartable-test.py"
+        failing_bin = scratch / "failing-bin"
+        failing_bin.mkdir()
+        (failing_bin / "bwrap").write_text(
+            (fake_bin / "bwrap").read_text().replace(
+                "done\n",
+                "done\n"
+                f"case \"$*\" in *{unstartable}*)\n"
+                "  echo \"bwrap: Can't create file at /gone.sock: Read-only file system\" >&2\n"
+                "  exit 1 ;;\n"
+                "esac\n", 1))
+        (failing_bin / "bwrap").chmod(0o755)
+        failing_path = f"{failing_bin}{os.pathsep}{os.environ.get('PATH', '')}"
+        for case_name, suites, failing_suite, extra_arguments, expected_exit, summary in (
+                ("a suite whose test sandbox did not start, beside one that passed",
+                 ["a-test.py", unstartable], None, (), runner.EXIT_COULD_NOT_RUN,
+                 "SUMMARY: 1 passed, 0 failed, 1 not run, 2 total"),
+                ("a suite whose test sandbox did not start, beside one that failed",
+                 ["a-test.py", "b-test.py", unstartable], "b-test.py", (),
+                 runner.EXIT_SOME_FAILED, "SUMMARY: 1 passed, 1 failed, 1 not run, 3 total"),
+                # git lists z-test.py last, so with -j 1 it starts after the suite not run.
+                ("a suite whose test sandbox did not start, with --stop-at-first-failing-suite, "
+                 "which it does not stop",
+                 [unstartable, "z-test.py"], None, ("--stop-at-first-failing-suite", "-j", "1"),
+                 runner.EXIT_COULD_NOT_RUN,
+                 "SUMMARY: 1 passed, 0 failed, 1 not run, 2 total")):
+            case_scratch = scratch / f"not run {expected_exit} {len(suites)} {len(extra_arguments)}"
+            case_scratch.mkdir()
+            repository = scratch_checkout(case_scratch, suites)
+            if failing_suite is not None:
+                (repository / failing_suite).write_text("import sys\nsys.exit(1)\n")
+                subprocess.run(["git", "-C", str(repository), "-c", "user.name=t", "-c",
+                                "user.email=t@t", "commit", "-qam", "fails"], check=True)
+            completed, report = run_runner(case_scratch, repository, failing_path,
+                                           extra_arguments)
+            passing = next(suite for suite in suites if suite not in (unstartable, failing_suite))
+            check(f"{case_name}: the run exits {expected_exit}, and the suite is NOT RUN, "
+                  f"listed with its log under the suites not run, and counted as not run",
+                  completed.returncode == expected_exit
+                  and any(line.startswith(f"NOT RUN {unstartable} did not start: bwrap could "
+                                          f"not build its nc-test-sandbox (exit 1) (")
+                          for line in report.splitlines())
+                  and any(line.startswith(f"NOT RUN {unstartable} did not start: ")
+                          and " — log " in line for line in report.splitlines())
+                  and "1 not run, because bwrap could not build the nc-test-sandbox" in report
+                  and not any(line.startswith(f"FAIL {unstartable}")
+                              for line in report.splitlines())
+                  and summary in report
+                  and f"PASS {passing} " in report,
+                  (completed.returncode, completed.stderr[-600:], report[-1500:]))
+
 # --- A signalled suite inside bwrap is reported as the signal ----------------
 
 with tempfile.TemporaryDirectory() as scratch_name:
@@ -613,11 +666,20 @@ if linux_only_cases_run_here("the covers over listening sockets, and an nc-test-
               "the suite did not start: bwrap could not build its nc-test-sandbox" in text
               and "run the suite again" in text, text)
         line = runner.suite_line({**failed, "admitted": False})
-        check("a suite whose nc-test-sandbox could not start says so on its FAIL line, which "
+        check("a suite whose nc-test-sandbox could not start says so on its NOT RUN line, which "
               "judges no suite failing",
-              line.startswith("FAIL plain-test.sh did not start: bwrap could not build its "
+              line.startswith("NOT RUN plain-test.sh did not start: bwrap could not build its "
                               "nc-test-sandbox (exit 1)")
               and not runner.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(line), line)
+        # A sandbox program that names no suite process and still exits 0.
+        (fake_bin / "bwrap").write_text("#!/bin/sh\nexit 0\n")
+        passed = runner.run_one_suite(scratch, sys.executable, "plain-test.sh", scratch,
+                                      sandbox_prefix=(str(fake_bin / "bwrap"),),
+                                      note_suite_process=lambda *arguments, **options: None)
+        check("a suite that exits 0 though no suite process was named is PASS, not NOT RUN",
+              passed["exit"] == 0 and not passed.get("test sandbox did not start")
+              and runner.suite_line({**passed, "admitted": False}).startswith(
+                  "PASS plain-test.sh"), passed)
 
 
 # --- Hiding by default: fixed directories ----------------------------------------

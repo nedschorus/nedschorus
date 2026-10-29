@@ -16,7 +16,8 @@ such a push goes ahead with the message for a run that could not start.
 Only a suite's failure refuses the push. Every way the run can end without a verdict lets the push
 through with a message saying how to run it by hand: another run holding the machine's test lock,
 which the run does not wait for, the run not finishing within the time budget, the run unable to start or
-ending in an uncaught exception, and this file failing. A run that exits 1 refuses the push only
+ending in an uncaught exception, a suite whose test sandbox did not start while no suite failed, which
+the runner reports with exit 2, and this file failing. A run that exits 1 refuses the push only
 when its SUMMARY line counts a failed suite: the runner still writes its report and run record
 after printing SUMMARY, and a write that fails there exits 1 too. When the run gives no verdict,
 what it printed on stderr is shown above the message, so the cause is not lost; for a held lock

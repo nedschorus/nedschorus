@@ -48,7 +48,8 @@ Usage:
   --stop-at-first-failing-suite
                 once a suite fails, kill the suites running beside it, as a
                 stop signal does, and start no other; the run exits 1, and
-                each suite killed is reported as stopped, not as failed
+                each suite killed is reported as stopped, not as failed. A
+                suite whose nc-test-sandbox did not start does not stop the run
   --only-suites-named SUITE [SUITE ...]
                 run only these suites, each named by its path from the
                 checkout's top directory, as git lists it; a name git does
@@ -79,8 +80,10 @@ refused.
 
 HOW EACH SUITE IS JUDGED. By its exit code, and nothing else: 0 is PASS,
 anything else is FAIL, and a suite killed by a signal is FAIL naming the
-signal. The suites print at least four different success wordings, so no
-text can be trusted to mean pass or fail. Each suite runs as
+signal. The one exception is a suite whose nc-test-sandbox bwrap could not
+build: no test ran, so it is NOT RUN, not FAIL, and its recording keeps
+bwrap's exit, so the next selective run selects it again. The suites print
+at least four different success wordings, so no text can be trusted to mean pass or fail. Each suite runs as
 `<interpreter> -u <path>`, or `sh <path>` for a `*-test.sh` suite, from the
 checkout's top directory, stdin closed,
 stdout and stderr together into its own log file. A suite that starts
@@ -364,9 +367,10 @@ it, and a suite outside bwrap outlives it.
 OUTPUT. A first line naming the checkout, its commit, whether tracked files
 differ from that commit, the suite count, the interpreter's own --version
 answer and path, -j, and the log directory. Then one line per suite as it
-finishes: `PASS <path> (<seconds>s)` or `FAIL <path> exit <code>
-(<seconds>s)`, with `, <n> skipped` when it printed SKIP lines. Then the
-failed suites again, each with its log, and every SKIP line, each with its
+finishes: `PASS <path> (<seconds>s)`, `FAIL <path> exit <code>
+(<seconds>s)` or `NOT RUN <path> did not start: ...`, with `, <n> skipped`
+when it printed SKIP lines. Then the failed suites again, each with its log,
+the suites not run, each with its log, and every SKIP line, each with its
 suite, so the end of the output holds everything needed. The last line
 opens `SUMMARY:` and carries the counts. The whole report is also written to
 test-run-report.txt in the log directory, so a run in the background needs no
@@ -567,11 +571,14 @@ a suite runs reads or sources; an ignored file; anything outside the checkout (a
 tool upgrade, leftover machine state). The daily full run covers all of
 these.
 
-EXIT. 0 when every suite exited 0; 1 when any suite failed; 2 when the run
-could not start (not a checkout's top directory, no suites listed, git or
-the interpreter unusable, a COMMIT git cannot resolve, a suite
---only-suites-named names that git does not list); 3 when another run
-holds the lock, where a lock is taken.
+EXIT. 0 when every suite exited 0; 1 when any suite failed, even in a run
+that was then stopped or not run to the end; 2 when no suite
+failed but the run gave no full verdict: a suite was not run because its
+nc-test-sandbox did not start, the run was not run to the end, its records
+could not be written, or the run could not start (not a checkout's top
+directory, no suites listed, git or the interpreter unusable, a COMMIT git
+cannot resolve, a suite --only-suites-named names that git does not list);
+3 when another run holds the lock, where a lock is taken.
 """
 
 import argparse
@@ -808,6 +815,9 @@ TEST_CASE_TIMES_FILE_NAME = "test-case-times.tsv"
 JUNIT_XML_FILE_NAME = "junit.xml"
 TEST_CASE_FAILURE_HISTORY_FILE_NAME = "test-case-failure-history.jsonl"
 ADMISSION_WAITED_LINE_PREFIX = "seconds suites waited for admission: "
+# Readers of the runner's output pick a suite's line out by these.
+FAILED_SUITE_LINE_PREFIX = "FAIL "
+NOT_RUN_SUITE_LINE_PREFIX = "NOT RUN "
 # The suites print one line per case opening PASS, FAIL or ok.
 TEST_CASE_LINE = re.compile(r"^\s*(?P<verdict>PASS|FAIL|ok)\b:?\s*(?P<text>.*)$")
 # A process a suite run without any sandbox leaves running can hold its output open.
@@ -2921,7 +2931,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         result["timeout"] = {"limit": timed_out[0], "recorded": timed_out[1]}
     if stopped_by is not None and exit_code != 0:
         result["stopped by"] = stopped_by
-    if sandbox_started is False:
+    if sandbox_started is False and exit_code != 0:
         result["test sandbox did not start"] = True
     if statistics is not None:
         with statistics:
@@ -3428,8 +3438,15 @@ def describe_exit(code):
         return f"killed by signal {-code}"
 
 
+def suite_failed(result):
+    """Whether the suite failed: it exited nonzero, and neither a stop nor its nc-test-sandbox
+    failing to start ended it."""
+    return (result["exit"] != 0 and not result.get("stopped by")
+            and not result.get("test sandbox did not start"))
+
+
 def why_suite_failed(result):
-    """What a failed suite's line says after its path: its timeout, or how it exited."""
+    """What a failed or not-run suite's line says after its path: why, or how it exited."""
     if result.get("stopped by"):
         return f"killed when the run was stopped by {result['stopped by']}"
     if result.get("test sandbox did not start"):
@@ -3494,7 +3511,9 @@ def suite_line(result):
                        f"{result['peak_memory_bytes'] / 10**6:.0f} MB")
     if result["exit"] == 0:
         return f"PASS {result['suite']} ({detail})"
-    return f"FAIL {result['suite']} {why_suite_failed(result)} ({detail})"
+    prefix = (NOT_RUN_SUITE_LINE_PREFIX if result.get("test sandbox did not start")
+              else FAILED_SUITE_LINE_PREFIX)
+    return f"{prefix}{result['suite']} {why_suite_failed(result)} ({detail})"
 
 
 class Report:
@@ -3828,7 +3847,7 @@ def main(argv=None, platform=None):
             # In the suite's own thread, so the next suite this thread takes sees the stop
             # before it starts.
             if (arguments.stop_at_first_failing_suite and result["exit"] != 0
-                    and not run_stops):
+                    and not result.get("test sandbox did not start") and not run_stops):
                 run_stops.append(f"the first failing suite, {suite}")
             return result
 
@@ -3891,7 +3910,8 @@ def main(argv=None, platform=None):
                         report.line("Fix what it names, then run this again. The suites already "
                                     "running finish first.")
                         report.close()
-                        return EXIT_COULD_NOT_RUN
+                        return (EXIT_SOME_FAILED if any(map(suite_failed, results))
+                                else EXIT_COULD_NOT_RUN)
                     results.append(result)
                     report.line(suite_line(result))
                     if result.get("output_note"):
@@ -3910,19 +3930,26 @@ def main(argv=None, platform=None):
             report.close()
             if run_record is not None:
                 run_record.finish()
-            return EXIT_COULD_NOT_RUN
+            return EXIT_SOME_FAILED if any(map(suite_failed, results)) else EXIT_COULD_NOT_RUN
 
         results.sort(key=lambda result: result["suite"])
         # Here only --stop-at-first-failing-suite stops a suite: a stop signal returned above.
         stopped = [result for result in results if result.get("stopped by")]
-        failed = [result for result in results
-                  if result["exit"] != 0 and not result.get("stopped by")]
+        not_run = [result for result in results if result.get("test sandbox did not start")]
+        failed = [result for result in results if suite_failed(result)]
         skipping = [result for result in results if result["skips"]]
         if failed:
             report.line("")
             report.line(f"{len(failed)} failed:")
             for result in failed:
-                report.line(f"FAIL {result['suite']} {why_suite_failed(result)}"
+                report.line(f"{FAILED_SUITE_LINE_PREFIX}{result['suite']} {why_suite_failed(result)}"
+                            f" — log {result['log']}")
+        if not_run:
+            report.line("")
+            report.line(f"{len(not_run)} not run, because bwrap could not build the "
+                        f"nc-test-sandbox; each log says why and what to do:")
+            for result in not_run:
+                report.line(f"{NOT_RUN_SUITE_LINE_PREFIX}{result['suite']} {why_suite_failed(result)}"
                             f" — log {result['log']}")
         if run_stops:
             report.line("")
@@ -3974,18 +4001,19 @@ def main(argv=None, platform=None):
                         f"inputs unchanged since {changed_since[:12]}"
                         if changed_since is not None else "")
         stopped_note = f", {len(stopped)} stopped" if run_stops else ""
-        report.line(f"SUMMARY: {len(results) - len(failed) - len(stopped)} passed, "
-                    f"{len(failed)} failed{stopped_note}, "
+        not_run_note = f", {len(not_run)} not run" if not_run else ""
+        report.line(f"SUMMARY: {len(results) - len(failed) - len(stopped) - len(not_run)} "
+                    f"passed, {len(failed)} failed{not_run_note}{stopped_note}, "
                     f"{len(results)} total; {skip_count} cases skipped in {len(skipping)} "
                     f"suites; {top.name} at {commit[:12]}; {version}{not_selected}")
         report.close()
         if run_record is not None:
             run_record.finish()
-        # A failing suite outranks missing records, since a caller that reads exit 2 as
-        # "no verdict" would otherwise let a failure through.
+        # A failing suite outranks a suite not run and missing records, since a caller that
+        # reads exit 2 as "no verdict" would otherwise let a failure through.
         if failed:
             return EXIT_SOME_FAILED
-        return EXIT_COULD_NOT_RUN if records_failed else EXIT_ALL_PASSED
+        return EXIT_COULD_NOT_RUN if not_run or records_failed else EXIT_ALL_PASSED
     finally:
         restore_signal_handlers(signal_handlers_replaced)
         if readings is not None:

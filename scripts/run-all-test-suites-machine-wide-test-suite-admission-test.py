@@ -912,18 +912,26 @@ with tempfile.TemporaryDirectory() as scratch_name:
         def records_cannot_be_written(*arguments, **options):
             raise OSError(21, "Is a directory", "junit.xml")
 
-        code, printed, _ = main_with("records", **as_if_bwrap,
+        real_run_one_suite = runner.run_one_suite
+
+        def suite_ends_with(exit_code):
+            """A run_one_suite whose suite ends with exit_code, whether or not bwrap can start
+            here: inside a test sandbox, /usr/bin/bwrap cannot build another."""
+            def run(*arguments, **options):
+                result = {**real_run_one_suite(*arguments, **options), "exit": exit_code}
+                result.pop("test sandbox did not start", None)
+                return result
+            return run
+
+        suite_passes = suite_ends_with(0)
+
+        code, printed, _ = main_with("records", **as_if_bwrap, run_one_suite=suite_ends_with(1),
                                      write_case_times_suite_resources_and_junit_xml_of_run=records_cannot_be_written)
-        # The stand-in bwrap builds no real sandbox, so the suite itself fails here, and a
-        # failing suite outranks the missing records.
+        # A failing suite outranks the missing records.
         check("records that cannot be written while a suite failed end the run with exit 1, "
               "the failure's exit, naming the missing records and printing the SUMMARY",
               code == runner.EXIT_SOME_FAILED and "could not be written" in printed
               and "SUMMARY: " in printed, (code, printed[-800:]))
-        real_run_one_suite = runner.run_one_suite
-
-        def suite_passes(*arguments, **options):
-            return {**real_run_one_suite(*arguments, **options), "exit": 0}
 
         code, printed, _ = main_with("records-all-passed", **as_if_bwrap,
                                      run_one_suite=suite_passes,
@@ -967,6 +975,35 @@ with tempfile.TemporaryDirectory() as scratch_name:
               "after the run reports the failure",
               code == runner.EXIT_COULD_NOT_RUN and len(started_suites) == 1,
               (code, started_suites, printed_out.getvalue()[-600:]))
+
+        suite_fails = suite_ends_with(1)
+        failed_first = threading.Event()
+
+        def first_fails_then_second_cannot_start(top, interpreter, suite, *arguments, **options):
+            if suite.endswith("a-test.py"):
+                result = suite_fails(top, interpreter, suite, *arguments, **options)
+                failed_first.set()
+                return result
+            failed_first.wait(30)
+            # Long enough for the run to report the failed suite first.
+            time.sleep(1)
+            raise runner.MachineWideTestSuiteAdmissionCouldNotDecide("slot-09 could not be opened")
+
+        run_scratch = scratch / "main-failed-then-admission-error"
+        run_scratch.mkdir()
+        with replaced(run_one_suite=first_fails_then_second_cannot_start, **as_if_bwrap), \
+                contextlib.redirect_stdout(io.StringIO()) as printed_out, \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = runner.main(["--checkout", str(two_suites), "-j", "2",
+                                "--lock-file", str(run_scratch / "run.lock"),
+                                "--log-dir", str(run_scratch / "logs"),
+                                "--recorded-inputs-directory", str(run_scratch / "recorded")])
+        printed = printed_out.getvalue()
+        check("admission that fails after a suite has failed ends the run with exit 1, not 2, "
+              "so no caller reads the failure as a run without a verdict",
+              code == runner.EXIT_SOME_FAILED and "FAIL a-test.py" in printed
+              and "admission failed: slot-09" in printed and "Traceback" not in printed,
+              (code, printed[-800:]))
 
         readings_fail = threading.Event()
         samplers = []
