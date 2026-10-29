@@ -17,9 +17,9 @@ The cycle, per reincarnation:
      (os.execv, so the process ID stays, and the lock file keeps naming it).
      The handoff is still unconsumed, so the fresh process carries out steps
      3 to 6 below at startup, as after a reboot: it extracts the dialog
-     (step 3), and only when the dialog cannot be extracted does it start
-     the successor from the handoff's next-step and the recovery note step 3
-     describes. Started with
+     (step 3); when the dialog cannot be extracted, the successor starts with
+     no conversation-tail, and has the recovery note step 3 describes
+     instead. Started with
      --started-by-handoff-supervisor-restarting-itself-on-main-code, the fresh
      process prints that the restart worked. When the checkout cannot be
      fast-forwarded, or os.execv fails, this process prints why, carries on
