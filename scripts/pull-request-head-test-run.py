@@ -320,7 +320,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
               and daily.runner_summary_line(completed) is None):
             steps_failed.append((
                 f"{run_all_test_suites.PROGRAM} exited {completed.returncode} and printed "
-                f"no {daily.RUNNER_SUMMARY_LINE_PREFIX} line, which is no verdict",
+                f"no {run_all_test_suites.SUMMARY_LINE_PREFIX} line, which is no verdict",
                 "Read the runner's stderr in the record, then run this again."))
         if completed.returncode in (run_all_test_suites.EXIT_ALL_PASSED,
                                     run_all_test_suites.EXIT_SOME_FAILED):
@@ -348,7 +348,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
             record_lines.extend(printed)
             if summary is None:
                 record_lines.append(
-                    f"the runner printed no {daily.RUNNER_SUMMARY_LINE_PREFIX} line; its "
+                    f"the runner printed no {run_all_test_suites.SUMMARY_LINE_PREFIX} line; its "
                     f"stderr:")
                 record_lines.extend(f"  {line}"
                                     for line in completed.stderr.strip().splitlines())

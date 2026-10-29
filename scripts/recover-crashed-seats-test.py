@@ -216,6 +216,7 @@ def shell_words(command: str) -> list:
     """Return the command's words as a shell splits them, with each `;` a word of its own."""
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
+    lexer.commenters = ""
     return list(lexer)
 
 
@@ -1170,7 +1171,8 @@ def run_came_up_cases(root: Path):
 
 
 with tempfile.TemporaryDirectory() as temporary:
-    root = Path(temporary)
+    # Resolved, as os.getcwd() is, where TMPDIR is reached through a link.
+    root = Path(temporary).resolve()
 
     # --- refusals, and seats already running ---------------------------------
     # A seat found running is not refused (user-ruled 2026-09-16, on the
@@ -2913,8 +2915,7 @@ with tempfile.TemporaryDirectory() as temporary:
             os.chdir(saved_directory)
         check("AGENTS ROOT: a relative --agents-root resolves against the caller's directory",
               exit_code == 0
-              and [path.resolve() for path in seat_directories_launched]
-              == [workspace.seat_directory.resolve()]
+              and seat_directories_launched == [workspace.seat_directory]
               and all(path.is_absolute() for path in seat_directories_launched)
               and workspace.agents_root.parent != Path.home(),
               (exit_code, seat_directories_launched))
@@ -3108,6 +3109,8 @@ with tempfile.TemporaryDirectory() as temporary:
           completed.returncode != 0 and "different recoveries" in completed.stderr,
           completed.stderr)
 
+    check("shell_words keeps a word with an unquoted # inside it, and the words after it",
+          shell_words("echo a#b c") == ["echo", "a#b", "c"], shell_words("echo a#b c"))
     run_claude_json_presets_cases(root)
     run_came_up_cases(root)
     run_reach_clause_cases(root)

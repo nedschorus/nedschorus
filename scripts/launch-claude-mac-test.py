@@ -408,7 +408,8 @@ class AnotherUpdateHoldsTheLock:
 
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="launch-claude-mac-test-") as scratch:
-        root = Path(scratch)
+        # Resolved, as the cwd the launcher reports is, where TMPDIR is reached through a link.
+        root = Path(scratch).resolve()
 
         # --- ~user root: refused before anything runs ----------------------
         sandbox = MacLaunchSandbox(root / "tilde-user")
@@ -457,8 +458,7 @@ def main() -> int:
         seat_directory = f"{sandbox.workdir}/relative agents/seat-t"
         check("relative root: tmux -c is the seat directory under the caller's directory",
               result.returncode == 0
-              and any(previous == "-c"
-                      and Path(current).resolve() == Path(seat_directory).resolve()
+              and any(previous == "-c" and current == seat_directory
                       for previous, current in zip(tmux_argv, tmux_argv[1:])),
               (result.returncode, result.stderr[:300], tmux_argv))
         check("relative root: the seat directory was created under the caller's directory",

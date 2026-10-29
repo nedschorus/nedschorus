@@ -336,7 +336,9 @@ if linux_only_cases_run_here("the report's sandbox lines"):
               "PID namespace" not in report, report[-600:])
 
     with tempfile.TemporaryDirectory() as scratch_name:
-        scratch = pathlib.Path(scratch_name)
+        # Resolved, as the runner resolves the checkout it names, where TMPDIR is reached
+        # through a link.
+        scratch = pathlib.Path(scratch_name).resolve()
         fake_bin = scratch / "bin"
         fake_bin.mkdir()
         # Stands in for a working bwrap: skips the sandbox's own arguments, names the
@@ -347,8 +349,8 @@ if linux_only_cases_run_here("the report's sandbox lines"):
             "status_fd=\n"
             "while [ $# -gt 0 ]; do\n"
             "  case \"$1\" in\n"
-            "    --dev-bind|--bind|--ro-bind|--ro-bind-try|--setenv) shift 3 ;;\n"
-            "    --proc|--dev|--tmpfs|--overlay-src|--tmp-overlay|--unsetenv) shift 2 ;;\n"
+            "    --dev-bind|--bind|--ro-bind|--ro-bind-try|--setenv|--symlink) shift 3 ;;\n"
+            "    --proc|--dev|--tmpfs|--dir|--overlay-src|--tmp-overlay|--unsetenv) shift 2 ;;\n"
             "    --json-status-fd) status_fd=$2; shift 2 ;;\n"
             "    --unshare-pid|--unshare-net|--unshare-ipc|--die-with-parent) shift ;;\n"
             "    *) break ;;\n"
