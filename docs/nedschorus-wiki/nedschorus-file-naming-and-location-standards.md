@@ -11,7 +11,7 @@ The naming and location standards for this project's files. Where a tool this pr
 
 ## Desired locations or file names for various components
 
-The MD-skills agent-seat moves each file on main that is not where, or not named as, this page says, under GHI [Rationalize the repository layout: group components by owning system under nc-systems/](https://github.com/nedschorus/nedschorus/issues/224), one system per pull request, repointing in the same commit every citation in the repository. A new file goes where this page says, creating the directory if needed, unless its system, skill or script names another place.
+The MD-skills agent-seat moves each file on main that is not where, or not named as, this page says, under GHI [Rationalize the repository layout: group components by owning system under nc-systems/](https://github.com/nedschorus/nedschorus/issues/224), one system per pull request, repointing in the same commit every citation in the repository. A new file goes where this page says. A system gets its own directory under `nc-systems/` in the pull request that adds its first production code; test code alone does not earn one.
 
 A file in a queue directory is named as it will be at its canonical location, apart from the issue number a GHI-MD gains when its GHI is filed, so promoting it is a `git mv`.
 
