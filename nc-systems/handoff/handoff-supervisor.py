@@ -1885,10 +1885,11 @@ STARTED_BY_HANDOFF_SUPERVISOR_RESTARTING_ITSELF_ON_MAIN_CODE_FLAG = (
 HANDOFF_SUPERVISOR_NOT_RESTARTED_ON_MAIN_CODE_TEMPLATE = (
     "The handoff-supervisor of this agent-seat did not restart itself on main's current "
     "code at this session-handoff. It still runs the code it started with, so changes "
-    "merged to main since it started reach this agent-seat only when the handoff-supervisor "
-    "restarts. The handoff-supervisor's reason: \"{report}\". Tell the user that the "
-    "handoff-supervisor did not restart itself on main's code, and quote its reason, "
-    "because the handoff-supervisor restarts only from a checkout, {checkout}, that "
+    "merged to main since it started, to the handoff-supervisor and to the instructions it "
+    "gives each successor, reach this agent-seat only when the handoff-supervisor restarts. "
+    "Its reason: \"{report}\". Tell the user now that the handoff-supervisor did not "
+    "restart itself on main's code, quote its reason, and name the checkout {checkout}. "
+    "The handoff-supervisor restarts itself at a session-handoff only when that checkout "
     "fast-forwards to main or is current with it."
 )
 
