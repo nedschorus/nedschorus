@@ -12,7 +12,7 @@ The naming and location convention for this project's files. Where internal or e
 
 ## Desired locations or file names for various components
 
-A file on main that is not where this page says is moved there by GHI [Rationalize the repository layout: group components by owning system under nc-systems/, and a hook dispatcher](https://github.com/nedschorus/nedschorus/issues/224), one system at a time, each move repointing every citation in the same commit. A new file goes where this page says, creating the directory if needed, unless its system, skill or script names another place.
+A file on main that is not where this page says is moved there by GHI [Rationalize the repository layout: group components by owning system under nc-systems/](https://github.com/nedschorus/nedschorus/issues/224), one system at a time, each move repointing every citation in the same commit. A new file goes where this page says, creating the directory if needed, unless its system, skill or script names another place.
 
 A file in a queue directory is named as it will be at its canonical location, apart from the issue number a GHI-MD gains when its GHI is filed, so promoting it is a `git mv`.
 
