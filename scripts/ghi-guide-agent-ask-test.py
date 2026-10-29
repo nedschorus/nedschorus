@@ -1279,12 +1279,16 @@ with tempfile.TemporaryDirectory() as temporary:
                        / "ghi-write" / "SKILL.md").is_file(),
                   (exit_code, said))
 
-        exit_code, said = asks_with_hostname("Els-MacBook-Pro.local", seat_flag)
-        check("off ned-box, a seat directory that happens to exist locally does "
-              "not keep the ask from going to the box over ssh",
-              exit_code == 0 and len(ssh_calls) == 1
-              and ssh_calls[0][:2] == ["ssh", ghi_ask.AGENT_BOX] and not asked,
-              (exit_code, ssh_calls, said))
+        # One hostname sorts before "ned-box" and one after, so only an exact
+        # match counts as ned-box.
+        for hostname in ("Els-MacBook-Pro.local", "ned-box-two", "zed-mac"):
+            exit_code, said = asks_with_hostname(hostname, seat_flag)
+            check(f"off ned-box (hostname {hostname}), a seat directory that "
+                  "happens to exist locally does not keep the ask from going to "
+                  "the box over ssh",
+                  exit_code == 0 and len(ssh_calls) == 1
+                  and ssh_calls[0][:2] == ["ssh", ghi_ask.AGENT_BOX] and not asked,
+                  (exit_code, ssh_calls, said))
 
         # The two commands the missing-seat message gives create the seat:
         # the first when the seat's branch exists, the second when it does not.
