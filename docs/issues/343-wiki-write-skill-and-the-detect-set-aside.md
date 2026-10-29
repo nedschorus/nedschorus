@@ -21,7 +21,7 @@ second on the same subject, route by state, write for a fresh reader, make every
 reference openable.
 
 That machinery already paid once. A seat was about to write a testing-technique
-wiki page, ran `scripts/ghi-info-ask.py`, and found
+wiki page, ran `scripts/ghi-guide-agent-ask.py`, and found
 GHI [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18) already owned the
 subject with a sharper formulation. Nothing was written.
 

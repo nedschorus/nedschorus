@@ -77,7 +77,7 @@ Unless named otherwise, files are in `~/.claude/handoffs/` on the agent-seat's m
 - `CLAUDE_CODE_TASK_LIST_ID` and `GIT_AUTHOR_NAME`: set by `launch-claude-mac`, `launch-claude-ubuntu`, and `recover-crashed-seats.py` when it starts a ned-box handoff-supervisor itself; the first is required by `handoff-supervisor.py`, the second names the agent-seat in `uncommitted-work-snapshots.py`.
 - `NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME`, `NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY` and `NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID`: set by `handoff-supervisor.py` for its agent-session; read by `handoff-write-and-check-supervisor.py`.
 - `LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS`: set by `recover-crashed-seats.py` and `resupervise-seat.py`; passed on to the handoff-supervisor by `launch-claude-mac` and `launch-claude-ubuntu`.
-- `NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER`: set by `scripts/ghi-info-ask.py` for its own agent-sessions; silences `handoff-context-threshold-hook.py`.
+- `NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER`: set by `scripts/ghi-guide-agent-ask.py` for its own agent-sessions; silences `handoff-context-threshold-hook.py`.
 
 ## Entry points
 

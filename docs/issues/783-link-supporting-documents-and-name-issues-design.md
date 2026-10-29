@@ -198,7 +198,7 @@ The exact new wording of each change is written in the build and put to the user
 - **`nc-systems/cold-read/cold-read-fast-read.py`**, the program that runs a cold-read-fast-read, is unchanged: a GHI-MD that is a design document keeps the `-design` suffix, which the program already reads.
 
 Two changes do not go in the build's pull request:
-- **`docs/issues/46-ghi-info-agent-design.md` § The GHI write path**, which the tool's docstring names as its authority, is a GHI-MD, so its pointer to this design, for the body, the title and where a GHI-MD may sit, lands through edit-GHI after the build.
+- **`docs/issues/46-ghi-guide-agent-design.md` § The GHI write path**, which the tool's docstring names as its authority, is a GHI-MD, so its pointer to this design, for the body, the title and where a GHI-MD may sit, lands through edit-GHI after the build.
 - **merge-lane-2's instructions** are in its machine-local, uncommitted `nedlern@ned-box:/home/nedlern/agents/merge-lane-2/CLAUDE.local.md`. The `relink-and-retitle-issues --after-merge` step goes in there, with the user's approval, when the build merges.
 
 ## Open questions
@@ -211,7 +211,7 @@ The ruling that a closed issue is frozen leaves three points open. The build's p
 
 ## Search receipt
 
-ghi-info, asked on 2026-09-29 with `--include-closed` whether any issue covers how the ghi-write-tool chooses the files an issue's body links, how it tells the GHI-MD from other files named for the issue, or how it links documents stored elsewhere or shared, named four issues and said none covers this directly:
+ghi-guide-agent, asked on 2026-09-29 with `--include-closed` whether any issue covers how the ghi-write-tool chooses the files an issue's body links, how it tells the GHI-MD from other files named for the issue, or how it links documents stored elsewhere or shared, named four issues and said none covers this directly:
 - GHI [Build ghi-write (step-1 founding skill): trigger on creating or revising a GHI; enforce edit-don't-comment-or-duplicate](https://github.com/nedschorus/nedschorus/issues/13), closed;
 - GHI [Walk the live ghi-write skill: close order, pair sequence, and the user's comment-rule wording](https://github.com/nedschorus/nedschorus/issues/340), closed;
 - GHI [ghi-write follow-ups from PR #332: the full re-review it did not get, and how to retrofit an oversize issue into a GHI-MD](https://github.com/nedschorus/nedschorus/issues/345), closed as not planned;

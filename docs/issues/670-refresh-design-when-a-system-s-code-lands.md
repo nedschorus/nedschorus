@@ -9,7 +9,7 @@ kind: design
 
 Build **`refresh-design`**: the step that brings a system's three documents — its design, its build-slice plan and its overview — into line with what has landed on main since the last refresh, removing and never revising. The name is the user's coinage (walk of 2026-09-22, item 6). Nothing performs this step today.
 
-**The glossary gets its entry only when the step exists.** The user's words, 2026-09-23: "I would not add this to the glossary yet. I'd try to keep the glossary true now, not true eventually. Instead I'd make a GHI for it, assuming there isn't one." Until it is built, this issue is where the definition lives. A search on 2026-09-23 found no issue for it: `scripts/ghi-info-ask.py --include-closed` over open and closed issues, and `gh issue list --state all --search 'refresh-design OR "refresh design" OR overview OR BIPP OR "design lifecycle"'`.
+**The glossary gets its entry only when the step exists.** The user's words, 2026-09-23: "I would not add this to the glossary yet. I'd try to keep the glossary true now, not true eventually. Instead I'd make a GHI for it, assuming there isn't one." Until it is built, this issue is where the definition lives. A search on 2026-09-23 found no issue for it: `scripts/ghi-guide-agent-ask.py --include-closed` over open and closed issues, and `gh issue list --state all --search 'refresh-design OR "refresh design" OR overview OR BIPP OR "design lifecycle"'`.
 
 ## The draft definition, as put to the user on 2026-09-23
 

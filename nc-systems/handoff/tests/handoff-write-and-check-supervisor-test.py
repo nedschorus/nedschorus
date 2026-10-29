@@ -1182,7 +1182,7 @@ def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Pat
     # (d) The reviewer's route, reproduced at 08398ce. A supervised parent seat
     # has handed off once, and its supervisor has consumed that handoff. A
     # child `claude -p` the parent started in another seat's directory -- as
-    # scripts/ghi-info-ask.py starts one in ghi-info -- inherits the parent's
+    # scripts/ghi-guide-agent-ask.py starts one in ghi-guide-agent -- inherits the parent's
     # three variables but has its own CLAUDE_CODE_SESSION_ID. Its handoff must
     # land under its own directory's name and leave the parent's untouched:
     # taken under the parent's name, it passes the foreign-claim check, raises

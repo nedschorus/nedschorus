@@ -61,7 +61,7 @@ After the page merges, cold-read-research adds further links to the page: from t
 
 ## Search for an existing GHI
 
-On 2026-10-28, `scripts/ghi-info-ask.py --include-closed`, asked for any GHI, open or closed, or GHI-MD, about a page on when to use code-prompt-code, or about deciding which agent steps should be code, returned GHI 237 (closed, cited above) and GHI 1036 (open, a different subject, cited above), and found no GHI on a "what should be code" question in the cold-read-fast-read.
+On 2026-10-28, `scripts/ghi-guide-agent-ask.py --include-closed` (then named `ghi-info-ask.py`), asked for any GHI, open or closed, or GHI-MD, about a page on when to use code-prompt-code, or about deciding which agent steps should be code, returned GHI 237 (closed, cited above) and GHI 1036 (open, a different subject, cited above), and found no GHI on a "what should be code" question in the cold-read-fast-read.
 
 ## Next action
 

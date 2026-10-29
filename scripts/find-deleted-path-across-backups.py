@@ -3,7 +3,7 @@
 
 WHY THIS EXISTS. On 2026-08-23 an agent followed a citation in nedschorus#46 to
 `md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md`, found
-nothing, and built the ghi-info tool without the eleven deferred findings that
+nothing, and built the ghi-guide-agent tool without the eleven deferred findings that
 file held. The path had been deleted on 2026-08-14 (commit ab541cc) when review
 records were retired. The content was never actually lost: it was in git, in the
 predecessor's own session transcript, in Timeshift on the box, and in Time

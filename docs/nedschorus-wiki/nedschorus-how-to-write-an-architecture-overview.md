@@ -14,7 +14,7 @@ The overview has these seven sections, in this order. The words component, share
 4. **Invariants.** State each rule the code keeps across components that no single file states, especially an absence, such as "the launchers never start `claude` themselves; only the handoff-supervisor does", in one to three sentences, with its reason in at most one clause.
 5. **Shared state.** For each file, lock, environment variable, git ref or other state that two or more components use, say which components create or write it and which read or wait on it, naming an outside program such as Claude Code or git where it is the writer, and say where it lives, naming the machine when that matters.
 6. **Entry points.** For each component where execution starts, say what starts it: a person, a Claude Code hook event, a job in `nc-systems/general-tools/scheduled-jobs-on-each-machine.json`, or another system.
-7. **Planned work.** List each open GHI that holds work on the system, one line each, written `GHI [<title>](<url>)`; find them with `scripts/ghi-info-ask.py` and a GitHub search for the system's name and directory. Do not list work recorded only on an agent-seat's task list.
+7. **Planned work.** List each open GHI that holds work on the system, one line each, written `GHI [<title>](<url>)`; find them with `scripts/ghi-guide-agent-ask.py` and a GitHub search for the system's name and directory. Do not list work recorded only on an agent-seat's task list.
 
 ## What an overview leaves out
 
