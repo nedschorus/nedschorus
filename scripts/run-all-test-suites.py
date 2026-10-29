@@ -841,9 +841,12 @@ TEST_CASE_TIMES_FILE_NAME = "test-case-times.tsv"
 JUNIT_XML_FILE_NAME = "junit.xml"
 TEST_CASE_FAILURE_HISTORY_FILE_NAME = "test-case-failure-history.jsonl"
 ADMISSION_WAITED_LINE_PREFIX = "seconds suites waited for admission: "
-# Readers of the runner's output pick a suite's line out by these.
+# Readers of the runner's output pick its lines apart by these.
 FAILED_SUITE_LINE_PREFIX = "FAIL "
 NOT_RUN_SUITE_LINE_PREFIX = "NOT RUN "
+SUITE_LINE_LOG_MARK = " — log "
+SUMMARY_LINE_PREFIX = "SUMMARY:"
+FIRST_REPORT_LINE_LOG_DIRECTORY_MARK = "; logs in "
 # The suites print one line per case opening PASS, FAIL or ok.
 TEST_CASE_LINE = re.compile(r"^\s*(?P<verdict>PASS|FAIL|ok)\b:?\s*(?P<text>.*)$")
 # A process a suite run without any sandbox leaves running can hold its output open.
@@ -3792,7 +3795,7 @@ def main(argv=None, platform=None):
                          f"{changed_since[:12]}" if changed_since is not None else "")
         report.line(f"{PROGRAM}: {top} at {commit} ({state}); {len(listed)} suites "
                     f"listed by git{named_note}{selected_note}; {version} ({interpreter}); "
-                    f"-j {jobs}; logs in {log_dir}")
+                    f"-j {jobs}{FIRST_REPORT_LINE_LOG_DIRECTORY_MARK}{log_dir}")
         if recorder is None:
             report.line(f"inputs not recorded, and no recording in {recordings_dir} or failure "
                         f"history changed: --leave-recorded-inputs-and-failure-history-unchanged")
@@ -4018,14 +4021,14 @@ def main(argv=None, platform=None):
             report.line(f"{len(failed)} failed:")
             for result in failed:
                 report.line(f"{FAILED_SUITE_LINE_PREFIX}{result['suite']} {why_suite_failed(result)}"
-                            f" — log {result['log']}")
+                            f"{SUITE_LINE_LOG_MARK}{result['log']}")
         if not_run:
             report.line("")
             report.line(f"{len(not_run)} not run, because bwrap could not build the "
                         f"nc-test-sandbox; each log says why and what to do:")
             for result in not_run:
                 report.line(f"{NOT_RUN_SUITE_LINE_PREFIX}{result['suite']} {why_suite_failed(result)}"
-                            f" — log {result['log']}")
+                            f"{SUITE_LINE_LOG_MARK}{result['log']}")
         if run_stops:
             report.line("")
             report.line(f"stopped at {run_stops[0]}: {len(stopped)} suites killed while they "
@@ -4077,8 +4080,9 @@ def main(argv=None, platform=None):
                         if changed_since is not None else "")
         stopped_note = f", {len(stopped)} stopped" if run_stops else ""
         not_run_note = f", {len(not_run)} not run" if not_run else ""
-        report.line(f"SUMMARY: {len(results) - len(failed) - len(stopped) - len(not_run)} "
-                    f"passed, {len(failed)} failed{not_run_note}{stopped_note}, "
+        report.line(f"{SUMMARY_LINE_PREFIX} "
+                    f"{len(results) - len(failed) - len(stopped) - len(not_run)} passed, "
+                    f"{len(failed)} failed{not_run_note}{stopped_note}, "
                     f"{len(results)} total; {skip_count} cases skipped in {len(skipping)} "
                     f"suites; {top.name} at {commit[:12]}; {version}{not_selected}")
         report.close()
