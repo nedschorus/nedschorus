@@ -1312,7 +1312,7 @@ def what_should_be_code_section(target: pathlib.Path, scratch: pathlib.Path) -> 
     with launcher_output.open("w", encoding="utf-8") as output:
         process = subprocess.Popen(
             command, stdout=output, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-            cwd=REPO_ROOT, text=True, start_new_session=True)
+            cwd=REPO_ROOT, start_new_session=True)
         try:
             exit_code = process.wait(
                 timeout=COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_CELL_TIMEOUT_SECONDS)
