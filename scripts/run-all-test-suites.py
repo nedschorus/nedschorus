@@ -301,7 +301,7 @@ from, so there a run still cleans up after the lock's last holder.
 ADMISSION, on Linux in nc-test-sandboxes.
 Every run on the machine shares one admission, kept in the directory beside
 --lock-file. A suite starts only while the machine's CPU use averaged over the
-last 5 s is under 50% and its available memory is above 10 GB, read with
+last 5 s is under 55% and its available memory is above 10 GB, read with
 psutil; at most 4 suites start per second and at most 64 run at once on the
 machine, each holding an flock on one of 64 slot files, so the kernel frees
 the slot of a killed run. A suite run without any sandbox first takes the
@@ -820,7 +820,7 @@ SUITE_SANDBOX_LISTS_OF_THIS_PROGRAM = {
 # Admission, shared by every run on this machine: a suite starts only while the
 # machine has room for it. The run records the machine's readings every second
 # (MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME), so these thresholds can be moved from evidence.
-TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 50
+TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 55
 TEST_SUITE_ADMISSION_CPU_AVERAGE_SECONDS = 5
 TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE = 10 * 10**9
 TEST_SUITE_ADMISSION_STARTS_PER_SECOND = 4
