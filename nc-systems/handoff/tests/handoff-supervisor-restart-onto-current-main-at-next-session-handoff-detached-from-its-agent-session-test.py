@@ -202,7 +202,7 @@ def run_main(fixture, *extra, detach=lambda _: False, **keywords):
 
 def case(function):
     def run():
-        root = Path(tempfile.mkdtemp(prefix="restart-test-"))
+        root = Path(tempfile.mkdtemp(prefix="restart-test-")).resolve()
         fixture = None
         try:
             fixture = Fixture(root, **getattr(function, "fixture_options", {}))
@@ -358,6 +358,7 @@ def refuses_when_supervisor_is_its_tmux_panes_own_process(fixture):
         return table
     code, _, stderr = run_main(fixture, read_table=table_with_tmux_parent)
     check_refused_untouched(fixture, code, stderr, "is its tmux pane's own process")
+    check("Restarting an agent-seat's handoff-supervisor onto main's code" in stderr, "the refusal names no next step: " + stderr)
 
 
 @case
@@ -791,13 +792,13 @@ def a_supervisor_gone_from_the_table_after_sigstop_is_refused(fixture):
 def a_ps_failure_after_sigstop_continues_the_supervisor(fixture):
     calls = []
 
-    def table_failing_after_the_freeze():
+    def table_failing_after_the_sigstop():
         calls.append(1)
         if len(calls) > 1:
             raise subprocess.TimeoutExpired(["ps"], 30)
         return restart.read_process_table()
-    code, _, stderr = run_main(fixture, read_table=table_failing_after_the_freeze)
-    check(code == 1 and "ps failed after SIGSTOP" in stderr and "SIGCONT was sent" in stderr, stderr)
+    code, _, stderr = run_main(fixture, read_table=table_failing_after_the_sigstop)
+    check(code == 1 and "ps failed after SIGSTOP" in stderr and "it sent it SIGCONT. Run this program once more." in stderr, stderr)
     check(not process_state(fixture.supervisor).startswith(("T", "t")), "SIGCONT was not sent")
 
 
