@@ -63,7 +63,7 @@ def cosmic_ray_timeout_line_and_test_command_words_for_limit(limit):
     """The config's timeout line and the test command's first words, for this limit."""
     return (f"timeout = {float(limit + EXTRA_SECONDS)!r}\n",
             [sys.executable, str(SCRIPT.resolve()),
-             load_script_module().RUN_AS_COSMIC_RAY_TEST_COMMAND_FLAG, repr(float(limit))])
+             load_script_module().COSMIC_RAY_TEST_COMMAND_RUN_TEST_SUITE_RUNNER_STOPPED_AFTER_SECONDS_FLAG, repr(float(limit))])
 
 CONTROL_DIRECTORY_VARIABLE = "PULL_REQUEST_MUTATION_TESTING_SURVIVORS_TEST_CONTROL_DIR"
 
@@ -317,7 +317,7 @@ def test_command_output_when_the_machine_lock_is_held(scratch):
         holder.write("pid 7, the holder in this test\n")
         holder.flush()
         return subprocess.run(
-            [sys.executable, str(SCRIPT), load_script_module().RUN_AS_COSMIC_RAY_TEST_COMMAND_FLAG,
+            [sys.executable, str(SCRIPT), load_script_module().COSMIC_RAY_TEST_COMMAND_RUN_TEST_SUITE_RUNNER_STOPPED_AFTER_SECONDS_FLAG,
              "60.0", sys.executable, str(SCRIPT.with_name("run-all-test-suites.py")),
              "--checkout", str(repository), "--lock-file", str(lock_file),
              "--recorded-inputs-directory", str(Path(scratch) / "recordings"),
