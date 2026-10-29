@@ -1029,6 +1029,9 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and result.stdout.strip() == str(suggestions)
           and "STUB FAST READ: questions 1 to 3" in report_text,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+    check("the progress line says that, if Question 4 fails, its section says why",
+          "and its Question 4 section says why Question 4 was not answered." in result.stderr,
+          repr(result.stderr))
     check("the Question 4 section and stderr say Question 4 was not answered, with "
           "the cell's cause",
           "Question 4 was not answered" in question_4_part
