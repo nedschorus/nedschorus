@@ -136,13 +136,11 @@ class Refused(Exception):
 
 
 class StepFailed(Exception):
-    """git, gh or a file failed. instructions, when given, replace the usual ones; passing says a
-    run again may pass, as after a timeout or a network fault."""
+    """git, gh or a file failed. instructions, when given, replace the usual ones."""
 
-    def __init__(self, text, instructions=None, passing=False):
+    def __init__(self, text, instructions=None):
         super().__init__(text)
         self.instructions = instructions
-        self.passing = passing
 
 
 def command(number, subcommand):
@@ -215,18 +213,13 @@ def parse_follow_up_request_blocks_from_message_text(text):
     return requests
 
 
-def git_timed_out(failure):
-    return failure.returncode is None and failure.stderr.startswith("did not finish")
-
-
-def git(directory, arguments, passing=False, **options):
-    """git's stdout. passing marks a failure of a call that a run again may pass, such as a fetch;
-    a timeout is marked so for any call."""
+def git(directory, arguments, **options):
+    """git's stdout."""
     # Absolute, so a failure names the directory: "." says nothing to the agent reading it.
     try:
         return git_output.run_git(Path(directory).absolute(), arguments, **options).decode()
     except git_output.GitCommandFailed as failure:
-        raise StepFailed(str(failure), passing=passing or git_timed_out(failure)) from None
+        raise StepFailed(str(failure)) from None
 
 
 def gh(arguments):
@@ -236,16 +229,15 @@ def gh(arguments):
         completed = subprocess.run(["gh", *arguments], capture_output=True, text=True,
                                    stdin=subprocess.DEVNULL, timeout=GH_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
-        raise StepFailed(f"{name} did not finish within {GH_TIMEOUT_SECONDS} s", passing=True) from None
+        raise StepFailed(f"{name} did not finish within {GH_TIMEOUT_SECONDS} s") from None
     except OSError as error:
         raise StepFailed(f"could not start gh: {error}") from None
     if completed.returncode < 0:
         raise StepFailed(f"{name} was killed by signal {-completed.returncode}: "
-                         f"{completed.stderr.strip() or 'it printed no error text'}", passing=True)
+                         f"{completed.stderr.strip() or 'it printed no error text'}")
     if completed.returncode != 0:
-        # Most often GitHub or the network, which a run again may pass.
         raise StepFailed(f"{name} exited {completed.returncode}: "
-                         f"{completed.stderr.strip() or 'it printed no error text'}", passing=True)
+                         f"{completed.stderr.strip() or 'it printed no error text'}")
     return completed.stdout
 
 
@@ -388,7 +380,7 @@ def start_topic_branch(number, branch, findings):
                       "Commit or remove them, then run the same start-topic-branch command again.")
     branches_file = state_file(states, TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT, number)
     records = read_json(branches_file, [])
-    git(".", ["fetch", "origin"], passing=True, timeout_seconds=FETCH_TIMEOUT_SECONDS)
+    git(".", ["fetch", "origin"], timeout_seconds=FETCH_TIMEOUT_SECONDS)
     try:
         git(".", ["switch", "-c", branch, "origin/main"])
     except StepFailed as failure:
@@ -486,7 +478,7 @@ def open_pull_request(number, findings):
     except git_output.GitCommandFailed as failure:
         if failure.returncode is None:
             raise StepFailed(f"git push -u origin {branch} failed ({failure.stderr}), so no pull request "
-                             "was opened.", passing=git_timed_out(failure)) from None
+                             "was opened.") from None
         raise StepFailed(
             f"git push -u origin {branch} exited {failure.returncode}, so no pull request was "
             f"opened. git's output:\n{failure.stderr.strip()}",
@@ -571,7 +563,7 @@ def finish_follow_up_request_and_print_merge_lane_2_message(number):
 
 def next_step(number):
     states = state_directory()
-    git(".", ["fetch", "origin"], passing=True, timeout_seconds=FETCH_TIMEOUT_SECONDS)
+    git(".", ["fetch", "origin"], timeout_seconds=FETCH_TIMEOUT_SECONDS)
     request = saved_follow_up_request(states, number)
     record = read_json(state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, number), {})
     answers = record.get("answers", {})
@@ -752,16 +744,10 @@ def main(argv=None):
         print(f"REFUSED: {refusal}", file=sys.stderr)
         return 1
     except StepFailed as failure:
-        the_user = (f"the user, in one sentence, that {arguments.subcommand} fails with the error above and "
-                    f"that the follow-up of pull request {arguments.number} is stopped until it")
-        subagent = "If you are a subagent, pass that sentence to the agent that dispatched you instead."
-        if failure.instructions:
-            instructions = failure.instructions
-        elif failure.passing:
-            instructions = (f"Run the same {arguments.subcommand} command again once.\n"
-                            f"If it fails the same way, tell {the_user} works.\n{subagent}")
-        else:
-            instructions = f"Tell {the_user} is fixed.\n{subagent}"
+        instructions = failure.instructions or (
+            f"Tell the user, in one sentence, that {arguments.subcommand} fails with the error above and that "
+            f"the follow-up of pull request {arguments.number} is stopped until it is fixed.\n"
+            "If you are a subagent, pass that sentence to the agent that dispatched you instead.")
         print(f"FAILED: {failure}\n"
               f"{arguments.subcommand} stopped there; what it did before the failure stays done.\n"
               + instructions, file=sys.stderr)

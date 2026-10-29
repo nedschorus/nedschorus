@@ -10,7 +10,9 @@ GitHub; a pre-push hook in the clone injects a refused push.
 Run: python3 scripts/pull-request-follow-up-request-findings-open-pull-requests-or-record-leave-out-reasons-and-clean-up-test.py
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -39,7 +41,7 @@ BLOCK = (f"#follow_up_request pull request {NUMBER}\n"
 LINK = "https://github.com/nedschorus/nedschorus/pull/2001"
 OPEN_LINK = "https://github.com/nedschorus/nedschorus/pull/2002"
 ALREADY_OPEN = f'a pull request for branch "topic-one" into branch "main" already exists:\n{OPEN_LINK}'
-NOT_PASSING_END = ("that the follow-up of pull request 1964 is stopped until it is fixed.\n"
+TELL_THE_USER_END = ("that the follow-up of pull request 1964 is stopped until it is fixed.\n"
                    "If you are a subagent, pass that sentence to the agent that dispatched you instead.\n")
 DESCRIPTION = "Keep code span padding\n\nKeeps the padding.\n\n#no_defect_fixed\n"
 FAKE_GH = """#!/bin/sh
@@ -253,10 +255,11 @@ def test_start():
         origin_url = git(worktree, "remote", "get-url", "origin")
         git(worktree, "remote", "set-url", "origin", str(case.root / "missing.git"))
         code, out, err = case.run(worktree, "start-topic-branch", "topic-three", "--finding-numbers", "1")
-        check("a fetch that fails is FAILED with exit 2, to be run again once, and records no branch",
-              code == 2 and err.startswith("FAILED: git fetch origin") and "Run the same start-topic-branch command again once." in err
-              and "that start-topic-branch fails with the error above" in err
-              and "start-topic-branch stopped there; what it did before the failure stays done." in err
+        check("a fetch that fails is FAILED with exit 2, telling the agent to tell the user, and records no branch",
+              code == 2 and err.startswith("FAILED: git fetch origin") and "again once" not in err
+              and "start-topic-branch stopped there; what it did before the failure stays done.\n"
+                  "Tell the user, in one sentence, that start-topic-branch fails with the error above and "
+                  + TELL_THE_USER_END in err
               and [record["branch"] for record in case.topic_branches()] == ["topic-one", "topic-two"], err)
         git(worktree, "remote", "set-url", "origin", origin_url)
         code, out, err = case.run(worktree, "start-topic-branch", "topic-one", "--finding-numbers", "1")
@@ -266,7 +269,7 @@ def test_start():
               and "If git says the branch already exists or is not a valid branch name, run python3 "
                   f"{program.PROGRAM} {NUMBER} start-topic-branch <another topic-branch> --finding-numbers "
                   "<n>[,<n>...]\n" in err
-              and "again once" not in err and err.endswith(NOT_PASSING_END)
+              and "again once" not in err and err.endswith(TELL_THE_USER_END)
               and git(worktree, "branch", "--show-current") == "topic-two"
               and [record["branch"] for record in case.topic_branches()] == ["topic-one", "topic-two"]
               and case.answers() == {"started": {"1": "topic-two", "2": "topic-two"}}, err)
@@ -477,11 +480,11 @@ def test_open_failures():
         try:
             program.open_pull_request(NUMBER, [1])
         except program.StepFailed as error:
-            check("a push that does not finish in time is a StepFailed a run again may pass, with the usual instructions",
+            check("a push that does not finish in time is a StepFailed with the usual instructions",
                   str(error) == "git push -u origin topic-one failed (did not finish within 0.5 s), so no pull request was opened."
-                  and error.instructions is None and error.passing, repr(error.instructions))
+                  and error.instructions is None, repr(error.instructions))
         else:
-            check("a push that does not finish in time is a StepFailed a run again may pass, with the usual instructions", False)
+            check("a push that does not finish in time is a StepFailed with the usual instructions", False)
         finally:
             program.PUSH_TIMEOUT_SECONDS = original_timeout
         original_run_git = program.git_output.run_git
@@ -494,11 +497,10 @@ def test_open_failures():
         try:
             program.open_pull_request(NUMBER, [1])
         except program.StepFailed as error:
-            check("a push that cannot start is a StepFailed a run again does not pass",
-                  "could not start git: injected" in str(error) and error.instructions is None and not error.passing,
-                  str(error))
+            check("a push that cannot start is a StepFailed with the usual instructions",
+                  "could not start git: injected" in str(error) and error.instructions is None, str(error))
         else:
-            check("a push that cannot start is a StepFailed a run again does not pass", False)
+            check("a push that cannot start is a StepFailed with the usual instructions", False)
         finally:
             program.git_output.run_git = original_run_git
             os.chdir(original_directory)
@@ -506,7 +508,7 @@ def test_open_failures():
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_CREATE_FAILS="1")
         check("gh pr create that fails is FAILED with exit 2, naming the call without its description, recording nothing",
               code == 2 and "FAILED: gh pr create exited 1: GraphQL: something went wrong\n" in err
-              and "Run the same open-pull-request command again once." in err and "answers" not in case.answers()
+              and "again once" not in err and err.endswith(TELL_THE_USER_END) and "answers" not in case.answers()
               and description.exists(), err)
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_CREATE_OUTPUT="no link here")
         check("gh pr create that prints no link is FAILED with exit 2, saying how to check for the pull request",
@@ -517,18 +519,18 @@ def test_open_failures():
               and "answers" not in case.answers(), err)
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1",
                                   FAKE_GH_CREATE_ERROR="a pull request for branch \"topic-one\" into branch \"main\" already exists:")
-        check("gh pr create that says a pull request already exists but names none is FAILED, to be run again once",
+        check("gh pr create that says a pull request already exists but names none is FAILED, telling the agent to tell the user",
               code == 2 and "FAILED: gh pr create exited 1: a pull request for branch" in err
-              and "Run the same open-pull-request command again once." in err and "answers" not in case.answers(), err)
+              and "again once" not in err and err.endswith(TELL_THE_USER_END) and "answers" not in case.answers(), err)
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1",
                                   FAKE_GH_CREATE_ERROR=f"HTTP 502: bad gateway {OPEN_LINK}")
         check("gh pr create that fails naming a link, without saying a pull request is open, is FAILED",
               code == 2 and "FAILED: gh pr create exited 1: HTTP 502" in err and "answers" not in case.answers(), err)
         for signal_number in ("9", "1"):
             code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_KILLED=signal_number)
-            check(f"a gh killed by signal {signal_number} is FAILED with exit 2, to be run again once, recording nothing",
+            check(f"a gh killed by signal {signal_number} is FAILED with exit 2, telling the agent to tell the user, recording nothing",
                   code == 2 and f"FAILED: gh pr create was killed by signal {signal_number}: it printed no error text\n" in err
-                  and "Run the same open-pull-request command again once." in err
+                  and "again once" not in err and err.endswith(TELL_THE_USER_END)
                   and "answers" not in case.answers(), err)
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_CREATE_FAILS_SILENTLY="1")
         check("a gh that exits nonzero without error text is FAILED, saying it printed none",
@@ -537,9 +539,9 @@ def test_open_failures():
         git_only.mkdir()
         (git_only / "git").symlink_to(shutil.which("git"))
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", PATH=str(git_only))
-        check("a gh that cannot start is FAILED with exit 2, not to be run again",
+        check("a gh that cannot start is FAILED with exit 2, telling the agent to tell the user",
               code == 2 and "could not start gh" in err and "again once" not in err
-              and err.endswith(NOT_PASSING_END), err)
+              and err.endswith(TELL_THE_USER_END), err)
         (case.bin / "gh").write_text("#!/bin/sh\nsleep 5\n")
         original_timeout = program.GH_TIMEOUT_SECONDS
         program.GH_TIMEOUT_SECONDS = 0.5
@@ -548,10 +550,10 @@ def test_open_failures():
         try:
             program.gh(["pr", "list"])
         except program.StepFailed as error:
-            check("a gh that does not finish in time is a StepFailed a run again may pass",
-                  "did not finish within 0.5 s" in str(error) and error.passing, str(error))
+            check("a gh that does not finish in time is a StepFailed with the usual instructions",
+                  "did not finish within 0.5 s" in str(error) and error.instructions is None, str(error))
         else:
-            check("a gh that does not finish in time is a StepFailed a run again may pass", False)
+            check("a gh that does not finish in time is a StepFailed with the usual instructions", False)
         finally:
             os.environ["PATH"] = saved_path
             program.GH_TIMEOUT_SECONDS = original_timeout
@@ -578,7 +580,7 @@ def test_open_title_and_description_file_removal_failure():
         check("a title and description file open-pull-request cannot remove is FAILED with exit 2, after the pull "
               "request is opened, said and recorded",
               code == 2 and out == f"Opened {LINK} for finding 1 of pull request 1964's follow-up request, and recorded it.\n"
-              and err.startswith(f"FAILED: could not remove {description}: ") and err.endswith(NOT_PASSING_END)
+              and err.startswith(f"FAILED: could not remove {description}: ") and err.endswith(TELL_THE_USER_END)
               and case.answers()["answers"] == {"1": {"link": LINK, "branch": "topic-one"}}, out + err)
     finally:
         case.close()
@@ -675,7 +677,7 @@ def test_state_failures():
               and f" in {outside} failed" in err
               and "\nTell the user, in one sentence, that finish-follow-up-request-and-print-merge-lane-2-message "
                   "fails with the error above and " in err
-              and "again once" not in err and err.endswith(NOT_PASSING_END), err)
+              and "again once" not in err and err.endswith(TELL_THE_USER_END), err)
         saved = case.save()
         saved.write_text("not a block\n")
         code, out, err = case.run(case.repository, "finish-follow-up-request-and-print-merge-lane-2-message")
@@ -701,7 +703,7 @@ def test_state_failures():
         code, out, err = case.run(case.repository, "finish-follow-up-request-and-print-merge-lane-2-message")
         check("an answers file that is not JSON is FAILED, not to be run again",
               code == 2 and "is not the JSON this program writes" in err and "again once" not in err
-              and err.endswith(NOT_PASSING_END), err)
+              and err.endswith(TELL_THE_USER_END), err)
         answers.unlink()
         answers.mkdir()
         (answers / "inside").write_text("x")
@@ -809,25 +811,6 @@ def test_clean_up_goes_on_past_each_worktree_and_branch():
         case.close()
 
 
-def test_git_failure_passing():
-    directory = tempfile.mkdtemp(prefix="follow-up-program-git-test-")
-    try:
-        cases = (("a git call that does not finish in time", ["-c", "alias.wait=!sleep 5", "wait"],
-                  {"timeout_seconds": 0.5}, True),
-                 ("a git call that exits nonzero", ["rev-parse", "--show-toplevel"], {}, False),
-                 ("a git call marked passing that exits nonzero", ["rev-parse", "--show-toplevel"],
-                  {"passing": True}, True))
-        for label, arguments, options, passing in cases:
-            try:
-                program.git(directory, arguments, **options)
-            except program.StepFailed as error:
-                check(f"{label} is a StepFailed with passing {passing}", error.passing is passing, str(error))
-            else:
-                check(f"{label} is a StepFailed with passing {passing}", False)
-    finally:
-        shutil.rmtree(directory)
-
-
 def test_clean_up_failure():
     case = Case()
     try:
@@ -836,7 +819,7 @@ def test_clean_up_failure():
         code, out, err = case.run(case.repository, "remove-recorded-topic-branches-and-worktrees")
         check("a git command remove-recorded-topic-branches-and-worktrees cannot run is FAILED with exit 2",
               code == 2 and err.startswith("FAILED: git status --short") and "again once" not in err
-              and err.endswith(NOT_PASSING_END),
+              and err.endswith(TELL_THE_USER_END),
               out + err)
     finally:
         case.close()
@@ -906,9 +889,32 @@ def test_next_step():
               out + err)
         git(worktree, "remote", "set-url", "origin", str(case.root / "missing.git"))
         code, out, err = case.run(worktree, "next-step")
-        check("a fetch that fails is FAILED with exit 2, to be run again once, before any step",
-              code == 2 and out == "" and err.startswith("FAILED: git fetch origin")
-              and "Run the same next-step command again once.\n" in err, out + err)
+        check("a fetch that fails is FAILED with exit 2, telling the agent to tell the user, before any step",
+              code == 2 and out == "" and err.startswith("FAILED: git fetch origin") and "again once" not in err
+              and "next-step stopped there; what it did before the failure stays done.\n"
+                  "Tell the user, in one sentence, that next-step fails with the error above and "
+                  + TELL_THE_USER_END in err, out + err)
+        original_run_git = program.git_output.run_git
+
+        def fetch_times_out(directory, arguments, **options):
+            if arguments[0] == "fetch":
+                raise program.git_output.GitCommandFailed(arguments, directory, None, "did not finish within 0.5 s")
+            return original_run_git(directory, arguments, **options)
+        program.git_output.run_git = fetch_times_out
+        original_directory, errors = os.getcwd(), io.StringIO()
+        os.chdir(worktree)
+        try:
+            with contextlib.redirect_stderr(errors):
+                code = program.main([str(NUMBER), "next-step"])
+        finally:
+            program.git_output.run_git = original_run_git
+            os.chdir(original_directory)
+        err = errors.getvalue()
+        check("a fetch that times out is FAILED with exit 2, telling the agent to tell the user, not to run it again",
+              code == 2 and err == f"FAILED: git fetch origin in {worktree} failed (did not finish within 0.5 s)\n"
+                                   "next-step stopped there; what it did before the failure stays done.\n"
+                                   "Tell the user, in one sentence, that next-step fails with the error above and "
+                                   + TELL_THE_USER_END, err)
     finally:
         case.close()
 
@@ -940,7 +946,7 @@ for test in (test_help, test_block_parsing, test_brief_text, test_no_saved_block
              test_open_refusals, test_open, test_open_failures, test_open_title_and_description_file_removal_failure,
              test_leave_out_and_finish, test_three_findings,
              test_state_failures, test_clean_up, test_clean_up_goes_on_past_each_worktree_and_branch,
-             test_git_failure_passing, test_clean_up_failure, test_next_step, test_next_step_branch_choice):
+             test_clean_up_failure, test_next_step, test_next_step_branch_choice):
     test()
 
 print(f"FAILED: {len(failures)} failed" if failures else "PASSED: 0 failed")
