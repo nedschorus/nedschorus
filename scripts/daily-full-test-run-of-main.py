@@ -121,8 +121,9 @@ write_daily_memory_review_mark is not reused: it builds its target from the
 marks' directory, so this program hands run_on_ned_box_or_here the same
 `mkdir -p ... && cat > ...` command over its own directory.
 scripts/run-all-test-suites.py is loaded the same way for the runner's name,
-its exit code for a held lock, and the environment its own git calls run in,
-which drops the variables that send git into another repository.
+its exit code for a held lock, the prefixes of the output lines this program
+picks out, and the environment its own git calls run in, which drops the
+variables that send git into another repository.
 
 SCHEDULE. Installed on each machine by
 nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py, from the
@@ -214,7 +215,6 @@ DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = 3600
 DAILY_FULL_TEST_RUN_RECORD_WRITE_TIMEOUT_SECONDS = 30
 
 RUNNER_SKIPPED_CASE_LINE = re.compile(r"^(?:\S+: )?SKIP\s")
-RUNNER_SUMMARY_LINE_PREFIX = "SUMMARY:"
 
 EXIT_STEP_OF_THIS_PROGRAM_FAILED = 4
 EXIT_RECORD_NOT_WRITTEN = 5
@@ -413,7 +413,7 @@ def lock_never_taken_step_failed(completed, seconds_waiting_for_lock):
 def runner_summary_line(completed):
     """Return the last SUMMARY: line, or None."""
     summary = [line for line in completed.stdout.splitlines()
-               if line.startswith(RUNNER_SUMMARY_LINE_PREFIX)]
+               if line.startswith(run_all_test_suites.SUMMARY_LINE_PREFIX)]
     return summary[-1] if summary else None
 
 
@@ -439,7 +439,8 @@ def runner_output_lines_for_the_record(completed):
     if summary is not None:
         kept.append(summary)
     else:
-        kept.append(f"the runner printed no {RUNNER_SUMMARY_LINE_PREFIX} line; its stderr:")
+        kept.append(f"the runner printed no {run_all_test_suites.SUMMARY_LINE_PREFIX} line; "
+                    f"its stderr:")
         kept.extend(f"  {line}" for line in completed.stderr.strip().splitlines())
     return kept
 
@@ -550,8 +551,8 @@ def daily_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, machin
                       and runner_summary_line(completed) is None):
                     steps_failed.append((
                         f"{run_all_test_suites.PROGRAM} exited {completed.returncode} "
-                        f"and printed no {RUNNER_SUMMARY_LINE_PREFIX} line, which is no "
-                        f"verdict",
+                        f"and printed no {run_all_test_suites.SUMMARY_LINE_PREFIX} line, "
+                        f"which is no verdict",
                         "Read the runner's stderr in the record, then run this again."))
             finally:
                 not_removed = remove_worktree_of_main(clone, worktree)

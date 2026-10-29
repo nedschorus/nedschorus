@@ -63,7 +63,10 @@ suite failing by its own exit (it printed nothing, was not run to the end,
 could not write its records, or a suite's nc-test-sandbox did not start), is
 printed as ERRORED and counts against the run like a survivor. cosmic-ray
 itself reports every nonzero exit of the runner as a kill; this script does
-not. On the unmutated head either a suite's own time limit or the limit on
+not. A mutant one of whose suites had a process killed at the suite's memory
+ceiling (MEMORY CEILING in the runner's docstring), as a mutant that allocates
+without end does, is killed: it fails that suite in seconds, and the rest of
+the machine keeps its memory. On the unmutated head either a suite's own time limit or the limit on
 one run of the suites stops the script with exit 2 and a message saying the suites ran out of time, with the limit,
 and, for a suite's own limit, the suite.
 
@@ -100,7 +103,7 @@ TEST_SUITE_RUNNER_START_UP_SECONDS = 5
 # The runner acts on SIGTERM within RUN_STOP_SIGNAL_CHECK_SECONDS, then waits up to
 # TEST_SUITE_OUTPUT_DRAIN_SECONDS for each killed suite's output.
 MUTANT_TIMEOUT_EXTRA_SECONDS_FOR_TEST_SUITE_RUNNER_TO_STOP_ITS_SUITES = 30
-RUN_AS_COSMIC_RAY_TEST_COMMAND_FLAG = "--cosmic-ray-test-command-run-test-suite-runner-stopped-after-seconds"
+COSMIC_RAY_TEST_COMMAND_RUN_TEST_SUITE_RUNNER_STOPPED_AFTER_SECONDS_FLAG = "--cosmic-ray-test-command-run-test-suite-runner-stopped-after-seconds"
 TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX = f"{PROGRAM}: stopped the suite runner with SIGTERM"
 
 TEST_SUITE_RUNNER_PATH = Path(__file__).resolve().with_name("run-all-test-suites.py")
@@ -236,7 +239,7 @@ def run_test_suite_runner_with_its_stderr_on_stdout_stopped_before_cosmic_ray_li
 def test_command_for(suites, worktree, arguments, recorded_inputs_directory,
                      mutant_timeout_seconds):
     """The command cosmic-ray runs: this script, running the suite runner once on the worktree."""
-    command = [sys.executable, str(Path(__file__).resolve()), RUN_AS_COSMIC_RAY_TEST_COMMAND_FLAG,
+    command = [sys.executable, str(Path(__file__).resolve()), COSMIC_RAY_TEST_COMMAND_RUN_TEST_SUITE_RUNNER_STOPPED_AFTER_SECONDS_FLAG,
                repr(float(mutant_timeout_seconds)),
                sys.executable, str(TEST_SUITE_RUNNER_PATH), "--checkout", str(worktree),
                "--python", arguments.python,
@@ -524,7 +527,7 @@ def parse_arguments(argv):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
-    if argv[:1] == [RUN_AS_COSMIC_RAY_TEST_COMMAND_FLAG]:
+    if argv[:1] == [COSMIC_RAY_TEST_COMMAND_RUN_TEST_SUITE_RUNNER_STOPPED_AFTER_SECONDS_FLAG]:
         return run_test_suite_runner_with_its_stderr_on_stdout_stopped_before_cosmic_ray_limit(
             float(argv[1]), argv[2:])
     # A Bash tool timeout or TaskStop sends SIGTERM; raised as SystemExit, the stop still runs the

@@ -1614,21 +1614,23 @@ def run_completed_task_prune_remote_store_cases(workspace: Path):
           writer.log_store_task_list_copy_location_in_scp_form(None, Path("/home/nedlern/x")))
 
 
-with tempfile.TemporaryDirectory() as temporary_directory:
+with tempfile.TemporaryDirectory() as temporary_directory_name:
+    # Resolved, as the cwd the program reports is, where TMPDIR is reached through a link.
+    temporary_directory = Path(temporary_directory_name).resolve()
     run_collapse_cases()
-    run_written_by_session_field_cases(Path(temporary_directory))
-    run_multi_line_next_step_cases(Path(temporary_directory))
-    run_counter_cases(Path(temporary_directory))
-    run_invocation_cases(Path(temporary_directory))
-    run_liveness_report_cases(Path(temporary_directory))
-    run_console_identity_case(Path(temporary_directory))
-    run_agent_name_and_claim_cases(Path(temporary_directory))
-    run_seat_name_the_supervisor_does_not_answer_to_cases(Path(temporary_directory))
-    run_spawned_subagent_roster_cases(Path(temporary_directory))
-    run_roster_never_blocks_a_handoff_cases(Path(temporary_directory))
-    run_seat_name_and_directory_from_the_handoff_supervisor_cases(Path(temporary_directory))
-    run_completed_task_prune_cases(Path(temporary_directory))
-    run_completed_task_prune_remote_store_cases(Path(temporary_directory))
+    run_written_by_session_field_cases(temporary_directory)
+    run_multi_line_next_step_cases(temporary_directory)
+    run_counter_cases(temporary_directory)
+    run_invocation_cases(temporary_directory)
+    run_liveness_report_cases(temporary_directory)
+    run_console_identity_case(temporary_directory)
+    run_agent_name_and_claim_cases(temporary_directory)
+    run_seat_name_the_supervisor_does_not_answer_to_cases(temporary_directory)
+    run_spawned_subagent_roster_cases(temporary_directory)
+    run_roster_never_blocks_a_handoff_cases(temporary_directory)
+    run_seat_name_and_directory_from_the_handoff_supervisor_cases(temporary_directory)
+    run_completed_task_prune_cases(temporary_directory)
+    run_completed_task_prune_remote_store_cases(temporary_directory)
 
 print()
 if failures:

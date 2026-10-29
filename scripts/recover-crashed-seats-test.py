@@ -212,6 +212,14 @@ def real_subprocess_run_help():
         [sys.executable, str(SUPERVISOR_SCRIPT), "--help"],
         capture_output=True, text=True).stdout
 
+def shell_words(command: str) -> list:
+    """Return the command's words as a shell splits them, with each `;` a word of its own."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    return list(lexer)
+
+
 def patch(monkey_target, value):
     setattr(recovery, monkey_target, value)
 
@@ -1163,7 +1171,8 @@ def run_came_up_cases(root: Path):
 
 
 with tempfile.TemporaryDirectory() as temporary:
-    root = Path(temporary)
+    # Resolved, as os.getcwd() is, where TMPDIR is reached through a link.
+    root = Path(temporary).resolve()
 
     # --- refusals, and seats already running ---------------------------------
     # A seat found running is not refused (user-ruled 2026-09-16, on the
@@ -2524,13 +2533,18 @@ with tempfile.TemporaryDirectory() as temporary:
         recovery.launcher_path = real_launcher_path
         recovery.run_tmux = real_run_tmux
     box_command = tmux_commands[0][0][-1] if tmux_commands else ""
-    box_tokens = shlex.split(box_command)
+    box_tokens = shell_words(box_command)
     check("A: the box branch composes --handoff-dir into the supervisor command",
           str(workspace.handoffs) in box_tokens
           and str(workspace.seat_directory) in box_tokens
           and "abc-123" in box_tokens
           and "--handoff-dir" in box_tokens,
           box_command)
+    # A pane command that ends with the supervisor call lets the pane's shell exec into it,
+    # and tmux, then its parent, wakes it from a `kill -STOP` at once.
+    check("A: the box branch's detached pane command ends with `; exit $?`, so the shell "
+          "stays the supervisor's parent",
+          box_command.endswith("; exit $?"), box_command)
 
     # A recovery run from another agent-session's shell must not hand that agent-session's
     # Claude Code, tmux or supervisor variables to the seat it launches, on either branch.
@@ -2682,7 +2696,7 @@ with tempfile.TemporaryDirectory() as temporary:
         recovery.launcher_path = real_launcher_path
         recovery.run_tmux = real_run_tmux
     check("F1: an apostrophe handoff dir survives the box command's shell parse",
-          str(apostrophe_handoffs) in shlex.split(tmux_commands[0][0][-1]),
+          str(apostrophe_handoffs) in shell_words(tmux_commands[0][0][-1]),
           tmux_commands[0][0][-1])
 
     # PR #134 review finding 2: a --handoff-dir that does not exist yet must
@@ -2773,7 +2787,7 @@ with tempfile.TemporaryDirectory() as temporary:
     command_line = next((line for line in detached_capture.splitlines()
                          if "handoff-supervisor.py" in line), "")
     try:
-        command_tokens = shlex.split(command_line)
+        command_tokens = shell_words(command_line)
         parse_problem = ""
     except ValueError as error:
         command_tokens, parse_problem = [], str(error)
@@ -2900,8 +2914,9 @@ with tempfile.TemporaryDirectory() as temporary:
         finally:
             os.chdir(saved_directory)
         check("AGENTS ROOT: a relative --agents-root resolves against the caller's directory",
-              exit_code == 0 and seat_directories_launched == [workspace.seat_directory]
-              and workspace.seat_directory.is_absolute()
+              exit_code == 0
+              and seat_directories_launched == [workspace.seat_directory]
+              and all(path.is_absolute() for path in seat_directories_launched)
               and workspace.agents_root.parent != Path.home(),
               (exit_code, seat_directories_launched))
     finally:
@@ -3094,6 +3109,8 @@ with tempfile.TemporaryDirectory() as temporary:
           completed.returncode != 0 and "different recoveries" in completed.stderr,
           completed.stderr)
 
+    check("shell_words keeps a word with an unquoted # inside it, and the words after it",
+          shell_words("echo a#b c") == ["echo", "a#b", "c"], shell_words("echo a#b c"))
     run_claude_json_presets_cases(root)
     run_came_up_cases(root)
     run_reach_clause_cases(root)

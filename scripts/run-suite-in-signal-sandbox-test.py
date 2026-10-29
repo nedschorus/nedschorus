@@ -789,12 +789,51 @@ if linux_only_cases_run_here("the low-priority cgroup scope of a suite in an nc-
         check("in an nc-test-sandbox, the suite runs in a cgroup scope of its own and at low "
               "priority, as the runner's suites do",
               len(launched) == 2
-              and launched[0][:len(program.runner.TEST_SUITE_CGROUP_SCOPE_COMMAND)]
-              == list(program.runner.TEST_SUITE_CGROUP_SCOPE_COMMAND)
+              and launched[0][:len(program.runner.test_suite_cgroup_scope_command())]
+              == list(program.runner.test_suite_cgroup_scope_command())
               and any(launched[0][index:index + 3] == nice for index in range(len(launched[0]))),
               launched[:1])
         check("where no cgroup scope can be made, the suite still runs at low priority",
               len(launched) == 2 and launched[1][:3] == nice, launched[1:])
+
+        # A launch that stands in for a suite that exited 0 after the kernel killed one of
+        # its processes at its memory ceiling: the counters say so, and the inside check
+        # vouched for the sandbox.
+        class ExitedZero:
+            returncode = 0
+
+            def wait(self):
+                return 0
+
+        def suite_with_a_process_killed_at_its_memory_ceiling(command, *arguments, **options):
+            if not any("doubling-test.py" in str(part) for part in command):
+                return real_popen(command, *arguments, **options)
+            launched.append(list(command))
+            os.write(options["pass_fds"][0], b"usage_usec 1000000\nmemory.peak 5\noom_kill 1\n")
+            (scratch / "proof").write_text(program.PID_ONE_PROOF + "\n")
+            return ExitedZero()
+
+        launched.clear()
+        program.subprocess.Popen = suite_with_a_process_killed_at_its_memory_ceiling
+        program.stop_descendants = lambda: None
+        program.runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none = \
+            lambda: None
+        printed = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(printed):
+                code = program.run_suite_confined(repository, "doubling-test.py",
+                                                  sys.executable, ("/usr/bin/bwrap",),
+                                                  scratch / "proof")
+        finally:
+            (program.subprocess.Popen, program.stop_descendants,
+             program.runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none) = \
+                originals
+        check("a suite that exits 0 after the kernel killed one of its processes at its memory "
+              "ceiling fails, killed by SIGKILL, and the run says OUT OF MEMORY with the ceiling",
+              code == -signal.SIGKILL
+              and f"MemoryMax={program.runner.TEST_SUITE_MEMORY_CEILING_BYTES}" in launched[0]
+              and "OUT OF MEMORY: the kernel killed 1 of the suite's processes at its memory "
+                  "ceiling of 4 GB" in printed.getvalue(), (code, printed.getvalue(), launched))
 
 if not linux_only_cases_run_here("the cases that run a suite"):
     pass

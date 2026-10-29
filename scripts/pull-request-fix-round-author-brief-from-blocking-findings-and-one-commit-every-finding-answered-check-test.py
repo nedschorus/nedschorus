@@ -31,6 +31,9 @@ REVIEWS = f"api --paginate repos/{{owner}}/{{repo}}/pulls/{NUMBER}/reviews --jq 
 PR_VIEW = f"pr view {NUMBER} --json url,headRefOid,headRefName"
 BRANCH = "topic-branch-of-the-pull-request"
 URL = f"https://github.com/o/r/pull/{NUMBER}"
+ADVISOR_SENTENCE = ("This is the pull request's third fix-round, its last before merge-lane-2 brings it to "
+                    "the user: before you change anything, call the advisor with the blocking findings and "
+                    "the fix you plan.")
 
 FAKE_GH = r'''#!/usr/bin/env python3
 import json, os, sys
@@ -174,6 +177,8 @@ def brief_cases(root, repository, base, frozen_head):
     code, out, err = run(root, repository, routes_for(frozen_head, [review(commit_id=frozen_head)]))
     check("brief: exit 0 for a changes-requested review of the current head", code == 0, err)
     check("brief: names the frozen-head", f"Frozen-head: {frozen_head}" in out, out)
+    check("brief: the first changes-requested review's brief does not ask for the advisor",
+          ADVISOR_SENTENCE not in out and "advisor" not in out, out)
     check("brief: carries both blocking findings word for word, in order, and not the note",
           out.index("hook.py swallows") < out.index("no case for the timeout")
           and "A non-blocking note" not in out and "1. hook.py:12" in out and "2. test.py (" in out, out)
@@ -385,6 +390,33 @@ def brief_cases(root, repository, base, frozen_head):
     check("brief: with two changes-requested reviews of different commits, only the latest sets the round",
           code == 0 and f"Frozen-head: {frozen_head}" in out and "Blocking findings (2)" in out
           and "an earlier round's finding" not in out, err + out)
+    check("brief: the second changes-requested review's brief does not ask for the advisor",
+          code == 0 and "advisor" not in out, err + out)
+
+    def earlier_rounds(count):
+        return [review(commit_id=base, review_id=review_id) for review_id in range(11 - count, 11)]
+
+    code, out, err = run(root, repository, routes_for(
+        frozen_head, earlier_rounds(2) + [review(commit_id=frozen_head, review_id=11)]))
+    check("brief: the third changes-requested review's brief asks for the advisor, word for word, before the findings",
+          code == 0 and out.count(ADVISOR_SENTENCE) == 1
+          and out.index(f"merge-lane-2's review: {URL}#pullrequestreview-11\n\n{ADVISOR_SENTENCE}\n\n")
+          < out.index("Blocking findings (2)") < out.index("For the subagent, the rules of the round"), err + out)
+    code, out, err = run(root, repository, routes_for(
+        frozen_head, earlier_rounds(2) + [review(commit_id=frozen_head, review_id=11),
+                                          review(state="COMMENTED", commit_id=frozen_head, review_id=12,
+                                                 body="Noted.")]) | comments_route(12, []))
+    check("brief: a comment-only review after the third changes-requested review keeps the advisor sentence",
+          code == 0 and out.count(ADVISOR_SENTENCE) == 1, err + out)
+    code, out, err = run(root, repository, routes_for(
+        frozen_head, earlier_rounds(3) + [review(commit_id=frozen_head, review_id=11)]))
+    check("brief: the fourth changes-requested review's brief does not ask for the advisor",
+          code == 0 and "advisor" not in out, err + out)
+    code, out, err = run(root, repository, routes_for(
+        frozen_head, earlier_rounds(2) + [review(commit_id=frozen_head, review_id=11)]),
+        "--check", "--answers", answers_file(root, GOOD_ANSWERS))
+    check("check: the third round's check passes and prints no advisor sentence",
+          code == 0 and "Nothing pushed" in out and "advisor" not in out, err + out)
 
     code, out, err = run(root, repository, routes_for(
         frozen_head, [review(commit_id=frozen_head),
