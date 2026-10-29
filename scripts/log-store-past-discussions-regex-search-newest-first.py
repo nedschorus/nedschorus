@@ -25,8 +25,10 @@ Before it searches session-dialogs, it writes again each session dialog
 whose transcript changed since the dialog was written, as the dialogs
 refresher, scripts/log-store-session-dialogs-refresh-nbd.py, does every 10
 minutes, so a dialog is as current as the transcript the mirror last copied,
-about a minute behind the session. After the dialog extractor changes, the
-refresher alone rewrites every dialog, on its next pass.
+about a minute behind the session. After the dialog extractor,
+scripts/handoff-extract-conversation.py, or its subagent tracker changes, the
+refresher alone rewrites every dialog, on its next pass; until then a dialog
+the search did not write keeps the older extractor's form.
 
 A user's message is usually found twice, once in his session's dialog and
 once among user-messages; the user-messages hit carries the time he sent it,
@@ -110,10 +112,11 @@ FAILURES. A record that could not be searched prints a line opening FAILED,
 naming what failed and what to do, after the hits found elsewhere: a missing
 log-store or kind directory, a file ripgrep could not read, a transcript the
 reader could not read, a session dialog the extractor could not build again
-whole, a session dialog not written again from its changed transcript, and a
-directory of transcripts not looked through for changed ones, which leave
-those dialogs without the session's latest turns, ripgrep missing, ned-box
-unreachable from the Mac.
+whole, a session dialog not written again from its changed transcript, a
+directory of transcripts not looked through for changed ones, ripgrep missing,
+and ned-box unreachable from the Mac. A dialog not written again, or one under
+a directory not looked through, is still searched, but may lack the
+session's latest turns.
 After the FAILED lines, one closing line says what the failures mean for the
 page: when hits were printed, that they are real matches but the page may lack
 hits from the failed records; when none were, that a match may be in those
