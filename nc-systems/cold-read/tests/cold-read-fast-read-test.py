@@ -1044,6 +1044,7 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and result.stdout.strip() == str(suggestions)
           and "Question 4 was not answered" in report_text
           and f"no answer within {5 / 60:g} minutes" in report_text
+          and f"for up to {5 / 60:g} minutes" in result.stderr
           and QUESTION_4_STUB_ANSWER.strip() not in report_text,
           f"exit {result.returncode}; report={report_text!r}; stderr={result.stderr!r}")
     hanging_stub_pid = (int(hanging_stub_pid_file.read_text())

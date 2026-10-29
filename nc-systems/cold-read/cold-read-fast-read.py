@@ -1314,7 +1314,7 @@ def what_should_be_code_section(target: pathlib.Path, scratch: pathlib.Path) -> 
                 timeout=COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             exit_code = None
-            cold_read_grid.stop_process_tree(process, grace_seconds=0)
+            cold_read_grid.stop_process_tree(process)
     output_text = launcher_output.read_text(encoding="utf-8")
     print(output_text, file=sys.stderr, end="")
     if exit_code == 0:
