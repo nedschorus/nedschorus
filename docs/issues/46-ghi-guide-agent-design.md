@@ -1,10 +1,10 @@
 ---
-issue: "[Build ghi-info — the GHI knowledge agent](https://github.com/nedschorus/nedschorus/issues/46)"
+issue: "[Build ghi-guide-agent — the GHI knowledge agent](https://github.com/nedschorus/nedschorus/issues/46)"
 kind: design
 design-as-of: 2026-08-11
 ---
 
-# ghi-guide-agent — the GHI knowledge agent (design)
+# Build ghi-guide-agent — the GHI knowledge agent
 
 How agents work with GitHub issues (GHIs) in nedschorus: `ghi-guide-agent`, a long-lived knowledge agent over the issue corpus; a script-maintained local mirror; a write path whose hook routes raw writes through the project write tool; and the `ghi-write` skill carrying the judgment none of the machinery can. Throughout, **GHI author** means whichever agent is filing or editing an issue. Decision trail: `git show 6c9b437:docs/drafts/ghi-info-agent-plan-draft.md` (per-item dispositions, 2026-08-07) and [git show db917b5:md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md](../../git show db917b5:md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md); the rejected single-gate direction is kept in § Why issue writes cannot be a credential gate, below, and in full at `git show 0860628:docs/drafts/ghi-gatekeeper-plan-draft.md`.
 
@@ -12,7 +12,7 @@ The organizing idea: instead of building a vector or graph database of the GHIs,
 
 ## Build status
 
-Issue [Build ghi-info — the GHI knowledge agent](https://github.com/nedschorus/nedschorus/issues/46) builds the whole system this design describes: the GHI mirror and refresh script, the ghi-guide-agent-ask wrapper, the issue-write tool and its redirect hook, the maintenance sweep and fixer spawning, and the seat on the box. On main as of 2026-09-30:
+Issue [Build ghi-guide-agent — the GHI knowledge agent](https://github.com/nedschorus/nedschorus/issues/46) builds the whole system this design describes: the GHI mirror and refresh script, the ghi-guide-agent-ask wrapper, the issue-write tool and its redirect hook, the maintenance sweep and fixer spawning, and the seat on the box. On main as of 2026-09-30:
 
 - **The `ghi-write` skill**, the front-loading layer, landed 2026-08-12 (§ The three-layer stack).
 - **The mirror and the seat:** `scripts/ghi-mirror-refresh.py`, run in the seat's checkout `~/agents/ghi-guide-agent` on ned-box, which holds `ghi-mirror/`.
