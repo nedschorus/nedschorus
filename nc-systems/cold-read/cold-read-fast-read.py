@@ -417,19 +417,19 @@ _claude_cell_spec.loader.exec_module(claude_cell)
 SONNET_BACKUP_MODEL = claude_cell.TIER_TO_CLAUDE_MODEL_CHAIN[FAST_READ_TIER][0]
 # Loaded only for stop_process_tree, which stops the Question 4 cell's
 # process group, the model it started included, at its time limit.
-_cold_read_grid_spec = importlib.util.spec_from_file_location(
-    "cold_read_grid", pathlib.Path(__file__).with_name("cold-read-grid.py"))
-cold_read_grid = importlib.util.module_from_spec(_cold_read_grid_spec)
-_cold_read_grid_spec.loader.exec_module(cold_read_grid)
+_cell_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common", pathlib.Path(__file__).with_name("cold-read-cell-common.py"))
+cell_common = importlib.util.module_from_spec(_cell_common_spec)
+_cell_common_spec.loader.exec_module(cell_common)
 # The claude launcher sets no time limit of its own; the Sonnet backup is
 # allowed as long as one Gemini attempt.
 COLD_READ_FAST_READ_SONNET_BACKUP_RUN_ALLOWANCE_SECONDS = 30 * 60
-# Each Gemini attempt of the read on ned-box is bounded by the --print-timeout
-# the agy cell gives each model of the cold-read-tier's chain; the five
+# Each Gemini attempt of the read on ned-box is bounded by the time after
+# which the agy cell kills each model of the cold-read-tier's chain; the five
 # minutes more cover git, the shipper and the connect.
 COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS = (
     FAST_READ_ATTEMPTS * len(agy_cell.TIER_TO_AGY_MODEL_CHAIN[FAST_READ_TIER])
-    * agy_cell.COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS
+    * agy_cell.COLD_READ_AGY_CELL_PER_MODEL_RUN_KILL_AFTER_SECONDS
     + COLD_READ_FAST_READ_SONNET_BACKUP_RUN_ALLOWANCE_SECONDS + 5 * 60
     + COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS)
 
@@ -1323,7 +1323,7 @@ def what_should_be_code_section(target: pathlib.Path, scratch: pathlib.Path) -> 
                 timeout=COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             exit_code = None
-            cold_read_grid.stop_process_tree(process)
+            cell_common.stop_process_tree(process)
     output_text = launcher_output.read_text(encoding="utf-8")
     print(output_text, file=sys.stderr, end="")
     if exit_code == 0:

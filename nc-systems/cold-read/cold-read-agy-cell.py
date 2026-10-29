@@ -47,7 +47,10 @@ committed): `agy --add-dir <repo> --dangerously-skip-permissions --model <id>
 repository's AGENTS.md does not load. `--dangerously-skip-permissions` is what
 lets the Write of the report happen headless. Antigravity's model ids carry the
 effort as a suffix (gemini-3.8-flash-{low,medium,high}); `--effort` is passed
-as well, exactly as the campaign passed it.
+as well, exactly as the campaign passed it. agy does not always stop at
+`--print-timeout`, so the cell runs agy in a process group of its own and kills
+that group 60 seconds after agy's own deadline; the attempt then fails with
+the cause `timed-out`, like any other failed attempt.
 
 THE CHAT-INSTEAD-OF-FILE QUIRK, and how it is handled. The campaign measured
 that gemini-3.8-flash sometimes answers the whole review in chat instead of
@@ -137,9 +140,15 @@ TIER_TO_REASONING_EFFORT = {
     "fast": "medium",
 }
 
-# The fast read on the Mac sizes its ssh time limit from this number.
 COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60
 AGY_PRINT_TIMEOUT = f"{COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS // 60}m"
+# agy does not always honour --print-timeout, so the cell kills agy's process
+# group this long after agy's own deadline. The fast read on the Mac sizes its
+# ssh time limit from the sum.
+COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS = 60
+COLD_READ_AGY_CELL_PER_MODEL_RUN_KILL_AFTER_SECONDS = (
+    COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS
+    + COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS)
 
 GEMINI_API_KEY_FILE = pathlib.Path.home() / ".config" / "nedschorus" / "gemini-api.key"
 AGY_MISSING_GEMINI_API_KEY_LINE_PREFIX = (
@@ -280,6 +289,7 @@ def main() -> int:
         recognised_failure_texts_for_model=(
             missing_key_failure_texts(key_file_problem) if key_file_problem else None),
         child_environment=agy_environment,
+        per_model_run_timeout_seconds=COLD_READ_AGY_CELL_PER_MODEL_RUN_KILL_AFTER_SECONDS,
     )
 
 
