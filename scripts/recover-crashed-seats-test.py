@@ -216,6 +216,7 @@ def shell_words(command: str) -> list:
     """Return the command's words as a shell splits them, with each `;` a word of its own."""
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
+    lexer.commenters = ""
     return list(lexer)
 
 
@@ -3106,6 +3107,8 @@ with tempfile.TemporaryDirectory() as temporary:
           completed.returncode != 0 and "different recoveries" in completed.stderr,
           completed.stderr)
 
+    check("shell_words keeps a word with an unquoted # inside it, and the words after it",
+          shell_words("echo a#b c") == ["echo", "a#b", "c"], shell_words("echo a#b c"))
     run_claude_json_presets_cases(root)
     run_came_up_cases(root)
     run_reach_clause_cases(root)
