@@ -55,6 +55,15 @@ dialog is written as a sibling file: the tail is the successor's working set,
 the companion is the conversation's history without the raw transcript's tool
 dumps.
 
+The session dialogs the log-store keeps for the past-discussion search come
+from render_complete_dialog_of_transcript_as_markdown, which is not the
+handoff's companion: in it, an agent paragraph identical to one the agent
+showed earlier in the session becomes one line, "(repeated: <its first eight
+words> …)". A paragraph is text between blank lines. The first copy stays
+whole, and the user's and the subagent turns are never shortened. The
+handoff's own files keep every repeat, since a successor needs the current
+item's closing line.
+
 Exit codes: 0 extraction written, 2 bad invocation, 3 transcript not
 found, 4 transcript unusable (empty, unparseable, or boundary not found).
 """
@@ -463,6 +472,37 @@ def subagent_turns_note(turns) -> str:
     return f"; {count} subagent turns, not counted in the words" if count else ""
 
 
+REPEATED_PARAGRAPH_OPENING_WORDS = 8
+# Blank lines, however many, between two paragraphs; captured, so the paragraphs keep their spacing.
+PARAGRAPH_BREAK = re.compile(r"(\n(?:[ \t]*\n)+)")
+
+
+def turns_with_repeated_agent_paragraphs_shortened(turns):
+    """Return the turns with each agent paragraph identical to an earlier agent paragraph made one line.
+
+    The line is "(repeated: <its first eight words> …)"; paragraphs are compared with their outer
+    whitespace stripped. Only "assistant" turns are changed, and only copies after the first.
+    """
+    shown = set()
+    shortened = []
+    for turn in turns:
+        if turn["voice"] != "assistant":
+            shortened.append(turn)
+            continue
+        pieces = PARAGRAPH_BREAK.split(turn["text"])
+        for index in range(0, len(pieces), 2):
+            paragraph = pieces[index].strip()
+            if not paragraph:
+                continue
+            if paragraph in shown:
+                opening = " ".join(paragraph.split()[:REPEATED_PARAGRAPH_OPENING_WORDS])
+                pieces[index] = f"(repeated: {opening} …)"
+            else:
+                shown.add(paragraph)
+        shortened.append(dict(turn, text="".join(pieces)))
+    return shortened
+
+
 SUBAGENT_HEADINGS = {
     "task": "Subagent task",
     "follow-up": "Subagent task, continued",
@@ -551,7 +591,8 @@ def render_companion(turns, report: ExtractionReport) -> str:
 
 
 def render_complete_dialog_of_transcript_as_markdown(transcript_path: Path) -> str:
-    """Return a transcript's complete filtered dialog, subagent turns included.
+    """Return a transcript's session dialog for the log-store: its complete filtered dialog, subagent turns included,
+    with each agent paragraph shown before made one line, as turns_with_repeated_agent_paragraphs_shortened says.
 
     A transcript with no dialog turns still yields a dialog, one that says it holds none,
     so a caller that writes it has a file to say the session was read.
@@ -560,7 +601,9 @@ def render_complete_dialog_of_transcript_as_markdown(transcript_path: Path) -> s
 
 
 def complete_dialog_turns_and_report(transcript_path: Path):
+    """Return (turns, report) of the session dialog render_complete_dialog_of_transcript_as_markdown renders."""
     turns, skip_counts = read_dialog_turns(transcript_path, include_subagent_tasks_and_reports=True)
+    turns = turns_with_repeated_agent_paragraphs_shortened(turns)
     report = ExtractionReport(
         session_id=transcript_path.stem,
         transcript_path=transcript_path,
