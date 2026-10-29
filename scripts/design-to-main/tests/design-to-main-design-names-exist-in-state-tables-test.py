@@ -44,7 +44,15 @@ import unittest
 
 MACHINE_DIRECTORY = pathlib.Path(__file__).resolve().parent.parent
 REPOSITORY_ROOT = MACHINE_DIRECTORY.parent.parent
-DESIGN_PATH = REPOSITORY_ROOT / "docs" / "design-to-main" / "design-to-main-state-machine-design.md"
+DESIGN_RELATIVE_PATH = "docs/design-to-main/design-to-main-state-machine-design.md"
+DESIGN_PATH = REPOSITORY_ROOT / DESIGN_RELATIVE_PATH
+
+_rule_failure_lines_spec = importlib.util.spec_from_file_location(
+    "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py")
+RULE_FAILURE_LINES = importlib.util.module_from_spec(_rule_failure_lines_spec)
+_rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)
 
 
 def load_state_tables_module():
@@ -209,6 +217,71 @@ def backticked_names_the_code_does_not_define(design_text, name_classes):
     return undefined
 
 
+UNDEFINED_NAME_FAILURE_MESSAGE = "\n".join([
+    f"backticked in {DESIGN_RELATIVE_PATH}, defined by no code and on no list of this suite; every "
+    f"name the design writes in backticks must be a name the state machine's code defines.",
+    "If the design misspells a name the code defines, correct the design.",
+    "If your change renamed or removed the name in scripts/design-to-main/ by mistake, put it back.",
+    "If your change renamed or removed the name on purpose, change the design to match.",
+    "If the name is spelled as a string in another module of scripts/design-to-main/, add it to "
+    "MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE in this suite with that module's file name.",
+    "If the word is not a name of the state machine, add it with its reason to "
+    "BACKTICKED_TOKENS_THAT_ARE_NOT_MACHINE_NAMES in this suite.",
+    RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(DESIGN_RELATIVE_PATH),
+    RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
+
+
+def string_no_longer_in_cited_module_failure_message(name, file_name):
+    return "\n".join([
+        f"{name} is listed in MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE as a string in "
+        f"scripts/design-to-main/{file_name}, and that file no longer spells it; the entry is how "
+        f"this suite accepts a design name the state tables module does not define.",
+        "If your change removed the string by mistake, put it back.",
+        "If your change renamed the string, give the entry the new name, and change the design's "
+        "name to match.",
+        "If your change moved the string to another module of scripts/design-to-main/, change the "
+        "entry's file name.",
+        "If the state machine no longer has that name, remove the entry, and remove the name from "
+        "the design.",
+        RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(DESIGN_RELATIVE_PATH),
+        RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
+
+
+def exempted_name_now_defined_failure_message(list_name):
+    if list_name == "BACKTICKED_TOKENS_THAT_ARE_NOT_MACHINE_NAMES":
+        found = (f"on {list_name} in this suite, and now a name the state tables module defines; "
+                 f"a name of the state machine must be checked, not exempted.")
+    else:
+        found = (f"on {list_name} in this suite, and now a name the state tables module defines, "
+                 f"so the entry is no longer needed.")
+    return "\n".join([
+        found,
+        f"If your change added that name to the state tables on purpose, remove it from {list_name}.",
+        "If your change added it to the state tables by mistake, remove it from the state tables.",
+        RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
+
+
+def assert_every_backticked_name_is_defined(test, undefined):
+    test.assertEqual(undefined - set(KNOWN_MISMATCHES_AWAITING_A_RULING), set(),
+                     UNDEFINED_NAME_FAILURE_MESSAGE)
+
+
+def assert_each_outside_name_is_a_literal_in_its_module(test, outside_names):
+    for name, (file_name, _what) in outside_names.items():
+        with test.subTest(name=name):
+            test.assertTrue(is_a_string_literal_in_machine_module(name, file_name),
+                            string_no_longer_in_cited_module_failure_message(name, file_name))
+
+
+def assert_no_exempted_name_is_a_machine_name(test, known, not_machine_names, outside_names):
+    test.assertEqual(set(not_machine_names) & known, set(),
+                     exempted_name_now_defined_failure_message(
+                         "BACKTICKED_TOKENS_THAT_ARE_NOT_MACHINE_NAMES"))
+    test.assertEqual(set(outside_names) & known, set(),
+                     exempted_name_now_defined_failure_message(
+                         "MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE"))
+
+
 class TheDesignsNamesExistInTheCode(unittest.TestCase):
 
     @classmethod
@@ -218,8 +291,7 @@ class TheDesignsNamesExistInTheCode(unittest.TestCase):
         cls.undefined = backticked_names_the_code_does_not_define(cls.design_text, cls.name_classes)
 
     def test_every_backticked_name_in_the_design_is_defined_or_a_known_mismatch(self):
-        self.assertEqual(self.undefined - set(KNOWN_MISMATCHES_AWAITING_A_RULING), set(),
-                         "backticked in the design, defined by no code and on no list")
+        assert_every_backticked_name_is_defined(self, self.undefined)
 
     def test_every_known_mismatch_is_still_one(self):
         self.assertEqual(set(KNOWN_MISMATCHES_AWAITING_A_RULING) - self.undefined, set(),
@@ -233,14 +305,14 @@ class TheDesignsNamesExistInTheCode(unittest.TestCase):
                         "MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE" % module_path.name)
 
     def test_a_name_defined_outside_the_tables_module_is_a_literal_in_the_file_it_cites(self):
-        for name, (file_name, _what) in MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE.items():
-            with self.subTest(name=name):
-                self.assertTrue(is_a_string_literal_in_machine_module(name, file_name))
+        assert_each_outside_name_is_a_literal_in_its_module(
+            self, MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE)
 
     def test_no_allowlisted_word_is_a_machine_name(self):
-        known = set().union(*self.name_classes.values())
-        self.assertEqual(set(BACKTICKED_TOKENS_THAT_ARE_NOT_MACHINE_NAMES) & known, set())
-        self.assertEqual(set(MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE) & known, set())
+        assert_no_exempted_name_is_a_machine_name(
+            self, set().union(*self.name_classes.values()),
+            BACKTICKED_TOKENS_THAT_ARE_NOT_MACHINE_NAMES,
+            MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE)
 
     def test_the_prose_read_is_the_whole_design_but_its_fenced_blocks(self):
         prose = design_prose_without_front_matter_and_fenced_blocks(self.design_text)
@@ -296,6 +368,87 @@ class TheCheckerFailsOnANameTheCodeDoesNotHave(unittest.TestCase):
     def test_a_name_inside_a_fenced_block_is_not_read(self):
         text = self.design_text + "\n```text\n`not-a-name-in-a-fence`\n```\n"
         self.assertEqual(self.undefined_in(text), set())
+
+
+class EachFailureMessageNamesTheRuleAndOneFixPerCause(unittest.TestCase):
+    """Each assertion above, made to fail on a planted input, prints the approved lines."""
+
+    def failure_message(self, assertion, *arguments):
+        class Collector(unittest.TestCase):
+            def runTest(inner):
+                assertion(inner, *arguments)
+
+        result = unittest.TestResult()
+        Collector().run(result)
+        self.assertEqual(result.errors, [], "the planted input raised instead of failing")
+        failures = [text for _test, text in result.failures]
+        self.assertTrue(failures, "the planted input did not fail the assertion")
+        return failures[0]
+
+    def test_an_undefined_name_prints_the_rule_and_one_fix_per_cause(self):
+        message = self.failure_message(assert_every_backticked_name_is_defined,
+                                       {"test-design-drafting"})
+        self.assertIn("'test-design-drafting'", message)
+        self.assertTrue(message.rstrip().endswith("\n".join([
+            f"backticked in {DESIGN_RELATIVE_PATH}, defined by no code and on no list of this "
+            f"suite; every name the design writes in backticks must be a name the state machine's "
+            f"code defines.",
+            "If the design misspells a name the code defines, correct the design.",
+            "If your change renamed or removed the name in scripts/design-to-main/ by mistake, put "
+            "it back.",
+            "If your change renamed or removed the name on purpose, change the design to match.",
+            "If the name is spelled as a string in another module of scripts/design-to-main/, add "
+            "it to MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE in this suite with that "
+            "module's file name.",
+            "If the word is not a name of the state machine, add it with its reason to "
+            "BACKTICKED_TOKENS_THAT_ARE_NOT_MACHINE_NAMES in this suite.",
+            RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(DESIGN_RELATIVE_PATH),
+            RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])), message)
+
+    def test_a_string_gone_from_its_cited_module_prints_the_rule_and_one_fix_per_cause(self):
+        message = self.failure_message(
+            assert_each_outside_name_is_a_literal_in_its_module,
+            {"no-such-planted-name": ("design-to-main-state-tables-common.py", "planted")})
+        self.assertTrue(message.rstrip().endswith("\n".join([
+            "no-such-planted-name is listed in MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE "
+            "as a string in scripts/design-to-main/design-to-main-state-tables-common.py, and that "
+            "file no longer spells it; the entry is how this suite accepts a design name the state "
+            "tables module does not define.",
+            "If your change removed the string by mistake, put it back.",
+            "If your change renamed the string, give the entry the new name, and change the "
+            "design's name to match.",
+            "If your change moved the string to another module of scripts/design-to-main/, change "
+            "the entry's file name.",
+            "If the state machine no longer has that name, remove the entry, and remove the name "
+            "from the design.",
+            RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(DESIGN_RELATIVE_PATH),
+            RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])), message)
+
+    def test_an_exempted_word_now_defined_prints_which_list_and_one_fix_per_cause(self):
+        message = self.failure_message(assert_no_exempted_name_is_a_machine_name,
+                                       {"contract-review"}, {"contract-review": "planted"}, {})
+        self.assertIn("'contract-review'", message)
+        self.assertTrue(message.rstrip().endswith("\n".join([
+            "on BACKTICKED_TOKENS_THAT_ARE_NOT_MACHINE_NAMES in this suite, and now a name the state "
+            "tables module defines; a name of the state machine must be checked, not exempted.",
+            "If your change added that name to the state tables on purpose, remove it from "
+            "BACKTICKED_TOKENS_THAT_ARE_NOT_MACHINE_NAMES.",
+            "If your change added it to the state tables by mistake, remove it from the state "
+            "tables.",
+            RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])), message)
+
+    def test_an_outside_name_now_defined_prints_which_list_and_one_fix_per_cause(self):
+        message = self.failure_message(assert_no_exempted_name_is_a_machine_name,
+                                       {"contract-review"}, {},
+                                       {"contract-review": ("planted.py", "planted")})
+        self.assertTrue(message.rstrip().endswith("\n".join([
+            "on MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE in this suite, and now a name "
+            "the state tables module defines, so the entry is no longer needed.",
+            "If your change added that name to the state tables on purpose, remove it from "
+            "MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE.",
+            "If your change added it to the state tables by mistake, remove it from the state "
+            "tables.",
+            RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])), message)
 
 
 if __name__ == "__main__":
