@@ -78,8 +78,9 @@ which, with the record, is where its failures are read.
 
 Exit codes: 0 every merge since the last run was mutation-tested and its
 survivors given tasks, or the first run wrote the state file;
-EXIT_STEP_FAILED a step failed, as above; EXIT_RECORD_NOT_WRITTEN;
-EXIT_ANOTHER_RUN_HOLDS_THE_LOCK.
+EXIT_STEP_FAILED (4) a step failed, as above; EXIT_RECORD_NOT_WRITTEN (5) the
+record could not be written;
+EXIT_ANOTHER_RUN_HOLDS_THE_LOCK (6).
 """
 
 # Messages here follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
@@ -101,6 +102,7 @@ from pathlib import Path
 
 PROGRAM = "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open"
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+RUN_BY_HAND = f"cd /home/nedlern/Projects/nedschorus && python3 scripts/{PROGRAM}.py"
 
 MUTATION_TESTING_PROGRAM = Path(__file__).resolve().with_name(
     "mutation-testing-changed-lines-quick-or-full-pass-survivors.py")
@@ -161,7 +163,7 @@ def git_or_raise(clone, *arguments):
         raise StepFailed(
             f"git {' '.join(arguments)} failed in {clone} (exit {completed.returncode}): "
             f"{(completed.stderr.strip().splitlines() or ['no detail'])[-1]}. "
-            f"Fix what git reports, then run this program again.")
+            f"Fix what git reports, then run this program again on ned-box: {RUN_BY_HAND}")
     return completed.stdout.strip()
 
 
@@ -270,10 +272,12 @@ def task_text(mutant, merge, merge_subject, author, owner_reason, record_citatio
         f"there is nothing to do.\n"
         f"If a test can tell the mutant from the code: add that test in a new pull request, "
         f"and show it kills the mutant by applying the diff above to the file by hand, "
-        f"running the test, seeing it fail, and undoing the diff.\n"
+        f"running the test's suite, seeing it fail, and undoing the diff.\n"
         f"If no test can, because the mutant behaves exactly as the code does: in a new pull "
-        f"request, end the line with the comment `# pragma: no mutate`, followed by why no "
-        f"test can kill its mutants; every mutation pass skips a line that ends so.\n"
+        f"request, end the line with a comment that starts `# pragma: no mutate` and goes on "
+        f"to say why no test can kill its mutants, such as `# pragma: no mutate, both "
+        f"branches return the same value`; every mutation pass skips a line whose comment "
+        f"says `pragma: no mutate`.\n"
         f"The run's record: {record_citation}")
     return subject, description
 
@@ -341,9 +345,10 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
             f"{exit_code} but its JSON file {json_file} cannot be read "
             f"({type(error).__name__}: {error}), so its survivors are not known. The next run "
             f"tries this merge again.\n"
-            f"If it fails the same way again, the program and this one disagree on the JSON "
-            f"file: fix the one that does not match "
-            f"--survived-and-errored-mutants-json-file in the program's docstring.") from error
+            f"If the next run fails the same way, {Path(arguments.mutation_testing_program).name} "
+            f"and scripts/{PROGRAM}.py disagree on that file's contents: make the reader in "
+            f"test_one_merge() match --survived-and-errored-mutants-json-file in the other "
+            f"program's docstring, or the writer match the docstring.") from error
     record.append(f"merge {merge[:12]} {merge_subject}: {summary_line(stdout)}")
     for mutant in survived:
         place = f"{mutant['module_path']}:{mutant['line']} {mutant['operator']}"
@@ -372,7 +377,7 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
                 f"tries this merge again, and opens no second task for a mutant already "
                 f"given one.\n"
                 f"Fix what the error names, such as a missing task list directory "
-                f"{list_directory}, then run this program again.") from error
+                f"{list_directory}, then run this program again on ned-box: {RUN_BY_HAND}") from error
         state["tasks_opened"][key] = {"agent_seat": owner, "task_id": task_id}
         write_state(state_file, state)
         record.append(f"  SURVIVED {place}: task #{task_id} opened on {owner}'s task list")
@@ -455,7 +460,7 @@ def main_under_lock(arguments):
                     f"the last tested commit {last}, from {state_file}, is not an ancestor of "
                     f"origin/main {main_commit}, so the merges since it cannot be listed.\n"
                     f"Set last_tested_main_commit in that file to the commit on origin/main "
-                    f"from which merges should be tested, then run this program again.")
+                    f"from which merges should be tested, then run this program again on ned-box: {RUN_BY_HAND}")
             merges = git_or_raise(arguments.clone, "rev-list", "--first-parent", "--reverse",
                                   f"{last}..{main_commit}").split()
             if merges and not (arguments.cosmic_ray_venv / "bin" / "cosmic-ray").is_file():
@@ -464,7 +469,7 @@ def main_under_lock(arguments):
                     f"cosmic-ray is not installed in {arguments.cosmic_ray_venv}, so no merge "
                     f"can be mutation-tested.\n"
                     f"Install it on ned-box: python3 -m venv {venv} && {venv}/bin/pip install "
-                    f"cosmic-ray=={COSMIC_RAY_VERSION}, then run this program again.")
+                    f"cosmic-ray=={COSMIC_RAY_VERSION}, then run this program again on ned-box: {RUN_BY_HAND}")
             with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as scratch:
                 for merge in merges:
                     test_one_merge(arguments, state, state_file, merge, record,

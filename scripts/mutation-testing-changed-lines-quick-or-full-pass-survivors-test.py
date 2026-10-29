@@ -473,7 +473,7 @@ def run_quick_mutation_pass_cases():
         check("a JSON file that cannot be written: exit 2, and the message says what to do",
               completed.returncode == 2 and "SUMMARY:" in completed.stdout
               and "were not written to" in completed.stderr
-              and "Give --survived-and-errored-mutants-json-file a path" in completed.stderr,
+              and "--survived-and-errored-mutants-json-file naming a path" in completed.stderr,
               f"rc={completed.returncode} err={completed.stderr}")
 
     # A change with no failure-handling line is not mutated in the quick pass.
@@ -561,7 +561,7 @@ def run_quick_mutation_pass_cases():
         check("quick mutation pass: a changed file that is not valid Python exits 2, naming it "
               "and the check to pass, and removes the worktree",
               completed.returncode == 2
-              and "scripts/broken.py at the head is not valid Python" in completed.stderr
+              and "scripts/broken.py at the head commit is not valid Python" in completed.stderr
               and "python3 -m py_compile scripts/broken.py" in completed.stderr
               and len(worktrees_of(repository)) == 1,
               f"rc={completed.returncode} err={completed.stderr}")
@@ -575,7 +575,7 @@ def run_quick_mutation_pass_cases():
         except survivors.CouldNotRun as refusal:
             refused = str(refusal)
         check("quick mutation pass: a changed file that is not UTF-8 is refused as not valid "
-              "Python", "latin.py at the head is not valid Python" in refused, refused)
+              "Python", "latin.py at the head commit is not valid Python" in refused, refused)
 
     # Every listed repository-wide check is a suite in this repository.
     repository_root = SCRIPT.resolve().parent.parent

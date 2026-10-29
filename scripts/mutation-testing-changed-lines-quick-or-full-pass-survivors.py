@@ -331,10 +331,11 @@ def failure_handling_line_ranges_of_file(worktree, path):
         return failure_handling_line_ranges((worktree / path).read_text(encoding="utf-8"))
     except (SyntaxError, UnicodeDecodeError) as error:
         raise CouldNotRun(
-            f"{PROGRAM}: not run — {path} at the head is not valid Python ({error}), so the "
-            f"quick mutation pass cannot find its failure-handling code.\n"
-            f"Fix the file so python3 -m py_compile {shlex.quote(path)} passes, then run "
-            f"this again.") from error
+            f"{PROGRAM}: not run — {path} at the head commit is not valid Python ({error}), so "
+            f"the quick mutation pass cannot find its failure-handling code.\n"
+            f"Fix the file until python3 -m py_compile {shlex.quote(path)} passes.\n"
+            f"Commit the fix, then run scripts/{PROGRAM}.py again with the new head "
+            f"commit.") from error
 
 
 def run_test_suite_runner_with_its_stderr_on_stdout_stopped_before_cosmic_ray_limit(
@@ -790,9 +791,12 @@ def main_with_stop_signals_raising_system_exit(argv):
                                   f"out, no recorded suite reads it and it has no sibling "
                                   f"suite, so its changed failure-handling code is untested.\n"
                                   f"Write a suite that makes that code handle its failure, "
-                                  f"run it once with python3 scripts/run-all-test-suites.py "
+                                  f"and commit it.\n"
+                                  f"Run it once with python3 scripts/run-all-test-suites.py "
                                   f"--only-suites-named <the suite's path>, which records "
-                                  f"what it reads, commit it, then run this again.")
+                                  f"what it reads, so this program finds it.\n"
+                                  f"Run scripts/{PROGRAM}.py again with the new head "
+                                  f"commit.")
                         else:
                             print(f"NO SUITE  {path}: no recorded suite reads it and it "
                                   f"has no sibling suite, so its changed lines are untested")
@@ -847,8 +851,10 @@ def main_with_stop_signals_raising_system_exit(argv):
             print(f"{PROGRAM}: the survived and errored mutants were not written to "
                   f"{arguments.survived_and_errored_mutants_json_file}: {error}. The lines "
                   f"above are this run's whole result.\n"
-                  f"Give --survived-and-errored-mutants-json-file a path in a directory you "
-                  f"can write to, and run this again.", file=sys.stderr)
+                  f"Run scripts/{PROGRAM}.py again with "
+                  f"--survived-and-errored-mutants-json-file naming a path in a directory "
+                  f"you can write to, or without that option if you need no JSON file.",
+                  file=sys.stderr)
             return EXIT_COULD_NOT_RUN
     if totals["survived"] or totals["errored"] or totals["not run"] or untested:
         return EXIT_SURVIVORS_OR_UNTESTED_FILES
