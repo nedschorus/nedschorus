@@ -334,7 +334,7 @@ def failure_handling_line_ranges_of_file(worktree, path):
             f"{PROGRAM}: not run — {path} at the head commit is not valid Python ({error}), so "
             f"the quick mutation pass cannot find its failure-handling code.\n"
             f"Fix the file until python3 -m py_compile {shlex.quote(path)} passes.\n"
-            f"Commit the fix, then run scripts/{PROGRAM}.py again with the new head "
+            f"Commit the fix, then run scripts/{PROGRAM}.py again with the same options and the new head "
             f"commit.") from error
 
 
@@ -795,7 +795,7 @@ def main_with_stop_signals_raising_system_exit(argv):
                                   f"Run it once with python3 scripts/run-all-test-suites.py "
                                   f"--only-suites-named <the suite's path>, which records "
                                   f"what it reads, so this program finds it.\n"
-                                  f"Run scripts/{PROGRAM}.py again with the new head "
+                                  f"Run scripts/{PROGRAM}.py again with the same options and the new head "
                                   f"commit.")
                         else:
                             print(f"NO SUITE  {path}: no recorded suite reads it and it "

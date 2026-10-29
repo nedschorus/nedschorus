@@ -345,10 +345,11 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
             f"{exit_code} but its JSON file {json_file} cannot be read "
             f"({type(error).__name__}: {error}), so its survivors are not known. The next run "
             f"tries this merge again.\n"
-            f"If the next run fails the same way, {Path(arguments.mutation_testing_program).name} "
-            f"and scripts/{PROGRAM}.py disagree on that file's contents: make the reader in "
-            f"test_one_merge() match --survived-and-errored-mutants-json-file in the other "
-            f"program's docstring, or the writer match the docstring.") from error
+            f"If the next run fails the same way, {arguments.mutation_testing_program} writes "
+            f"that file in a form scripts/{PROGRAM}.py does not read: make the two agree on "
+            f"what the docstring of {arguments.mutation_testing_program} says under "
+            f"--survived-and-errored-mutants-json-file, by changing test_one_merge() in "
+            f"scripts/{PROGRAM}.py or the code that writes the file.") from error
     record.append(f"merge {merge[:12]} {merge_subject}: {summary_line(stdout)}")
     for mutant in survived:
         place = f"{mutant['module_path']}:{mutant['line']} {mutant['operator']}"
