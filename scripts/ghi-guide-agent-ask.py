@@ -59,7 +59,7 @@ one checkout, per the design's "wrapper state ... lives there." This script is t
 both machines (it is checked into the repo, so every checkout — Mac or box
 — carries an identical copy). It tells which machine it is on by the
 hostname, never by whether the seat directory exists: on any machine whose
-hostname is not AGENT_BOX_HOSTNAME it re-execs itself over `ssh ned` (the
+hostname is not NED_BOX_HOSTNAME it re-execs itself over `ssh ned` (the
 Mac's ssh alias for the box), one hop, so every step below (refresh, session
 state, the claude call, the post-check) runs box-side where the mirror and
 state actually live. On the box it runs locally, and a missing seat
@@ -172,7 +172,7 @@ _git_output_spec.loader.exec_module(git_output)
 
 AGENT_BOX = os.environ.get("NEDSCHORUS_AGENT_BOX", "ned")
 # AGENT_BOX is the Mac's ssh alias for the box, which the box itself cannot resolve.
-AGENT_BOX_HOSTNAME = "ned-box"
+NED_BOX_HOSTNAME = "ned-box"
 DEFAULT_AGENTS_ROOT = Path(os.environ.get("NEDSCHORUS_AGENTS_ROOT", "~/agents")).expanduser()
 DEFAULT_SEAT_DIR = DEFAULT_AGENTS_ROOT / "ghi-guide-agent"
 DEFAULT_REPO = "nedschorus/nedschorus"
@@ -887,9 +887,8 @@ def build_remote_command(question: str, include_closed: bool, repo: str,
 
     Two further properties this shape buys:
       - `--seat-dir "$PWD"` after a successful cd means the box-side run
-        takes the local branch unconditionally. Without it, a box whose
-        seat directory is missing would ssh to itself — an infinite
-        delegation loop rather than an error.
+        runs in the directory the shell entered, which is the seat by
+        construction, whatever DEFAULT_SEAT_DIR resolves to there.
       - a failed cd keeps the shell's OWN diagnostic (which names the real
         cause — missing, not a directory, unreadable) and adds the remedy
         beside it. Suppressing the shell's line would make a permissions
@@ -915,8 +914,8 @@ def build_remote_command(question: str, include_closed: bool, repo: str,
     ])
 
 
-def running_on_agent_box() -> bool:
-    return socket.gethostname().split(".")[0] == AGENT_BOX_HOSTNAME
+def running_on_ned_box() -> bool:
+    return socket.gethostname().split(".")[0] == NED_BOX_HOSTNAME
 
 
 def main(argv=None) -> int:
@@ -952,7 +951,7 @@ def main(argv=None) -> int:
         seat_dir = Path(arguments.seat_dir).expanduser()
     else:
         seat_dir = DEFAULT_SEAT_DIR
-        if not running_on_agent_box():
+        if not running_on_ned_box():
             question_on_stdin = arguments.question_file is not None
             remote_command = build_remote_command(question,
                                                   arguments.include_closed,
@@ -979,13 +978,15 @@ def main(argv=None) -> int:
 
     if not seat_dir.is_dir():
         # One line, because scripts/ghi-issue-write.py reports only the last stderr line.
-        print(f"ghi-guide-agent-ask: the ask failed: the ghi-guide-agent seat directory "
-              f"{seat_dir} does not exist on this machine, and the ask runs inside it. "
-              f"Create it on {AGENT_BOX_HOSTNAME} with `git -C ~/Projects/nedschorus "
-              f"worktree add {seat_dir} ghi-guide-agent`, or, when git says that branch "
-              f"does not exist, with `git -C ~/Projects/nedschorus worktree add -b "
-              f"ghi-guide-agent {seat_dir} origin/main`; then retry the ask. Until it "
-              f"exists, every ask fails, and the ghi-write skill's fallback ladder applies.",
+        print(f"ghi-guide-agent-ask: the ask failed: ghi-guide-agent's agent-home "
+              f"{seat_dir} does not exist on {NED_BOX_HOSTNAME}, and the ask runs inside it. "
+              f"Create it, from either machine, with `ssh nedlern@{NED_BOX_HOSTNAME} "
+              f"'git -C ~/Projects/nedschorus worktree add {seat_dir} ghi-guide-agent'`, "
+              f"or, when git says that branch does not exist, with `ssh "
+              f"nedlern@{NED_BOX_HOSTNAME} 'git -C ~/Projects/nedschorus worktree add -b "
+              f"ghi-guide-agent {seat_dir} origin/main'`; then retry the ask. Until it "
+              f"exists every ask fails: if you are filing or editing a GHI, go on down the "
+              f"ask's fallback ladder in .claude/skills/ghi-write/SKILL.md.",
               file=sys.stderr)
         return 1
 

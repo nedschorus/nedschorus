@@ -492,8 +492,8 @@ check("the seat is resolved box-side at the launcher's fixed box root, $HOME/age
       'seat="$HOME/agents/ghi-guide-agent"' in command, command)
 check("the seat path reads no agents-root variable (launch-claude-ubuntu reads none)",
       "NEDSCHORUS_AGENTS_ROOT" not in command, command)
-check("the box-side run is pinned to --seat-dir \"$PWD\", so it can never "
-      "re-delegate to itself (an infinite ssh loop)",
+check("the box-side run is pinned to --seat-dir \"$PWD\", so it runs in the "
+      "seat the shell entered",
       '--seat-dir "$PWD"' in command, command)
 check("--repo rides the remote command (it was silently dropped before)",
       "--repo x/y" in command, command)
@@ -570,7 +570,7 @@ try:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
             exit_code = ghi_ask.main(["q", "--seat-dir", str(missing)])
         check("main() with a missing explicit --seat-dir errors cleanly, no traceback",
-              exit_code == 1 and "does not exist on this machine" in err.getvalue()
+              exit_code == 1 and "does not exist on ned-box" in err.getvalue()
               and str(missing) in err.getvalue(),
               err.getvalue())
 finally:
@@ -1137,15 +1137,15 @@ with tempfile.TemporaryDirectory() as temporary:
             return FakeCompletedProcess(0, "verdict: unrelated\n")
 
         patch_module_function(ghi_ask.subprocess, "run", ssh_recording_run)
-        running_on_agent_box_orig = ghi_ask.running_on_agent_box
-        patch("running_on_agent_box", lambda: False)
+        running_on_ned_box_orig = ghi_ask.running_on_ned_box
+        patch("running_on_ned_box", lambda: False)
         try:
             with contextlib.redirect_stdout(io.StringIO()):
                 exit_code = ghi_ask.main(["--question-file", str(question_path)])
                 from_file = dict(remote)
                 plain_exit_code = ghi_ask.main(["a short question"])
         finally:
-            patch("running_on_agent_box", running_on_agent_box_orig)
+            patch("running_on_ned_box", running_on_ned_box_orig)
             ghi_ask.subprocess.run = subprocess_run_orig
         check("off the box, a question given as an argument still rides the "
               "remote command, with nothing on stdin",
@@ -1179,7 +1179,7 @@ with tempfile.TemporaryDirectory() as temporary:
                                         box_error.getvalue())
 
         patch_module_function(ghi_ask.subprocess, "run", box_running_ssh)
-        patch("running_on_agent_box", lambda: False)
+        patch("running_on_ned_box", lambda: False)
         try:
             for name, arguments in (
                     ("--question-file", ["--question-file", str(question_path)]),
@@ -1198,7 +1198,7 @@ with tempfile.TemporaryDirectory() as temporary:
                       and str(question_path) not in hint,
                       (exit_code, hint[-500:]))
         finally:
-            patch("running_on_agent_box", running_on_agent_box_orig)
+            patch("running_on_ned_box", running_on_ned_box_orig)
             ghi_ask.subprocess.run = subprocess_run_orig
 
         # Off the box, an ssh call that times out or cannot start is reported
@@ -1210,7 +1210,7 @@ with tempfile.TemporaryDirectory() as temporary:
         def ssh_not_starting(command, **keywords):
             raise FileNotFoundError("ssh")
 
-        patch("running_on_agent_box", lambda: False)
+        patch("running_on_ned_box", lambda: False)
         try:
             for name, fake, expected in (
                     ("times out", ssh_timing_out,
@@ -1230,7 +1230,7 @@ with tempfile.TemporaryDirectory() as temporary:
                       exit_code == 1 and caller_error.getvalue() == expected,
                       (exit_code, caller_error.getvalue()))
         finally:
-            patch("running_on_agent_box", running_on_agent_box_orig)
+            patch("running_on_ned_box", running_on_ned_box_orig)
             ghi_ask.subprocess.run = subprocess_run_orig
 
         # Which machine this is comes from the hostname, never from whether
@@ -1271,10 +1271,12 @@ with tempfile.TemporaryDirectory() as temporary:
                   "missing, the ask exits 1 with one stderr line naming the "
                   "directory and the command that creates it",
                   exit_code == 1 and said.count("\n") == 1
-                  and f"seat directory {missing_seat} does not exist on this machine" in said
-                  and f"worktree add {missing_seat} ghi-guide-agent`" in said
-                  and f"worktree add -b ghi-guide-agent {missing_seat} origin/main`" in said
-                  and "ghi-write skill's fallback ladder" in said,
+                  and f"agent-home {missing_seat} does not exist on ned-box" in said
+                  and f"worktree add {missing_seat} ghi-guide-agent'`" in said
+                  and f"worktree add -b ghi-guide-agent {missing_seat} origin/main'`" in said
+                  and "fallback ladder in .claude/skills/ghi-write/SKILL.md" in said
+                  and (SCRIPT_PATH.resolve().parent.parent / ".claude" / "skills"
+                       / "ghi-write" / "SKILL.md").is_file(),
                   (exit_code, said))
 
         exit_code, said = asks_with_hostname("Els-MacBook-Pro.local", seat_flag)
@@ -1287,7 +1289,10 @@ with tempfile.TemporaryDirectory() as temporary:
         # The two commands the missing-seat message gives create the seat:
         # the first when the seat's branch exists, the second when it does not.
         exit_code, said = asks_with_hostname("ned-box", missing_seat)
-        given_commands = re.findall(r"`(git -C ~/Projects/nedschorus [^`]+)`", said)
+        # Each is given as `ssh nedlern@ned-box '<git command>'`, so it runs on
+        # ned-box from either machine; the git command inside is what runs here.
+        given_commands = re.findall(
+            r"`ssh nedlern@ned-box '(git -C ~/Projects/nedschorus [^'`]+)'`", said)
         import subprocess as real_subprocess
         patch_module_function(real_subprocess, "run", subprocess_run_orig)
         git_environment = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
