@@ -9,7 +9,8 @@ A partial append can leave a torn record that prevents subsequent records from b
 The runner's output is copied to stderr line by line as it arrives, so a run stopped before
 it ends still shows its progress; stdout keeps only the SUMMARY line and where the record went.
 
-Exit codes: 0 suites passed, 1 suite failed, 2 refused or unable to start, 4 failed step,
+Exit codes: 0 suites passed, 1 suite failed, 2 refused, unable to start, or no suite failed but
+one did not run because its test sandbox did not start, 4 failed step,
 5 record not written, 7 uncaught exception. Local logs and the record remain available for recovery."""
 
 import argparse
@@ -198,7 +199,7 @@ def stream_for_the_runners_output():
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         prog=PROGRAM,
-        description="Run the test suites a pull request's head reaches and file the test "
+        description="Run the nc-test-suites a pull request's head reaches and file the test "
                     "log in the log-store under the head's commit hash.")
     parser.add_argument("--checkout", default=str(REPOSITORY_ROOT))
     parser.add_argument("--since", metavar="COMMIT")

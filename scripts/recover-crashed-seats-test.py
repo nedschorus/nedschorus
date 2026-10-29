@@ -701,6 +701,34 @@ def run_tmux_has_session_answer_cases(root: Path):
     patch("run_tmux", real_run_tmux)
 
 
+def run_tmux_server_working_directory_cases(root: Path):
+    """A seat's tmux server starts in $HOME, so it is never rooted in the caller's
+    agent-home, where the occupancy check would count it against the calling seat."""
+    home = root / "server-cwd-home"
+    caller_seat_directory = root / "server-cwd-calling-seat"
+    stubs = root / "server-cwd-stubs"
+    for directory in (home, caller_seat_directory, stubs):
+        directory.mkdir()
+    recorded = root / "server-cwd-recorded.txt"
+    fake_tmux = stubs / "tmux"
+    fake_tmux.write_text(f'#!/bin/sh\npwd -P > "{recorded}"\n', encoding="utf-8")
+    fake_tmux.chmod(0o755)
+    saved_environment, saved_directory = dict(os.environ), os.getcwd()
+    try:
+        os.environ["PATH"] = f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"
+        os.environ["HOME"] = str(home)
+        os.chdir(caller_seat_directory)
+        real_run_tmux("new-session", "-d", "-s", "seat-b", "-c", str(root), "true",
+                      socket_name="seat-b")
+    finally:
+        os.chdir(saved_directory)
+        os.environ.clear()
+        os.environ.update(saved_environment)
+    started_in = recorded.read_text(encoding="utf-8").strip() if recorded.is_file() else ""
+    check("tmux runs in $HOME, not in the working directory of the seat that ran recovery",
+          started_in == str(home.resolve()), repr(started_in))
+
+
 def run_mac_window_cases(root: Path):
     """On ned-box, a seat a run brings up gets a window on the user's Mac attached to it."""
     real_launcher_path = recovery.launcher_path
@@ -1998,7 +2026,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # and both branch-state call sites are pinned whole]
     # (https://github.com/nedschorus/nedschorus/pull/590) added. Look there,
     # not here, before trusting that a wording change is guarded.
-    boot_recovery_prompt = supervisor_module.BootRecoveryIgnitionPlan(
+    boot_recovery_prompt = supervisor_module.IgnitionPlanWithoutConversationTail(
         "Finish the walk.").compose("")
     workspace = Workspace(root / "r27")
     all_dead()
@@ -2031,6 +2059,22 @@ with tempfile.TemporaryDirectory() as temporary:
           dialog_prompt[:120])
     check("REVIEW-2: a brief that only quotes the opener is not a handoff successor",
           not recovery.is_unreplied_reincarnation_successor(quoted))
+
+    # A handoff whose session-dialog could not be extracted starts a successor
+    # with the same plan, which names the occasion and the transcript.
+    for transcript_name in ("present", "absent"):
+        transcript = root / "r29-transcripts" / f"{transcript_name}.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        if transcript_name == "present":
+            transcript.write_text("{}\n", encoding="utf-8")
+        handoff_recovery_prompt = supervisor_module.IgnitionPlanWithoutConversationTail(
+            "Finish the walk.", "a handoff", "retiring-session", transcript).compose("")
+        successor = write_transcript(root / "r29-transcripts", f"handoff-recovery-{transcript_name}",
+                                     handoff_recovery_prompt, records=1)
+        check(f"REVIEW-3: a successor started at a handoff without a conversation-tail, its "
+              f"transcript {transcript_name}, is recognized",
+              recovery.is_unreplied_reincarnation_successor(successor),
+              handoff_recovery_prompt[:200])
 
     # --- recover into a window (nedschorus#242 change 6, #116 build step 3) --
     # --open-iterm-window-per-seat launches the seat ATTACHED in its own iTerm
@@ -2841,6 +2885,25 @@ with tempfile.TemporaryDirectory() as temporary:
         check("AGENTS ROOT: on macOS, --agents-root still chooses the seat launched",
               exit_code == 0 and seat_directories_launched == [workspace.seat_directory],
               (exit_code, seat_directories_launched))
+        # run_tmux runs tmux from $HOME, so a relative root left relative would name a
+        # seat directory under $HOME, not under the caller's directory.
+        seat_directories_launched.clear()
+        relative_root_arguments = [
+            workspace.name, "--agents-root", workspace.agents_root.name,
+            "--handoff-dir", str(workspace.handoffs),
+            "--projects-root", str(workspace.projects)]
+        saved_directory = os.getcwd()
+        try:
+            os.chdir(workspace.agents_root.parent)
+            with redirect_stdout(io.StringIO()):
+                exit_code = recovery.main(relative_root_arguments)
+        finally:
+            os.chdir(saved_directory)
+        check("AGENTS ROOT: a relative --agents-root resolves against the caller's directory",
+              exit_code == 0 and seat_directories_launched == [workspace.seat_directory]
+              and workspace.seat_directory.is_absolute()
+              and workspace.agents_root.parent != Path.home(),
+              (exit_code, seat_directories_launched))
     finally:
         patch("launcher_path", launcher_path_before_agents_root_cases)
         patch("agents_root_is_movable_on_this_machine", lambda: True)
@@ -3036,6 +3099,7 @@ with tempfile.TemporaryDirectory() as temporary:
     run_reach_clause_cases(root)
     run_seat_listing_cases(root)
     run_tmux_has_session_answer_cases(root)
+    run_tmux_server_working_directory_cases(root)
     run_mac_window_cases(root)
 
     # The same thing through recover_seat, on each path that can offer the

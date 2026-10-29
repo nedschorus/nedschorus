@@ -66,6 +66,7 @@ def run_program(scratch, helpers, exits, *pull_requests, review_tools=None, cwd=
     completed = subprocess.run(
         [sys.executable, str(PROGRAM), *pull_requests,
          "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+         "--merge-lane-review-worktrees-directory", str(helpers / "wt"),
          "--review-tools-worktree-at-main", str(review_tools or scratch / "main-checkout")],
         capture_output=True, text=True, cwd=cwd,
         env={**os.environ, "GIT_DIR": str(scratch / "no-such-git-directory"),
@@ -142,6 +143,7 @@ def main():
         live = subprocess.Popen(
             [sys.executable, str(PROGRAM), "7",
              "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+             "--merge-lane-review-worktrees-directory", str(helpers / "wt"),
              "--review-tools-worktree-at-main", str(scratch / "main-checkout")],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env={**os.environ, "MERGE_LANE_HEAD_TEST_RUN_TEST_LOG": str(scratch / "live.log"),
@@ -179,6 +181,7 @@ def main():
                    "this command, from any directory: " + shlex.join([
                        sys.executable, str(PROGRAM.resolve()), "9",
                        "--merge-lane-worktrees-and-outputs-directory", str(helpers.resolve()),
+                       "--merge-lane-review-worktrees-directory", str((helpers / "wt").resolve()),
                        "--review-tools-worktree-at-main",
                        str((scratch / "main-checkout").resolve())])) in lines
                   and any(line.startswith("Before you run it, give it a stderr that takes "
@@ -197,6 +200,7 @@ def main():
             both = subprocess.Popen(
                 [sys.executable, str(PROGRAM), "9",
                  "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+                 "--merge-lane-review-worktrees-directory", str(helpers / "wt"),
                  "--review-tools-worktree-at-main", str(scratch / "main-checkout")],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 env={**os.environ, "MERGE_LANE_HEAD_TEST_RUN_TEST_LOG": str(scratch / "both.log"),
@@ -236,6 +240,7 @@ def main():
         unread = subprocess.Popen(
             [sys.executable, str(PROGRAM), "7",
              "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+             "--merge-lane-review-worktrees-directory", str(helpers / "wt"),
              "--review-tools-worktree-at-main", str(scratch / "main-checkout")],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env={**os.environ, "MERGE_LANE_HEAD_TEST_RUN_TEST_LOG": str(scratch / "unread.log"),

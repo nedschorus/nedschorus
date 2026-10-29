@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Takes the variables that redirect git out of a test suite's own process.
+"""Takes the variables that redirect git out of an nc-test-suite's own process.
 
 Not a test file, and not a program a seat runs: the suites that build a
 scratch repository with `git init` load it and call

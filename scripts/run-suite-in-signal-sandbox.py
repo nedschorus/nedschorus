@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one test suite inside the signal sandbox, optionally with a hand mutant applied.
+"""Run one nc-test-suite inside the signal sandbox, optionally with a hand mutant applied.
 
 Usage:
   python3 scripts/run-suite-in-signal-sandbox.py <suite> [--mutant PATCH]
@@ -33,8 +33,8 @@ Usage:
 The suite runs exactly as scripts/run-all-test-suites.py runs it: from the
 checkout's top directory, stdin closed, without the variables that redirect
 git, inside the signal sandbox (`bwrap --unshare-pid` on Linux, `sandbox-exec`
-on macOS), with RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX=1; on Linux in a test
-sandbox of its own once admission lets it start, at low priority and in a cgroup
+on macOS), with RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX=1; on Linux in an
+nc-test-sandbox of its own once admission lets it start, at low priority and in a cgroup
 scope of its own, whose CPU seconds and peak memory it prints, and on macOS while
 holding the machine's test-run lock. Before the suite starts, a check inside the sandbox
 proves it is confined: on Linux, that process 1 there is bwrap; on macOS, that
@@ -410,7 +410,7 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
         bytecode_dir.mkdir(parents=True, exist_ok=True)
         writable.append(bytecode_dir)
         environment["PYTHONPYCACHEPREFIX"] = str(bytecode_dir)
-    # The test sandbox is built from Linux's /proc and bwrap, so not on another platform.
+    # The nc-test-sandbox is built from Linux's /proc and bwrap, so not on another platform.
     if platform.startswith("linux"):
         sandbox_prefix = runner.command_prefix_starting_one_suite_in_its_test_sandbox(
             sandbox_prefix, top, writable, suite,
@@ -531,7 +531,7 @@ def run(arguments, platform):
     if unconfined_because:
         raise NotRun(f"no signal sandbox: {unconfined_because}")
 
-    # In its own test sandbox the suite shares no machine state with other runs, so no
+    # In its own nc-test-sandbox the suite shares no machine state with other runs, so no
     # machine lock is taken; admission decides when it starts, as for the runner's suites.
     in_test_sandbox = platform.startswith("linux") and \
         runner.does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix)

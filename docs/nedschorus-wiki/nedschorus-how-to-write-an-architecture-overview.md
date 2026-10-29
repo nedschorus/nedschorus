@@ -1,6 +1,6 @@
-# How to write an architecture overview
+# How to write an nc-architecture-overview
 
-An architecture overview tells a reader who must change a system what the system is for, what its components are, and how the components fit together. It describes the system as it is on main at the commit named in its last line. It summarizes and points: it says in a sentence, or for a few in a short paragraph, what each component and each piece of shared state does and where it lives, and leaves the detail to the code and the documents that hold it. An overview does not replace reading the code; it teaches an agent who will change the system the rules no single file states, and what to do and not do.
+An nc-architecture-overview tells a reader who must change a system what the system is for, what its components are, and how the components fit together. It describes the system as it is on main at the commit named in its last line. It summarizes and points: it says in a sentence, or for a few in a short paragraph, what each component and each piece of shared state does and where it lives, and leaves the detail to the code and the documents that hold it. An overview does not replace reading the code; it teaches an agent who will change the system the rules no single file states, and what to do and not do.
 
 The overview of a system whose code lives in `nc-systems/<system>/` is `docs/nedschorus-wiki/nedschorus-<system>-architecture-overview.md`, where `<system>` is the directory directly under `nc-systems/`. This page is `docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md`.
 
@@ -25,7 +25,7 @@ The overview has these seven sections, in this order. The words component, share
 
 ## Improvements and problems the writer notices
 
-While reading the code, a writer may notice something worth changing: an improvement, such as something to add, remove, simplify or archive, or a possible problem. None of it goes into the overview, which describes the system as it is, and Planned work does not list it. The writer records it in a proposed-improvements-or-changes-file beside the overview, as GHI [Proposed improvements or changes to a GHI are handled by agents first, and reach the user only when they need him](https://github.com/nedschorus/nedschorus/issues/1132) says for an architecture overview; the line that GHI puts under the overview's first heading stands before the seven sections and is not one of them. Until an agent exists to settle the file's entries, the file waits on main as a reminder.
+While reading the code, a writer may notice something worth changing: an improvement, such as something to add, remove, simplify or archive, or a possible problem. None of it goes into the overview, which describes the system as it is, and Planned work does not list it. The writer records it in a proposed-improvements-or-changes-file beside the overview, as GHI [Proposed improvements or changes to a GHI are handled by agents first, and reach the user only when they need him](https://github.com/nedschorus/nedschorus/issues/1132) says for an nc-architecture-overview; the line that GHI puts under the overview's first heading stands before the seven sections and is not one of them. Until an agent exists to settle the file's entries, the file waits on main as a reminder.
 
 ## Length
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""What the three handoff-supervisor suites beside this file share.
+"""What the handoff-supervisor suites beside this file share.
 
 Each suite loads this file by path in a process of its own, so each gets its
 own copy of the supervisor module: the cases patch the module's globals, and
@@ -67,7 +67,7 @@ SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY = Path(
     tempfile.mkdtemp(prefix="ssh-that-never-reaches-ned-box-"))
 atexit.register(shutil.rmtree, SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY, True)
 (SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY / "ssh").write_text(
-    "#!/bin/sh\necho 'ssh: this test suite never reaches ned-box' >&2\nexit 255\n",
+    "#!/bin/sh\necho 'ssh: this nc-test-suite never reaches ned-box' >&2\nexit 255\n",
     encoding="utf-8")
 (SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY / "ssh").chmod(0o755)
 os.environ["PATH"] = (f"{SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY}{os.pathsep}"

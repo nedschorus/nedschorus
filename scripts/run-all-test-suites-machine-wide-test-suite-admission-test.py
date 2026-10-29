@@ -49,13 +49,13 @@ def check(case_name, condition, detail=""):
 def linux_only_cases_run_here(cases):
     """True on Linux; elsewhere prints why the cases are skipped and returns False.
 
-    Every case that builds or inspects a test sandbox, runs bwrap or reads /proc goes
+    Every case that builds or inspects an nc-test-sandbox, runs bwrap or reads /proc goes
     through this, since only Linux has them. scripts/run-all-test-suites-signal-sandbox-test.py
     runs this file as if on a Mac, and fails a case that does not.
     """
     if sys.platform.startswith("linux"):
         return True
-    print(f"SKIP  [this machine cannot run it] {cases}: test sandboxes, bwrap and /proc exist only on Linux")
+    print(f"SKIP  [this machine cannot run it] {cases}: nc-test-sandboxes, bwrap and /proc exist only on Linux")
     return False
 
 
@@ -786,7 +786,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
         mac_under_bwrap, built = None, str(error)
     finally:
         runner.listening_unix_sockets_the_test_sandbox_would_show = original_listening
-    check("off Linux no test sandbox is built, whatever the prefix, so nothing reads /proc",
+    check("off Linux no nc-test-sandbox is built, whatever the prefix, so nothing reads /proc",
           built is None and mac_under_bwrap["exit"] == 1, (built, mac_under_bwrap))
 
     # --- The suites' environment carries no credential -----------------------------
@@ -809,8 +809,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
           and environment.get("KEEP_THIS_ONE") == "value-of-KEEP_THIS_ONE",
           sorted(name for name in saved if name in environment))
 
-    # --- A checkout whose git directory cannot be found gets no test sandbox ---------
-    if linux_only_cases_run_here("a test sandbox for a checkout with no git common directory"):
+    # --- A checkout whose git directory cannot be found gets no nc-test-sandbox ---------
+    if linux_only_cases_run_here("an nc-test-sandbox for a checkout with no git common directory"):
         original_common = runner.git_common_directory_of_checkout
         runner.git_common_directory_of_checkout = lambda top: None
         try:
@@ -820,11 +820,11 @@ with tempfile.TemporaryDirectory() as scratch_name:
             raised = str(error)
         finally:
             runner.git_common_directory_of_checkout = original_common
-        check("when the checkout's git common directory cannot be found, the test sandbox is "
+        check("when the checkout's git common directory cannot be found, the nc-test-sandbox is "
               "refused rather than built without its read-only git directory",
               raised is not None and "git common directory" in raised, raised)
 
-    # --- Every failure of admission or of a test sandbox ends the run with exit 2 ---
+    # --- Every failure of admission or of an nc-test-sandbox ends the run with exit 2 ---
     run_repository = scratch / "run-repository"
     run_repository.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=run_repository, check=True)
@@ -863,12 +863,12 @@ with tempfile.TemporaryDirectory() as scratch_name:
     def no_git_directory(top):
         return None
 
-    # These drive the run path taken where suites run in test sandboxes, which reads
+    # These drive the run path taken where suites run in nc-test-sandboxes, which reads
     # psutil and /proc.
-    if linux_only_cases_run_here("the exit-2 cases of a run in test sandboxes"):
+    if linux_only_cases_run_here("the exit-2 cases of a run in nc-test-sandboxes"):
         code, printed, _ = main_with("no-git-directory", git_common_directory_of_checkout=no_git_directory,
                                      **as_if_bwrap)
-        check("a test sandbox that cannot be built for the checkout stops the run before any "
+        check("an nc-test-sandbox that cannot be built for the checkout stops the run before any "
               "suite, with exit 2 and the reason",
               code == runner.EXIT_COULD_NOT_RUN and "git common directory" in printed
               and "Traceback" not in printed, (code, printed[-800:]))
@@ -904,7 +904,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
                                                     "file is not empty; delete it")
 
         code, printed, _ = main_with("cover", run_one_suite=cover_breaks, **as_if_bwrap)
-        check("a test sandbox that fails while suites run ends the run with exit 2 and the "
+        check("an nc-test-sandbox that fails while suites run ends the run with exit 2 and the "
               "reason, not a traceback",
               code == runner.EXIT_COULD_NOT_RUN and "delete it" in printed
               and "Traceback" not in printed, (code, printed[-800:]))
@@ -912,18 +912,26 @@ with tempfile.TemporaryDirectory() as scratch_name:
         def records_cannot_be_written(*arguments, **options):
             raise OSError(21, "Is a directory", "junit.xml")
 
-        code, printed, _ = main_with("records", **as_if_bwrap,
+        real_run_one_suite = runner.run_one_suite
+
+        def suite_ends_with(exit_code):
+            """A run_one_suite whose suite ends with exit_code, whether or not bwrap can start
+            here: inside a test sandbox, /usr/bin/bwrap cannot build another."""
+            def run(*arguments, **options):
+                result = {**real_run_one_suite(*arguments, **options), "exit": exit_code}
+                result.pop("test sandbox did not start", None)
+                return result
+            return run
+
+        suite_passes = suite_ends_with(0)
+
+        code, printed, _ = main_with("records", **as_if_bwrap, run_one_suite=suite_ends_with(1),
                                      write_case_times_suite_resources_and_junit_xml_of_run=records_cannot_be_written)
-        # The stand-in bwrap builds no real sandbox, so the suite itself fails here, and a
-        # failing suite outranks the missing records.
+        # A failing suite outranks the missing records.
         check("records that cannot be written while a suite failed end the run with exit 1, "
               "the failure's exit, naming the missing records and printing the SUMMARY",
               code == runner.EXIT_SOME_FAILED and "could not be written" in printed
               and "SUMMARY: " in printed, (code, printed[-800:]))
-        real_run_one_suite = runner.run_one_suite
-
-        def suite_passes(*arguments, **options):
-            return {**real_run_one_suite(*arguments, **options), "exit": 0}
 
         code, printed, _ = main_with("records-all-passed", **as_if_bwrap,
                                      run_one_suite=suite_passes,
@@ -967,6 +975,35 @@ with tempfile.TemporaryDirectory() as scratch_name:
               "after the run reports the failure",
               code == runner.EXIT_COULD_NOT_RUN and len(started_suites) == 1,
               (code, started_suites, printed_out.getvalue()[-600:]))
+
+        suite_fails = suite_ends_with(1)
+        failed_first = threading.Event()
+
+        def first_fails_then_second_cannot_start(top, interpreter, suite, *arguments, **options):
+            if suite.endswith("a-test.py"):
+                result = suite_fails(top, interpreter, suite, *arguments, **options)
+                failed_first.set()
+                return result
+            failed_first.wait(30)
+            # Long enough for the run to report the failed suite first.
+            time.sleep(1)
+            raise runner.MachineWideTestSuiteAdmissionCouldNotDecide("slot-09 could not be opened")
+
+        run_scratch = scratch / "main-failed-then-admission-error"
+        run_scratch.mkdir()
+        with replaced(run_one_suite=first_fails_then_second_cannot_start, **as_if_bwrap), \
+                contextlib.redirect_stdout(io.StringIO()) as printed_out, \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = runner.main(["--checkout", str(two_suites), "-j", "2",
+                                "--lock-file", str(run_scratch / "run.lock"),
+                                "--log-dir", str(run_scratch / "logs"),
+                                "--recorded-inputs-directory", str(run_scratch / "recorded")])
+        printed = printed_out.getvalue()
+        check("admission that fails after a suite has failed ends the run with exit 1, not 2, "
+              "so no caller reads the failure as a run without a verdict",
+              code == runner.EXIT_SOME_FAILED and "FAIL a-test.py" in printed
+              and "admission failed: slot-09" in printed and "Traceback" not in printed,
+              (code, printed[-800:]))
 
         readings_fail = threading.Event()
         samplers = []
@@ -1025,14 +1062,29 @@ with tempfile.TemporaryDirectory() as scratch_name:
               history_paths == [tilde_home / "recorded-for-this-case"
                                 / runner.TEST_CASE_FAILURE_HISTORY_FILE_NAME], history_paths)
 
+        history_paths.clear()
+        run_scratch = scratch / "main-records-left-unchanged"
+        run_scratch.mkdir()
+        with replaced(append_test_case_failure_history=note_history_path, **as_if_bwrap), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = runner.main(["--checkout", str(run_repository),
+                                "--lock-file", str(run_scratch / "run.lock"),
+                                "--log-dir", str(run_scratch / "logs"),
+                                "--recorded-inputs-directory", str(run_scratch / "recorded"),
+                                "--leave-recorded-inputs-and-failure-history-unchanged"])
+        check("with --leave-recorded-inputs-and-failure-history-unchanged, a run in nc-test-"
+              "sandboxes adds nothing to the failure history, and still writes its JUnit XML",
+              history_paths == [] and (run_scratch / "logs" / runner.JUNIT_XML_FILE_NAME).exists(),
+              (code, history_paths))
+
     code, printed, logs = main_with(
         "no-bwrap", signal_sandbox=lambda **options: ((), "bwrap is not on PATH"))
-    check("without test sandboxes there is no admission, and no case times, JUnit XML or "
+    check("without nc-test-sandboxes there is no admission, and no case times, JUnit XML or "
           "failure history are written",
           code == runner.EXIT_ALL_PASSED and not (logs / runner.JUNIT_XML_FILE_NAME).exists()
           and runner.ADMISSION_WAITED_LINE_PREFIX not in printed, (code, printed[-800:]))
 
-    # --- On the Mac a run needs neither psutil nor /proc, and builds no test sandbox ---
+    # --- On the Mac a run needs neither psutil nor /proc, and builds no nc-test-sandbox ---
     mac_scratch = scratch / "main-mac"
     mac_scratch.mkdir()
     fake_sandbox_exec = mac_scratch / "sandbox-exec"

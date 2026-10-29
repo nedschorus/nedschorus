@@ -6,6 +6,17 @@ issue: "[Tell the user when ned-box's claude is logged out or ned-box's subscrip
 
 The user's plan, stated 2026-09-11: "I plan to move most for the process to nedbox, so if claude is not logged in on it, or out of subscription or down in any way I'd block and report."
 
+## Decided 2026-10-27: the shared health check is not built, and this issue is closed as not planned
+
+The shared health check this file plans is not built, and this issue is closed as not planned. CLAUDE.md's rule stays: an agent tells the user what the failing command or program said, with its remedy if it gave one. Decided as item 4 of the approval-walk issue-design-file-edits-and-alert-term-approval-walk-2026-10-27, in the agent-seat `fleet-restart-at-login`, closed without the user's answer because his earlier rulings already decide it (minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/issue-design-file-edits-and-alert-term-approval-walk-2026-10-27-minutes.md`, line 28 and its addendum on line 31). The rulings, as those minutes give them:
+
+- 2026-10-13T23:11:47Z, transcript c1b8aa3a line 2681, his words: "claude logged out etc is very obvious. So we don't need to do much for that. ned-box down -same thing".
+- 2026-10-14, walk ghi-972-seat-service-design-open-defects-2026-10-14, item 5, "y" (minutes `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/ghi-972-seat-service-design-open-defects-2026-10-14-minutes.md` line 13).
+- 2026-10-22T17:30:56Z, transcript a03d3ebc line 1210: "I keep getting asked if we need to guard against dead networks, crashed computers, full disks. We do not, they are obvious."
+- 2026-10-27T16:51:23Z, transcript 33b8db5b line 1403, alerts walk item 2: "When it's broken, it's a showstopper and super obvious."
+
+These rulings overturn the user's 2026-09-30 "y" recorded in § Narrowed 2026-09-30 below, which narrowed the shared check to a logged-out `claude` and a run-out subscription and called building it no longer speculative. They come after it and say each such failure is obvious. His 2026-10-13 "claude logged out etc" is read as covering a run-out ned-box subscription too, which also stops every agent-session with a message on each screen. The sections below record the plan as it stood before this decision.
+
 ## Narrowed 2026-09-30: lasting failures only
 
 Ruled by the user's "y" to item 7 of the walk eight-deferrals-with-no-trigger-2026-09-29 (minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/eight-deferrals-with-no-trigger-2026-09-29-minutes.md`), after the user said: "I don't care about transient ned-box issues, particularly if I've asked claude to reboot it." The issue stays open.
@@ -44,7 +55,3 @@ Precedent for the failure shapes: `ghi-guide-agent-ask.py` already separates ssh
 User-approved 2026-09-11 as item 7 of the cold-read-research open-items walk, as an amendment correcting a "no action needed" recommendation.
 
 Search receipt: `gh issue list --state all --search "box unavailable health check"` and `--search "ned-box down report"` returned nothing on this matter (2026-09-11). The ghi-guide-agent ask was attempted first per the ghi-write skill and failed with the defect filed as GHI [checkout-freshness catch-up's block decision overwrites the answer of a claude -p subprocess whose output a program reads](https://github.com/nedschorus/nedschorus/issues/334).
-
-## Provisional additions (not yet vetted by the user)
-
-- fleet-restart-at-login, 2026-10-14: This GHI-MD contradicts its own 2026-09-30 update: the sentence "Do not build the shared check speculatively" still stands beside the update that says the build is no longer speculative. Remove or reconcile the older sentence (task #129).

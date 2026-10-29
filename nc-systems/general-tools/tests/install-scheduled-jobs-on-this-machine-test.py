@@ -129,6 +129,11 @@ NED_BOX_GUARDED_FILE_PRUNE_LINE = (
     "guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py >> "
     "/home/nedlern/.claude/guarded-file-versions-and-approvals-store-removed-checkout-"
     "copies-prune.log 2>&1")
+# The deletion of exited agent-sessions' Claude Code temp folders, on ned-box alone.
+NED_BOX_TEMP_FOLDERS_DELETE_LINE = (
+    "30 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
+    "claude-code-temp-folders-of-exited-agent-sessions-delete.py >> "
+    "/home/nedlern/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log 2>&1")
 MAC_GUARDED_FILE_PRUNE_PLIST = {
     "Label": "com.nedschorus.guarded-file-versions-and-approvals-store-removed-checkout-"
              "copies-prune",
@@ -254,8 +259,10 @@ check("the Mac's worktree cleanup is a launchd job at 06:30, so a run missed whi
 check("the table's jobs are the two typed by hand before this program, the worktree "
       "cleanup, ned-box's crash restart watcher, ned-box's Remote Control reconnect watcher, the "
       "weekly owner check of the work-snapshot hook, the session dialogs refresh and the "
-      "guarded-file store's prune, and no other",
-      sorted(real_jobs) == ["clean-worktrees", "daily-full-test-run-of-main",
+      "guarded-file store's prune, the deletion of exited agent-sessions' temp folders, and "
+      "no other",
+      sorted(real_jobs) == ["claude-code-temp-folders-of-exited-agent-sessions-delete",
+                            "clean-worktrees", "daily-full-test-run-of-main",
                             "guarded-file-versions-and-approvals-store-removed-checkout-"
                             "copies-prune",
                             "handoff-agent-seat-died-without-session-handoff-restart-watcher",
@@ -290,6 +297,15 @@ remote_control_watcher_documentation = (
 guarded_file_prune_documentation = (
     REPOSITORY_ROOT / real_jobs["guarded-file-versions-and-approvals-store-removed-"
                                 "checkout-copies-prune"]["program"]).read_text(encoding="utf-8")
+temp_folders_delete = real_jobs["claude-code-temp-folders-of-exited-agent-sessions-delete"]
+check("the temp-folder deletion runs on ned-box alone, at 07:30, and its program documents the "
+      "table's line",
+      list(temp_folders_delete["on"]) == ["ned-box"]
+      and installer.cron_line(ned_box, temp_folders_delete, temp_folders_delete["on"]["ned-box"])
+      == NED_BOX_TEMP_FOLDERS_DELETE_LINE
+      and f"    {NED_BOX_TEMP_FOLDERS_DELETE_LINE}\n"
+      in (REPOSITORY_ROOT / temp_folders_delete["program"]).read_text(encoding="utf-8"),
+      installer.cron_line(ned_box, temp_folders_delete, temp_folders_delete["on"]["ned-box"]))
 weekly_live_check_documentation = (
     REPOSITORY_ROOT / real_jobs["weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"]
     ["program"]).read_text(encoding="utf-8")
@@ -312,7 +328,7 @@ printed, errors = io.StringIO(), io.StringIO()
 stub = MachineStub()
 with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="linux", home=Path("/home/nedlern"), run=stub)
-check("--print as ned-box prints ned-box's eight cron lines from the real table and runs nothing",
+check("--print as ned-box prints ned-box's nine cron lines from the real table and runs nothing",
       exit_code == 0 and stub.commands == []
       and printed.getvalue().splitlines() == [
           "machine: ned-box (linux, /home/nedlern)",
@@ -327,7 +343,9 @@ check("--print as ned-box prints ned-box's eight cron lines from the real table 
           "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — cron line:",
           NED_BOX_WEEKLY_LIVE_CHECK_LINE,
           "guarded-file-versions-and-approvals-store-removed-checkout-copies-prune — cron "
-          "line:", NED_BOX_GUARDED_FILE_PRUNE_LINE],
+          "line:", NED_BOX_GUARDED_FILE_PRUNE_LINE,
+          "claude-code-temp-folders-of-exited-agent-sessions-delete — cron line:",
+          NED_BOX_TEMP_FOLDERS_DELETE_LINE],
       (exit_code, printed.getvalue(), errors.getvalue()))
 printed, errors = io.StringIO(), io.StringIO()
 with redirect_stdout(printed), redirect_stderr(errors):
@@ -1528,7 +1546,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("in an agent-session no user attends, the install-failed refusal tells a subagent to "
           "report, does not ask to tell the user, and still says how to install by hand",
           "do not tell the user" in unattended_errors
-          and "If you are a subagent, tell the agent that dispatched you" in unattended_errors
+          and shell_reader.report_to_user_or_dispatching_agent_instruction_build("", environment={"CLAUDE_CODE_SESSION_ATTENDED": "0"}) in unattended_errors
           and "Tell the user" not in unattended_errors and "pip install" in unattended_errors
           and "pip exited 1: no network" in unattended_errors
           and "Leave this run of install-scheduled-jobs-on-this-machine undone; run it again, with "
@@ -1607,7 +1625,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("in an agent-session no user attends, that refusal tells a subagent to report, does not "
           "ask to tell the user, and gives a top-level agent its next step",
           unattended_exit == 2 and "do not tell the user" in unattended_errors
-          and "If you are a subagent, tell the agent that dispatched you" in unattended_errors
+          and shell_reader.report_to_user_or_dispatching_agent_instruction_build("", environment={"CLAUDE_CODE_SESSION_ATTENDED": "0"}) in unattended_errors
           and "go on with your task" in unattended_errors
           and "Leave this run of install-scheduled-jobs-on-this-machine undone" in unattended_errors
           and "Tell the user" not in unattended_errors, unattended_errors)

@@ -64,7 +64,11 @@ before each check run.
 A fast read that prints a line opening FAILED, or exits nonzero, ends CHECK
 before the walk-minutes are written: the program prints that line, or a FAILED
 line of its own, then says the item stays waiting and tells the agent to ask
-the user whether to run check again, and exits 1. A fast read that succeeds but says on stderr that its record was not
+the user whether to run check again, and exits 1. The one exception is a fast
+read that names its report on stdout and exits 1 because its record did not
+reach the log-store, which its stderr says in a `record: FAILED` or
+`record: REFUSED` line: its report is used like any other. A fast read whose
+report is used but says on stderr that its record was not
 shipped, or that its target changed during the read, has that line added to its
 status line. An unshipped record, a log-store this machine cannot reach, and a
 counts line that cannot be written are each printed after the rest, saying the
@@ -155,8 +159,10 @@ NO_PROPOSED_TEXT = "no proposed text marked"
 STATUS_ALREADY_DONE = "`{mark}` text {number}, \"{excerpt}\": fast read already done ({record})."
 STATUS_HAD_TO_BE_RUN = "`{mark}` text {number}, \"{excerpt}\": fast read had to be run ({record})."
 STATUS_FAST_READ_NOTE = " The fast read also said: {note}"
-# The fast read reports these on stderr and still exits 0, because its report was written.
-FAST_READ_NOTE_MARKERS = ("cold-read-fast-read: record: FAILED", "#cold_read_target_changed_during_run")
+# The fast read reports these on stderr after writing its report; an unshipped record also makes it exit 1.
+FAST_READ_RECORD_NOT_SHIPPED_MARKERS = ("cold-read-fast-read: record: FAILED",
+                                        "cold-read-fast-read: record: REFUSED")
+FAST_READ_NOTE_MARKERS = FAST_READ_RECORD_NOT_SHIPPED_MARKERS + ("#cold_read_target_changed_during_run",)
 CHECK_JUDGEMENT_LINES = (
     "Read the fast-read report of each text above whose status line says \"fast read had to be run\".",
     "If a finding holds and changes how a text is understood but not what the item decides, "
@@ -176,6 +182,8 @@ LOG_STORE_UNREACHABLE = ("this machine reaches the log-store at neither {paths},
 RECORDS_NOT_SHIPPED = (
     "The minutes record the answer, but the fast read of `{mark}` text {number} did not ship its record: {note}",
     "The record stays at {record}; once ned-box can be reached, run `python3 {shipper} {record}`.",
+    "If the line above says REFUSED, first rename {record} with a -2 suffix, or the next number not taken, "
+    "and ship the renamed directory instead.",
     "Include these lines in your next message to the user, and carry on as the lines above say.",
 )
 FAST_READ_FAILED_LINES = (
@@ -375,11 +383,14 @@ def run_fast_read(text, name, fast_read_program):
     failed = [line for line in lines if line.startswith("FAILED")]
     if failed:
         raise FastReadFailed(failed[0])
-    if result.returncode != 0 or not lines[-1]:
-        raise FastReadFailed(f"FAILED: {fast_read_program} --target {target} exited {result.returncode} "
-                             f"without naming a report; its stderr: {result.stderr.strip()[-500:]}")
     notes = [line.strip() for line in result.stderr.split("\n")
              if any(marker in line for marker in FAST_READ_NOTE_MARKERS)]
+    # Exit 1 means other failures too, so only the stderr line says the record was all that failed.
+    only_the_record_not_shipped = result.returncode == 1 and any(
+        note.startswith(FAST_READ_RECORD_NOT_SHIPPED_MARKERS) for note in notes)
+    if (result.returncode != 0 and not only_the_record_not_shipped) or not lines[-1]:
+        raise FastReadFailed(f"FAILED: {fast_read_program} --target {target} exited {result.returncode} "
+                             f"without naming a report; its stderr: {result.stderr.strip()[-500:]}")
     return Path(lines[-1]).parent, notes
 
 
@@ -496,7 +507,7 @@ def check(arguments):
         statuses.append(STATUS_HAD_TO_BE_RUN.format(mark=mark, number=number, excerpt=excerpt(text), record=record)
                         + "".join(STATUS_FAST_READ_NOTE.format(note=note) for note in notes))
         for note in notes:
-            if note.startswith(FAST_READ_NOTE_MARKERS[0]):
+            if note.startswith(FAST_READ_RECORD_NOT_SHIPPED_MARKERS):
                 problems += [line.format(mark=mark, number=number, note=note, record=record,
                                          shipper=RECORD_SHIPPER_FILE)
                              for line in RECORDS_NOT_SHIPPED]

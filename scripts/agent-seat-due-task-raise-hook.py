@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Raise an agent-seat's own tasks when they come due, at the end of each turn.
+"""Raise an agent-seat's own tasks when what they wait on is done, at the end of each turn.
 
 Wired as a Stop hook in .claude/settings.json.
 
@@ -13,33 +13,44 @@ a session without one prints nothing. Only `*.json` files are read, because
 the list directory also holds the harness's `.lock`. Task files are never
 written.
 
-WHAT MAKES A TASK DUE. Two optional keys in a task's `metadata`:
+WHAT MAKES A TASK DUE. One optional key in a task's `metadata`:
 
-  due_utc   an ISO 8601 time in UTC, such as "2026-10-03T09:00:00Z". A time
-            with no offset is read as UTC. Passed means at or before now.
-  waits_on  a non-empty list of conditions on the repository
-            nedschorus/nedschorus, each {"pr_merged": <number>} or
-            {"issue_closed": <number>}. Met means every condition is met. An
-            empty list is never met: "every one of nothing" would raise a
-            task nobody set a prerequisite on. A list with any entry this
-            hook cannot read is never met.
+  prerequisites  a non-empty list of conditions on the repository
+                 nedschorus/nedschorus, each {"pr_merged": <number>} or
+                 {"issue_closed": <number>}. Met means every condition is
+                 met. An empty list is never met: "every one of nothing"
+                 would raise a task nobody set a prerequisite on. A list
+                 with any entry this hook cannot read is never met.
 
-An open task (status pending or in_progress) is raised when its due time has
-passed or its waits_on is met, and only when every task in its blockedBy is
+THE OLD KEYS. `waits_on` is the old name of `prerequisites`, and is read in
+its place when a task has no `prerequisites`, so a task not yet moved to the
+new key is not skipped. `due_utc` held a due time, and is no longer read. An
+open task that still carries either key, even one blockedBy holds, is named
+once, in the same text as any raise, with what its agent must change with
+TaskUpdate.
+
+An open task (status pending or in_progress) is raised when its
+prerequisites are met, and only when every task in its blockedBy is
 completed. A blockedBy id with no task file does not hold the task: a deleted
 task can never complete, and holding on it would silence the task for good.
 A blocker file that exists but cannot be read does hold it, because its
-status is unknown. An open task with neither due_utc nor waits_on, whose
-blockedBy is a non-empty list of tasks that all exist and are completed, is
-raised too: an agent told to record a prerequisite task with addBlockedBy is
-told this hook raises the task when that prerequisite is done. A deleted
-blocker frees such a task without raising it, because nothing it waited on
-was done.
+status is unknown. An open task with no prerequisites, or one already
+raised for its current prerequisites, whose blockedBy is a non-empty list of
+tasks that all exist and are completed, is raised too: an agent told to
+record a prerequisite task with addBlockedBy, at TaskCreate or after a
+raise, is told this hook raises the task when that prerequisite is done. A
+raise for prerequisites also records the completed blockedBy list, so the
+same blockers do not raise the task a second time. A deleted blocker frees such
+a task without raising it, because nothing it waited on was done.
 
-RAISED ONCE. The hook records, per task, the due_utc and waits_on values it
-raised the task for, or for a task raised because its blockers completed, its
+RAISED ONCE. The hook records, per task, the prerequisites list it raised
+the task for, or for a task raised because its blockers completed, its
 blockedBy list, and does not raise the task again for the same value;
-changing any of them lets the task be raised again. The Stop hook's
+changing either lets the task be raised again. A record written under the
+old key name `waits_on` counts as the same record, so moving a list to the
+new key unchanged raises nothing again. The old keys a task was named for
+are recorded too, so it is named again only when the old keys it carries
+change. The Stop hook's
 additionalContext continues the conversation, so a hook that said the same
 thing at every turn boundary would never let the agent stop. The record is
 written atomically BEFORE anything is printed, and no raise is printed if the
@@ -57,7 +68,7 @@ silence on any fault would mute the hook for good after one torn file. Two
 sessions sharing one list id that stop at the same instant could each raise
 the same task once; that is not locked against.
 
-GITHUB, and only for waits_on. A condition is checked with `gh pr view` or
+GITHUB, and only for prerequisites. A condition is checked with `gh pr view` or
 `gh issue view` (read-only), GH_TOKEN removed from the environment so gh
 uses its keyring login, stdin closed, each call bounded by
 GH_CALL_TIMEOUT_SECONDS and all of a run's calls together by
@@ -67,28 +78,29 @@ gh could not answer, because gh is missing, failed, timed out or printed no
 JSON object, is not an answer: no task waiting on it is raised, it is
 recorded as a failure with its time so it too waits the interval, and the
 stop that asked reports it, as OUTPUT says. No condition is checked for a
-task already raised for its current waits_on, or held by blockedBy, so an
-agent-seat whose tasks have no waits_on makes no network call. The same call
+task already raised for its current prerequisites, or held by blockedBy, so
+an agent-seat whose tasks have no prerequisites makes no network call. The same call
 fetches the title and URL the raise line cites; a condition gh never
 answered is cited by its number alone.
 
-OUTPUT. Something to raise: one JSON object,
+OUTPUT. Something to raise or a task to name: one JSON object,
 {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": ...}},
 which Claude Code delivers to the model as non-error feedback while the
 conversation continues. No `decision` field and no `systemMessage`: the text
-is for the agent. The text is one instruction per due task, then the
-instruction for a task that cannot be acted on yet, then one line per
-condition gh could not answer at this stop. Nothing to raise: nothing
-printed, exit 0. A fault, such as a payload that is not a JSON object, a
-state file that cannot be written, a condition gh could not answer at a
-stop with nothing to raise, or any exception: one line on stderr naming the
-hook and the fault, nothing on stdout, exit 1. The line for a failed state
-write says how many due tasks went unraised, or that none was due, and that
-the first stop after the state file can be written raises them; the line
-for a condition gh could not answer quotes gh's failure; the line for any
-other fault says no task was checked. Claude Code
-records a Stop hook's exit 1 as a non-blocking error and still ends the turn.
-Exit 2 and additionalContext would both continue the conversation, and a
+is for the agent. The text is one instruction per due task, then, when any
+task was raised, the instruction for a task that cannot be acted on yet,
+then the lines for each task still carrying an old key, then one line per
+condition gh could not answer at this stop. Nothing to raise and no task to
+name for an old key: nothing printed, exit 0. A fault, such as a payload
+that is not a JSON object, a state file that cannot be written, a condition
+gh could not answer at a stop with nothing else to print, or any exception:
+one line on stderr naming the hook and the fault, nothing on stdout, exit 1.
+The line for a failed state write says how many due tasks went unraised, or
+that none was due, and how many tasks carrying an old key went unnamed, and
+that the first stop after the state file can be written raises and names
+them; the line for a condition gh could not answer quotes gh's failure; the
+line for any other fault says no task was checked. Claude Code records a
+Stop hook's exit 1 as a non-blocking error and still ends the turn. Exit 2 and additionalContext would both continue the conversation, and a
 fault that recurs at every stop would then never let the agent stop.
 
 ONLY THE AGENT-SEAT'S OWN SESSION IS RAISED, never a headless `claude -p`
@@ -117,7 +129,6 @@ signals cover a child started any other way.
 import importlib.util
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -143,8 +154,6 @@ STATE_DIRECTORY_UNDER_HOME = (Path(".local") / "state" / "claude"
 OPEN_TASK_STATUSES = ("pending", "in_progress")
 COMPLETED_TASK_STATUS = "completed"
 
-FRACTIONAL_SECONDS_PATTERN = re.compile(r"^(.*T\d{2}:\d{2}:\d{2})\.(\d+)(.*)$")
-
 GITHUB_REPOSITORY = "nedschorus/nedschorus"
 CONDITION_RECHECK_INTERVAL_SECONDS = 300
 GH_CALL_TIMEOUT_SECONDS = 8
@@ -157,9 +166,14 @@ CONDITION_KINDS = {
     "issue_closed": ("issue", "CLOSED", "GHI", "closed"),
 }
 
+PREREQUISITES_KEY = "prerequisites"
+PREREQUISITES_OLD_KEY = "waits_on"
+DUE_TIME_OLD_KEY = "due_utc"
+
 DEFER_INSTRUCTION = (
-    "If a task above cannot be acted on yet, give it a later metadata.due_utc, "
-    "a new metadata.waits_on, or both, with TaskUpdate instead."
+    "If a task above cannot be acted on yet, record what it now waits on with TaskUpdate "
+    "instead: a pull request or a GHI in a new metadata.prerequisites, or a task with "
+    "addBlockedBy."
 )
 
 
@@ -228,30 +242,8 @@ def is_held_by_blockers(task: dict, tasks: dict, directory: Path) -> bool:
     return any(blocker_holds(blocker, tasks, directory) for blocker in blocked_by)
 
 
-def parse_due_utc(text) -> "datetime | None":
-    """The instant a due_utc string names, or None when it names none."""
-    if not isinstance(text, str) or not text.strip():
-        return None
-    normalized = text.strip()
-    if normalized[-1] in "Zz":
-        normalized = normalized[:-1] + "+00:00"
-    # Python 3.9's fromisoformat, the Mac's system Python, takes a fraction
-    # of exactly three or six digits; written times use any number.
-    fraction = FRACTIONAL_SECONDS_PATTERN.match(normalized)
-    if fraction:
-        normalized = (fraction.group(1) + "." + fraction.group(2)[:6].ljust(6, "0")
-                      + fraction.group(3))
-    try:
-        instant = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if instant.tzinfo is None:
-        instant = instant.replace(tzinfo=timezone.utc)
-    return instant
-
-
-def parse_waits_on(value) -> "list | None":
-    """The waits_on list as [(kind, number), ...], or None if any entry is unreadable."""
+def parse_prerequisites(value) -> "list | None":
+    """The prerequisites list as [(kind, number), ...], or None if any entry is unreadable."""
     if not isinstance(value, list) or not value:
         return None
     conditions = []
@@ -271,7 +263,7 @@ def condition_key(kind: str, number: int) -> str:
     return f"{kind}:{number}"
 
 
-def canonical_waits_on(value) -> str:
+def canonical_prerequisites(value) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
@@ -311,7 +303,7 @@ def write_state_atomically(path: Path, state: dict) -> None:
 
 
 class GitHubConditionChecker:
-    """Answers waits_on conditions from the cache or from gh, within a budget."""
+    """Answers prerequisite conditions from the cache or from gh, within a budget."""
 
     def __init__(self, checks: dict, now_epoch: float):
         self.checks = checks
@@ -393,15 +385,13 @@ def gh_failure_line(kind: str, number: int, cause: str) -> str:
     return (f"This hook could not ask GitHub whether {id_type} {number} is {met_word}, so no "
             f"task waiting on it was raised: {cause}. It asks again at the first stop at least "
             f"{CONDITION_RECHECK_INTERVAL_SECONDS // 60} minutes from now. If gh's error says "
-            f"{id_type} {number} does not exist, correct the metadata.waits_on that names it "
+            f"{id_type} {number} does not exist, correct the metadata.prerequisites that names it "
             f"with TaskUpdate. If it says gh is not logged in or its credentials are bad, ask "
             f"the user to run `gh auth login` on this machine.")
 
 
-def raise_line(task: dict, due_text, met_citations, done_blockers=None) -> str:
+def raise_line(task: dict, met_citations, done_blockers=None) -> str:
     reasons = []
-    if due_text is not None:
-        reasons.append(f"its due time {single_line(due_text)} has passed")
     if met_citations is not None:
         reasons.append("its prerequisites are met: " + "; ".join(met_citations))
     if done_blockers is not None:
@@ -411,15 +401,34 @@ def raise_line(task: dict, due_text, met_citations, done_blockers=None) -> str:
             f"now: {', and '.join(reasons)}.")
 
 
-def due_task_lines(tasks: dict, directory: Path, state: dict, now: datetime) -> "tuple[list, bool, list]":
-    """The raise lines for this run, whether the state changed, and the gh failures met.
+def old_keys_line(task: dict, old_keys: dict) -> str:
+    """What the agent must change with TaskUpdate for each old key the task carries."""
+    changes = []
+    if PREREQUISITES_OLD_KEY in old_keys:
+        changes.append(
+            f"metadata.{PREREQUISITES_OLD_KEY} is the old name of metadata.{PREREQUISITES_KEY}: "
+            f"set metadata.{PREREQUISITES_KEY} to the same list, unless metadata."
+            f"{PREREQUISITES_KEY} already holds what the task waits on, then set metadata."
+            f"{PREREQUISITES_OLD_KEY} to null")
+    if DUE_TIME_OLD_KEY in old_keys:
+        changes.append(
+            f"metadata.{DUE_TIME_OLD_KEY} held a due time, which no hook reads any more: set "
+            f"metadata.{DUE_TIME_OLD_KEY} to null, and if the task waits on a pull request or "
+            f"a GHI, record it in metadata.{PREREQUISITES_KEY}, or on a task, with addBlockedBy")
+    return (f'Task {task["id"]} "{single_line(task.get("subject", ""))}" still carries an old '
+            f"metadata key; change it with TaskUpdate: {'; and '.join(changes)}.")
 
-    Mutates `state` to record every raise it returns and to prune entries
-    for tasks and conditions that no longer need them.
+
+def due_task_lines(tasks: dict, directory: Path, state: dict, now: datetime) -> "tuple[list, list, bool, list]":
+    """The raise lines, the old-key lines, whether the state changed, and the gh failure lines.
+
+    Mutates `state` to record every raise and every old-key line it returns,
+    and to prune entries for tasks and conditions that no longer need them.
     """
     raised = state["raised"]
     checker = GitHubConditionChecker(state["checks"], now.timestamp())
     lines = []
+    old_key_lines = []
     state_changed = False
     conditions_still_named = set()
 
@@ -432,50 +441,59 @@ def due_task_lines(tasks: dict, directory: Path, state: dict, now: datetime) -> 
             metadata = {}
         if not isinstance(metadata, dict):
             continue
-        due_text = metadata.get("due_utc")
-        waits_on_value = metadata.get("waits_on")
-        conditions = parse_waits_on(waits_on_value)
+        record = raised.get(task_id) if isinstance(raised.get(task_id), dict) else {}
+        new_record = dict(record)
+
+        old_keys = {key: metadata[key] for key in (PREREQUISITES_OLD_KEY, DUE_TIME_OLD_KEY)
+                    if key in metadata}
+        old_keys_record = canonical_prerequisites(old_keys) if old_keys else None
+        if record.get("old_keys") != old_keys_record:
+            if old_keys_record is None:
+                del new_record["old_keys"]
+            else:
+                new_record["old_keys"] = old_keys_record
+                old_key_lines.append(old_keys_line(task, old_keys))
+
+        prerequisites_value = metadata.get(PREREQUISITES_KEY)
+        if prerequisites_value is None:
+            prerequisites_value = metadata.get(PREREQUISITES_OLD_KEY)
+        conditions = parse_prerequisites(prerequisites_value)
         if conditions is not None:
             conditions_still_named.update(condition_key(k, n) for k, n in conditions)
-        if is_held_by_blockers(task, tasks, directory):
-            continue
-        record = raised.get(task_id) if isinstance(raised.get(task_id), dict) else {}
-
-        due_reason = None
-        due_instant = parse_due_utc(due_text)
-        if (due_instant is not None and due_instant <= now
-                and record.get("due_utc") != due_text):
-            due_reason = due_text
 
         prerequisite_citations = None
-        if conditions is not None:
-            waits_on_record = canonical_waits_on(waits_on_value)
-            if record.get("waits_on") != waits_on_record:
-                answers = [(kind, number, checker.answer(kind, number))
-                           for kind, number in conditions]
-                if all(answer.get("met") is True for _, _, answer in answers):
-                    prerequisite_citations = [
-                        condition_citation(kind, number, answer)
-                        for kind, number, answer in answers]
-
         done_blockers = None
-        if due_text is None and waits_on_value is None:
+        if not is_held_by_blockers(task, tasks, directory):
             blockers = completed_blockers(task, tasks)
-            if blockers is not None and record.get("blocked_by") != blockers:
+            already_raised_for_prerequisites = False
+            if conditions is not None:
+                prerequisites_record = canonical_prerequisites(prerequisites_value)
+                recorded = record.get(PREREQUISITES_KEY, record.get(PREREQUISITES_OLD_KEY))
+                already_raised_for_prerequisites = recorded == prerequisites_record
+                if not already_raised_for_prerequisites:
+                    answers = [(kind, number, checker.answer(kind, number))
+                               for kind, number in conditions]
+                    if all(answer.get("met") is True for _, _, answer in answers):
+                        prerequisite_citations = [
+                            condition_citation(kind, number, answer)
+                            for kind, number, answer in answers]
+                        new_record.pop(PREREQUISITES_OLD_KEY, None)
+                        new_record[PREREQUISITES_KEY] = prerequisites_record
+                        if blockers is not None:
+                            new_record["blocked_by"] = blockers
+            if ((prerequisites_value is None or already_raised_for_prerequisites)
+                    and blockers is not None and record.get("blocked_by") != blockers):
                 done_blockers = blockers
+                new_record["blocked_by"] = blockers
+            if prerequisite_citations is not None or done_blockers is not None:
+                lines.append(raise_line(task, prerequisite_citations, done_blockers))
 
-        if due_reason is None and prerequisite_citations is None and done_blockers is None:
-            continue
-        new_record = dict(record)
-        if due_reason is not None:
-            new_record["due_utc"] = due_text
-        if prerequisite_citations is not None:
-            new_record["waits_on"] = canonical_waits_on(waits_on_value)
-        if done_blockers is not None:
-            new_record["blocked_by"] = done_blockers
-        raised[task_id] = new_record
-        state_changed = True
-        lines.append(raise_line(task, due_reason, prerequisite_citations, done_blockers))
+        if new_record != record:
+            if new_record:
+                raised[task_id] = new_record
+            else:
+                del raised[task_id]
+            state_changed = True
 
     for task_id in list(raised):
         if task_id not in tasks:
@@ -485,7 +503,7 @@ def due_task_lines(tasks: dict, directory: Path, state: dict, now: datetime) -> 
         if key not in conditions_still_named:
             del state["checks"][key]
             state_changed = True
-    return lines, state_changed or checker.changed, [
+    return lines, old_key_lines, state_changed or checker.changed, [
         gh_failure_line(kind, number, cause) for kind, number, cause in checker.gh_failures]
 
 
@@ -511,7 +529,8 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
     tasks = read_tasks(directory)
     state_path = state_file_path(home, directory.name)
     state = read_state(state_path)
-    lines, state_changed, gh_failure_lines = due_task_lines(tasks, directory, state, now)
+    lines, old_key_lines, state_changed, gh_failure_lines = due_task_lines(
+        tasks, directory, state, now)
     if state_changed:
         try:
             write_state_atomically(state_path, state)
@@ -521,17 +540,22 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
                            f"first stop after the state file can be written raises them")
             else:
                 outcome = "no task was due at this stop, so none went unraised"
+            if old_key_lines:
+                outcome += (f", and {len(old_key_lines)} task(s) still carrying an old key were "
+                            f"not named; that stop names them")
             raise HookFault(f"the state file {state_path} could not be written, and {outcome}. "
                             f"Make {state_path.parent} a directory this user can write to: "
                             f"{error}") from error
-    if not lines:
+    if not lines and not old_key_lines:
         if gh_failure_lines:
             raise HookFault(" ".join(gh_failure_lines))
         return None
+    defer_lines = [DEFER_INSTRUCTION] if lines else []
     return json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "Stop",
-            "additionalContext": "\n".join(lines + [DEFER_INSTRUCTION] + gh_failure_lines),
+            "additionalContext": "\n".join(lines + defer_lines + old_key_lines
+                                           + gh_failure_lines),
         }
     }, ensure_ascii=False)
 

@@ -21,14 +21,20 @@ WHAT IS PINNED HERE.
     is not run a second time. The cap counts only on agy's own error line,
     opening `AGY_ERROR:`: the cap's words inside other text are retried, and
     a Sonnet backup failure carrying agy's cap line is not reported as the
-    cap. A refusal by the agy launcher, exit 64, is not retried either. A
+    cap. Gemini's Ultra quota, on the same error line, is not retried
+    either: the read goes to the Sonnet backup and, when the backup writes
+    the report, prints a line opening `Ultra quota used up; Sonnet read
+    this;` with the reset time Gemini gave, its seconds dropped; the quota's
+    words elsewhere are retried and print no such line, a backup that
+    fails prints none, and a backup failure carrying agy's quota line is not
+    reported as the quota. A refusal by the agy launcher, exit 64, is not retried either. A
     cell whose agy exits 64 is retried, because the read never sees that 64:
     the launcher turns any agy failure that leaves no report into its own
     exit 1.
 
   - The Sonnet backup. After the Gemini cell's failures, the same cell runs
-    once on claude-sonnet-5-5 through the claude cell launcher; its report is
-    the read's, stamped runtime=claude, with a line after the stamp naming
+    once on claude-sonnet-5-5 at low effort through the claude cell launcher;
+    its report is the read's, stamped runtime=claude, with a line after the stamp naming
     the backup and Gemini's cause. When the backup fails too, the read prints
     one line opening FAILED, naming both causes, exits 1, and leaves no
     report. A stub `claude` is first on PATH in every case, failing unless
@@ -228,6 +234,19 @@ GEMINI_SPENDING_CAP_STDERR = (
     'Error 429, Message: Your project has exceeded its monthly spending cap. '
     'Please go to AI Studio at https://ai.studio/spend to manage your project '
     'spend cap.","error_code":429,"retryable":true}\n')
+# The words Gemini's agy prints when the Ultra sign-in's quota is used up, as
+# agy's own log records them, on agy's error line in the form the spending
+# cap above takes.
+GEMINI_ULTRA_QUOTA_REFUSAL = (
+    'Individual quota reached. Please upgrade your subscription to increase '
+    'your limits. Resets in 2h27m27s.')
+GEMINI_ULTRA_QUOTA_STDERR = (
+    'AGY_ERROR: {"short_error":"agent executor error: generating and executing: '
+    'RESOURCE_EXHAUSTED (code 429): ' + GEMINI_ULTRA_QUOTA_REFUSAL
+    + '","error_code":429,"retryable":true}\n')
+ULTRA_QUOTA_LINE = "Ultra quota used up; Sonnet read this; Gemini resets in 2h27m."
+ULTRA_QUOTA_RELAY_LINE = ("Copy the line above into your next message to the user, because he "
+                          "wants to know when the fast read fell back to Sonnet.")
 
 failures = []
 
@@ -616,9 +635,9 @@ with tempfile.TemporaryDirectory() as scratch:
           f"claude launches={launches_counted(claude_counter_path(counter))}; "
           f"stderr={result.stderr!r}")
     check("the Sonnet backup's stamp names the claude runtime, claude-sonnet-5-5, "
-          "effort medium and the fast tier",
+          "effort low and the fast tier",
           all(field in provenance_stamp_of(suggestions)
-              for field in ("runtime=claude", "model=claude-sonnet-5-5", "effort=medium",
+              for field in ("runtime=claude", "model=claude-sonnet-5-5", "effort=low",
                             "cell=fast-clarify", "tier=fast")),
           repr(provenance_stamp_of(suggestions)))
     check("the report's second line says the Sonnet backup ran and names the Gemini cause",
@@ -692,6 +711,116 @@ with tempfile.TemporaryDirectory() as scratch:
           and "stub agy: the gemini cause" in result.stdout
           and "spending cap is reached" not in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"fail_stderr": GEMINI_ULTRA_QUOTA_STDERR},
+    )
+    check("a Sonnet backup failure whose output carries agy's quota line is not reported as "
+          "the Ultra sign-in's quota",
+          result.returncode == 1 and result.stdout.startswith("FAILED")
+          and "stub agy: the gemini cause" in result.stdout
+          and "Gemini refused with" not in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_exit": 3,
+               "fail_stderr": GEMINI_ULTRA_QUOTA_STDERR}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: past the quota\n"},
+    )
+    quota_lines = (suggestions.read_text(encoding="utf-8").splitlines()
+                   if suggestions.is_file() else [])
+    check("the Ultra sign-in's quota is not retried: one Gemini launch, then the "
+          "Sonnet backup, whose report is the read's, and stdout keeps its one line",
+          result.returncode == 0 and result.stdout == f"{suggestions}\n"
+          and launches_counted(counter) == 1
+          and launches_counted(claude_counter_path(counter)) == 1
+          and ('cold-read-fast-read: Gemini refused with "Individual quota reached"; '
+               "the quota resets in 2h27m. This read does not retry Gemini, which would "
+               "refuse the same way; the Sonnet backup reads the document now.") in result.stderr.splitlines(),
+          f"exit {result.returncode}; stdout={result.stdout!r}; "
+          f"launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+    stderr_lines = result.stderr.splitlines()
+    check("stderr carries the line for the user, on a line of its own: Ultra quota "
+          "used up, Sonnet read this, and the reset time without its seconds",
+          ULTRA_QUOTA_LINE in stderr_lines, repr(result.stderr))
+    check("the next stderr line tells the agent to copy that line to the user",
+          ULTRA_QUOTA_LINE in stderr_lines
+          and stderr_lines[stderr_lines.index(ULTRA_QUOTA_LINE) + 1:][:1] == [ULTRA_QUOTA_RELAY_LINE],
+          repr(result.stderr))
+    check("the Sonnet backup line in the report names the Ultra quota and its reset time",
+          len(quota_lines) > 1
+          and 'Gemini refused with "Individual quota reached"; the quota resets in 2h27m' in quota_lines[1],
+          repr(quota_lines[:2]))
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_exit": 3,
+               "fail_stderr": "The design quotes it: " + GEMINI_ULTRA_QUOTA_STDERR}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: after a quoted quota\n"},
+    )
+    check("the quota's words inside other text are not the quota: the Gemini cell is "
+          "retried, and no Ultra quota line is printed",
+          result.returncode == 0 and launches_counted(counter) == 2
+          and "retrying once" in result.stderr
+          and "Ultra quota used up" not in result.stderr,
+          f"exit {result.returncode}; launches={launches_counted(counter)}; "
+          f"stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_exit": 3,
+               "fail_stderr": GEMINI_ULTRA_QUOTA_STDERR}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"fail_stderr": "stub claude: the sonnet cause\n"},
+    )
+    check("when the Sonnet backup fails after the quota, no line says Sonnet read the "
+          "document, and FAILED names the quota and its reset time",
+          result.returncode == 1 and result.stdout.startswith("FAILED")
+          and 'Gemini refused with "Individual quota reached"; the quota resets in 2h27m' in result.stdout
+          and "Ultra quota used up" not in result.stderr
+          and "Copy the line above" not in result.stderr,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    module = script_under_test_module()
+    for refusal, expected in (
+            ("Resets in 95h3m42s.", "Ultra quota used up; Sonnet read this; Gemini resets in 95h3m."),
+            ("Resets in 5m.", "Ultra quota used up; Sonnet read this; Gemini resets in 5m."),
+            ("Resets in 4h.", "Ultra quota used up; Sonnet read this; Gemini resets in 4h."),
+            ("Resets in 42s.", "Ultra quota used up; Sonnet read this; Gemini resets in under a minute."),
+            ("Please upgrade.", "Ultra quota used up; Sonnet read this; Gemini gave no reset time.")):
+        line = module.ultra_quota_line(f"AGY_ERROR: Individual quota reached. {refusal}")
+        check(f"the Ultra quota line for {refusal!r} reads {expected!r}",
+              line == expected, repr(line))
+
+    for refusal, expected in (
+            ("Resets in 2h27m3s.",
+             'Gemini refused with "Individual quota reached"; the quota resets in 2h27m. '
+             "This read does not retry Gemini, which would refuse the same way; the "
+             "Sonnet backup reads the document now."),
+            ("Please upgrade.",
+             'Gemini refused with "Individual quota reached"; Gemini gave no reset time. '
+             "This read does not retry Gemini, which would refuse the same way; the "
+             "Sonnet backup reads the document now.")):
+        message = module.gemini_quota_not_retried_message(
+            f"AGY_ERROR: Individual quota reached. {refusal}")
+        check(f"the not-retried message for {refusal!r} needs no reset time to read true",
+              message == expected, repr(message))
 
     # The launcher turns any agy failure that leaves no report, a stub agy's
     # exit 64 included, into its own exit 1, so only a launcher that refuses
@@ -999,20 +1128,22 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}; records={records_after_three_reads}; "
           f"stderr={result.stderr[-300:]!r}")
 
-    # The walk route: no record, no freeze, no ship.
+    # The walk route: no record, no freeze, no ship, so a store that cannot be
+    # reached leaves the exit 0.
     repository = build_scratch_repository(scratch)
     walk_draft_relative = "docs/walk/a-walk-item-draft.md"
     suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
     result = run_fast_read(
         repository, stubs, {"*": {"report": "STUB FAST READ: of the walk item\n"}},
         suggestions, walk_draft_relative, counter,
+        ship_destination="nobody@no-such-host.invalid:/tmp/no-store",
     )
-    check("a walk draft's read freezes nothing and ships nothing",
+    check("a walk draft's read freezes nothing, ships nothing, and exits 0 with the store unreachable",
           result.returncode == 0 and not (repository / "cold-read-records").exists()
           and "record: " not in result.stderr and not (repository / "log-store").exists(),
           f"exit {result.returncode}; stderr={result.stderr[-300:]!r}")
 
-    # A store that cannot be reached: the read still succeeds, and says so.
+    # A store that cannot be reached: the report is kept, and the read exits 1.
     repository = build_scratch_repository(scratch)
     records_report = (repository / "cold-read-records" / f"a-design-{record_stamp}"
                       / "fast-read.md")
@@ -1021,10 +1152,32 @@ with tempfile.TemporaryDirectory() as scratch:
         records_report, other_relative, counter,
         ship_destination="nobody@no-such-host.invalid:/tmp/no-store",
     )
-    check("an unreachable store is reported as record: FAILED on stderr and the read still exits 0",
-          result.returncode == 0 and result.stdout.strip() == str(records_report)
+    check("an unreachable store is reported as record: FAILED on stderr, the report's path "
+          "is still the stdout line, and the read exits 1",
+          result.returncode == 1 and result.stdout.strip() == str(records_report)
+          and records_report.is_file()
           and any("record: FAILED:" in line for line in result.stderr.splitlines()),
           f"exit {result.returncode}; stderr={result.stderr[-400:]!r}")
+
+    # A store already holding other bytes under the record's name refuses it:
+    # the record did not reach the store either.
+    repository = build_scratch_repository(scratch)
+    records_report = (repository / "cold-read-records" / f"a-design-{record_stamp}"
+                      / "fast-read.md")
+    stored_elsewhere = (repository / SCRATCH_LOG_STORE_RELATIVE / records_report.parent.name
+                        / "fast-read.md")
+    stored_elsewhere.parent.mkdir(parents=True)
+    stored_elsewhere.write_text("ANOTHER READ'S REPORT\n", encoding="utf-8")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
+        records_report, other_relative, counter,
+    )
+    check("a store that refuses the record is reported as record: REFUSED on stderr, the "
+          "report's path is still the stdout line, and the read exits 1",
+          result.returncode == 1 and result.stdout.strip() == str(records_report)
+          and records_report.is_file()
+          and any("record: REFUSED:" in line for line in result.stderr.splitlines()),
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr[-400:]!r}")
 
 
 # --- The sentence-id markup (nedschorus#284 step 2) ----------------------
@@ -2073,6 +2226,14 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
         check("when the read on ned-box fails printing no result line, the read prints a "
               "FAILED line of its own",
               exit_code == 1 and stdout.startswith("FAILED (the fast read on ned-box exited 1"),
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        exit_code, stdout, stderr = read_from_mac(mac_draft, remote_exit=1)
+        check("when the read on ned-box wrote its report and exits 1 for its record, the "
+              "report's path is relayed, the exit 1 kept, and no line says the read failed",
+              exit_code == 1 and stdout == f"{mac_suggestions}\n"
+              and "the fast read on ned-box wrote its report" in stderr
+              and "the fast read on ned-box failed" not in stderr,
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
 
         shutil.rmtree(ned_box_worktree / ".git")

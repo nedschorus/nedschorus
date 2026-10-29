@@ -16,7 +16,8 @@ such a push goes ahead with the message for a run that could not start.
 Only a suite's failure refuses the push. Every way the run can end without a verdict lets the push
 through with a message saying how to run it by hand: another run holding the machine's test lock,
 which the run does not wait for, the run not finishing within the time budget, the run unable to start or
-ending in an uncaught exception, and this file failing. A run that exits 1 refuses the push only
+ending in an uncaught exception, a suite whose test sandbox did not start while no suite failed, which
+the runner reports with exit 2, and this file failing. A run that exits 1 refuses the push only
 when its SUMMARY line counts a failed suite: the runner still writes its report and run record
 after printing SUMMARY, and a write that fails there exits 1 too. When the run gives no verdict,
 what it printed on stderr is shown above the message, so the cause is not lost; for a held lock
@@ -199,7 +200,7 @@ def say_not_run(stream, cause, tell_user):
 def say_refusal(stream, stdout):
     lines = stdout.splitlines()
     summary = next((line for line in reversed(lines) if line.startswith(SUMMARY_LINE_PREFIX)), "")
-    say(stream, MESSAGE_PREFIX + "a test suite failed in the selective test run, so this push "
+    say(stream, MESSAGE_PREFIX + "an nc-test-suite failed in the selective test run, so this push "
         "is refused. %s" % summary)
     for line in lines:
         if line.startswith(FAILED_SUITE_LINE_PREFIX) and FAILED_SUITE_LINE_LOG_MARK in line:
@@ -272,7 +273,7 @@ def main(stream, environment):
         say_refusal(stream, stdout)
         return EXIT_REFUSE_PUSH
     if status == RUNNER_EXIT_LOCKED:
-        say_not_run(stream, "another run of the test suites held this machine's test lock: %s"
+        say_not_run(stream, "another run of the nc-test-suites held this machine's test lock: %s"
                     % runner_cause_line(stderr), tell_user=False)
         return EXIT_ALLOW_PUSH
     if status < 0:

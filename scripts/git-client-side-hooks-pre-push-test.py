@@ -235,7 +235,7 @@ GIT_PUSH_FAILED_LINE_START = "error: failed to push some refs to "
 GIT_PUSH_REF_LINE = re.compile(r"^ [ +\-*!=] ")
 SELECTIVE_TEST_RUN_STARTING = "pre-push: starting the selective test run on "
 SELECTIVE_TEST_RUN_PASSED = "pre-push: the selective test run passed. "
-SELECTIVE_TEST_RUN_REFUSED = ("pre-push: a test suite failed in the selective test run, so this "
+SELECTIVE_TEST_RUN_REFUSED = ("pre-push: an nc-test-suite failed in the selective test run, so this "
                               "push is refused. ")
 SELECTIVE_TEST_RUN_NOT_RUN_END = ", so this push goes ahead without the selective test run"
 SELECTIVE_TEST_RUN_HAND_RUN_LINE = (
@@ -1326,7 +1326,7 @@ def run_selective_test_run_cases(scratch):
 
     _, outcome = not_run_case(
         "lock held", FAKE_TEST_SUITES_RUNNER_LOCKED,
-        "another run of the test suites held this machine's test lock: " + FAKE_LOCK_HOLDER_LINE,
+        "another run of the nc-test-suites held this machine's test lock: " + FAKE_LOCK_HOLDER_LINE,
         tell_user=False)
     check("lock held: the runner's advice to its own caller is not passed on",
           FAKE_LOCK_ADVICE_LINE not in outcome.stderr, outcome.describe())

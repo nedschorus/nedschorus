@@ -905,6 +905,61 @@ def run_spawned_subagent_roster_cases(workspace: Path):
           writer.still_working_subagent_entries(list(multi.values())) == [],
           str(multi))
 
+    # An interim notification arrives with <status>completed</status> while the
+    # subagent's own background work still runs; the last notification decides.
+    # Both bodies are trimmed from real transcripts.
+    incident_agent = "a68d25248370ee861"
+    interim_body = (
+        "<task-notification>\n"
+        f"<task-id>{incident_agent}</task-id>\n"
+        "<tool-use-id>toolu_01ND98sByPRjfgSm7HcRmtiJ</tool-use-id>\n"
+        "<status>completed</status>\n"
+        '<summary>Agent "Fix-round for PR 2045" is waiting on its own background work</summary>\n'
+        "<note>This agent stopped with background work of its own still running. It may "
+        "resume on its own when that work completes or reports, and the same task-id "
+        "notifies again if it does; the result below may be interim.</note>\n"
+        "<result>Waiting on the test run.</result>\n"
+        "</task-notification>")
+    final_body = (
+        "<task-notification>\n"
+        f"<task-id>{incident_agent}</task-id>\n"
+        "<status>completed</status>\n"
+        '<summary>Agent "Fable check of decisions 4 and 5" finished</summary>\n'
+        "<note>A task-notification fires each time this agent stops with no live background "
+        "children of its own. The user can send it another message and resume it, so the "
+        "same task-id may notify more than once.</note>\n"
+        f'<result>This agent\'s report was delivered to you as a message from "{incident_agent}" '
+        "(its SubagentHandback call). Read it there; it is not repeated here.\n</result>\n"
+        "</task-notification>")
+
+    def delivered(body, stamp):
+        return [{"type": "queue-operation", "operation": "enqueue", "timestamp": stamp,
+                 "sessionId": FIXTURE_SESSION_ID, "content": body},
+                {"type": "user", "timestamp": stamp, "message": {"role": "user", "content": body},
+                 "sessionId": FIXTURE_SESSION_ID}]
+
+    incident_spawn = spawn_record(incident_agent, "Fix-round for PR 2045", "2026-10-27T21:18:21.032Z")
+    interim_last_path = workspace / "roster-interim-notification-last.jsonl"
+    interim_last_path.write_text("\n".join(json.dumps(record) for record in [
+        incident_spawn, *delivered(interim_body, "2026-10-27T21:31:58.572Z"),
+    ]) + "\n", encoding="utf-8")
+    interim_roster = writer.spawned_subagent_roster(interim_last_path)
+    check("a subagent whose last notification is interim counts as still working",
+          [entry["agent_id"] for entry in writer.still_working_subagent_entries(interim_roster)]
+          == [incident_agent],
+          str(interim_roster))
+    final_last_path = workspace / "roster-final-notification-after-interim.jsonl"
+    final_last_path.write_text("\n".join(json.dumps(record) for record in [
+        incident_spawn, *delivered(interim_body, "2026-10-27T21:31:58.572Z"),
+        *delivered(final_body, "2026-10-27T21:45:00.000Z"),
+    ]) + "\n", encoding="utf-8")
+    final_roster = writer.spawned_subagent_roster(final_last_path)
+    check("a final notification after an interim one ends the subagent",
+          writer.still_working_subagent_entries(final_roster) == []
+          and final_roster[0]["last_event"] == "completed"
+          and final_roster[0]["last_event_at"] == "2026-10-27T21:45:00Z",
+          str(final_roster))
+
     # An empty transcript is not an error: a session may spawn nothing.
     empty_path = workspace / "roster-empty.jsonl"
     empty_path.write_text("", encoding="utf-8")

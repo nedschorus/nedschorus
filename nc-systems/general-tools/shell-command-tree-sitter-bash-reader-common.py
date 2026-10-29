@@ -62,6 +62,11 @@ _python_libraries_pinned_requirements_install_if_missing_then_import_spec = impo
     Path(__file__).resolve().with_name("python-libraries-pinned-requirements-install-if-missing-then-import-common.py"))
 python_libraries_pinned_requirements_install_if_missing_then_import_common = importlib.util.module_from_spec(_python_libraries_pinned_requirements_install_if_missing_then_import_spec)
 _python_libraries_pinned_requirements_install_if_missing_then_import_spec.loader.exec_module(python_libraries_pinned_requirements_install_if_missing_then_import_common)
+_failed_command_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().with_name("failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py"))
+_failed_command_lines = importlib.util.module_from_spec(_failed_command_lines_spec)
+_failed_command_lines_spec.loader.exec_module(_failed_command_lines)
 
 REQUIREMENTS_FILE = python_libraries_pinned_requirements_install_if_missing_then_import_common.PINNED_REQUIREMENTS_FILE
 # The Bash guards run in parallel with a 30-second hook timeout; a cached wheel installs in about a second.
@@ -576,8 +581,7 @@ def report_to_user_or_dispatching_agent_instruction_build(words, environment=os.
                 f"a subagent, skip the rest of this message and go on with your task.\n"
                 f"If you are a subagent, tell the agent that dispatched you, in these words: "
                 f"{words}")
-    return (f"Tell the user, or, if you are a subagent, the agent that dispatched you, in these "
-            f"words: {words}")
+    return f"Tell {_failed_command_lines.REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT} in these words: {words}"
 
 
 def _text(node):

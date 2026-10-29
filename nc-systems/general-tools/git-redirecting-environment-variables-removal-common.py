@@ -2,7 +2,7 @@
 """The environment variables that make git act on a different repository, and
 an environment with them removed.
 
-Set in an agent-session or a test suite, each of these points a git command at
+Set in an agent-session or an nc-test-suite, each of these points a git command at
 another repository's files whatever `-C` or the working directory says, so a
 program that runs git on a repository it names removes them first. This module
 is the one place the list is written; scripts/git-redirecting-environment-variables-defined-once-test.py

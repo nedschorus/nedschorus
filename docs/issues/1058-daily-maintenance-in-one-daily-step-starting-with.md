@@ -5,8 +5,6 @@ kind: design
 
 # Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user
 
-This GHI has proposed improvements or changes: read every file in this folder whose name starts with `1058-daily-maintenance-in-one-daily-step-starting-with-proposed-improvements-or-changes-`.
-
 Gather the project's regular maintenance into one list of maintenance jobs, each run as often as it needs, which is daily for most of the jobs below, and each handed to the user as the section "How a daily job is handed to the user and tracked (decided)" says. The list began as the noon step, whose only job was the review of the memory stores, and its second job is to check every page of the wiki against the things the pages describe, fix the obvious errors, and list the rest for the user. That the wiki check is one of the maintenance jobs is decided, and how a job runs is settled under Deferred-decisions item 1.
 
 ## Why
@@ -152,11 +150,12 @@ Each day, a program, with no model:
 
 The user hears from this job only when something needs attention, by the design in "How a daily job is handed to the user and tracked" below:
 
-- **The replay's time passes its budget.** The budget is the time that GHI's first full measured invocation sets. The message gives the time of the last full invocation, which that GHI has the replay record in the log-store, the budget, and the number of pairs in the file.
 - **A newly added pair reads differently at main from its recorded verdict.** One line per pair: the command, shortened; the working directory; the transcript where it was first seen; the recorded verdict; and main's reading.
 - **The job could not do its work.** When the log-store or a transcript cannot be read, or a guard raises or runs past its time on a new pair, the message says what the job could not read and why, and never says that nothing needs attention.
 
 On a day with none of these, the job shows the user nothing.
+
+The job does not report the replay's time. On 2026-10-28 the user approved, in reboot-test's approval-walk reboot-test-carried-items-2026-10-27 (item 17), using the test runner's recorded times instead of a times file, a budget and a daily report of any run over the budget: "The test runner already records each suite's time and stops a suite that runs past its limit", and that GHI's GHI-MD records the first passing run's time of its suite and its regeneration program's time.
 
 Open for this job: which differences from the recorded verdict are expected rather than reported, since the guard that judged the command may have been older or not yet written, and the replay stubs the git and gh probes that the force-push guard and the Markdown push reminder make; and that a transcript records that some hook refused a command, not which one.
 
@@ -276,11 +275,11 @@ The design:
 - **A job shown to an agent-session that ends without an answer goes back to due.** If the agent-session the job was shown to ends in any other way, by a crash or being closed, with no answer recorded, the program that started that agent-session sees it exit and sets the state back to due. The next run of the scheduled job then starts a new agent-session for the job. So a job handed out and never answered is never silently lost.
 - **A program changes a state file only under a file lock.** Two runs at the same moment therefore cannot both take the same job.
 - **Storage is a file with a lock.** The state may move into the agent-seat database of GHI [A small service on ned-box keeps one record of every agent-seat on both machines](https://github.com/nedschorus/nedschorus/issues/972) if that database is built.
-- **It replaces the current marks.** For every job the daily step covers, this design replaces the "started" and "done" mark scripts used today, `nc-systems/handoff/daily-memory-review-mark.py` and `nc-systems/handoff/daily-overview-refresh-reminder-mark.py`.
+- **It replaces the current marks.** For every job the daily step covers, this design replaces the "started" and "done" mark scripts used today, `nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py` and `nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py`.
 
 ## How a daily job reads the Mac (decided)
 
-Every daily job runs on ned-box, including a job that must read something on the Mac, such as the memory review, which reads the Mac's memory store, or a job that reads facts about the Mac's setup. ned-box's key to the Mac runs only one fixed command there, `scripts/mac-request-from-ned-box-forced-command.py`, which today accepts the verbs `open-window` and `read-agent-seat-task-lists`. Each thing a daily job must read on the Mac gets a helper of its own: one more verb that the fixed command accepts. Each helper only reads, and accepts only the exact words it expects. When the Mac is asleep or cannot be reached, the job's agent-session writes "Mac not checked today", with the reason, in its record, never reports the Mac as fine, and tries again the next day. The user ruled this on 2026-10-20 (user-ruled 2026-10-20, approval-walk agent-instructions-editor-every-open-decision-2026-10-15, item 24), approving with "A" the recommendation "add a read-only helper to the fixed command for each thing a daily job must read on the Mac". The walk-minutes are `docs/walk/agent-instructions-editor-every-open-decision-2026-10-15-minutes.md` in the agent-instructions-editor agent-seat's checkout on ned-box.
+Every daily job runs on ned-box, including a job that must read something on the Mac, such as the memory review, which reads the Mac's memory store, or a job that reads facts about the Mac's setup. ned-box's key to the Mac runs only one fixed command there, `scripts/mac-request-from-ned-box-forced-command.py`, which today accepts the verbs `open-window`, `open-agent-seat-window`, `open-in-typora`, `open-in-browser` and `read-agent-seat-task-lists`. Each thing a daily job must read on the Mac gets a helper of its own: one more verb that the fixed command accepts. Each helper only reads, and accepts only the exact words it expects. When the Mac is asleep or cannot be reached, the job's agent-session writes "Mac not checked today", with the reason, in its record, never reports the Mac as fine, and tries again the next day. The user ruled this on 2026-10-20 (user-ruled 2026-10-20, approval-walk agent-instructions-editor-every-open-decision-2026-10-15, item 24), approving with "A" the recommendation "add a read-only helper to the fixed command for each thing a daily job must read on the Mac". The walk-minutes are `docs/walk/agent-instructions-editor-every-open-decision-2026-10-15-minutes.md` in the agent-instructions-editor agent-seat's checkout on ned-box.
 
 ## How the maintenance jobs resume, pace their work and file their reports (decided)
 

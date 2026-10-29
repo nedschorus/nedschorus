@@ -306,7 +306,7 @@ def print_brief(number, reviewer_login):
         "entry after it: what you fixed, or why the finding does not hold. Never commit it: "
         "the branch's .gitignore may not leave it out, and the check in step 7 refuses a commit "
         "that holds it.",
-        f"6. Run the affected test suites: {PRE_PUSH_TEST_COMMAND}",
+        f"6. Run the affected nc-test-suites: {PRE_PUSH_TEST_COMMAND}",
         "   If a suite fails because of this round's change, fix it in the same commit; if it "
         "fails for another cause, tell merge-lane-2 with SendMessage before pushing.",
         f"7. Run the check: {check_command}",

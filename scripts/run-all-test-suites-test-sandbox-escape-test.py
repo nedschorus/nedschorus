@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Tests that a suite inside its test sandbox cannot escape it.
+"""Tests that a suite inside its nc-test-sandbox cannot escape it.
 
 A probe is run as a suite by scripts/run-all-test-suites.py's own run_one_suite,
 the path every suite takes: in a cgroup scope at low priority, with the input
 recorder, in a checkout that is a linked worktree, as merge-lane-2's head test
-runs and mutation testing use. The probe tries every escape. Each target is one
+runs and nc-mutation-testing use. The probe tries every escape. Each target is one
 this file made for the purpose: a file in the real home directory, a tmux server
 on a socket of its own, a listening socket in the session's runtime directory, a
 sleeper process, a scratch repository. If a protection were missing, the worst a
@@ -91,7 +91,7 @@ MACHINE_SOCKETS_NAMED = (
     "/run/docker.sock", "/run/dbus/system_bus_socket", "/run/snapd.socket",
     "/run/systemd/io.systemd.Manager")
 # gnome-shell on ned-box serves displays :0 and :1; its authorization cookie lives in the
-# runtime directory, which the test sandbox hides.
+# runtime directory, which the nc-test-sandbox hides.
 X11_DISPLAYS_PROBED = (0, 1)
 PROBE_SUITE = "escape-probe-test.py"
 
@@ -301,7 +301,7 @@ for path in targets["late_sockets"]:
 
 def bwrap_unavailable_reason():
     if not sys.platform.startswith("linux"):
-        return f"{sys.platform} has no test sandbox; it is built with bwrap on Linux"
+        return f"{sys.platform} has no nc-test-sandbox; it is built with bwrap on Linux"
     if os.environ.get(runner.SIGNAL_SANDBOX_INSIDE_VARIABLE):
         return "this suite is already inside a sandbox, where bwrap cannot start again"
     if shutil.which("bwrap") is None:
@@ -373,7 +373,7 @@ def make_linked_worktree(scratch):
 
 
 def run_probe(scratch):
-    """Run the probe as a suite in its test sandbox, and check every target after."""
+    """Run the probe as a suite in its nc-test-sandbox, and check every target after."""
     sandbox_prefix, unconfined_because = runner.signal_sandbox()
     if not sandbox_prefix:
         print(f"SKIP  every escape case: the runner builds no sandbox here: {unconfined_because}")
@@ -571,7 +571,7 @@ def run_probe(scratch):
             except ValueError:
                 continue
             attempts[record["attempt"]] = record
-        check("the probe ran as a suite inside its test sandbox and reported",
+        check("the probe ran as a suite inside its nc-test-sandbox and reported",
               result["exit"] == 0 and len(attempts) > 40, (result["exit"], log_text[-1500:]))
         check("the probe ran in a cgroup scope of its own, as suites do, and its counters "
               "were read",
