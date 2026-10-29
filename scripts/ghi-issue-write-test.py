@@ -515,147 +515,76 @@ def run_cases(scratch: Path):
               "a copy whose name carries no number" in str(refusal),
               str(refusal))
 
-    # --- A title names the work: no date, no file path ------------------
-    # User-ruled 2026-09-30, item 4 of the walk
-    # open-questions-concerns-and-recommendations-2026-09-30. The detector
-    # is read through getattr so that main's code, which has none, fails
-    # these cases by name instead of killing the suite.
-
-    date_or_path = getattr(tool, "date_or_file_path_in_heading", None)
-    # What `git ls-tree -r --name-only -z HEAD` lists for the cases below: the
-    # detector judges a relative path and a file extension against the
-    # tracked tree, never against what a checkout's directory holds.
-    TRACKED = ["docs/agents/pr-reviewer-instructions.md",
-               "docs/issues/412-build-sanity-checker.md",
-               "config/cold-read-tier-roster.json",
-               "nc-systems/cold-read/cold-read-grid.py",
-               "scripts/ghi-issue-write.py", "CLAUDE.md"]
-    for case_name, heading, expected in [
-            ("a heading carrying an ISO date is caught",
-             "Sweep the bare words, under the 2026-09-15 rule", "2026-09-15"),
-            ("a path opened by an entry at the repository's root is caught",
-             "Rewrite the seat briefs under docs/agents; one ruled",
-             "docs/agents"),
-            ("a root entry named alone is caught",
-             "Group the components under nc-systems/", "nc-systems/"),
-            ("a path ending in a file name is caught, its parenthesis "
-             "stripped",
-             "Founding program (plan: plans/founding-plan.md)",
-             "plans/founding-plan.md"),
-            ("a path under the home directory is caught",
-             "Reviewers never open ~/.config/gh", "~/.config/gh"),
-            ("an absolute path is caught",
-             "Move /home/nedlern/logs aside", "/home/nedlern/logs"),
-            ("a heading that only names the work passes",
-             "Build sanity-checker", ""),
-            ("a slash command passes",
-             "Four small skills: /save, /push, /save-MD-as-draft", ""),
-            ("a slashed pair that is not a path passes",
-             "Claude turn/start and turn/steer equivalents, A/B tested", ""),
-            ("a program named without its directory passes",
-             "recover-crashed-seats.py exits nonzero", ""),
-            ("a version number is not read as a file extension",
-             "Codex/Gemini 3.8 notes", ""),
-            ("an ordinary word that is also a root entry passes",
-             "The config/state split", ""),
-            ("so does a root entry paired with a word it does not hold",
-             "Separate docs/code review", ""),
-            ("a product name with a dot passes, no tracked file ending so",
-             "Support Deno/Node.js", ""),
-            ("so does a site name", "Codex/claude.ai parity", ""),
-            ("and a pair of model versions", "Opus 4.x/5.x", "")]:
-        try:
-            found = (date_or_path(heading, TRACKED) if date_or_path
-                     else "no detector")
-        except Exception as failure:  # main's detector took a directory
-            found = f"raised {failure!r}"
-        check(case_name, found == expected, f"found {found!r}")
-
-    # The verdict is the tracked tree's, so a directory only one checkout
-    # holds — merge-lane-2's walk-ledgers/, which git ignores — refuses
-    # nothing. Driven through create, whose signature main's code shares.
-    (scratch / "walk-ledgers").mkdir(exist_ok=True)
-    untracked_root = Recorder({
-        "gh issue list": Completed("[]"),
-        "git ls-tree -r --name-only -z HEAD": Completed("\0".join(TRACKED)),
-    })
-    untracked_heading = written(scratch, "untracked-root.md",
-                                "# Tidy the walk-ledgers/notes pile\n\nBody.\n")
-    try:
-        tool.create(untracked_heading, REPO, scratch, untracked_root, quiet)
-        refused = ""
-    except tool.Refused as refusal:
-        refused = str(refusal)
-    except Exception as failure:  # past the check, the stubs run out
-        refused = ""
-    check("a directory the checkout holds but git does not track is no "
-          "path", "file path" not in refused, refused)
-
-    # The same, for a root entry named alone. The two-segment heading above
-    # passes even under a check that reads the directory, because the
-    # directory holds walk-ledgers/ but not walk-ledgers/notes; a heading
-    # naming walk-ledgers/ alone is refused by such a check and by no other
-    # (review of PR [GHI heading check runs after the duplicate
-    # refusals](https://github.com/nedschorus/nedschorus/pull/838)).
-    try:
-        tool.refuse_heading_with_date_or_file_path(
-            "Tidy the walk-ledgers/ pile", scratch, Recorder({
-                "git ls-tree -r --name-only -z HEAD":
-                    Completed("\0".join(TRACKED))}))
-        alone_refused = ""
-    except tool.Refused as refusal:
-        alone_refused = str(refusal)
-    check("an untracked directory named alone is no path either",
-          not alone_refused, alone_refused)
-
-    # A listing the check cannot read lets the heading through, whether git
-    # answers with a failure or does not answer in time: the check only
-    # decides whether to refuse, so a path it cannot see is not a reason to
-    # stop a filing. Until the same review a timeout stopped the run with
-    # exit 1, and no case tested that a failed listing is let through.
-    for case_name, answer in [
-            ("a tracked-tree listing that fails lets the heading through",
-             Completed("", 128, "fatal: Not a valid object name HEAD")),
-            ("and so does one that times out",
-             subprocess.TimeoutExpired(
-                 ["git", "ls-tree", "-r", "--name-only", "-z", "HEAD"], 30))]:
-        try:
-            tool.refuse_heading_with_date_or_file_path(
-                "Group the components under nc-systems/", scratch,
-                Recorder({"git ls-tree -r --name-only -z HEAD": answer}))
-            outcome = ""
-        except Exception as failure:
-            outcome = f"{type(failure).__name__}: {failure}"
-        check(case_name, not outcome, outcome)
+    # --- A title names the work: no date; a path is allowed -------------
 
     title_refusal_lines = [
-        "Remove the date or file path from this file's first heading; the "
-        "heading becomes the issue's title.",
-        "Put the date or path in the text below the heading.",
+        "Remove the date from this file's first heading; the heading "
+        "becomes the issue's title.",
+        "Put the date in the text below the heading.",
         "Then rerun the same command."]
-    for case_name, heading in [
-            ("create refuses a dated heading before filing anything",
-             "Stamp the launch time (user-ruled 2026-08-27)"),
-            ("create refuses a heading carrying a file path before filing "
-             "anything",
-             "Ship the records: docs/ship-records.py and the runner")]:
-        titled = written(scratch, "titled.md",
-                         f"# {heading}\n\nBody.\n")
-        refusing = Recorder({
-            "gh issue list": Completed("[]"),
-            "git ls-tree -r --name-only -z HEAD": Completed("\0".join(TRACKED)),
-        })
+    for case_name, heading, refused in [
+            ("a heading carrying an ISO date is refused",
+             "Sweep the bare words, under the 2026-09-15 rule", True),
+            ("a dated heading in parentheses is refused",
+             "Stamp the launch time (user-ruled 2026-08-27)", True),
+            ("a heading that only names the work passes",
+             "Build sanity-checker", False),
+            ("a version number is not read as a date",
+             "Codex/Gemini 3.8 notes", False),
+            ("a longer run of digits is not read as a date",
+             "Ticket 12026-09-150 notes", False),
+            ("a directory named from the repository root passes",
+             "Group the components under nc-systems/", False),
+            ("a file path passes",
+             "Ship the records: docs/ship-records.py and the runner", False),
+            ("a path under the home directory passes",
+             "Reviewers never open ~/.config/gh", False),
+            ("an absolute path passes",
+             "Move /home/nedlern/logs aside", False)]:
         try:
-            tool.create(titled, REPO, scratch, refusing, quiet)
-            check(case_name, False, "it filed")
+            tool.refuse_heading_with_date(heading)
+            outcome = None
         except tool.Refused as refusal:
-            check(case_name,
-                  refusal.code == 64
-                  and str(refusal).splitlines() == title_refusal_lines
-                  and not refusing.ran("gh issue create")
-                  and not refusing.ran(ASK),
-                  f"code {refusal.code}: {refusal}; "
-                  f"{refusing.commands()}")
+            outcome = refusal
+        check(case_name,
+              (outcome is not None) == refused
+              and (outcome is None
+                   or (outcome.code == 64
+                       and str(outcome).splitlines() == title_refusal_lines)),
+              repr(outcome))
+
+    titled = written(scratch, "titled.md",
+                     "# Stamp the launch time (user-ruled 2026-08-27)\n\nBody.\n")
+    refusing = Recorder({"gh issue list": Completed("[]")})
+    try:
+        tool.create(titled, REPO, scratch, refusing, quiet)
+        check("create refuses a dated heading before filing anything",
+              False, "it filed")
+    except tool.Refused as refusal:
+        check("create refuses a dated heading before filing anything",
+              refusal.code == 64
+              and str(refusal).splitlines() == title_refusal_lines
+              and not refusing.ran("gh issue create")
+              and not refusing.ran(ASK),
+              f"code {refusal.code}: {refusal}; {refusing.commands()}")
+
+    # A heading naming a path is not refused at the heading check: create
+    # goes on to file it. The stubs run out past that point.
+    pathed = written(scratch, "pathed.md",
+                     "# Group the components under nc-systems/\n\nBody.\n")
+    pathed_run = Recorder({"gh issue list": Completed("[]")})
+    try:
+        tool.create(pathed, REPO, scratch, pathed_run, quiet)
+        pathed_refusal = ""
+    except tool.Refused as refusal:
+        pathed_refusal = str(refusal)
+    except Exception:
+        pathed_refusal = ""
+    check("create does not refuse a heading that names a path, and goes on "
+          "to file it",
+          "first heading" not in pathed_refusal
+          and pathed_run.ran("gh issue create"),
+          f"{pathed_refusal}; {pathed_run.commands()}")
 
     # --- The heading is judged after the refusals the key cannot see -----
     # Review of PR [GHI titles name the work](https://github.com/nedschorus/nedschorus/pull/829):
@@ -683,7 +612,7 @@ def run_cases(scratch: Path):
         check("a dated heading whose filing is in flight is told to wait, "
               "not to change its heading",
               "https://github.com/x/y/pull/9" in str(refusal)
-              and "file path" not in str(refusal), str(refusal))
+              and "first heading" not in str(refusal), str(refusal))
 
     dated_landed_path = f"docs/issues/570-{tool.slug(DATED)}.md"
     dated_landed = Recorder({
@@ -701,7 +630,7 @@ def run_cases(scratch: Path):
         check("a dated heading already on main is sent to the edit "
               "operation, not told to change its heading",
               dated_landed_path in str(refusal)
-              and "file path" not in str(refusal), str(refusal))
+              and "first heading" not in str(refusal), str(refusal))
 
     # --- The dry run answers as the real run does -----------------------
     # Review of PR 829: the dry run validated alone and printed "would
@@ -709,9 +638,7 @@ def run_cases(scratch: Path):
 
     for case_name, heading in [
             ("create --dry-run refuses a dated heading as create does",
-             "Stamp the launch time (user-ruled 2026-08-27)"),
-            ("and a home-directory path, for a file outside any checkout",
-             "Reviewers never open ~/.config/gh")]:
+             "Stamp the launch time (user-ruled 2026-08-27)")]:
         dry = written(scratch, "dry-run.md", f"# {heading}\n\nBody.\n")
         printed, complaint = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(printed), \
@@ -2177,30 +2104,13 @@ def run_git_failure_cases(scratch: Path):
               and (answer.returncode == 0) == ("not shown" not in shown),
               shown)
 
-    complaint = io.StringIO()
-    with contextlib.redirect_stderr(complaint):
-        tracked = tool.tracked_paths_at_head(scratch, Recorder({
-            "git ls-tree -r --name-only -z HEAD":
-                Completed("", 128, "fatal: Not a valid object name HEAD")}))
-    check("a tracked-tree listing that fails is printed before the heading "
-          "is let through",
-          tracked == [] and "fatal: Not a valid object name HEAD"
-          in complaint.getvalue() and "not checked for a file path"
-          in complaint.getvalue(), complaint.getvalue())
-
     # A checkout with no commit yet, where git exits 128 for HEAD as it does
     # for a failure, and the stand-in for one whose HEAD git cannot read.
     unborn = scratch / "unborn"
     subprocess.run(["git", "init", "-q", str(unborn)], check=True,
                    capture_output=True)
-    complaint = io.StringIO()
-    with contextlib.redirect_stderr(complaint):
-        tracked = tool.tracked_paths_at_head(unborn, tool.run)
-        located = tool.merge_base_with_main(
-            "4b825dc642cb6eb9a060e54bf8d69288fbee4904", unborn, tool.run)
-    check("a checkout with no commit yet tracks nothing, and says nothing "
-          "about it", tracked == [] and not complaint.getvalue(),
-          (tracked, complaint.getvalue()))
+    located = tool.merge_base_with_main(
+        "4b825dc642cb6eb9a060e54bf8d69288fbee4904", unborn, tool.run)
     check("a checkout with no commit yet has no merge base with main",
           located == "", repr(located))
     try:
@@ -2212,33 +2122,6 @@ def run_git_failure_cases(scratch: Path):
         outcome = str(refusal)
     check("a HEAD git cannot read is raised, not taken for no commit yet",
           "fatal: not a git repository" in outcome, outcome)
-    complaint = io.StringIO()
-    with contextlib.redirect_stderr(complaint):
-        tracked = tool.tracked_paths_at_head(scratch, Recorder({
-            "git ls-tree -r --name-only -z HEAD": Completed(
-                "", 128, "fatal: not a git repository"),
-            "git rev-parse --verify --quiet HEAD": Completed(
-                "", 128, "fatal: not a git repository")}))
-    check("and the heading check still lets the heading through, saying so",
-          tracked == [] and "not checked for a file path"
-          in complaint.getvalue(), complaint.getvalue())
-
-    def unborn_probe_times_out(arguments, **options):
-        if arguments[:2] == ["git", "rev-parse"]:
-            raise subprocess.TimeoutExpired(arguments, 30)
-        return Completed("", 128, "fatal: unable to read tree")
-    complaint = io.StringIO()
-    try:
-        with contextlib.redirect_stderr(complaint):
-            tracked = tool.tracked_paths_at_head(scratch,
-                                                 unborn_probe_times_out)
-    except subprocess.TimeoutExpired as expiry:
-        tracked = expiry
-    check("a failed listing whose no-commit-yet probe times out still lets "
-          "the heading through, saying so",
-          tracked == [] and "not checked for a file path"
-          in complaint.getvalue(), (tracked, complaint.getvalue()))
-
     worktree_parent = scratch / "removal"
     worktree = worktree_parent / "worktree"
     worktree.mkdir(parents=True)
@@ -4055,7 +3938,7 @@ def run_edit_cases(scratch: Path):
               False, "it landed")
     except tool.Refused as refusal:
         check("an edit that changes the heading to a dated one is refused",
-              refusal.code == 64 and "file path" in str(refusal),
+              refusal.code == 64 and "first heading" in str(refusal),
               f"code {refusal.code}: {refusal}")
     check("and nothing of it is adjudicated, landed or renamed",
           not renamed_to_a_date.ran(ASK)
@@ -4777,9 +4660,6 @@ def run_real_git_listing_cases(scratch: Path):
                       ["update-ref", "refs/remotes/origin/main", "HEAD"]):
         subprocess.run(["git", "-C", str(repository), *arguments], check=True,
                        capture_output=True)
-    check("the tracked paths at HEAD name a non-ASCII file as stored",
-          accented in tool.tracked_paths_at_head(repository, tool.run),
-          str(tool.tracked_paths_at_head(repository, tool.run)))
     check("the filed GHI-MDs on main include a non-ASCII name",
           tool.ghi_md_paths_on_main("HEAD", repository, tool.run) == [accented],
           str(tool.ghi_md_paths_on_main("HEAD", repository, tool.run)))
