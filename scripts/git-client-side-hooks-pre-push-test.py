@@ -1244,6 +1244,40 @@ def run_push_cases(scratch):
 
 # --- The selective test run -------------------------------------------------
 
+def load_module_from_path(name, path):
+    specification = importlib.util.spec_from_file_location(name, path)
+    loaded = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(loaded)
+    return loaded
+
+
+def run_selective_test_run_copies_of_runner_constants_cases():
+    # The hook keeps its own copies of the runner's output format, so nothing but this ties them.
+    hook = load_module_from_path("selective_test_run_check", SELECTIVE_TEST_RUN_CHECK)
+    runner = load_module_from_path("run_all_test_suites", REAL_TEST_SUITES_RUNNER)
+    for hook_name, hook_value, runner_value in (
+            ("RUNNER_FILE_NAME", hook.RUNNER_FILE_NAME, REAL_TEST_SUITES_RUNNER.name),
+            ("RUNNER_EXIT_ALL_PASSED", hook.RUNNER_EXIT_ALL_PASSED, runner.EXIT_ALL_PASSED),
+            ("RUNNER_EXIT_SOME_FAILED", hook.RUNNER_EXIT_SOME_FAILED, runner.EXIT_SOME_FAILED),
+            ("RUNNER_EXIT_LOCKED", hook.RUNNER_EXIT_LOCKED, runner.EXIT_LOCKED),
+            ("REPORT_FILE_NAME", hook.REPORT_FILE_NAME, runner.REPORT_FILE_NAME),
+            ("FAILED_SUITE_LINE_PREFIX", hook.FAILED_SUITE_LINE_PREFIX,
+             runner.FAILED_SUITE_LINE_PREFIX),
+            ("NOT_RUN_SUITE_LINE_PREFIX", hook.NOT_RUN_SUITE_LINE_PREFIX,
+             runner.NOT_RUN_SUITE_LINE_PREFIX),
+            ("SUITE_LINE_LOG_MARK", hook.SUITE_LINE_LOG_MARK, runner.SUITE_LINE_LOG_MARK),
+            ("SUMMARY_LINE_PREFIX", hook.SUMMARY_LINE_PREFIX, runner.SUMMARY_LINE_PREFIX),
+            ("RUNNER_REFUSAL_LINE_PREFIX", hook.RUNNER_REFUSAL_LINE_PREFIX,
+             f"{runner.PROGRAM}: not run")):
+        check(f"the selective test run's {hook_name} equals the runner's",
+              hook_value == runner_value, f"hook {hook_value!r}, runner {runner_value!r}")
+    first_line = (f"{runner.PROGRAM}: /fake at abc (clean); -j 4"
+                  f"{runner.FIRST_REPORT_LINE_LOG_DIRECTORY_MARK}/fake/logs")
+    found = hook.log_directory_named_in(first_line)
+    check("the selective test run's LOG_DIRECTORY_PATTERN finds the log directory after the "
+          "runner's FIRST_REPORT_LINE_LOG_DIRECTORY_MARK", found == "/fake/logs", repr(found))
+
+
 def run_selective_test_run_cases(scratch):
     def lines_from(stderr, first):
         """The stderr lines from the first one starting with `first`, or []."""
@@ -2092,6 +2126,7 @@ def run_revert_check_cases(scratch):
 
 def main():
     run_unit_cases()
+    run_selective_test_run_copies_of_runner_constants_cases()
     # Resolved, because git and the hooks print resolved paths: on macOS the temporary
     # directory is under /var, a symlink to /private/var.
     scratch = Path(tempfile.mkdtemp(prefix="pre-push-test-")).resolve()
