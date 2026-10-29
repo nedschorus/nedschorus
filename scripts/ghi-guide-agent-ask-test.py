@@ -17,6 +17,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shlex
 import sys
 import tempfile
@@ -569,7 +570,7 @@ try:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
             exit_code = ghi_ask.main(["q", "--seat-dir", str(missing)])
         check("main() with a missing explicit --seat-dir errors cleanly, no traceback",
-              exit_code == 1 and "bootstrap" in err.getvalue()
+              exit_code == 1 and "does not exist on this machine" in err.getvalue()
               and str(missing) in err.getvalue(),
               err.getvalue())
 finally:
@@ -1136,15 +1137,15 @@ with tempfile.TemporaryDirectory() as temporary:
             return FakeCompletedProcess(0, "verdict: unrelated\n")
 
         patch_module_function(ghi_ask.subprocess, "run", ssh_recording_run)
-        seat_orig = ghi_ask.DEFAULT_SEAT_DIR
-        patch("DEFAULT_SEAT_DIR", root / "no-seat-on-this-machine")
+        running_on_agent_box_orig = ghi_ask.running_on_agent_box
+        patch("running_on_agent_box", lambda: False)
         try:
             with contextlib.redirect_stdout(io.StringIO()):
                 exit_code = ghi_ask.main(["--question-file", str(question_path)])
                 from_file = dict(remote)
                 plain_exit_code = ghi_ask.main(["a short question"])
         finally:
-            patch("DEFAULT_SEAT_DIR", seat_orig)
+            patch("running_on_agent_box", running_on_agent_box_orig)
             ghi_ask.subprocess.run = subprocess_run_orig
         check("off the box, a question given as an argument still rides the "
               "remote command, with nothing on stdin",
@@ -1178,7 +1179,7 @@ with tempfile.TemporaryDirectory() as temporary:
                                         box_error.getvalue())
 
         patch_module_function(ghi_ask.subprocess, "run", box_running_ssh)
-        patch("DEFAULT_SEAT_DIR", root / "no-seat-on-this-machine")
+        patch("running_on_agent_box", lambda: False)
         try:
             for name, arguments in (
                     ("--question-file", ["--question-file", str(question_path)]),
@@ -1197,7 +1198,7 @@ with tempfile.TemporaryDirectory() as temporary:
                       and str(question_path) not in hint,
                       (exit_code, hint[-500:]))
         finally:
-            patch("DEFAULT_SEAT_DIR", seat_orig)
+            patch("running_on_agent_box", running_on_agent_box_orig)
             ghi_ask.subprocess.run = subprocess_run_orig
 
         # Off the box, an ssh call that times out or cannot start is reported
@@ -1209,7 +1210,7 @@ with tempfile.TemporaryDirectory() as temporary:
         def ssh_not_starting(command, **keywords):
             raise FileNotFoundError("ssh")
 
-        patch("DEFAULT_SEAT_DIR", root / "no-seat-on-this-machine")
+        patch("running_on_agent_box", lambda: False)
         try:
             for name, fake, expected in (
                     ("times out", ssh_timing_out,
@@ -1229,8 +1230,94 @@ with tempfile.TemporaryDirectory() as temporary:
                       exit_code == 1 and caller_error.getvalue() == expected,
                       (exit_code, caller_error.getvalue()))
         finally:
-            patch("DEFAULT_SEAT_DIR", seat_orig)
+            patch("running_on_agent_box", running_on_agent_box_orig)
             ghi_ask.subprocess.run = subprocess_run_orig
+
+        # Which machine this is comes from the hostname, never from whether
+        # the seat directory exists. On ned-box with the seat missing, the ask
+        # once ran `ssh ned`, a name only the Mac resolves, and failed with
+        # ssh's "Could not resolve hostname" instead of naming the seat.
+        ssh_calls = []
+
+        def ssh_call_recording_run(command, **keywords):
+            ssh_calls.append(command)
+            return FakeCompletedProcess(0, "verdict: unrelated\n")
+
+        def asks_with_hostname(hostname, seat_directory):
+            ssh_calls.clear()
+            asked.clear()
+            caller_error = io.StringIO()
+            gethostname_orig = ghi_ask.socket.gethostname
+            seat_directory_orig = ghi_ask.DEFAULT_SEAT_DIR
+            patch_module_function(ghi_ask.socket, "gethostname", lambda: hostname)
+            patch("DEFAULT_SEAT_DIR", seat_directory)
+            patch_module_function(ghi_ask.subprocess, "run", ssh_call_recording_run)
+            try:
+                with contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(caller_error):
+                    exit_code = ghi_ask.main(["a short question"])
+            finally:
+                patch_module_function(ghi_ask.socket, "gethostname", gethostname_orig)
+                patch("DEFAULT_SEAT_DIR", seat_directory_orig)
+            return exit_code, caller_error.getvalue()
+
+        missing_seat = root / "agents" / "ghi-guide-agent"
+        for hostname in ("ned-box", "ned-box.local"):
+            exit_code, said = asks_with_hostname(hostname, missing_seat)
+            check(f"on ned-box (hostname {hostname}) with the seat directory "
+                  "missing, the ask runs no ssh and asks nothing",
+                  not ssh_calls and not asked, (ssh_calls, asked))
+            check(f"on ned-box (hostname {hostname}) with the seat directory "
+                  "missing, the ask exits 1 with one stderr line naming the "
+                  "directory and the command that creates it",
+                  exit_code == 1 and said.count("\n") == 1
+                  and f"seat directory {missing_seat} does not exist on this machine" in said
+                  and f"worktree add {missing_seat} ghi-guide-agent`" in said
+                  and f"worktree add -b ghi-guide-agent {missing_seat} origin/main`" in said
+                  and "ghi-write skill's fallback ladder" in said,
+                  (exit_code, said))
+
+        exit_code, said = asks_with_hostname("Els-MacBook-Pro.local", seat_flag)
+        check("off ned-box, a seat directory that happens to exist locally does "
+              "not keep the ask from going to the box over ssh",
+              exit_code == 0 and len(ssh_calls) == 1
+              and ssh_calls[0][:2] == ["ssh", ghi_ask.AGENT_BOX] and not asked,
+              (exit_code, ssh_calls, said))
+
+        # The two commands the missing-seat message gives create the seat:
+        # the first when the seat's branch exists, the second when it does not.
+        exit_code, said = asks_with_hostname("ned-box", missing_seat)
+        given_commands = re.findall(r"`(git -C ~/Projects/nedschorus [^`]+)`", said)
+        import subprocess as real_subprocess
+        patch_module_function(real_subprocess, "run", subprocess_run_orig)
+        git_environment = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+
+        def run_git(*arguments):
+            return real_subprocess.run(["git", *arguments], capture_output=True,
+                                       text=True, env=git_environment, check=False)
+
+        for case, branch_exists in (("first", True), ("second", False)):
+            projects_repository = root / f"projects-nedschorus-{case}"
+            run_git("init", "-q", "-b", "main", str(projects_repository))
+            run_git("-C", str(projects_repository), "commit", "-q",
+                    "--allow-empty", "-m", "initial")
+            run_git("-C", str(projects_repository), "update-ref",
+                    "refs/remotes/origin/main", "HEAD")
+            if branch_exists:
+                run_git("-C", str(projects_repository), "branch", "ghi-guide-agent")
+            command = given_commands[0 if branch_exists else 1] if len(given_commands) == 2 else ""
+            created = real_subprocess.run(
+                shlex.split(command.replace("~/Projects/nedschorus",
+                                            str(projects_repository))) or ["false"],
+                capture_output=True, text=True, env=git_environment, check=False)
+            check(f"the missing-seat message's {case} command creates the seat "
+                  f"directory when the ghi-guide-agent branch "
+                  f"{'exists' if branch_exists else 'does not exist'}",
+                  created.returncode == 0 and (missing_seat / ".git").exists(),
+                  (given_commands, created.returncode, created.stderr))
+            run_git("-C", str(projects_repository), "worktree", "remove",
+                    "--force", str(missing_seat))
     finally:
         patch("ask", ask_orig)
 
