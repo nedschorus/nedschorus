@@ -2915,8 +2915,7 @@ with tempfile.TemporaryDirectory() as temporary:
             os.chdir(saved_directory)
         check("AGENTS ROOT: a relative --agents-root resolves against the caller's directory",
               exit_code == 0
-              and [path.resolve() for path in seat_directories_launched]
-              == [workspace.seat_directory.resolve()]
+              and seat_directories_launched == [workspace.seat_directory]
               and all(path.is_absolute() for path in seat_directories_launched)
               and workspace.agents_root.parent != Path.home(),
               (exit_code, seat_directories_launched))
