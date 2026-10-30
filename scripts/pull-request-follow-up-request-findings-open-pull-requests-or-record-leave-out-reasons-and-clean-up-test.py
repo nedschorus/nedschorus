@@ -14,6 +14,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -41,12 +42,32 @@ BLOCK = (f"#follow_up_request pull request {NUMBER}\n"
 LINK = "https://github.com/nedschorus/nedschorus/pull/2001"
 OPEN_LINK = "https://github.com/nedschorus/nedschorus/pull/2002"
 ALREADY_OPEN = f'a pull request for branch "topic-one" into branch "main" already exists:\n{OPEN_LINK}'
-TELL_THE_USER_END = ("that the follow-up of pull request 1964 is stopped until it is fixed.\n"
-                   "If you are a subagent, pass that sentence to the agent that dispatched you instead.\n")
+TITLE = "Render code spans"
+FOLLOWED_UP_LINK = f"https://github.com/nedschorus/nedschorus/pull/{NUMBER}"
+FOLLOWED_UP = f"pull request [{TITLE}]({FOLLOWED_UP_LINK})"
+FOLLOWED_UP_LINK_ALONE = f"pull request {FOLLOWED_UP_LINK}"
+SUBAGENT_END = '"\nIf you are a subagent, pass that sentence to the agent that dispatched you instead.\n'
 DESCRIPTION = "Keep code span padding\n\nKeeps the padding.\n\n#no_defect_fixed\n"
 FAKE_GH = """#!/bin/sh
 printf '%s\\036' "$*" >> "$FAKE_GH_LOG"
 [ -n "$FAKE_GH_KILLED" ] && kill -"$FAKE_GH_KILLED" $$
+if [ "$1 $2" = "pr view" ]; then
+    [ -n "$FAKE_GH_VIEW_FAILS" ] && { echo "HTTP 502: view" >&2; exit 1; }
+    printf '%s\\n' "${FAKE_GH_TITLE-Render code spans}"
+    exit 0
+fi
+if [ "$1 $2" = "pr list" ]; then
+    [ -n "$FAKE_GH_LIST_FAILS" ] && { echo "HTTP 502: list" >&2; exit 1; }
+    printf '%s' "$FAKE_GH_LIST_OUTPUT"
+    exit 0
+fi
+# A marker file path: the first pr create made while it is missing makes it and fails.
+if [ -n "$FAKE_GH_CREATE_FAILS_FIRST" ] && [ ! -e "$FAKE_GH_CREATE_FAILS_FIRST" ]; then
+    : > "$FAKE_GH_CREATE_FAILS_FIRST"
+    [ -n "$FAKE_GH_FIRST_SLEEPS" ] && sleep 5
+    echo "GraphQL: first try failed" >&2
+    exit 1
+fi
 [ -n "$FAKE_GH_CREATE_FAILS_SILENTLY" ] && exit 1
 if [ -n "$FAKE_GH_CREATE_ERROR" ]; then
     printf '%s\n' "$FAKE_GH_CREATE_ERROR" >&2
@@ -60,6 +81,12 @@ printf 'Creating pull request\\n%s\\n' "${FAKE_GH_CREATE_OUTPUT-https://github.c
 """
 
 failures = []
+
+
+def fails_line(subcommand, followed_up=FOLLOWED_UP, start="Pass"):
+    """The start of the sentence for the user the FAILED frame's usual instructions hand the agent."""
+    return (f'{start} this sentence to the user word for word: "{subcommand} fails with this error, so the '
+            f'follow-up of {followed_up} is stopped until it is fixed: ')
 
 
 def check(name, condition, detail=""):
@@ -132,6 +159,24 @@ class Case:
 
     def gh_calls(self):
         return self.gh_log.read_text().split("\x1e")[:-1] if self.gh_log.exists() else []
+
+    def gh_pr_create_calls(self):
+        return [call for call in self.gh_calls() if call.startswith("pr create ")]
+
+    @contextlib.contextmanager
+    def in_process(self, directory, **environment):
+        """Run the program's own functions in directory, with this case's fake gh, as case.run runs the program."""
+        saved_directory, saved_environment = os.getcwd(), dict(os.environ)
+        os.chdir(directory)
+        os.environ.update({"PATH": self.environment["PATH"], "FAKE_GH_LOG": str(self.gh_log), **environment})
+        program.followed_up_pull_request_text.cache_clear()
+        try:
+            yield
+        finally:
+            os.chdir(saved_directory)
+            os.environ.clear()
+            os.environ.update(saved_environment)
+            program.followed_up_pull_request_text.cache_clear()
 
     def commit_change(self, name="change.txt"):
         (self.worktree / name).write_text("change\n")
@@ -217,9 +262,13 @@ def test_no_saved_block():
         for arguments in (("next-step",), ("start-topic-branch", "topic", "--finding-numbers", "1"), ("open-pull-request", "--handled-finding-numbers", "1"),
                           ("record-finding-leave-out-reason", "1", "--reason", "x"), ("finish-follow-up-request-and-print-merge-lane-2-message",)):
             code, out, err = case.run(case.repository, *arguments)
-            check(f"{arguments[0]} with no saved block refuses with exit 1",
+            check(f"{arguments[0]} with no saved block refuses with exit 1, handing the agent the sentence for the user",
                   code == 1 and out == "" and err.startswith(
-                      f"REFUSED: No follow-up request from merge-lane-2 is saved for pull request {NUMBER}"), err)
+                      f"REFUSED: No follow-up request from merge-lane-2 is saved for pull request {NUMBER}")
+                  and err.endswith("\nIf the message has that line, the hook did not save the block: follow up the "
+                                   "message's findings by hand, as CLAUDE.md says, and pass this sentence to the user "
+                                   "word for word: \"The follow-up request hook did not save merge-lane-2's findings "
+                                   f"for {FOLLOWED_UP}." + SUBAGENT_END), err)
         check("start with no saved block records nothing", case.topic_branches() is None)
         code, out, err = case.run(case.repository, "remove-recorded-topic-branches-and-worktrees")
         check("remove-recorded-topic-branches-and-worktrees with nothing recorded removes nothing and exits 0",
@@ -258,8 +307,7 @@ def test_start():
         check("a fetch that fails is FAILED with exit 2, telling the agent to tell the user, and records no branch",
               code == 2 and err.startswith("FAILED: git fetch origin") and "again once" not in err
               and "start-topic-branch stopped there; what it did before the failure stays done.\n"
-                  "Tell the user, in one sentence, that start-topic-branch fails with the error above and "
-                  + TELL_THE_USER_END in err
+                  + fails_line("start-topic-branch") + "git fetch origin in " in err and err.endswith(SUBAGENT_END)
               and [record["branch"] for record in case.topic_branches()] == ["topic-one", "topic-two"], err)
         git(worktree, "remote", "set-url", "origin", origin_url)
         code, out, err = case.run(worktree, "start-topic-branch", "topic-one", "--finding-numbers", "1")
@@ -269,7 +317,10 @@ def test_start():
               and "If git says the branch already exists or is not a valid branch name, run python3 "
                   f"{program.PROGRAM} {NUMBER} start-topic-branch <another topic-branch> --finding-numbers "
                   "<n>[,<n>...]\n" in err
-              and "again once" not in err and err.endswith(TELL_THE_USER_END)
+              and "again once" not in err
+              and err.endswith(fails_line("start-topic-branch", start="Otherwise pass")
+                               + f"git switch -c topic-one origin/main in {worktree} failed (exit 128: fatal: a branch "
+                                 "named 'topic-one' already exists)" + SUBAGENT_END)
               and git(worktree, "branch", "--show-current") == "topic-two"
               and [record["branch"] for record in case.topic_branches()] == ["topic-one", "topic-two"]
               and case.answers() == {"started": {"1": "topic-two", "2": "topic-two"}}, err)
@@ -470,15 +521,20 @@ def test_open_failures():
                                          "output:\npre-push: suite x fails")
               and "If git's output shows the pre-push hook refusing the push, do what it says, commit "
                   "the fix, and run the same open-pull-request command again." in err
-              and "Run the same open-pull-request command again once." not in err, err)
-        check("a refused push calls no gh, records nothing and keeps the file",
-              case.gh_calls() == [] and "answers" not in case.answers() and description.exists())
+              and err.endswith("the fix, and run the same open-pull-request command again.\n"
+                               "Otherwise pass this sentence to the user word for word: \"git push of topic-one "
+                               f"fails, so the follow-up of {FOLLOWED_UP} is stopped until it works." + SUBAGENT_END)
+              and "again once" not in err, err)
+        check("a refused push calls gh only for the title of the sentence for the user, records nothing and keeps "
+              "the file",
+              case.gh_calls() == [f"pr view {NUMBER} --repo nedschorus/nedschorus --json title --jq .title"]
+              and "answers" not in case.answers() and description.exists(), str(case.gh_calls()))
         hook.write_text("#!/bin/sh\nsleep 5\n")
-        original_time_limit, original_directory = program.push_time_limit_seconds, os.getcwd()
+        original_time_limit = program.push_time_limit_seconds
         program.push_time_limit_seconds = lambda environment: 0.5
-        os.chdir(worktree)
         try:
-            program.open_pull_request(NUMBER, [1])
+            with case.in_process(worktree):
+                program.open_pull_request(NUMBER, [1])
         except program.StepFailed as error:
             check("a push that does not finish in time is a StepFailed with the usual instructions",
                   str(error) == "git push -u origin topic-one failed (did not finish within 0.5 s), so no pull request was opened."
@@ -497,22 +553,20 @@ def test_open_failures():
             return original_run_git(directory, arguments, **options)
         pushes = []
         program.git_output.run_git = push_times_out
-        saved_environment = dict(os.environ)
-        os.environ[program.pre_push_conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE] = "7"
-        os.environ[program.pre_push_selective_test_run.TIME_BUDGET_ENVIRONMENT_VARIABLE] = "11"
         try:
-            with contextlib.redirect_stderr(io.StringIO()) as stderr:
+            with case.in_process(worktree, **{program.pre_push_conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE: "7",
+                                              program.pre_push_selective_test_run.TIME_BUDGET_ENVIRONMENT_VARIABLE: "11.5"}), \
+                    contextlib.redirect_stderr(io.StringIO()) as stderr:
                 code = program.main([str(NUMBER), "open-pull-request", "--handled-finding-numbers", "1"])
         finally:
             program.git_output.run_git = original_run_git
-            os.environ.clear()
-            os.environ.update(saved_environment)
-        check("a push that times out is given the hooks' budgets from the environment plus 120 s, and tells the "
-              "agent to tell the user, not to run the command again",
-              code == 2 and pushes == [138.0] and stderr.getvalue() ==
-              "FAILED: git push -u origin topic-one failed (did not finish within 138.0 s), so no pull request was opened.\n"
+        check("a push that times out is given the hooks' budgets from the environment plus 120 s, rounded up to whole "
+              "seconds, and hands the agent the sentence for the user, not a run again",
+              code == 2 and pushes == [139] and stderr.getvalue() ==
+              "FAILED: git push -u origin topic-one failed (did not finish within 139 s), so no pull request was opened.\n"
               "open-pull-request stopped there; what it did before the failure stays done.\n"
-              "Tell the user, in one sentence, that open-pull-request fails with the error above and " + TELL_THE_USER_END,
+              + fails_line("open-pull-request") + "git push -u origin topic-one failed (did not finish within 139 s), so "
+              "no pull request was opened." + SUBAGENT_END,
               f"{code} {pushes} {stderr.getvalue()!r}")
 
         def push_cannot_start(directory, arguments, **options):
@@ -521,7 +575,8 @@ def test_open_failures():
             return original_run_git(directory, arguments, **options)
         program.git_output.run_git = push_cannot_start
         try:
-            program.open_pull_request(NUMBER, [1])
+            with case.in_process(worktree):
+                program.open_pull_request(NUMBER, [1])
         except program.StepFailed as error:
             check("a push that cannot start is a StepFailed with the usual instructions",
                   "could not start git: injected" in str(error) and error.instructions is None, str(error))
@@ -529,45 +584,82 @@ def test_open_failures():
             check("a push that cannot start is a StepFailed with the usual instructions", False)
         finally:
             program.git_output.run_git = original_run_git
-            os.chdir(original_directory)
         hook.unlink()
-        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_CREATE_FAILS="1")
-        check("gh pr create that fails is FAILED with exit 2, naming the call without its description, recording nothing",
-              code == 2 and "FAILED: gh pr create exited 1: GraphQL: something went wrong\n" in err
-              and "again once" not in err and err.endswith(TELL_THE_USER_END) and "answers" not in case.answers()
-              and description.exists(), err)
-        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_CREATE_OUTPUT="no link here")
-        check("gh pr create that prints no link is FAILED with exit 2, saying how to check for the pull request",
-              code == 2 and "FAILED: gh pr create exited 0 but printed no pull request link, so the pull request "
-                            "may be open: 'Creating pull request\\nno link here'\n" in err
-              and "Check whether it is open with: gh pr list --head topic-one --json url --jq '.[].url'\n" in err
-              and "the follow-up of pull request 1964 is stopped until it is recorded." in err
+
+        def run_counting_pr_creates(**environment):
+            before = len(case.gh_pr_create_calls())
+            code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", **environment)
+            return code, out, err, len(case.gh_pr_create_calls()) - before
+        code, out, err, creates = run_counting_pr_creates(FAKE_GH_CREATE_FAILS="1")
+        check("gh pr create that fails on both tries is FAILED with exit 2, naming both failures and the call without "
+              "its description, recording nothing",
+              code == 2 and creates == 2
+              and "FAILED: both tries of gh pr create failed: gh pr create exited 1: GraphQL: something went wrong; "
+                  "then gh pr create exited 1: GraphQL: something went wrong\n" in err
+              and "again once" not in err and fails_line("open-pull-request") in err and err.endswith(SUBAGENT_END)
+              and "answers" not in case.answers() and description.exists(), err)
+        code, out, err, creates = run_counting_pr_creates(FAKE_GH_CREATE_OUTPUT="no link here")
+        check("gh pr create that prints no link, when gh pr list finds no pull request either, is FAILED with exit 2, "
+              "handing the agent the sentence for the user, with no gh pr create run again",
+              code == 2 and creates == 1
+              and case.gh_calls()[-1] == "pr list --head topic-one --json url --jq .[].url"
+              and err == "FAILED: gh pr create exited 0 but printed no pull request link: 'Creating pull "
+                         "request\\nno link here', and gh pr list --head topic-one printed 0 pull request links, not "
+                         "one: ''\n"
+                         "open-pull-request stopped there; what it did before the failure stays done.\n"
+                         "Pass this sentence to the user word for word: \"open-pull-request could not record the pull "
+                         f"request of branch topic-one, so the follow-up of {FOLLOWED_UP} is stopped until it is "
+                         "recorded." + SUBAGENT_END
               and "answers" not in case.answers(), err)
-        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1",
-                                  FAKE_GH_CREATE_ERROR="a pull request for branch \"topic-one\" into branch \"main\" already exists:")
-        check("gh pr create that says a pull request already exists but names none is FAILED, telling the agent to tell the user",
-              code == 2 and "FAILED: gh pr create exited 1: a pull request for branch" in err
-              and "again once" not in err and err.endswith(TELL_THE_USER_END) and "answers" not in case.answers(), err)
-        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1",
-                                  FAKE_GH_CREATE_ERROR=f"HTTP 502: bad gateway {OPEN_LINK}")
+        code, out, err, creates = run_counting_pr_creates(FAKE_GH_CREATE_OUTPUT="no link here",
+                                                          FAKE_GH_LIST_OUTPUT=f"{LINK}\n{OPEN_LINK}\n")
+        check("gh pr create that prints no link, when gh pr list finds two pull requests, is FAILED, naming both",
+              code == 2 and f"printed 2 pull request links, not one: '{LINK}\\n{OPEN_LINK}'\n" in err
+              and "open-pull-request could not record the pull request of branch topic-one" in err
+              and "answers" not in case.answers(), err)
+        code, out, err, creates = run_counting_pr_creates(FAKE_GH_CREATE_OUTPUT="no link here", FAKE_GH_LIST_FAILS="1")
+        check("gh pr create that prints no link, when gh pr list fails, is FAILED, naming gh pr list's failure",
+              code == 2 and "printed no pull request link: 'Creating pull request\\nno link here', and gh pr list "
+                            "exited 1: HTTP 502: list\n" in err
+              and "open-pull-request could not record the pull request of branch topic-one" in err
+              and "answers" not in case.answers(), err)
+        code, out, err, creates = run_counting_pr_creates(
+            FAKE_GH_CREATE_ERROR="a pull request for branch \"topic-one\" into branch \"main\" already exists:")
+        check("gh pr create that says a pull request already exists but names none is FAILED after two tries, "
+              "handing the agent the sentence for the user",
+              code == 2 and creates == 2 and "FAILED: both tries of gh pr create failed: gh pr create exited 1: a pull "
+                                             "request for branch" in err
+              and "again once" not in err and fails_line("open-pull-request") in err and err.endswith(SUBAGENT_END)
+              and "answers" not in case.answers(), err)
+        code, out, err, creates = run_counting_pr_creates(FAKE_GH_CREATE_ERROR=f"HTTP 502: bad gateway {OPEN_LINK}")
         check("gh pr create that fails naming a link, without saying a pull request is open, is FAILED",
-              code == 2 and "FAILED: gh pr create exited 1: HTTP 502" in err and "answers" not in case.answers(), err)
+              code == 2 and creates == 2 and "FAILED: both tries of gh pr create failed: gh pr create exited 1: HTTP 502" in err
+              and "answers" not in case.answers(), err)
         for signal_number in ("9", "1"):
-            code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_KILLED=signal_number)
-            check(f"a gh killed by signal {signal_number} is FAILED with exit 2, telling the agent to tell the user, recording nothing",
-                  code == 2 and f"FAILED: gh pr create was killed by signal {signal_number}: it printed no error text\n" in err
-                  and "again once" not in err and err.endswith(TELL_THE_USER_END)
+            code, out, err, creates = run_counting_pr_creates(FAKE_GH_KILLED=signal_number)
+            check(f"a gh killed by signal {signal_number} is FAILED with exit 2 after two tries, its sentence for the "
+                  "user naming the pull request by its link alone when gh gives no title, recording nothing",
+                  code == 2 and creates == 2
+                  and f"gh pr create was killed by signal {signal_number}: it printed no error text\n" in err
+                  and "again once" not in err
+                  and fails_line("open-pull-request", FOLLOWED_UP_LINK_ALONE) in err and err.endswith(SUBAGENT_END)
                   and "answers" not in case.answers(), err)
-        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_CREATE_FAILS_SILENTLY="1")
-        check("a gh that exits nonzero without error text is FAILED, saying it printed none",
-              code == 2 and "FAILED: gh pr create exited 1: it printed no error text\n" in err, err)
+        code, out, err, creates = run_counting_pr_creates(FAKE_GH_CREATE_FAILS_SILENTLY="1", FAKE_GH_VIEW_FAILS="1")
+        check("a gh that exits nonzero without error text is FAILED, saying it printed none, and a title gh pr view "
+              "cannot give leaves the link alone",
+              code == 2 and "then gh pr create exited 1: it printed no error text\n" in err
+              and case.gh_calls()[-1] == f"pr view {NUMBER} --repo nedschorus/nedschorus --json title --jq .title"
+              and fails_line("open-pull-request", FOLLOWED_UP_LINK_ALONE) in err, err)
         git_only = case.root / "git-only"
         git_only.mkdir()
         (git_only / "git").symlink_to(shutil.which("git"))
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", PATH=str(git_only))
-        check("a gh that cannot start is FAILED with exit 2, telling the agent to tell the user",
-              code == 2 and "could not start gh" in err and "again once" not in err
-              and err.endswith(TELL_THE_USER_END), err)
+        check("a gh that cannot start is FAILED with exit 2 after one try, its sentence naming the pull request by "
+              "its link alone",
+              code == 2 and err.startswith("FAILED: could not start gh") and "both tries" not in err
+              and "again once" not in err
+              and fails_line("open-pull-request", FOLLOWED_UP_LINK_ALONE) + "could not start gh" in err
+              and err.endswith(SUBAGENT_END), err)
         (case.bin / "gh").write_text("#!/bin/sh\nsleep 5\n")
         original_timeout = program.GH_TIMEOUT_SECONDS
         program.GH_TIMEOUT_SECONDS = 0.5
@@ -584,12 +676,71 @@ def test_open_failures():
             os.environ["PATH"] = saved_path
             program.GH_TIMEOUT_SECONDS = original_timeout
         (case.bin / "gh").write_text(FAKE_GH)
-        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1",
-                                  FAKE_GH_CREATE_ERROR=ALREADY_OPEN)
-        check("gh pr create that refuses a second pull request records the one already open, as a run again "
-              "after a lost link does",
-              code == 0 and f"Found already open {OPEN_LINK} for finding 1 of pull request 1964's follow-up request, and recorded it.\n" in out
+        code, out, err, creates = run_counting_pr_creates(FAKE_GH_CREATE_ERROR=ALREADY_OPEN)
+        check("gh pr create that refuses a second pull request records the one already open, with no second try",
+              code == 0 and creates == 1
+              and out.startswith(f"Found already open {OPEN_LINK} for finding 1 of pull request 1964's follow-up request, and recorded it.\n")
               and case.answers() == {"started": {"1": "topic-one"}, "answers": {"1": {"link": OPEN_LINK, "branch": "topic-one"}}}, out + err)
+    finally:
+        case.close()
+
+
+def test_open_gh_pr_create_second_try_and_gh_pr_list():
+    def ready_case():
+        case = Case()
+        worktree = started(case)
+        case.commit_change()
+        case.write_description()
+        return case, worktree
+
+    case, worktree = ready_case()
+    try:
+        code, out, err = case.run(worktree, "open-pull-request", FAKE_GH_CREATE_FAILS_FIRST=str(case.root / "failed-once"))
+        check("gh pr create that fails once and passes on the second try is recorded, with a notice naming the first "
+              "failure",
+              code == 0 and len(case.gh_pr_create_calls()) == 2
+              and out.startswith("Notice: gh pr create failed once (gh pr create exited 1: GraphQL: first try failed) "
+                                 f"and passed on the second try.\nOpened {LINK} for finding 1 of pull request 1964's "
+                                 "follow-up request, and recorded it.\n")
+              and case.answers()["answers"] == {"1": {"link": LINK, "branch": "topic-one"}}, out + err)
+    finally:
+        case.close()
+    case, worktree = ready_case()
+    try:
+        code, out, err = case.run(worktree, "open-pull-request", FAKE_GH_CREATE_FAILS_FIRST=str(case.root / "failed-once"),
+                                  FAKE_GH_CREATE_ERROR=ALREADY_OPEN)
+        check("a second try of gh pr create that finds the pull request already open records it, with the notice",
+              code == 0 and len(case.gh_pr_create_calls()) == 2
+              and out.startswith("Notice: gh pr create failed once (gh pr create exited 1: GraphQL: first try failed) "
+                                 f"and passed on the second try.\nFound already open {OPEN_LINK} for finding 1")
+              and case.answers()["answers"] == {"1": {"link": OPEN_LINK, "branch": "topic-one"}}, out + err)
+    finally:
+        case.close()
+    case, worktree = ready_case()
+    original_timeout = program.GH_TIMEOUT_SECONDS
+    program.GH_TIMEOUT_SECONDS = 0.5
+    try:
+        with case.in_process(worktree, FAKE_GH_CREATE_FAILS_FIRST=str(case.root / "failed-once"), FAKE_GH_FIRST_SLEEPS="1"), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            program.open_pull_request(NUMBER, None)
+        check("gh pr create that does not finish in time once and passes on the second try is recorded, with the notice",
+              len(case.gh_pr_create_calls()) == 2
+              and out.getvalue().startswith("Notice: gh pr create failed once (gh pr create did not finish within "
+                                            "0.5 s) and passed on the second try.\nOpened ")
+              and case.answers()["answers"]["1"]["link"] == LINK, out.getvalue())
+    finally:
+        program.GH_TIMEOUT_SECONDS = original_timeout
+        case.close()
+    case, worktree = ready_case()
+    try:
+        code, out, err = case.run(worktree, "open-pull-request", FAKE_GH_CREATE_OUTPUT="no link here",
+                                  FAKE_GH_LIST_OUTPUT=OPEN_LINK + "\n")
+        check("gh pr create that exits 0 without a link records the one link gh pr list finds, with a notice",
+              code == 0 and len(case.gh_pr_create_calls()) == 1
+              and case.gh_calls()[-1] == "pr list --head topic-one --json url --jq .[].url"
+              and out.startswith("Notice: gh pr create exited 0 but printed no pull request link; gh pr list --head "
+                                 f"topic-one found {OPEN_LINK}.\nOpened {OPEN_LINK} for finding 1")
+              and case.answers()["answers"] == {"1": {"link": OPEN_LINK, "branch": "topic-one"}}, out + err)
     finally:
         case.close()
 
@@ -604,11 +755,12 @@ def test_push_time_limit_is_the_pre_push_hooks_budgets_plus_120_seconds():
         spec.loader.exec_module(hooks[-1])
     conflict_check, selective_test_run = hooks
     for environment in ({}, {conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE: "7",
-                             selective_test_run.TIME_BUDGET_ENVIRONMENT_VARIABLE: "11"}):
-        expected = (conflict_check.time_budget_seconds(environment)
-                    + selective_test_run.time_budget_seconds(environment) + 120)
-        check(f"the push time limit is the two pre-push hooks' budgets plus 120 s, environment {environment}",
-              program.push_time_limit_seconds(environment) == expected,
+                             selective_test_run.TIME_BUDGET_ENVIRONMENT_VARIABLE: "11.5"}):
+        expected = math.ceil(conflict_check.time_budget_seconds(environment)
+                             + selective_test_run.time_budget_seconds(environment) + 120)
+        check(f"the push time limit is the two pre-push hooks' budgets plus 120 s, rounded up, environment {environment}",
+              program.push_time_limit_seconds(environment) == expected
+              and isinstance(program.push_time_limit_seconds(environment), int),
               f"{program.push_time_limit_seconds(environment)} != {expected}")
 
 
@@ -624,7 +776,9 @@ def test_open_title_and_description_file_removal_failure():
         check("a title and description file open-pull-request cannot remove is FAILED with exit 2, after the pull "
               "request is opened, said and recorded",
               code == 2 and out == f"Opened {LINK} for finding 1 of pull request 1964's follow-up request, and recorded it.\n"
-              and err.startswith(f"FAILED: could not remove {description}: ") and err.endswith(TELL_THE_USER_END)
+              and err.startswith(f"FAILED: could not remove {description}: ")
+              and fails_line("open-pull-request") + f"could not remove {description}: " in err
+              and err.endswith(SUBAGENT_END)
               and case.answers()["answers"] == {"1": {"link": LINK, "branch": "topic-one"}}, out + err)
     finally:
         case.close()
@@ -719,9 +873,8 @@ def test_state_failures():
         check("outside a git checkout the program is FAILED with exit 2",
               code == 2 and out == "" and err.startswith("FAILED: git rev-parse")
               and f" in {outside} failed" in err
-              and "\nTell the user, in one sentence, that finish-follow-up-request-and-print-merge-lane-2-message "
-                  "fails with the error above and " in err
-              and "again once" not in err and err.endswith(TELL_THE_USER_END), err)
+              and "\n" + fails_line("finish-follow-up-request-and-print-merge-lane-2-message") + "git rev-parse" in err
+              and "again once" not in err and err.endswith(SUBAGENT_END), err)
         saved = case.save()
         saved.write_text("not a block\n")
         code, out, err = case.run(case.repository, "finish-follow-up-request-and-print-merge-lane-2-message")
@@ -747,7 +900,8 @@ def test_state_failures():
         code, out, err = case.run(case.repository, "finish-follow-up-request-and-print-merge-lane-2-message")
         check("an answers file that is not JSON is FAILED, not to be run again",
               code == 2 and "is not the JSON this program writes" in err and "again once" not in err
-              and err.endswith(TELL_THE_USER_END), err)
+              and fails_line("finish-follow-up-request-and-print-merge-lane-2-message") in err
+              and err.endswith(SUBAGENT_END), err)
         answers.unlink()
         answers.mkdir()
         (answers / "inside").write_text("x")
@@ -782,7 +936,11 @@ def test_clean_up():
         check("remove-recorded-topic-branches-and-worktrees leaves a worktree the agent harness locks, and its branches, with exit 1",
               code == 1 and f"Worktree {worktree} is locked by the agent harness (lock reason: claude agent "
                             "agent-a1b2 (pid 4242)), so remove-recorded-topic-branches-and-worktrees left it" in out
-              and "Wait until the subagent has ended.\n" in out
+              and "Wait until the subagent has ended.\nIf the worktree is still locked when you end your turn, pass "
+                  "this sentence to the user word for word: \"The agent harness still locks worktree "
+                  f"{worktree} of the follow-up of {FOLLOWED_UP}, so remove-recorded-topic-branches-and-worktrees "
+                  "could not remove it.\"\nIf you are a subagent, pass that sentence to the agent that dispatched "
+                  "you instead.\n" in out
               and "left 1 worktree or branch in place;" in out
               and out.endswith(f"\nWhen you have done what each says, run: python3 {program.PROGRAM} {NUMBER} remove-recorded-topic-branches-and-worktrees\n")
               and worktree.exists() and "topic-one" in git(case.repository, "branch"), out + err)
@@ -791,6 +949,9 @@ def test_clean_up():
         code, out, err = case.run(case.repository, "remove-recorded-topic-branches-and-worktrees")
         check("remove-recorded-topic-branches-and-worktrees leaves a worktree locked for another reason, saying what to do",
               code == 1 and "is locked (lock reason: kept by the user), so remove-recorded-topic-branches-and-worktrees left it" in out
+              and "\nIf anyone may still be using the worktree, leave it, and pass this sentence to the user word "
+                  f"for word: \"Worktree {worktree} of the follow-up of {FOLLOWED_UP} is locked (lock reason: kept by "
+                  "the user), so remove-recorded-topic-branches-and-worktrees left it.\"\nOtherwise list" in out
               and f"Then run: git worktree remove --force --force {worktree}" in out and worktree.exists(), out + err)
         git(case.repository, "worktree", "unlock", str(worktree))
         (worktree / "stray.txt").write_text("stray\n")
@@ -850,7 +1011,7 @@ def test_clean_up_goes_on_past_each_worktree_and_branch():
         code, out, err = case.run(case.repository, command)
         check("a lock without a reason is named as such",
               code == 1 and "is locked (lock reason: none given)" in out
-              and "of pull request 1964's follow-up is locked (lock reason: none given), so" in out, out + err)
+              and f"of the follow-up of {FOLLOWED_UP} is locked (lock reason: none given), so" in out, out + err)
     finally:
         case.close()
 
@@ -863,7 +1024,8 @@ def test_clean_up_failure():
         code, out, err = case.run(case.repository, "remove-recorded-topic-branches-and-worktrees")
         check("a git command remove-recorded-topic-branches-and-worktrees cannot run is FAILED with exit 2",
               code == 2 and err.startswith("FAILED: git status --short") and "again once" not in err
-              and err.endswith(TELL_THE_USER_END),
+              and fails_line("remove-recorded-topic-branches-and-worktrees") + "git status --short" in err
+              and err.endswith(SUBAGENT_END),
               out + err)
     finally:
         case.close()
@@ -936,8 +1098,7 @@ def test_next_step():
         check("a fetch that fails is FAILED with exit 2, telling the agent to tell the user, before any step",
               code == 2 and out == "" and err.startswith("FAILED: git fetch origin") and "again once" not in err
               and "next-step stopped there; what it did before the failure stays done.\n"
-                  "Tell the user, in one sentence, that next-step fails with the error above and "
-                  + TELL_THE_USER_END in err, out + err)
+                  + fails_line("next-step") + "git fetch origin in " in err and err.endswith(SUBAGENT_END), out + err)
         original_run_git = program.git_output.run_git
 
         def fetch_times_out(directory, arguments, **options):
@@ -945,20 +1106,18 @@ def test_next_step():
                 raise program.git_output.GitCommandFailed(arguments, directory, None, "did not finish within 0.5 s")
             return original_run_git(directory, arguments, **options)
         program.git_output.run_git = fetch_times_out
-        original_directory, errors = os.getcwd(), io.StringIO()
-        os.chdir(worktree)
+        errors = io.StringIO()
         try:
-            with contextlib.redirect_stderr(errors):
+            with case.in_process(worktree), contextlib.redirect_stderr(errors):
                 code = program.main([str(NUMBER), "next-step"])
         finally:
             program.git_output.run_git = original_run_git
-            os.chdir(original_directory)
         err = errors.getvalue()
-        check("a fetch that times out is FAILED with exit 2, telling the agent to tell the user, not to run it again",
+        check("a fetch that times out is FAILED with exit 2, handing the agent the sentence for the user, not a run again",
               code == 2 and err == f"FAILED: git fetch origin in {worktree} failed (did not finish within 0.5 s)\n"
                                    "next-step stopped there; what it did before the failure stays done.\n"
-                                   "Tell the user, in one sentence, that next-step fails with the error above and "
-                                   + TELL_THE_USER_END, err)
+                                   + fails_line("next-step") + f"git fetch origin in {worktree} failed (did not "
+                                   "finish within 0.5 s)" + SUBAGENT_END, err)
     finally:
         case.close()
 
@@ -987,7 +1146,8 @@ def test_next_step_branch_choice():
 
 
 for test in (test_help, test_block_parsing, test_brief_text, test_no_saved_block, test_start,
-             test_open_refusals, test_open, test_open_failures, test_push_time_limit_is_the_pre_push_hooks_budgets_plus_120_seconds,
+             test_open_refusals, test_open, test_open_failures, test_open_gh_pr_create_second_try_and_gh_pr_list,
+             test_push_time_limit_is_the_pre_push_hooks_budgets_plus_120_seconds,
              test_open_title_and_description_file_removal_failure,
              test_leave_out_and_finish, test_three_findings,
              test_state_failures, test_clean_up, test_clean_up_goes_on_past_each_worktree_and_branch,

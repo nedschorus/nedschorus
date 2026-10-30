@@ -47,9 +47,11 @@ reader; then git push -u origin <branch>, where <branch> is the last topic branc
 recorded for the worktree, whatever the worktree has checked out, and whose pre-push hook runs the test
 suites; gh pr create against main; record the pull request's link against each
 finding in FINDING_ANSWERS_FILE_NAME_FORMAT; then remove FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME, so the
-next topic branch's pull request cannot take this one's title and description. When gh pr create refuses because a
-pull request for the branch is already open, as on a run again after gh opened it but timed out or printed no link,
-that pull request's link is recorded.
+next topic branch's pull request cannot take this one's title and description. A gh pr create that fails, other than
+by gh not starting, is tried once more, and a second try that passes is printed as a notice; when a try refuses
+because a pull request for the branch is already open, as after a first try that opened it but failed, that pull
+request's link is recorded; when gh pr create exits 0 printing no link, the link gh pr list --head <branch> prints is
+recorded. A push that fails is not tried again.
 
 record-finding-leave-out-reason: record the reason against the finding; refuse a finding that does
 not exist or already has an answer, and an empty reason.
@@ -79,6 +81,10 @@ start-topic-branch leaves; commits made on any branch but the recorded one, whic
 branch started while an earlier one in the same worktree has no pull request yet, which open-pull-request never
 pushes, since it pushes the last.
 
+Each text that has the agent tell the user something hands it the finished sentence, which names the pull request
+followed up by its link, built from REPOSITORY, and by its title when gh pr view gives it within
+TITLE_TIMEOUT_SECONDS; otherwise by its link alone.
+
 Exit codes: 0 done; 1 refused, or remove-recorded-topic-branches-and-worktrees left something in place, said with
 what to do; 2 git, gh or a file failed, said on stderr, and what the subcommand
 did before the failure stays done, or the arguments are not ones the program
@@ -86,8 +92,10 @@ takes, which argparse says on stderr, followed by what to do.
 """
 
 import argparse
+import functools
 import importlib.util
 import json
+import math
 import os
 import re
 import subprocess
@@ -116,6 +124,7 @@ pre_push_conflict_check = load_script_beside_this_one("git-client-side-hooks-pre
 pre_push_selective_test_run = load_script_beside_this_one("git-client-side-hooks-pre-push-selective-test-run.py")
 
 PROGRAM = "scripts/" + Path(__file__).name
+REPOSITORY = "nedschorus/nedschorus"
 FOLLOW_UP_REQUEST_LINE_PATTERN = re.compile(r"^#follow_up_request pull request (\d+)[ \t]*$")
 FINDING_LINE_PATTERN = re.compile(r"^(\d+)\.\s+(\S.*)$")
 PULL_REQUEST_LINK_PATTERN = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+")
@@ -126,6 +135,9 @@ FINDING_ANSWERS_FILE_NAME_FORMAT = "pull-request-{number}-follow-up-finding-answ
 FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME = "follow-up-pull-request-title-and-description.md"
 HARNESS_LOCK_REASON_START = "claude agent"
 GH_TIMEOUT_SECONDS = 60
+# Short, as the title only adds to a sentence the user gets after a failure, which it must not hold up.
+TITLE_TIMEOUT_SECONDS = 15
+GH_PR_CREATE_TRIES = 2
 PUSH_ITSELF_SECONDS = 120
 FETCH_TIMEOUT_SECONDS = 300
 # gh pr create's words, when a pull request for the head branch is already open, before its link.
@@ -135,14 +147,15 @@ LEAVE_OUT_ARGUMENTS = 'record-finding-leave-out-reason <n> --reason "<why>"'
 TITLE_AND_DESCRIPTION_FORM = "the pull request's title on the first line, a blank line, then the description"
 NEEDS_USER_DECISION_REASON = "\"Needs the user's decision: <what the finding would change>\""
 DO_NOT_COMMIT_LINE = "Do not commit it: it is never part of the pull request."
+SUBAGENT_LINE = "If you are a subagent, pass that sentence to the agent that dispatched you instead."
 # Each text this program hands an agent follows
 # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 
 
 def push_time_limit_seconds(environment):
     # Sized from the time budgets the two pre-push hooks bound themselves to, plus the push itself.
-    return (pre_push_conflict_check.time_budget_seconds(environment)
-            + pre_push_selective_test_run.time_budget_seconds(environment) + PUSH_ITSELF_SECONDS)
+    return math.ceil(pre_push_conflict_check.time_budget_seconds(environment)
+                     + pre_push_selective_test_run.time_budget_seconds(environment) + PUSH_ITSELF_SECONDS)
 
 
 class Refused(Exception):
@@ -157,8 +170,35 @@ class StepFailed(Exception):
         self.instructions = instructions
 
 
+class GhCouldNotStart(StepFailed):
+    """gh could not be started, which a second try does not change."""
+
+
 def command(number, subcommand):
     return f"python3 {PROGRAM} {number} {subcommand}"
+
+
+@functools.lru_cache(maxsize=None)
+def followed_up_pull_request_text(number):
+    """"pull request [<title>](<link>)" for the pull request followed up, or "pull request <link>" when gh pr view
+    gives no title. Fetched only when a sentence for the user is built, so no other step waits on GitHub."""
+    link = f"https://github.com/{REPOSITORY}/pull/{number}"
+    try:
+        title = gh(["pr", "view", str(number), "--repo", REPOSITORY, "--json", "title", "--jq", ".title"],
+                   timeout_seconds=TITLE_TIMEOUT_SECONDS).strip()
+    except StepFailed:
+        title = ""
+    return f"pull request [{title}]({link})" if title else f"pull request {link}"
+
+
+def pass_on_to_the_user(sentence, start="Pass"):
+    return f'{start} this sentence to the user word for word: "{sentence}"'
+
+
+def fails_sentence(subcommand, number, error):
+    # On one line, as git's error text can span several.
+    return (f"{subcommand} fails with this error, so the follow-up of {followed_up_pull_request_text(number)} is "
+            f"stopped until it is fixed: {' '.join(str(error).split())}")
 
 
 def build_follow_up_request_forked_subagent_brief(request):
@@ -236,16 +276,17 @@ def git(directory, arguments, **options):
         raise StepFailed(str(failure)) from None
 
 
-def gh(arguments):
+def gh(arguments, timeout_seconds=None):
     # The subcommand alone names the call: pr create's arguments hold the whole description.
     name = "gh " + " ".join(arguments[:2])
+    timeout_seconds = timeout_seconds or GH_TIMEOUT_SECONDS
     try:
         completed = subprocess.run(["gh", *arguments], capture_output=True, text=True,
-                                   stdin=subprocess.DEVNULL, timeout=GH_TIMEOUT_SECONDS)
+                                   stdin=subprocess.DEVNULL, timeout=timeout_seconds)
     except subprocess.TimeoutExpired:
-        raise StepFailed(f"{name} did not finish within {GH_TIMEOUT_SECONDS} s") from None
+        raise StepFailed(f"{name} did not finish within {timeout_seconds} s") from None
     except OSError as error:
-        raise StepFailed(f"could not start gh: {error}") from None
+        raise GhCouldNotStart(f"could not start gh: {error}") from None
     if completed.returncode < 0:
         raise StepFailed(f"{name} was killed by signal {-completed.returncode}: "
                          f"{completed.stderr.strip() or 'it printed no error text'}")
@@ -325,10 +366,10 @@ def saved_follow_up_request(states, number):
                       f"\"#follow_up_request pull request {number}\", this program does not handle it: "
                       "follow up the message's findings by hand, as CLAUDE.md says.\n"
                       "If the message has that line, the hook did not save the block: follow up the "
-                      "message's findings by hand, as CLAUDE.md says, and tell the user, in one sentence, that "
-                      "the follow-up request hook did not save merge-lane-2's findings for pull request "
-                      f"{number}.\n"
-                      "If you are a subagent, pass that sentence to the agent that dispatched you instead.")
+                      "message's findings by hand, as CLAUDE.md says, and "
+                      + pass_on_to_the_user("The follow-up request hook did not save merge-lane-2's findings for "
+                                            f"{followed_up_pull_request_text(number)}.", "pass")
+                      + f"\n{SUBAGENT_LINE}")
     try:
         requests = parse_follow_up_request_blocks_from_message_text(text)
     except ValueError as error:
@@ -401,10 +442,8 @@ def start_topic_branch(number, branch, findings):
         raise StepFailed(str(failure),
                          "If git says the branch already exists or is not a valid branch name, run "
                          f"{command(number, START_ARGUMENTS.replace('<topic-branch>', '<another topic-branch>'))}\n"
-                         "Otherwise tell the user, in one sentence, that start-topic-branch fails with the "
-                         f"error above and that the follow-up of pull request {number} is stopped until it is "
-                         "fixed.\n"
-                         "If you are a subagent, pass that sentence to the agent that dispatched you instead.") from None
+                         + pass_on_to_the_user(fails_sentence("start-topic-branch", number, failure), "Otherwise pass")
+                         + f"\n{SUBAGENT_LINE}") from None
     record = {"branch": branch, "worktree": worktree}
     if record not in records:
         write_json(branches_file, [*records, record])
@@ -498,29 +537,15 @@ def open_pull_request(number, findings):
             f"opened. git's output:\n{failure.stderr.strip()}",
             "If git's output shows the pre-push hook refusing the push, do what it "
             "says, commit the fix, and run the same open-pull-request command again.\n"
-            "Otherwise run the same open-pull-request command again once.\n"
-            f"If the push fails the same way, tell the user, in one sentence, that git push of {branch} "
-            f"fails and that the follow-up of pull request {number} is stopped until it works.\n"
-            "If you are a subagent, pass that sentence to the agent that dispatched you instead.") from None
-    opened = "Opened"
-    try:
-        output = gh(["pr", "create", "--base", "main", "--head", branch, "--title", title, "--body", description])
-    except StepFailed as failure:
-        if PULL_REQUEST_ALREADY_OPEN_WORDS not in str(failure) or not PULL_REQUEST_LINK_PATTERN.search(str(failure)):
-            raise
-        output, opened = str(failure), "Found already open"
+            + pass_on_to_the_user(f"git push of {branch} fails, so the follow-up of "
+                                  f"{followed_up_pull_request_text(number)} is stopped until it works.",
+                                  "Otherwise pass")
+            + f"\n{SUBAGENT_LINE}") from None
+    output, opened = gh_pr_create_tried_twice(
+        ["pr", "create", "--base", "main", "--head", branch, "--title", title, "--body", description])
     links = PULL_REQUEST_LINK_PATTERN.findall(output)
     if not links:
-        raise StepFailed(
-            f"gh pr create exited 0 but printed no pull request link, so the pull request may be open: "
-            f"{output.strip()!r}",
-            f"Check whether it is open with: gh pr list --head {branch} --json url --jq '.[].url'\n"
-            "Run the same open-pull-request command again once, whether or not it is: when it is open, gh "
-            "pr create names it, and open-pull-request records its link.\n"
-            "If it fails the same way, tell the user, in one sentence, that open-pull-request could not "
-            f"record the pull request of branch {branch}, with its link if gh pr list printed one, and that "
-            f"the follow-up of pull request {number} is stopped until it is recorded.\n"
-            "If you are a subagent, pass that sentence to the agent that dispatched you instead.")
+        links = [link_gh_pr_list_finds(number, branch, output)]
     link = links[-1]
     for finding in findings:
         answers[str(finding)] = {"link": link, "branch": branch}
@@ -530,6 +555,50 @@ def open_pull_request(number, findings):
           "request, and recorded it.")
     remove_file(description_file)
     print(still_unanswered_text(number, request, answers))
+
+
+def gh_pr_create_tried_twice(arguments):
+    """gh pr create's output, and "Opened", or "Found already open" when a try refuses because the branch's pull
+    request is already open and names it. A failure other than gh not starting gets a second try, and a second try
+    that passes is printed as a notice."""
+    first_failure = None
+    for attempt in range(1, GH_PR_CREATE_TRIES + 1):
+        try:
+            output, opened = gh(arguments), "Opened"
+        except GhCouldNotStart:
+            raise
+        except StepFailed as failure:
+            if PULL_REQUEST_ALREADY_OPEN_WORDS in str(failure) and PULL_REQUEST_LINK_PATTERN.search(str(failure)):
+                output, opened = str(failure), "Found already open"
+            elif attempt < GH_PR_CREATE_TRIES:
+                first_failure = failure
+                continue
+            else:
+                raise StepFailed(f"both tries of gh pr create failed: {first_failure}; then {failure}") from None
+        if first_failure is not None:
+            print(f"Notice: gh pr create failed once ({' '.join(str(first_failure).split())}) and passed on the "
+                  "second try.")
+        return output, opened
+
+
+def link_gh_pr_list_finds(number, branch, create_output):
+    """The link of the one open pull request gh pr list finds for branch, after gh pr create printed none."""
+    lost = f"gh pr create exited 0 but printed no pull request link: {create_output.strip()!r}"
+    instructions = (pass_on_to_the_user(f"open-pull-request could not record the pull request of branch {branch}, "
+                                        f"so the follow-up of {followed_up_pull_request_text(number)} is stopped "
+                                        "until it is recorded.")
+                    + f"\n{SUBAGENT_LINE}")
+    try:
+        listed = gh(["pr", "list", "--head", branch, "--json", "url", "--jq", ".[].url"])
+    except StepFailed as failure:
+        raise StepFailed(f"{lost}, and {failure}", instructions) from None
+    links = PULL_REQUEST_LINK_PATTERN.findall(listed)
+    if len(links) != 1:
+        raise StepFailed(f"{lost}, and gh pr list --head {branch} printed {len(links)} pull request links, not one: "
+                         f"{listed.strip()!r}", instructions)
+    print(f"Notice: gh pr create exited 0 but printed no pull request link; gh pr list --head {branch} found "
+          f"{links[0]}.")
+    return links[0]
 
 
 def record_finding_leave_out_reason(number, finding, reason):
@@ -636,18 +705,19 @@ def remove_recorded_topic_branches_and_worktrees(number):
             left.append(f"Worktree {path} is locked by the agent harness (lock reason: {reason}), so "
                         "remove-recorded-topic-branches-and-worktrees left it and the topic branches recorded with it: the subagent may still be running.\n"
                         "Wait until the subagent has ended.\n"
-                        "If the worktree is still locked when you end your turn, tell the user, in one "
-                        f"sentence, that the agent harness still locks worktree {path} of pull request "
-                        f"{number}'s follow-up, so remove-recorded-topic-branches-and-worktrees could not remove it.\n"
-                        "If you are a subagent, pass that sentence to the agent that dispatched you instead.")
+                        + pass_on_to_the_user(
+                            f"The agent harness still locks worktree {path} of the follow-up of "
+                            f"{followed_up_pull_request_text(number)}, so remove-recorded-topic-branches-and-worktrees "
+                            "could not remove it.", "If the worktree is still locked when you end your turn, pass")
+                        + f"\n{SUBAGENT_LINE}")
         elif reason is not None:
             locked = f"locked (lock reason: {reason or 'none given'})"
             left.append(f"Worktree {path} is {locked}, so remove-recorded-topic-branches-and-worktrees "
                         "left it and the topic branches recorded with it.\n"
-                        "If anyone may still be using the worktree, leave it, "
-                        f"and tell the user, in one sentence, that worktree {path} of pull request "
-                        f"{number}'s follow-up is {locked}, so remove-recorded-topic-branches-and-worktrees left "
-                        "it.\n"
+                        + pass_on_to_the_user(
+                            f"Worktree {path} of the follow-up of {followed_up_pull_request_text(number)} is {locked}, "
+                            "so remove-recorded-topic-branches-and-worktrees left it.",
+                            "If anyone may still be using the worktree, leave it, and pass") + "\n"
                         f"Otherwise list its changed or untracked files with git -C {path} status "
                         "--short, read them, copy out any that is work to keep, and tell merge-lane-2 "
                         "about it with SendMessage.\n"
@@ -759,9 +829,8 @@ def main(argv=None):
         return 1
     except StepFailed as failure:
         instructions = failure.instructions or (
-            f"Tell the user, in one sentence, that {arguments.subcommand} fails with the error above and that "
-            f"the follow-up of pull request {arguments.number} is stopped until it is fixed.\n"
-            "If you are a subagent, pass that sentence to the agent that dispatched you instead.")
+            pass_on_to_the_user(fails_sentence(arguments.subcommand, arguments.number, failure))
+            + f"\n{SUBAGENT_LINE}")
         print(f"FAILED: {failure}\n"
               f"{arguments.subcommand} stopped there; what it did before the failure stays done.\n"
               + instructions, file=sys.stderr)
