@@ -185,6 +185,12 @@ with tempfile.TemporaryDirectory() as directory:
     check("a pattern with a non-ASCII letter is not prefiltered, finds its match, and says so on stderr",
           "USER: approve item 5" in run.stdout and "every transcript was read" in run.stderr
           and "İtem 5" in run.stderr, f"exit {run.returncode}: {run.stdout}{run.stderr}")
+    write_transcript(directory, [typed("cut it by x\u00bd now"), agent("ok")], name="six.jsonl")
+    run = search(directory, r"by x\w")
+    check("a pattern with a regex escape is not prefiltered, so it finds a match only Python's \\w reads (\u00bd)",
+          "USER: cut it by x\u00bd now" in run.stdout and "every transcript was read" in run.stderr,
+          f"exit {run.returncode}: {run.stdout}{run.stderr}")
+    (Path(directory) / "-home-someone-agents-alpha" / "six.jsonl").unlink()
     (Path(directory) / "-home-someone-agents-alpha" / "four.jsonl").unlink()
     (Path(directory) / "-home-someone-agents-alpha" / "five.jsonl").unlink()
 

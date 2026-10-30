@@ -153,8 +153,8 @@ def transcripts(projects_dir, seats, since_hours):
 def claude_code_session_transcript_paths_prefilter_on_raw_json(projects_dir, paths, patterns, all_terms):
     """Return (the paths whose raw JSON holds a pattern's text, a note on what was not prefiltered, or "").
 
-    Every path is kept when a pattern could match text that JSON escapes or that ripgrep folds
-    differently, or the search fails, so a prefilter never drops a transcript that holds a match."""
+    Every path is kept when a pattern is not plain text, or the search fails, so a prefilter
+    never drops a transcript that holds a match."""
     prefilters = [claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcript_raw_json_prefilter_pattern(pattern)
                   for pattern in patterns]
     if not paths:

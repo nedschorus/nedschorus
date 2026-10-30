@@ -278,10 +278,11 @@ def run_text_search_cases():
 
 def run_raw_json_prefilter_cases():
     prefilter = claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcript_raw_json_prefilter_pattern
-    for pattern, expected in (("^approve$", "approve"), ("^approve it$", "approve [iIİı]t"),
-                              (r"walk \d+|item\w", "wal[kK\u212a] \\d+|[iI\u0130\u0131]tem\\w"),
-                              ("Kelvin", "[kKK]elv[iIİı]n"), ("yes", "ye[sSſ]"),
-                              ("İtem", None), ("(?i)approve", None),
+    for pattern, expected in (("^approve$", "approve"), ("^approve it$", "approve [iI\u0130\u0131]t"),
+                              ("Kelvin", "[kK\u212a]elv[iI\u0130\u0131]n"), ("yes", "ye[sS\u017f]"),
+                              ("a-b, c/d: e#f", "a-b, c/d: e#f"),
+                              (r"by x\w", None), (r"walk \d+", None), ("walk|item", None), ("a+", None),
+                              ("\u0130tem", None), ("(?i)approve", None), ("tab\there", None),
                               ("a.b", None), (r"line\nbreak", None), ('say "yes"', None), ("[ab]c", None)):
         check(f"raw JSON prefilter: {pattern!r} gives {expected!r}", prefilter(pattern) == expected,
               prefilter(pattern))

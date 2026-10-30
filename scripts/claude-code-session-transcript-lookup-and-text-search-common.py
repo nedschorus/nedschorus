@@ -96,84 +96,30 @@ def claude_code_session_transcripts_matching_any_pattern_ignoring_case(
     return sorted(paths), problems
 
 
-def pattern_without_anchors(pattern):
-    """The pattern with its line and text anchors removed, for ripgrep to pick transcripts by.
-
-    ripgrep reads a transcript's raw JSON records, where a message is one quoted string inside
-    a longer line, so an anchor such as ^ or $ would miss it. Without its anchors the pattern
-    matches wherever it matched before, and the user's messages are then matched with them.
-    """
-    kept = []
-    in_class = False
-    index = 0
-    while index < len(pattern):
-        character = pattern[index]
-        if character == "\\" and index + 1 < len(pattern):
-            if in_class or pattern[index + 1] not in "AzZ":
-                kept.append(pattern[index:index + 2])
-            index += 2
-            continue
-        if in_class:
-            closing = pattern.find(":]", index + 2)
-            if pattern.startswith("[:", index) and closing != -1:
-                kept.append(pattern[index:closing + 2])
-                index = closing + 2
-                continue
-            if character == "]":
-                in_class = False
-        elif character == "[":
-            in_class = True
-            kept.append("[")
-            index += 1
-            # A ] first in a class, or right after its ^, is a literal ].
-            for opening in "^]":
-                if pattern[index:index + 1] == opening:
-                    kept.append(opening)
-                    index += 1
-            continue
-        elif character in "^$":
-            index += 1
-            continue
-        kept.append(character)
-        index += 1
-    return "".join(kept)
-
-
 def claude_code_session_transcript_raw_json_prefilter_pattern(pattern):
     """The pattern for ripgrep to pick transcripts by, or None when every transcript must be read.
 
-    ripgrep reads a transcript's raw JSON, where a line break, a tab, a quote mark, a backslash
-    and other control characters are each written as an escape of two or more characters. A
-    pattern that could match one of those characters in a message could fail to match its
-    escape, so it gets no prefilter. Anchors are dropped first, since in the JSON a message is
-    one string inside a longer line.
+    Only plain text gets a prefilter, since Python's re and ripgrep read many escapes and classes
+    differently: \\w, for one, matches ½ in Python and not in ripgrep. Plain text here is ASCII
+    with no regex metacharacter, no quote mark and no control character, which a transcript's raw
+    JSON writes as themselves, after dropping a leading ^ and a trailing $, since in the JSON a
+    message is one string inside a longer line.
 
-    Python's re.IGNORECASE folds more than ripgrep's --ignore-case: "İtem" matches "item" in
-    Python and not in ripgrep. So a pattern with a non-ASCII character gets no prefilter, and each
-    ASCII letter Python folds onto a non-ASCII one becomes a class of all of them. A group opened
-    with "(?" can hold flags or a name that this rewrite would break, so it gets no prefilter.
+    Python's re.IGNORECASE folds more than ripgrep's --ignore-case: "item" matches "İtem" in
+    Python and not in ripgrep. So each ASCII letter Python folds onto a non-ASCII one becomes a
+    class of all of them, and the result is a regular expression rather than fixed text.
     """
-    pattern = pattern_without_anchors(pattern)
-    if "(?" in pattern or any(ord(character) > 0x7f for character in pattern):
+    pattern = pattern.removeprefix("^")
+    if pattern.endswith("$"):
+        pattern = pattern[:-1]
+    if any(character in PLAIN_TEXT_EXCLUDED_CHARACTERS or not " " <= character <= "~" for character in pattern):
         return None
-    kept = []
-    index = 0
-    while index < len(pattern):
-        character = pattern[index]
-        if character == "\\":
-            following = pattern[index + 1:index + 2]
-            # \w and \d match only characters JSON writes as themselves; every other escaped
-            # letter or digit (\s, \S, \W, \D, \b, \n, \t, \x, \u, \p, back-references) may not.
-            if following in ("\\", '"') or (following.isalnum() and following not in "wd"):
-                return None
-            kept.append(pattern[index:index + 2])
-            index += 2
-            continue
-        if character in '.["' or ord(character) < 0x20:
-            return None
-        kept.append(ASCII_LETTERS_THAT_PYTHON_IGNORECASE_FOLDS_ONTO_NON_ASCII_LETTERS.get(character, character))
-        index += 1
-    return "".join(kept)
+    return "".join(ASCII_LETTERS_THAT_PYTHON_IGNORECASE_FOLDS_ONTO_NON_ASCII_LETTERS.get(character, character)
+                   for character in pattern)
+
+
+# Python's and ripgrep's regex metacharacters, and the quote mark, which JSON writes escaped.
+PLAIN_TEXT_EXCLUDED_CHARACTERS = set('.^$*+?()[]{}|\\"')
 
 
 # Each ASCII letter that Python's re.IGNORECASE matches with a non-ASCII letter, as a class of all
