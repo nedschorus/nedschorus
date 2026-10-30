@@ -51,7 +51,7 @@ A file in a queue directory is named as it will be in its final location, apart 
   - **Pairing:** each program that reads the file names the file in one constant, and the file names, before its data, each program that reads it
 - **A `-draft` file of a kind that has no queue**
   - **Location:** `docs/drafts/`
-  - **Naming:** `<subject>-draft.md`; a version frozen for reviewers is `<subject>-candidate.md`. Candidates move to the log-store's `seats/<seat name>/` once the work they served has landed on main. 
+  - **Naming:** `<subject>-draft.md`; a version frozen for reviewers is `<subject>-candidate.md`. A `-draft` or `-candidate` file moves to the log-store's `seats/<agent-seat name>/` when the work it served merges or is dropped. A later candidate of the same subject adds the next number, such as `<subject>-candidate-2.md`.
 
 ## Files the user reviews
 
