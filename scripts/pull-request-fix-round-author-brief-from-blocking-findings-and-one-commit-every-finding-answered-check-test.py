@@ -329,10 +329,6 @@ def brief_cases(root, repository, base, frozen_head):
           code == 1 and "is APPROVED, not CHANGES_REQUESTED" in err
           and "tell merge-lane-2 why not, with SendMessage" in err, err)
 
-    def comments_route(review_id, comments):
-        return {f"api --paginate repos/{{owner}}/{{repo}}/pulls/{NUMBER}/reviews/{review_id}/comments --jq .[]":
-                {"stdout": lines(comments)}}
-
     reposted = dict(routes_for(frozen_head, [review(commit_id=frozen_head, body="Two blockers."),
                                              review(state="COMMENTED", commit_id=frozen_head, review_id=12,
                                                     body="**Blocking: 2**, now inline.")],
@@ -400,7 +396,8 @@ def brief_cases(root, repository, base, frozen_head):
         frozen_head, earlier_rounds(2) + [review(commit_id=frozen_head, review_id=11)]))
     check("brief: the third changes-requested review's brief asks for the advisor, word for word, before the findings",
           code == 0 and out.count(ADVISOR_SENTENCE) == 1
-          and out.index(f"merge-lane-2's review: {URL}#pullrequestreview-11\n\n{ADVISOR_SENTENCE}\n\n")
+          and f"The round's reviews: {URL}#pullrequestreview-11\n\n{ADVISOR_SENTENCE}\n\n" in out
+          and out.index(f"The round's reviews: {URL}#pullrequestreview-11\n\n{ADVISOR_SENTENCE}\n\n")
           < out.index("Blocking findings (2)") < out.index("For the subagent, the rules of the round"), err + out)
     code, out, err = run(root, repository, routes_for(
         frozen_head, earlier_rounds(2) + [review(commit_id=frozen_head, review_id=11),
@@ -732,6 +729,119 @@ def check_cases(root, repository, base, frozen_head):
     del rewritten, second
 
 
+def pull_request_2213_review(review_id, login, state, commit_id, body):
+    return {"id": review_id, "user": {"login": login}, "state": state, "commit_id": commit_id,
+            "html_url": f"{URL}#pullrequestreview-{review_id}", "body": body}
+
+
+def pull_request_2213_comment(comment_id, path, body):
+    # GitHub returns line and original_line as null for these comments, so the brief places them by path.
+    return {"id": comment_id, "path": path, "line": None, "original_line": None, "body": body,
+            "html_url": f"{URL}#discussion_r{comment_id}"}
+
+
+def comments_route(review_id, comments):
+    return {f"api --paginate repos/{{owner}}/{{repo}}/pulls/{NUMBER}/reviews/{review_id}/comments --jq .[]":
+            {"stdout": lines(comments)}}
+
+
+def commissioned_reviewer_cases(root, repository, base, frozen_head):
+    """Pull request 2213's reviews, ids, logins, states and order as GitHub returned them, bodies shortened.
+
+    Round 0: the commissioned reviewer (mac-claude) posts its review as a COMMENT on the frozen-head,
+    then merge-lane-2 requests changes on the same commit. Round 1: after the fix commit is pushed,
+    the commissioned reviewer posts on it before merge-lane-2's next review. The scratch repository's
+    commits stand in for the pull request's."""
+    bash_guards = ("nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-"
+                   "transcript-recorded-commands-check.py")
+    reviewer_round_0 = pull_request_2213_review(
+        5718075290, "mac-claude", "COMMENTED", frozen_head,
+        "REQUEST_CHANGES\n\n**Verdict: one blocking finding.** In the bash-guards replay check, "
+        "`include_subagents=True` is the only thing that keeps subagent transcripts in step 1.")
+    merge_lane_round_0 = pull_request_2213_review(
+        5718084175, "ned-review-merge", "CHANGES_REQUESTED", frozen_head,
+        "Changes requested by merge-lane-2.\n\nBlocking, each in its own inline comment:\n"
+        f"1. The reviewer's finding at `{bash_guards}:285`.\n2. Codex: the ripgrep prefilter.\n"
+        "3. Codex: the grep fallback.\n4. merge-lane-2's fast-read hold.")
+    reviewer_comments = [pull_request_2213_comment(
+        4428022230, bash_guards, "**Blocks.** No test covers `include_subagents=True` here.")]
+    merge_lane_comments = [
+        pull_request_2213_comment(4428029719, "scripts/search-user-messages-in-transcripts.py",
+                                  "**Blocks.** (Codex [P2]) The prefilter intersects the selected transcripts."),
+        pull_request_2213_comment(4428029724,
+                                  "scripts/claude-code-session-transcript-lookup-and-text-search-common.py",
+                                  "**Blocks.** (Codex [P2]) The grep fallback replaces `\\d` with `[0-9]`."),
+        pull_request_2213_comment(4428029732, "scripts/search-user-messages-in-transcripts.py",
+                                  "**Blocks.** (merge-lane-2's fast-read hold) Reword the summary clause."),
+    ]
+    round_0 = {PR_VIEW: {"stdout": json.dumps({"url": URL, "headRefOid": frozen_head, "headRefName": BRANCH})},
+               REVIEWS: {"stdout": lines([reviewer_round_0, merge_lane_round_0])},
+               **comments_route(5718075290, reviewer_comments),
+               **comments_route(5718084175, merge_lane_comments)}
+    code, out, err = run(root, repository, round_0)
+    check("2213: the brief reads the commissioned reviewer's **Blocks.** comment as well as merge-lane-2's",
+          code == 0 and "Blocking findings (4)" in out and "include_subagents=True" in out
+          and all(text in out for text in ["selected transcripts", "grep fallback", "summary clause"]), err + out)
+    check("2213: the round is set by merge-lane-2's changes-requested review, not the earlier comment",
+          f"Frozen-head: {frozen_head}" in out
+          and f"fix-round-pull-request-{NUMBER}-review-5718084175" in out, out)
+    check("2213: the brief names merge-lane-2's review, then the commissioned reviewer's, each once",
+          f"The round's reviews: {URL}#pullrequestreview-5718084175 and {URL}#pullrequestreview-5718075290\n"
+          in out, out)
+
+    four_answers = answers_file(root, GOOD_ANSWERS + "3. Fixed.\n4. Reworded.\n")
+    code, out, err = run(root, repository, round_0, "--check", "--answers", four_answers)
+    check("2213: the check takes an answer to the commissioned reviewer's finding",
+          code == 0 and "4 findings answered" in out and f"{bash_guards}: " in out, err + out)
+    code, out, err = run(root, repository, round_0, "--check", "--answers", answers_file(root, GOOD_ANSWERS
+                                                                                         + "3. Fixed.\n"))
+    check("2213: the check refuses three answers to four findings",
+          code == 1 and "no entry for finding 4" in err, err)
+
+    fix = commit_file(repository, "hook.py", "fixed\n", "fix-round 0")
+    reviewer_round_1 = pull_request_2213_review(
+        5718557027, "mac-claude", "COMMENTED", fix,
+        "REQUEST_CHANGES\n\nFix-round review of 258b1a01..e1effdcb.")
+    after_push = dict(round_0, **{
+        PR_VIEW: {"stdout": json.dumps({"url": URL, "headRefOid": fix, "headRefName": BRANCH})},
+        REVIEWS: {"stdout": lines([reviewer_round_0, merge_lane_round_0, reviewer_round_1])},
+        **comments_route(5718557027, [pull_request_2213_comment(
+            4428404941, "scripts/claude-code-session-transcript-lookup-and-text-search-common.py",
+            "**Blocks.** `\\w` is passed to ripgrep unchanged.")])})
+    four_answers = answers_file(root, GOOD_ANSWERS + "3. Fixed.\n4. Reworded.\n")
+    code, out, err = run(root, repository, after_push, "--check", "--answers", four_answers)
+    check("2213: after the push, the commissioned reviewer's review of the new head is not part of the round",
+          code == 0 and "4 findings answered" in out and f"New head {fix}" in out
+          and "passed to ripgrep" not in out, err + out)
+    git(repository, "reset", "-q", "--hard", frozen_head)
+
+    reviewer_dismissed = dict(reviewer_round_0, state="DISMISSED")
+    dismissed = dict(round_0, **{REVIEWS: {"stdout": lines([reviewer_dismissed, merge_lane_round_0])}})
+    code, out, err = run(root, repository, dismissed)
+    check("brief: a dismissed review of the frozen-head gives no blocking finding",
+          code == 0 and "Blocking findings (3)" in out and "include_subagents" not in out, err + out)
+
+    # Two rounds on the same frozen-head, each with its commissioned reviewer's comment before
+    # merge-lane-2's changes-requested review: the second round holds only its own reviews.
+    first_reviewer = review(state="COMMENTED", commit_id=frozen_head, login="mac-claude", review_id=20,
+                            body="First round.")
+    second_reviewer = review(state="COMMENTED", commit_id=frozen_head, login="mac-claude", review_id=22,
+                             body="Second round.")
+    same_head = {**routes_for(frozen_head, [first_reviewer, review(commit_id=frozen_head, review_id=21),
+                                            second_reviewer, review(commit_id=frozen_head, review_id=23)],
+                              review_id=23),
+                 **comments_route(20, [comment("first.py", "**Blocks.** the first round's finding.", comment_id=30)]),
+                 **comments_route(21, [comment("first.py", "**Blocks.** merge-lane-2's first round.", comment_id=31)]),
+                 **comments_route(22, [comment("second.py", "**Blocks.** the second round's finding.",
+                                               comment_id=32)])}
+    code, out, err = run(root, repository, same_head)
+    check("brief: a second round on the same frozen-head reads only the reviews after merge-lane-2's previous one",
+          code == 0 and "Blocking findings (3)" in out and "the second round's finding" in out
+          and "first round" not in out and f"{URL}#pullrequestreview-23 and {URL}#pullrequestreview-22" in out,
+          err + out)
+    del base
+
+
 def gh_timeout_case():
     specification = importlib.util.spec_from_file_location("fix_round_program", PROGRAM)
     program = importlib.util.module_from_spec(specification)
@@ -755,5 +865,6 @@ def gh_timeout_case():
 gh_timeout_case()
 case("brief", brief_cases)
 case("check", check_cases)
+case("commissioned reviewer", commissioned_reviewer_cases)
 print(f"{'FAILED' if failures else 'PASSED'}: {len(failures)} failed")
 sys.exit(1 if failures else 0)
