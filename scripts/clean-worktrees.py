@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
-"""Report or remove finished session worktrees under .claude/worktrees/.
+"""Report or remove finished session worktrees under .claude/worktrees/, and finished
+topic-worktrees beside the agent-homes in ~/agents/.
 
 Session worktrees pile up invisibly: every Claude session gets one, sessions
 end, and nothing reaps them. A worktree is DONE — removable — when these
 mechanical checks all pass:
 
+  0. at rest  - no rebase, merge, cherry-pick or revert is in progress in
+                it: its git directory holds none of rebase-merge,
+                rebase-apply, MERGE_HEAD, CHERRY_PICK_HEAD and REVERT_HEAD.
+                Mid-rebase, HEAD is detached at a commit already on
+                origin/main, so the landed check alone reads the work as
+                finished. If git cannot locate those files, the worktree is
+                kept.
   1. landed   - no commits beyond origin/main (`git log origin/main..HEAD`
                 is empty, and git exits 0), so everything the worktree's
                 branch carries is already on main. origin/main is read as
@@ -44,9 +52,35 @@ is visible in the output either way. Regenerable junk
 (.DS_Store, __pycache__, at any depth) is not listed. If git cannot list a
 worktree's files, the worktree is kept.
 
-Anything that fails a check is KEPT, with the failing reason. Worktrees
-outside <repo>/.claude/worktrees/ — agent seat homes, manual checkouts — are
-always kept: their lifecycles belong to their owners, not to this script.
+Anything that fails a check is KEPT, with the failing reason.
+
+TOPIC-WORKTREES BESIDE THE AGENT-HOMES. A worktree directly in ~/agents/ of
+the machine it runs on (the home directory's agents/, read from HOME) is
+judged too, when its directory name is an agent-home's name followed by a
+hyphen and more, such as cold-read-improvement-claude-md-batching-sentence,
+and its branch is not a seat-branch. An agent-home here is a worktree in
+~/agents/ whose branch is named like its directory. Such a topic-worktree
+passes the four checks above and four more, each of which keeps it:
+
+  4. clean    - no uncommitted change and no untracked file (ignored files
+                do not count). Unlike a worktree under .claude/worktrees/,
+                such files keep it: an agent-seat may still want them.
+  5. on a branch - its HEAD is not detached.
+  6. quiet    - no file or directory in it was written in the last
+                TOPIC_WORKTREE_QUIET_SECONDS. An agent-seat working there
+                runs from its agent-home, so the vacancy check cannot see it.
+                If a time cannot be read, the worktree is kept.
+  7. walks shipped - before --remove removes it, each walk in its
+                docs/walk/ (each <name>-minutes.md names one) is shipped to
+                the log-store with scripts/walk-files-ship.py, as the
+                records are, and a walk that is refused or fails to ship
+                keeps the worktree, printed as a record that did not ship.
+
+Every other worktree outside <repo>/.claude/worktrees/ — the agent-homes, the
+reference-checkout, a worktree deeper in ~/agents/, such as one under
+~/agents/agent-instructions-editor-worktrees/, the merge-lane's review
+checkouts — is always kept: its lifecycle belongs to its
+owner, not to this script.
 
 Removing a worktree does not remove the branch it was on, and nothing has
 ever swept a branch whose worktree is already gone — list_worktrees()
@@ -154,11 +188,28 @@ DISPOSABLE_JUNK_BASENAMES = (".DS_Store", "__pycache__")
 
 DISCARDED_FILES_NAMED_AT_MOST = 10
 
+# A topic-worktree's agent-seat runs from its agent-home, out of lsof's sight; a few hours without a
+# write is the evidence it has finished there.
+TOPIC_WORKTREE_QUIET_SECONDS = 4 * 3600
+
+# The reference clone's walk shipper, given the path of one walk's minutes, ships that walk.
+WALK_FILES_SHIPPER = REPO_ROOT / "scripts" / "walk-files-ship.py"
+WALK_MINUTES_SUFFIX = "-minutes.md"
+
 # Gitignored directories whose records belong in the log-store, each with the program that ships one
 # record of that kind. The reference clone's shippers, not the worktree's possibly older copies.
 LOG_STORE_RECORD_SHIPPERS = (
     ("cold-read-records", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-record-ship.py"),
     ("sanity-check-records", REPO_ROOT / "scripts" / "sanity-check-record-ship.py"),
+)
+
+# Each file git keeps in a worktree's git directory while an operation is stopped partway, with the operation.
+IN_PROGRESS_GIT_OPERATION_FILES = (
+    ("rebase-merge", "a rebase"),
+    ("rebase-apply", "a rebase or git am"),
+    ("MERGE_HEAD", "a merge"),
+    ("CHERRY_PICK_HEAD", "a cherry-pick"),
+    ("REVERT_HEAD", "a revert"),
 )
 
 # lsof scans all processes and can be slow under load; a timeout must keep worktrees.
@@ -250,6 +301,23 @@ def delete_orphaned_branch_ref(branch, repo):
     return True
 
 
+def in_progress_git_operation_keep_reason(worktree):
+    """Return why a worktree with a git operation stopped partway must be kept, or None."""
+    arguments = ["rev-parse", "--path-format=absolute"]
+    for file_name, _ in IN_PROGRESS_GIT_OPERATION_FILES:
+        arguments += ["--git-path", file_name]
+    located = run_git(worktree, *arguments)
+    if located.returncode != 0:
+        return (f"git cannot locate the files that show a rebase or merge in progress "
+                f"({located.stderr.strip()[:80]})")
+    for path, (file_name, operation) in zip(located.stdout.splitlines(),
+                                            IN_PROGRESS_GIT_OPERATION_FILES):
+        if Path(path).exists():
+            return (f"{operation} is in progress in it (its git directory holds {file_name}), "
+                    f"so its HEAD does not show its owner's finished work")
+    return None
+
+
 def worktree_vacancy_keep_reason(worktree):
     """Return why vacancy is unproven, or None for a provably vacant worktree."""
     # Even a partial listing proves occupancy when it contains a matching cwd.
@@ -310,6 +378,55 @@ def agent_worktree_quiet_keep_reason(worktree, now=None):
     return None
 
 
+def topic_worktrees_beside_agent_homes(worktrees):
+    """Return the resolved paths of the topic-worktrees directly in ~/agents/ that this script judges."""
+    agents_directory = (Path.home() / "agents").resolve()
+    in_agents_directory = [(path.resolve(), branch) for path, branch in worktrees
+                           if path.resolve().parent == agents_directory]
+    agent_home_names = {path.name for path, branch in in_agents_directory if branch == path.name}
+    return {path for path, branch in in_agents_directory
+            if branch not in agent_home_names
+            and any(path.name.startswith(f"{home}-") for home in agent_home_names)}
+
+
+def raise_error(error):
+    raise error
+
+
+def topic_worktree_quiet_keep_reason(worktree, now=None):
+    """Return why a topic-worktree written too recently must be kept, or None after sufficient quiet."""
+    now = time.time() if now is None else now
+    try:
+        newest = worktree.lstat().st_mtime
+        # os.walk ignores unreadable directories unless told to raise, and an unread time cannot prove quiet.
+        for directory, subdirectories, files in os.walk(worktree, onerror=raise_error):
+            for name in subdirectories + files:
+                newest = max(newest, os.lstat(os.path.join(directory, name)).st_mtime)
+    except OSError as error:
+        return f"when its files were last written could not be read ({error.strerror})"
+    quiet_seconds = now - newest
+    if quiet_seconds < TOPIC_WORKTREE_QUIET_SECONDS:
+        return (f"a file in it was written {int(quiet_seconds // 60)} min ago, so an agent-seat "
+                f"may still be working in it from its agent-home, where the vacancy check cannot "
+                f"see it (quiet for {TOPIC_WORKTREE_QUIET_SECONDS // 3600} h before removal)")
+    return None
+
+
+def topic_worktree_keep_reason(worktree, branch):
+    """Return why a landed topic-worktree must be kept before the vacancy check, or None."""
+    if branch is None:
+        return "its HEAD is detached, so its owner may be partway through a rebase or a bisect"
+    status = run_git(worktree, "status", "--porcelain", "-z", "--untracked-files=all")
+    if status.returncode != 0:
+        return f"git cannot list its uncommitted changes ({status.stderr.strip()[:80]})"
+    changed = [entry.path for entry in git_output.status_entries(status.stdout)
+               if not is_disposable_junk(entry.path)]
+    if changed:
+        return (f"{len(changed)} uncommitted or untracked file(s), which only its owner "
+                f"may discard: {discarded_files_text(changed)}")
+    return topic_worktree_quiet_keep_reason(worktree)
+
+
 def is_disposable_junk(relative_path):
     return any(part in DISPOSABLE_JUNK_BASENAMES for part in Path(relative_path).parts)
 
@@ -332,9 +449,13 @@ def discarded_files_text(paths):
     return named + (f" and {more} more" if more > 0 else "")
 
 
-def log_store_records_in(worktree):
-    """Return (shipper, record directory) for each non-empty record directory the worktree holds."""
+def log_store_records_in(worktree, topic_worktree):
+    """Return (shipper, path to ship) for each non-empty record directory the worktree holds and,
+    in a topic-worktree, for the minutes file of each walk in its docs/walk/."""
     records = []
+    if topic_worktree:
+        records.extend((WALK_FILES_SHIPPER, minutes)
+                       for minutes in sorted((worktree / "docs" / "walk").glob(f"*{WALK_MINUTES_SUFFIX}")))
     for directory_name, shipper in LOG_STORE_RECORD_SHIPPERS:
         records_directory = worktree / directory_name
         if not records_directory.is_dir():
@@ -345,10 +466,11 @@ def log_store_records_in(worktree):
     return records
 
 
-def ship_log_store_records(worktree):
-    """Ship every record the worktree holds, printing a line for each; return the shipper lines of those that did not ship."""
+def ship_log_store_records(worktree, topic_worktree):
+    """Ship every record the worktree holds, printing a line for each; return (shipper, line) for
+    each that did not ship."""
     unshipped = []
-    for shipper, record in log_store_records_in(worktree):
+    for shipper, record in log_store_records_in(worktree, topic_worktree):
         shipment = subprocess.run([sys.executable, str(shipper), str(record)],
                                   capture_output=True, text=True, check=False)
         sys.stderr.write(shipment.stderr)
@@ -363,17 +485,21 @@ def ship_log_store_records(worktree):
             # The shipper's line appears only inside this FAILED line, so a reader counts it once.
             print(f"{worktree.name}: record shipment FAILED, worktree kept — removing it would delete "
                   f"a record the log-store does not hold: {record.relative_to(worktree)} ({line})")
-            unshipped.append(line)
+            unshipped.append((shipper, line))
         else:
             print(f"{worktree.name}: {line}")
     return unshipped
 
 
-def classify(worktree, branch, main_checkout):
+def classify(worktree, branch, main_checkout, topic_worktree):
     """Return (done, reason, discarded paths) for a worktree."""
     managed_area = (main_checkout / ".claude" / "worktrees").resolve()
-    if managed_area not in worktree.resolve().parents:
+    if not topic_worktree and managed_area not in worktree.resolve().parents:
         return False, "outside the managed area (.claude/worktrees/) — its owner decides its lifecycle", []
+
+    keep_reason = in_progress_git_operation_keep_reason(worktree)
+    if keep_reason is not None:
+        return False, keep_reason, []
 
     unlanded = run_git(worktree, "log", "--oneline", "origin/main..HEAD")
     if unlanded.returncode != 0:
@@ -381,6 +507,12 @@ def classify(worktree, branch, main_checkout):
     if unlanded.stdout.strip():
         commits = len(unlanded.stdout.splitlines())
         return False, f"{commits} commit(s) not on origin/main", []
+
+    # Before the vacancy check, which scans every process and is the slowest.
+    if topic_worktree:
+        keep_reason = topic_worktree_keep_reason(worktree, branch)
+        if keep_reason is not None:
+            return False, keep_reason, []
 
     keep_reason = worktree_vacancy_keep_reason(worktree)
     if keep_reason is not None:
@@ -394,7 +526,7 @@ def classify(worktree, branch, main_checkout):
     discarded, listing_error = files_a_removal_discards(worktree)
     if discarded is None:
         return False, f"git cannot list its files ({listing_error})", []
-    records = log_store_records_in(worktree)
+    records = log_store_records_in(worktree, topic_worktree)
     shipped_first = (f"; --remove first ships its {len(records)} record(s) to the log-store "
                      f"and keeps it if one does not ship: "
                      + ", ".join(str(record.relative_to(worktree)) for _, record in records)
@@ -406,16 +538,24 @@ def classify(worktree, branch, main_checkout):
     return True, "landed and vacant" + shipped_first, []
 
 
-def remove_worktree(worktree, branch, repo, discarded):
+def remove_worktree(worktree, branch, repo, discarded, topic_worktree):
     """Ship its log-store records, then remove a done worktree and its merged branch; return success."""
-    unshipped = ship_log_store_records(worktree)
+    unshipped = ship_log_store_records(worktree, topic_worktree)
     if unshipped:
         # No next-step line may contain FAILED: the handoff-supervisor counts each such line as a failure.
-        if any(line.startswith("REFUSED:") for line in unshipped):
+        if any(line.startswith("REFUSED:") and shipper != WALK_FILES_SHIPPER
+               for shipper, line in unshipped):
             print(f"{worktree.name}: for each record whose line starts REFUSED:, rename its directory "
                   f"as that line says; the next scripts/clean-worktrees.py --remove then ships it "
                   f"and removes the worktree")
-        if not all(line.startswith("REFUSED:") for line in unshipped):
+        # A walk's refusal names add-only files the store holds with other bytes; no rename resolves it.
+        if any(line.startswith("REFUSED:") and shipper == WALK_FILES_SHIPPER
+               for shipper, line in unshipped):
+            print(f"{worktree.name}: for each walk whose line starts REFUSED:, the log-store holds "
+                  f"another copy of each file that line names; the walk's owner decides which copy "
+                  f"is right and makes the worktree's file match it; the next "
+                  f"scripts/clean-worktrees.py --remove then ships the walk and removes the worktree")
+        if not all(line.startswith("REFUSED:") for _, line in unshipped):
             print(f"{worktree.name}: for each record whose line does not start REFUSED:, do nothing "
                   f"now: the next scripts/clean-worktrees.py --remove, daily or at a handoff, "
                   f"ships the record again; "
@@ -448,10 +588,13 @@ def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
     """Report or remove the worktrees and orphaned branch refs, and report dead registrations;
     return the number of failures, or raise git_output.GitCommandFailed when git cannot list them."""
     failures = 0
-    for worktree, branch in list_worktrees(repo, main_checkout):
-        done, reason, discarded = classify(worktree, branch, main_checkout)
+    worktrees = list_worktrees(repo, main_checkout)
+    topic_worktrees = topic_worktrees_beside_agent_homes(worktrees)
+    for worktree, branch in worktrees:
+        topic_worktree = worktree.resolve() in topic_worktrees
+        done, reason, discarded = classify(worktree, branch, main_checkout, topic_worktree)
         if remove:
-            if done and not remove_worktree(worktree, branch, repo, discarded):
+            if done and not remove_worktree(worktree, branch, repo, discarded, topic_worktree):
                 failures += 1
             elif not done:
                 print(f"{worktree.name}: kept — {reason}")
