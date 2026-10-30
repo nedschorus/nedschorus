@@ -1130,7 +1130,8 @@ def run_github_token_cases(root: Path):
                   and "recover-crashed-seats: the agent-seat merge-lane-2 was not started"
                   in stderr.getvalue()
                   and "home-without-token-files/.config/nedschorus/ned-review-merge.token"
-                  in stderr.getvalue(),
+                  in stderr.getvalue()
+                  and "Once the file is fixed: run this recovery again." in stderr.getvalue(),
                   (exit_code, tmux_calls, launcher_runs, stderr.getvalue()))
     finally:
         os.environ["HOME"] = str(SCRATCH_HOME_DIRECTORY)

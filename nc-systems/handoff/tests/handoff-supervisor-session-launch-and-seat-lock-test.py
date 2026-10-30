@@ -899,14 +899,14 @@ def run_launched_session_github_token_cases(workspace: Path):
               recorded == fixture.FIXTURE_GITHUB_TOKEN_BY_ACCOUNT[account],
               f"{recorded!r}; exit {completed.returncode}: {completed.stderr[-600:]}")
 
-    user_fills_the_file = "Only the user holds the tokens"
+    user_fills_the_file = "write the GitHub token of ned-review-merge to"
     for label, prepare, remedy in (
             ("missing", lambda token_file: None, user_fills_the_file),
             ("empty", lambda token_file: token_file.write_text("\n", encoding="utf-8"),
              user_fills_the_file),
             ("unreadable", lambda token_file: (token_file.write_text("x\n", encoding="utf-8"),
                                                token_file.chmod(0)),
-             "Make the file readable by this user"),
+             "readable by the Unix user"),
     ):
         home = directory / f"home-with-{label}-token-file"
         (home / ".config" / "nedschorus").mkdir(parents=True, exist_ok=True)
@@ -921,7 +921,9 @@ def run_launched_session_github_token_cases(workspace: Path):
               and "ned-review-merge" in completed.stderr
               and str(token_file) in completed.stderr
               and "Do not start the agent-seat any other way" in completed.stderr
-              and remedy in completed.stderr,
+              and remedy in completed.stderr
+              and "If you are an agent, do not open, write or change the file" in completed.stderr
+              and "`launch-claude-ubuntu merge-lane-2`" in completed.stderr,
               f"{recorded!r}; exit {completed.returncode}: {completed.stderr[-800:]}")
         if token_file.exists():
             token_file.chmod(0o600)

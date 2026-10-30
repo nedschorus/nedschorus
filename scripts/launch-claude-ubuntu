@@ -153,7 +153,7 @@ esac
 # nc-systems/handoff/handoff-supervisor.py), so this launcher takes no account.
 if [ -n "${NEDSCHORUS_SEAT_GITHUB_ACCOUNT:-}" ]; then
     echo "launch-claude-ubuntu: refused, because NEDSCHORUS_SEAT_GITHUB_ACCOUNT is set, but this launcher does not choose the GitHub account an agent-seat acts as: the handoff-supervisor does, from AGENT_SEAT_GITHUB_ACCOUNTS_OTHER_THAN_THE_MACHINE_DEFAULT in nc-systems/handoff/handoff-supervisor.py." >&2
-    echo "launch-claude-ubuntu: unset NEDSCHORUS_SEAT_GITHUB_ACCOUNT and launch again; if this agent-seat must act as an account other than ubuntu-claude, add it to that table in a pull request." >&2
+    echo "launch-claude-ubuntu: unset NEDSCHORUS_SEAT_GITHUB_ACCOUNT and launch again; if this agent-seat must act as an account other than ubuntu-claude, add an entry for it, agent-seat name to account, to that table in a pull request, and put that account's token in ~/.config/nedschorus/<account>.token on the machine the agent-seat runs on." >&2
     exit 2
 fi
 

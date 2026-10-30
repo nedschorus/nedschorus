@@ -111,6 +111,7 @@ account.
 import argparse
 import ctypes
 import fcntl
+import getpass
 import importlib.util
 import json
 import os
@@ -875,31 +876,37 @@ def agent_seat_github_account_lookup_and_token_file_read(agent_seat_name: str):
     return account, token
 
 
-def agent_seat_github_token_unreadable_report(program_name: str,
-                                              error: AgentSeatGithubTokenUnreadableError) -> str:
-    """Return the report of an agent-seat not started for want of its GitHub token."""
+def agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build(program_name: str,
+                                              error: AgentSeatGithubTokenUnreadableError,
+                                              start_again_instruction: str) -> str:
+    """Return the report of an agent-seat not started for want of its GitHub token.
+
+    start_again_instruction says how to start the agent-seat again once the file is fixed;
+    it depends on the program that refused.
+    """
     # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md
     machine = ("ned-box" if handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
                else "the Mac")
+    unix_user = getpass.getuser()
     if error.file_is_there:
-        what_to_do = (
-            f"Make the file readable by this user on {machine}, with `chmod 600 {error.token_file}` "
-            "when this user owns it, then start the agent-seat again the way it was started this time.")
+        what_the_user_does = (
+            f"make {error.token_file} on {machine} readable by the Unix user {unix_user}, "
+            f"for example with `chmod 600 {error.token_file}` when {unix_user} owns it")
     else:
-        what_to_do = (
-            "Only the user holds the tokens. If you are an agent, tell the user: \"The agent-seat "
-            f"{error.agent_seat_name} on {machine} did not start, because it needs the GitHub token "
-            f"of {error.account} written to {error.token_file} on {machine}, as one line, mode 600; "
-            "docs/nedschorus-wiki/nedschorus-github-identities-and-token-policy.md says where each "
-            "token comes from.\" A subagent tells the agent that dispatched it instead.\n"
-            "Once the file holds the token, start the agent-seat again the way it was started "
-            "this time.")
+        what_the_user_does = (
+            f"write the GitHub token of {error.account} to {error.token_file} on {machine}, as one "
+            "line, mode 600; docs/nedschorus-wiki/nedschorus-github-identities-and-token-policy.md "
+            "says where each token comes from")
     return (f"{program_name}: the agent-seat {error.agent_seat_name} was not started, because "
             f"{error}.\n"
             f"Every agent-session of {error.agent_seat_name} acts on GitHub through that token; "
             "without it, gh and git would act as the account gh's own login holds, which is the "
             "wrong account for this agent-seat.\n"
-            f"{what_to_do}\n"
+            "Only the user handles token files. If you are an agent, do not open, write or change "
+            f"the file; tell the user: \"The agent-seat {error.agent_seat_name} on {machine} did not "
+            f"start. To start it, {what_the_user_does}.\" A subagent tells the agent that "
+            "dispatched it instead.\n"
+            f"Once the file is fixed: {start_again_instruction}\n"
             "Do not start the agent-seat any other way: it would act on GitHub as the wrong account.")
 
 
@@ -2430,8 +2437,13 @@ def main(argv=None) -> int:
     try:
         _, os.environ["GH_TOKEN"] = agent_seat_github_account_lookup_and_token_file_read(arguments.agent)
     except AgentSeatGithubTokenUnreadableError as error:
-        print(agent_seat_github_token_unreadable_report("handoff-supervisor", error),
-              file=sys.stderr)
+        print(agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build(
+            "handoff-supervisor", error,
+            "start the agent-seat again with its launcher, from the Mac: "
+            f"`launch-claude-ubuntu {arguments.agent}` for an agent-seat on ned-box, "
+            f"`launch-claude-mac {arguments.agent}` for one on the Mac. If the launcher left a "
+            "shell open in the agent-seat's tmux session, exit that shell first."),
+            file=sys.stderr)
         return AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS
 
     if bool(arguments.adopt_session_id) != bool(arguments.adopt_process_id):
