@@ -15,9 +15,9 @@ The MD-skills agent-seat moves each file on main that is not where, or not named
 
 A file in a queue directory is named as it will be in its final location, apart from the issue number a GHI-MD gains when its GHI is filed. A GHI-MD moves to its final location through the ghi-write-tool once its cold read is done; any other file moves to it by `git mv` in a pull request once the user approves it.
 
-- **Skill prompt, the text a skill's own reviewer or cell runs**
+- **Skill prompt, the agent-instructions a skill's program gives an agent it launches**
   - **Location:** `nc-systems/skills/<skill name>/`, where `<skill name>` is the skill's name without its slash, such as `cold-read`
-  - **Naming:** `<pass>-prompt.md`, named for the pass it drives
+  - **Naming:** `<skill name>-<prompt name>-prompt.md`, where <prompt name> says what the prompt asks for, such as `cold-read-defect-hunt-prompt.md`.
 - **Hook**
   - **Location:** `.claude/hooks/` for a hook that guards which files or GitHub issues an agent may change; every other hook in its system's directory, `nc-systems/<system-name>/`, or in `nc-systems/general-tools/` when it belongs to no system
   - **Naming:** `<what it does>.py`, such as `instruction-file-guard.py` or `ghi-issue-write-hand-typed-gh-command-refusal.py`
