@@ -25,7 +25,61 @@ A rule holds when something fires at the moment the rule applies. This issue giv
    - The hook records what it raised, and when it last made each network check, in a state file of its own for the agent-seat. A task is raised once for its due time and once when its conditions come to hold, so the hook cannot keep the agent from stopping turn after turn; a raised task the agent leaves open is raised again only after the agent changes its `due_utc`, its `waits_on` or, for a task raised because its `blockedBy` tasks completed, its `blockedBy`, and then only when the new due time passes, the new conditions all hold or the new `blockedBy` tasks have all completed.
    - A fault prints one line on stderr naming it and exits 1, which Claude Code records as a non-blocking error, so a hook error never stops the agent's turn from ending; a condition the hook could not ask GitHub about, at a stop that raises a task, is named in the raise text instead.
 
-3. **The hourly sweep.** A scheduled job, installed through `nc-systems/general-tools/scheduled-jobs-on-each-machine.json` like the jobs already there, runs on each machine, reads the task lists of the agent-seats on that machine, and checks due times and `waits_on` conditions as the idle check does. Its purpose is the agent-seat that is idle, which the idle check cannot reach because an idle agent ends no turns. Two questions are open: how the job tells that an agent-seat is idle, and how it reaches an idle agent-seat. The handoff-supervisor launches agent-sessions but does not type into a running one, and `scripts/synthetic-keystroke-guard-hook.py` refuses synthetic keystrokes, so no route exists yet.
+3. **The idle sweep.** A scheduled job, installed through `nc-systems/general-tools/scheduled-jobs-on-each-machine.json` like the jobs already there, runs on ned-box every 5 minutes. It looks for an agent-seat that is idle while it has something to do. The idle check cannot reach such an agent-seat, because an idle agent ends no turns. § The idle sweep, below, says how the job finds one and how it wakes it.
+
+## The idle sweep
+
+### Why
+
+Two incidents on 2026-10-30, both in reboot-test's agent-session 222a1661-826e-4213-834e-439b45884194 (transcript `nedlern@ned-box:/home/nedlern/.claude/projects/-home-nedlern-agents-reboot-test/222a1661-826e-4213-834e-439b45884194.jsonl`):
+
+- **A turn that ended on an announced action.** At 17:14:34Z the agent ended a turn on "I'm starting the PR 1633 work now.", about PR [GHI-MD edit for issue 1571: The Bash guards replay reads a stored file of distinct recorded command pairs, reuses main's readings and reads many commands in each new process](https://github.com/nedschorus/nedschorus/pull/1633), without a tool call. Eight Stop hooks ran, and none of them stopped it. The agent-seat sat idle until the user noticed, at 17:38:48Z, 24 minutes later. GHI [A project style guide: words to avoid, a mechanical checker, and a check on unbacked promises](https://github.com/nedschorus/nedschorus/issues/14) records this incident against its announced-action check, which is not built.
+- **Ready work held for 20 hours.** At 22:54Z on 2026-10-29 the handoff threshold hook put off the agent-session's handoff while a subagent ran, told the agent to start no new subagents until a later message, and then went silent. That message could never come, because of two defects in the hook: it counted a subagent that had finished as still running, and its 65% ceiling compares only the current context, which compaction kept at 24%. ned-box-helper's task #165, which fixes the hook's reading of a subagent whose last notice is interim, and reboot-test's task #369, "Handoff threshold hook: the 65% ceiling compares only current context", fix the defects. Ready work waited until the user asked about it at about 18:00Z on 2026-10-30.
+
+Each defect has its own fix. This sweep is the backstop for the defects nobody has found yet: an agent-seat that sits idle with something to do is found and woken within minutes, whatever left it idle.
+
+### What the user has said
+
+- 2026-10-12, in prime-intellect's agent-session bafa2657-92ad-439d-ac19-89fdad69d71e, on waking an agent-seat after its session limit resets: "send that agent a "." to wake them at the appropriate time".
+- 2026-10-14 to 2026-10-15, in GHI [Nudge the author of a pull request whose review findings have gone unanswered for hours](https://github.com/nedschorus/nedschorus/issues/1203), § "How the nudge works": an idle agent-seat is woken by a cross-session message, with a test that a running agent-session received it. Nothing types into its tmux window: "tmux is dangerous because it steps in the middle of other typing".
+- 2026-10-18, in GHI [Wake an agent-seat when its 5-hour session limit resets](https://github.com/nedschorus/nedschorus/issues/1152), § "Decided": a recurring job inside each agent-seat's own session wakes it every 3 hours, which the user decided was "simpler and safer" than a timer outside Claude that types into tmux panes. It is not built: on 2026-10-30, `.claude/settings.json` had only the `compact` SessionStart hook, and no program on main mentioned CronCreate.
+- 2026-10-30, at item 5.2.2.7 of ned-box-helper's approval-walk ned-box-helper-open-items-2026-10-27, as ned-box-helper summarized his words in its walk-minutes (`nedlern@ned-box:/home/nedlern/agents/ned-box-helper/docs/walk/ned-box-helper-open-items-2026-10-27-minutes.md`, the line beginning "User on item 5.2.2.7"): he finds the wake tame, a reminder such as "is now a good time to hand off?", and extra wakes are fine; he asked why the wake runs every 3 hours; he prefers a message from a supervising agent or program over a timer inside the agent-session, which clutters it; when the agent answers that something is still running, the next message escalates: "you've given this X minutes, please check; if not sure, hand off"; and a single "." is fairly safe to send. He also proposed treating zero token spend in an agent-session's transcript as the sign that it is truly idle, with a cheap model deciding whether to nudge.
+
+### How the job tells an agent-seat is idle
+
+Code decides, from facts on disk; no model runs while every agent-seat is busy or has nothing to do. An agent-seat is idle when all of these hold:
+
+- Its current agent-session's transcript, `~/.claude/projects/<project folder>/<session id>.jsonl`, and every transcript under that agent-session's `subagents/` directory, gained no record that spent tokens (an `assistant` record with `usage`) in the last 15 minutes.
+- Its last turn ended: the last record of the agent-session's own transcript is the `turn_duration` system record, or a later record that is not a request to the model.
+- It is not waiting on the user: its last message does not ask him a question and no approval-walk item is waiting on him. This is the one test that needs judgment, so the model of the next section makes it.
+
+A background command or watch the agent-seat started spends no tokens while it runs, so an agent-seat waiting on one looks idle. The model reads what the agent said it was waiting for, and the job does not nudge again about the same wait sooner than the user's escalation rule allows.
+
+### Who decides, and what is sent
+
+When code finds an agent-seat idle, the job hands a cheap model, such as Claude Haiku, the agent-seat's last message, its open tasks that nothing holds, any handoff deferral marker file under `~/.claude/handoffs/`, and the commands or watches it said it was waiting on. The model answers with one of these, as a JSON object the job checks:
+
+- **nothing**: the agent-seat is waiting on the user, or on work that is still running and has not run long.
+- **nudge**, with a short reason: the message is "." followed by one line naming what the model saw, such as "You announced "I'm starting the PR 1633 work now" 15 minutes ago and have not started it", or "Your handoff was put off at 22:54Z; is now a good time to hand off?".
+- **escalate**: a nudge was sent about the same wait, and the agent-seat answered that something was still running; the message is the user's "you've given this X minutes, please check; if not sure, hand off".
+- **tell the user**: the agent-seat stayed idle after an escalation.
+
+### How the message reaches the agent-seat
+
+Proposed: the job starts the cheap model as a headless agent-session, `claude -p --model haiku`, with only the tools ListAgents and SendMessage allowed, and that agent-session sends the message with SendMessage, Claude Code's cross-session messaging, to the agent-seat by its name. Nothing types into a tmux window. On 2026-10-30 a headless Haiku agent-session started this way listed all nine agent-seats on ned-box, each with its tmux pane and whether it was busy or idle, and delivered a message into reboot-test's agent-session, which received it while busy. GHI [Claude turn/start and turn/steer equivalents: inject a message into an idle session, steer an active turn](https://github.com/nedschorus/nedschorus/issues/37) records, in its outcome of 2026-09-18, that a cross-session message wakes an idle agent-session, which then processes it.
+
+Three limits remain:
+
+- Cross-session messages stay on one machine, so the Mac's agent-seats need a job running on the Mac; GHI [Seat mailboxes across machines and runtimes](https://github.com/nedschorus/nedschorus/issues/749) records the limit. ned-box comes first.
+- A message can reach a stale offline Remote Control entry instead of the running agent-session, as GHI [Cross-session messages between agent-seats reach stale offline Remote Control entries instead of the live agent-session](https://github.com/nedschorus/nedschorus/issues/1115) records. The job checks the agent-seat's transcript for the message after sending it, and tells the user when the message is not there.
+- Each wake starts one Haiku agent-session; on most runs the job starts none, because code finds no idle agent-seat.
+
+The 3-hourly wake of GHI [Wake an agent-seat when its 5-hour session limit resets](https://github.com/nedschorus/nedschorus/issues/1152) and this job do overlapping work. If the user chooses this job, GHI 1152's wake is not built, and the job also wakes an agent-seat whose 5-hour session limit has reset.
+
+### Open questions for the user
+
+1. **The route.** A supervising program sends the message as a cross-session message, as proposed above, replacing GHI 1152's in-session wake; or the in-session wake of GHI 1152 stays, with a shorter interval, and the job only finds idle agent-seats and tells the user.
+2. **The numbers.** 15 minutes of no token spend before an agent-seat counts as idle; X = 30 minutes before an escalation; and the job running every 5 minutes.
 
 GHI 14's promise check, its item 3, is narrowed to depend on this issue in an edit of the same day: a promise passes when the same turn created or updated a task with a due time or a checkable prerequisite.
 
@@ -70,11 +124,11 @@ Each new `waits_on` kind's key names are chosen in the pull request that builds 
 
 ## Next action
 
-The idle check, item 2, is built: `scripts/agent-seat-due-task-raise-hook.py`, merged on 2026-10-02 and registered as a Stop hook in `.claude/settings.json`. It has raised nothing, because no task opts in: on 2026-10-23, none of the 1,472 task files on the two machines carried `due_utc` or `waits_on`, and none of the 1,550 TaskCreate and TaskUpdate calls in the agent-session transcripts of the 14 days before set either field (measurement: `nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/nothing-needs-you-idle-measurement-2026-10-23/report.md`). Pull request 1914, merged on 2026-10-24, finished phase 1 of § More kinds of prerequisite: agents are now told, after each TaskCreate, to record what the task waits on. The next action is phase 2: its open questions go to the user in prime-intellect's next approval-walk, with the hourly sweep's two open questions, and the sweep and phase 2 are built.
+The idle check, item 2, is built: `scripts/agent-seat-due-task-raise-hook.py`, merged on 2026-10-02 and registered as a Stop hook in `.claude/settings.json`. It has raised nothing, because no task opts in: on 2026-10-23, none of the 1,472 task files on the two machines carried `due_utc` or `waits_on`, and none of the 1,550 TaskCreate and TaskUpdate calls in the agent-session transcripts of the 14 days before set either field (measurement: `nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/nothing-needs-you-idle-measurement-2026-10-23/report.md`). Pull request 1914, merged on 2026-10-24, finished phase 1 of § More kinds of prerequisite: agents are now told, after each TaskCreate, to record what the task waits on. The next action is phase 2: its open questions go to the user in prime-intellect's next approval-walk, and phase 2 is built. The idle sweep's open questions go to the user in reboot-test's approval-walk, and the sweep is built after he answers them.
 
 ## Trigger to close
 
-The idle check runs in every agent-seat, the hourly sweep runs on both machines, and a task carrying a due time or a prerequisite is raised to its agent-seat without anyone remembering it; and phase 2 of § More kinds of prerequisite is built, so that each of its kinds of prerequisite is raised to the agent-seat that waits on it, or reported to that agent-seat as cancelled, without anyone remembering it.
+The idle check runs in every agent-seat, the idle sweep runs on both machines, and a task carrying a due time or a prerequisite is raised to its agent-seat without anyone remembering it; and phase 2 of § More kinds of prerequisite is built, so that each of its kinds of prerequisite is raised to the agent-seat that waits on it, or reported to that agent-seat as cancelled, without anyone remembering it.
 
 ## Provisional additions (not yet vetted by the user)
 
