@@ -2071,13 +2071,16 @@ with tempfile.TemporaryDirectory() as temporary:
 
     # A handoff whose session-dialog could not be extracted starts a successor
     # with the same plan, which names the occasion and the transcript.
-    for transcript_name in ("present", "absent"):
-        transcript = root / "r29-transcripts" / f"{transcript_name}.jsonl"
-        transcript.parent.mkdir(parents=True, exist_ok=True)
-        if transcript_name == "present":
-            transcript.write_text("{}\n", encoding="utf-8")
+    transcript_lookups = {
+        "found": (root / "retiring-session.jsonl", None, ()),
+        "notfound": (None, root / "retiring-session.jsonl", ()),
+        "inseveralfolders": (None, None, (root / "a" / "retiring-session.jsonl",
+                                          root / "b" / "retiring-session.jsonl")),
+    }
+    for transcript_name, (found, expected, several) in transcript_lookups.items():
         handoff_recovery_prompt = supervisor_module.IgnitionPlanWithoutConversationTail(
-            "Finish the walk.", "a handoff", "retiring-session", transcript).compose("")
+            "Finish the walk.", "a handoff", "retiring-session", found, expected, several,
+        ).compose("")
         successor = write_transcript(root / "r29-transcripts", f"handoff-recovery-{transcript_name}",
                                      handoff_recovery_prompt, records=1)
         check(f"REVIEW-3: a successor started at a handoff without a conversation-tail, its "

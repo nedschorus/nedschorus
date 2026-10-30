@@ -420,12 +420,18 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
     the handoff's next step as its prompt, told that the session-dialog could
     not be extracted and where the transcript is, and the handoff is consumed.
     The handoff names another session as its writer, so the extraction must be
-    tried on the writer, not on the session the supervisor launched. A second
-    handoff, whose writer has no transcript, gives a successor told so."""
+    tried on the writer, not on the session the supervisor launched. The
+    writer's transcript is in another seat's project folder, which the
+    transcript search still finds. A second handoff, whose writer has no
+    transcript, and a third, whose writer's transcript is in two project
+    folders, give successors told what the search reported."""
     handoff_directory = workspace / "failedextraction"
     handoff_directory.mkdir(parents=True)
-    projects = workspace / "failedextraction-projects"
-    projects.mkdir()
+    keyed_project_directory = supervisor.project_directory_for_working_directory(workspace)
+    other_project_directory = supervisor.PROJECTS_ROOT / "failedextraction-other-project"
+    another_project_directory = supervisor.PROJECTS_ROOT / "failedextraction-another-project"
+    other_project_directory.mkdir(parents=True)
+    another_project_directory.mkdir(parents=True)
     settings = supervisor.SupervisorSettings(
         agent="failedextraction", working_directory=workspace,
         handoff_directory=handoff_directory, agent_command="unused-stub-agent",
@@ -433,11 +439,17 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
     launched_session_ids, launched_prompts, extracted_from = [], [], []
     writer_session_id = "11111111-2222-3333-4444-555555555555"
     writer_without_a_transcript = "66666666-7777-8888-9999-000000000000"
-    (projects / f"{writer_session_id}.jsonl").write_text("{}\n", encoding="utf-8")
+    writer_in_two_project_folders = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    (other_project_directory / f"{writer_session_id}.jsonl").write_text("{}\n", encoding="utf-8")
+    for project_directory in (other_project_directory, another_project_directory):
+        (project_directory / f"{writer_in_two_project_folders}.jsonl").write_text(
+            "{}\n", encoding="utf-8")
     handoffs_to_write = [
         f"restart-counter: 1\nwritten-by-session: {writer_session_id}\nnext-step: carry on\n",
         f"restart-counter: 2\nwritten-by-session: {writer_without_a_transcript}\n"
         "next-step: carry on further\n",
+        f"restart-counter: 3\nwritten-by-session: {writer_in_two_project_folders}\n"
+        "next-step: carry on still\n",
     ]
 
     def launch(agent_command, session_id, working_directory, prompt, **_):
@@ -459,19 +471,19 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
             extract_dialog=failing_extract_dialog,
             launch_time_git_sync=lambda working_directory: "launch-time-git-sync: stubbed",
             remove_finished_worktrees_at_handoff=lambda working_directory: "worktrees: stubbed",
-            project_directory_for_working_directory=lambda working_directory: projects,
             memory_review_due_lines=lambda: (),
             stdin_isatty=True), \
             contextlib.redirect_stdout(console), contextlib.redirect_stderr(errors):
         exit_code = supervisor.supervise_sessions(settings)
     state = supervisor.read_supervisor_state(settings.state_path)
     check("FAILED EXTRACTION: a handoff whose dialog cannot be extracted still starts a successor",
-          exit_code == 0 and len(launched_session_ids) == 3
-          and len(set(launched_session_ids)) == 3,
+          exit_code == 0 and len(launched_session_ids) == 4
+          and len(set(launched_session_ids)) == 4,
           f"{exit_code!r} {launched_session_ids!r} {extracted_from!r}")
     check("FAILED EXTRACTION: the extraction is tried on the handoff's writer, "
           "not on the launched session",
-          extracted_from == [writer_session_id, writer_without_a_transcript],
+          extracted_from == [writer_session_id, writer_without_a_transcript,
+                             writer_in_two_project_folders],
           f"{extracted_from!r} {launched_session_ids!r}")
     check("FAILED EXTRACTION: the failure is still printed, naming the session, "
           "and nothing says it is not relaunching",
@@ -486,28 +498,44 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
           console.getvalue()[-600:])
     successor_prompt = launched_prompts[1] if len(launched_prompts) > 1 else ""
     check("FAILED EXTRACTION: the successor's prompt is the next step, then says the "
-          "session-dialog could not be extracted and gives the transcript's path",
+          "session-dialog could not be extracted and gives the path of the transcript, "
+          "which is in another seat's project folder",
           successor_prompt.startswith(
               "carry on\n\n(Recovered at a handoff: the previous session's conversation-tail "
               "is unavailable, because the handoff-supervisor could not extract session "
               f"{writer_session_id}'s session-dialog; this next-step and the repository are "
               f"your context, and that session's transcript is "
-              f"{projects / (writer_session_id + '.jsonl')}, which you can read when the "
-              "next-step leaves out something you need.) "),
+              f"{other_project_directory / (writer_session_id + '.jsonl')}, which you can read "
+              "when the next-step leaves out something you need.) "),
           successor_prompt[:600])
-    last_prompt = launched_prompts[2] if len(launched_prompts) > 2 else ""
-    check("FAILED EXTRACTION: when the writer's transcript is not where it should be, the "
-          "successor's prompt says so instead of sending it there",
-          last_prompt.startswith(
+    no_transcript_prompt = launched_prompts[2] if len(launched_prompts) > 2 else ""
+    check("FAILED EXTRACTION: when no project folder holds the writer's transcript, the "
+          "successor's prompt says it is not where it was expected nor in any other project "
+          "folder, and that the next step and the repository are its whole context",
+          no_transcript_prompt.startswith(
               "carry on further\n\n(Recovered at a handoff: the previous session's "
               "conversation-tail is unavailable, because the handoff-supervisor could not "
               f"extract session {writer_without_a_transcript}'s session-dialog, and that "
               "session's transcript is not at "
-              f"{projects / (writer_without_a_transcript + '.jsonl')}; this next-step and the "
+              f"{keyed_project_directory / (writer_without_a_transcript + '.jsonl')} or in any "
+              f"other folder under {supervisor.PROJECTS_ROOT}/; this next-step and the "
               "repository are your whole context.) "),
-          last_prompt[:600])
+          no_transcript_prompt[:900])
+    two_folders_prompt = launched_prompts[3] if len(launched_prompts) > 3 else ""
+    check("FAILED EXTRACTION: when two project folders hold the writer's transcript, the "
+          "successor's prompt names both, joined by \"and\"",
+          two_folders_prompt.startswith(
+              "carry on still\n\n(Recovered at a handoff: the previous session's "
+              "conversation-tail is unavailable, because the handoff-supervisor could not "
+              f"extract session {writer_in_two_project_folders}'s session-dialog; this "
+              "next-step and the repository are your context, and that session's transcript "
+              "is in more than one folder, at "
+              f"{another_project_directory / (writer_in_two_project_folders + '.jsonl')} and "
+              f"{other_project_directory / (writer_in_two_project_folders + '.jsonl')}, which "
+              "you can read when the next-step leaves out something you need.) "),
+          two_folders_prompt[:900])
     check("FAILED EXTRACTION: each handoff is consumed",
-          state.get("consumed_counter") == 2, str(state))
+          state.get("consumed_counter") == 3, str(state))
 
 
 def process_is_gone_within_seconds(process_id: int, seconds: float) -> bool:
