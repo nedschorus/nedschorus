@@ -149,5 +149,44 @@ with tempfile.TemporaryDirectory() as directory:
           and "1 matching user message(s)" in run.stdout,
           f"exit {run.returncode}: {run.stdout}{run.stderr}")
 
+def search(directory, *arguments):
+    return subprocess.run([sys.executable, str(SEARCH_SCRIPT), "--projects-dir", directory, *arguments],
+                          capture_output=True, text=True)
+
+
+with tempfile.TemporaryDirectory() as directory:
+    write_transcript(directory, [typed("the alpha plan"), agent("ok")], name="one.jsonl")
+    write_transcript(directory, [typed("alpha then beta"), agent("ok")], name="two.jsonl")
+    write_transcript(directory, [typed("nothing here"), agent("ok")], name="three.jsonl")
+    run = search(directory, "BETA")
+    check("the prefilter reads only the transcripts that hold a pattern's text, and still finds the hit",
+          run.returncode == 0 and "USER: alpha then beta" in run.stdout
+          and "in 3 transcript(s), 1 of which held a pattern's text and were read" in run.stdout,
+          f"exit {run.returncode}: {run.stdout}{run.stderr}")
+    run = search(directory, "alpha", "beta", "--all-terms")
+    check("with --all-terms, a transcript is read only when it holds every pattern's text",
+          "1 matching user message(s)" in run.stdout and "1 of which held a pattern's text" in run.stdout,
+          f"exit {run.returncode}: {run.stdout}{run.stderr}")
+    run = search(directory, "alpha", "beta")
+    check("without --all-terms, a transcript holding any pattern's text is read",
+          "2 matching user message(s)" in run.stdout and "2 of which held a pattern's text" in run.stdout,
+          f"exit {run.returncode}: {run.stdout}{run.stderr}")
+    run = search(directory, "alpha.plan")
+    check("a pattern that could match text JSON escapes gets no prefilter: every transcript is read",
+          "1 matching user message(s)" in run.stdout and "3 of which held a pattern's text" in run.stdout,
+          f"exit {run.returncode}: {run.stdout}{run.stderr}")
+
+    paths = sorted(str(path) for path in Path(directory).glob("*/*.jsonl"))
+    real_search = search_module.claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcripts_matching_any_pattern_ignoring_case
+    search_module.claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcripts_matching_any_pattern_ignoring_case = (
+        lambda *_, **__: ([], ["ripgrep could not search everything: injected failure"]))
+    try:
+        kept, note = search_module.claude_code_session_transcript_paths_prefilter_on_raw_json(directory, paths, ["beta"], False)
+    finally:
+        search_module.claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcripts_matching_any_pattern_ignoring_case = (
+            real_search)
+    check("a prefilter search that fails reads every transcript, and says why",
+          kept == paths and "injected failure" in note and "every transcript was read" in note, (kept, note))
+
 print(f"{'FAILED' if failures else 'all cases passed'}: {len(failures)} failure(s)")
 sys.exit(1 if failures else 0)
