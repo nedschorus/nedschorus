@@ -27,6 +27,10 @@ A rule holds when something fires at the moment the rule applies. This issue giv
 
 3. **The idle sweep.** A scheduled job, installed through `nc-systems/general-tools/scheduled-jobs-on-each-machine.json` like the jobs already there, runs on ned-box every 5 minutes. It looks for an agent-seat that is idle while it has something to do. The idle check cannot reach such an agent-seat, because an idle agent ends no turns. § The idle sweep, below, says how the job finds one and how it wakes it.
 
+GHI 14's promise check, its item 3, is narrowed to depend on this issue in an edit of the same day: a promise passes when the same turn created or updated a task with a due time or a checkable prerequisite.
+
+GHI [Relaunch stopped agent-seats with open tasks daily](https://github.com/nedschorus/nedschorus/issues/936) also reads agent-seat task lists on a schedule, to relaunch agent-seats that stopped; the idle sweep and that issue's job may share one reader of the task files.
+
 ## The idle sweep
 
 ### Why
@@ -51,28 +55,29 @@ Code decides, from facts on disk; no model runs while every agent-seat is busy o
 
 - Its current agent-session's transcript, `~/.claude/projects/<project folder>/<session id>.jsonl`, and every transcript under that agent-session's `subagents/` directory, gained no record that spent tokens (an `assistant` record with `usage`) in the last 15 minutes.
 - Its last turn ended: the last record of the agent-session's own transcript is the `turn_duration` system record, or a later record that is not a request to the model.
-- It is not waiting on the user: its last message does not ask him a question and no approval-walk item is waiting on him. This is the one test that needs judgment, so the model of the next section makes it.
+- No approval-walk item is waiting on the user: no walk-minutes file of the agent-seat's has a last `#next_to_present` line other than `#next_to_present none, closed`.
 
-A background command or watch the agent-seat started spends no tokens while it runs, so an agent-seat waiting on one looks idle. The model reads what the agent said it was waiting for, and the job does not nudge again about the same wait sooner than the user's escalation rule allows.
+Code also reads from the transcript what the agent-seat is waiting on, and since when: each background command it started (a tool call with `run_in_background`) with no completion notice after it, and each subagent whose own transcript under `subagents/` has changed in the last 15 minutes.
 
 ### Who decides, and what is sent
 
-When code finds an agent-seat idle, the job hands a cheap model, such as Claude Haiku, the agent-seat's last message, its open tasks that nothing holds, any handoff deferral marker file under `~/.claude/handoffs/`, and the commands or watches it said it was waiting on. The model answers with one of these, as a JSON object the job checks:
+When code finds an agent-seat idle, the job hands a cheap model, such as Claude Haiku, in one `claude -p` call with no tools, the agent-seat's last message, its open tasks that nothing holds, any handoff deferral marker file under `~/.claude/handoffs/`, and what code found it waiting on, with how long each has run. The model judges one thing: whether the agent-seat has something it could do now, or is rightly waiting on the user or on work still running. It answers with the JSON object `{"wake": true or false, "reason": "<one line>"}`, which the job checks.
 
-- **nothing**: the agent-seat is waiting on the user, or on work that is still running and has not run long.
-- **nudge**, with a short reason: the message is "." followed by one line naming what the model saw, such as "You announced "I'm starting the PR 1633 work now" 15 minutes ago and have not started it", or "Your handoff was put off at 22:54Z; is now a good time to hand off?".
-- **escalate**: a nudge was sent about the same wait, and the agent-seat answered that something was still running; the message is the user's "you've given this X minutes, please check; if not sure, hand off".
-- **tell the user**: the agent-seat stayed idle after an escalation.
+The rest is code, kept in a log of each message the job sent, with its time, in the log-store:
+
+- **nudge**: on the first `wake`, the job sends one message whose first line is "." and whose second line is the model's reason, such as "You announced "I'm starting the PR 1633 work now" 15 minutes ago and have not started it", or "Your handoff was put off at 22:54Z; is now a good time to hand off?".
+- **escalate**: when the agent-seat is idle again X minutes after a nudge, and the model still answers `wake`, the job sends the user's text, with X filled in: "You've given this X minutes, please check; if not sure, hand off".
+- **tell the user**: when the agent-seat is idle again X minutes after an escalation, the job tells the user instead of the agent-seat.
 
 ### How the message reaches the agent-seat
 
-Proposed: the job starts the cheap model as a headless agent-session, `claude -p --model haiku`, with only the tools ListAgents and SendMessage allowed, and that agent-session sends the message with SendMessage, Claude Code's cross-session messaging, to the agent-seat by its name. Nothing types into a tmux window. On 2026-10-30 a headless Haiku agent-session started this way listed all nine agent-seats on ned-box, each with its tmux pane and whether it was busy or idle, and delivered a message into reboot-test's agent-session, which received it while busy. GHI [Claude turn/start and turn/steer equivalents: inject a message into an idle session, steer an active turn](https://github.com/nedschorus/nedschorus/issues/37) records, in its outcome of 2026-09-18, that a cross-session message wakes an idle agent-session, which then processes it.
+Proposed: the job starts a second headless agent-session, `claude -p --model haiku`, with only the tools ListAgents and SendMessage allowed, and tells it to send the job's text, word for word, with SendMessage, Claude Code's cross-session messaging, to the agent-seat by its name. Nothing types into a tmux window. On 2026-10-30 a headless Haiku agent-session started this way listed all nine agent-seats on ned-box, each with its tmux pane and whether it was busy or idle, and delivered a message into reboot-test's agent-session, which received it while busy. GHI [Claude turn/start and turn/steer equivalents: inject a message into an idle session, steer an active turn](https://github.com/nedschorus/nedschorus/issues/37) records, in its outcome of 2026-09-18, that a cross-session message wakes an idle agent-session, which then processes it. Each `claude -p` call is stopped after 5 minutes; a call that fails or is stopped is reported to the user.
 
 Three limits remain:
 
 - Cross-session messages stay on one machine, so the Mac's agent-seats need a job running on the Mac; GHI [Seat mailboxes across machines and runtimes](https://github.com/nedschorus/nedschorus/issues/749) records the limit. ned-box comes first.
-- A message can reach a stale offline Remote Control entry instead of the running agent-session, as GHI [Cross-session messages between agent-seats reach stale offline Remote Control entries instead of the live agent-session](https://github.com/nedschorus/nedschorus/issues/1115) records. The job checks the agent-seat's transcript for the message after sending it, and tells the user when the message is not there.
-- Each wake starts one Haiku agent-session; on most runs the job starts none, because code finds no idle agent-seat.
+- A message can go to an old offline entry that Remote Control left in the list of agent-sessions, instead of the running agent-session, as GHI [Cross-session messages between agent-seats reach stale offline Remote Control entries instead of the live agent-session](https://github.com/nedschorus/nedschorus/issues/1115) records. On 2026-10-30, ListAgents showed three entries named prime-intellect: the running agent-session on ned-box and two Remote Control entries, from 3 and 18 days before. The job therefore sends to the entry ListAgents shows on this machine, by its name and its ref, such as `prime-intellect [2c0a77]`, looks for the message's text, word for word, in the agent-seat's transcript a minute after sending it, and tells the user when it is not there.
+- Each agent-seat found idle costs one or two Haiku calls; on most runs the job makes none, because code finds no idle agent-seat.
 
 The 3-hourly wake of GHI [Wake an agent-seat when its 5-hour session limit resets](https://github.com/nedschorus/nedschorus/issues/1152) and this job do overlapping work. If the user chooses this job, GHI 1152's wake is not built, and the job also wakes an agent-seat whose 5-hour session limit has reset.
 
@@ -80,10 +85,6 @@ The 3-hourly wake of GHI [Wake an agent-seat when its 5-hour session limit reset
 
 1. **The route.** A supervising program sends the message as a cross-session message, as proposed above, replacing GHI 1152's in-session wake; or the in-session wake of GHI 1152 stays, with a shorter interval, and the job only finds idle agent-seats and tells the user.
 2. **The numbers.** 15 minutes of no token spend before an agent-seat counts as idle; X = 30 minutes before an escalation; and the job running every 5 minutes.
-
-GHI 14's promise check, its item 3, is narrowed to depend on this issue in an edit of the same day: a promise passes when the same turn created or updated a task with a due time or a checkable prerequisite.
-
-GHI [Relaunch stopped agent-seats with open tasks daily](https://github.com/nedschorus/nedschorus/issues/936) also reads agent-seat task lists on a schedule, to relaunch agent-seats that stopped; the hourly sweep and that issue's job may share one reader of the task files.
 
 ## More kinds of prerequisite, in two phases
 
@@ -117,7 +118,7 @@ Each new `waits_on` kind's key names are chosen in the pull request that builds 
 #### Open questions for the user
 
 1. **Where item 3 is recorded.** `waits_on` holds only what a task waits on. Does what waits on a task get a `metadata` field of its own, or is it derived by reading every other `waits_on` that names the task, which works only for things that have task lists? And which agent-seat is told when the waiting thing is a GHI, since a GHI names no agent-seat?
-2. **Who looks.** Either each agent-seat's idle check reads the other lists it needs, from the log-store's copies, at the end of each turn; or one program on ned-box reads every list and tells each agent-seat, which is the hourly sweep of § What to build, item 3; or the program that finishes the thing, such as the merge program `scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py` or the approval-walk's `close` step, tells the waiting agent-seats at once. The third catches nothing finished outside those programs, such as a GHI closed in the GitHub web page or a pull request closed there.
+2. **Who looks.** Either each agent-seat's idle check reads the other lists it needs, from the log-store's copies, at the end of each turn; or one program on ned-box reads every list and tells each agent-seat, which is the idle sweep of § What to build, item 3; or the program that finishes the thing, such as the merge program `scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py` or the approval-walk's `close` step, tells the waiting agent-seats at once. The third catches nothing finished outside those programs, such as a GHI closed in the GitHub web page or a pull request closed there.
 3. **How the approval-walk answer is published.** For item 1 to work across agent-seats and machines, the `close` step could write a record of each answer to the log-store at once, or the walk-minutes could be shipped to the log-store after each answer. Which one?
 4. **How a Mac agent-seat is told.** A program on ned-box can read the Mac's lists but has no agreed route into a Mac agent-session; GHI 1203 tells the user in that case. Is that right here too, or does each Mac agent-seat's own idle check do the reading?
 5. **Which cancellations count.** Is a GHI closed as not planned a cancelled prerequisite under item 4, or met, as today? Is an approval-walk item deferred once still waiting, or cancelled? When one of a task's several `waits_on` conditions is cancelled, is the agent-seat told at once, or only once the others hold?
