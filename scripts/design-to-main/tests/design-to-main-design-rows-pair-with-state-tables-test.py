@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Sections 3.1 and 3.2 of the design-to-main state-machine design, read
 from the design file in the checkout this test runs in, paired with
-STATE_TABLE and TRANSITION_TABLE in design-to-main-state-tables.py.
+STATE_TABLE and TRANSITION_TABLE in design-to-main-state-tables-common.py.
 
 User-ruled 2026-09-16, the eleventh design walk
 (design-state-tables-source-of-truth-and-checker), item 2.2: both copies
@@ -44,12 +44,21 @@ import unittest
 
 MACHINE_DIRECTORY = pathlib.Path(__file__).resolve().parent.parent
 REPOSITORY_ROOT = MACHINE_DIRECTORY.parent.parent
-DESIGN_PATH = REPOSITORY_ROOT / "docs" / "design-to-main" / "design-to-main-state-machine-design.md"
+DESIGN_RELATIVE_PATH = "docs/design-to-main/design-to-main-state-machine-design.md"
+DESIGN_PATH = REPOSITORY_ROOT / DESIGN_RELATIVE_PATH
+STATE_TABLES_RELATIVE_PATH = "scripts/design-to-main/design-to-main-state-tables-common.py"
+
+_rule_failure_lines_spec = importlib.util.spec_from_file_location(
+    "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py")
+RULE_FAILURE_LINES = importlib.util.module_from_spec(_rule_failure_lines_spec)
+_rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)
 
 
 def load_state_tables_module():
     spec = importlib.util.spec_from_file_location(
-        "design_to_main_state_tables", MACHINE_DIRECTORY / "design-to-main-state-tables.py")
+        "design_to_main_state_tables", MACHINE_DIRECTORY / "design-to-main-state-tables-common.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -328,8 +337,75 @@ def replace_transition_row(number, **changes):
                  for row in T.TRANSITION_TABLE)
 
 
+COPIES_DISAGREE_FIX_LINES = (
+    "If your change edited one copy by mistake, undo that edit.",
+    "If your change edited a copy on purpose, make the same change in the other copy, so that "
+    "both say the same.",
+    RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(DESIGN_RELATIVE_PATH),
+    RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE)
+
+TRANSITION_ROWS_DISAGREE_FAILURE_MESSAGE = "\n".join((
+    f"section 3.2 of {DESIGN_RELATIVE_PATH} and TRANSITION_TABLE in {STATE_TABLES_RELATIVE_PATH} "
+    f"disagree on the rows listed above; both copies are edited by hand, section 3.2 deciding "
+    f"what a transition is and the code what it does.",) + COPIES_DISAGREE_FIX_LINES)
+STATES_DISAGREE_FAILURE_MESSAGE = "\n".join((
+    f"section 3.1 of {DESIGN_RELATIVE_PATH} and STATE_TABLE in {STATE_TABLES_RELATIVE_PATH} "
+    f"disagree on the states listed above; both copies of the states and their sub-states are "
+    f"edited by hand and must list the same.",) + COPIES_DISAGREE_FIX_LINES)
+PACKAGES_DISAGREE_FAILURE_MESSAGE = "\n".join((
+    f"section 3.1's package column in {DESIGN_RELATIVE_PATH} and STATE_TABLE's "
+    f"package_beyond_standard in {STATE_TABLES_RELATIVE_PATH} disagree on the states listed "
+    f"above; the code's text is what a launched agent receives, so the design's column must say "
+    f"the same.",) + COPIES_DISAGREE_FIX_LINES)
+
+
+def phrase_no_row_uses_failure_message(cell, phrase, where):
+    return "\n".join([
+        f'no row of section 3.2 of {DESIGN_RELATIVE_PATH} has {cell} "{phrase}"; this suite reads '
+        f"the rows by that phrase, and a phrase no row uses leaves its reading untested by the "
+        f"design, where a later row could fall into it by accident.",
+        "If your change reworded those cells by mistake, put the phrase back.",
+        f"If the new wording is meant to stay, change {where} in this suite to the new wording.",
+        f"If no row should use the phrase any more, remove it from {where}, with the code in this "
+        f"suite that reads it.",
+        RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(DESIGN_RELATIVE_PATH),
+        RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
+
+
+def assert_the_design_and_the_code_pair(test, prose_rows):
+    test.assertEqual(
+        transition_row_pairing_mismatches(prose_rows, T.TRANSITION_TABLE, T.STATE_TABLE), [],
+        TRANSITION_ROWS_DISAGREE_FAILURE_MESSAGE)
+
+
+def assert_every_phrase_the_matcher_reads_is_used(test, prose_rows):
+    from_cells = [row.from_cell for row in prose_rows]
+    trigger_cells = [row.trigger_cell for row in prose_rows]
+    to_cells = [row.to_cell for row in prose_rows]
+    for constant_name, phrase in (
+            ("FROM_CELL_PHRASE_ANY_REVIEWING_STATE_BUT", FROM_CELL_PHRASE_ANY_REVIEWING_STATE_BUT),
+            ("FROM_CELL_PHRASE_A_REVIEWING_SUB_STATE_BY_AGENT",
+             FROM_CELL_PHRASE_A_REVIEWING_SUB_STATE_BY_AGENT)):
+        test.assertTrue(any(cell.startswith(phrase) for cell in from_cells),
+                        phrase_no_row_uses_failure_message(
+                            "a From cell starting with", phrase, constant_name))
+    for phrase in TRIGGER_CELL_PHRASES_NAMING_VERDICTS:
+        test.assertTrue(any(phrase in cell for cell in trigger_cells),
+                        phrase_no_row_uses_failure_message(
+                            "a Trigger cell containing", phrase,
+                            "that key of TRIGGER_CELL_PHRASES_NAMING_VERDICTS"))
+    for phrase in TO_CELL_PHRASE_OF_DESTINATION_MARKER.values():
+        test.assertTrue(any(phrase in cell for cell in to_cells),
+                        phrase_no_row_uses_failure_message(
+                            "a To cell containing", phrase,
+                            "that value of TO_CELL_PHRASE_OF_DESTINATION_MARKER"))
+
+
 class DesignRowsPairWithTheCode(unittest.TestCase):
     """The design on disk against the tables as they stand."""
+
+    # Section 3.2's message follows every disagreeing row, which unittest otherwise shortens.
+    maxDiff = None
 
     @classmethod
     def setUpClass(cls):
@@ -337,32 +413,22 @@ class DesignRowsPairWithTheCode(unittest.TestCase):
         cls.prose_rows = section_3_2_prose_rows(cls.design_text)
 
     def test_every_section_3_2_row_pairs_with_its_transition_table_row(self):
-        self.assertEqual(
-            transition_row_pairing_mismatches(self.prose_rows, T.TRANSITION_TABLE, T.STATE_TABLE), [])
+        assert_the_design_and_the_code_pair(self, self.prose_rows)
 
     def test_every_section_3_1_state_is_a_state_table_state_and_back(self):
         self.assertEqual(
             state_pairing_mismatches(section_3_1_states_and_sub_states(self.design_text),
-                                     T.STATE_TABLE), [])
+                                     T.STATE_TABLE), [], STATES_DISAGREE_FAILURE_MESSAGE)
 
     def test_every_section_3_1_package_cell_is_the_state_table_row_s_text(self):
         self.assertEqual(
             package_column_mismatches(section_3_1_packages_beyond_standard(self.design_text),
-                                      T.STATE_TABLE), [])
+                                      T.STATE_TABLE), [], PACKAGES_DISAGREE_FAILURE_MESSAGE)
 
     def test_every_phrase_the_matcher_reads_is_in_the_design(self):
         # A phrase the design no longer uses would make its reading dead
         # code that a later row could fall into by accident.
-        from_cells = [row.from_cell for row in self.prose_rows]
-        trigger_cells = [row.trigger_cell for row in self.prose_rows]
-        to_cells = [row.to_cell for row in self.prose_rows]
-        for phrase in (FROM_CELL_PHRASE_ANY_REVIEWING_STATE_BUT,
-                       FROM_CELL_PHRASE_A_REVIEWING_SUB_STATE_BY_AGENT):
-            self.assertTrue(any(cell.startswith(phrase) for cell in from_cells), phrase)
-        for phrase in TRIGGER_CELL_PHRASES_NAMING_VERDICTS:
-            self.assertTrue(any(phrase in cell for cell in trigger_cells), phrase)
-        for marker, phrase in TO_CELL_PHRASE_OF_DESTINATION_MARKER.items():
-            self.assertTrue(any(phrase in cell for cell in to_cells), marker)
+        assert_every_phrase_the_matcher_reads_is_used(self, self.prose_rows)
 
 
 class TheMatcherFailsOnDrift(unittest.TestCase):
@@ -477,6 +543,92 @@ class TheMatcherFailsOnDrift(unittest.TestCase):
         emptied = dict(packages, **{T.TEST_SUITE_EXECUTING: ""})
         self.assertEqual([m.split(":")[0] for m in package_column_mismatches(emptied, T.STATE_TABLE)],
                          ["state %s" % T.TEST_SUITE_EXECUTING])
+
+
+class EachFailureMessageNamesTheRuleAndOneFixPerCause(unittest.TestCase):
+    """Each real-design assertion, made to fail on a planted input, prints the approved lines."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.design_text = DESIGN_PATH.read_text()
+        cls.prose_rows = section_3_2_prose_rows(cls.design_text)
+
+    def failure_message(self, assertion, *arguments):
+        class Collector(unittest.TestCase):
+            maxDiff = None
+
+            def runTest(inner):
+                assertion(inner, *arguments)
+
+        result = unittest.TestResult()
+        Collector().run(result)
+        self.assertEqual(result.errors, [], "the planted input raised instead of failing")
+        failures = [text for _test, text in result.failures]
+        self.assertTrue(failures, "the planted input did not fail the assertion")
+        return failures[0]
+
+    def test_a_section_3_2_row_changed_prints_the_row_then_the_rule_and_one_fix_per_cause(self):
+        edited = [dataclasses.replace(row, to_cell=row.to_cell.replace(
+            "`test-design-writing`", "`implementation-writing`", 1)) if row.row == "24" else row
+                  for row in self.prose_rows]
+        message = self.failure_message(assert_the_design_and_the_code_pair, edited)
+        self.assertIn("row 24", message)
+        self.assertTrue(message.rstrip().endswith("\n".join([
+            "section 3.2 of docs/design-to-main/design-to-main-state-machine-design.md and "
+            "TRANSITION_TABLE in scripts/design-to-main/design-to-main-state-tables-common.py "
+            "disagree on the rows listed above; both copies are edited by hand, section 3.2 "
+            "deciding what a transition is and the code what it does.",
+            "If your change edited one copy by mistake, undo that edit.",
+            "If your change edited a copy on purpose, make the same change in the other copy, so "
+            "that both say the same.",
+            RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(DESIGN_RELATIVE_PATH),
+            RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])), message)
+
+    def test_the_section_3_1_messages_name_both_copies_and_end_with_the_same_fix_lines(self):
+        fix_lines = [
+            "If your change edited one copy by mistake, undo that edit.",
+            "If your change edited a copy on purpose, make the same change in the other copy, so "
+            "that both say the same.",
+            RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(DESIGN_RELATIVE_PATH),
+            RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE]
+        self.assertEqual(STATES_DISAGREE_FAILURE_MESSAGE.split("\n"), [
+            "section 3.1 of docs/design-to-main/design-to-main-state-machine-design.md and "
+            "STATE_TABLE in scripts/design-to-main/design-to-main-state-tables-common.py disagree "
+            "on the states listed above; both copies of the states and their sub-states are edited "
+            "by hand and must list the same."] + fix_lines)
+        self.assertEqual(PACKAGES_DISAGREE_FAILURE_MESSAGE.split("\n"), [
+            "section 3.1's package column in docs/design-to-main/design-to-main-state-machine-design.md "
+            "and STATE_TABLE's package_beyond_standard in "
+            "scripts/design-to-main/design-to-main-state-tables-common.py disagree on the states "
+            "listed above; the code's text is what a launched agent receives, so the design's "
+            "column must say the same."] + fix_lines)
+
+    def test_a_from_cell_phrase_no_row_uses_prints_where_to_change_it(self):
+        edited = [dataclasses.replace(row, from_cell=row.from_cell.replace(
+            FROM_CELL_PHRASE_ANY_REVIEWING_STATE_BUT, "every reviewing state except ", 1))
+                  for row in self.prose_rows]
+        message = self.failure_message(assert_every_phrase_the_matcher_reads_is_used, edited)
+        self.assertTrue(message.rstrip().endswith("\n".join([
+            'no row of section 3.2 of docs/design-to-main/design-to-main-state-machine-design.md '
+            'has a From cell starting with "any reviewing state but "; this suite reads the rows by '
+            "that phrase, and a phrase no row uses leaves its reading untested by the design, where "
+            "a later row could fall into it by accident.",
+            "If your change reworded those cells by mistake, put the phrase back.",
+            "If the new wording is meant to stay, change FROM_CELL_PHRASE_ANY_REVIEWING_STATE_BUT "
+            "in this suite to the new wording.",
+            "If no row should use the phrase any more, remove it from "
+            "FROM_CELL_PHRASE_ANY_REVIEWING_STATE_BUT, with the code in this suite that reads it.",
+            RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(DESIGN_RELATIVE_PATH),
+            RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])), message)
+
+    def test_a_to_cell_phrase_no_row_uses_prints_the_phrase_not_the_marker(self):
+        phrase = TO_CELL_PHRASE_OF_DESTINATION_MARKER[T.TO_BOTH_WRITERS_FRESH]
+        edited = [dataclasses.replace(row, to_cell=row.to_cell.replace(phrase, "the writers", 1))
+                  for row in self.prose_rows]
+        message = self.failure_message(assert_every_phrase_the_matcher_reads_is_used, edited)
+        self.assertIn(f'has a To cell containing "{phrase}"', message)
+        self.assertIn("change that value of TO_CELL_PHRASE_OF_DESTINATION_MARKER in this suite",
+                      message)
 
 
 if __name__ == "__main__":

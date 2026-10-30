@@ -131,8 +131,9 @@ skill owns each kind.
 WHO CALLS IT. nc-systems/cold-read/cold-read-grid.py at the end of every run, whatever the
 outcome; the agent after writing triage.md (the cold-read skill's step
 7); nc-systems/cold-read/cold-read-fast-read.py when it writes into cold-read-records/.
-A shipping failure never fails the cold read: the caller prints this
-program's one line and goes on. `--all` ships every directory under
+Whenever this program's line is not `shipped:`, a calling program prints the
+line, finishes its run and keeps its reports, and then exits 1, or the nonzero
+code its run has for another reason. `--all` ships every directory under
 cold-read-records/ in this checkout, continuing past a refused or failed one
 and listing them at the end; being add-only it is safe over directories
 already in the store, which is how a seat catches up after the box was down,
@@ -179,14 +180,12 @@ import tempfile
 import textwrap
 import typing
 
-# This file sits in nc-systems/cold-read/, two directories below the root.
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 # What a cold-read-record is called and where it lives, defined once in a
 # module so no program keeps its own copy. importlib, because the filename
 # has hyphens.
 _record_names_spec = importlib.util.spec_from_file_location(
     "cold_read_record_names",
-    pathlib.Path(__file__).with_name("cold-read-record-names.py"))
+    pathlib.Path(__file__).with_name("cold-read-record-names-common.py"))
 record_names = importlib.util.module_from_spec(_record_names_spec)
 _record_names_spec.loader.exec_module(record_names)
 RECORDS_DIR = record_names.RECORDS_DIR
@@ -205,7 +204,7 @@ DESTINATION_ENVIRONMENT_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 # name is add-only like the rest of that directory. nc-systems/cold-read/cold-read-grid.py
 # names the same file in the prose it hands the agent, which is prose naming a
 # file rather than a second definition of a path a program builds -- the
-# distinction nc-systems/cold-read/tests/cold-read-record-names-test.py draws.
+# distinction nc-systems/cold-read/tests/cold-read-record-names-common-test.py draws.
 TRIAGE_FILE_REPLACED_IN_THE_STORE = "triage.md"
 
 SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
@@ -263,25 +262,25 @@ What each kind holds and how its files are named is decided by its owner,
 in the nedschorus repository, which this machine also clones:
 
 - `cold-read-records/` -- cold-read-records, named by
-  `nc-systems/cold-read/cold-read-record-names.py`
+  `nc-systems/cold-read/cold-read-record-names-common.py`
 - `sanity-check-records/` -- the /sanity-check skill's records, shipped by
   `scripts/sanity-check-record-ship.py`
 - `walk/` -- approval-walk files, named by the walk-me-through skill, shipped
   by `scripts/walk-files-ship.py`
-- `transcripts/` -- each machine's session transcripts, handoffs, task
-  lists, seat-briefs and global CLAUDE.md, mirrored by
+- `agent-session-files-by-machine/` -- each machine's session transcripts, handoffs,
+  task lists, seat-briefs and global CLAUDE.md, mirrored by
   `scripts/transcript-mirror-to-log-store.py`
 - `session-dialogs/` -- each mirrored session's complete filtered dialog,
   kept current by `scripts/log-store-session-dialogs-refresh-nbd.py`
 - `seats/` -- a seat's shared files, shipped by
   `scripts/seat-shared-file-ship.py`
 - `analysis/` -- analyses, placed by hand
-- `daily-full-test-runs/` -- each machine's daily run of every test suite on
+- `daily-full-test-runs/` -- each machine's daily run of every nc-test-suite on
   main, written by `scripts/daily-full-test-run-of-main.py`
 - `pull-request-head-test-runs/` -- each machine's test log of a pull request's
   head, one per commit, written by `scripts/pull-request-head-test-run.py`
 - `daily-memory-review-marks/` -- the daily memory review's started and done
-  marks, written by `nc-systems/handoff/daily-memory-review-mark.py`
+  marks, written by `nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py`
 - `handoff-agent-seat-died-without-session-handoff-restart-watcher/` -- each decision of ned-box's
   crash watcher and the notices it showed the user, written by
   `nc-systems/handoff/handoff-agent-seat-died-without-session-handoff-restart-watcher.py`
@@ -289,10 +288,18 @@ in the nedschorus repository, which this machine also clones:
   machine's weekly check that the work-snapshot hook finds a real claude
   session, written by
   `nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py`
-- `guarded-file-versions-and-approvals/` -- each machine's copies of every
-  version of a guarded file and the record of which versions the user
-  approved, written by
+- `ghi-guide-agent-proposed-improvements-or-changes/` -- ghi-guide-agent's ruling questions
+  about GHI-MDs, each a proposed-improvements-or-changes-file settled in
+  place, written by `scripts/ghi-issue-write.py`
+- `guarded-file-versions-and-approvals/` -- each machine's log of every
+  version of a guarded file, with its git blob id and the time it was seen, a
+  copy of each version its checkout's branch HEAD did not hold, and the record
+  of which versions the user approved, written by
   `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`
+- `bash-guards-replay-changed-verdict-or-failed-run-log-directories/` -- the
+  Bash guards replay's step logs and differences files, one directory per
+  replay that exited 1 or 2, written by
+  `nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py`
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file
@@ -344,19 +351,64 @@ def provenance_comment_of(first_line: str) -> str:
     return line if line.startswith(PROVENANCE_COMMENT_PREFIX) else "(no provenance comment)"
 
 
+def one_line(error_text: str) -> str:
+    """ssh's error text on one line, since it goes into the one stdout line."""
+    return " ".join(error_text.split()) or "no error text"
+
+
+def local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(step):
+    """Run `step`, a store operation's filesystem calls when the store is
+    local, and return (process, the step's value). An OSError is returned as
+    the failed result the ssh path returns, exit 1 and a value of None, so a
+    caller that handles the remote failure handles the local one too; stdout
+    carries the OS's reason, for the FAILED line, and stderr the error."""
+    try:
+        return subprocess.CompletedProcess([], 0, "", ""), step()
+    except OSError as failed:
+        return subprocess.CompletedProcess([], 1, failed.strerror or str(failed),
+                                           f"{failed}\n"), None
+
+
+def failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+        host, completed: subprocess.CompletedProcess) -> str:
+    """The reason a FAILED line gives for a store step that returned the
+    failed result. A local store's step carries the OS's reason in stdout
+    (see the wrapper above), and its exit 1 must not read as an ssh exit."""
+    if host is None:
+        return completed.stdout
+    if completed.returncode == RSYNC_EXIT_CONNECTION_FAILED:
+        return "ned-box unreachable"
+    return f"ssh exit {completed.returncode}"
+
+
+class FirstLineUnreadable(Exception):
+    """A file's first line could not be read; the message says why."""
+
+
 def local_first_line(path: pathlib.Path) -> str:
     try:
         with path.open(encoding="utf-8", errors="replace") as handle:
             return handle.readline()
-    except OSError:
-        return ""
+    except OSError as error:
+        raise FirstLineUnreadable(str(error)) from None
 
 
 def remote_first_line(host: str, path: pathlib.PurePosixPath) -> str:
     completed = subprocess.run(
         SSH_COMMAND + [host, f"head -n 1 -- '{path}'"],
         capture_output=True, text=True, check=False)
-    return completed.stdout if completed.returncode == 0 else ""
+    if completed.returncode != 0:
+        raise FirstLineUnreadable(
+            f"ssh exit {completed.returncode}: {one_line(completed.stderr)}")
+    return completed.stdout
+
+
+def described_provenance_comment(read_first_line, *arguments) -> str:
+    """The provenance comment the file's first line holds, or why that line could not be read."""
+    try:
+        return provenance_comment_of(read_first_line(*arguments))
+    except FirstLineUnreadable as failure:
+        return f"(could not be read: {failure})"
 
 
 def rsync_command(host, source: pathlib.Path, target: pathlib.PurePosixPath, *extra) -> list:
@@ -503,9 +555,14 @@ def ensure_store(host, records_path: pathlib.PurePosixPath) -> subprocess.Comple
     UTF-8; see `make_directory_and_refresh_readme_script`."""
     root = records_path.parent
     if host is None:
-        pathlib.Path(records_path).mkdir(parents=True, exist_ok=True)
-        refresh_store_readme(root)
-        return subprocess.CompletedProcess([], 0, "", "")
+
+        def make_directory_and_refresh_readme():
+            pathlib.Path(records_path).mkdir(parents=True, exist_ok=True)
+            refresh_store_readme(root)
+
+        completed, _ = local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
+            make_directory_and_refresh_readme)
+        return completed
     script = make_directory_and_refresh_readme_script(records_path, root)
     return subprocess.run(SSH_COMMAND + [host, script], input=STORE_README,
                           capture_output=True, text=True, encoding="utf-8",
@@ -525,7 +582,7 @@ def store_inventory(host, store_dir: pathlib.PurePosixPath):
     """{relative path: sha256} of the store's copy of this cold-read-record,
     and the process that produced it. An absent directory is an empty
     inventory with exit 0; an unreachable host is ssh's exit 255 and an
-    inventory of None.
+    inventory of None, and a local read that fails is exit 1 and None.
 
     sha256 on both sides -- Python's hashlib here, sha256sum on ned-box -- is
     the digest the cold-read-grid already records for the cold-read-target, so
@@ -536,8 +593,8 @@ def store_inventory(host, store_dir: pathlib.PurePosixPath):
     """
     if host is None:
         directory = pathlib.Path(store_dir)
-        inventory = local_inventory(directory) if directory.is_dir() else {}
-        return subprocess.CompletedProcess([], 0, "", ""), inventory
+        return local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
+            lambda: local_inventory(directory) if directory.is_dir() else {})
     script = (f"if [ -d '{store_dir}' ]; then cd '{store_dir}' && "
               f"find . -type f -exec sha256sum {{}} +; fi")
     completed = subprocess.run(SSH_COMMAND + [host, script],
@@ -565,13 +622,8 @@ def place_staged_files(host, staging_dir: pathlib.PurePosixPath,
                "local_digests": local_digests,
                "replaceable": TRIAGE_FILE_REPLACED_IN_THE_STORE}
     if host is None:
-        try:
-            outcome = place_staged_files_and_read_them_back(request)
-        except OSError as failed:
-            # stdout carries the OS's own reason, which the FAILED line prints.
-            return subprocess.CompletedProcess([], 1, failed.strerror or str(failed),
-                                               f"{failed}\n"), None
-        return subprocess.CompletedProcess([], 0, "", ""), outcome
+        return local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
+            lambda: place_staged_files_and_read_them_back(request))
     completed = subprocess.run(
         SSH_COMMAND + [host, f"python3 -c {shlex.quote(place_staged_files_program())}"],
         input=json.dumps(request), capture_output=True, text=True,
@@ -679,8 +731,8 @@ def link_staged_files_never_over_existing(host, staging_dir: pathlib.PurePosixPa
     """Hard-link each staged file into the store directory, in the order
     given, then remove the staging directory and return the process and the
     store's {relative path: sha256} of `relatives` -- the files the store now
-    holds under those names, whoever put them there. An unreachable host is
-    an inventory of None, as in store_inventory.
+    holds under those names, whoever put them there. An unreachable host, or
+    a local step that fails, is an inventory of None, as in store_inventory.
 
     A link is never made over an existing file: a name already taken is left
     as it is, and placing goes on past it, so the caller judges each file by
@@ -693,21 +745,25 @@ def link_staged_files_never_over_existing(host, staging_dir: pathlib.PurePosixPa
     hashlib locally, as store_inventory does."""
     if host is None:
         staging, store = pathlib.Path(staging_dir), pathlib.Path(store_dir)
-        try:
-            for relative in relatives:
-                target = store / relative
-                target.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    os.link(staging / relative, target)
-                except FileExistsError:
-                    continue
-                except OSError:
-                    break
-        finally:
-            shutil.rmtree(staging, ignore_errors=True)
-        after = {relative: hashlib.sha256((store / relative).read_bytes()).hexdigest()
-                 for relative in relatives if (store / relative).is_file()}
-        return subprocess.CompletedProcess([], 0, "", ""), after
+
+        def link_and_read_back():
+            try:
+                for relative in relatives:
+                    target = store / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        os.link(staging / relative, target)
+                    except FileExistsError:
+                        continue
+                    except OSError:
+                        break
+            finally:
+                shutil.rmtree(staging, ignore_errors=True)
+            return {relative: hashlib.sha256((store / relative).read_bytes()).hexdigest()
+                    for relative in relatives if (store / relative).is_file()}
+
+        return local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
+            link_and_read_back)
     script = link_staged_files_never_over_existing_script(staging_dir, store_dir, relatives)
     completed = subprocess.run(SSH_COMMAND + [host, script],
                                capture_output=True, text=True, check=False)
@@ -800,8 +856,10 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
     by design: the walk's minutes and dispositions, a walk text the walk only
     added to (scripts/walk-files-ship.py) and a seat's own files
     (scripts/seat-shared-file-ship.py). Returns the process and
-    {store relative path: StagedReplacement}, or None for an unreachable
-    host, as store_inventory does. The staging directory is left for the
+    {store relative path: StagedReplacement}, or None, as store_inventory
+    returns for an unreachable host, when the host is unreachable or a step
+    fails partway, locally or remotely; None does not say which renames were
+    done. The staging directory is left for the
     caller to remove, with remove_staging_directory or by placing the rest.
 
     `replacements` is a list of (staged relative path, store relative path,
@@ -836,29 +894,34 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
     os.replace and hashlib locally."""
     if host is None:
         staging, store = pathlib.Path(staging_dir), pathlib.Path(store_dir)
-        others = other_staging_directories_local(staging)
-        if others:
-            return subprocess.CompletedProcess([], 0, "", ""), OtherShipmentStaging(others)
-        outcomes = {}
-        store.mkdir(parents=True, exist_ok=True)
-        for staged_relative, store_relative, required in replacements:
-            target = store / store_relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            displaced = (hashlib.sha256(target.read_bytes()).hexdigest()
-                         if target.is_file() else None)
-            replaced = required is None or displaced == required
-            if replaced:
-                os.replace(staging / staged_relative, target)
-            outcomes[store_relative] = (replaced, displaced)
-        stored = {
-            store_relative: hashlib.sha256(
-                (store / store_relative).read_bytes()).hexdigest()
-            for store_relative in outcomes
-            if (store / store_relative).is_file()}
-        return subprocess.CompletedProcess([], 0, "", ""), {
-            store_relative: StagedReplacement(replaced, displaced,
-                                              stored.get(store_relative))
-            for store_relative, (replaced, displaced) in outcomes.items()}
+
+        def replace_and_read_back():
+            others = other_staging_directories_local(staging)
+            if others:
+                return OtherShipmentStaging(others)
+            outcomes = {}
+            store.mkdir(parents=True, exist_ok=True)
+            for staged_relative, store_relative, required in replacements:
+                target = store / store_relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                displaced = (hashlib.sha256(target.read_bytes()).hexdigest()
+                             if target.is_file() else None)
+                replaced = required is None or displaced == required
+                if replaced:
+                    os.replace(staging / staged_relative, target)
+                outcomes[store_relative] = (replaced, displaced)
+            stored = {
+                store_relative: hashlib.sha256(
+                    (store / store_relative).read_bytes()).hexdigest()
+                for store_relative in outcomes
+                if (store / store_relative).is_file()}
+            return {
+                store_relative: StagedReplacement(replaced, displaced,
+                                                  stored.get(store_relative))
+                for store_relative, (replaced, displaced) in outcomes.items()}
+
+        return local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
+            replace_and_read_back)
     script = replace_with_staged_files_script(staging_dir, store_dir, replacements)
     completed = subprocess.run(SSH_COMMAND + [host, script],
                                capture_output=True, text=True, check=False)
@@ -937,15 +1000,25 @@ def replace_with_staged_files_script(staging_dir: pathlib.PurePosixPath,
         f"done\n")
 
 
-def remove_staging_directory(host, staging_dir: pathlib.PurePosixPath) -> None:
-    """Remove a staging directory a failed copy may have left. Best effort: the
-    copy that failed may have failed because ned-box is unreachable, and then
-    this fails too and the directory stays, which nothing reads."""
+def remove_staging_directory(host, staging_dir: pathlib.PurePosixPath) -> typing.Optional[str]:
+    """Remove a staging directory a failed copy may have left. Returns None
+    when it is gone, else why it could not be removed. Nothing else removes a
+    directory left behind, and replace_with_staged_files refuses every later
+    shipment of the same name until it is deleted."""
     if host is None:
-        shutil.rmtree(pathlib.Path(staging_dir), ignore_errors=True)
-        return
-    subprocess.run(SSH_COMMAND + [host, f"rm -rf -- {shlex.quote(str(staging_dir))}"],
-                   capture_output=True, text=True, check=False)
+        try:
+            shutil.rmtree(pathlib.Path(staging_dir))
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            return str(error)
+        return None
+    completed = subprocess.run(
+        SSH_COMMAND + [host, f"rm -rf -- {shlex.quote(str(staging_dir))}"],
+        capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        return f"ssh exit {completed.returncode}: {one_line(completed.stderr)}"
+    return None
 
 
 def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path) -> int:
@@ -972,8 +1045,8 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     # placing step takes the inventory again.
     listed, in_store = store_inventory(host, store_dir)
     if in_store is None:
-        reason = ("ned-box unreachable" if listed.returncode == RSYNC_EXIT_CONNECTION_FAILED
-                  else f"ssh exit {listed.returncode}")
+        reason = failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+            host, listed)
         print(f"FAILED: {name} — {reason}; the record stays on disk, unshipped.")
         sys.stderr.write(listed.stderr)
         return EXIT_FAILED
@@ -993,12 +1066,13 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         # exactly one stdout line.
         described = []
         for relative in differing_files:
-            local_line = provenance_comment_of(local_first_line(record_dir / relative))
+            local_line = described_provenance_comment(local_first_line, record_dir / relative)
             if host:
-                store_line = provenance_comment_of(remote_first_line(host, store_dir / relative))
+                store_line = described_provenance_comment(
+                    remote_first_line, host, store_dir / relative)
             else:
-                store_line = provenance_comment_of(
-                    local_first_line(pathlib.Path(store_dir) / relative))
+                store_line = described_provenance_comment(
+                    local_first_line, pathlib.Path(store_dir) / relative)
             described.append(f"{relative} (store: {store_line}; local: {local_line})")
         print(f"REFUSED: {name} — already in the store with different content: "
               f"{'; '.join(described)}. Rename the local directory with a -2 suffix "
@@ -1023,20 +1097,23 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         rsync_command(host, record_dir, staging_dir),
         capture_output=True, text=True, check=False)
     if transferred.returncode != 0:
-        remove_staging_directory(host, staging_dir)
+        left_behind = remove_staging_directory(host, staging_dir)
         reason = ("ned-box unreachable" if transferred.returncode == RSYNC_EXIT_CONNECTION_FAILED
                   else f"rsync exit {transferred.returncode}")
-        print(f"FAILED: {name} — {reason} during the copy; a later run finishes it.")
+        staging_note = (f"; the staging directory {host + ':' if host else ''}{staging_dir}, "
+                        f"if the copy made it, could not be removed ({left_behind})"
+                        if left_behind else "")
+        print(f"FAILED: {name} — {reason} during the copy{staging_note}; "
+              f"a later run finishes it.")
         sys.stderr.write(transferred.stderr)
+        if left_behind:
+            sys.stderr.write(
+                f"{PROGRAM}: if {staging_dir} is there, delete it: nothing else removes it.\n")
         return EXIT_FAILED
     placed, outcome = place_staged_files(host, staging_dir, store_dir, local)
     if outcome is None:
-        if host is None:
-            reason = placed.stdout
-        elif placed.returncode == RSYNC_EXIT_CONNECTION_FAILED:
-            reason = "ned-box unreachable"
-        else:
-            reason = f"ssh exit {placed.returncode}"
+        reason = failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+            host, placed)
         print(f"FAILED: {name} — {reason} while placing the copied files; "
               f"a later run finishes it.")
         sys.stderr.write(placed.stderr)
@@ -1118,7 +1195,7 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
     parser = argparse.ArgumentParser(
         description=description, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("record_directory", nargs="?",
-                        help="one record directory, relative to the repo root or absolute")
+                        help="one record directory, relative to the current directory or absolute")
     parser.add_argument("--all", action="store_true",
                         help=f"every directory under {records_dir.name}/ in this checkout")
     args = parser.parse_args(argv)
@@ -1129,10 +1206,7 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
     host, records_path = destination
 
     if not args.all:
-        record_dir = pathlib.Path(args.record_directory)
-        if not record_dir.is_absolute():
-            record_dir = REPO_ROOT / record_dir
-        return ship_one(host, records_path, record_dir.resolve())
+        return ship_one(host, records_path, pathlib.Path(args.record_directory).resolve())
 
     directories = sorted(p for p in records_dir.glob("*") if p.is_dir()) \
         if records_dir.is_dir() else []

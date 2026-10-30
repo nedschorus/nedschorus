@@ -9,9 +9,15 @@ contract, the write-detection rule, and why the reviewer writes a file rather
 than answering in chat.
 
 Usage:
-  nc-systems/cold-read/cold-read-claude-cell.py --cell restate --tier second \\
+  nc-systems/cold-read/cold-read-claude-cell.py --cell restate --tier second-strongest-model \\
       --target docs/drafts/foo.md \\
-      --report cold-read-records/foo-2026-01-01/claude-restate-second.md
+      --report cold-read-records/foo-2026-01-01/claude-restate-second-strongest-model.md
+
+The cold-read-tier `second-strongest-model` asks for the agent-binary's
+second-strongest model. The cold-read-tier `fast` runs Claude Sonnet at low
+effort.
+nc-systems/cold-read/cold-read-fast-read.py runs this tier as its backup when
+the Gemini cold-read-cell fails.
 
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.
@@ -45,16 +51,19 @@ _common_spec.loader.exec_module(common)
 
 PROGRAM = "cold-read-claude-cell"
 
-# No fallback: each tier must use its pinned model rather than silently substitute a weaker reviewer.
+# No fallback within a tier: each tier must use its pinned model rather than silently substitute a weaker reviewer.
+# The fast tier is no such substitute: the fast read runs it only after its Gemini cell fails, and says so.
 TIER_TO_CLAUDE_MODEL_CHAIN = {
     "deep": ("claude-opus-5-5",),
-    "second": ("claude-fable-5-1",),
+    "second-strongest-model": ("claude-fable-5-1",),
+    "fast": ("claude-sonnet-5-5",),
 }
 
 # Pin effort so results do not depend on the machine's default.
 TIER_TO_REASONING_EFFORT = {
     "deep": "xhigh",
-    "second": "max",
+    "second-strongest-model": "max",
+    "fast": "low",
 }
 
 # Write is needed for the report; WebFetch lets the reviewer inspect linked pages.

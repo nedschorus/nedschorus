@@ -71,7 +71,8 @@ the reading of them. One run failing does not throw the other away: the
 combined result is written from the run that landed, with a marker line at
 the top naming what is missing, and this program exits 1. Both failing leaves
 no combined result at all, because there is nothing to read. A run whose
-report cannot be parsed -- no `## CASE` heading in it naming one of the cases
+cell exited nonzero is a failed run even when a report is at its path. A run
+whose report cannot be parsed -- no `## CASE` heading in it naming one of the cases
 this run was given -- is a failed run, not a restater that caught nothing:
 zero and unreadable are different answers and this program never prints one
 as the other.
@@ -110,10 +111,9 @@ import subprocess
 import sys
 import time
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 _record_names_spec = importlib.util.spec_from_file_location(
     "cold_read_record_names",
-    pathlib.Path(__file__).with_name("cold-read-record-names.py"))
+    pathlib.Path(__file__).with_name("cold-read-record-names-common.py"))
 record_names = importlib.util.module_from_spec(_record_names_spec)
 _record_names_spec.loader.exec_module(record_names)
 RECORDS_DIR = record_names.RECORDS_DIR
@@ -157,17 +157,17 @@ def build_runner_argument_parser():
     parser.add_argument(
         "--restater", required=True, metavar="CLASS",
         help="the restater class under judgment, named as the roster names "
-             "its models (gemini-3.8-flash-low, gpt-6-sol, claude-opus-5)")
+             "its models (gemini-3.8-flash-low, gpt-6.1-sol, claude-opus-5)")
     parser.add_argument(
         "--case", required=True, action="append", nargs=4,
         metavar=("DRAFT", "PERFECT", "DEFECT_LIST", "RESTATEMENT"),
         help="one document's four files, in that order, each relative to the "
-             "repository root or absolute. Repeat once per document; the "
+             "current directory or absolute. Repeat once per document; the "
              "ruled campaign passes three")
     parser.add_argument(
         "--prompt-file", required=True, metavar="PATH",
         help="the file holding the judge's instructions, passed to both runs "
-             "unchanged; relative to the repository root unless absolute. "
+             "unchanged; relative to the current directory unless absolute. "
              "Required, because neither this program nor the judge cell "
              "carries that text -- see the module docstring")
     parser.add_argument(
@@ -230,7 +230,6 @@ def launch_judge_runs(
         err = open(stderr_path, "w", encoding="utf-8")  # pylint: disable=consider-using-with
         process = subprocess.Popen(  # pylint: disable=consider-using-with
             command, stdout=err, stderr=err, stdin=subprocess.DEVNULL,
-            cwd=REPO_ROOT,
         )
         err.close()
         running[run_number] = (process, report_path, stderr_path)
@@ -390,6 +389,14 @@ def read_run(report_path: pathlib.Path, exit_code: int, case_count: int) -> dict
     }
     report_text = (
         report_path.read_text(encoding="utf-8") if report_path.is_file() else "")
+    if exit_code != 0 and report_text.strip():
+        # The cell removes its report on a failure it handles, so a report
+        # beside a nonzero exit is a killed cell's unstamped text or an
+        # earlier judging's, left in a reused --record-dir.
+        run["why_unusable"] = (
+            f"the cell exited {exit_code}, so the report at {report_path} "
+            "is not this run's finished judgment")
+        return run
     if not report_text.strip():
         run["why_unusable"] = (
             f"no report at {report_path} (the cell exited {exit_code}); a run "
@@ -647,9 +654,7 @@ def main() -> int:
         return EXIT_BAD_INVOCATION
 
     if args.record_dir:
-        record_dir = pathlib.Path(args.record_dir)
-        if not record_dir.is_absolute():
-            record_dir = REPO_ROOT / record_dir
+        record_dir = pathlib.Path(args.record_dir).resolve()
         record_dir.mkdir(parents=True, exist_ok=True)
     else:
         record_dir = make_record_directory_for(

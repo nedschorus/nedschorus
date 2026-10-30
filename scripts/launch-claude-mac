@@ -72,12 +72,15 @@ AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}"
 # expanduser()s the same value; a ~user/ form is refused, because this
 # script would mkdir a literal ~user directory while those tools resolve
 # that user's real home — one seat, silently split across two directories.
+# A relative root is resolved here, against the caller's directory, because
+# the launcher later changes directory to $HOME before it starts tmux.
 case "$AGENTS_ROOT" in
     ("~"[!/]*)
         echo "launch-claude-mac: ~user agents roots are not supported — the shell and the fleet's Python tools resolve them to different directories, splitting the seat. Use an absolute path." >&2
         exit 2 ;;
     ("~") AGENTS_ROOT="$HOME" ;;
     ("~/"*) AGENTS_ROOT="$HOME${AGENTS_ROOT#?}" ;;
+    ([!/]*) AGENTS_ROOT="$PWD/$AGENTS_ROOT" ;;
 esac
 
 # The supervisor lives in its own system directory one level up, so the
@@ -286,18 +289,31 @@ if ! git -C "$AGENT_DIRECTORY" rev-parse --show-toplevel >/dev/null 2>&1; then
         || echo "launch-claude-mac: could not make $AGENT_DIRECTORY a checkout; the agent will start without project settings" >&2
 fi
 
-# Boot-time worktree report: finished session worktrees pile up invisibly,
+# $1 names the step and its command, $2 says why the launch goes on, $3 is
+# the step's short name, $4 its exit code.
+report_launch_step_failure() {
+    echo "launch-claude-mac: the launch-time $1 failed with exit $4, $2" >&2
+    echo "launch-claude-mac: any error the $3 printed is above these lines; if none is there, the $3 ended without printing one, for example because it was killed." >&2
+    echo "launch-claude-mac: if you are an agent that ran this launch, tell the user these lines and any error above them, change nothing in $REPOSITORY yourself, and go on with your work." >&2
+    echo "launch-claude-mac: if you are the user, run the command in the first of these lines on this Mac: if it succeeds, nothing more is needed; if it fails and prints an error, fix the cause that error names; if it fails and prints nothing, ask an agent to find out why the $3 fails on this Mac without printing an error, and give it that command and its exit code." >&2
+}
+
+# Launch-time worktree report: finished session worktrees pile up invisibly,
 # so each launch names any that are done (landed and vacant) and the
 # command that removes them. Report only — removal stays a deliberate,
 # separate call — and a report problem never blocks a launch.
-python3 "$SCRIPT_DIRECTORY/clean-worktrees.py" --only-done || true
+python3 "$SCRIPT_DIRECTORY/clean-worktrees.py" --only-done \
+    || report_launch_step_failure "worktree report (python3 $SCRIPT_DIRECTORY/clean-worktrees.py --only-done), which lists the finished worktrees," \
+        "and the launch goes on, because the agent-seat does not need the report." report "$?"
 
-# Boot-time freshness: fast-forward the machine's reference checkout to
+# Launch-time freshness: fast-forward the machine's reference checkout to
 # origin/main (ff-only, never a merge — it carries no work of its own by
 # construction). The mid-session half runs as a Stop hook
 # (scripts/checkout-freshness-catch-up.py); this covers machines between
 # sessions, and never blocks a launch.
-python3 "$SCRIPT_DIRECTORY/checkout-freshness-catch-up.py" --reference-pull --repo "$REPOSITORY" 2>/dev/null || true
+python3 "$SCRIPT_DIRECTORY/checkout-freshness-catch-up.py" --reference-pull --repo "$REPOSITORY" \
+    || report_launch_step_failure "fast-forward of the reference checkout $REPOSITORY to origin/main (python3 $SCRIPT_DIRECTORY/checkout-freshness-catch-up.py --reference-pull --repo $REPOSITORY)" \
+        "so that checkout may be behind origin/main, and the launch goes on with it as it is." fast-forward "$?"
 
 # Per-seat tmux servers: every seat runs on its OWN tmux server, socket
 # `-L <name>`, because one server crash must not kill the whole per-machine
@@ -547,6 +563,11 @@ SEAT_WINDOW_TITLE_FORMAT='[mac] #S'
 # today; a seat that should look different gets its own value chosen here.
 SEAT_ITERM2_BACKGROUND_COLOUR=FFE6EE
 
+# A tmux server keeps the working directory it starts in (-c sets only the
+# pane's), and recover-crashed-seats.py counts a server rooted in an
+# agent-home as that seat's live process; so tmux starts from $HOME.
+cd "$HOME"
+
 if [ "$ATTACH" = yes ]; then
     # iTerm2's proprietary SetColors sequence, written before tmux starts
     # because tmux does not pass it through to the terminal. Only on a
@@ -563,7 +584,10 @@ if [ "$ATTACH" = yes ]; then
         set-option -g set-titles on \; set-option -g set-titles-string "$SEAT_WINDOW_TITLE_FORMAT" \; \
         set-option -g mouse on \; set-option -s copy-command pbcopy
 fi
-tmux -L "$SEAT_TMUX_SOCKET" new-session -d -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND" \; \
+# The trailing `exit $?` stops the pane's shell from exec'ing into the
+# supervisor: with tmux as its direct parent, tmux wakes it at once after a
+# `kill -STOP`. The pane still closes with the supervisor's exit status.
+tmux -L "$SEAT_TMUX_SOCKET" new-session -d -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND; exit \$?" \; \
         set-option -g set-titles on \; set-option -g set-titles-string "$SEAT_WINDOW_TITLE_FORMAT" \; \
         set-option -g mouse on \; set-option -s copy-command pbcopy 2>/dev/null \
     || echo "launch-claude-mac: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-mac $AGENT_NAME)"

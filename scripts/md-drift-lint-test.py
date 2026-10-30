@@ -29,7 +29,7 @@ LINT_SCRIPT = Path(__file__).with_name("md-drift-lint.py")
 # sys.dont_write_bytecode keeps one from being written either. The two cover
 # different halves of the same hazard and both are needed.
 #
-# Mutation testing this lint -- change PLACEHOLDER_SPAN, rerun, read which
+# nc-mutation-testing of this lint -- change PLACEHOLDER_SPAN, rerun, read which
 # case fails -- is how its exclusions are checked, and a stale .pyc makes it
 # report a clean, plausible, entirely wrong table. Python decides a cached
 # .pyc is current by (mtime, size) at one-second resolution, so two mutations
@@ -556,12 +556,12 @@ with tempfile.TemporaryDirectory() as frozen_workspace:
           findings == [], str(findings))
 
 
-# An architecture overview gets the overview checks of
+# An nc-architecture-overview gets the overview checks of
 # docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md on
 # top of the ordinary ones; any other Markdown file does not.
 OVERVIEW_NAME = "docs/nedschorus-wiki/nedschorus-demo-architecture-overview.md"
 OVERVIEW_PATH_MODULE = LINT_SCRIPT.with_name(
-    "architecture-overview-path-template-and-checked-against-commit-reader.py")
+    "architecture-overview-path-template-and-checked-against-commit-reader-common.py")
 
 
 def overview_repository(root: Path):
@@ -609,7 +609,7 @@ with tempfile.TemporaryDirectory() as overview_workspace:
                            encoding="utf-8")
         findings = [problem for _, problem in lint.lint_markdown(
             outside, root, architecture_overview_checks=True)]
-        check("a file outside the repository is not taken for an architecture overview",
+        check("a file outside the repository is not taken for an nc-architecture-overview",
               findings == [], str(findings))
     findings = problems_for(
         "- `scripts/unregistered-hook.py`, a `Stop` hook: does a thing.\n", root,
@@ -627,7 +627,7 @@ with tempfile.TemporaryDirectory() as overview_workspace:
     findings = problems_for(
         "- `scripts/unregistered-hook.py`, a `Stop` hook: does a thing.\n", root,
         "docs/nedschorus-wiki/ordinary-page.md")
-    check("a file that is not an architecture overview gets no hook check",
+    check("a file that is not an nc-architecture-overview gets no hook check",
           findings == [], str(findings))
 
     findings = problems_for(

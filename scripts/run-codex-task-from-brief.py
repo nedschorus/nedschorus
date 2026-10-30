@@ -6,7 +6,7 @@ Usage:
       [--sandbox read-only|workspace-write] [-m <model>] [--effort <effort>]
       [--network] [--writable-root <folder>]... [--outside-git-checkout]
       [--web-search] [--deadline-minutes <minutes>] [--run-log <file>]
-      [--prefetch-github '<gh arguments>']...
+      [--prefetch-github '<gh arguments>']... [--resume <session-id>]
 
 The program an agent uses to hand Codex a task. It always:
   - reads the prompt from the brief file, never from the command line;
@@ -41,8 +41,9 @@ Options that widen what Codex may do, each off by default:
                           and --cache, each with its value as the next word
                           or after =, and --include/-i,
                           --paginate and --slurp; `api` has no -R. Any other
-                          `api` option is refused, so `api graphql` cannot
-                          run, since it needs -f to send its query. Codex
+                          `api` option is refused. The endpoint `graphql` is
+                          accepted, but it cannot send a query, because a
+                          query needs -f, -F or --input. Codex
                           cannot run `gh` itself, because its permission
                           profile denies the folder holding
                           gh's login. The files go in
@@ -51,6 +52,12 @@ Options that widen what Codex may do, each off by default:
 
 --deadline-minutes bounds the whole run: the --prefetch-github commands and
 Codex together.
+
+--resume <session-id> sends the brief as a follow-up to that Codex session.
+The id is on the `session id:` line near the top of the earlier run's run
+log. Every other option applies as in a first run, -C included: Codex works
+in the -C folder, not the one the session started in. --writable-root is
+refused with --resume because `codex exec resume` does not accept --add-dir.
 
 On success it prints `report: <path>` and exits 0. It exits 1, saying what
 failed, when a --prefetch-github command fails, or when Codex cannot be
@@ -84,6 +91,11 @@ SANDBOX_TO_PROFILE_BASE = {"read-only": ":read-only", "workspace-write": ":works
 DEFAULT_DEADLINE_MINUTES = 60
 # Codex gets this long to exit after SIGTERM before its process group is killed.
 STOP_GRACE_SECONDS = 10
+# macOS refuses a signal with EPERM while every process left in the group is a zombie,
+# Codex itself included until it is reaped; the group is gone within about 0.2 s of
+# Codex being reaped.
+EXITING_GROUP_SIGNAL_ATTEMPTS = 50
+EXITING_GROUP_SIGNAL_RETRY_SECONDS = 0.1
 # The gh commands --prefetch-github runs: each only reads from GitHub.
 PREFETCH_READING_SUBCOMMANDS = {("pr", "list"), ("pr", "view"), ("issue", "list"),
                                 ("issue", "view")}
@@ -112,6 +124,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
                         help="file holding the whole prompt")
     parser.add_argument("-o", dest="report", required=True,
                         help="file Codex writes its final message to")
+    parser.add_argument("--resume", metavar="SESSION_ID",
+                        help="send the brief as a follow-up to this Codex session")
     parser.add_argument("--sandbox", choices=tuple(SANDBOX_TO_PROFILE_BASE),
                         default="read-only")
     parser.add_argument("-m", dest="model", help="Codex model id")
@@ -166,7 +180,7 @@ def api_refusal(words):
         elif word in PREFETCH_API_FLAGS_WITHOUT_VALUE:
             pass
         else:
-            return f"`gh api` option `{word}` is not one of the reading options accepted"
+            return f"`gh api` option `{word}` is not accepted"
         index += 1
     if len(endpoints) != 1:
         return (f"`gh api` needs exactly one endpoint, such as repos/OWNER/REPO/pulls/12, "
@@ -235,13 +249,15 @@ def brief_with_prefetched_files(prompt: str, files) -> str:
 def codex_command(checkout: pathlib.Path, report: pathlib.Path, sandbox: str,
                   model, effort, prompt: str, network: bool = False,
                   writable_roots=(), outside_git_checkout: bool = False,
-                  web_search: bool = False) -> list:
-    command = [
-        "codex", "exec",
+                  web_search: bool = False, resume=None) -> list:
+    # Resume accepts no -C; exec's working directory applies to its subcommand.
+    command = ["codex", "exec", "-C", str(checkout)]
+    if resume is not None:
+        command.append("resume")
+    command += [
         *common.codex_credential_denying_permission_profile_arguments(
             PERMISSION_PROFILE_NAME, SANDBOX_TO_PROFILE_BASE[sandbox], network=network),
         "--disable", "memories",
-        "-C", str(checkout),
         "-o", str(report),
     ]
     for root in writable_roots:
@@ -256,23 +272,37 @@ def codex_command(checkout: pathlib.Path, report: pathlib.Path, sandbox: str,
     if effort:
         command += ["-c", f"model_reasoning_effort={effort}"]
     # `--` keeps a brief that begins with "-", such as front matter, from being read as an option.
-    return command + ["--", prompt]
+    return command + ["--"] + ([resume] if resume is not None else []) + [prompt]
+
+
+def signal_process_group(process: subprocess.Popen, signal_number: int) -> bool:
+    """Send the signal to Codex's group; return False when the group is already gone."""
+    attempts_left = EXITING_GROUP_SIGNAL_ATTEMPTS
+    while True:
+        try:
+            os.killpg(process.pid, signal_number)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            attempts_left -= 1
+            if attempts_left == 0:
+                raise
+            # Only this program can reap Codex, so a group whose last member is Codex's
+            # zombie would refuse every attempt.
+            process.poll()
+            time.sleep(EXITING_GROUP_SIGNAL_RETRY_SECONDS)
 
 
 def stop_process_group(process: subprocess.Popen) -> None:
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
+    if not signal_process_group(process, signal.SIGTERM):
         return
     try:
         process.wait(timeout=STOP_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
         pass
     # Codex exiting is not enough: a process it started may outlive SIGTERM in the same group.
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    signal_process_group(process, signal.SIGKILL)
     process.wait()
 
 
@@ -284,6 +314,12 @@ def fail(message: str) -> int:
 def main(argv=None) -> int:
     parser = build_argument_parser()
     args = parser.parse_args(argv)
+    if args.resume is not None and args.writable_root:
+        parser.error(
+            "refused --writable-root with --resume: `codex exec resume` does not "
+            "accept --add-dir.\n"
+            "To resume without extra writable folders, omit --writable-root.\n"
+            "To start a new task with extra writable folders, omit --resume.")
     for gh_arguments in args.prefetch_github:
         quoting_error = prefetch_quoting_error(gh_arguments)
         if quoting_error:
@@ -340,7 +376,8 @@ def main(argv=None) -> int:
         checkout, report, args.sandbox, args.model, args.effort, prompt,
         network=args.network,
         writable_roots=[pathlib.Path(root).resolve() for root in args.writable_root],
-        outside_git_checkout=args.outside_git_checkout, web_search=args.web_search)
+        outside_git_checkout=args.outside_git_checkout, web_search=args.web_search,
+        resume=args.resume)
     print(f"{PROGRAM}: running Codex in {checkout}; log {run_log}", file=sys.stderr)
     try:
         with open(run_log, "w", encoding="utf-8") as log:
@@ -348,19 +385,19 @@ def main(argv=None) -> int:
             process = subprocess.Popen(
                 command, stdin=subprocess.DEVNULL, stdout=log,
                 stderr=subprocess.STDOUT, start_new_session=True)
-            try:
-                exit_code = process.wait(timeout=seconds_left)
-            except subprocess.TimeoutExpired:
-                stop_process_group(process)
-                shared = ("The deadline covers every --prefetch-github command and Codex "
-                          "together. " if args.prefetch_github else "")
-                return fail(
-                    f"Codex was still running when the run's {args.deadline_minutes:g}-minute "
-                    f"deadline passed, and was stopped; its output so far is in {run_log}.\n"
-                    f"{shared}If the run needs longer, run it again with a larger "
-                    f"--deadline-minutes.")
     except OSError as error:
         return fail(f"could not start Codex: {error}")
+    try:
+        exit_code = process.wait(timeout=seconds_left)
+    except subprocess.TimeoutExpired:
+        stop_process_group(process)
+        shared = ("The deadline covers every --prefetch-github command and Codex "
+                  "together. " if args.prefetch_github else "")
+        return fail(
+            f"Codex was still running when the run's {args.deadline_minutes:g}-minute "
+            f"deadline passed, and was stopped; its output so far is in {run_log}.\n"
+            f"{shared}If the run needs longer, run it again with a larger "
+            f"--deadline-minutes.")
     if exit_code != 0:
         return fail(f"Codex exited {exit_code}; its output is in {run_log}.")
     if not report.is_file() or not report.read_text(encoding="utf-8").strip():

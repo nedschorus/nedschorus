@@ -10,7 +10,12 @@ gate answers each run from a numbered output file and exit code the case
 writes. The fake `gh` logs every call with the GH_TOKEN it saw and answers
 from a routes file the case writes; it does not filter `gh pr list` by base
 branch, so the program's own filter is what each stacked case tests. The
-waits between gate runs go to a list instead of sleeping.
+waits between gate runs go to a list instead of sleeping. A case may make the
+pull request's review worktrees in a scratch review worktrees directory, as
+worktrees of the review tools clone; a pr10-head that is a plain directory
+instead makes git worktree remove fail. A route may kill the fake `gh` with
+SIGKILL, and a case may put a `git` first on PATH that kills itself on
+`git worktree remove` and runs the real git otherwise.
 
 Run: python3 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget-test.py
 """
@@ -80,6 +85,8 @@ route = routes.get(key)
 if route is None:
     sys.stderr.write("fake gh: unarranged call %r\n" % (argv,))
     sys.exit(97)
+if route.get("killed"):
+    os.kill(os.getpid(), 9)
 sys.stdout.write(route.get("stdout", ""))
 sys.stderr.write(route.get("stderr", ""))
 sys.exit(route.get("exit", 0))
@@ -130,11 +137,16 @@ STACKED_AND_NOT = [{"number": 20, "baseRefName": BRANCH},
                    {"number": 22, "baseRefName": "some-other-topic"}]
 
 
-def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_state="at-main"):
+def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_state="at-main",
+             review_worktrees_state="none", git_killed_on_worktree_remove=False):
     """Run main() once; return (exit code, output, gh calls, gate calls, waits).
 
     review_tools_state: "at-main", "behind-main" (origin/main moved on after the
     clone), "no-origin" (the clone's origin is gone) or "no-gate".
+    review_worktrees_state: "none", "both" (pr10-head and pr10-merged are
+    worktrees, pr10-merged with an untracked file), "merged-only" (pr10-merged
+    is a worktree, pr10-head is not there) or "head-not-a-worktree" (pr10-head
+    is a plain directory, pr10-merged a worktree).
     """
     directory = scratch / name
     directory.mkdir()
@@ -142,6 +154,11 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
     bin_directory.mkdir()
     (bin_directory / "gh").write_text(FAKE_GH)
     (bin_directory / "gh").chmod(0o755)
+    if git_killed_on_worktree_remove:
+        (bin_directory / "git").write_text(
+            '#!/bin/bash\ncase " $* " in *" worktree remove "*) kill -9 $$;; esac\n'
+            f'exec {shutil.which("git")} "$@"\n')
+        (bin_directory / "git").chmod(0o755)
     origin = origin_with_one_commit(directory)
     review_tools = directory / "review-tools"
     git("clone", "-q", str(origin), str(review_tools))
@@ -154,6 +171,17 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
         (seed / "README").write_text("moved on\n")
         git("commit", "-q", "-am", "main moves on", cwd=seed)
         git("push", "-q", str(origin), "main", cwd=seed)
+    review_worktrees = directory / "review-worktrees"
+    if review_worktrees_state == "both":
+        git("worktree", "add", "-q", "--detach", str(review_worktrees / "pr10-head"),
+            cwd=review_tools)
+    if review_worktrees_state == "head-not-a-worktree":
+        (review_worktrees / "pr10-head").mkdir(parents=True)
+        (review_worktrees / "pr10-head" / "README").write_text("not a worktree\n")
+    if review_worktrees_state != "none":
+        git("worktree", "add", "-q", "--detach", str(review_worktrees / "pr10-merged"),
+            cwd=review_tools)
+        (review_worktrees / "pr10-merged" / "left-by-a-test-run.txt").write_text("untracked\n")
     if review_tools_state == "no-origin":
         shutil.rmtree(origin)
     for number, (output, exit_code) in enumerate(gate_answers, start=1):
@@ -176,7 +204,8 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
     try:
         with contextlib.redirect_stdout(output):
             exit_code = program.main([PULL_REQUEST, HEAD, SINCE, "--review-tools-worktree-at-main",
-                                      str(review_tools)], wait=waits.append)
+                                      str(review_tools), "--merge-lane-review-worktrees-directory",
+                                      str(review_worktrees)], wait=waits.append)
     finally:
         os.environ["PATH"] = saved_path
         if saved_home is None:
@@ -189,6 +218,13 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
     gate_log = directory / "gate-calls.log"
     gate_calls = gate_log.read_text().splitlines() if gate_log.exists() else []
     return exit_code, output.getvalue(), gh_calls, gate_calls, waits
+
+
+def registered_worktrees(review_tools):
+    listing = subprocess.run(["git", "-C", str(review_tools), "worktree", "list", "--porcelain"],
+                             capture_output=True, text=True, env=GIT_ENVIRONMENT, check=True)
+    return [line.split(" ", 1)[1] for line in listing.stdout.splitlines()
+            if line.startswith("worktree ")]
 
 
 def argvs(gh_calls):
@@ -207,7 +243,8 @@ def main():
     scratch = Path(tempfile.mkdtemp(prefix="merge-lane-merge-test-")).resolve()
     try:
         exit_code, output, gh_calls, gate_calls, waits = run_case(
-            scratch, "stacked", [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT))
+            scratch, "stacked", [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            review_worktrees_state="both")
         calls = argvs(gh_calls)
         edit_20 = index_of(calls, ["pr", "edit", "20"])
         merge = index_of(calls, ["pr", "merge"])
@@ -231,6 +268,47 @@ def main():
               and f"--base {BRANCH}" in output, output)
         check("a merged pull request exits 0 and prints its state after the merge",
               exit_code == 0 and '{"state":"MERGED"}' in output, f"exit {exit_code}\n{output}")
+        review_worktrees = scratch / "stacked" / "review-worktrees"
+        left = registered_worktrees(scratch / "stacked" / "review-tools")
+        check("a merged pull request's two review worktrees are removed, an untracked file "
+              "in one included, and each removal is printed",
+              not (review_worktrees / "pr10-head").exists()
+              and not (review_worktrees / "pr10-merged").exists()
+              and not any("review-worktrees" in path for path in left)
+              and f"removed the review worktree {review_worktrees / 'pr10-head'}" in output
+              and f"removed the review worktree {review_worktrees / 'pr10-merged'}" in output,
+              f"{left}\n{output}")
+
+        exit_code, output, _, _, _ = run_case(
+            scratch, "merged-only", [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            review_worktrees_state="merged-only")
+        review_worktrees = scratch / "merged-only" / "review-worktrees"
+        check("a review worktree that is not there is skipped, and the other is still removed",
+              exit_code == 0 and not (review_worktrees / "pr10-merged").exists(),
+              f"exit {exit_code}\n{output}")
+
+        exit_code, output, gh_calls, _, _ = run_case(
+            scratch, "review-worktree-not-removable", [(GATE_PASSED, 0)],
+            default_routes(STACKED_AND_NOT), review_worktrees_state="head-not-a-worktree")
+        review_tools = scratch / "review-worktree-not-removable" / "review-tools"
+        not_removable = scratch / "review-worktree-not-removable" / "review-worktrees" / "pr10-head"
+        check("a review worktree that git cannot remove exits 3 after the merge is reported, "
+              "naming the worktree, git's error as text and the command to remove it",
+              exit_code == 3 and index_of(argvs(gh_calls), ["pr", "merge"]) is not None
+              and '{"state":"MERGED"}' in output
+              and f"STOP: merged, but the review worktree {not_removable} was not removed"
+              in output and "exited 128: fatal: " in output and "is not a working tree" in output
+              and f"git -C {review_tools} worktree remove --force {not_removable}" in output,
+              f"exit {exit_code}\n{output}")
+        check("the other review worktree is still removed when one cannot be",
+              not (not_removable.parent / "pr10-merged").exists(), output)
+
+        exit_code, output, _, _, _ = run_case(
+            scratch, "git-killed", [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            review_worktrees_state="both", git_killed_on_worktree_remove=True)
+        check("a git worktree remove killed by a signal exits 3 after the merge",
+              exit_code == 3 and "STOP: merged, but the review worktree" in output
+              and "exited -9" in output, f"exit {exit_code}\n{output}")
 
         exit_code, output, gh_calls, _, _ = run_case(
             scratch, "none-stacked", [(GATE_PASSED, 0)],
@@ -304,9 +382,22 @@ def main():
 
         exit_code, output, gh_calls, _, _ = run_case(
             scratch, "merge-fails", [(GATE_PASSED, 0)],
-            default_routes(STACKED_AND_NOT, merge_exit=1))
+            default_routes(STACKED_AND_NOT, merge_exit=1), review_worktrees_state="both")
         check("a merge that fails exits 1", exit_code == 1 and "merge exit 1" in output,
               f"exit {exit_code}\n{output}")
+        review_worktrees = scratch / "merge-fails" / "review-worktrees"
+        check("a merge that fails leaves the review worktrees in place",
+              (review_worktrees / "pr10-head").is_dir()
+              and (review_worktrees / "pr10-merged").is_dir(), output)
+
+        routes = default_routes(STACKED_AND_NOT)
+        routes["pr merge"] = {"killed": True}
+        exit_code, output, _, _, _ = run_case(
+            scratch, "merge-killed", [(GATE_PASSED, 0)], routes, review_worktrees_state="both")
+        review_worktrees = scratch / "merge-killed" / "review-worktrees"
+        check("a merge killed by a signal exits 1 and leaves the review worktrees in place",
+              exit_code == 1 and (review_worktrees / "pr10-head").is_dir()
+              and (review_worktrees / "pr10-merged").is_dir(), f"exit {exit_code}\n{output}")
 
         exit_code, output, gh_calls, gate_calls, _ = run_case(
             scratch, "no-token", [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),

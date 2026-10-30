@@ -16,9 +16,39 @@ WHAT IS PINNED HERE.
     set, so no case can flake across a minute boundary.
 
   - One retry. A cell that fails once is run again and, when the second run
-    produces a report, the read succeeds. A cell that fails twice is not run
-    a third time: the read prints a line opening FAILED on stdout, exits 1,
-    and leaves no report.
+    produces a report, the read succeeds. A Gemini cell that fails twice is
+    not run a third time, and one that fails on Gemini's monthly spending cap
+    is not run a second time. The cap counts only on agy's own error line,
+    opening `AGY_ERROR:`: the cap's words inside other text are retried, and
+    a Sonnet backup failure carrying agy's cap line is not reported as the
+    cap. Gemini's Ultra quota, on the same error line, is not retried
+    either: the read goes to the Sonnet backup and, when the backup writes
+    the report, prints a line opening `Ultra quota used up; Sonnet read
+    this;` with the reset time Gemini gave, its seconds dropped; the quota's
+    words elsewhere are retried and print no such line, a backup that
+    fails prints none, and a backup failure carrying agy's quota line is not
+    reported as the quota. A refusal by the agy launcher, exit 64, is not retried either. A
+    cell whose agy exits 64 is retried, because the read never sees that 64:
+    the launcher turns any agy failure that leaves no report into its own
+    exit 1.
+
+  - The Sonnet backup. After the Gemini cell's failures, the same cell runs
+    once on claude-sonnet-5-5 at low effort through the claude cell launcher;
+    its report is the read's, stamped runtime=claude, with a line after the stamp naming
+    the backup and Gemini's cause. When the backup fails too, the read prints
+    one line opening FAILED, naming both causes, exits 1, and leaves no
+    report. A stub `claude` is first on PATH in every case, failing unless
+    the case plans a report, so no case reaches the real claude.
+
+  - Question 4, What should be code. Once Questions 1 to 3 have a report,
+    one more cell asks Question 4 of the document itself through the claude
+    cell launcher on claude-opus-5-5 at high effort, and its answer, under
+    its own stamp, is the report's one Question 4 section, before the
+    sentence coverage, on both routes. When that cell fails or runs past its
+    time limit, after which the model it started is killed, the section and
+    stderr say so, and the read still exits 0 with Questions 1 to 3. When
+    Questions 1 to 3 fail, Question 4 is not asked. The stub `claude` answers
+    Question 4 in every case unless the case plans otherwise.
 
   - The chat-instead-of-file quirk carries through: a model that answers a
     review-length text in chat and writes no file still gives the read a
@@ -32,7 +62,7 @@ WHAT IS PINNED HERE.
     substituted and no placeholder left.
 
   - That embedded template is current: it is byte-for-byte the text of
-    .claude/skills/cold-read/prompts/fast-clarify.md, the editable source of
+    .claude/skills/cold-read/prompts/fast-clarify-prompt.md, the editable source of
     truth the user ruled on 2026-09-07. The constant in the script is a
     derived copy of that file, and this is the case that holds the two in
     step.
@@ -41,11 +71,11 @@ WHAT IS PINNED HERE.
     and nothing launched.
 
   - The full-run warning. A target in the class the /cold-read skill's step 2
-    sends to the cold-read-full-run -- a skill or its prompt, a file under
-    docs/agents/, a wiki file, a design, a test design, a design-contract --
-    is read with one line on stderr and one line in the report saying the
-    full run is still required; step 2's own exceptions (a walk file,
-    CLAUDE.md) and everything else are read with nothing said. The warning
+    sends to the cold-read-full-run -- CLAUDE.md, a skill or its prompt, a file
+    under docs/agents/, a wiki file, a design, a test design, a design-contract
+    -- is read with one line on stderr and one line in the report saying the
+    full run is still required; step 2's own exception (a walk file) and
+    everything else are read with nothing said. The warning
     never refuses and never touches stdout's one line.
 
   - The bare-number check. A walk draft is read with every bare issue, pull
@@ -69,15 +99,18 @@ launches and succeed after.
 Run: python3 nc-systems/cold-read/tests/cold-read-fast-read-test.py
 """
 
+import hashlib
 import importlib.util
 import json
 import os
 import re
+import shlex
 import pathlib
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import datetime
 from pathlib import Path
 
@@ -103,6 +136,12 @@ _scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
 scratch_repository_fixture = importlib.util.module_from_spec(
     _scratch_repository_fixture_spec)
 _scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
+
+# The shared cell module, whose own suite pins its wording; the cases here take that wording from it.
+_cell_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common", SYSTEM_DIRECTORY / "cold-read-cell-common.py")
+cell_common = importlib.util.module_from_spec(_cell_common_spec)
+_cell_common_spec.loader.exec_module(cell_common)
 # Every read on the records route ships its record; here, to a scratch
 # log-store inside the scratch checkout through the shipper's destination
 # override, so no case reaches ned-box.
@@ -115,7 +154,7 @@ RECORD_CLOCK_OVERRIDE_VARIABLE = "COLD_READ_RECORD_CLOCK_OVERRIDE"
 AGENT_SESSION_ID_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 FIXED_RECORD_CLOCK_FOR_TESTS = "2026-09-16T10:42"
 FIXED_RECORD_STAMP_FOR_TESTS = "2026-09-16"
-STDOUT_RECOVERY_PHRASE = "recovered the report from the model's chat output"
+STDOUT_RECOVERY_PHRASE = cell_common.STDOUT_RECOVERY_PHRASE
 LONG_CHAT_REVIEW = " ".join(f"word{index}" for index in range(150)) + "\n"
 
 # The script under test, imported so the cases below read the constants it
@@ -138,18 +177,19 @@ def script_under_test_module():
 # root). One pair today, because only the fast cell has a second copy of its
 # prompt: the user's ruling that the reviewer's instructions live in the .py
 # that runs the cell was made about the fast cell. The other cold-read
-# prompts -- defect-hunt.md, restate.md, terminology.md -- are read from the
+# prompts -- defect-hunt-prompt.md, restate-prompt.md, terminology-prompt.md -- are read from the
 # skill at run time and have no second copy anywhere, so nothing about them
 # belongs here. If another cell ever embeds its prompt the same way, the same
 # shape covers it: one more pair, on one more line.
 EMBEDDED_PROMPT_COPY_AND_SOURCE_PAIRS = (
     ("FAST_CLARIFY_PROMPT_TEMPLATE",
-     ".claude/skills/cold-read/prompts/fast-clarify.md"),
+     ".claude/skills/cold-read/prompts/fast-clarify-prompt.md"),
 )
 
 # The stub `agy`: the model from --model, the prompt from --print's value,
 # the plan from the environment, and a counter file that counts launches so
-# "fail_first_attempts": N fails the first N and succeeds after.
+# "fail_first_attempts": N fails the first N and succeeds after; "hang"
+# sleeps past any deadline a case sets.
 STUB_AGY = """#!/usr/bin/env python3
 import json, os, pathlib, sys
 argv = sys.argv
@@ -160,11 +200,19 @@ step = plan.get(model, plan.get("*", {}))
 counter_path = pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_COUNTER_PATH"])
 launches = (int(counter_path.read_text()) if counter_path.is_file() else 0) + 1
 counter_path.write_text(str(launches))
+if step.get("hang"):
+    import time
+    time.sleep(300)
 if "dump_prompt" in step:
     pathlib.Path(step["dump_prompt"]).write_text(prompt, encoding="utf-8")
+if "edit_document" in step:
+    with open(step["edit_document"], "a", encoding="utf-8") as handle:
+        handle.write("An edit made while the reviewer read.\\n")
+if "delete_document" in step:
+    pathlib.Path(step["delete_document"]).unlink()
 if launches <= step.get("fail_first_attempts", 0):
-    sys.stderr.write("stub agy: simulated failure on launch %d\\n" % launches)
-    sys.exit(1)
+    sys.stderr.write(step.get("fail_stderr", "stub agy: simulated failure on launch %d\\n" % launches))
+    sys.exit(step.get("fail_exit", 1))
 report_path = pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"])
 if "report" in step:
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -173,6 +221,81 @@ if "stdout" in step:
     sys.stdout.write(step["stdout"])
 sys.exit(step.get("exit", 0))
 """
+
+# The stub `claude`, which the claude cell launcher runs for the Sonnet
+# backup and for Question 4. It is on PATH in every case, so no case reaches
+# the real claude. Launched with Question 4's model, it follows the Question 4
+# plan, counts in a counter of its own and writes the report path its prompt
+# names; otherwise, with no plan it fails, so a case that does not plan the
+# backup sees it fail. "report" writes the report and succeeds; "fail_stderr"
+# is what a failure prints; "dump_prompt" saves the prompt; "pid_file" saves
+# the stub's process ID; "hang" sleeps past any deadline a case sets;
+# "concurrent_read_answer" exits 0 without writing its own report, after
+# writing that text where a concurrent fast read, in a temporary directory of
+# its own, would write its Question 4 answer; it saves that directory, then
+# that file, one per line, to the file "concurrent_read_answer_path_file" names.
+STUB_CLAUDE = """#!/usr/bin/env python3
+import json, os, pathlib, re, sys, tempfile, time
+argv = sys.argv
+prompt = sys.stdin.read()
+model = argv[argv.index("--model") + 1] if "--model" in argv else ""
+asks_question_4 = model == "QUESTION_4_MODEL"
+plan = json.loads(os.environ.get(
+    "COLD_READ_CLAUDE_CELL_TEST_STUB_QUESTION_4_PLAN" if asks_question_4
+    else "COLD_READ_CLAUDE_CELL_TEST_STUB_PLAN", "{}"))
+counter_path = pathlib.Path(os.environ["COLD_READ_CLAUDE_CELL_TEST_STUB_COUNTER_PATH"]
+                            + ("-question-4" if asks_question_4 else ""))
+launches = (int(counter_path.read_text()) if counter_path.is_file() else 0) + 1
+counter_path.write_text(str(launches))
+if "dump_prompt" in plan:
+    pathlib.Path(plan["dump_prompt"]).write_text(prompt, encoding="utf-8")
+if "pid_file" in plan:
+    pathlib.Path(plan["pid_file"]).write_text(str(os.getpid()), encoding="utf-8")
+if plan.get("hang"):
+    time.sleep(300)
+own_report = (pathlib.Path(re.search(r"Write your report to (\\S+), once", prompt).group(1))
+              if asks_question_4 else None)
+if "concurrent_read_answer" in plan:
+    temporary_root = pathlib.Path(os.path.realpath(tempfile.gettempdir()))
+    own = pathlib.Path(os.path.realpath(own_report))
+    own_scratch = next(parent for parent in own.parents if parent.parent == temporary_root)
+    concurrent_scratch = pathlib.Path(tempfile.mkdtemp(prefix="cold-read-fast-read-"))
+    concurrent = concurrent_scratch / own.relative_to(own_scratch)
+    concurrent.parent.mkdir(parents=True, exist_ok=True)
+    concurrent.write_text(plan["concurrent_read_answer"], encoding="utf-8")
+    pathlib.Path(plan["concurrent_read_answer_path_file"]).write_text(
+        f"{concurrent_scratch}\\n{concurrent}\\n", encoding="utf-8")
+    sys.exit(0)
+if "report" not in plan:
+    sys.stderr.write(plan.get("fail_stderr", "stub claude: simulated failure\\n"))
+    sys.exit(1)
+report_path = (own_report if asks_question_4
+               else pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"]))
+report_path.parent.mkdir(parents=True, exist_ok=True)
+report_path.write_text(plan["report"], encoding="utf-8")
+""".replace("QUESTION_4_MODEL", script_under_test_module().WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID)
+# What the stub answers to Question 4 when a case plans nothing else.
+QUESTION_4_STUB_ANSWER = "STUB OPUS QUESTION 4: No issues\n"
+# The words Gemini's agy prints when the project's monthly spending cap is
+# reached, as a real failing read on ned-box printed them.
+GEMINI_SPENDING_CAP_STDERR = (
+    'AGY_ERROR: {"short_error":"agent executor error: generating and executing: '
+    'Error 429, Message: Your project has exceeded its monthly spending cap. '
+    'Please go to AI Studio at https://ai.studio/spend to manage your project '
+    'spend cap.","error_code":429,"retryable":true}\n')
+# The words Gemini's agy prints when the Ultra sign-in's quota is used up, as
+# agy's own log records them, on agy's error line in the form the spending
+# cap above takes.
+GEMINI_ULTRA_QUOTA_REFUSAL = (
+    'Individual quota reached. Please upgrade your subscription to increase '
+    'your limits. Resets in 2h27m27s.')
+GEMINI_ULTRA_QUOTA_STDERR = (
+    'AGY_ERROR: {"short_error":"agent executor error: generating and executing: '
+    'RESOURCE_EXHAUSTED (code 429): ' + GEMINI_ULTRA_QUOTA_REFUSAL
+    + '","error_code":429,"retryable":true}\n')
+ULTRA_QUOTA_LINE = "Ultra quota used up; Sonnet read this; Gemini resets in 2h27m."
+ULTRA_QUOTA_RELAY_LINE = ("Copy the line above into your next message to the user, because he "
+                          "wants to know when the fast read fell back to Sonnet.")
 
 failures = []
 
@@ -230,8 +353,10 @@ def build_scratch_repository(scratch):
 
 def run_fast_read(repository, stub_directory, plan, expected_report, target_argument,
                   counter_path, ship_destination=None,
-                  record_clock=FIXED_RECORD_CLOCK_FOR_TESTS, agent_session_id=None):
-    """The read as a subprocess, with the stub agy first on PATH.
+                  record_clock=FIXED_RECORD_CLOCK_FOR_TESTS, agent_session_id=None,
+                  current_directory=None, claude_plan=None, question_4_plan=None):
+    """The read as a subprocess, with the stub agy first on PATH, run from
+    `current_directory`, by default `repository`.
 
     `expected_report` is where the stub writes -- the path the case expects
     the rule to choose. If the read chooses another, the cell finds no report
@@ -241,7 +366,11 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     stub = stub_directory / "agy"
     stub.write_text(STUB_AGY, encoding="utf-8")
     stub.chmod(0o755)
+    stub_claude = stub_directory / "claude"
+    stub_claude.write_text(STUB_CLAUDE, encoding="utf-8")
+    stub_claude.chmod(0o755)
     counter_path.unlink(missing_ok=True)
+    claude_counter_path(counter_path).unlink(missing_ok=True)
     # The agy cell scans HOME for credential files at launch, and the real
     # home takes seconds to walk.
     scratch_home = repository.parent / "scratch-home"
@@ -252,6 +381,12 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
     environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(expected_report)
     environment["COLD_READ_AGY_CELL_TEST_STUB_COUNTER_PATH"] = str(counter_path)
+    environment["COLD_READ_CLAUDE_CELL_TEST_STUB_PLAN"] = json.dumps(claude_plan or {})
+    environment["COLD_READ_CLAUDE_CELL_TEST_STUB_QUESTION_4_PLAN"] = json.dumps(
+        question_4_plan if question_4_plan is not None else {"report": QUESTION_4_STUB_ANSWER})
+    question_4_counter_path(counter_path).unlink(missing_ok=True)
+    environment["COLD_READ_CLAUDE_CELL_TEST_STUB_COUNTER_PATH"] = str(
+        claude_counter_path(counter_path))
     environment[RECORD_SHIP_DESTINATION_VARIABLE] = (
         ship_destination or str(repository / SCRATCH_LOG_STORE_RELATIVE))
     environment[RECORD_CLOCK_OVERRIDE_VARIABLE] = record_clock
@@ -263,6 +398,7 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
         [sys.executable, str(repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py"),
          "--target", str(target_argument)],
         capture_output=True, text=True, check=False, env=environment,
+        cwd=current_directory or repository,
     )
 
 
@@ -270,6 +406,16 @@ def agent_session_written_beside(report):
     """The JSON the read wrote beside report naming its agent-session, or None when there is none."""
     written = report.with_name(report.name + ".agent-session.json")
     return json.loads(written.read_text(encoding="utf-8")) if written.is_file() else None
+
+
+def claude_counter_path(counter_path):
+    """Where the stub claude counts its launches, beside the stub agy's counter."""
+    return counter_path.with_name(counter_path.name + "-claude")
+
+
+def question_4_counter_path(counter_path):
+    """Where the stub claude counts its Question 4 launches."""
+    return pathlib.Path(str(claude_counter_path(counter_path)) + "-question-4")
 
 
 def launches_counted(counter_path):
@@ -301,11 +447,11 @@ with tempfile.TemporaryDirectory() as scratch:
     record_directory_name = name_module.record_directory_name_for_target
     clock_at_1042 = datetime.datetime(2026, 9, 16, 10, 42)
     skill_target = Path("/r/.claude/skills/cold-read/SKILL.md")
-    terminology_target = Path("/r/.claude/skills/cold-read/prompts/terminology.md")
+    terminology_target = Path("/r/.claude/skills/cold-read/prompts/terminology-prompt.md")
     check("a skill's document part is SKILL, a hyphen, and the skill's name",
           record_name(skill_target) == "SKILL-cold-read", record_name(skill_target))
     check("a skill's prompt file is its stem alone, like any other document",
-          record_name(terminology_target) == "terminology", record_name(terminology_target))
+          record_name(terminology_target) == "terminology-prompt", record_name(terminology_target))
     check("an ordinary document is its stem, with no directory",
           record_name(Path("/r/docs/drafts/explain-skill-draft.md")) == "explain-skill-draft")
     check("README gets no special case",
@@ -432,6 +578,59 @@ with tempfile.TemporaryDirectory() as scratch:
           and not (repository / "docs" / "walk" / "some-item-suggestions.md").exists(),
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
+    # --- An edit to the target while the reviewer reads is named ----------
+    repository = build_scratch_repository(scratch)
+    edited_report = records_report
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
+        edited_report, other_relative, counter,
+    )
+    check("a target left alone during the read gets no changed-during-read line",
+          result.returncode == 0 and "#cold_read_target_changed_during_run" not in result.stderr
+          and "#cold_read_target_changed_during_run" not in edited_report.read_text(encoding="utf-8"),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+    repository = build_scratch_repository(scratch)
+    edited_document = repository / other_relative
+    launch_sha256 = hashlib.sha256(edited_document.read_bytes()).hexdigest()
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"report": "STUB FAST READ: of the design\n", "edit_document": str(edited_document)}},
+        edited_report, other_relative, counter,
+    )
+    edited_lines = (edited_report.read_text(encoding="utf-8").splitlines()
+                    if edited_report.is_file() else [])
+    changed_lines = [line for line in result.stderr.splitlines()
+                     if line.startswith("#cold_read_target_changed_during_run")]
+    check("a target edited during the read still succeeds, with the report path as stdout's one line",
+          result.returncode == 0 and result.stdout.strip() == str(edited_report)
+          and len(result.stdout.splitlines()) == 1,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+    after_sha256 = hashlib.sha256(edited_document.read_bytes()).hexdigest()
+    check("stderr carries one changed-during-read line naming both hashes and the triage to do",
+          len(changed_lines) == 1 and launch_sha256[:12] in changed_lines[0]
+          and after_sha256[:12] in changed_lines[0]
+          and "carry each fix to the document as it now stands" in changed_lines[0]
+          and "triage the report against those quoted sentences" in changed_lines[0]
+          # On the records route the copy the reviewer read is kept, and the line says where.
+          and "-with-sentence-ids.md)" in changed_lines[0] and "kept at " in changed_lines[0],
+          repr(result.stderr))
+    check("the report keeps its provenance stamp first and the same line, as a comment, second",
+          len(edited_lines) > 1 and edited_lines[0].startswith("<!-- provenance:")
+          and changed_lines != [] and edited_lines[1] == f"<!-- {changed_lines[0]} -->",
+          repr(edited_lines[:2]))
+    repository = build_scratch_repository(scratch)
+    deleted_document = repository / other_relative
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"report": "STUB FAST READ: of the design\n", "delete_document": str(deleted_document)}},
+        edited_report, other_relative, counter,
+    )
+    check("a target deleted during the read is named as changed, its new hash unreadable",
+          result.returncode == 0 and result.stdout.strip() == str(edited_report)
+          and any(line.startswith("#cold_read_target_changed_during_run") and "then unreadable" in line
+                  for line in result.stderr.splitlines()),
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
     # --- One retry --------------------------------------------------------
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
@@ -461,13 +660,327 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the read prints one line opening FAILED on stdout",
           result.stdout.startswith("FAILED") and len(result.stdout.splitlines()) == 1,
           repr(result.stdout))
-    check("exactly two launches were made: the run and one retry",
-          launches_counted(counter) == 2, f"launches={launches_counted(counter)}")
+    check("exactly two Gemini launches were made: the run and one retry, then one "
+          "Sonnet backup launch",
+          launches_counted(counter) == 2 and launches_counted(claude_counter_path(counter)) == 1,
+          f"launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}")
     check("no report is left behind by a failed read",
           not suggestions.exists(), f"{suggestions} exists")
     check("a failed read writes no agent-session file",
           agent_session_written_beside(suggestions) is None,
           repr(agent_session_written_beside(suggestions)))
+
+    # --- The Sonnet backup -----------------------------------------------
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: of the walk item\n"},
+    )
+    backup_lines = (suggestions.read_text(encoding="utf-8").splitlines()
+                    if suggestions.is_file() else [])
+    check("when the Gemini cell fails twice, the Sonnet backup's report is the read's",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and "STUB SONNET FAST READ: of the walk item" in "\n".join(backup_lines)
+          and launches_counted(counter) == 2
+          and launches_counted(claude_counter_path(counter)) == 1,
+          f"exit {result.returncode}; stdout={result.stdout!r}; "
+          f"launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+    check("the Sonnet backup's stamp names the claude runtime, claude-sonnet-5-5, "
+          "effort low and the fast tier",
+          all(field in provenance_stamp_of(suggestions)
+              for field in ("runtime=claude", "model=claude-sonnet-5-5", "effort=low",
+                            "cell=fast-clarify", "tier=fast")),
+          repr(provenance_stamp_of(suggestions)))
+    check("the report's second line says the Sonnet backup ran and names the Gemini cause",
+          len(backup_lines) > 1
+          and backup_lines[1].startswith("<!-- #cold_read_fast_read_sonnet_backup_ran ")
+          and "stub agy: the gemini cause" in backup_lines[1],
+          repr(backup_lines[:2]))
+    check("stderr says the Sonnet backup runs and why, before it runs, and that it read the document",
+          "running the same cell once on claude-sonnet-5-5" in result.stderr
+          and "stub agy: the gemini cause" in result.stderr
+          and "cold-read-fast-read: #cold_read_fast_read_sonnet_backup_ran " in result.stderr,
+          repr(result.stderr))
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_exit": 3,
+               "fail_stderr": GEMINI_SPENDING_CAP_STDERR}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: past the cap\n"},
+    )
+    cap_lines = (suggestions.read_text(encoding="utf-8").splitlines()
+                 if suggestions.is_file() else [])
+    check("Gemini's monthly spending cap is not retried: one Gemini launch, then the "
+          "Sonnet backup, whose report is the read's",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and launches_counted(counter) == 1
+          and launches_counted(claude_counter_path(counter)) == 1
+          and "a retry cannot pass a monthly cap" in result.stderr,
+          f"exit {result.returncode}; launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+    check("the Sonnet backup line names Gemini's spending cap and where to raise it",
+          len(cap_lines) > 1 and "monthly spending cap" in cap_lines[1]
+          and "https://ai.studio/spend" in cap_lines[1],
+          repr(cap_lines[:2]))
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_exit": 3,
+               "fail_stderr": "The design quotes it: " + GEMINI_SPENDING_CAP_STDERR}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: after a quoted cap\n"},
+    )
+    quoted_cap_lines = (suggestions.read_text(encoding="utf-8").splitlines()
+                        if suggestions.is_file() else [])
+    check("the cap's words inside other text, such as a model quoting a document, are not "
+          "the cap: the Gemini cell is retried, and the backup line does not name the cap",
+          result.returncode == 0 and launches_counted(counter) == 2
+          and "retrying once" in result.stderr
+          and "a retry cannot pass a monthly cap" not in result.stderr
+          and len(quoted_cap_lines) > 1
+          and "spending cap is reached" not in quoted_cap_lines[1],
+          f"exit {result.returncode}; launches={launches_counted(counter)}; "
+          f"lines={quoted_cap_lines[:2]!r}; stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"fail_stderr": GEMINI_SPENDING_CAP_STDERR},
+    )
+    check("a Sonnet backup failure whose output carries agy's cap line is not reported as "
+          "Gemini's spending cap",
+          result.returncode == 1 and result.stdout.startswith("FAILED")
+          and "stub agy: the gemini cause" in result.stdout
+          and "spending cap is reached" not in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"fail_stderr": GEMINI_ULTRA_QUOTA_STDERR},
+    )
+    check("a Sonnet backup failure whose output carries agy's quota line is not reported as "
+          "the Ultra sign-in's quota",
+          result.returncode == 1 and result.stdout.startswith("FAILED")
+          and "stub agy: the gemini cause" in result.stdout
+          and "Gemini refused with" not in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_exit": 3,
+               "fail_stderr": GEMINI_ULTRA_QUOTA_STDERR}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: past the quota\n"},
+    )
+    quota_lines = (suggestions.read_text(encoding="utf-8").splitlines()
+                   if suggestions.is_file() else [])
+    check("the Ultra sign-in's quota is not retried: one Gemini launch, then the "
+          "Sonnet backup, whose report is the read's, and stdout keeps its one line",
+          result.returncode == 0 and result.stdout == f"{suggestions}\n"
+          and launches_counted(counter) == 1
+          and launches_counted(claude_counter_path(counter)) == 1
+          and ('cold-read-fast-read: Gemini refused with "Individual quota reached"; '
+               "the quota resets in 2h27m. This read does not retry Gemini, which would "
+               "refuse the same way; the Sonnet backup reads the document now.") in result.stderr.splitlines(),
+          f"exit {result.returncode}; stdout={result.stdout!r}; "
+          f"launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+    stderr_lines = result.stderr.splitlines()
+    check("stderr carries the line for the user, on a line of its own: Ultra quota "
+          "used up, Sonnet read this, and the reset time without its seconds",
+          ULTRA_QUOTA_LINE in stderr_lines, repr(result.stderr))
+    check("the next stderr line tells the agent to copy that line to the user",
+          ULTRA_QUOTA_LINE in stderr_lines
+          and stderr_lines[stderr_lines.index(ULTRA_QUOTA_LINE) + 1:][:1] == [ULTRA_QUOTA_RELAY_LINE],
+          repr(result.stderr))
+    check("the Sonnet backup line in the report names the Ultra quota and its reset time",
+          len(quota_lines) > 1
+          and 'Gemini refused with "Individual quota reached"; the quota resets in 2h27m' in quota_lines[1],
+          repr(quota_lines[:2]))
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_exit": 3,
+               "fail_stderr": "The design quotes it: " + GEMINI_ULTRA_QUOTA_STDERR}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: after a quoted quota\n"},
+    )
+    check("the quota's words inside other text are not the quota: the Gemini cell is "
+          "retried, and no Ultra quota line is printed",
+          result.returncode == 0 and launches_counted(counter) == 2
+          and "retrying once" in result.stderr
+          and "Ultra quota used up" not in result.stderr,
+          f"exit {result.returncode}; launches={launches_counted(counter)}; "
+          f"stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_exit": 3,
+               "fail_stderr": GEMINI_ULTRA_QUOTA_STDERR}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"fail_stderr": "stub claude: the sonnet cause\n"},
+    )
+    check("when the Sonnet backup fails after the quota, no line says Sonnet read the "
+          "document, and FAILED names the quota and its reset time",
+          result.returncode == 1 and result.stdout.startswith("FAILED")
+          and 'Gemini refused with "Individual quota reached"; the quota resets in 2h27m' in result.stdout
+          and "Ultra quota used up" not in result.stderr
+          and "Copy the line above" not in result.stderr,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    module = script_under_test_module()
+    for refusal, expected in (
+            ("Resets in 95h3m42s.", "Ultra quota used up; Sonnet read this; Gemini resets in 95h3m."),
+            ("Resets in 5m.", "Ultra quota used up; Sonnet read this; Gemini resets in 5m."),
+            ("Resets in 4h.", "Ultra quota used up; Sonnet read this; Gemini resets in 4h."),
+            ("Resets in 42s.", "Ultra quota used up; Sonnet read this; Gemini resets in under a minute."),
+            ("Please upgrade.", "Ultra quota used up; Sonnet read this; Gemini gave no reset time.")):
+        line = module.ultra_quota_line(f"AGY_ERROR: Individual quota reached. {refusal}")
+        check(f"the Ultra quota line for {refusal!r} reads {expected!r}",
+              line == expected, repr(line))
+
+    for refusal, expected in (
+            ("Resets in 2h27m3s.",
+             'Gemini refused with "Individual quota reached"; the quota resets in 2h27m. '
+             "This read does not retry Gemini, which would refuse the same way; the "
+             "Sonnet backup reads the document now."),
+            ("Please upgrade.",
+             'Gemini refused with "Individual quota reached"; Gemini gave no reset time. '
+             "This read does not retry Gemini, which would refuse the same way; the "
+             "Sonnet backup reads the document now.")):
+        message = module.gemini_quota_not_retried_message(
+            f"AGY_ERROR: Individual quota reached. {refusal}")
+        check(f"the not-retried message for {refusal!r} needs no reset time to read true",
+              message == expected, repr(message))
+
+    # The launcher turns any agy failure that leaves no report, a stub agy's
+    # exit 64 included, into its own exit 1, so only a launcher that refuses
+    # reaches the read's no-retry path for exit 64.
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_exit": 64}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: after agy's exit 64\n"},
+    )
+    check("agy's own exit 64 is retried like any failure: two Gemini launches, then the backup",
+          result.returncode == 0 and launches_counted(counter) == 2
+          and launches_counted(claude_counter_path(counter)) == 1,
+          f"exit {result.returncode}; launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    copied_agy_cell = repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"
+    launcher_entry = 'if __name__ == "__main__":\n    sys.exit(main())\n'
+    copied_agy_cell_text = copied_agy_cell.read_text(encoding="utf-8")
+    check("the copied agy launcher ends in the entry point the refusing stand-in replaces",
+          copied_agy_cell_text.endswith(launcher_entry), repr(copied_agy_cell_text[-80:]))
+    copied_agy_cell.write_text(
+        copied_agy_cell_text.replace(launcher_entry, (
+            'if __name__ == "__main__":\n'
+            '    counter = pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_COUNTER_PATH"])\n'
+            '    counter.write_text(str((int(counter.read_text()) if counter.is_file() else 0) + 1))\n'
+            '    print(f"{PROGRAM}: stand-in refusal of the invocation", file=sys.stderr)\n'
+            '    sys.exit(common.EXIT_BAD_INVOCATION)\n')),
+        encoding="utf-8")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: never\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: after the launcher's refusal\n"},
+    )
+    refusal_lines = (suggestions.read_text(encoding="utf-8").splitlines()
+                     if suggestions.is_file() else [])
+    check("the agy launcher's refusal, exit 64, is not retried: one Gemini launch, then the "
+          "Sonnet backup, whose report is the read's",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and launches_counted(counter) == 1
+          and launches_counted(claude_counter_path(counter)) == 1
+          and "refused the invocation (exit 64)" in result.stderr
+          and "STUB SONNET FAST READ: after the launcher's refusal" in "\n".join(refusal_lines),
+          f"exit {result.returncode}; launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+    check("the backup line names the launcher's refusal as the Gemini cell's cause",
+          len(refusal_lines) > 1 and "stand-in refusal of the invocation" in refusal_lines[1],
+          repr(refusal_lines[:2]))
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"fail_stderr": "stub claude: the sonnet cause\n"},
+    )
+    check("when Gemini and the Sonnet backup both fail, one FAILED line names both causes",
+          result.returncode == 1 and len(result.stdout.splitlines()) == 1
+          and result.stdout.startswith("FAILED")
+          and "stub agy: the gemini cause" in result.stdout
+          and "stub claude: the sonnet cause" in result.stdout
+          and not suggestions.exists(),
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    # --- A Gemini cell past its deadline: the Sonnet backup runs -----------
+    repository = build_scratch_repository(scratch)
+    copied_agy_cell = repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"
+    copied_agy_cell.write_text(
+        copied_agy_cell.read_text(encoding="utf-8")
+        .replace("COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n",
+                 "COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 1\n")
+        .replace("COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS = 60\n",
+                 "COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS = 1\n"),
+        encoding="utf-8")
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs, {"*": {"hang": True}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: after Gemini timed out\n"},
+    )
+    backup_lines = (suggestions.read_text(encoding="utf-8").splitlines()
+                    if suggestions.is_file() else [])
+    check("when the Gemini cell runs past its deadline twice, the Sonnet backup's "
+          "report is the read's",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and "STUB SONNET FAST READ: after Gemini timed out" in "\n".join(backup_lines)
+          and launches_counted(counter) == 2
+          and launches_counted(claude_counter_path(counter)) == 1,
+          f"exit {result.returncode}; stdout={result.stdout!r}; "
+          f"launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+    check("the report's backup line names the timeout as the Gemini cause",
+          len(backup_lines) > 1
+          and "timed-out — no result within 2 seconds" in backup_lines[1],
+          repr(backup_lines[:2]))
 
     # --- Chat instead of file, through the read ---------------------------
     repository = build_scratch_repository(scratch)
@@ -485,6 +998,183 @@ with tempfile.TemporaryDirectory() as scratch:
           f"stdout={result.stdout!r}")
     check("the launcher's recovery line is on the read's stderr",
           STDOUT_RECOVERY_PHRASE in result.stderr, repr(result.stderr))
+
+    # --- Question 4: What should be code ----------------------------------
+    question_4_module = script_under_test_module()
+    question_4_heading = question_4_module.WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING
+    coverage_heading = question_4_module.SENTENCE_COVERAGE_HEADING
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    question_4_prompt_dump = scratch / "received-question-4-prompt.txt"
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n"}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"report": QUESTION_4_STUB_ANSWER,
+                         "dump_prompt": str(question_4_prompt_dump)},
+    )
+    report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
+    question_4_part = report_text.partition(question_4_heading)[2]
+    check("Question 4 is asked once, after the fast-clarify cell, and its answer is the "
+          "report's one Question 4 section, between Questions 1 to 3 and the sentence "
+          "coverage",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and launches_counted(question_4_counter_path(counter)) == 1
+          and report_text.count(question_4_heading) == 1
+          and report_text.index("STUB FAST READ: questions 1 to 3")
+          < report_text.index(question_4_heading)
+          < report_text.index(QUESTION_4_STUB_ANSWER.strip())
+          < report_text.index(coverage_heading),
+          f"exit {result.returncode}; question 4 launches="
+          f"{launches_counted(question_4_counter_path(counter))}; report={report_text!r}; "
+          f"stderr={result.stderr!r}")
+    check("the Question 4 section opens with its own provenance stamp: claude-opus-5-5 "
+          "at high effort",
+          question_4_part.lstrip("\n").startswith("<!-- provenance: runtime=claude "
+                                                  "model=claude-opus-5-5 effort=high "
+                                                  "cell=what-should-be-code "),
+          repr(question_4_part[:300]))
+    received_question_4_prompt = (question_4_prompt_dump.read_text(encoding="utf-8")
+                                  if question_4_prompt_dump.is_file() else "")
+    draft_path = str((repository / walk_draft_relative).resolve())
+    check("the Question 4 cell receives the embedded template, the user's question word "
+          "for word, about the document itself rather than its marked copy",
+          received_question_4_prompt.startswith(f"Read {draft_path} in full")
+          and question_4_module.WHAT_SHOULD_BE_CODE_QUESTION in received_question_4_prompt
+          and "{TARGET_PATH}" not in received_question_4_prompt
+          and "{REPORT_PATH}" not in received_question_4_prompt,
+          repr(received_question_4_prompt[:300]))
+    check("the Question 4 cell is told to write its report into a scratch file, not into "
+          "the checkout",
+          f"Write your report to {repository}" not in received_question_4_prompt
+          and question_4_module.WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_FILE_NAME
+          in received_question_4_prompt,
+          repr(received_question_4_prompt[-500:]))
+    check("the claude launcher names no stray write, since Question 4 runs after the "
+          "fast-clarify cell's report is written",
+          cell_common.STRAY_WRITE_PHRASE not in result.stderr, repr(result.stderr))
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n"}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"fail_stderr": "stub claude: the opus cause\n"},
+    )
+    report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
+    question_4_part = report_text.partition(question_4_heading)[2]
+    check("when the Question 4 cell fails, the read still delivers Questions 1 to 3, "
+          "exit 0, its stdout the report's path",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and "STUB FAST READ: questions 1 to 3" in report_text,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+    check("the progress line says that, if Question 4 fails, its section says why",
+          "and its Question 4 section says why Question 4 was not answered." in result.stderr,
+          repr(result.stderr))
+    check("the Question 4 section and stderr say Question 4 was not answered, with "
+          "the cell's cause",
+          "Question 4 was not answered" in question_4_part
+          and "the opus cause" in question_4_part
+          and "Question 4 was not answered" in result.stderr
+          and question_4_part.index("Question 4 was not answered")
+          < question_4_part.index(coverage_heading),
+          f"section={question_4_part!r}; stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch)
+    copied_fast_read = repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py"
+    copied_fast_read.write_text(
+        copied_fast_read.read_text(encoding="utf-8").replace(
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n",
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 5\n"),
+        encoding="utf-8")
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    hanging_stub_pid_file = scratch / "hanging-question-4-stub.pid"
+    hanging_stub_pid_file.unlink(missing_ok=True)
+    hanging_read_started_at = time.monotonic()
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n"}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"hang": True, "report": QUESTION_4_STUB_ANSWER,
+                         "pid_file": str(hanging_stub_pid_file)},
+    )
+    hanging_read_seconds = time.monotonic() - hanging_read_started_at
+    # The stub sleeps 300 s, so a read that took longer may have waited for the
+    # sleep to end rather than killed the stub at the 5 s limit.
+    check("a Question 4 cell past its time limit is killed, not waited for: the read "
+          "returns before the hanging stub's sleep could have ended",
+          hanging_read_seconds < 300, f"{hanging_read_seconds:.0f} s")
+    report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
+    check("when the Question 4 cell runs past its time limit, the section says it gave "
+          "no answer within the limit, and the read still exits 0 with Questions 1 to 3",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and "Question 4 was not answered" in report_text
+          and f"no answer within {5 / 60:g} minutes" in report_text
+          and f"for up to {5 / 60:g} minutes" in result.stderr
+          and QUESTION_4_STUB_ANSWER.strip() not in report_text,
+          f"exit {result.returncode}; report={report_text!r}; stderr={result.stderr!r}")
+    hanging_stub_pid = (int(hanging_stub_pid_file.read_text())
+                        if hanging_stub_pid_file.is_file() else None)
+
+    def process_is_running(pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    for _ in range(50):
+        if hanging_stub_pid is None or not process_is_running(hanging_stub_pid):
+            break
+        time.sleep(0.1)
+    check("the model the Question 4 cell started is killed with it at the time limit",
+          hanging_stub_pid is not None and not process_is_running(hanging_stub_pid),
+          f"pid {hanging_stub_pid}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    concurrent_answer = "STUB CONCURRENT READ: another document's Question 4 answer\n"
+    concurrent_answer_path_file = scratch / "concurrent-read-question-4-answer.paths"
+    concurrent_answer_path_file.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n"}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"concurrent_read_answer": concurrent_answer,
+                         "concurrent_read_answer_path_file": str(concurrent_answer_path_file)},
+    )
+    report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
+    concurrent_paths = (concurrent_answer_path_file.read_text(encoding="utf-8").split("\n")
+                        if concurrent_answer_path_file.is_file() else [])
+    check("when the Question 4 cell exits 0 without an answer, the read neither takes nor "
+          "removes the answer a concurrent fast read wrote in its own temporary directory",
+          result.returncode == 0 and "Question 4 was not answered" in report_text
+          and concurrent_answer.strip() not in report_text
+          and len(concurrent_paths) > 1 and pathlib.Path(concurrent_paths[1]).is_file(),
+          f"exit {result.returncode}; concurrent paths {concurrent_paths}; report={report_text!r}")
+    if concurrent_paths:
+        shutil.rmtree(concurrent_paths[0], ignore_errors=True)
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs, {"*": {"fail_first_attempts": 99}},
+        suggestions, walk_draft_relative, counter,
+    )
+    check("when Questions 1 to 3 fail, Question 4 is not asked",
+          result.returncode == 1 and launches_counted(question_4_counter_path(counter)) == 0,
+          f"exit {result.returncode}; question 4 launches="
+          f"{launches_counted(question_4_counter_path(counter))}")
+
+    repository = build_scratch_repository(scratch)
+    records_report = (repository / "cold-read-records" / f"a-design-{record_stamp}"
+                      / "fast-read.md")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
+        records_report, "docs/drafts/a-design.md", counter,
+    )
+    records_text = records_report.read_text(encoding="utf-8") if records_report.is_file() else ""
+    check("a read on the records route carries the Question 4 section in its fast-read.md",
+          result.returncode == 0 and records_text.count(question_4_heading) == 1
+          and QUESTION_4_STUB_ANSWER.strip() in records_text,
+          f"exit {result.returncode}; report={records_text!r}")
 
     # --- The embedded instructions: two cases, and why both are needed ---
     # The case below and the one after it are a pair. The first proves the
@@ -584,6 +1274,37 @@ with tempfile.TemporaryDirectory() as scratch:
           and "Traceback" not in result.stderr,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
+    # --- A relative --target is the current directory's file ---------------
+    # Run with the current directory in another checkout, the read must review
+    # that checkout's file, not the one at the same path in its own checkout.
+    repository = build_scratch_repository(scratch)
+    other_relative = "docs/drafts/a-design.md"
+    second_checkout = scratch / "second-checkout"
+    if second_checkout.exists():
+        shutil.rmtree(second_checkout)
+    second_document = second_checkout / other_relative
+    second_document.parent.mkdir(parents=True)
+    second_document.write_text("# A design\n\nThe second checkout's own line.\n", encoding="utf-8")
+    second_checkout = scratch_repository_fixture.commit_seeded_cold_read_scratch_repository(
+        second_checkout)
+    # The record still goes under the script's own checkout's cold-read-records/.
+    second_checkout_report = (repository / "cold-read-records"
+                              / f"a-design-{record_stamp}" / "fast-read.md")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
+        second_checkout_report, other_relative, counter, current_directory=second_checkout,
+    )
+    # A file outside the script's checkout is frozen at its absolute path under target/.
+    frozen = (second_checkout_report.parent / "target"
+              / second_document.resolve().relative_to(second_document.resolve().anchor))
+    check("a relative --target run from another checkout freezes that checkout's file, "
+          "not the one at the same path in the script's checkout",
+          result.returncode == 0 and frozen.is_file()
+          and frozen.read_bytes() == (second_checkout / other_relative).read_bytes()
+          and frozen.read_bytes() != (repository / other_relative).read_bytes(),
+          f"exit {result.returncode}; frozen present={frozen.exists()}; "
+          f"stdout={result.stdout!r}; stderr={result.stderr[-300:]!r}")
+
     # --- The records route freezes the target and ships the record ----------
     # User-ruled 2026-09-07: a record carries the exact bytes reviewed at the
     # target's repository path, and goes to the log-store once the report has
@@ -674,20 +1395,22 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}; records={records_after_three_reads}; "
           f"stderr={result.stderr[-300:]!r}")
 
-    # The walk route: no record, no freeze, no ship.
+    # The walk route: no record, no freeze, no ship, so a store that cannot be
+    # reached leaves the exit 0.
     repository = build_scratch_repository(scratch)
     walk_draft_relative = "docs/walk/a-walk-item-draft.md"
     suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
     result = run_fast_read(
         repository, stubs, {"*": {"report": "STUB FAST READ: of the walk item\n"}},
         suggestions, walk_draft_relative, counter,
+        ship_destination="nobody@no-such-host.invalid:/tmp/no-store",
     )
-    check("a walk draft's read freezes nothing and ships nothing",
+    check("a walk draft's read freezes nothing, ships nothing, and exits 0 with the store unreachable",
           result.returncode == 0 and not (repository / "cold-read-records").exists()
           and "record: " not in result.stderr and not (repository / "log-store").exists(),
           f"exit {result.returncode}; stderr={result.stderr[-300:]!r}")
 
-    # A store that cannot be reached: the read still succeeds, and says so.
+    # A store that cannot be reached: the report is kept, and the read exits 1.
     repository = build_scratch_repository(scratch)
     records_report = (repository / "cold-read-records" / f"a-design-{record_stamp}"
                       / "fast-read.md")
@@ -696,10 +1419,32 @@ with tempfile.TemporaryDirectory() as scratch:
         records_report, other_relative, counter,
         ship_destination="nobody@no-such-host.invalid:/tmp/no-store",
     )
-    check("an unreachable store is reported as record: FAILED on stderr and the read still exits 0",
-          result.returncode == 0 and result.stdout.strip() == str(records_report)
+    check("an unreachable store is reported as record: FAILED on stderr, the report's path "
+          "is still the stdout line, and the read exits 1",
+          result.returncode == 1 and result.stdout.strip() == str(records_report)
+          and records_report.is_file()
           and any("record: FAILED:" in line for line in result.stderr.splitlines()),
           f"exit {result.returncode}; stderr={result.stderr[-400:]!r}")
+
+    # A store already holding other bytes under the record's name refuses it:
+    # the record did not reach the store either.
+    repository = build_scratch_repository(scratch)
+    records_report = (repository / "cold-read-records" / f"a-design-{record_stamp}"
+                      / "fast-read.md")
+    stored_elsewhere = (repository / SCRATCH_LOG_STORE_RELATIVE / records_report.parent.name
+                        / "fast-read.md")
+    stored_elsewhere.parent.mkdir(parents=True)
+    stored_elsewhere.write_text("ANOTHER READ'S REPORT\n", encoding="utf-8")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
+        records_report, other_relative, counter,
+    )
+    check("a store that refuses the record is reported as record: REFUSED on stderr, the "
+          "report's path is still the stdout line, and the read exits 1",
+          result.returncode == 1 and result.stdout.strip() == str(records_report)
+          and records_report.is_file()
+          and any("record: REFUSED:" in line for line in result.stderr.splitlines()),
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr[-400:]!r}")
 
 
 # --- The sentence-id markup (nedschorus#284 step 2) ----------------------
@@ -881,12 +1626,50 @@ check("on the walk route it says the copy was temporary and is gone",
 # because nothing said so. The read now says it, and these cases pin which
 # targets it says it about.
 warning_module = script_under_test_module()
+
+
+def ssh_time_limit_seconds_with_agy_cell(agy_cell_text):
+    """The fast read's ssh time limit when the agy cell it loads is `agy_cell_text`."""
+    real_spec_from_file_location = importlib.util.spec_from_file_location
+
+    def spec_with_stand_in_agy_cell(name, location, *arguments, **keywords):
+        if pathlib.Path(location) == warning_module.AGY_CELL_LAUNCHER:
+            location = stand_in_agy_cell
+        return real_spec_from_file_location(name, location, *arguments, **keywords)
+
+    with tempfile.TemporaryDirectory() as scratch:
+        stand_in_agy_cell = pathlib.Path(scratch) / "cold-read-agy-cell.py"
+        stand_in_agy_cell.write_text(agy_cell_text, encoding="utf-8")
+        importlib.util.spec_from_file_location = spec_with_stand_in_agy_cell
+        try:
+            module = script_under_test_module()
+        finally:
+            importlib.util.spec_from_file_location = real_spec_from_file_location
+    return module.COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS
+
+
+check("the ssh time limit of a read on ned-box follows the agy cell's per-model limit, "
+      "the length of the fast cold-read-tier's model chain, the Sonnet backup's allowance "
+      "and the Question 4 cell's time limit",
+      ssh_time_limit_seconds_with_agy_cell(
+          "COLD_READ_AGY_CELL_PER_MODEL_RUN_KILL_AFTER_SECONDS = 45 * 60\n"
+          "TIER_TO_AGY_MODEL_CHAIN = {'fast': ('model-a', 'model-b')}\n")
+      == warning_module.FAST_READ_ATTEMPTS * 2 * 45 * 60
+      + warning_module.COLD_READ_FAST_READ_SONNET_BACKUP_RUN_ALLOWANCE_SECONDS + 5 * 60
+      + warning_module.COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS)
+check("the Question 4 prompt carries the fast-clarify prompt's reading rules whole, "
+      "from their first sentence to their last",
+      warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES.startswith(warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES_OPENING_WORDS)
+      and warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES.endswith(warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES_CLOSING_WORDS)
+      and "Never open a credential file" in warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES
+      and warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES in warning_module.COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE,
+      repr(warning_module.FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES[:200]))
 class_of = warning_module.full_run_class_of_target
 root = warning_module.REPO_ROOT
 check("a skill is in the class",
       class_of(root / ".claude/skills/cold-read/SKILL.md") == "a skill or a skill's prompt")
 check("a skill's prompt is in the class",
-      class_of(root / ".claude/skills/cold-read/prompts/terminology.md")
+      class_of(root / ".claude/skills/cold-read/prompts/terminology-prompt.md")
       == "a skill or a skill's prompt")
 check("a file under docs/agents/ is in the class",
       class_of(root / "docs/agents/pr-reviewer-instructions.md") == "a file under docs/agents/")
@@ -897,7 +1680,7 @@ check("a wiki file is in the class",
       class_of(root / "docs/nedschorus-wiki/nedschorus-glossary.md") == "a wiki file")
 check("a design is recognised by its name, wherever it sits",
       class_of(root / "nc-systems/main-gatekeeper/main-gatekeeper-design.md") == "a design"
-      and class_of(root / "docs/issues/46-ghi-info-agent-design.md") == "a design")
+      and class_of(root / "docs/issues/46-ghi-guide-agent-design.md") == "a design")
 check("a test design and a design-contract have their own names",
       class_of(root / "docs/issues/x-test-design.md") == "a test design"
       and class_of(root / "docs/designs/queue/x-contract.md") == "a design-contract")
@@ -911,10 +1694,13 @@ check("a design's glossary is not in step 2's list, so it is not called a design
       class_of(root / "docs/design-to-main/design-to-main-glossary.md") is None)
 check("notes about a design are not the design",
       class_of(root / "docs/issues/142-draft-md-skill-design-notes.md") is None)
-check("step 2's own exceptions are not in the class: a walk file and CLAUDE.md",
-      class_of(root / "docs/walk/an-item-draft.md") is None
-      and class_of(root / "CLAUDE.md") is None
-      and class_of(root / "docs/agents/CLAUDE.local.md") is None)
+check("CLAUDE.md is recognised by its name, wherever it sits",
+      class_of(root / "CLAUDE.md") == "CLAUDE.md"
+      and class_of(root / "nc-systems/cold-read/CLAUDE.md") == "CLAUDE.md")
+check("step 2's own exception is not in the class: a walk file",
+      class_of(root / "docs/walk/an-item-draft.md") is None)
+check("a seat's CLAUDE.local.md at the checkout's root is not in the class",
+      class_of(root / "CLAUDE.local.md") is None)
 check("an ordinary document is not in the class",
       class_of(root / "docs/issues/32-preservation-and-placement.md") is None)
 check("a file outside the checkout is not classified",
@@ -1007,15 +1793,17 @@ with tempfile.TemporaryDirectory() as warning_scratch:
     check("the read still succeeds: the warning never refuses",
           result.returncode == 0 and brief_report.is_file(),
           f"exit {result.returncode}; stderr={result.stderr!r}")
-    check("the warning is on stderr, naming the class",
-          "the cold-read-full-run is required before this document lands "
+    check("the warning is on stderr, naming the class and step 2's exemption",
+          "unless step 2 of the /cold-read skill exempts this change" in result.stderr
+          and "the cold-read-full-run is required before this document lands "
           "(a file under docs/agents/)" in result.stderr, repr(result.stderr))
     check("stdout is still exactly the report path",
           result.stdout.strip() == str(brief_report)
           and len(result.stdout.splitlines()) == 1, repr(result.stdout))
     brief_report_text = brief_report.read_text(encoding="utf-8") if brief_report.is_file() else ""
     check("the report carries the same sentence, so the shipped record says it too",
-          "The cold-read-full-run is required before this document lands" in brief_report_text,
+          "Unless step 2 of the /cold-read skill exempts this change" in brief_report_text
+          and "the cold-read-full-run is required before this document lands" in brief_report_text,
           repr(brief_report_text[-400:]))
 
     # A document outside the class is read with nothing said.
@@ -1244,10 +2032,10 @@ with tempfile.TemporaryDirectory() as git_failure_scratch:
           and "dubious ownership" in git_failure_run.stderr,
           f"exit {git_failure_run.returncode}; {git_failure_run.stdout!r}; {git_failure_run.stderr!r}")
 
-# A worktree whose .git file names a missing git directory, as a ned-box
-# worktree read from the Mac through /Volumes/nedhome does, is a git failure
-# to report: git's words begin like "no worktree", and taking them so would
-# send its walk draft to the records route unsaid.
+# A worktree whose .git file names a missing git directory, outside the
+# Mac's mount of ned-box's home, is a git failure to report: git's words
+# begin like "no worktree", and taking them so would send its walk draft to
+# the records route unsaid.
 with tempfile.TemporaryDirectory() as missing_git_directory_scratch:
     missing_git_directory_scratch = Path(missing_git_directory_scratch).resolve()
     worktree_with_missing_git_directory = missing_git_directory_scratch / "a-worktree"
@@ -1267,7 +2055,8 @@ with tempfile.TemporaryDirectory() as missing_git_directory_scratch:
           "naming the target and a next step",
           "names a git directory that is missing or is not a git directory" in missing_git_directory_raised
           and str(draft_in_worktree_with_missing_git_directory) in missing_git_directory_raised
-          and "git worktree repair" in missing_git_directory_raised,
+          and "Run the fast read on the machine that made the worktree" in missing_git_directory_raised
+          and "git worktree repair" not in missing_git_directory_raised,
           repr(missing_git_directory_raised))
 
     # git prints the same words when the .git file names a directory that
@@ -1306,8 +2095,8 @@ with tempfile.TemporaryDirectory() as missing_git_directory_scratch:
                 wording_raised = ""
             except warning_module.CheckoutRootUnreadable as error:
                 wording_raised = str(error)
-            check(f"git {git_version}'s words for a broken worktree are raised with the repair step",
-                  "git worktree repair" in wording_raised, repr(wording_raised))
+            check(f"git {git_version}'s words for a broken worktree are raised with the next step",
+                  "machine that made the worktree" in wording_raised, repr(wording_raised))
     finally:
         os.environ["PATH"] = path_before_stand_in
 
@@ -1341,6 +2130,427 @@ with tempfile.TemporaryDirectory() as missing_git_directory_scratch:
             os.environ["GIT_CEILING_DIRECTORIES"] = environment_before
     check("a directory in no repository answers this checkout",
           no_repository_root == warning_module.REPO_ROOT, repr(no_repository_root))
+
+# A ned-box worktree seen on the Mac through /Volumes/nedhome: git there
+# cannot read the worktree's git directory, so the read runs on ned-box over
+# ssh. No machine here has the mount, so the mount and ned-box's home are
+# scratch directories, and a stand-in ssh runs the remote command on this
+# machine, where a stand-in fast read in the "ned-box" checkout records what
+# it was given. The stand-in drops the agent-session ID, as real OpenSSH
+# forwards no local environment, so only the remote command can carry it.
+STAND_IN_SSH = """#!/bin/sh
+printf '%s\n' "$@" > "$STAND_IN_SSH_ARGUMENTS_FILE"
+if [ "$STAND_IN_SSH_MODE" = unreachable ]; then
+    echo "ssh: connect to host ned-box port 22: No route to host" >&2
+    exit 255
+fi
+if [ "$STAND_IN_SSH_MODE" = unreachable-saying-two-lines ]; then
+    echo "Warning: Permanently added 'ned-box' (ED25519) to the list of known hosts." >&2
+    echo "nedlern@ned-box: Permission denied (publickey)." >&2
+    exit 255
+fi
+if [ "$STAND_IN_SSH_MODE" = killed ]; then
+    kill -TERM $$
+fi
+if [ "$STAND_IN_SSH_MODE" = hangs ]; then
+    exec sleep 30
+fi
+for last; do :; done
+exec env -u CLAUDE_CODE_SESSION_ID sh -c "$last"
+"""
+STAND_IN_REMOTE_FAST_READ = """import json, os, pathlib, sys
+plan = json.loads(os.environ["STAND_IN_REMOTE_FAST_READ_PLAN"])
+pathlib.Path(plan["record"]).write_text(json.dumps({
+    "argv": sys.argv[1:], "cwd": os.getcwd(),
+    "session": os.environ.get("CLAUDE_CODE_SESSION_ID")}), encoding="utf-8")
+sys.stderr.write(plan["stderr"])
+sys.stdout.write(plan["stdout"])
+sys.exit(plan["exit"])
+"""
+with tempfile.TemporaryDirectory() as over_ssh_scratch:
+    import contextlib
+    import io
+    import shlex
+    over_ssh_scratch = Path(over_ssh_scratch).resolve()
+    mac_mount = over_ssh_scratch / "mac mount"
+    ned_box_home = over_ssh_scratch / "ned-box home"
+    seat_relative = Path("agents") / "seat it's"
+    mac_worktree = mac_mount / seat_relative
+    (mac_worktree / "docs" / "walk").mkdir(parents=True)
+    (mac_worktree / ".git").write_text(
+        f"gitdir: {ned_box_home / 'Projects' / 'gone' / '.git' / 'worktrees' / 'seat'}\n",
+        encoding="utf-8")
+    mac_draft = mac_worktree / "docs" / "walk" / "a-walk-item-draft.md"
+    mac_draft.write_text("## Item 1 of 1\n", encoding="utf-8")
+    ned_box_worktree = ned_box_home / seat_relative
+    subprocess.run(["git", "init", "-q", str(ned_box_worktree)], check=True)
+    (ned_box_worktree / "nc-systems" / "cold-read").mkdir(parents=True)
+    (ned_box_worktree / "nc-systems" / "cold-read" / "cold-read-fast-read.py").write_text(
+        STAND_IN_REMOTE_FAST_READ, encoding="utf-8")
+    ned_box_draft = ned_box_worktree / "docs" / "walk" / "a-walk-item-draft.md"
+    ned_box_suggestions = ned_box_worktree / "docs" / "walk" / "a-walk-item-suggestions.md"
+    ned_box_draft.parent.mkdir(parents=True)
+    ned_box_draft.write_text("## Item 1 of 1\n", encoding="utf-8")
+    mac_suggestions = mac_worktree / "docs" / "walk" / "a-walk-item-suggestions.md"
+    stand_in_ssh = over_ssh_scratch / "ssh"
+    stand_in_ssh.write_text(STAND_IN_SSH, encoding="utf-8")
+    stand_in_ssh.chmod(0o755)
+    ssh_arguments_file = over_ssh_scratch / "ssh-arguments"
+    remote_record = over_ssh_scratch / "remote-record.json"
+    log_store_citation = f"nedlern@ned-box:{ned_box_home}/nedschorus-logs/x/"
+
+    attributes_before = {name: getattr(warning_module, name) for name in
+                         ("MAC_MOUNT_OF_NED_BOX_HOME", "NED_BOX_HOME", "SSH_PROGRAM",
+                          "COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS")}
+    environment_names = ("STAND_IN_SSH_ARGUMENTS_FILE", "STAND_IN_SSH_MODE",
+                         "STAND_IN_REMOTE_FAST_READ_PLAN", AGENT_SESSION_ID_VARIABLE)
+    environment_before = {name: os.environ.get(name) for name in environment_names}
+    argv_before = sys.argv
+
+    def read_from_mac(target, ssh_mode="", remote_exit=0, remote_stdout=None,
+                      ssh_program=stand_in_ssh, session_id=None,
+                      timeout_seconds=attributes_before["COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS"]):
+        """main() on `target` as the Mac runs it: (exit, stdout, stderr)."""
+        for stale in (ssh_arguments_file, remote_record):
+            if stale.exists():
+                stale.unlink()
+        warning_module.MAC_MOUNT_OF_NED_BOX_HOME = str(mac_mount)
+        warning_module.NED_BOX_HOME = str(ned_box_home)
+        warning_module.SSH_PROGRAM = str(ssh_program)
+        warning_module.COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS = timeout_seconds
+        os.environ["STAND_IN_SSH_ARGUMENTS_FILE"] = str(ssh_arguments_file)
+        os.environ["STAND_IN_SSH_MODE"] = ssh_mode
+        os.environ["STAND_IN_REMOTE_FAST_READ_PLAN"] = json.dumps({
+            "record": str(remote_record), "exit": remote_exit,
+            "stdout": f"{ned_box_suggestions}\n" if remote_stdout is None else remote_stdout,
+            "stderr": f"cold-read-fast-read: record: shipped: {log_store_citation}\n"
+                      f"cold-read-fast-read: read {ned_box_draft}\n"})
+        if session_id is None:
+            os.environ.pop(AGENT_SESSION_ID_VARIABLE, None)
+        else:
+            os.environ[AGENT_SESSION_ID_VARIABLE] = session_id
+        sys.argv = ["cold-read-fast-read.py", "--target", str(target)]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = warning_module.main()
+        return exit_code, stdout.getvalue(), stderr.getvalue()
+
+    try:
+        warning_module.MAC_MOUNT_OF_NED_BOX_HOME = str(mac_mount)
+        warning_module.NED_BOX_HOME = str(ned_box_home)
+        check("a path under the Mac's mount translates to the same path under ned-box's home",
+              warning_module.ned_box_path_of_mac_mount_path(mac_draft) == str(ned_box_draft),
+              repr(warning_module.ned_box_path_of_mac_mount_path(mac_draft)))
+        beside_the_mount = Path(str(mac_mount) + "-other") / "a.md"
+        check("a path beside the mount, sharing its name as a prefix, is not under it",
+              warning_module.ned_box_path_of_mac_mount_path(beside_the_mount) is None,
+              repr(warning_module.ned_box_path_of_mac_mount_path(beside_the_mount)))
+
+        exit_code, stdout, stderr = read_from_mac(mac_draft, session_id="session 'one'")
+        ssh_arguments = (ssh_arguments_file.read_text(encoding="utf-8").splitlines()
+                         if ssh_arguments_file.exists() else [])
+        remote = (json.loads(remote_record.read_text(encoding="utf-8"))
+                  if remote_record.exists() else {})
+        check("from the Mac, a ned-box worktree's document is read on ned-box and its "
+              "report path is printed in its Mac mount form, exit 0",
+              exit_code == 0 and stdout == f"{mac_suggestions}\n"
+              and "failed" not in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+        check("ssh runs without prompting, to nedlern@ned-box, with a connect timeout",
+              ssh_arguments[:5] == ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                                    "nedlern@ned-box"], repr(ssh_arguments))
+        check("the read on ned-box runs from the ned-box checkout holding the target, "
+              "on the target's ned-box path, through a quoted remote command",
+              remote.get("argv") == ["--target", str(ned_box_draft)]
+              and remote.get("cwd") == str(ned_box_worktree), repr(remote))
+        check("the agent-session ID reaches the read on ned-box",
+              remote.get("session") == "session 'one'", repr(remote))
+        check("ned-box paths on stderr are relayed in Mac mount form, a log-store citation as it is",
+              f"read {mac_draft}" in stderr and log_store_citation in stderr
+              and f"read {ned_box_draft}" not in stderr, repr(stderr))
+
+        exit_code, stdout, stderr = read_from_mac(mac_draft)
+        remote = (json.loads(remote_record.read_text(encoding="utf-8"))
+                  if remote_record.exists() else {})
+        check("with no agent-session ID set, none is passed to the read on ned-box",
+              exit_code == 0 and remote.get("session") is None, repr(remote))
+
+        exit_code, stdout, stderr = read_from_mac(mac_draft, ssh_mode="unreachable")
+        check("when ned-box cannot be reached, the read says so with ssh's words and exits 1",
+              exit_code == 1 and stdout.startswith("FAILED")
+              and "ned-box could not be reached" in stderr
+              and "No route to host" in stderr and "ssh nedlern@ned-box true" in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+        check("when ned-box cannot be reached, the read gives the agent a sentence for the "
+              "user holding ssh's words and the remedy",
+              "most often for one of two causes: ned-box could not be reached, or ned-box "
+              "refused this Mac's key. ssh said: 'ssh: connect to host ned-box port 22: "
+              "No route to host'.\n" in stderr
+              and "The next line is a message for the user; do not run its command yourself. "
+                  "If you are a subagent, pass it word for word to the agent that dispatched you, "
+                  "for the user; otherwise tell it to the user word for word:\n"
+                  "The cold-read-fast-read could not run "
+                  "on ned-box from this Mac: ssh exited 255 and said: 'ssh: connect to host "
+                  "ned-box port 22: No route to host'. Run `ssh nedlern@ned-box true` from "
+                  "a Terminal on your Mac. If that command fails with 'Permission denied', ned-box "
+                  "refused this Mac's key; if it fails another way, check that ned-box is on and on the "
+                  "LAN.\n" in stderr,
+              repr(stderr))
+
+        exit_code, stdout, stderr = read_from_mac(mac_draft, ssh_mode="unreachable-saying-two-lines")
+        stderr_lines = stderr.splitlines()
+        check("when ssh says two lines and exits 255, the message for the user is the one "
+              "last line, holding both of ssh's lines and the remedy",
+              exit_code == 1 and len(stderr_lines) >= 2
+              and stderr_lines[-2].endswith("otherwise tell it to the user word for word:")
+              and stderr_lines[-1].startswith("The cold-read-fast-read could not run on ned-box")
+              and "'Warning: Permanently added 'ned-box' (ED25519) to the list of known "
+                  "hosts. nedlern@ned-box: Permission denied (publickey).'" in stderr_lines[-1]
+              and stderr_lines[-1].endswith("check that ned-box is on and on the LAN."),
+              repr(stderr))
+
+        exit_code, stdout, stderr = read_from_mac(mac_draft, ssh_mode="killed")
+        check("when a signal kills ssh, the read says which signal, prints a FAILED line "
+              "and exits 1",
+              exit_code == 1
+              and stdout.startswith("FAILED (ssh was killed by signal 15")
+              and "ssh was killed by signal 15 before the cold-read-fast-read on ned-box finished"
+              in stderr and "the fast read on ned-box failed" not in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+        check("when a signal kills ssh, the message gives the command to run once more "
+              "on the Mac, with the target in its Mac form",
+              "over ssh again:\n" + shlex.join(
+                  ["python3", str(Path(warning_module.__file__).resolve()),
+                   "--target", str(mac_draft)]) + "\n" in stderr, repr(stderr))
+        killed_again = stderr.find("If ssh is killed again, do not run the command a third time")
+        check("when a signal kills ssh, the message says what to do if ssh is killed again "
+              "before what to do on any other failure of the second run",
+              -1 < killed_again < stderr.find("When the second run fails in any other way"),
+              repr(stderr))
+
+        exit_code, stdout, stderr = read_from_mac(mac_draft, ssh_mode="hangs",
+                                                  timeout_seconds=0.5)
+        check("when the read on ned-box outlasts the time limit, ssh is stopped, the read "
+              "says so with the target and exits 1",
+              exit_code == 1
+              and stdout.startswith("FAILED (no fast read result: the fast read on ned-box "
+                                    "did not finish within")
+              and "so this program stopped waiting and ended ssh, and" in stderr
+              and f"report, which this Mac sees at {mac_suggestions}." in stderr
+              and f"look for a report at {mac_suggestions}. The report is not written" in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+        rerun_command = shlex.join(["python3", str(Path(warning_module.__file__).resolve()),
+                                    "--target", str(mac_draft)])
+        check("when the read on ned-box outlasts the time limit, the message gives the "
+              "command to run once more on the Mac, with the target in its Mac form",
+              f"over ssh again:\n{rerun_command}\n" in stderr, repr(stderr))
+        stderr_lines = stderr.splitlines()
+        check("when the read on ned-box outlasts the time limit, the message for the user, "
+              "naming the target and the report place, is the one last line",
+              len(stderr_lines) >= 2
+              and stderr_lines[-2].startswith("The next line is a message for the user. ")
+              and stderr_lines[-2].endswith("otherwise tell it to the user word for word:")
+              and stderr_lines[-1].startswith(f"The cold-read-fast-read of {ned_box_draft} "
+                                              f"ran on ned-box for more than")
+              and stderr_lines[-1].endswith(f"if a complete report appears at "
+                                            f"{mac_suggestions}, that is its result."),
+              repr(stderr))
+
+        # The home's text again further down the path must survive the trip
+        # to ned-box's form and back: only the leading home is the mount.
+        mac_target_holding_home_twice = (mac_worktree / "docs"
+                                         / str(ned_box_home).lstrip("/") / "a b.md")
+        mac_target_holding_home_twice.parent.mkdir(parents=True)
+        mac_target_holding_home_twice.write_text("## Item 1 of 1\n", encoding="utf-8")
+        ned_box_target_holding_home_twice = warning_module.ned_box_path_of_mac_mount_path(
+            mac_target_holding_home_twice)
+        check("a ned-box path holding the home's path twice goes back to its Mac mount "
+              "path, with only the leading home replaced",
+              warning_module.mac_mount_path_of_ned_box_path(ned_box_target_holding_home_twice)
+              == str(mac_target_holding_home_twice),
+              repr(warning_module.mac_mount_path_of_ned_box_path(
+                  ned_box_target_holding_home_twice)))
+        rerun_command_holding_home_twice = shlex.join(
+            ["python3", str(Path(warning_module.__file__).resolve()),
+             "--target", str(mac_target_holding_home_twice)])
+        for ssh_mode, timeout_seconds, condition in (
+                ("killed", attributes_before[
+                    "COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS"],
+                 "a signal kills ssh"),
+                ("hangs", 0.5, "the read on ned-box outlasts the time limit")):
+            exit_code, stdout, stderr = read_from_mac(
+                mac_target_holding_home_twice, ssh_mode=ssh_mode,
+                timeout_seconds=timeout_seconds)
+            check(f"when {condition} on a target whose path holds ned-box's home twice, "
+                  f"the command to run once more names the target's own Mac path",
+                  exit_code == 1
+                  and f"over ssh again:\n{rerun_command_holding_home_twice}\n" in stderr,
+                  repr(stderr))
+
+        # A walk draft's frozen copy in a cold-read-record is no walk draft: its
+        # read takes the records route, so its report is never a suggestions file.
+        frozen_copy_relative = (seat_relative / "cold-read-records" / "item-2026-10-19"
+                                / "target" / "docs" / "walk" / "item-draft.md")
+        place = warning_module.cold_read_fast_read_report_location_seen_from_mac_for_target_sent_over_ssh(
+            str(ned_box_home / frozen_copy_relative))
+        check("the report place named for a walk draft's frozen copy read over ssh is "
+              "its cold-read-record in the log-store",
+              place == "fast-read.md in the newest directory whose name starts item-draft- in "
+                       "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/",
+              repr(place))
+        place = warning_module.cold_read_fast_read_report_location_seen_from_mac_for_target_sent_over_ssh(str(ned_box_draft))
+        check("the report place named for a walk draft read over ssh is its suggestions "
+              "file seen through this Mac's mount", place == str(mac_suggestions), repr(place))
+
+        # The same frozen copy read from the Mac through main(), with ssh hanging:
+        # the timeout message names the cold-read-record, not a suggestions file.
+        mac_frozen_copy = mac_mount / frozen_copy_relative
+        mac_frozen_copy.parent.mkdir(parents=True)
+        mac_frozen_copy.write_text("## Item 1 of 1\n", encoding="utf-8")
+        exit_code, stdout, stderr = read_from_mac(mac_frozen_copy, ssh_mode="hangs",
+                                                  timeout_seconds=0.5)
+        records_place = ("fast-read.md in the newest directory whose name starts item-draft- in "
+                         "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/")
+        check("when the read of a walk draft's frozen copy outlasts the time limit, the "
+              "message names its cold-read-record in the log-store, not a suggestions file",
+              exit_code == 1 and f"report, which this Mac sees at {records_place}." in stderr
+              and f"if a complete report appears at {records_place}, that is its result" in stderr
+              and "suggestions" not in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        # A worktree inside another: the nearer .git is the worktree that holds the target.
+        inner_relative = seat_relative / "inner seat"
+        (mac_mount / inner_relative / "docs" / "walk").mkdir(parents=True)
+        (mac_mount / inner_relative / ".git").write_text(
+            f"gitdir: {ned_box_home / 'Projects' / 'gone-too' / '.git'}\n", encoding="utf-8")
+        place = warning_module.cold_read_fast_read_report_location_seen_from_mac_for_target_sent_over_ssh(
+            str(ned_box_home / inner_relative / "docs" / "walk" / "inner-draft.md"))
+        check("the report place of a walk draft in a worktree inside another worktree is "
+              "taken from the nearer worktree",
+              place == str(mac_mount / inner_relative / "docs" / "walk"
+                           / "inner-suggestions.md"),
+              repr(place))
+
+        # A walk draft in a worktree whose path holds ned-box's home again
+        # further down: only the leading home is the mount.
+        twice_relative = Path("agents") / str(ned_box_home).lstrip("/") / "seat twice"
+        (mac_mount / twice_relative / "docs" / "walk").mkdir(parents=True)
+        (mac_mount / twice_relative / ".git").write_text(
+            f"gitdir: {ned_box_home / 'Projects' / 'gone-twice' / '.git'}\n", encoding="utf-8")
+        mac_twice_draft = mac_mount / twice_relative / "docs" / "walk" / "twice-draft.md"
+        mac_twice_draft.write_text("## Item 1 of 1\n", encoding="utf-8")
+        mac_twice_suggestions = mac_twice_draft.with_name("twice-suggestions.md")
+        place = warning_module.cold_read_fast_read_report_location_seen_from_mac_for_target_sent_over_ssh(
+            str(ned_box_home / twice_relative / "docs" / "walk" / "twice-draft.md"))
+        check("the report place of a walk draft whose path holds ned-box's home twice "
+              "is its suggestions file seen through this Mac's mount, with only the "
+              "leading home replaced", place == str(mac_twice_suggestions), repr(place))
+        exit_code, stdout, stderr = read_from_mac(mac_twice_draft, ssh_mode="hangs",
+                                                  timeout_seconds=0.5)
+        check("when the read of a walk draft whose path holds ned-box's home twice "
+              "outlasts the time limit, the message names its suggestions file's own "
+              "Mac path",
+              exit_code == 1
+              and f"report, which this Mac sees at {mac_twice_suggestions}." in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        exit_code, stdout, stderr = read_from_mac(
+            mac_draft, ssh_program=over_ssh_scratch / "no-such-ssh")
+        check("when ssh cannot be started, the read says so, names who can run "
+              "it on ned-box and with what command, and exits 1",
+              exit_code == 1 and stdout.startswith("FAILED")
+              and "ssh could not be started" in stderr
+              and "Ask any agent-seat on ned-box" in stderr
+              and f"--target {shlex.quote(str(ned_box_draft))}" in stderr
+              and "\nssh nedlern@ned-box '" in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+        stderr_lines = stderr.splitlines()
+        printed = {}
+        for name, opening in (("an agent-seat on ned-box", "Ask any agent-seat on ned-box"),
+                              ("the user", "When ListAgents lists no agent-seat on ned-box")):
+            index = next((index for index, line in enumerate(stderr_lines)
+                          if line.startswith(opening)), None)
+            printed[name] = (stderr_lines[index + 1]
+                             if index is not None and index + 1 < len(stderr_lines) else "")
+        # Run from outside the ned-box checkout, as an agent-seat in its own checkout
+        # would: only the printed checkout entry can reach the target's checkout.
+        for name, line in printed.items():
+            if remote_record.exists():
+                remote_record.unlink()
+            subprocess.run(["sh", "-c", line], cwd=over_ssh_scratch, check=False,
+                           capture_output=True, text=True,
+                           env={**os.environ,
+                                "PATH": f"{over_ssh_scratch}{os.pathsep}{os.environ['PATH']}"})
+            remote = (json.loads(remote_record.read_text(encoding="utf-8"))
+                      if remote_record.exists() else {})
+            check(f"the command printed for {name} runs as printed: it reads the target "
+                  f"from the ned-box checkout holding it",
+                  remote.get("argv") == ["--target", str(ned_box_draft)]
+                  and remote.get("cwd") == str(ned_box_worktree),
+                  f"{line!r}; {remote!r}")
+
+        exit_code, stdout, stderr = read_from_mac(
+            mac_draft, remote_exit=64,
+            remote_stdout=f"FAILED (target not found: {ned_box_draft})\n")
+        check("when the read on ned-box fails, its FAILED line is relayed in Mac mount form, "
+              "a line says it failed, and its exit code is kept",
+              exit_code == 64 and stdout == f"FAILED (target not found: {mac_draft})\n"
+              and "the fast read on ned-box failed (exit 64)" in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        exit_code, stdout, stderr = read_from_mac(mac_draft, remote_exit=1, remote_stdout="")
+        check("when the read on ned-box fails printing no result line, the read prints a "
+              "FAILED line of its own",
+              exit_code == 1 and stdout.startswith("FAILED (the fast read on ned-box exited 1"),
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        exit_code, stdout, stderr = read_from_mac(mac_draft, remote_exit=1)
+        check("when the read on ned-box wrote its report and exits 1 for its record, the "
+              "report's path is relayed, the exit 1 kept, and no line says the read failed",
+              exit_code == 1 and stdout == f"{mac_suggestions}\n"
+              and "the fast read on ned-box wrote its report" in stderr
+              and "the fast read on ned-box failed" not in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        shutil.rmtree(ned_box_worktree / ".git")
+        exit_code, stdout, stderr = read_from_mac(mac_draft)
+        check("when ned-box has no checkout holding the target, git's words are relayed, "
+              "a FAILED line is printed and the exit is nonzero",
+              exit_code != 0 and stdout.startswith("FAILED")
+              and "not a git repository" in stderr and remote_record.exists() is False,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        elsewhere_worktree = over_ssh_scratch / "elsewhere" / "seat"
+        (elsewhere_worktree / "docs" / "walk").mkdir(parents=True)
+        (elsewhere_worktree / ".git").write_text(
+            f"gitdir: {over_ssh_scratch / 'gone' / '.git'}\n", encoding="utf-8")
+        elsewhere_draft = elsewhere_worktree / "docs" / "walk" / "a-walk-item-draft.md"
+        elsewhere_draft.write_text("## Item 1 of 1\n", encoding="utf-8")
+        exit_code, stdout, stderr = read_from_mac(elsewhere_draft)
+        check("a broken worktree outside the mount still stops the read, exit 1, with no ssh",
+              exit_code == 1 and stdout.startswith("FAILED (no fast read ran")
+              and "machine that made the worktree" in stderr
+              and not ssh_arguments_file.exists(),
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+    finally:
+        for name, value in attributes_before.items():
+            setattr(warning_module, name, value)
+        for name, value in environment_before.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        sys.argv = argv_before
+
+# A walk draft's marked copy is scratch, so the changed-during-read line must not send the agent to it.
+with tempfile.TemporaryDirectory() as changed_scratch:
+    changed_target = Path(changed_scratch) / "draft.md"
+    changed_target.write_text("Edited after launch.\n", encoding="utf-8")
+    walk_route_line = script_under_test_module().target_changed_during_read_line(
+        changed_target, "0" * 64, None)
+check("on the walk route the changed-during-read line says the reviewer's copy is gone",
+      "(since removed)" in walk_route_line and "kept at" not in walk_route_line,
+      repr(walk_route_line))
 
 print()
 if failures:

@@ -6,7 +6,8 @@
 #
 # EXIT CODES. 0 the merge may proceed; 1 the gate REFUSES, a named reason on
 # stderr; 2 the gate COULD NOT RUN -- bad invocation, missing jq or gh,
-# unreadable token, or a read from GitHub that failed or could not be parsed.
+# unreadable token, a read from GitHub that failed or could not be parsed, or a
+# failed run of the description reader.
 # 1 and 2 are distinguished because the fleet's near-miss shape is a gate
 # that could not run being read as a gate that passed.
 #
@@ -139,7 +140,7 @@ TOKEN_ONLY_MERGE_ACCOUNT="The gate reads GitHub only as the merge account, $MERG
 TOKEN_TELL_THE_USER="Tell the user this message: only the user can restore the token."
 
 if [ $# -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
-  echo "usage: scripts/merge-gate.sh <pull request number> <the head commit, all 40 characters> <reviewed-since: ISO 8601 time>"
+  echo "usage: scripts/merge-gate.sh <pull request number> <the nc-head-commit, all 40 characters> <reviewed-since: ISO 8601 time>"
   echo
   echo "Decides whether a pull request may merge: reads it from GitHub as the merge account"
   echo "$MERGE_ACCOUNT and exits 0 only when every requirement is met, printing a merge"
@@ -149,17 +150,18 @@ if [ $# -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
   exit 0
 fi
 [ $# -eq 3 ] || cannot "merge-gate.sh takes exactly three arguments and was given $#." \
-  "Call it as: scripts/merge-gate.sh <pull request number> <the head commit, all 40 characters> <reviewed-since: the submitted_at of your latest review as the merge account, or of the pin if that is later>"
+  "Call it as: scripts/merge-gate.sh <pull request number> <the nc-head-commit, all 40 characters> <reviewed-since: the submitted_at of your latest review as the merge account, or of the pin if that is later>"
 PR=$1; EXPECTED=$2; SINCE=$3
 
 command -v jq >/dev/null 2>&1 || cannot "jq is not on PATH. Put jq on PATH, then rerun the gate." \
   "If jq is not installed on this machine, tell the user this message."
 command -v gh >/dev/null 2>&1 || cannot "gh is not on PATH. Put gh on PATH, then rerun the gate." \
   "If gh is not installed on this machine, tell the user this message."
+DESCRIPTION_DEFECT_LINE_READER="$(dirname "${BASH_SOURCE[0]}")/pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py"
 
 # An abbreviated or malformed EXPECTED used to refuse as "head moved", naming the
 # wrong cause: the head had not moved, the caller had passed a short sha.
-FULL_HASH_LINE="Pass the head commit's full hash in lower case, as gh pr view $PR --json headRefOid --jq .headRefOid prints it, then run the gate again."
+FULL_HASH_LINE="Pass the nc-head-commit's full hash in lower case, as gh pr view $PR --json headRefOid --jq .headRefOid prints it, then run the gate again."
 case "$EXPECTED" in
   *[!0-9a-f]*|"") cannot "expected-head-sha is not a full 40-character hex sha: $EXPECTED" "$FULL_HASH_LINE" ;;
 esac
@@ -208,14 +210,15 @@ approval=$(jq -s -c \
    | sort_by(.submitted_at) | last // empty' <<<"$reviews_raw")
 [ $? -eq 0 ] || cannot "could not parse the review channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
 [ -n "$approval" ] || fail "no APPROVED review found; the gate prints a merge command only for a commit an approving review covers." \
-  "If the head commit has not been reviewed yet, commission its review, and run the gate again once the head commit is approved." \
-  "If its review found a defect, do not merge until the defect is fixed and the new head commit is approved." \
-  "If its review found no defect, approve the head commit as an account other than the pull request's author: the merge account, or mac-claude when the merge account opened the pull request. Then run the gate again."
+  "If the nc-head-commit has not been reviewed yet, commission its review, and run the gate again once the nc-head-commit is approved." \
+  "If its review found a defect, do not merge until the defect is fixed and the new nc-head-commit is approved." \
+  "If its review found no defect, approve the nc-head-commit as an account other than the pull request's author: the merge account, or mac-claude when the merge account opened the pull request. Then run the gate again."
 
-approved_sha=$(jq -r '.commit_id' <<<"$approval")
-approval_id=$(jq -r '.id' <<<"$approval")
-approval_at=$(jq -r '.submitted_at' <<<"$approval")
-approver=$(jq -r '.user.login' <<<"$approval")
+APPROVAL_UNPARSABLE="could not parse the approving review"
+approved_sha=$(jq -r '.commit_id' <<<"$approval")    || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+approval_id=$(jq -r '.id' <<<"$approval")            || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+approval_at=$(jq -r '.submitted_at' <<<"$approval")  || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+approver=$(jq -r '.user.login' <<<"$approval")       || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
 [ -n "$approved_sha" ] && [ "$approved_sha" != "null" ] || fail "the approving review https://github.com/$REPO/pull/$PR#pullrequestreview-$approval_id records no commit_id, so the gate cannot tell which commit it approved." \
   "Do not merge. Tell the user this message."
 
@@ -233,11 +236,11 @@ since_ok=$(jq -n --arg since "$SINCE" --arg bound "$bound_at" \
   "Run the gate again with a reviewed-since no later than $bound_at." \
   "If you have read the pull request after $bound_at, post a review as the merge account saying so, then run the gate again with that review's submitted_at."
 
-[ "$head" = "$EXPECTED" ] || fail "head moved: you passed $EXPECTED, and the head commit is now $head." \
-  "If an approving review covers $head, run the gate again with $head as the expected head commit and a reviewed-since from after you read that review." \
+[ "$head" = "$EXPECTED" ] || fail "head moved: you passed $EXPECTED, and the nc-head-commit is now $head." \
+  "If an approving review covers $head, run the gate again with $head as the expected nc-head-commit and a reviewed-since from after you read that review." \
   "Otherwise, have $head reviewed and approved, then run the gate again the same way."
 # Merging past this would land code no approval covered.
-[ "$approved_sha" = "$head" ] || fail "the approval covers $approved_sha but the head commit is now $head." \
+[ "$approved_sha" = "$head" ] || fail "the approval covers $approved_sha but the nc-head-commit is now $head." \
   "Have $head reviewed, and approved by an account other than the pull request's author, then run the gate again."
 [ "$draft" = "false" ]    || fail "pull request is a draft pull request, which its author has marked as not ready to merge." \
   "Ask the pull request's author whether it is ready, through the pull request's agent-seat or on the pull request." \
@@ -261,7 +264,7 @@ case "$merge_state" in
   UNKNOWN) fail "mergeStateStatus is $merge_state" \
     "UNKNOWN: GitHub has not computed it, or the pull request is already merged or closed. If the pull request is open, run the gate again in a minute; if it still reads UNKNOWN five minutes later, tell the user this message." ;;
   DIRTY) fail "mergeStateStatus is $merge_state" \
-    "DIRTY: the branch conflicts with main. Tell the pull request's author; the author clears the conflict as CLAUDE.md says, and the new head commit then needs its own approving review." ;;
+    "DIRTY: the branch conflicts with main. Tell the pull request's author; the author clears the conflict as CLAUDE.md says, and the new nc-head-commit then needs its own approving review." ;;
   BEHIND) fail "mergeStateStatus is $merge_state" \
     "BEHIND: the branch is behind main. Tell the user this message." ;;
   BLOCKED) fail "mergeStateStatus is $merge_state" \
@@ -309,7 +312,7 @@ reviews=$(jq -s --arg since "$SINCE" --argjson approval_id "$approval_id" \
 [ $? -eq 0 ] || cannot "could not parse the review channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
 
 NEW_ACTIVITY_READ="Read everything posted or edited since $SINCE: the inline comments, the issue comments and the reviews."
-NEW_ACTIVITY_FINDING="If any raises a finding, do not merge until the finding is fixed, or answered with a reason that shows it does not hold; a fix moves the head commit, which then needs its own approving review."
+NEW_ACTIVITY_FINDING="If any raises a finding, do not merge until the finding is fixed, or answered with a reason that shows it does not hold; a fix moves the nc-head-commit, which then needs its own approving review."
 NEW_ACTIVITY_RECORD="When nothing is left open, post a review as the merge account saying what you read, check that nothing was posted between your reading and that review; if something was, read it and repeat from the first line. Then run the gate again with the review's submitted_at as reviewed-since."
 [ "$inline" -eq 0 ]  || fail "$inline inline comment(s) posted or edited since $SINCE -- read them before merging" \
   "$NEW_ACTIVITY_READ" "$NEW_ACTIVITY_FINDING" "$NEW_ACTIVITY_RECORD"
@@ -318,17 +321,71 @@ NEW_ACTIVITY_RECORD="When nothing is left open, post a review as the merge accou
 [ "$reviews" -eq 0 ] || fail "$reviews review(s) posted or edited since $SINCE -- read them before merging" \
   "$NEW_ACTIVITY_READ" "$NEW_ACTIVITY_FINDING" "$NEW_ACTIVITY_RECORD"
 
-# The gate checks only that a labelled line is there. Whether the line is true
-# is a reviewer's judgement, not the gate's.
+# The gate checks only that a defect line is there. Whether the line is true
+# is a reviewer's judgement, not the gate's. Which lines are defect lines, and
+# which link a not-fixed line names, the description reader decides.
+DESCRIPTION_UNPARSABLE="could not parse pull request $PR's description"
 body_read=$(gh pr view "$PR" --repo "$REPO" --json body)
 [ $? -eq 0 ] || cannot "could not read pull request $PR's description; any error gh printed is just above this line." "$RERUN_ONCE_GH"
-has_defect_line=$(jq -r '.body
-  | split("\n")
-  | any(test("^\\s*(?:[-*+]\\s+)?(?:\\*\\*|__)?(?:Root cause(?: not fixed)?(?:\\*\\*|__)?:|No defect fixed(?:\\*\\*|__)?\\.)"))' <<<"$body_read")
-[ $? -eq 0 ] || cannot "could not parse pull request $PR's description" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
-[ "$has_defect_line" = "true" ] || fail "the pull request's description has no line beginning \"Root cause:\", \"Root cause not fixed:\" or \"No defect fixed.\", so it does not say whether the pull request fixes a defect and, if it does, whether the change removes the defect's root cause." \
-  "Have the pull request's author add one of these lines to the description, starting the line with the label, which may follow a bullet and may be in bold type: \"Root cause:\" and the root cause the change removes; \"Root cause not fixed:\" and the root cause that stays, or that none was found, with the reason; or \"No defect fixed.\" when the pull request fixes no defect." \
+description=$(jq -er '.body | strings' <<<"$body_read")
+[ $? -eq 0 ] || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+defect_lines=$(python3 "$DESCRIPTION_DEFECT_LINE_READER" <<<"$description")
+[ $? -eq 0 ] || cannot "python3 $DESCRIPTION_DEFECT_LINE_READER exited nonzero when the gate ran it with pull request $PR's description on standard input, so the gate cannot read the description's defect lines; any error python3 or that program printed is just above this line." \
+  "If that error says No such file or directory, that program is missing from the checkout the gate ran from." \
+  "Otherwise that program or python3 cannot run, or that program has a defect, which the text of this description may set off; the cause is not the description's encoding, because GitHub gives the gate descriptions as UTF-8 text." \
+  "Either way a rerun fails the same way: do not run the gate again, and do not repair the checkout, that program or python3 yourself." \
+  "Tell the user every line the gate printed, the error above included, leave pull request https://github.com/$REPO/pull/$PR unmerged, go on with other pull requests meanwhile, and run the gate on this one again only once the user says the cause is fixed."
+[ "$defect_lines" != "[]" ] || fail "the pull request's description has no line beginning \"#root_cause\", \"#root_cause_not_fixed\" or \"#no_defect_fixed\", so it does not say whether the pull request fixes a defect and, if it does, whether the change removes the defect's root cause." \
+  "Have the pull request's author add one of these lines to the description, starting the line with the hashtag, which may follow a bullet and may be in bold type: \"#root_cause\" and the root cause the change removes; \"#root_cause_not_fixed\" and the root cause that stays, or that none was found, with the reason; or \"#no_defect_fixed\" when the pull request fixes no defect." \
   "Editing the description needs no new commit. Once the description has the line, run the gate again."
+
+# A not-fixed line, in either form, names after #follow_up the issue or pull
+# request that will fix its cause or look for it, and GitHub must not show that
+# work abandoned.
+not_fixed=$(jq -c '[.[] | select(.kind == "root_cause_not_fixed") | {line, link}]' <<<"$defect_lines")
+[ $? -eq 0 ] || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+FOLLOW_UP_IF_NO_ISSUE="If no such issue exists, open one with the /ghi-write skill, or link the outside project's issue when the cause is outside this repository."
+FOLLOW_UP_EDIT_ONLY="Editing the description is enough; no new commit is needed."
+FOLLOW_UP_RERUN="Once the description has the link, run the gate again."
+FOLLOW_UP_REPLACE="Replace that link with an open issue or pull request that fixes the cause, or, if the cause is not known, an open issue that looks for it."
+not_fixed_count=$(jq length <<<"$not_fixed")                    || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+for ((line_index = 0; line_index < not_fixed_count; line_index++)); do
+  line=$(jq -r ".[$line_index].line" <<<"$not_fixed")           || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+  link=$(jq -r ".[$line_index].link // empty" <<<"$not_fixed")  || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+  [ -n "$link" ] || fail "the description's line \`$line\` has no \`#follow_up\` followed by a full https://github.com/ link." \
+    "Add \`#follow_up <link>\` to the end of that line." \
+    "If the cause is known, link the open issue or pull request that fixes it." \
+    "If the cause is not known, link an open issue that looks for it." \
+    "$FOLLOW_UP_IF_NO_ISSUE" "$FOLLOW_UP_EDIT_ONLY" "$FOLLOW_UP_RERUN"
+  [[ $link =~ ^https://github\.com/([^/]+)/([^/]+)/(issues|pull)/([0-9]+)$ ]]
+  link_repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"; link_path_kind=${BASH_REMATCH[3]}; link_number=${BASH_REMATCH[4]}
+  # GitHub sends /issues/<n> and /pull/<n> to the same item, so either form names this pull request.
+  [ "$(tr '[:upper:]' '[:lower:]' <<<"$link_repo")" != "$REPO" ] || [ "$link_number" != "$PR" ] || fail "the description's line \`$line\` names after \`#follow_up\` $link, which is this pull request; a pull request cannot be the follow-up for a cause it leaves in place." \
+    "$FOLLOW_UP_REPLACE" "$FOLLOW_UP_IF_NO_ISSUE" \
+    "If this pull request does remove the cause, replace the whole line with a \"#root_cause\" line that names the cause it removes, and link nothing." \
+    "$FOLLOW_UP_EDIT_ONLY" "$FOLLOW_UP_RERUN"
+  # The issues endpoint answers for a pull request too, with its merged_at, and
+  # says which of the two the number is; the pulls endpoint would answer an
+  # issue's number only with Not Found.
+  linked=$(gh api "repos/$link_repo/issues/$link_number")
+  [ $? -eq 0 ] || cannot "could not read $link, which the description's line \`$line\` names after \`#follow_up\`; any error gh printed is just above this line." \
+    "If gh's error says Not Found, the link names no issue or pull request the merge account can see: have the pull request's author correct the link in the description, then run the gate again." \
+    "Otherwise run the gate again once; if it fails the same way, tell the user this message and gh's error."
+  linked_kind=$(jq -r --arg path_kind "$link_path_kind" 'if $path_kind == "pull" and (.pull_request | not) then "issue-at-a-pull-request-link"
+                       elif .pull_request then (if .state == "closed" and .pull_request.merged_at == null then "pull-request-closed-unmerged" else "live" end)
+                       elif .state == "closed" and .state_reason == "not_planned" then "issue-closed-not-planned" else "live" end' <<<"$linked")
+  [ $? -eq 0 ] || cannot "could not parse what GitHub returned for $link" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+  case "$linked_kind" in
+    issue-closed-not-planned) fail "the description's line \`$line\` names after \`#follow_up\` $link, an issue closed as not planned, so no work is planned on the cause the line leaves in place." \
+      "$FOLLOW_UP_REPLACE" "$FOLLOW_UP_IF_NO_ISSUE" "$FOLLOW_UP_EDIT_ONLY" "$FOLLOW_UP_RERUN" ;;
+    pull-request-closed-unmerged) fail "the description's line \`$line\` names after \`#follow_up\` $link, a pull request closed without merging, so it will not fix the cause the line leaves in place." \
+      "$FOLLOW_UP_REPLACE" "$FOLLOW_UP_IF_NO_ISSUE" "$FOLLOW_UP_EDIT_ONLY" "$FOLLOW_UP_RERUN" ;;
+    issue-at-a-pull-request-link) fail "the description's line \`$line\` names after \`#follow_up\` $link, a pull-request link, but $link_number in $link_repo is an issue, not a pull request." \
+      "If that issue is the follow-up, change the link to https://github.com/$link_repo/issues/$link_number." \
+      "If you meant a pull request, link it as https://github.com/<owner>/<repository>/pull/<its number>." \
+      "$FOLLOW_UP_EDIT_ONLY" "$FOLLOW_UP_RERUN" ;;
+  esac
+done
 
 echo "gate passed (#$PR): approved commit $approved_sha by $approver at $approval_at, $decision, $merge_state, no new channel activity since $SINCE"
 # The pin (--match-head-commit) is what makes the approval binding: GitHub

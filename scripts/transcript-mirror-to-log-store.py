@@ -23,19 +23,19 @@ same way it is found locally, apart from the seat-briefs, which go to
 `seat-briefs/` because `~/.claude/agents/` is Claude Code's own directory of
 subagent definitions:
 
-  /home/nedlern/nedschorus-logs/transcripts/mac/projects/<project-key>/<session-id>.jsonl
-  /home/nedlern/nedschorus-logs/transcripts/mac/handoffs/<file>
-  /home/nedlern/nedschorus-logs/transcripts/mac/tasks/<list-name>/<task-id>.json
-  /home/nedlern/nedschorus-logs/transcripts/mac/seat-briefs/<seat>/CLAUDE.local.md
-  /home/nedlern/nedschorus-logs/transcripts/mac/CLAUDE.md
-  /home/nedlern/nedschorus-logs/transcripts/ned-box/projects/...
+  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/projects/<project-key>/<session-id>.jsonl
+  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/handoffs/<file>
+  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/tasks/<list-name>/<task-id>.json
+  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/seat-briefs/<seat>/CLAUDE.local.md
+  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/CLAUDE.md
+  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/ned-box/projects/...
 
 `mac` and `ned-box` are the names CLAUDE.md uses for the two machines; this
 program tells them apart by hostname. On ned-box the copy is local -- its
 transcripts are already on that disk inside Timeshift's coverage, and the
 copy makes the store the one place to look for any session from either
 machine. A file there is cited with its host in scp form, like everything in
-the store: `nedlern@ned-box:/home/nedlern/nedschorus-logs/transcripts/mac/handoffs/<file>`.
+the store: `nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/handoffs/<file>`.
 
 HOW. `rsync -a` of each source into its place, over ssh in batch mode with a
 connect timeout from the Mac, never `--delete`: a transcript that vanishes
@@ -51,8 +51,11 @@ no-overwrite rule nc-systems/cold-read/cold-read-record-ship.py applies to cold-
 records does not apply here. Two things rsync meets on a live tree are
 expected and not failures: files that vanish between its listing and its
 transfer (a scratch project directory removed by a session ending; exit 24
-from GNU rsync on ned-box, exit 23 from the Mac's openrsync -- told apart by
-rsync_vanished_exit_code) and files that change while being read. A run
+from GNU rsync on ned-box) and files that change while being read. The Mac's
+openrsync exits 23 for vanished files, and 23 is also its exit for every
+other partial transfer, so rsync_vanished_exit_code gives openrsync no
+vanished code: on the Mac a file vanishing mid-run is a FAILED line, with
+openrsync's stderr, for that one run. A run
 that overlaps a slow earlier run -- the first pass moves about a gigabyte --
 exits quietly on the lock rather than racing it.
 
@@ -75,12 +78,7 @@ every ssh it opens, rsync's included, gives up about a minute after ned-box
 stops answering (ServerAliveInterval 15, ServerAliveCountMax 4), as when the
 Mac sleeps mid-run, and rsync's --timeout ends a transfer that stops moving.
 The run then ends and frees the lock, and a directory preparation or rsync
-that ended that way prints its FAILED line. One gap: openrsync's exit 23 is
-taken as files vanishing, so on the Mac any other partial transfer openrsync
-reports with 23 is silent too, its stderr dropped with the rest. The Mac's
-hourly log held no exit-23 run and no line from openrsync in 461 runs
-(measured 2026-09-30), so there is no sample to tell the two apart by their
-text.
+that ended that way prints its FAILED line.
 
 WHEN IT LAST COMPLETED A PASS, SEEN FROM NED-BOX. A run in which every
 source mirrored ends by writing the UTC time that pass started, as one line
@@ -132,7 +130,7 @@ Cron's environment has no ssh agent; the Mac's key to ned-box carries no
 passphrase, checked 2026-09-07 with `env -i HOME=/Users/el PATH=/usr/bin:/bin
 ssh -o BatchMode=yes nedlern@ned-box true`.
 
-THE DESTINATION IS ONE CONSTANT, LOG_STORE_TRANSCRIPTS_DESTINATION, the same
+THE DESTINATION IS ONE CONSTANT, LOG_STORE_AGENT_SESSION_FILES_DESTINATION, the same
 shape as the record shipper's; TRANSCRIPT_MIRROR_DESTINATION in the
 environment overrides it for the tests, which point it at a scratch
 directory (local mode, real rsync) or at the real string with stub rsync and
@@ -153,7 +151,7 @@ import time
 
 PROGRAM = "transcript-mirror-to-log-store"
 
-LOG_STORE_TRANSCRIPTS_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/transcripts"
+LOG_STORE_AGENT_SESSION_FILES_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine"
 LOG_STORE_HOSTNAME = "ned-box"
 MACHINE_NAME_ON_STORE_HOST = "ned-box"
 MACHINE_NAME_ELSEWHERE = "mac"
@@ -193,7 +191,6 @@ SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
 RSYNC_IO_TIMEOUT_SECONDS = "300"
 # Vanishing files are expected in a live transcript tree.
 RSYNC_EXIT_VANISHED_GNU = 24
-RSYNC_EXIT_VANISHED_OPENRSYNC = 23
 LOCK_FILE_NAME = ".transcript-mirror.lock"
 # The backup search on ned-box reads this file beside the Mac copy's projects/.
 MIRROR_PASS_STAMP_FILE_NAME = "last-complete-mirror-pass-utc.txt"
@@ -204,12 +201,12 @@ EXIT_LOCKED = 3
 
 
 @functools.lru_cache(maxsize=None)
-def rsync_vanished_exit_code() -> int:
-    """Return the installed rsync’s exit code for vanished source files."""
-    # GNU uses 24; openrsync uses 23, which can also hide other partial-transfer errors.
+def rsync_vanished_exit_code():
+    """Return the installed rsync's exit code that means only that source files vanished, or None for openrsync."""
+    # openrsync's 23 means vanished files and every other partial transfer alike.
     completed = subprocess.run(["rsync", "--version"], capture_output=True, text=True, check=False)
     first_line = completed.stdout.partition("\n")[0]
-    return RSYNC_EXIT_VANISHED_OPENRSYNC if first_line.startswith("openrsync") else RSYNC_EXIT_VANISHED_GNU
+    return None if first_line.startswith("openrsync") else RSYNC_EXIT_VANISHED_GNU
 
 
 def split_destination(destination: str):
@@ -232,7 +229,7 @@ def destination_for_this_machine():
     if override:
         host, path = split_destination(override)
     else:
-        host, path = split_destination(LOG_STORE_TRANSCRIPTS_DESTINATION)
+        host, path = split_destination(LOG_STORE_AGENT_SESSION_FILES_DESTINATION)
         if this_machine_name() == MACHINE_NAME_ON_STORE_HOST:
             host = None
     return host, path / this_machine_name()
@@ -273,10 +270,13 @@ def count_files_in_store(host, path: pathlib.PurePosixPath, files=None):
     paths = [path] if files is None else [path / file for file in files]
     if host is None:
         return sum(count_files_local(pathlib.Path(p)) for p in paths)
+    # Without pipefail a failed find still counts what it found, and the pipe exits 0.
     completed = subprocess.run(
-        SSH_COMMAND + [host, f"find {' '.join(shlex.quote(str(p)) for p in paths)} -type f | wc -l"],
+        SSH_COMMAND + [host, f"set -o pipefail; "
+                             f"find {' '.join(shlex.quote(str(p)) for p in paths)} -type f | wc -l"],
         capture_output=True, text=True, check=False)
     if completed.returncode != 0:
+        sys.stderr.write(completed.stderr)
         return None
     try:
         return int(completed.stdout.strip())

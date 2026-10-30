@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for cold-read-agy-cell.py — the Antigravity leg's pins and its one
-quirk, driven through a stub `agy` so no model is ever called.
+"""Tests for cold-read-agy-cell.py — the Antigravity leg's pins, its one
+quirk and its Gemini API key, driven through a stub `agy` so no model is ever
+called.
 
 WHAT IS PINNED HERE.
 
@@ -9,7 +10,7 @@ WHAT IS PINNED HERE.
     measurements, superseding low), and the stamp says so, with
     runtime=agy. The other tiers are refused by this launcher before agy
     runs: it pins no model for them, and a Gemini review under a `deep`- or
-    `second`-tier stamp would be a tier the roster never measured it on.
+    `second-strongest-model`-tier stamp would be a tier the roster never measured it on.
 
   - The invocation is the one measured working in the 2026-09-04 campaign:
     --add-dir <repo> (or AGENTS.md does not load), --dangerously-skip-permissions
@@ -45,6 +46,14 @@ WHAT IS PINNED HERE.
     (user-ruled 2026-09-29). With no sandbox program on PATH the launcher
     refuses, exit 64, and never starts agy.
 
+  - The Gemini API key. With GEMINI_API_KEY unset, agy is given the key
+    read from .config/nedschorus/gemini-api.key in the scratch home, with
+    its trailing newline stripped, and the key is not printed. A key the
+    caller set reaches agy unchanged though the file holds another. With the
+    file missing, not UTF-8 text, or empty, agy runs without a key, fails the
+    way the real agy does, and the cell's cause line is logged-out, naming the
+    file and why it gave no key, with no traceback and no byte of the file.
+
   - Every case runs the launcher with HOME at that scratch home, so no run
     of this suite scans or masks the real home's credential files.
 
@@ -62,9 +71,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 # This suite sits in nc-systems/cold-read/tests/; the programs it tests are
@@ -82,11 +93,14 @@ scratch_repository_fixture = importlib.util.module_from_spec(
     _scratch_repository_fixture_spec)
 _scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
 
-# The phrases the launcher and the shared module print, spelled out here
-# rather than imported so a reworded line fails here rather than passing
-# however either side was reworded.
-STDOUT_RECOVERY_PHRASE = "recovered the report from the model's chat output"
-NEAR_MISS_RECOVERY_PHRASE = "recovered a near-miss report"
+# The shared cell module, whose own suite pins its wording; the cases here take that wording from it.
+_cell_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common", SYSTEM_DIRECTORY / "cold-read-cell-common.py")
+cell_common = importlib.util.module_from_spec(_cell_common_spec)
+_cell_common_spec.loader.exec_module(cell_common)
+
+STDOUT_RECOVERY_PHRASE = cell_common.STDOUT_RECOVERY_PHRASE
+NEAR_MISS_RECOVERY_PHRASE = cell_common.NEAR_MISS_RECOVERY_PHRASE
 
 # A review-length chat answer and a remark-length one, either side of the
 # launcher's 120-word threshold.
@@ -98,8 +112,11 @@ SHORT_CHAT_REMARK = "I have written the report to the path you gave me.\n"
 # "report" is text to write to the report path (absent means write nothing),
 # "near_miss" writes the report one directory away from where it was asked,
 # "stdout" is the model's chat text, "dump_argv" and "dump_prompt" are paths
-# to record what the stub was launched with, and "exit" is the code to exit
-# with. The report path arrives by environment, as in the other cell tests,
+# to record what the stub was launched with, "dump_key" is a path to record
+# GEMINI_API_KEY as agy received it, "hang_writing_child_pid_to" is a path
+# to append the pid of a child the stub starts before both sleep past any
+# deadline a case sets, "stderr" is text for stderr, and "exit" is the code
+# to exit with. The report path arrives by environment, as in the other cell tests,
 # so a reworded template cannot unhook the stub.
 STUB_AGY = """#!/usr/bin/env python3
 import json, os, pathlib, sys
@@ -128,8 +145,20 @@ if "read_paths" in step:
         except OSError as error:
             reads[path] = "UNREADABLE: " + str(error)
     pathlib.Path(step["dump_reads"]).write_text(json.dumps(reads), encoding="utf-8")
+if "dump_key" in step:
+    pathlib.Path(step["dump_key"]).write_text(
+        json.dumps(os.environ.get("GEMINI_API_KEY")), encoding="utf-8")
 if "stdout" in step:
     sys.stdout.write(step["stdout"])
+if "stderr" in step:
+    sys.stderr.write(step["stderr"])
+if "hang_writing_child_pid_to" in step:
+    import subprocess, time
+    sys.stdout.flush()
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
+    with open(step["hang_writing_child_pid_to"], "a", encoding="utf-8") as handle:
+        handle.write("%d\\n" % child.pid)
+    time.sleep(300)
 sys.exit(step.get("exit", 0))
 """
 
@@ -189,9 +218,12 @@ def scratch_home_for(stub_directory):
 
 
 def run_agy_cell(repository, stub_directory, plan, report_path, *arguments,
-                 tier="fast", path_override=None):
+                 tier="fast", path_override=None, gemini_api_key=None):
     install_stub_agy(stub_directory)
     environment = dict(os.environ)
+    environment.pop("GEMINI_API_KEY", None)
+    if gemini_api_key is not None:
+        environment["GEMINI_API_KEY"] = gemini_api_key
     environment["HOME"] = str(scratch_home_for(stub_directory))
     environment["PATH"] = (path_override if path_override is not None else
                            f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}")
@@ -202,8 +234,50 @@ def run_agy_cell(repository, stub_directory, plan, report_path, *arguments,
          "--cell", "fast-clarify", "--tier", tier,
          "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
          *arguments],
-        capture_output=True, text=True, check=False, env=environment,
+        capture_output=True, text=True, check=False, env=environment, cwd=repository,
     )
+
+
+def agy_cell_copy_killing_agy_after_seconds(repository, timeout_seconds, margin_seconds):
+    """Rewrite the scratch copy of the agy cell so it gives agy
+    `timeout_seconds` and kills agy's process group `margin_seconds` later."""
+    copied_cell = repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"
+    cell_text = copied_cell.read_text(encoding="utf-8")
+    for constant_line, value in (
+            ("COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n", timeout_seconds),
+            ("COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS = 60\n", margin_seconds)):
+        if cell_text.count(constant_line) != 1:
+            raise AssertionError(f"the agy cell no longer holds {constant_line!r} once")
+        cell_text = cell_text.replace(
+            constant_line, constant_line.split("=")[0] + f"= {value}\n")
+    copied_cell.write_text(cell_text, encoding="utf-8")
+
+
+def pids_written_to(pid_file):
+    if not pid_file.is_file():
+        return []
+    return [int(line) for line in pid_file.read_text(encoding="utf-8").split()]
+
+
+def process_gone_within(pid, seconds):
+    """Whether `pid` has exited, and been reaped, within `seconds`."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def kill_left_over_processes(pids):
+    """A failing case may leave the stub's child sleeping; end it."""
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 def provenance_stamp_of(report):
@@ -260,8 +334,32 @@ with tempfile.TemporaryDirectory() as scratch:
           and "{REPORT_PATH}" not in received_prompt,
           repr(received_prompt[:300]))
 
+    # The fast read on the Mac sizes its ssh time limit from the per-model
+    # constant, so --print-timeout must follow it, not a literal that happens
+    # to equal it.
+    repository = build_scratch_repository(scratch)
+    copied_cell = repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"
+    cell_text = copied_cell.read_text(encoding="utf-8")
+    constant_line = "COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n"
+    check("the agy cell sets its per-model time limit on one line this suite can change",
+          cell_text.count(constant_line) == 1, repr(constant_line))
+    copied_cell.write_text(cell_text.replace(
+        constant_line, "COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 45 * 60\n"),
+        encoding="utf-8")
+    report = report_path_for(repository, "print-timeout-follows-constant")
+    argv_dump = scratch / "print-timeout-follows-constant-argv.json"
+    result = run_agy_cell(
+        repository, stubs,
+        {"*": {"report": "STUB AGY REVIEW\n", "dump_argv": str(argv_dump)}}, report,
+    )
+    argv = json.loads(argv_dump.read_text(encoding="utf-8")) if argv_dump.is_file() else []
+    check("agy's --print-timeout follows the cell's per-model time limit",
+          result.returncode == 0 and "--print-timeout" in argv
+          and argv[argv.index("--print-timeout") + 1] == "45m",
+          f"exit {result.returncode}; argv={argv!r}; stderr={result.stderr!r}")
+
     # --- The other tiers are refused before agy runs ----------------------
-    for other_tier in ("deep", "second"):
+    for other_tier in ("deep", "second-strongest-model"):
         repository = build_scratch_repository(scratch)
         report = report_path_for(repository, f"tier-{other_tier}")
         result = run_agy_cell(
@@ -428,6 +526,128 @@ with tempfile.TemporaryDirectory() as scratch:
           cell_reads.get(str(ordinary_file)) == canary_text, repr(cell_reads))
     check("inside the cell, agy's own login file is still read",
           cell_reads.get(str(agy_login_canary)) == canary_text, repr(cell_reads))
+
+    # --- The Gemini API key ---------------------------------------------------
+    gemini_api_key_file = scratch_home_for(stubs) / ".config" / "nedschorus" / "gemini-api.key"
+    gemini_api_key_file.parent.mkdir(parents=True, exist_ok=True)
+    # agy's own words when it has no key, as the real agy printed them on ned-box.
+    agy_missing_key_stderr = (
+        'modelProvider is set to "gemini" in settings.json, but the GEMINI_API_KEY '
+        "environment variable is not set. Set GEMINI_API_KEY to your Gemini API key, "
+        'or remove "modelProvider" from settings.json to use the default backend.\n')
+
+    def received_key(dump):
+        return json.loads(dump.read_text(encoding="utf-8")) if dump.is_file() else "NOT RUN"
+
+    gemini_api_key_file.write_text("test-key-from-file\n", encoding="utf-8")
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "key-from-file")
+    key_dump = scratch / "key-from-file-key.json"
+    result = run_agy_cell(repository, stubs,
+                          {"*": {"report": "STUB AGY REVIEW\n", "dump_key": str(key_dump)}},
+                          report)
+    check("with GEMINI_API_KEY unset, the cell exits 0",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("with GEMINI_API_KEY unset, agy is given the key file's key, newline stripped",
+          received_key(key_dump) == "test-key-from-file", repr(received_key(key_dump)))
+    check("the key read from the file is not printed",
+          "test-key-from-file" not in result.stdout + result.stderr, repr(result.stderr))
+
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "key-from-caller")
+    key_dump = scratch / "key-from-caller-key.json"
+    result = run_agy_cell(repository, stubs,
+                          {"*": {"report": "STUB AGY REVIEW\n", "dump_key": str(key_dump)}},
+                          report, gemini_api_key="test-key-from-caller")
+    check("with GEMINI_API_KEY set, agy is given the caller's key, not the file's",
+          received_key(key_dump) == "test-key-from-caller", repr(received_key(key_dump)))
+
+    for case_slug, prepare_key_file, problem in (
+            ("key-file-missing", lambda: gemini_api_key_file.unlink(),
+             "No such file or directory"),
+            ("key-file-not-utf8", lambda: gemini_api_key_file.write_bytes(b"\xff\xfekey\n"),
+             "the file is not UTF-8 text"),
+            ("key-file-empty", lambda: gemini_api_key_file.write_text("\n", encoding="utf-8"),
+             "the file is empty")):
+        prepare_key_file()
+        repository = build_scratch_repository(scratch)
+        report = report_path_for(repository, case_slug)
+        key_dump = scratch / f"{case_slug}-key.json"
+        result = run_agy_cell(repository, stubs,
+                              {"*": {"dump_key": str(key_dump),
+                                     "stderr": agy_missing_key_stderr, "exit": 1}},
+                              report)
+        check(f"{case_slug}: agy runs without a key and the cell exits 1",
+              received_key(key_dump) is None and result.returncode == 1,
+              f"key={received_key(key_dump)!r}; exit {result.returncode}")
+        expected_cause_line = (
+            f"cold-read-agy-cell: cause: logged-out — GEMINI_API_KEY is not set, and "
+            f"{gemini_api_key_file} gave no key: {problem}")
+        check(f"{case_slug}: the cause line names the key file and why it gave no key",
+              expected_cause_line in result.stderr.splitlines(), repr(result.stderr))
+        check(f"{case_slug}: no traceback, and no byte of the file, is printed",
+              "Traceback" not in result.stderr and "0xff" not in result.stderr,
+              repr(result.stderr))
+    gemini_api_key_file.unlink()
+
+    # --- An agy that runs past its deadline is killed with its children ------
+    repository = build_scratch_repository(scratch)
+    agy_cell_copy_killing_agy_after_seconds(repository, 1, 1)
+    report = report_path_for(repository, "agy-past-its-deadline")
+    pid_file = scratch / "agy-past-its-deadline-child-pids"
+    started = time.monotonic()
+    result = run_agy_cell(repository, stubs,
+                          {"*": {"hang_writing_child_pid_to": str(pid_file),
+                                 "stdout": "stub agy: words before the hang\n"}}, report)
+    elapsed = time.monotonic() - started
+    child_pids = pids_written_to(pid_file)
+    check("an agy that runs past its deadline fails the cell with exit 1 and no report, "
+          "within seconds of the deadline",
+          result.returncode == 1 and not report.exists() and elapsed < 60,
+          f"exit {result.returncode}; {elapsed:.0f} s; stderr={result.stderr!r}")
+    check("the cell reports the attempt as timed out, on the cause line callers read",
+          "cold-read-agy-cell: cause: timed-out — no result within 2 seconds"
+          in result.stderr.splitlines()
+          and "gemini-3.8-flash-medium(timed-out)" in result.stderr,
+          repr(result.stderr))
+    check("what agy printed before it was killed is on the cell's stderr",
+          "stub agy: words before the hang" in result.stderr, repr(result.stderr))
+    check("the process agy started is killed with agy",
+          len(child_pids) == 1 and all(process_gone_within(pid, 10) for pid in child_pids),
+          repr(child_pids))
+    kill_left_over_processes(child_pids)
+
+    # --- A stopped cell stops agy too --------------------------------------
+    # agy runs in a session of its own, outside the group the grid stops; the
+    # cell's SIGTERM handling must carry the stop to agy's group.
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "stopped-cell")
+    pid_file = scratch / "stopped-cell-child-pids"
+    install_stub_agy(stubs)
+    environment = dict(os.environ)
+    environment.pop("GEMINI_API_KEY", None)
+    environment["HOME"] = str(scratch_home_for(stubs))
+    environment["PATH"] = f"{stubs}{os.pathsep}{environment.get('PATH', '')}"
+    environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(
+        {"*": {"hang_writing_child_pid_to": str(pid_file)}})
+    environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(report)
+    launcher = subprocess.Popen(
+        [sys.executable, str(repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"),
+         "--cell", "fast-clarify", "--tier", "fast",
+         "--target", TARGET_RELATIVE_PATH, "--report", str(report)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+        env=environment, cwd=repository, start_new_session=True)
+    waited_until = time.monotonic() + 60
+    while not pids_written_to(pid_file) and time.monotonic() < waited_until:
+        time.sleep(0.1)
+    cell_common.stop_process_tree(launcher)
+    child_pids = pids_written_to(pid_file)
+    check("stopping a cell as the grid does kills the process agy started",
+          len(child_pids) == 1 and all(process_gone_within(pid, 10) for pid in child_pids),
+          repr(child_pids))
+    check("a cell stopped by SIGTERM exits 128 plus SIGTERM's number, not by SIGKILL",
+          launcher.returncode == 128 + signal.SIGTERM, repr(launcher.returncode))
+    kill_left_over_processes(child_pids)
 
     # --- No sandbox program on PATH: refused, agy never started ------------
     repository = build_scratch_repository(scratch)

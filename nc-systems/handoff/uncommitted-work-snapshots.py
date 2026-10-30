@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Work-snapshots: copies of a worktree's uncommitted changes that outlive a crash.
 
-Design: nc-systems/handoff/uncommitted-work-snapshots-across-crashes-design.md.
+Design: nc-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md.
 
 A work-snapshot is a commit in the clone's shared object store under
 refs/work-snapshots/<owner key>/<SHA-1 of the worktree's path>, holding every
@@ -84,6 +84,19 @@ def run_git(directory, *arguments, environment=None, input_text=None):
 def git_output(directory, *arguments, environment=None, input_text=None):
     """stdout of a git command, stripped; raises WorkSnapshotError when git fails."""
     result = run_git(directory, *arguments, environment=environment, input_text=input_text)
+    if result.returncode != 0:
+        raise WorkSnapshotError(
+            f"git {' '.join(arguments)} in {directory} exited {result.returncode}: "
+            f"{result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def git_output_or_none_on_exit_1(directory, *arguments):
+    """stdout of a git command, stripped, or None when git exits 1; raises
+    WorkSnapshotError for any other failure."""
+    result = run_git(directory, *arguments)
+    if result.returncode == 1:
+        return None
     if result.returncode != 0:
         raise WorkSnapshotError(
             f"git {' '.join(arguments)} in {directory} exited {result.returncode}: "
@@ -251,18 +264,25 @@ def work_snapshot_ref(owner_key, worktree):
 
 def operation_in_progress(worktree):
     """merge, rebase, cherry-pick, revert or am when git shows one under way, else None."""
-    def git_path(name):
-        return Path(git_output(worktree, "rev-parse", "--path-format=absolute",
-                               "--git-path", name))
-    if git_path("MERGE_HEAD").exists():
+    arguments = ["rev-parse", "--path-format=absolute"]
+    for name in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"):
+        arguments += ["--git-path", name]
+    lines = git_output(worktree, *arguments).split("\n")
+    if len(lines) != 5:
+        raise WorkSnapshotError(
+            f"git {' '.join(arguments)} in {worktree} printed {len(lines)} lines where the 5 paths "
+            "should give one line each; a path holding a newline prints as two lines, "
+            "and fewer lines mean git printed less than asked")
+    merge_head, cherry_pick_head, revert_head, rebase_merge, rebase_apply = (
+        Path(line) for line in lines)
+    if merge_head.exists():
         return "merge"
-    if git_path("CHERRY_PICK_HEAD").exists():
+    if cherry_pick_head.exists():
         return "cherry-pick"
-    if git_path("REVERT_HEAD").exists():
+    if revert_head.exists():
         return "revert"
-    if git_path("rebase-merge").is_dir():
+    if rebase_merge.is_dir():
         return "rebase"
-    rebase_apply = git_path("rebase-apply")
     if rebase_apply.is_dir():
         return "am" if (rebase_apply / "applying").exists() else "rebase"
     return None
@@ -289,16 +309,12 @@ def tree_of_worktree_now(worktree):
         return git_output(worktree, "write-tree", environment=environment)
 
 
-def head_commit(worktree):
-    result = run_git(worktree, "rev-parse", "--verify", "-q", "HEAD")
-    return result.stdout.strip() if result.returncode == 0 else None
-
-
 def build_work_snapshot_commit(worktree, agent_seat, transcript):
     tree = tree_of_worktree_now(worktree)
-    head = head_commit(worktree)
-    branch_result = run_git(worktree, "symbolic-ref", "-q", "--short", "HEAD")
-    branch = branch_result.stdout.strip() if branch_result.returncode == 0 else "detached"
+    head = head_commit_or_raise(worktree)
+    # symbolic-ref -q exits 1 only for a detached HEAD.
+    branch = git_output_or_none_on_exit_1(
+        worktree, "symbolic-ref", "-q", "--short", "HEAD") or "detached"
     trailers = [
         f"{TRAILER_WORKTREE}: {worktree}",
         f"{TRAILER_BRANCH}: {branch}",
@@ -324,8 +340,8 @@ def build_work_snapshot_commit(worktree, agent_seat, transcript):
 
 
 def current_ref_value(directory, ref):
-    result = run_git(directory, "rev-parse", "--verify", "-q", ref)
-    return result.stdout.strip() if result.returncode == 0 else None
+    """The commit ref holds, or None when ref does not exist."""
+    return git_output_or_none_on_exit_1(directory, "rev-parse", "--verify", "-q", ref)
 
 
 def refresh_work_snapshot(worktree, owner_key, agent_seat, transcript):
@@ -555,7 +571,7 @@ def list_command_text(agent_seat):
 RESTORE_STEPS = """\
 Each was listed because its worktree is gone or no longer holds its changes. Handle each of them before your other work:
 1. See what it holds: `git diff --stat <ref>^ <ref>`, then `git diff <ref>^ <ref>`.
-2. Decide what to keep. If you keep nothing, skip step 3. Read the end of the transcript the entry names, to learn what the dead agent was doing; if the transcript is gone, decide from the diff alone, and ask the user when unsure. Drop any mutant: a deliberate small break in code that mutation testing makes, by a program or by an agent's own edit, to check that the tests notice. A crash during mutation testing leaves the mutant in the work-snapshot. If one file holds both wanted work and a mutant, keep the file and remove the mutant from it by editing it before you commit in step 3.
+2. Decide what to keep. If you keep nothing, skip step 3. Read the end of the transcript the entry names, to learn what the dead agent was doing; if the transcript is gone, decide from the diff alone, and ask the user when unsure. Drop any mutant: a deliberate small break in code that nc-mutation-testing makes, by a program or by an agent's own edit, to check that the tests notice. A crash during nc-mutation-testing leaves the mutant in the work-snapshot. If one file holds both wanted work and a mutant, keep the file and remove the mutant from it by editing it before you commit in step 3.
 3. Restore what you keep, as a commit.
    - If the entry says the work-snapshot was taken during a merge, rebase, cherry-pick, revert or am: restore nothing from it. Delete it (step 4), tell the user in one line which worktree and which operation were discarded, and, if the dead agent's task still needs the operation, start the operation again from the branch, which still holds the committed work.
    - Otherwise make a new worktree from the work-snapshot's parent, so the changes apply without conflict. Do this even when the entry's worktree still exists: it no longer holds these changes, so leave it alone. With <name> standing for `restored-` and the ref's last two parts joined by a hyphen: `git worktree add -b <name> <clone>/.claude/worktrees/<name> <ref>^`, where <clone> is the directory containing the path `git rev-parse --path-format=absolute --git-common-dir` prints. In the new worktree run `git diff --binary <ref>^ <ref> -- <files to keep> | git apply --index`, then `git commit -m "Restore work from <ref>"`. Carry the restored branch on, or tell the user it is there.

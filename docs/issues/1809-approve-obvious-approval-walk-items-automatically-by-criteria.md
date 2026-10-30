@@ -1,0 +1,34 @@
+---
+issue: "[Approve obvious approval-walk items automatically, by criteria drawn from the user's tracked obvious approvals, after the advisor checks each one](https://github.com/nedschorus/nedschorus/issues/1809)"
+---
+
+# Approve obvious approval-walk items automatically, by criteria drawn from the user's tracked obvious approvals, after the advisor checks each one
+
+## Why
+
+In an approval-walk the user answers each item, one at a time, and many answers are approvals of items he finds obvious, such as an item whose strongest case against is weak. Each one costs him a read and an answer. On 2026-10-19 he asked for an answer that marks an approval as obvious, so that the obvious ones could later be studied and some approved without asking him. In reboot-test's agent-session on ned-box, at 2026-10-19T16:15:17Z: "I want a new option called O for obvious, and O and A do the same thing, except that O marks somehow that response is obvious, so that after we've collected, say, 100 obvious responses, we can go back and review the transcripts and walks to see if there's a way we can automate at least some of the obvious approvals".
+
+On 2026-10-21 he set the condition for doing so, in cold-read-improvement's agent-session on ned-box at 2026-10-21T15:40:44Z: "if we ever automate obvious approvals, in other words, if we ever come up with criteria to, instead of to detect obvious approvals and approve them automatically, that would require an advisor to check first. ... it probably needs a GHI for the conversion of the tracking into a automated system that would then be checked by an advisor before proceeding. And if the advisor decided it wasn't obvious, it would be back to it being a normal approval with the advisor's information added."
+
+The advisor is a Claude Code tool with no inputs: when an agent calls it, the whole transcript so far goes to a stronger reviewer model, which sends back advice.
+
+## What exists
+
+- The answer AO, approve as obvious, is on main: the walk check program writes it as "approved #approved_obvious" in the walk-minutes.
+- Two surveys of the user's AO and "trivial" answers since 2026-10-12, by Codex and by a Claude subagent, found that what a change does predicts his disapprovals, and code against prose, protection and length do not: nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/2026-10-27-auto-approvable-walk-item-classes-survey/ (claude-report.md, codex-report.md, synthesis.md).
+- The first criteria, which the user approved at item 3.4 of agent-instructions-editor's approval-walk agent-instructions-editor-open-decisions-2026-10-26 (`/home/nedlern/agents/agent-instructions-editor/docs/walk/` on ned-box) on 2026-10-27 ("So that's an approve and keep going."), are built in pull request [Walk items settle without the user by kind, and every answer records its case-against rating](https://github.com/nedschorus/nedschorus/pull/2042), open and not yet merged on 2026-10-27:
+  - the walk-me-through skill settles, without asking the user, an item whose change is only one of five kinds (text caught up with a ruling, code or checked fact; a tested code fix; removing what nothing uses; a rename to a glossary name; carrying out a cited ruling) and whose case against is rated none, or weak and only cost, after the `check --not-asked <kind number>` step of the walk check program, `nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py`, and an advisor call;
+  - every item states its case against on a `#case_against` line rated none, weak, medium, strong or very strong, and the walk check program records the rating beside the user's answer, so ratings can be compared with his answers.
+- An Opus subagent rated the last 123 cases against without seeing the user's answers, then compared the ratings with his answers. On an item whose change is only one of the five kinds, the user approved all 45 whose case against the subagent rated none or weak. On an addition, an item that adds a rule, a check or an instruction sentence its source lacks, a weak case against predicted nothing (68% approved unchanged, against 70% overall): nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/2026-10-27-weakest-cases-against-survey/report.md, with items.tsv beside it. Item 5.1 of the same approval-walk puts to the user a wider condition drawn from it: a weak case against that says only that the change is long, takes work to build, delays something, guards against what has not happened, repeats what is covered or could wait.
+
+## The work
+
+What is left is the second half of the user's aim: finding which additions, such as a new rule, check or instruction sentence, and which weak cases against, can also settle without him. On 2026-10-27 he said: "My hope is after the survey, even additions, we can start to find some additions which we can auto approve or skip."
+
+1. From the survey of the weakest cases against, propose to the user, in an approval-walk, each pattern of weak case against he approved 99 to 100% of the time, with the test an agent or the walk check program would apply and every past item it would have settled wrongly. Item 5.1 does this for changes; the survey found no such pattern for additions.
+2. Once about 50 answers carry a `#case_against` rating, compare the ratings with his answers, and compare the additions he answered AO with those he disapproved; propose to him any class of addition with no disapproval among its items.
+3. Build what he approves into the walk-me-through skill's list of kinds and the walk check program's `--not-asked` step, keeping the advisor check before each item is settled.
+
+## Next action
+
+agent-instructions-editor, which owns the walk-me-through skill, builds item 5.1's wider condition if the user approves it, and keeps pull request 2042's condition if he does not; either way it does step 2 when the walk-minutes under `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/` and in each agent-seat's `docs/walk/` directory on ned-box, `/home/nedlern/agents/<agent-seat>/docs/walk/`, hold about 50 answer lines carrying a `#case_against_<rating>` hashtag.

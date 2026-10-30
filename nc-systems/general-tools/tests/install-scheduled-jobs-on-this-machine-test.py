@@ -79,25 +79,29 @@ NED_BOX_SESSION_DIALOGS_LINE = (
     "*/10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
     "log-store-session-dialogs-refresh-nbd.py --failures-only >> "
     "/home/nedlern/.claude/log-store-session-dialogs-refresh.log 2>&1")
-# The daily worktree cleanup, added to the table after the two jobs above; no
+# The worktree cleanup, added to the table after the two jobs above; no
 # machine had it installed by hand.
 NED_BOX_CLEAN_LINE = (
     "30 6 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
-    "clean-worktrees.py --remove >> /home/nedlern/.claude/daily-clean-worktrees.log 2>&1")
+    "clean-worktrees.py --remove >> /home/nedlern/.claude/clean-worktrees.log 2>&1")
 NED_BOX_CRASH_RESTART_WATCHER_LINE = (
     "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
     "handoff-agent-seat-died-without-session-handoff-restart-watcher.py >> "
     "/home/nedlern/.claude/handoff-agent-seat-died-without-session-handoff-restart-watcher.log 2>&1")
+NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE = (
+    "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
+    "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> "
+    "/home/nedlern/.claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log 2>&1")
 MAC_CLEAN_PLIST = {
-    "Label": "com.nedschorus.daily-clean-worktrees",
+    "Label": "com.nedschorus.clean-worktrees",
     "ProgramArguments": ["/opt/homebrew/bin/python3",
                          "/Users/el/Projects/nedschorus/scripts/clean-worktrees.py", "--remove"],
     "EnvironmentVariables": {
         "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
                 "/usr/sbin:/sbin"},
     "StartCalendarInterval": {"Hour": 6, "Minute": 30},
-    "StandardOutPath": "/Users/el/.claude/daily-clean-worktrees.log",
-    "StandardErrorPath": "/Users/el/.claude/daily-clean-worktrees.log",
+    "StandardOutPath": "/Users/el/.claude/clean-worktrees.log",
+    "StandardErrorPath": "/Users/el/.claude/clean-worktrees.log",
 }
 # The weekly owner check of the work-snapshot hook in a real claude session, added after the daily jobs.
 NED_BOX_WEEKLY_LIVE_CHECK_LINE = (
@@ -119,14 +123,19 @@ MAC_WEEKLY_LIVE_CHECK_PLIST = {
     "StandardErrorPath":
         "/Users/el/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log",
 }
-# The daily prune of the guarded-file hook's copies of removed checkouts, last in the table.
+# The prune of the guarded-file hook's copies of removed checkouts, last in the table.
 NED_BOX_GUARDED_FILE_PRUNE_LINE = (
     "0 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
     "guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py >> "
-    "/home/nedlern/.claude/daily-guarded-file-versions-and-approvals-store-removed-checkout-"
+    "/home/nedlern/.claude/guarded-file-versions-and-approvals-store-removed-checkout-"
     "copies-prune.log 2>&1")
+# The deletion of exited agent-sessions' Claude Code temp folders, on ned-box alone.
+NED_BOX_TEMP_FOLDERS_DELETE_LINE = (
+    "30 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
+    "claude-code-temp-folders-of-exited-agent-sessions-delete.py >> "
+    "/home/nedlern/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log 2>&1")
 MAC_GUARDED_FILE_PRUNE_PLIST = {
-    "Label": "com.nedschorus.daily-guarded-file-versions-and-approvals-store-removed-checkout-"
+    "Label": "com.nedschorus.guarded-file-versions-and-approvals-store-removed-checkout-"
              "copies-prune",
     "ProgramArguments": ["/opt/homebrew/bin/python3",
                          "/Users/el/Projects/nedschorus/nc-systems/general-tools/"
@@ -135,9 +144,9 @@ MAC_GUARDED_FILE_PRUNE_PLIST = {
         "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
                 "/usr/sbin:/sbin"},
     "StartCalendarInterval": {"Hour": 7, "Minute": 0},
-    "StandardOutPath": "/Users/el/.claude/daily-guarded-file-versions-and-approvals-store-"
+    "StandardOutPath": "/Users/el/.claude/guarded-file-versions-and-approvals-store-"
                        "removed-checkout-copies-prune.log",
-    "StandardErrorPath": "/Users/el/.claude/daily-guarded-file-versions-and-approvals-store-"
+    "StandardErrorPath": "/Users/el/.claude/guarded-file-versions-and-approvals-store-"
                          "removed-checkout-copies-prune.log",
 }
 DOMAIN = f"gui/{os.getuid()}"
@@ -155,6 +164,7 @@ class MachineStub:
         self.crontab_list_failure = None      # (exit code, stderr bytes)
         self.exit_codes = {}                  # "crontab-write" | "lint" | "bootstrap" | "kickstart" | "bootout" | "print"
         self.bootstrap_loads_the_job = True
+        self.print_error_text = b"Could not print: injected launchctl failure\n"
         # The macOS failure: `crontab` exits 0 and leaves an empty crontab.
         self.crontab_write_installs_empty_crontab = False
 
@@ -178,6 +188,8 @@ class MachineStub:
             code = self.exit_codes.get("lint", 0)
         elif command[:2] == ["launchctl", "print"]:
             code = self.exit_codes.get("print", 0 if command[2] in self.loaded else 113)
+            if code not in (0, 113):
+                err = self.print_error_text
         elif command[:2] == ["launchctl", "bootout"]:
             if "bootout" in self.exit_codes and command[2] in self.loaded:
                 code, err = self.exit_codes["bootout"], b"Boot-out failed: 5: Input/output error\n"
@@ -219,7 +231,7 @@ real_table = installer.load_table(REAL_TABLE_PATH)
 real_jobs = {job["name"]: job for job in real_table["jobs"]}
 mac, ned_box = real_table["machines"]["mac"], real_table["machines"]["ned-box"]
 mirror, daily = real_jobs["transcript-mirror-to-log-store"], real_jobs["daily-full-test-run-of-main"]
-clean = real_jobs["daily-clean-worktrees"]
+clean = real_jobs["clean-worktrees"]
 
 check("the table gives ned-box the transcript mirror's cron line it has installed, byte for byte",
       installer.cron_line(ned_box, mirror, mirror["on"]["ned-box"]) == NED_BOX_MIRROR_LINE,
@@ -235,22 +247,27 @@ check("the Mac's daily full test run is a launchd job at 03:30, not a cron line:
       "while the Mac sleeps starts at the next wake",
       daily["on"]["mac"]["scheduler"] == "launchd" and mac_plist == MAC_DAILY_PLIST
       and list(mac_plist) == list(MAC_DAILY_PLIST), mac_plist)
-check("the table gives ned-box the daily worktree cleanup's cron line at 06:30, two hours after "
+check("the table gives ned-box the worktree cleanup's cron line at 06:30, two hours after "
       "the daily full test run",
       installer.cron_line(ned_box, clean, clean["on"]["ned-box"]) == NED_BOX_CLEAN_LINE,
       installer.cron_line(ned_box, clean, clean["on"]["ned-box"]))
 mac_clean_plist = installer.launch_agent_plist(mac, clean, clean["on"]["mac"])
-check("the Mac's daily worktree cleanup is a launchd job at 06:30, so a run missed while the Mac "
+check("the Mac's worktree cleanup is a launchd job at 06:30, so a run missed while the Mac "
       "sleeps starts at the next wake",
       clean["on"]["mac"]["scheduler"] == "launchd" and mac_clean_plist == MAC_CLEAN_PLIST
       and list(mac_clean_plist) == list(MAC_CLEAN_PLIST), mac_clean_plist)
-check("the table's jobs are the two typed by hand before this program, the daily worktree "
-      "cleanup, ned-box's crash restart watcher, the weekly owner check of the work-snapshot "
-      "hook, the session dialogs refresh and the guarded-file store's daily prune, and no other",
-      sorted(real_jobs) == ["daily-clean-worktrees", "daily-full-test-run-of-main",
-                            "daily-guarded-file-versions-and-approvals-store-removed-checkout-"
+check("the table's jobs are the two typed by hand before this program, the worktree "
+      "cleanup, ned-box's crash restart watcher, ned-box's Remote Control reconnect watcher, the "
+      "weekly owner check of the work-snapshot hook, the session dialogs refresh and the "
+      "guarded-file store's prune, the deletion of exited agent-sessions' temp folders, and "
+      "no other",
+      sorted(real_jobs) == ["claude-code-temp-folders-of-exited-agent-sessions-delete",
+                            "clean-worktrees", "daily-full-test-run-of-main",
+                            "guarded-file-versions-and-approvals-store-removed-checkout-"
                             "copies-prune",
                             "handoff-agent-seat-died-without-session-handoff-restart-watcher",
+                            "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-"
+                            "tmux-typing-watcher",
                             "log-store-session-dialogs-refresh", "transcript-mirror-to-log-store",
                             "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"],
       sorted(real_jobs))
@@ -273,9 +290,22 @@ mirror_documentation = (REPOSITORY_ROOT / mirror["program"]).read_text(encoding=
 daily_documentation = (REPOSITORY_ROOT / daily["program"]).read_text(encoding="utf-8")
 clean_documentation = (REPOSITORY_ROOT / clean["program"]).read_text(encoding="utf-8")
 watcher_documentation = (REPOSITORY_ROOT / watcher["program"]).read_text(encoding="utf-8")
+remote_control_watcher = real_jobs[
+    "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher"]
+remote_control_watcher_documentation = (
+    REPOSITORY_ROOT / remote_control_watcher["program"]).read_text(encoding="utf-8")
 guarded_file_prune_documentation = (
-    REPOSITORY_ROOT / real_jobs["daily-guarded-file-versions-and-approvals-store-removed-"
+    REPOSITORY_ROOT / real_jobs["guarded-file-versions-and-approvals-store-removed-"
                                 "checkout-copies-prune"]["program"]).read_text(encoding="utf-8")
+temp_folders_delete = real_jobs["claude-code-temp-folders-of-exited-agent-sessions-delete"]
+check("the temp-folder deletion runs on ned-box alone, at 07:30, and its program documents the "
+      "table's line",
+      list(temp_folders_delete["on"]) == ["ned-box"]
+      and installer.cron_line(ned_box, temp_folders_delete, temp_folders_delete["on"]["ned-box"])
+      == NED_BOX_TEMP_FOLDERS_DELETE_LINE
+      and f"    {NED_BOX_TEMP_FOLDERS_DELETE_LINE}\n"
+      in (REPOSITORY_ROOT / temp_folders_delete["program"]).read_text(encoding="utf-8"),
+      installer.cron_line(ned_box, temp_folders_delete, temp_folders_delete["on"]["ned-box"]))
 weekly_live_check_documentation = (
     REPOSITORY_ROOT / real_jobs["weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"]
     ["program"]).read_text(encoding="utf-8")
@@ -285,49 +315,56 @@ check("the lines each program documents are the table's lines, and each names th
       and f"    {NED_BOX_DAILY_LINE}\n" in daily_documentation
       and f"    {NED_BOX_CLEAN_LINE}\n" in clean_documentation
       and f"    {NED_BOX_CRASH_RESTART_WATCHER_LINE}\n" in watcher_documentation
+      and f"    {NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE}\n" in remote_control_watcher_documentation
       and f"    {NED_BOX_WEEKLY_LIVE_CHECK_LINE}\n" in weekly_live_check_documentation
       and f"    {NED_BOX_GUARDED_FILE_PRUNE_LINE}\n" in guarded_file_prune_documentation
       and all("nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py" in text
               for text in (mirror_documentation, daily_documentation, clean_documentation,
-                           watcher_documentation, weekly_live_check_documentation,
+                           watcher_documentation, remote_control_watcher_documentation,
+                           weekly_live_check_documentation,
                            guarded_file_prune_documentation)))
 
 printed, errors = io.StringIO(), io.StringIO()
 stub = MachineStub()
 with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="linux", home=Path("/home/nedlern"), run=stub)
-check("--print as ned-box prints ned-box's seven cron lines from the real table and runs nothing",
+check("--print as ned-box prints ned-box's nine cron lines from the real table and runs nothing",
       exit_code == 0 and stub.commands == []
       and printed.getvalue().splitlines() == [
           "machine: ned-box (linux, /home/nedlern)",
           "transcript-mirror-to-log-store — cron line:", NED_BOX_MIRROR_LINE,
           "log-store-session-dialogs-refresh — cron line:", NED_BOX_SESSION_DIALOGS_LINE,
           "daily-full-test-run-of-main — cron line:", NED_BOX_DAILY_LINE,
-          "daily-clean-worktrees — cron line:", NED_BOX_CLEAN_LINE,
+          "clean-worktrees — cron line:", NED_BOX_CLEAN_LINE,
           "handoff-agent-seat-died-without-session-handoff-restart-watcher — cron line:",
           NED_BOX_CRASH_RESTART_WATCHER_LINE,
+          "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher — "
+          "cron line:", NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE,
           "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — cron line:",
           NED_BOX_WEEKLY_LIVE_CHECK_LINE,
-          "daily-guarded-file-versions-and-approvals-store-removed-checkout-copies-prune — cron "
-          "line:", NED_BOX_GUARDED_FILE_PRUNE_LINE],
+          "guarded-file-versions-and-approvals-store-removed-checkout-copies-prune — cron "
+          "line:", NED_BOX_GUARDED_FILE_PRUNE_LINE,
+          "claude-code-temp-folders-of-exited-agent-sessions-delete — cron line:",
+          NED_BOX_TEMP_FOLDERS_DELETE_LINE],
       (exit_code, printed.getvalue(), errors.getvalue()))
 printed, errors = io.StringIO(), io.StringIO()
 with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="darwin", home=Path("/Users/el"), run=stub)
 mac_printed = printed.getvalue()
-clean_heading = ("daily-clean-worktrees — launchd job, /Users/el/Library/LaunchAgents/"
-                 "com.nedschorus.daily-clean-worktrees.plist:\n")
+clean_heading = ("clean-worktrees — launchd job, /Users/el/Library/LaunchAgents/"
+                 "com.nedschorus.clean-worktrees.plist:\n")
 weekly_heading = ("weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — launchd job, "
                   "/Users/el/Library/LaunchAgents/com.nedschorus.weekly-uncommitted-work-snapshot-"
                   "hook-real-claude-session-owner-check.plist:\n")
 daily_part, _, clean_and_weekly_part = mac_printed.partition(clean_heading)
 clean_part, _, weekly_and_prune_part = clean_and_weekly_part.partition(weekly_heading)
-prune_heading = ("daily-guarded-file-versions-and-approvals-store-removed-checkout-copies-prune — "
-                 "launchd job, /Users/el/Library/LaunchAgents/com.nedschorus.daily-guarded-file-"
+prune_heading = ("guarded-file-versions-and-approvals-store-removed-checkout-copies-prune — "
+                 "launchd job, /Users/el/Library/LaunchAgents/com.nedschorus.guarded-file-"
                  "versions-and-approvals-store-removed-checkout-copies-prune.plist:\n")
 weekly_part, _, prune_part = weekly_and_prune_part.partition(prune_heading)
-check("--print as the Mac prints the mirror's cron line, the two daily jobs' plists and the weekly "
-      "owner check's and the guarded-file prune's plists, and runs nothing",
+check("--print as the Mac prints the mirror's cron line, the full test run's and the worktree "
+      "cleanup's plists and the weekly owner check's and the guarded-file prune's plists, and "
+      "runs nothing",
       exit_code == 0 and stub.commands == [] and clean_part.startswith("<?xml")
       and daily_part.startswith(
           "machine: mac (darwin, /Users/el)\ntranscript-mirror-to-log-store — cron line:\n"
@@ -360,7 +397,8 @@ check("--help ends with the docstring's exit-codes paragraph and prints nothing 
           "table; 2 not run — a bad "
           "invocation, a table this program cannot use, a machine the table does not name, a "
           "job's program missing, a crontab that could not be read, or a shell parser that "
-          "could not be installed.")
+          "could not be installed; or for --check, a job not checked because `launchctl print` "
+          "could not report it.")
       and "WHY THIS EXISTS" not in help_text and "THE TABLE is " not in help_text
       and "user-ruled" not in help_text, help_text)
 check("--check's help names both reasons for exit 1",
@@ -955,6 +993,15 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a kickstart that fails is FAILED with its exit code, exit 1",
           exit_code == 1 and f"`launchctl kickstart {TARGET}` exited 3; the job was not started"
                              in errors and "started:" not in printed, (exit_code, printed, errors))
+    plist_path.unlink(missing_ok=True)
+    stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode())
+    stub.exit_codes["print"] = 5
+    exit_code, printed, errors = run_main(["--install", "--start-once"] + DAILY, MAC, stub)
+    check("the rerun command a failed launchctl print prints carries --start-once when the run "
+          "was given it",
+          exit_code == 1 and (f"{SCRIPT_PATH.resolve()} --install --job "
+                              f"daily-full-test-run-of-main --start-once` on this machine.")
+          in errors, (exit_code, errors))
     stub = MachineStub(crontab=as_installed_today)
     exit_code, printed, errors = run_main(["--install", "--start-once"] + TWO_JOBS, NED_BOX, stub)
     check("--start-once where no selected job is a launchd job is refused before anything "
@@ -993,6 +1040,78 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a bootstrap that exits 0 with the job not found afterwards is FAILED, exit 1",
           exit_code == 1 and f"`launchctl print {TARGET}` does not find the job" in errors
           and "installed:" not in printed, (exit_code, printed, errors))
+    plist_path.unlink(missing_ok=True)
+    stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode())
+    stub.exit_codes["print"] = 5
+    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    check("a bootstrap that exits 0 followed by a launchctl print that fails with other than "
+          "service-not-found is FAILED with print's exit and error, exit 1, not installed",
+          exit_code == 1
+          and (f"FAILED: daily-full-test-run-of-main — bootstrap exited 0, and then `launchctl "
+               f"print {TARGET}` exited 5, which is neither 0 (loaded) nor 113 (no such job loaded), "
+               f"with the error: Could not print: injected launchctl failure; so "
+               f"whether {LABEL} is loaded is unknown.") in errors
+          and f"{SCRIPT_PATH.resolve()} --install --job daily-full-test-run-of-main` on this machine." in errors
+          and "installed:" not in printed, (exit_code, printed, errors))
+    exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
+    check("--check whose launchctl print fails with other than service-not-found reports the "
+          "job NOT CHECKED with print's exit and error, not as unloaded, and exits 2",
+          exit_code == 2
+          and (f"NOT CHECKED: daily-full-test-run-of-main — `launchctl print {TARGET}` exited 5, "
+               f"which is neither 0 (loaded) nor 113 (no such job loaded), with the error: "
+               f"Could not print: injected launchctl failure; so whether launchd has {LABEL} "
+               f"loaded is unknown.") in errors
+          and "Fix what launchctl's error names." in errors
+          and f"{SCRIPT_PATH.resolve()} --check --job daily-full-test-run-of-main` on this machine." in errors
+          and "loaded in" not in printed and "matches: " not in printed,
+          (exit_code, printed, errors))
+    silent_failure = installer.LaunchctlPrintFailed(TARGET, 5, "")
+    check("a launchctl print that fails printing no error says so, and tells the reader to "
+          "rerun once and then tell the user, not to fix an error that was never printed",
+          silent_failure.cause.endswith("and printed no error")
+          and silent_failure.next_steps("the-rerun", "FAILED: j").splitlines() == [
+              "Run `the-rerun` once more, on this machine; it tries this job alone.",
+              installer.next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+                  "FAILED: j")],
+          (silent_failure.cause, silent_failure.next_steps("the-rerun", "FAILED: j")))
+    stub.print_error_text = b""
+    exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
+    check_rerun = f"{SCRIPT_PATH.resolve()} --check --job daily-full-test-run-of-main"
+    check("--check whose launchctl print fails printing no error ends with the rerun and with "
+          "when to stop, which is NOT CHECKED again, not a DIFFERS line, and exits 2",
+          exit_code == 2 and errors.splitlines()[-3:] == [
+              f"Run `{check_rerun}` once more, on this machine; it tries this job alone.",
+              "A DIFFERS line is not this failure: it is drift the check found, and does not "
+              "count as the rerun failing.",
+              installer.next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+                  "NOT CHECKED: daily-full-test-run-of-main")], (exit_code, errors))
+    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    install_rerun = f"{SCRIPT_PATH.resolve()} --install --job daily-full-test-run-of-main"
+    check("--install whose launchctl print fails printing no error ends with the rerun and "
+          "with when to stop, and exits 1",
+          exit_code == 1 and errors.splitlines()[-2:] == [
+              f"Run `{install_rerun}` once more, on this machine; it tries this job alone.",
+              installer.next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+                  "FAILED: daily-full-test-run-of-main")], (exit_code, errors))
+    stub.print_error_text = b"Could not print: injected launchctl failure\n"
+    before = len(stub.commands)
+    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    check("--install over a plist that says what the table says, whose launchctl print fails "
+          "with other than service-not-found, is FAILED, exit 1, and boots nothing out",
+          exit_code == 1
+          and (f"FAILED: daily-full-test-run-of-main — `launchctl print {TARGET}` exited 5, "
+               f"which is neither 0 (loaded) nor 113 (no such job loaded), with the error: "
+               f"Could not print: injected launchctl failure; so whether {LABEL} is loaded is "
+               f"unknown, and the job was not installed.") in errors
+          and stub.commands[before:] == [["launchctl", "print", TARGET]],
+          (exit_code, printed, errors, stub.commands[before:]))
+    exit_code, printed, errors = run_main(["--install", "--start-once"] + DAILY, MAC, stub)
+    check("over a plist that says what the table says, the rerun command a failed launchctl "
+          "print prints carries --start-once when the run was given it",
+          exit_code == 1 and "the job was not installed." in errors
+          and (f"{SCRIPT_PATH.resolve()} --install --job daily-full-test-run-of-main "
+               f"--start-once` on this machine.") in errors, (exit_code, errors))
+    plist_path.unlink()
     stub = MachineStub(crontab=None)
     stub.exit_codes["crontab-write"] = 1
     exit_code, printed, errors = run_main(["--install"], MAC, stub)
@@ -1412,8 +1531,8 @@ with tempfile.TemporaryDirectory() as temporary:
                       "and says what the install printed and to tell the user",
                       install_calls == [True] and exit_code == 2 and stub.crontab_writes == []
                       and "pip exited 1: no network on this machine" in errors
-                      and "Tell the user, or, if you are a subagent, the agent that dispatched "
-                      "you, in these words: \"tree-sitter-bash is missing on " in errors
+                      and shell_reader.report_to_user_or_dispatching_agent_instruction_build(
+                          "\"tree-sitter-bash is missing on ", environment={}) in errors
                       and shell_reader.REQUIREMENTS_FILE.name in errors,
                       (install_calls, exit_code, printed, errors, stub.crontab_writes))
     finally:
@@ -1427,7 +1546,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("in an agent-session no user attends, the install-failed refusal tells a subagent to "
           "report, does not ask to tell the user, and still says how to install by hand",
           "do not tell the user" in unattended_errors
-          and "If you are a subagent, tell the agent that dispatched you" in unattended_errors
+          and shell_reader.report_to_user_or_dispatching_agent_instruction_build("", environment={"CLAUDE_CODE_SESSION_ATTENDED": "0"}) in unattended_errors
           and "Tell the user" not in unattended_errors and "pip install" in unattended_errors
           and "pip exited 1: no network" in unattended_errors
           and "Leave this run of install-scheduled-jobs-on-this-machine undone; run it again, with "
@@ -1506,7 +1625,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("in an agent-session no user attends, that refusal tells a subagent to report, does not "
           "ask to tell the user, and gives a top-level agent its next step",
           unattended_exit == 2 and "do not tell the user" in unattended_errors
-          and "If you are a subagent, tell the agent that dispatched you" in unattended_errors
+          and shell_reader.report_to_user_or_dispatching_agent_instruction_build("", environment={"CLAUDE_CODE_SESSION_ATTENDED": "0"}) in unattended_errors
           and "go on with your task" in unattended_errors
           and "Leave this run of install-scheduled-jobs-on-this-machine undone" in unattended_errors
           and "Tell the user" not in unattended_errors, unattended_errors)

@@ -32,7 +32,13 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 HOOK_SCRIPT = Path(__file__).with_name("cold-read-fast-read-due-for-linked-document-reminder-hook.py")
 STORE_VARIABLE = "NEDSCHORUS_LOG_STORE_COLD_READ_RECORDS_DIRECTORY"
-SUITE_ROOT = Path(tempfile.mkdtemp(prefix="cold-read-fast-read-due-for-linked-document-test-"))
+SUITE_TOP = Path(tempfile.mkdtemp(prefix="cold-read-fast-read-due-for-linked-document-test-"))
+(SUITE_TOP / "real").mkdir()
+# Every case runs through a symlink, as on the Mac, whose temporary directory is
+# under /var, a symlink to /private/var; a path the hook resolves and the suite
+# does not then fails on every machine, not only there.
+(SUITE_TOP / "through-symlink").symlink_to("real")
+SUITE_ROOT = SUITE_TOP / "through-symlink"
 failures = []
 
 
@@ -93,6 +99,11 @@ def expect_unchecked(case_name, completed, document, reason_part, due_paths=None
         check(f"{case_name}: not marked as read, and a fast read asked for it",
               listed and "(marked as read" not in listed[0] and fast_read_asked,
               f"context {context!r}")
+        instruction = [line for line in context.splitlines() if "not marked as read" in line]
+        check(f"{case_name}: the list's own line tells the agent to run the fast read on a document it changed, with the command",
+              len(instruction) == 1 and instruction[0].startswith("If you changed a document in this list that is not marked as read")
+              and "--target <document path>" in instruction[0],
+              f"context {context!r}")
     expected = [str(path.resolve()) for path in due_paths or []]
     check(f"{case_name}: the other documents are still judged",
           reported_paths(completed) == expected,
@@ -121,6 +132,16 @@ def check(case_name, condition, detail=""):
     else:
         print(f"FAIL  {case_name}: {detail}")
         failures.append(case_name)
+
+
+def run_hook(hook_script, stdin_text, environment_extra=None):
+    """Run hook_script with stdin_text, in this process's environment less the variables that silence the hook."""
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in ("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
+                                  "CLAUDE_CODE_SESSION_ATTENDED")}
+    environment.update(environment_extra or {})
+    return subprocess.run([sys.executable, str(hook_script)], input=stdin_text,
+                          capture_output=True, text=True, env=environment, timeout=60)
 
 
 class Case:
@@ -175,16 +196,9 @@ class Case:
         payload = {"hook_event_name": "Stop", "session_id": "s1",
                    "transcript_path": str(self.transcript), "cwd": str(self.checkout)}
         payload.update(payload_extra or {})
-        environment = {key: value for key, value in os.environ.items()
-                       if key not in ("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
-                                      "CLAUDE_CODE_SESSION_ATTENDED")}
-        environment[STORE_VARIABLE] = str(self.store)
-        environment.update(environment_extra or {})
-        completed = subprocess.run(
-            [sys.executable, str(HOOK_SCRIPT)],
-            input=json.dumps(payload) if stdin_text is None else stdin_text,
-            capture_output=True, text=True, env=environment, timeout=60)
-        return completed
+        return run_hook(HOOK_SCRIPT,
+                        json.dumps(payload) if stdin_text is None else stdin_text,
+                        {STORE_VARIABLE: str(self.store), **(environment_extra or {})})
 
 
 def reported_paths(completed):
@@ -388,9 +402,10 @@ def main():
         completed = case.run("See docs/plan-of-record.md.")
     finally:
         unreadable.chmod(0o755)
-    check("an unreadable record directory is a fault: exit 1, one stderr line, no output",
+    check("an unreadable record directory is a fault naming it: exit 1, one stderr line, no output",
           completed.returncode == 1 and completed.stdout == ""
           and "made no check" in completed.stderr
+          and "PermissionError" in completed.stderr and str(unreadable) in completed.stderr
           and len(completed.stderr.strip().splitlines()) == 1,
           f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
 
@@ -457,7 +472,7 @@ def main():
     completed = case.run("The walk-document is docs/walk/naming-rules-draft.md.")
     check("a malformed agent-session file beside suggestions newer than the walk-document is a fault naming the file",
           completed.returncode == 1 and completed.stdout == ""
-          and str(malformed) in completed.stderr,
+          and str(malformed.resolve()) in completed.stderr,
           f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
 
     case = Case()
@@ -484,11 +499,11 @@ def main():
     case.document("docs/plan-of-record.md", text="on main, edited\n")
     expect("a document on main with an uncommitted edit is reported",
            case.run("See docs/plan-of-record.md."), [document])
-    git(case.checkout, "commit", "-q", "-am", "edit on the topic branch")
-    expect("a document changed by a commit on the topic branch is reported",
+    git(case.checkout, "commit", "-q", "-am", "edit on the nc-topic-branch")
+    expect("a document changed by a commit on the nc-topic-branch is reported",
            case.run("See docs/plan-of-record.md."), [document])
     case.document("docs/plan-of-record.md", text="on main\n", modified=9_000_000)
-    expect("a document whose topic-branch commit is undone in the working tree is silent",
+    expect("a document whose nc-topic-branch commit is undone in the working tree is silent",
            case.run("See docs/plan-of-record.md."), None)
 
     case = Case()
@@ -562,8 +577,8 @@ def main():
     git(case.checkout, "checkout", "-q", "-")
     expect("a document only main changed since the checkout's branch was cut is silent",
            case.run("See docs/plan-of-record.md."), None)
-    case.document("docs/plan-of-record.md", text="changed on the topic branch too\n")
-    git(case.checkout, "commit", "-q", "-am", "edit on the topic branch")
+    case.document("docs/plan-of-record.md", text="changed on the nc-topic-branch too\n")
+    git(case.checkout, "commit", "-q", "-am", "edit on the nc-topic-branch")
     expect("a document a branch behind main also changed is reported",
            case.run("See docs/plan-of-record.md."), [document])
 
@@ -660,16 +675,86 @@ def main():
     rule_module = "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py"
     shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nc-systems" / "general-tools" / rule_module,
                 scratch_root / "nc-systems" / "general-tools" / rule_module)
-    completed = subprocess.run(
-        [sys.executable, str(scratch_root / "scripts" / HOOK_SCRIPT.name)],
-        input="{}", capture_output=True, text=True, timeout=60)
-    check("a shared module that will not load is a fault: exit 1, one stderr line, no output",
+    completed = run_hook(scratch_root / "scripts" / HOOK_SCRIPT.name, "{}")
+    home_module_path = (scratch_root / "nc-systems" / "general-tools"
+                        / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+    check("a shared module that is missing is a fault naming its path: exit 1, one stderr line, no output",
           completed.returncode == 1 and completed.stdout == ""
           and "made no check" in completed.stderr
+          and f"could not load {home_module_path}: FileNotFoundError" in completed.stderr
           and len(completed.stderr.strip().splitlines()) == 1,
           f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
 
-    shutil.rmtree(SUITE_ROOT, ignore_errors=True)
+    # An error raised inside the module carries no path of its own; the loader must add it.
+    home_module_path.write_text('raise RuntimeError("injected\\nload failure")\n')
+    completed = run_hook(scratch_root / "scripts" / HOOK_SCRIPT.name, "{}")
+    check("a shared module that raises while loading is a fault naming its path: exit 1, one stderr line",
+          completed.returncode == 1 and completed.stdout == ""
+          and f"could not load {home_module_path}: RuntimeError: injected load failure"
+          in completed.stderr
+          and len(completed.stderr.strip().splitlines()) == 1,
+          f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
+
+    # A module loaded by run(), after the import-time ones, is reported the same way.
+    shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nc-systems" / "general-tools"
+                / home_module_path.name, home_module_path)
+    git_runner_module = "git-machine-readable-output-runner-and-parser-common.py"
+    shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nc-systems" / "general-tools" / git_runner_module,
+                scratch_root / "nc-systems" / "general-tools" / git_runner_module)
+    record_names_path = scratch_root / "nc-systems" / "cold-read" / "cold-read-record-names-common.py"
+    case = Case()
+    case.transcript.write_text("")
+    completed = run_hook(
+        scratch_root / "scripts" / HOOK_SCRIPT.name,
+        json.dumps({"hook_event_name": "Stop", "transcript_path": str(case.transcript)}))
+    check("a module run() loads that is missing is a fault naming its path: exit 1, one stderr line",
+          completed.returncode == 1 and completed.stdout == ""
+          and f"could not load {record_names_path}: FileNotFoundError" in completed.stderr
+          and len(completed.stderr.strip().splitlines()) == 1,
+          f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
+
+    # git failing to find a checkout is reported, not taken as "in no checkout".
+    empty_path_directory = SUITE_ROOT / "path-without-git"
+    empty_path_directory.mkdir()
+    for label, environment_extra, reason_part in (
+            ("outlasts its time limit", git_that_on("--show-toplevel", "exec sleep 30"),
+             "did not finish within"),
+            ("cannot run", {"PATH": str(empty_path_directory)}, "could not start git"),
+            ("fails for another reason than being in no repository",
+             git_that_on("--show-toplevel", "{ echo 'fatal: injected failure' >&2; exit 128; }"),
+             "exit 128: fatal: injected failure")):
+        case = Case()
+        document = case.document("docs/plan-of-record.md")
+        completed = case.run("See docs/plan-of-record.md.", environment_extra=environment_extra)
+        context = (json.loads(completed.stdout)["hookSpecificOutput"]["additionalContext"]
+                   if completed.returncode == 0 and completed.stdout.strip() else "")
+        failure_part = f"git rev-parse --show-toplevel in {case.checkout} failed ({reason_part}"
+        check(f"git that {label} finding the session's checkout: exit 0, said first in the output",
+              completed.returncode == 0 and context.startswith("cold-read-fast-read due check incomplete")
+              and failure_part in context.splitlines()[0],
+              f"exit {completed.returncode}, context {context!r}, stderr {completed.stderr!r}")
+        listed = [line for line in context.splitlines() if line.startswith("- ")]
+        check(f"git that {label} finding the document's checkout: the document is listed as not checked",
+              len(listed) == 1 and listed[0].startswith(f"- {document.resolve()}: ")
+              and f"git rev-parse --show-toplevel in {document.resolve().parent} failed ({reason_part}"
+              in listed[0] and "Run on each document" in context,
+              f"context {context!r}")
+        stderr_lines = completed.stderr.strip().splitlines()
+        check(f"git that {label}: one stderr line for the session's checkout, one for the document",
+              len(stderr_lines) == 2 and "could not find the top" in stderr_lines[0]
+              and failure_part in stderr_lines[0]
+              and str(document.resolve()) in stderr_lines[1] and reason_part in stderr_lines[1],
+              f"stderr {completed.stderr!r}")
+    case = Case()
+    completed = case.run("No document named here.", environment_extra=git_that_on(
+        "--show-toplevel", "exec sleep 30"))
+    context = (json.loads(completed.stdout)["hookSpecificOutput"]["additionalContext"]
+               if completed.returncode == 0 and completed.stdout.strip() else "")
+    check("git that outlasts its time limit finding the session's checkout is said even when no document is found",
+          context.startswith("cold-read-fast-read due check incomplete") and "did not finish within" in context,
+          f"exit {completed.returncode}, context {context!r}, stderr {completed.stderr!r}")
+
+    shutil.rmtree(SUITE_TOP, ignore_errors=True)
     if failures:
         print(f"{len(failures)} case(s) failed")
         return 1

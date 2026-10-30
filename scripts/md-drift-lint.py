@@ -30,8 +30,8 @@ Checks, per file type:
           JSON that parsers resolve silently: the second value wins and an
           edit to the first does nothing)
 
-An architecture overview, a file at the path
-scripts/architecture-overview-path-template-and-checked-against-commit-reader.py
+An nc-architecture-overview, a file at the path
+scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py
 gives for a system with a directory under nc-systems/, gets the overview
 checks of docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md
 too, when this script is run (a program that calls lint_markdown() gets them
@@ -78,7 +78,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def _load_architecture_overview_path_reader():
     path = Path(__file__).resolve().with_name(
-        "architecture-overview-path-template-and-checked-against-commit-reader.py")
+        "architecture-overview-path-template-and-checked-against-commit-reader-common.py")
     specification = importlib.util.spec_from_file_location(
         "architecture_overview_path_template_and_checked_against_commit_reader", path)
     module = importlib.util.module_from_spec(specification)
@@ -349,7 +349,7 @@ def check_markdown_links(line: str, md_path: Path, repo_root: Path):
 
 
 def architecture_overview_system(path: Path, repo_root: Path):
-    """Return the system an architecture overview at path describes, or None."""
+    """Return the system an nc-architecture-overview at path describes, or None."""
     try:
         relative = path.resolve().relative_to(repo_root.resolve()).as_posix()
     except ValueError:
@@ -576,7 +576,7 @@ def in_frozen_measured_data(path: Path, repo_root: Path) -> bool:
 
 
 def lint_markdown(path: Path, repo_root: Path, architecture_overview_checks=False):
-    """Yield (line number, problem). The architecture overview checks, one of
+    """Yield (line number, problem). The nc-architecture-overview checks, one of
     which queries GitHub, run only when architecture_overview_checks is true."""
     if in_frozen_measured_data(path, repo_root):
         return

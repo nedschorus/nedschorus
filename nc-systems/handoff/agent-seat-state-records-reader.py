@@ -28,7 +28,7 @@ _supervisor_spec.loader.exec_module(supervisor)
 
 _worth_resuming_spec = importlib.util.spec_from_file_location(
     "seat_transcript_worth_resuming",
-    _SCRIPTS_DIRECTORY / "seat-transcript-worth-resuming.py")
+    _SCRIPTS_DIRECTORY / "agent-seat-transcript-worth-resuming-common.py")
 worth_resuming = importlib.util.module_from_spec(_worth_resuming_spec)
 _worth_resuming_spec.loader.exec_module(worth_resuming)
 
@@ -203,7 +203,7 @@ def waiting_handoff_verdict(handoff_directory: Path, name: str, state_path: Path
             return "seat-asked-to-be-consulted", (counter, dont_restart)
         return "defer-to-boot-ignition", (
             f"an unconsumed handoff waits (counter {counter}, consumed "
-            f"{consumed}) — plain relaunch is correct; the supervisor's "
+            f"{consumed}) — relaunching without resuming is correct; the supervisor's "
             "boot-ignition consumes it"
         )
     return None

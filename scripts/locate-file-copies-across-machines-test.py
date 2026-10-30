@@ -101,7 +101,7 @@ parser.add_argument("path")
 parser.add_argument("--skip", action="append", default=[])
 arguments = parser.parse_args()
 mode = os.environ.get("FAKE_BACKUP_SEARCH_MODE", "not-found")
-print("Searching every history this fleet keeps for: " + arguments.path)
+print("Searching every history the Mac and ned-box keep for: " + arguments.path)
 print(flush=True)
 if mode == "killed":
     os.kill(os.getpid(), signal.SIGKILL)
@@ -465,7 +465,7 @@ with scratch() as directory:
 with scratch() as directory:
     base = pathlib.Path(directory)
     make_stand_in_bin(base)
-    mirror = base / "box/logs/transcripts"
+    mirror = base / "box/logs/agent-session-files-by-machine"
     write(mirror / "mac/seat-briefs/some-seat/CLAUDE.local.md", "brief")
     write(mirror / "ned-box/tasks/nedschorus-some-seat-tasks/41.json", "task")
     write(mirror / "mac/CLAUDE.md", "global instructions")
@@ -616,7 +616,7 @@ with scratch() as directory:
                "/")], runs)
     order = [stdout.find(marker) for marker in (
         "\nTook ", "do not say the file does not exist", BACKUP_SEARCH_HEADER,
-        "Searching every history this fleet keeps for: nothing-anywhere.md",
+        "Searching every history the Mac and ned-box keep for: nothing-anywhere.md",
         "No surface that could be searched has it.")]
     check("the backup search's output follows this program's whole answer, "
           "closing lines included, and ends with its summary line",
@@ -686,7 +686,7 @@ with scratch() as directory:
           "the path and finishes",
           code == 1 and [one["argv"] for one in runs]
           == [[*skips, "-dash-led-never-anywhere.md"]]
-          and "Searching every history this fleet keeps for: "
+          and "Searching every history the Mac and ned-box keep for: "
               "-dash-led-never-anywhere.md" in output
           and "No surface that could be searched has it." in output
           and "did not finish" not in output, (runs, output))
@@ -909,6 +909,21 @@ check("the production plan searches ned-box's scratch worktrees, "
       len(box_checkouts) == 2
       and all("/tmp/claude-1000" in roots for roots in box_checkouts),
       box_checkouts)
+supervisor_temp_parent = re.search(
+    r'^NED_BOX_CLAUDE_CODE_TMPDIR = "([^"]+)"$',
+    (pathlib.Path(__file__).resolve().parents[1] / "nc-systems" / "handoff"
+     / "handoff-supervisor.py").read_text(encoding="utf-8"), re.M).group(1)
+check("the production plan searches ned-box's temp folders under the "
+      "handoff-supervisor's CLAUDE_CODE_TMPDIR as well as under /tmp, and "
+      "places a scratch path under either",
+      len(box_checkouts) == 2
+      and all(supervisor_temp_parent + "/claude-1000" in roots
+              for roots in box_checkouts)
+      and program.place_in_this_repository(
+          supervisor_temp_parent + "/claude-1000/-p/s/scratchpad/a.md",
+          [program.NED_BOX_SURFACES["this_repository"]])
+      == ("scratch", ["claude-1000", "-p", "s", "scratchpad", "a.md"]),
+      (supervisor_temp_parent, box_checkouts))
 check("the production log-store surface searches the whole log-store, the "
       "transcript mirror included",
       log_store == [{"name": "log-store",
@@ -953,10 +968,10 @@ with scratch() as directory:
     check("a cut list tells the agent to narrow the name",
           "run again with more of the name" in stdout, stdout)
 
-# --- The git surface: a file added and deleted on a merged topic branch --------
+# --- The git surface: a file added and deleted on a merged nc-topic-branch --------
 # Every pull request reaches main as a merge commit. With a pathspec and no
 # --full-history, git log follows a merge's first parent alone when the path
-# is the same there, so a file that lived only on the topic branch is never
+# is the same there, so a file that lived only on the nc-topic-branch is never
 # reached once the branch and its worktree's reflog are gone.
 with scratch() as directory:
     base = pathlib.Path(directory)
@@ -986,7 +1001,7 @@ with scratch() as directory:
           "branch's commits, and with it does",
           simplified == "" and removal in full.split(), (simplified, full))
     code, stdout, stderr = run(base, "side-branch-draft.md")
-    check("a file that lived only on a merged topic branch is found at its "
+    check("a file that lived only on a merged nc-topic-branch is found at its "
           "deleting commit",
           code == 0
           and f'commit {removal[:12]} ("Remove the side-branch draft")' in stdout

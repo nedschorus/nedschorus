@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run every test suite in a checkout, and report each one by its exit code.
+"""Run every nc-test-suite in a checkout, and report each one by its exit code.
 
 Usage:
   scripts/run-all-test-suites.py [--checkout DIR] [--python INTERPRETER]
@@ -7,13 +7,16 @@ Usage:
                                  [--wait-for-lock-seconds N]
                                  [--only-suites-whose-recorded-inputs-changed-since COMMIT]
                                  [--recorded-inputs-directory DIR]
+                                 [--leave-recorded-inputs-and-failure-history-unchanged]
+                                 [--stop-at-first-failing-suite]
+                                 [--only-suites-named SUITE [SUITE ...]]
 
   --checkout    the top directory of the checkout to test; default, the
                 checkout this file is in
   --python      the interpreter that runs each suite file; default, the one
                 running this program
   -j            how many suites of this run may run at once; default, on Linux
-                in test sandboxes, every suite to run, up to admission's
+                in nc-test-sandboxes, every suite to run, up to admission's
                 ceiling, and otherwise the machine's core count, or the number
                 of suites to run when that is fewer
   --log-dir     where each suite's output and the report are written;
@@ -21,7 +24,7 @@ Usage:
                 removed two days after its run ends. Two runs cannot share
                 one --log-dir: the second exits 3
   --lock-file   default ~/.claude/.run-all-test-suites.lock. Where each suite
-                runs in a test sandbox (Linux with bwrap), no lock is taken: the
+                runs in an nc-test-sandbox (Linux with bwrap), no lock is taken: the
                 run records and the admission directory beside this path are
                 shared by every run that names it. Elsewhere (macOS, or Linux
                 without bwrap), the lock that keeps two runs on one machine apart
@@ -36,6 +39,21 @@ Usage:
   --recorded-inputs-directory
                 where each suite's recorded inputs are kept; default
                 ~/.cache/nedschorus-test-suite-recorded-inputs
+  --leave-recorded-inputs-and-failure-history-unchanged
+                record no suite's inputs, save no recording and add nothing
+                to test-case-failure-history.jsonl, so a run on code that is
+                not meant to last, such as a mutant, changes nothing a later
+                run reads. The recordings are still read, for the starting
+                order and each suite's time limit
+  --stop-at-first-failing-suite
+                once a suite fails, kill the suites running beside it, as a
+                stop signal does, and start no other; the run exits 1, and
+                each suite killed is reported as stopped, not as failed. A
+                suite whose nc-test-sandbox did not start does not stop the run
+  --only-suites-named SUITE [SUITE ...]
+                run only these suites, each named by its path from the
+                checkout's top directory, as git lists it; a name git does
+                not list stops the run with exit 2
 
 WHY THIS EXISTS (user-ruled 2026-09-21, walk "redesigning how pull requests
 are processed", items 3 and 6). Until this program, every full run of the
@@ -62,8 +80,10 @@ refused.
 
 HOW EACH SUITE IS JUDGED. By its exit code, and nothing else: 0 is PASS,
 anything else is FAIL, and a suite killed by a signal is FAIL naming the
-signal. The suites print at least four different success wordings, so no
-text can be trusted to mean pass or fail. Each suite runs as
+signal. The one exception is a suite whose nc-test-sandbox bwrap could not
+build: no test ran, so it is NOT RUN, not FAIL, and its recording keeps
+bwrap's exit, so the next selective run selects it again. The suites print
+at least four different success wordings, so no text can be trusted to mean pass or fail. Each suite runs as
 `<interpreter> -u <path>`, or `sh <path>` for a `*-test.sh` suite, from the
 checkout's top directory, stdin closed,
 stdout and stderr together into its own log file. A suite that starts
@@ -75,12 +95,15 @@ PID namespace of their own. The suite runs as the same user, so a signal a
 suite sends can reach only the processes it started, never the agent-seats
 that run as the same account.
 
-THE SIGNAL SANDBOX IS ALSO EACH SUITE'S TEST SANDBOX, built when the
+THE SIGNAL SANDBOX IS ALSO EACH SUITE'S NC-TEST-SANDBOX, built when the
 suite starts and gone when it ends. It hides by default, because a list of
 files or sockets to cover misses every one not on it and every one made after
-the list. The file system is read-only, except: a private /tmp, which TMPDIR
-and TMUX_TMPDIR name, so no tmux server or socket of an agent-seat is
-reachable; a private /dev and System V IPC; the home directory, an empty
+the list. The file system is read-only, except: a private /tmp, which
+TMUX_TMPDIR names, so no tmux server or socket of an agent-seat is
+reachable, and in it TEST_SANDBOX_TMPDIR_SYMLINK_PATH, which TMPDIR names, a
+symbolic link to a directory beside it, as macOS's /var is a link to
+/private/var, so a suite that mixes a path built from TMPDIR with its
+resolved form fails here as it would on the Mac; a private /dev and System V IPC; the home directory, an empty
 tmpfs the suite may write, into which only the paths in
 TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY are bound, read-only, each with the
 reason suites need it, so no credential in the home directory is there; the
@@ -136,6 +159,16 @@ inside the sandbox, such as one a suite of this program starts, does not
 start another: bwrap cannot start inside bwrap, and its suites are already
 confined. The suites listed in SUITES_RUN_WITHOUT_ANY_SANDBOX cannot
 work inside it and run unconfined, each named in the report with the reason.
+Three dicts say which sandbox a suite gets, each mapping a suite's path to the
+reason it gets that sandbox: SUITES_RUN_WITHOUT_ANY_SANDBOX,
+SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY (suites
+whose sandbox gets a writable copy-on-write overlay of the repository's git
+directory) and SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK (suites
+whose sandbox keeps the machine's network). The three are read from the
+scripts/run-all-test-suites.py of the checkout whose suites the run tests,
+parsed and never run, and from this file only when that checkout has none;
+the report names the file. A run refuses, exit 2, when that file does not
+assign each of the three a literal dict.
 A suite bwrap reports as exiting 128+N is reported as killed by signal N;
 sandbox-exec replaces itself with the suite, so a suite's exit passes through.
 
@@ -227,15 +260,20 @@ Every such line in a suite's output is counted and printed. resupervise-seat
 prints its skips and then "all cases passed", which is how a run that
 dropped its end-to-end cases used to read as a full pass. A skip never
 changes a verdict; it is reported beside it.
+A suite marks a skip whose cause is the machine itself, its platform or what
+is installed on it, by putting SKIPPED_CASE_THIS_MACHINE_CANNOT_RUN_MARKER,
+`[this machine cannot run it]`, right after `SKIP` and its spaces:
+`SKIP  [this machine cannot run it] <case>: <reason>`. A marked skip is
+counted and printed like any other; it only changes selection, below.
 
-RUNS THAT OVERLAP, AND ONE RUN AT A TIME WITHOUT TEST SANDBOXES. Measured
+RUNS THAT OVERLAP, AND ONE RUN AT A TIME WITHOUT NC-TEST-SANDBOXES. Measured
 2026-09-21: two overlapping runs of scripts/resupervise-seat-test.py both exit
 0 and both print "all cases passed" while silently dropping cases to SKIP,
 because the suites share machine state. On Linux with bwrap each suite runs in
-a test sandbox of its own (see THE SIGNAL SANDBOX IS ALSO EACH SUITE'S TEST SANDBOX above), which shares no /tmp, tmux
+an nc-test-sandbox of its own (see THE SIGNAL SANDBOX IS ALSO EACH SUITE'S NC-TEST-SANDBOX above), which shares no /tmp, tmux
 directory or home directory writes with any other suite, so runs overlap
 freely and no lock is taken; ADMISSION below decides when each suite starts.
-Where suites do not run in test sandboxes, a run takes an exclusive lock on
+Where suites do not run in nc-test-sandboxes, a run takes an exclusive lock on
 --lock-file, and a second run on the same machine exits 3 without running
 anything, or, with --wait-for-lock-seconds, waits for the lock first. A wait blocks in the
 kernel's queue: a caller that instead retried every few seconds lost the lock
@@ -260,10 +298,10 @@ directories runs made before records existed are removed once nothing in
 them has changed for two days. macOS has no /proc to read start times
 from, so there a run still cleans up after the lock's last holder.
 
-ADMISSION, on Linux in test sandboxes.
+ADMISSION, on Linux in nc-test-sandboxes.
 Every run on the machine shares one admission, kept in the directory beside
 --lock-file. A suite starts only while the machine's CPU use averaged over the
-last 5 s is under 50% and its available memory is above 10 GB, read with
+last 5 s is under 55% and its available memory is above 10 GB, read with
 psutil; at most 4 suites start per second and at most 64 run at once on the
 machine, each holding an flock on one of 64 slot files, so the kernel frees
 the slot of a killed run. A suite run without any sandbox first takes the
@@ -273,13 +311,29 @@ reports what its suites wait for. A failure to decide, such as a machine
 reading that fails or a slot file that cannot be opened, stops the run with
 exit 2. Every suite runs at nice 10, in a cgroup scope of its own
 (`systemd-run --user --scope`), whose counters give the suite's CPU seconds
-and peak memory, every process it starts included. The
+and peak memory, every process it starts included.
+
+MEMORY CEILING, where suites run in cgroup scopes. A suite's scope may hold
+TEST_SUITE_MEMORY_CEILING_BYTES, 4 GB, or what
+TEST_SUITE_MEMORY_CEILING_BYTES_OF_SUITES_THAT_NEED_MORE gives it, every process
+it starts and the files it writes to its tmpfs /tmp included, and no swap. A
+process that would pass it is killed by the kernel, the largest in the scope
+first, and the rest of the suite runs on, so a runaway allocation, such as a
+mutant that turns a loop endless, ends alone instead of taking the machine's
+memory from every other process on it. A suite with a process killed this way
+fails: its FAIL line says OUT OF MEMORY and names the ceiling, and a suite
+that still exited 0 is reported as killed by SIGKILL, which its process was.
+There is no ceiling on macOS, on Linux without bwrap, systemd-run, setpriv or
+bash, where suites run without cgroup scopes, nor of its own on a suite that a
+suite's nested run starts inside bwrap, where systemd-run cannot reach the
+session bus: such a suite counts against the outer suite's ceiling. The
 run records the machine's CPU use, available memory and load every second in
 machine-cpu-and-memory-readings.tsv in its log directory, each suite's kind, admission wait,
 CPU seconds and peak memory in test-suite-resource-use.tsv, each case line's time in
 test-case-times.tsv, and all of it as JUnit XML in junit.xml. Every failing
 case is added to test-case-failure-history.jsonl in
---recorded-inputs-directory, with its commit and branch.
+--recorded-inputs-directory, with its commit and branch, except in a run given
+--leave-recorded-inputs-and-failure-history-unchanged.
 
 CONCURRENCY. -j N runs N suites at once. The default is the machine's core
 count (4 when Python cannot tell), or the number of suites to run when that
@@ -303,7 +357,7 @@ which the floor covers; no pass exceeded this limit measured from the suite's
 fastest pass. 1800 s is six times the longest pass seen. A suite past its limit
 has its process group killed with SIGKILL; each suite starts in a session of
 its own, so the group holds every process it started except one that starts a
-session of its own. In a test sandbox the group holds the init of the suite's
+session of its own. In an nc-test-sandbox the group holds the init of the suite's
 PID namespace, whose end ends every process inside, so nothing is left; outside
 one, such a process is not reached. It is reported FAIL with `TIMEOUT after
 <n>s (limit <m>s, <k> times recorded <r>s)`, `(limit <m>s, the floor, more than
@@ -316,7 +370,8 @@ A STOPPED RUN KILLS ITS SUITES. Since each suite runs in a session of its own,
 a signal sent to the runner's process group no longer reaches them. So once its
 suites start, the runner handles SIGTERM, SIGHUP and SIGINT: it kills every
 running suite as a timeout does, starts no other, prints a line naming the
-signal, and exits 2; a signal that comes after the last suite ended stops
+signal, and exits as EXIT says: 1 when a suite had already failed, otherwise 2;
+a signal that comes after the last suite ended stops
 nothing, and the run is reported as usual. A signal the runner was started
 with ignored, as SIGHUP is under nohup and SIGINT is for a command put in the
 background in a subshell, stops nothing: it gets a handler that does nothing.
@@ -331,13 +386,14 @@ it, and a suite outside bwrap outlives it.
 OUTPUT. A first line naming the checkout, its commit, whether tracked files
 differ from that commit, the suite count, the interpreter's own --version
 answer and path, -j, and the log directory. Then one line per suite as it
-finishes: `PASS <path> (<seconds>s)` or `FAIL <path> exit <code>
-(<seconds>s)`, with `, <n> skipped` when it printed SKIP lines. Then the
-failed suites again, each with its log, and every SKIP line, each with its
+finishes: `PASS <path> (<seconds>s)`, `FAIL <path> exit <code>
+(<seconds>s)` or `NOT RUN <path> did not start: ...`, with `, <n> skipped`
+when it printed SKIP lines. Then the failed suites again, each with its log,
+the suites not run, each with its log, and every SKIP line, each with its
 suite, so the end of the output holds everything needed. The last line
 opens `SUMMARY:` and carries the counts. The whole report is also written to
-report.txt in the log directory, so a run in the background needs no pipe to
-keep it.
+test-run-report.txt in the log directory, so a run in the background needs no
+pipe to keep it.
 
 RECORDED INPUTS (user-ruled 2026-09-30, walk
 open-questions-concerns-and-recommendations-2026-09-30, item 5, "y both").
@@ -414,7 +470,8 @@ source. Recordings live outside every checkout, under
 --recorded-inputs-directory and then the repository's root commit, one file
 per suite: worktrees come and go and every one of a clone's worktrees, and
 every clone, shares the same paths, so a recording made in one serves them
-all. Every run replaces the recordings of the suites it ran, a failed or
+all. Every run not given --leave-recorded-inputs-and-failure-history-unchanged
+replaces the recordings of the suites it ran, a failed or
 killed run's included, so the last recording always says how the suite's
 last run ended; the daily full run refreshes them all. Each recording is
 written to a temporary file of its own and renamed into place under a short
@@ -479,8 +536,10 @@ suite runs when one of them is this program (it holds the recorder), under
 has no recording on this machine, or one made by an older version of this
 program; its recorded run did not exit 0, since a run that failed or was
 killed recorded only what it read before it stopped; its recorded run
-skipped cases, since the cases skipped recorded nothing, and a skip can be
-a run disturbed by another; the suite file itself
+skipped a case without the mark `[this machine cannot run it]`, since the
+cases skipped recorded nothing, and a skip can be a run disturbed by
+another (a marked case never runs on this machine, so what it would read
+does not matter here); the suite file itself
 differs; a file it read differs; a path it looked for was added or deleted;
 an entry was added to or deleted from a directory it listed, a new
 subdirectory's name included; a file was added or deleted and it ran git on
@@ -531,13 +590,18 @@ a suite runs reads or sources; an ignored file; anything outside the checkout (a
 tool upgrade, leftover machine state). The daily full run covers all of
 these.
 
-EXIT. 0 when every suite exited 0; 1 when any suite failed; 2 when the run
-could not start (not a checkout's top directory, no suites listed, git or
-the interpreter unusable, a COMMIT git cannot resolve); 3 when another run
-holds the lock, where a lock is taken.
+EXIT. 0 when every suite exited 0; 1 when any suite failed, even in a run
+that was then stopped or not run to the end; 2 when no suite
+failed but the run gave no full verdict: a suite was not run because its
+nc-test-sandbox did not start, the run was not run to the end, its records
+could not be written, or the run could not start (not a checkout's top
+directory, no suites listed, git or the interpreter unusable, a COMMIT git
+cannot resolve, a suite --only-suites-named names that git does not list);
+3 when another run holds the lock, where a lock is taken.
 """
 
 import argparse
+import ast
 import codecs
 import collections
 import concurrent.futures
@@ -551,6 +615,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -569,6 +634,9 @@ TEST_SUITE_PATHSPEC = "*-test.py"
 # would miss inputs. Leave shell suites unrecorded so selection always runs them.
 SHELL_TEST_SUITE_PATHSPEC = "*-test.sh"
 SKIPPED_CASE_LINE = re.compile(r"^SKIP\s")
+SKIPPED_CASE_THIS_MACHINE_CANNOT_RUN_MARKER = "[this machine cannot run it]"
+SKIPPED_CASE_LINE_THIS_MACHINE_CANNOT_RUN = re.compile(
+    r"^SKIP\s+" + re.escape(SKIPPED_CASE_THIS_MACHINE_CANNOT_RUN_MARKER))
 
 # Git redirection variables can send scratch-repository writes into a live repository.
 # The list is the shared module's; programs that load this runner read it here too.
@@ -579,6 +647,13 @@ _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
 git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
 _git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
 GIT_REDIRECTING_ENVIRONMENT_VARIABLES = git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
+
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
 
 # Whether a user attends the agent-session changes what some messages under test say, so a suite
 # is launched without them and each test sets them itself.
@@ -594,10 +669,10 @@ AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES = (
 # the sandbox, such as a suite that tests this program, runs its suites as they
 # are: they are already inside.
 #
-# On Linux, each suite's test sandbox is these signal-sandbox arguments, shared by every
+# On Linux, each suite's nc-test-sandbox is these signal-sandbox arguments, shared by every
 # suite, plus the per-suite arguments of bwrap_arguments_for_one_suites_test_sandbox();
-# on macOS the signal sandbox is sandbox-exec alone and there is no test sandbox. The
-# test sandbox hides by default: the
+# on macOS the signal sandbox is sandbox-exec alone and there is no nc-test-sandbox. The
+# nc-test-sandbox hides by default: the
 # file system read-only, a private /tmp, /dev and System V IPC, the home directory an
 # empty tmpfs into which only the paths in TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY are
 # bound, and /run hidden, since it holds the machine's sockets: Docker's, the system bus,
@@ -631,7 +706,7 @@ TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS = {
                  "re-creates under a new directory",
 }
 XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX = f"/run/user/{os.getuid()}"
-# Variables naming a socket or a server outside the test sandbox.
+# Variables naming a socket or a server outside the nc-test-sandbox.
 TEST_SANDBOX_OUTSIDE_SOCKET_VARIABLES = (
     "TMUX",
     "TMUX_PANE",
@@ -648,9 +723,16 @@ TEST_SUITE_CREDENTIAL_ENVIRONMENT_VARIABLE_PATTERNS = (
     "*_TOKEN", "*_TOKEN_*", "*_API_KEY", "*_SECRET", "*_SECRET_*", "*PASSWORD*",
     "*_CREDENTIALS",
 )
+# TMPDIR is reached through a symbolic link, as macOS's /var is a link to /private/var, so a
+# suite that compares a path built from TMPDIR with the resolved path a process reports,
+# such as its cwd, fails on ned-box as it would on the Mac.
+TEST_SANDBOX_TMPDIR_SYMLINK_PATH = "/tmp/nc-test-sandbox-tmpdir-symlink"
+TEST_SANDBOX_TMPDIR_SYMLINK_TARGET_DIRECTORY_PATH = "/tmp/nc-test-sandbox-tmpdir-symlink-target"
 TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE = (
     "--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/dev/shm", "--proc", "/proc",
-    "--tmpfs", "/tmp", "--tmpfs", "/run",
+    "--tmpfs", "/tmp", "--dir", TEST_SANDBOX_TMPDIR_SYMLINK_TARGET_DIRECTORY_PATH,
+    "--symlink", TEST_SANDBOX_TMPDIR_SYMLINK_TARGET_DIRECTORY_PATH, TEST_SANDBOX_TMPDIR_SYMLINK_PATH,
+    "--tmpfs", "/run",
     *(("--tmpfs", XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX,
        "--setenv", "XDG_RUNTIME_DIR", XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX)
       if os.path.isdir(XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX)
@@ -663,7 +745,7 @@ TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE = (
     *(argument for directory in TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS
       if os.path.isdir(directory) for argument in ("--tmpfs", directory)),
     "--unshare-pid", "--unshare-ipc", "--die-with-parent",
-    "--setenv", "TMPDIR", "/tmp", "--setenv", "TMUX_TMPDIR", "/tmp",
+    "--setenv", "TMPDIR", TEST_SANDBOX_TMPDIR_SYMLINK_PATH, "--setenv", "TMUX_TMPDIR", "/tmp",
     *(argument for variable in TEST_SANDBOX_OUTSIDE_SOCKET_VARIABLES
       for argument in ("--unsetenv", variable)))
 SIGNAL_SANDBOX_INSIDE_VARIABLE = "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX"
@@ -697,10 +779,14 @@ SUITES_RUN_WITHOUT_ANY_SANDBOX = {
         "it starts the agy cell's own bwrap, which cannot start inside bwrap",
     "nc-systems/cold-read/tests/cold-read-fast-read-test.py":
         "it starts the agy cell's own bwrap, which cannot start inside bwrap",
+    "nc-systems/skills/explain/tests/explain-reply-cold-read-fast-read-test.py":
+        "its real fast read starts the agy cell's own bwrap, which cannot start inside bwrap",
+    "nc-systems/skills/walk-me-through/tests/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close-test.py":
+        "its real fast read starts the agy cell's own bwrap, which cannot start inside bwrap",
     "scripts/run-all-test-suites-cleanup-after-killed-runs-real-process-test.py":
         "it starts this program, whose suites run in bwrap, which cannot start inside bwrap",
     "scripts/run-all-test-suites-test-sandbox-escape-test.py":
-        "it builds test sandboxes itself with bwrap, which cannot start inside bwrap",
+        "it builds nc-test-sandboxes itself with bwrap, which cannot start inside bwrap",
     "scripts/run-all-test-suites-overlapping-runs-real-process-test.py":
         "it starts this program, whose suites run in bwrap, which cannot start inside bwrap",
     "scripts/mac-request-from-ned-box-forced-command-test.py":
@@ -716,15 +802,25 @@ SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY = {
         "it replays at two refs, each in a worktree it adds to this repository",
 }
 
-# Suites whose test sandbox keeps the machine's network, each with its reason. Every
-# other suite's test sandbox has a network of its own with only loopback, so no
+# Suites whose nc-test-sandbox keeps the machine's network, each with its reason. Every
+# other suite's nc-test-sandbox has a network of its own with only loopback, so no
 # suite reaches a port or an abstract Unix socket (such as the X server's) outside it.
 SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK = {}
+
+# A run uses the checkout under test's own copies of these lists, not the ones above,
+# whenever the checkout has a scripts/run-all-test-suites.py.
+SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST = (
+    "SUITES_RUN_WITHOUT_ANY_SANDBOX",
+    "SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY",
+    "SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK")
+SUITE_SANDBOX_LISTS_SOURCE_LINE_PREFIX = "which sandbox each suite runs in, from the lists in "
+SUITE_SANDBOX_LISTS_OF_THIS_PROGRAM = {
+    name: dict(globals()[name]) for name in SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST}
 
 # Admission, shared by every run on this machine: a suite starts only while the
 # machine has room for it. The run records the machine's readings every second
 # (MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME), so these thresholds can be moved from evidence.
-TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 50
+TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 55
 TEST_SUITE_ADMISSION_CPU_AVERAGE_SECONDS = 5
 TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE = 10 * 10**9
 TEST_SUITE_ADMISSION_STARTS_PER_SECOND = 4
@@ -745,6 +841,12 @@ TEST_CASE_TIMES_FILE_NAME = "test-case-times.tsv"
 JUNIT_XML_FILE_NAME = "junit.xml"
 TEST_CASE_FAILURE_HISTORY_FILE_NAME = "test-case-failure-history.jsonl"
 ADMISSION_WAITED_LINE_PREFIX = "seconds suites waited for admission: "
+# Readers of the runner's output pick its lines apart by these.
+FAILED_SUITE_LINE_PREFIX = "FAIL "
+NOT_RUN_SUITE_LINE_PREFIX = "NOT RUN "
+SUITE_LINE_LOG_MARK = " — log "
+SUMMARY_LINE_PREFIX = "SUMMARY:"
+FIRST_REPORT_LINE_LOG_DIRECTORY_MARK = "; logs in "
 # The suites print one line per case opening PASS, FAIL or ok.
 TEST_CASE_LINE = re.compile(r"^\s*(?P<verdict>PASS|FAIL|ok)\b:?\s*(?P<text>.*)$")
 # A process a suite run without any sandbox leaves running can hold its output open.
@@ -768,10 +870,32 @@ TEST_SUITE_CGROUP_STATISTICS_WRAPPER = (
     '"$@" 3>&-\n'
     'status=$?\n'
     '{ cat "/sys/fs/cgroup$cgroup/cpu.stat" && '
-    'printf "memory.peak %s\\n" "$(cat "/sys/fs/cgroup$cgroup/memory.peak")"; } >&3 2>&1\n'
+    'printf "memory.peak %s\\n" "$(cat "/sys/fs/cgroup$cgroup/memory.peak")" && '
+    'sed -n "/^oom_kill /p" "/sys/fs/cgroup$cgroup/memory.events"; } >&3 2>&1\n'
     'exit $status\n')
-TEST_SUITE_CGROUP_SCOPE_COMMAND = (
-    "systemd-run", "--user", "--scope", "--quiet", "--expand-environment=no", "--")
+# Each well above the largest peak memory its suites' scopes record, and no higher, since
+# a runaway holds the machine's memory until it reaches its ceiling.
+TEST_SUITE_MEMORY_CEILING_BYTES = 4 * 10**9
+TEST_SUITE_MEMORY_CEILING_BYTES_OF_SUITES_THAT_NEED_MORE = {
+    "scripts/daily-full-test-run-of-main-test.py": 24 * 10**9,
+}
+
+
+def test_suite_memory_ceiling_bytes(suite):
+    return TEST_SUITE_MEMORY_CEILING_BYTES_OF_SUITES_THAT_NEED_MORE.get(
+        suite, TEST_SUITE_MEMORY_CEILING_BYTES)
+
+
+def test_suite_cgroup_scope_command(memory_ceiling_bytes=TEST_SUITE_MEMORY_CEILING_BYTES):
+    """systemd-run's command that starts a suite in a cgroup scope of its own under a memory ceiling.
+
+    OOMPolicy=continue, because systemd's default stops the whole scope at the first kill,
+    the counting shell included, so the suite's counters and the reason it failed are lost."""
+    return ("systemd-run", "--user", "--scope", "--quiet", "--expand-environment=no",
+            "-p", f"MemoryMax={memory_ceiling_bytes}", "-p", "MemorySwapMax=0",
+            "-p", "OOMPolicy=continue", "--")
+
+
 # Where the shell that keeps the counters stands between this program and bwrap, it is
 # killed when this program dies, so bwrap's --die-with-parent still ends the suite.
 TEST_SUITE_COUNTER_SHELL_DIES_WITH_THIS_PROGRAM = ("setpriv", "--pdeathsig", "KILL")
@@ -781,7 +905,7 @@ RUN_RECORDS_DIRECTORY_SUFFIX = ".runs"
 # Long enough for whoever reads a run's report and failed-suite logs to read them.
 FINISHED_RUN_LOG_RETENTION_SECONDS = 2 * 24 * 3600
 LOG_DIRECTORY_LOCK_FILE_NAME = ".run-all-test-suites-log-directory.lock"
-REPORT_FILE_NAME = "report.txt"
+REPORT_FILE_NAME = "test-run-report.txt"
 SUITES_RUN_AT_ONCE_WHEN_CORE_COUNT_UNKNOWN = 4
 
 DEFAULT_RECORDED_INPUTS_DIRECTORY = (
@@ -1127,9 +1251,85 @@ def checkout_top_directory(given):
     top = Path(answer.stdout.strip()).resolve()
     if top != Path(given).resolve():
         raise CouldNotRun(
-            f"{PROGRAM}: not run — {given} is not the top directory of its checkout.\n"
-            f"Pass --checkout {top}")
+            f"{PROGRAM}: not run — {given} is not the top directory of the git checkout "
+            f"that holds {given}.\n"
+            f"Rerun the same command, replacing your --checkout and its value with: "
+            f"--checkout {shlex.quote(str(top))}\n"
+            f"If you leave --checkout out instead, this program tests the checkout that "
+            f"contains run-all-test-suites.py itself, whatever the current directory is.")
     return top
+
+
+def suite_sandbox_lists_read_from_checkout_under_test(top):
+    """Return ({list name: {suite: reason}}, the file they came from) for the checkout under test.
+
+    The lists name the checkout's suites by path, so they come from the checkout's own copy
+    of this program: a pull request head test run runs main's runner on the merged tree, and
+    a pull request that renames a listed suite renames its entry too. That copy is parsed,
+    never run, so none of the checkout's code runs in this program. A checkout without the
+    file, such as a test's scratch checkout, gets this program's own lists."""
+    source_file = top / "scripts" / "run-all-test-suites.py"
+    try:
+        source = source_file.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        own = {name: dict(entries) for name, entries in SUITE_SANDBOX_LISTS_OF_THIS_PROGRAM.items()}
+        return own, (f"{Path(__file__).resolve()}, since the checkout has no "
+                     f"{source_file.relative_to(top)}")
+    except (OSError, UnicodeDecodeError) as error:
+        restore = (f"git -C {shlex.quote(str(top))} checkout -- "
+                   f"{shlex.quote(str(source_file.relative_to(top)))}")
+        rerun = "Once the step for your case succeeds, rerun the command you ran.\n"
+        tell_the_user = ("this same error appears again after you rerun, stop and tell the user, "
+                         "quoting this message; a subagent tells the agent that dispatched it "
+                         "instead.")
+        if isinstance(error, UnicodeDecodeError):
+            raise CouldNotRun(
+                f"{PROGRAM}: not run — {source_file} is not UTF-8 text "
+                f"({type(error).__name__}: {error}), so which sandbox each suite runs in is "
+                f"unknown.\n"
+                f"If the file holds no uncommitted change you need, restore it with: {restore}\n"
+                f"If it holds an uncommitted change you need, re-save it as UTF-8, keeping "
+                f"that change.\n"
+                f"{rerun}"
+                f"If a step fails, or {tell_the_user}")
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — {source_file} could not be read "
+            f"({type(error).__name__}: {error}), so which sandbox each suite runs in is unknown.\n"
+            f"If you lack permission to read the file, grant yourself read permission, such as "
+            f"with: chmod u+r {shlex.quote(str(source_file))}\n"
+            f"If a directory or anything else that is not a regular file stands at that path, "
+            f"move it aside and restore the file with: "
+            f"mv {shlex.quote(str(source_file))} {shlex.quote(f'{source_file}.moved-aside')} "
+            f"&& {restore}\n"
+            f"{rerun}"
+            f"If neither case fits, a step fails, or {tell_the_user}")
+    try:
+        tree = ast.parse(source, filename=str(source_file))
+    except (SyntaxError, ValueError) as error:
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — {source_file} is not valid Python ({error}), so which "
+            f"sandbox each suite runs in is unknown.\n"
+            f"Correct the syntax error in {source_file}, which belongs to the checkout whose suites "
+            f"this run tests, then rerun the command you ran.")
+    found = {}
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id in SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST):
+            try:
+                found[node.targets[0].id] = ast.literal_eval(node.value)
+            except (ValueError, TypeError, SyntaxError, RecursionError):
+                found[node.targets[0].id] = None
+    unreadable = [name for name in SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST
+                  if not isinstance(found.get(name), dict)]
+    if unreadable:
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — {source_file} does not assign "
+            f"{', '.join(unreadable)} a literal dict of suite path to reason at its top "
+            f"level, so which sandbox each suite runs in is unknown.\n"
+            f"In {source_file}, assign each of {', '.join(unreadable)} once, at the top level, "
+            f"a dict written out literally, then rerun the command you ran.")
+    return found, str(source_file)
 
 
 def suites_listed_by_git(top):
@@ -1145,6 +1345,21 @@ def suites_listed_by_git(top):
             f"{PROGRAM}: not run — git lists no {TEST_SUITE_PATHSPEC} file in {top}.\n"
             f"Pass --checkout a checkout that has its suites committed or added.")
     return suites
+
+
+def suites_named_among_those_listed(top, listed, named):
+    """The listed suites, or only those named, in the order git lists them."""
+    if named is None:
+        return listed
+    unknown = [suite for suite in named if suite not in listed]
+    if unknown:
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — --only-suites-named names {', '.join(unknown)}, which git "
+            f"does not list as a suite in {top}.\n"
+            f"Name each suite by its path from the checkout's top directory, as "
+            f"`git -C {shlex.quote(str(top))} ls-files -- '{TEST_SUITE_PATHSPEC}' "
+            f"'{SHELL_TEST_SUITE_PATHSPEC}'` lists it, then run this again.")
+    return [suite for suite in listed if suite in named]
 
 
 def interpreter_and_version(given):
@@ -1168,9 +1383,27 @@ def interpreter_and_version(given):
     return found, version[0]
 
 
+def git_failure_next_step_lines(program_file):
+    """The lines that end a refusal after a git failure, for a run of program_file."""
+    return next_step_lines.git_failure_next_step_lines(
+        f"the same {program_file} command", program_file,
+        text_the_failure_line_contains="not run — git", include_the_misspelt_branch_commit_or_path_line=True)
+
+
+def first_line_of_error(completed):
+    return ((completed.stderr or "").strip().splitlines() or [""])[0]
+
+
 def commit_and_state(top):
-    head = git(top, "rev-parse", "HEAD")
-    commit = head.stdout.strip() if head.returncode == 0 else "no commit"
+    # --verify --quiet exits 1 for a branch with no commit yet.
+    head = git(top, "rev-parse", "--verify", "--quiet", "HEAD")
+    if head.returncode == 0:
+        commit = head.stdout.strip()
+    elif head.returncode == 1:
+        commit = "no commit"
+    else:
+        commit = (f"commit unknown (git rev-parse HEAD exited {head.returncode}: "
+                  f"{first_line_of_error(head)})")
     changed = git(top, "status", "--porcelain", "--untracked-files=no")
     if changed.returncode != 0:
         state = "tracked-file state unknown"
@@ -1739,7 +1972,8 @@ class MachineWideTestSuiteAdmission:
             reasons = sorted(set(self.waiting.values()))
             count = len(self.waiting)
         self.say(f"{count} suite{'s' if count != 1 else ''} of this run "
-                 f"{'wait' if count != 1 else 'waits'} to start: " + "; ".join(reasons))
+                 f"{'wait' if count != 1 else 'waits'} to start: " + "; ".join(reasons)
+                 + ". Each suite starts by itself once the reason it waits for clears.")
 
     def cancel(self):
         """Stop admitting: every suite still waiting raises MachineWideTestSuiteAdmissionCancelled."""
@@ -1819,10 +2053,10 @@ def why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(which=sh
     for program in ("systemd-run", "setpriv", "bash"):
         if which(program) is None:
             return f"{program} is not on PATH"
-    trial_line = " ".join((*TEST_SUITE_CGROUP_SCOPE_COMMAND,
+    trial_line = " ".join((*test_suite_cgroup_scope_command(),
                            *TEST_SUITE_COUNTER_SHELL_DIES_WITH_THIS_PROGRAM))
     try:
-        trial = runner([*TEST_SUITE_CGROUP_SCOPE_COMMAND,
+        trial = runner([*test_suite_cgroup_scope_command(),
                         *TEST_SUITE_COUNTER_SHELL_DIES_WITH_THIS_PROGRAM, "true"],
                        stdin=subprocess.DEVNULL,
                        capture_output=True, text=True,
@@ -1835,13 +2069,15 @@ def why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(which=sh
     return None
 
 
-def command_prefix_running_one_suite_in_its_cgroup_scope(statistics_descriptor, in_bwrap):
-    """The command prefix that runs a suite in a cgroup scope of its own and keeps its counters.
+def command_prefix_running_one_suite_in_its_cgroup_scope(statistics_descriptor, in_bwrap,
+                                                         memory_ceiling_bytes):
+    """The command prefix that runs a suite in a cgroup scope of its own, under memory_ceiling_bytes,
+    and keeps its counters.
 
     The counters are written to statistics_descriptor, an open file the caller passes on.
     A suite outside bwrap outlives a killed run, as before, and the shell, which waits
     for it, outlives the run with it, so the run's record still sees the suite running."""
-    return (*TEST_SUITE_CGROUP_SCOPE_COMMAND,
+    return (*test_suite_cgroup_scope_command(memory_ceiling_bytes),
             *(TEST_SUITE_COUNTER_SHELL_DIES_WITH_THIS_PROGRAM if in_bwrap else ()),
             "bash", "-c", TEST_SUITE_CGROUP_STATISTICS_WRAPPER, str(statistics_descriptor))
 
@@ -1855,6 +2091,14 @@ def cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(text):
         return (int(fields["usage_usec"]) / 10**6, int(fields["memory.peak"]), None)
     except (KeyError, ValueError):
         return None, None, f"the suite's cgroup counters could not be read: {text.strip()[:200]!r}"
+
+
+def processes_killed_at_memory_ceiling_from_suite_cgroup_statistics(text):
+    """How many of the suite's processes the kernel killed at its scope's memory ceiling."""
+    for line in text.splitlines():
+        if line.startswith("oom_kill "):
+            return int(line.split()[1])
+    return 0
 
 
 def copy_suite_output_to_log_noting_each_case_line(stream, log, started, cases, failures):
@@ -1984,8 +2228,15 @@ def lock_held_while_cleaning_up_after_earlier_runs(lock_file):
 
 
 def branch_of_checkout(top):
-    named = git(top, "rev-parse", "--abbrev-ref", "HEAD")
-    return named.stdout.strip() if named.returncode == 0 else None
+    # symbolic-ref -q exits 1 for a detached HEAD, recorded as "HEAD" as rev-parse
+    # --abbrev-ref names it.
+    named = git(top, "symbolic-ref", "-q", "--short", "HEAD")
+    if named.returncode == 0:
+        return named.stdout.strip()
+    if named.returncode == 1:
+        return "HEAD"
+    return (f"branch unknown (git symbolic-ref HEAD exited {named.returncode}: "
+            f"{first_line_of_error(named)})")
 
 
 def lock_explicit_log_directory(log_dir):
@@ -2042,7 +2293,7 @@ def is_credential_environment_variable(name):
 
 
 def launch_environment_for_a_test_suite_with_git_redirecting_agent_session_attendance_and_credential_variables_removed():
-    """Return the environment every path that launches a test suite gives the suite."""
+    """Return the environment every path that launches an nc-test-suite gives the suite."""
     environment = environment_without_git_redirecting_variables()
     for variable in AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES:
         environment.pop(variable, None)
@@ -2137,7 +2388,7 @@ def signal_sandbox(platform=None, environment=None, which=shutil.which,
     return prefix, None
 
 
-# Directories the test sandbox already makes private or hides, which the scan for
+# Directories the nc-test-sandbox already makes private or hides, which the scan for
 # writable directories does not walk.
 TEST_SANDBOX_PRIVATE_DIRECTORY_PATHS_NOT_SCANNED_FOR_WRITABLE_DIRECTORIES = ("/proc", "/sys", "/dev", "/tmp", "/run")
 
@@ -2167,7 +2418,7 @@ def directories_this_account_can_create_files_in_hidden_in_test_sandbox():
     if unhidden:
         raise SignalSandboxCouldNotStart(
             f"{', '.join(unhidden)}, which the scan for directories this account can write "
-            f"never walks, would not be hidden whole in the test sandbox, so what "
+            f"never walks, would not be hidden whole in the nc-test-sandbox, so what "
             f"{'it holds' if len(unhidden) == 1 else 'they hold'} would show inside it")
     pruned = tuple(dict.fromkeys(
         (*pruned, *TEST_SANDBOX_DIRECTORIES_THE_WRITABLE_DIRECTORY_SCAN_NEVER_WALKS)))
@@ -2215,7 +2466,7 @@ INTERPRETER_LOADED_PATHS_TIMEOUT_SECONDS = 60
 
 @functools.lru_cache(maxsize=None)
 def interpreter_directories_shown_read_only_in_test_sandbox(interpreter, hidden=None):
-    """The paths an interpreter loads that a test sandbox would hide: its executable under
+    """The paths an interpreter loads that an nc-test-sandbox would hide: its executable under
     the name given and its real one, its standard library, its site-packages, a virtual
     environment's pyvenv.cfg and its shared libpython, each as the interpreter reports it;
     none for an interpreter that loads nothing hidden.
@@ -2234,12 +2485,12 @@ def interpreter_directories_shown_read_only_in_test_sandbox(interpreter, hidden=
     except (OSError, subprocess.TimeoutExpired) as error:
         raise SignalSandboxCouldNotStart(
             f"the interpreter {given} could not report the paths it loads, so what it needs "
-            f"inside the test sandbox is not known: {error}") from error
+            f"inside the nc-test-sandbox is not known: {error}") from error
     loaded = answer.stdout.strip().split("\0")
     if answer.returncode != 0 or len(loaded) < 6 or not all(map(os.path.isabs, loaded)):
         raise SignalSandboxCouldNotStart(
             f"the interpreter {given} could not report the paths it loads, so what it needs "
-            f"inside the test sandbox is not known: exit {answer.returncode}: "
+            f"inside the nc-test-sandbox is not known: exit {answer.returncode}: "
             f"{(answer.stderr or answer.stdout).strip()}")
     shown = []
     for path in [given, *loaded]:
@@ -2253,7 +2504,7 @@ def interpreter_directories_shown_read_only_in_test_sandbox(interpreter, hidden=
                    for top in hidden):
                 raise SignalSandboxCouldNotStart(
                     f"the interpreter {given} loads {candidate}, which is or holds a "
-                    f"directory the test sandbox hides whole, so showing it would show that "
+                    f"directory the nc-test-sandbox hides whole, so showing it would show that "
                     f"directory; run the suites with an interpreter installed elsewhere")
             if candidate not in shown:
                 shown.append(candidate)
@@ -2264,7 +2515,7 @@ def interpreter_directories_shown_read_only_in_test_sandbox(interpreter, hidden=
 
 def paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(interpreters, program_files=(),
                                                                 checkout=None):
-    """Every path a suite's launch reads that a test sandbox would hide: each interpreter's
+    """Every path a suite's launch reads that an nc-test-sandbox would hide: each interpreter's
     directories, and for each program file run inside the sandbox, such as the launcher that
     checks the sandbox from inside it, the git checkout holding it, since the program loads
     repository modules from beside and above its own directory. A program file in the
@@ -2303,7 +2554,7 @@ def git_checkout_holding_directory_or_none(directory):
 
 
 def directories_hidden_whole_in_test_sandbox():
-    """Every directory a test sandbox shows as private or empty, the scanned ones included."""
+    """Every directory an nc-test-sandbox shows as private or empty, the scanned ones included."""
     return (*TEST_SANDBOX_PRIVATE_DIRECTORY_PATHS_NOT_SCANNED_FOR_WRITABLE_DIRECTORIES,
             REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX,
             *TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS,
@@ -2329,7 +2580,7 @@ def empty_file_bound_over_a_listening_socket_in_test_sandbox():
         os.close(descriptor)
     if not stat.S_ISREG(status.st_mode) or status.st_size != 0 or status.st_uid != os.getuid():
         raise SignalSandboxCouldNotStart(
-            f"{path}, the empty file that covers a listening socket inside the test "
+            f"{path}, the empty file that covers a listening socket inside the nc-test-"
             f"sandbox, is not an empty regular file of this account; delete it, "
             f"then run this again")
     return str(path)
@@ -2383,7 +2634,7 @@ def bwrap_arguments_for_one_suites_test_sandbox(checkout, writable_paths=(), sui
         raise SignalSandboxCouldNotStart(
             f"the git common directory of the checkout {real_checkout} could not be found "
             f"(git rev-parse --git-common-dir named {common!r}), so it could not be kept "
-            f"read-only inside the test sandbox")
+            f"read-only inside the nc-test-sandbox")
     # A bind made after the checkout's does not show under a second name the checkout was
     # bound at, so each protection is made under every name the checkout has.
     given_checkout = Path(os.path.abspath(checkout))
@@ -2408,8 +2659,8 @@ def bwrap_arguments_for_one_suites_test_sandbox(checkout, writable_paths=(), sui
 
 
 def broad_covers_of_one_suites_test_sandbox():
-    """The bwrap arguments that hide whole directories and listening sockets in a test
-    sandbox, to come before every bind of a path the suite needs."""
+    """The bwrap arguments that hide whole directories and listening sockets in an
+    nc-test-sandbox, to come before every bind of a path the suite needs."""
     arguments = []
     for directory in directories_this_account_can_create_files_in_hidden_in_test_sandbox():
         arguments += ["--tmpfs", directory]
@@ -2462,7 +2713,7 @@ def listening_unix_sockets_the_test_sandbox_would_show(proc_net_unix="/proc/net/
 
 
 def uncovered_listening_sockets_report_line_or_none(proc_net_unix="/proc/net/unix"):
-    """The report's line naming listening sockets the test sandbox does not hide, because this program cannot reach them."""
+    """The report's line naming listening sockets the nc-test-sandbox does not hide, because this program cannot reach them."""
     unreachable = []
     listening_unix_sockets_the_test_sandbox_would_show(
         proc_net_unix, unreachable, hidden=directories_hidden_whole_in_test_sandbox())
@@ -2470,15 +2721,15 @@ def uncovered_listening_sockets_report_line_or_none(proc_net_unix="/proc/net/uni
         return None
     names = sorted(set(unreachable))
     if len(names) == 1:
-        start = "a listening socket that the test sandbox does not hide, because this program cannot reach it"
+        start = "a listening socket that the nc-test-sandbox does not hide, because this program cannot reach it"
     else:
-        start = "listening sockets that the test sandbox does not hide, because this program cannot reach them"
+        start = "listening sockets that the nc-test-sandbox does not hide, because this program cannot reach them"
     return f"{start} and so neither can a suite: {', '.join(names)}; the run goes on, and nothing needs doing"
 
 
 def command_prefix_starting_one_suite_in_its_test_sandbox(sandbox_prefix, checkout, writable_paths=(),
                                                          suite=None, read_only_paths=()):
-    """The sandbox prefix with one suite's test sandbox added under bwrap."""
+    """The sandbox prefix with one suite's nc-test-sandbox added under bwrap."""
     if not does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix):
         return tuple(sandbox_prefix)
     return (*sandbox_prefix,
@@ -2523,7 +2774,7 @@ def signal_sandbox_refusal(error, program=PROGRAM):
             f"the user the suites were not run and why, and ask the user to run "
             f"the same command from an ordinary shell on this machine.\n"
             f"On Linux, if this run is not inside another sandbox, check that "
-            f"`bwrap {' '.join(TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE)} true` "
+            f"`{shlex.join(('bwrap', *TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE, 'true'))}` "
             f"works on this machine, and report what it prints to the user.\n"
             f"On macOS, report the reason above to the user: the suites need "
             f"{SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC} to refuse their signals to "
@@ -2532,7 +2783,7 @@ def signal_sandbox_refusal(error, program=PROGRAM):
 
 def signal_sandbox_line(prefix, unconfined_because):
     if does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(prefix):
-        return f"each suite runs in its own test sandbox: {' '.join(prefix)}"
+        return f"each suite runs in its own nc-test-sandbox: {' '.join(prefix)}"
     if prefix:
         return (f"each suite runs in a sandbox that refuses its signals to any process "
                 f"outside it: {' '.join(prefix)}")
@@ -2543,7 +2794,7 @@ def signal_sandbox_line(prefix, unconfined_because):
 
 
 TEST_SANDBOX_DID_NOT_START_NOTE = (
-    f"\n{PROGRAM}: the suite did not start: bwrap could not build its test sandbox, for the "
+    f"\n{PROGRAM}: the suite did not start: bwrap could not build its nc-test-sandbox, for the "
     f"reason bwrap printed above.\n"
     f"If bwrap says it can't create a file at a path, that path is a socket or credential "
     f"file that disappeared between this program's scan and the sandbox's start: run the "
@@ -2574,18 +2825,18 @@ def suite_process_started(process, status_read, note_suite_process):
 
 def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefix=(),
                   note_suite_process=None, in_cgroup_scope=False, nice=False, platform=None,
-                  time_limit=None, run_stop_signals=None):
+                  time_limit=None, run_stops=None):
     """Run one suite; return its result, on Linux with each case line it printed timed.
 
     time_limit is (limit seconds, recorded seconds or None) from
     suite_timeout_and_the_recorded_seconds_it_came_from(); a suite still running at its limit
-    has its process group killed, and its result carries "timeout". Once run_stop_signals,
-    a list a signal handler appends to, is not empty, the suite is killed the same way,
+    has its process group killed, and its result carries "timeout". Once run_stops,
+    a list naming what stopped the run, is not empty, the suite is killed the same way,
     and its result carries "stopped by".
 
     With in_cgroup_scope, the suite runs in a cgroup scope of its own and its CPU seconds
-    and peak memory are read from there; with nice, at low priority. Inside its test
-    sandbox the suite may write only the checkout and its own recorded-input files: the
+    and peak memory are read from there; with nice, at low priority. Inside its
+    nc-test-sandbox the suite may write only the checkout and its own recorded-input files: the
     run's log directory, where this program writes, stays out of its reach."""
     platform = sys.platform if platform is None else platform
     log_file = log_path_for(log_dir, suite)
@@ -2616,7 +2867,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                        "-o", str(strace_dir / "trace"), *command]
     if suite in SUITES_RUN_WITHOUT_ANY_SANDBOX:
         sandbox_prefix = ()
-    # The test sandbox is built from Linux's /proc and bwrap, so nothing of it is built
+    # The nc-test-sandbox is built from Linux's /proc and bwrap, so nothing of it is built
     # on another platform, whatever the prefix.
     if platform.startswith("linux"):
         if does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix):
@@ -2632,12 +2883,14 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                           *sandbox_prefix[1:])
     resource_prefix = ()
     statistics = None
+    memory_ceiling_bytes = test_suite_memory_ceiling_bytes(suite)
     if in_cgroup_scope:
         # A file with no name, so nothing a suite can reach stands where the counters go.
         statistics = tempfile.TemporaryFile()
         resource_prefix += command_prefix_running_one_suite_in_its_cgroup_scope(
             statistics.fileno(),
-            does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix))
+            does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix),
+            memory_ceiling_bytes)
     if nice:
         resource_prefix += ("nice", "-n", str(TEST_SUITE_NICE_INCREMENT))
     # bwrap, and the shell that keeps the cgroup counters, exit 128+N when the suite is
@@ -2685,7 +2938,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
             sandbox_started = suite_process_started(process, status_read, note_suite_process)
         deadline = None if time_limit is None else started + time_limit[0]
         while True:
-            wait_seconds = None if run_stop_signals is None else RUN_STOP_SIGNAL_CHECK_SECONDS
+            wait_seconds = None if run_stops is None else RUN_STOP_SIGNAL_CHECK_SECONDS
             if deadline is not None:
                 left = max(0.0, deadline - time.monotonic())
                 wait_seconds = left if wait_seconds is None else min(wait_seconds, left)
@@ -2694,8 +2947,8 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                 break
             except subprocess.TimeoutExpired:
                 pass
-            if run_stop_signals:
-                stopped_by = run_stop_signals[0]
+            if run_stops:
+                stopped_by = run_stops[0]
             elif deadline is not None and time.monotonic() >= deadline:
                 timed_out = time_limit
             else:
@@ -2724,6 +2977,15 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
             log.write(TEST_SANDBOX_DID_NOT_START_NOTE)
     if exit_reports_signal_as_128_plus and 128 < exit_code <= 128 + SIGNAL_NUMBER_LIMIT:
         exit_code = -(exit_code - 128)
+    counters = ""
+    if statistics is not None:
+        with statistics:
+            statistics.seek(0)
+            counters = statistics.read().decode("utf-8", "replace")
+    killed_at_memory_ceiling = processes_killed_at_memory_ceiling_from_suite_cgroup_statistics(
+        counters)
+    if killed_at_memory_ceiling and exit_code == 0:
+        exit_code = -signal.SIGKILL
     result = {
         "suite": suite,
         "exit": exit_code,
@@ -2741,10 +3003,12 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         result["timeout"] = {"limit": timed_out[0], "recorded": timed_out[1]}
     if stopped_by is not None and exit_code != 0:
         result["stopped by"] = stopped_by
+    if sandbox_started is False and exit_code != 0:
+        result["test sandbox did not start"] = True
+    if killed_at_memory_ceiling:
+        result["out of memory"] = {"processes killed": killed_at_memory_ceiling,
+                                   "ceiling": memory_ceiling_bytes}
     if statistics is not None:
-        with statistics:
-            statistics.seek(0)
-            counters = statistics.read().decode("utf-8", "replace")
         result["cpu_seconds"], result["peak_memory_bytes"], result["resources_note"] = \
             cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(counters)
     return result
@@ -2754,7 +3018,7 @@ def kill_test_suite_process_group(process):
     """SIGKILL the suite's process group, which every process it started stays in unless
     it starts a session of its own.
 
-    In a test sandbox the group holds the init of the suite's PID namespace, since bwrap
+    In an nc-test-sandbox the group holds the init of the suite's PID namespace, since bwrap
     is not given --new-session, and the init's end ends every process in the namespace.
     Called before the suite's first process is reaped, so its process group id is still
     its own."""
@@ -2931,6 +3195,8 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
         "exit": result["exit"],
         "seconds": result["seconds"],
         "skipped_cases": len(result["skips"]),
+        "skipped_cases_this_machine_cannot_run": sum(
+            1 for line in result["skips"] if SKIPPED_CASE_LINE_THIS_MACHINE_CANNOT_RUN.match(line)),
         "recorded_by": [PYTHON_INPUT_RECORDER_METHOD]
                        + ([STRACE_INPUT_RECORDER_METHOD] if strace_used else []),
         "reads": blob_hashes(top, sorted(touched & files)),
@@ -2944,8 +3210,18 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
 
 def recordings_directory_for(given, top):
     # Key by root commit so clones and worktrees share recordings.
-    roots = git(top, "rev-list", "--max-parents=0", "HEAD").stdout.split()
-    return Path(given).expanduser() / (min(roots)[:16] if roots else "no-commit")
+    head = git(top, "rev-parse", "--verify", "--quiet", "HEAD")
+    if head.returncode == 1:
+        return Path(given).expanduser() / "no-commit"
+    roots = git(top, "rev-list", "--max-parents=0", "HEAD") if head.returncode == 0 else head
+    if roots.returncode != 0 or not roots.stdout.split():
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — git could not list the root commits of HEAD in {top}, so "
+            f"this run cannot find its directory of recorded suite inputs, which is named "
+            f"after a root commit of HEAD: "
+            f"{first_line_of_error(roots) or 'git printed no error'}\n"
+            + git_failure_next_step_lines(Path(__file__).name))
+    return Path(given).expanduser() / min(roots.stdout.split())[:16]
 
 
 def recording_file_for(recordings_dir, suite):
@@ -3069,6 +3345,11 @@ def files_that_differ_since(top, commit):
     for status, path in zip(fields[0::2], fields[1::2]):
         differ[path] = "A" if status.startswith("A") else "D" if status.startswith("D") else "M"
     untracked = git(top, "ls-files", "--others", "--exclude-standard", "-z")
+    if untracked.returncode != 0:
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — git ls-files --others failed in {top}: "
+            f"{untracked.stderr.strip()}\n"
+            + git_failure_next_step_lines(Path(__file__).name))
     for path in untracked.stdout.split("\0"):
         if path:
             differ.setdefault(path, "A")
@@ -3121,10 +3402,16 @@ def selection_reason(suite, recording, checkout, commit):
                          else "no exit code recorded"))
     skipped = recording.get("skipped_cases")
     counted = isinstance(skipped, int) and not isinstance(skipped, bool)
-    if not counted or skipped != 0:
+    marked = recording.get("skipped_cases_this_machine_cannot_run")
+    if not isinstance(marked, int) or isinstance(marked, bool):
+        marked = 0
+    if not counted or skipped != marked:
         # A skipped case's reads were never recorded, and a skip can hide a run disturbed by another.
+        # A machine change that lets a marked case run does not select the suite by itself.
         return True, ("its last recorded run skipped "
-                      + (f"{skipped} case(s)" if counted else "an unrecorded number of cases")
+                      + (f"{skipped - marked} case(s) without the mark "
+                         f"{SKIPPED_CASE_THIS_MACHINE_CANNOT_RUN_MARKER}" if counted
+                         else "an unrecorded number of cases")
                       + ", so it recorded only what the cases that ran read")
     if suite in differ:
         return True, "the suite itself differs"
@@ -3223,11 +3510,26 @@ def describe_exit(code):
         return f"killed by signal {-code}"
 
 
+def suite_failed(result):
+    """Whether the suite failed: it exited nonzero, and neither a stop nor its nc-test-sandbox
+    failing to start ended it."""
+    return (result["exit"] != 0 and not result.get("stopped by")
+            and not result.get("test sandbox did not start"))
+
+
 def why_suite_failed(result):
-    """What a failed suite's line says after its path: its timeout, or how it exited."""
+    """What a failed or not-run suite's line says after its path: why, or how it exited."""
     if result.get("stopped by"):
         return f"killed when the run was stopped by {result['stopped by']}"
+    if result.get("test sandbox did not start"):
+        return (f"did not start: bwrap could not build its nc-test-sandbox "
+                f"({describe_exit(result['exit'])})")
     timeout = result.get("timeout")
+    out_of_memory = result.get("out of memory")
+    if timeout is None and out_of_memory:
+        return (f"{describe_exit(result['exit'])}, OUT OF MEMORY: the kernel killed "
+                f"{out_of_memory['processes killed']} of its processes at its memory ceiling of "
+                f"{out_of_memory['ceiling'] / 10**9:g} GB")
     if timeout is None:
         return describe_exit(result["exit"])
     recorded = timeout["recorded"]
@@ -3239,6 +3541,40 @@ def why_suite_failed(result):
     else:
         source = f", {multiple} times recorded {recorded:.0f}s"
     return f"TIMEOUT after {result['seconds']:.0f}s (limit {timeout['limit']:.0f}s{source})"
+
+
+SUITE_TIMEOUT_LINE = re.compile(r"^FAIL (?P<suite>.+?) TIMEOUT after \d+s \(limit (?P<limit>\d+)s")
+
+
+# A suite's own verdict: the runner's line ends in describe_exit(), not in a timeout, a stop
+# or an nc-test-sandbox that did not start.
+SUITE_FAILED_LINE = re.compile(
+    r"^FAIL (?P<suite>\S.*?) (?:exit \d+|killed by (?:signal \d+|\S+))"
+    r"(?:, OUT OF MEMORY: [^(]*?)?(?: \(| — log )")
+NOT_RUN_TO_THE_END_LINE_PREFIX = f"{PROGRAM}: not run to the end"
+
+
+def run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(text):
+    """True when the runner ran to its end and a suite failed by its own exit or signal.
+
+    A nonzero exit without that, such as an empty output, a run cut short, or records that
+    could not be written after every suite passed, judged no suite."""
+    lines = text.splitlines()
+    if any(line.startswith(NOT_RUN_TO_THE_END_LINE_PREFIX) for line in lines):
+        return False
+    return any(SUITE_FAILED_LINE.match(line) for line in lines)
+
+
+def run_all_test_suites_output_timed_out_suites_and_limits_parse(text):
+    """[(suite, limit seconds)] for each suite whose FAIL line says it ran past its limit.
+
+    Each suite once, in the order first printed: the list of failed suites repeats its line."""
+    found = {}
+    for line in text.splitlines():
+        match = SUITE_TIMEOUT_LINE.match(line)
+        if match:
+            found.setdefault(match["suite"], int(match["limit"]))
+    return list(found.items())
 
 
 def suite_line(result):
@@ -3253,11 +3589,13 @@ def suite_line(result):
                        f"{result['peak_memory_bytes'] / 10**6:.0f} MB")
     if result["exit"] == 0:
         return f"PASS {result['suite']} ({detail})"
-    return f"FAIL {result['suite']} {why_suite_failed(result)} ({detail})"
+    prefix = (NOT_RUN_SUITE_LINE_PREFIX if result.get("test sandbox did not start")
+              else FAILED_SUITE_LINE_PREFIX)
+    return f"{prefix}{result['suite']} {why_suite_failed(result)} ({detail})"
 
 
 class Report:
-    """Every line goes to stdout at once and to report.txt in the log directory."""
+    """Every line goes to stdout at once and to test-run-report.txt in the log directory."""
 
     def __init__(self, report_file):
         self.lock = threading.Lock()
@@ -3310,6 +3648,10 @@ def parse_arguments(argv):
                         dest="changed_since", metavar="COMMIT")
     parser.add_argument("--recorded-inputs-directory",
                         default=str(DEFAULT_RECORDED_INPUTS_DIRECTORY))
+    parser.add_argument("--leave-recorded-inputs-and-failure-history-unchanged",
+                        dest="leave_records_unchanged", action="store_true")
+    parser.add_argument("--stop-at-first-failing-suite", action="store_true")
+    parser.add_argument("--only-suites-named", nargs="+", metavar="SUITE")
     arguments = parser.parse_args(argv)
     if arguments.jobs is not None and arguments.jobs < 1:
         parser.error("-j takes a whole number of at least 1")
@@ -3349,7 +3691,7 @@ def main(argv=None, platform=None):
         print(signal_sandbox_refusal(error), file=sys.stderr)
         return EXIT_COULD_NOT_RUN
 
-    # In a test sandbox of its own each suite shares no machine state with another run's
+    # In an nc-test-sandbox of its own each suite shares no machine state with another run's
     # suites, so runs overlap, and admission decides when each suite starts.
     in_test_sandboxes = platform.startswith("linux") and \
         does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix)
@@ -3381,10 +3723,14 @@ def main(argv=None, platform=None):
         # Read again under the lock: the checkout may have changed while this run waited,
         # and the commit this run reports is read under the lock too.
         try:
-            suites = suites_listed_by_git(top)
+            listed = suites_listed_by_git(top)
+            suites = suites_named_among_those_listed(top, listed, arguments.only_suites_named)
+            sandbox_lists, sandbox_lists_source = (
+                suite_sandbox_lists_read_from_checkout_under_test(top))
         except CouldNotRun as refusal:
             print(refusal, file=sys.stderr)
             return EXIT_COULD_NOT_RUN
+        globals().update(sandbox_lists)
         if arguments.log_dir:
             log_dir = Path(arguments.log_dir).resolve()
             log_dir.mkdir(parents=True, exist_ok=True)
@@ -3409,7 +3755,11 @@ def main(argv=None, platform=None):
                 clean_up_lines = clean_up_after_earlier_runs(Path(arguments.lock_file),
                                                              previous_holder, platform)
         commit, state = commit_and_state(top)
-        recordings_dir = recordings_directory_for(arguments.recorded_inputs_directory, top)
+        try:
+            recordings_dir = recordings_directory_for(arguments.recorded_inputs_directory, top)
+        except CouldNotRun as refusal:
+            print(refusal, file=sys.stderr)
+            return EXIT_COULD_NOT_RUN
         # Each recording is read once, so selection and starting order see the same one
         # even while runs in other checkouts save it.
         recordings, identities_read = {}, {}
@@ -3431,20 +3781,30 @@ def main(argv=None, platform=None):
             [suite for suite, selected, _ in selection if selected], recordings)
         jobs = suites_run_at_once(arguments.jobs, len(chosen), os.cpu_count(),
                                   admission_decides=in_test_sandboxes)
-        strace = strace_usable()
-        recording_dir = log_dir / "recorded-inputs"
-        recording_dir.mkdir(parents=True, exist_ok=True)
-        recorder = (install_python_input_recorder(log_dir), recording_dir, strace)
+        if arguments.leave_records_unchanged:
+            strace = recorder = None
+        else:
+            strace = strace_usable()
+            recording_dir = log_dir / "recorded-inputs"
+            recording_dir.mkdir(parents=True, exist_ok=True)
+            recorder = (install_python_input_recorder(log_dir), recording_dir, strace)
         report = Report(log_dir / REPORT_FILE_NAME)
+        named_note = (f"; {len(suites)} named by --only-suites-named"
+                      if arguments.only_suites_named is not None else "")
         selected_note = (f"; {len(chosen)} selected by inputs changed since "
                          f"{changed_since[:12]}" if changed_since is not None else "")
-        report.line(f"{PROGRAM}: {top} at {commit} ({state}); {len(suites)} suites "
-                    f"listed by git{selected_note}; {version} ({interpreter}); "
-                    f"-j {jobs}; logs in {log_dir}")
-        report.line(f"inputs recorded by {PYTHON_INPUT_RECORDER_METHOD}"
-                    + (f" and {STRACE_INPUT_RECORDER_METHOD} ({strace})" if strace else "")
-                    + f", kept in {recordings_dir}")
+        report.line(f"{PROGRAM}: {top} at {commit} ({state}); {len(listed)} suites "
+                    f"listed by git{named_note}{selected_note}; {version} ({interpreter}); "
+                    f"-j {jobs}{FIRST_REPORT_LINE_LOG_DIRECTORY_MARK}{log_dir}")
+        if recorder is None:
+            report.line(f"inputs not recorded, and no recording in {recordings_dir} or failure "
+                        f"history changed: --leave-recorded-inputs-and-failure-history-unchanged")
+        else:
+            report.line(f"inputs recorded by {PYTHON_INPUT_RECORDER_METHOD}"
+                        + (f" and {STRACE_INPUT_RECORDER_METHOD} ({strace})" if strace else "")
+                        + f", kept in {recordings_dir}")
         report.line(signal_sandbox_line(sandbox_prefix, unconfined_because))
+        report.line(f"{SUITE_SANDBOX_LISTS_SOURCE_LINE_PREFIX}{sandbox_lists_source}")
         if lock_handle is not None and arguments.wait_for_lock_seconds > 0:
             report.line(f"{MACHINE_LOCK_WAITED_LINE_PREFIX}{seconds_waiting_for_lock:.0f}")
         if sandbox_prefix:
@@ -3493,11 +3853,14 @@ def main(argv=None, platform=None):
                 report.line(f"{'SELECTED' if selected else 'NOT SELECTED'} {suite}: {why}")
 
         run_stop_signals = []
+        # What stopped the run: a stop signal's name, or, with --stop-at-first-failing-suite,
+        # the first failing suite. Each suite's thread acts on its first entry.
+        run_stops = []
 
         def run_admitted(suite, **options):
-            if run_stop_signals:
+            if run_stops:
                 raise TestRunStoppedBeforeSuiteStarted(suite)
-            options["run_stop_signals"] = run_stop_signals
+            options["run_stops"] = run_stops
             options["time_limit"] = suite_timeout_and_the_recorded_seconds_it_came_from(
                 recordings.get(suite))
             outside = suite in SUITES_RUN_WITHOUT_ANY_SANDBOX
@@ -3525,7 +3888,7 @@ def main(argv=None, platform=None):
             return result
 
         def run_and_record(suite):
-            if is_shell_test_suite(suite):
+            if is_shell_test_suite(suite) or recorder is None:
                 return run_admitted(suite)
             result = run_admitted(suite, recorder=recorder)
             try:
@@ -3557,12 +3920,22 @@ def main(argv=None, platform=None):
             shutil.rmtree(recording_paths_for(recording_dir, suite)[1], ignore_errors=True)
             return result
 
+        def run_and_record_then_stop_the_run_if_first_to_fail(suite):
+            result = run_and_record(suite)
+            # In the suite's own thread, so the next suite this thread takes sees the stop
+            # before it starts.
+            if (arguments.stop_at_first_failing_suite and result["exit"] != 0
+                    and not result.get("test sandbox did not start") and not run_stops):
+                run_stops.append(f"the first failing suite, {suite}")
+            return result
+
         results = []
 
         def record_run_stop(signal_number, frame):
             # Only recorded here: the suites' threads and the loop below act on it where it
             # is safe, since raising inside subprocess code can leave a child unreaped.
             run_stop_signals.append(signal.Signals(signal_number).name)
+            run_stops.append(signal.Signals(signal_number).name)
 
         def ignore_run_stop(signal_number, frame):
             pass
@@ -3576,14 +3949,15 @@ def main(argv=None, platform=None):
                        else record_run_stop)
             signal_handlers_replaced[stop_signal] = signal.signal(stop_signal, handler)
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-            running = [pool.submit(run_and_record, suite) for suite in chosen]
+            running = [pool.submit(run_and_record_then_stop_the_run_if_first_to_fail, suite)
+                       for suite in chosen]
             pending = set(running)
             stop_acted_on = False
             while pending:
                 done, pending = concurrent.futures.wait(
                     pending, timeout=RUN_STOP_SIGNAL_CHECK_SECONDS,
                     return_when=concurrent.futures.FIRST_COMPLETED)
-                if run_stop_signals and not stop_acted_on:
+                if run_stops and not stop_acted_on:
                     stop_acted_on = True
                     for waiting in running:
                         waiting.cancel()
@@ -3596,7 +3970,7 @@ def main(argv=None, platform=None):
                         result = finished.result()
                     except (TestRunStoppedBeforeSuiteStarted,
                             MachineWideTestSuiteAdmissionCancelled):
-                        if run_stop_signals:
+                        if run_stops:
                             continue
                         raise
                     except (MachineWideTestSuiteAdmissionCouldNotDecide, SignalSandboxCouldNotStart,
@@ -3607,14 +3981,15 @@ def main(argv=None, platform=None):
                         if admission is not None:
                             admission.cancel()
                         what = ("admission failed" if isinstance(error, MachineWideTestSuiteAdmissionCouldNotDecide)
-                                else "a suite's test sandbox could not be built"
+                                else "a suite's nc-test-sandbox could not be built"
                                 if isinstance(error, SignalSandboxCouldNotStart)
                                 else "a suite could not be started")
                         report.line(f"{PROGRAM}: not run to the end — {what}: {error}")
                         report.line("Fix what it names, then run this again. The suites already "
                                     "running finish first.")
                         report.close()
-                        return EXIT_COULD_NOT_RUN
+                        return (EXIT_SOME_FAILED if any(map(suite_failed, results))
+                                else EXIT_COULD_NOT_RUN)
                     results.append(result)
                     report.line(suite_line(result))
                     if result.get("output_note"):
@@ -3626,24 +4001,39 @@ def main(argv=None, platform=None):
                                  or any(result.get("stopped by") for result in results)):
             report.line(f"{PROGRAM}: not run to the end — stopped by {run_stop_signals[0]}. "
                         f"The process group of every suite still running was killed, which "
-                        f"in a test sandbox ends every process the suite started; outside "
+                        f"in an nc-test-sandbox ends every process the suite started; outside "
                         f"one, a process a suite started in a session of its own is not "
                         f"reached and may still be running. The suites not yet started "
                         f"were not run.")
             report.close()
             if run_record is not None:
                 run_record.finish()
-            return EXIT_COULD_NOT_RUN
+            return EXIT_SOME_FAILED if any(map(suite_failed, results)) else EXIT_COULD_NOT_RUN
 
         results.sort(key=lambda result: result["suite"])
-        failed = [result for result in results if result["exit"] != 0]
+        # Here only --stop-at-first-failing-suite stops a suite: a stop signal returned above.
+        stopped = [result for result in results if result.get("stopped by")]
+        not_run = [result for result in results if result.get("test sandbox did not start")]
+        failed = [result for result in results if suite_failed(result)]
         skipping = [result for result in results if result["skips"]]
         if failed:
             report.line("")
             report.line(f"{len(failed)} failed:")
             for result in failed:
-                report.line(f"FAIL {result['suite']} {why_suite_failed(result)}"
-                            f" — log {result['log']}")
+                report.line(f"{FAILED_SUITE_LINE_PREFIX}{result['suite']} {why_suite_failed(result)}"
+                            f"{SUITE_LINE_LOG_MARK}{result['log']}")
+        if not_run:
+            report.line("")
+            report.line(f"{len(not_run)} not run, because bwrap could not build the "
+                        f"nc-test-sandbox; each log says why and what to do:")
+            for result in not_run:
+                report.line(f"{NOT_RUN_SUITE_LINE_PREFIX}{result['suite']} {why_suite_failed(result)}"
+                            f"{SUITE_LINE_LOG_MARK}{result['log']}")
+        if run_stops:
+            report.line("")
+            report.line(f"stopped at {run_stops[0]}: {len(stopped)} suites killed while they "
+                        f"ran, {len(chosen) - len(results)} not started "
+                        f"(--stop-at-first-failing-suite)")
         if skipping:
             report.line("")
             report.line("skipped cases:")
@@ -3666,14 +4056,15 @@ def main(argv=None, platform=None):
                             f"{log_dir / MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME} is cut "
                             f"short, so this run exits 2 if every suite passed, and 1 if any "
                             f"failed. Fix what it names, then run this again.")
-        # The case times, suite resources and failure history come with the test sandboxes.
+        # The case times, suite resources and failure history come with the nc-test-sandboxes.
         if admission is not None:
             try:
                 write_case_times_suite_resources_and_junit_xml_of_run(log_dir, results)
-                append_test_case_failure_history(
-                    Path(arguments.recorded_inputs_directory).expanduser()
-                    / TEST_CASE_FAILURE_HISTORY_FILE_NAME,
-                    top, commit, branch_of_checkout(top), log_dir, results)
+                if not arguments.leave_records_unchanged:
+                    append_test_case_failure_history(
+                        Path(arguments.recorded_inputs_directory).expanduser()
+                        / TEST_CASE_FAILURE_HISTORY_FILE_NAME,
+                        top, commit, branch_of_checkout(top), log_dir, results)
             except OSError as error:
                 records_failed = True
                 report.line(f"{PROGRAM}: the run's case times, suite resources, JUnit XML or "
@@ -3687,17 +4078,21 @@ def main(argv=None, platform=None):
         not_selected = (f"; {len(suites) - len(chosen)} suites not selected, their recorded "
                         f"inputs unchanged since {changed_since[:12]}"
                         if changed_since is not None else "")
-        report.line(f"SUMMARY: {len(results) - len(failed)} passed, {len(failed)} failed, "
+        stopped_note = f", {len(stopped)} stopped" if run_stops else ""
+        not_run_note = f", {len(not_run)} not run" if not_run else ""
+        report.line(f"{SUMMARY_LINE_PREFIX} "
+                    f"{len(results) - len(failed) - len(stopped) - len(not_run)} passed, "
+                    f"{len(failed)} failed{not_run_note}{stopped_note}, "
                     f"{len(results)} total; {skip_count} cases skipped in {len(skipping)} "
                     f"suites; {top.name} at {commit[:12]}; {version}{not_selected}")
         report.close()
         if run_record is not None:
             run_record.finish()
-        # A failing suite outranks missing records, since a caller that reads exit 2 as
-        # "no verdict" would otherwise let a failure through.
+        # A failing suite outranks a suite not run and missing records, since a caller that
+        # reads exit 2 as "no verdict" would otherwise let a failure through.
         if failed:
             return EXIT_SOME_FAILED
-        return EXIT_COULD_NOT_RUN if records_failed else EXIT_ALL_PASSED
+        return EXIT_COULD_NOT_RUN if not_run or records_failed else EXIT_ALL_PASSED
     finally:
         restore_signal_handlers(signal_handlers_replaced)
         if readings is not None:

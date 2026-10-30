@@ -10,7 +10,7 @@ Every agent-facing-message, the text a program in this project hands an agent wh
 - a warning or reminder a hook adds, as `additionalContext`, to what the agent reads next;
 - the `reason` field of a Stop hook that keeps the agent's turn open;
 - an error, a failing verdict or usage text that a script the agent runs prints, a git hook included; usage text the agent asked for with `--help` is not an error, and this page does not cover it;
-- the FAIL line of a test suite that enforces a project rule.
+- the FAIL line of an nc-test-suite that enforces a project rule.
 
 A line a program shows the user directly, with no agent between, says what a fact for the user says under "When the message sends the agent to the user": what stopped, on which machine, and what it costs him. The rest of this page is about messages an agent reads.
 
@@ -88,4 +88,4 @@ Write instructions as instructions, on every channel. The Claude Code hooks refe
 
 - Test the message: assert, in a test that runs the program, that each line the agent must act on is present, so that deleting or rewording the line fails a test. Where you can, also run in a test each command the message tells the agent to run, so that an instruction which stops working fails a test too. `scripts/registered-hook-messages-carry-no-citations-test.py` already fails a hook registered in `.claude/settings.json` whose module-level message constants, those named with an ending such as `_MESSAGE` or `_REASON`, cite a date, a ruling, or an issue or pull request; it also fails a registered hook that declares no such constant.
 - A program that hands agents messages carries a comment naming this page by its path, `docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md`, so whoever edits a message finds the page.
-- Before the message merges, test it with a fresh agent that has the context a real agent has when the message fires: CLAUDE.md, and the skill or the task it is working on. Use the situations where the message has really fired, when it has; otherwise set up the situation it was written for. Carry out what the fresh agent writes. Separately, run each command the message names, so that a command, path or flag that does not work fails a test.
+- Before the message merges, test it with a fresh-agent, given a short description of the situation the message was written for and, when the message fires inside one skill, that skill. Do not try to give it the context of a particular agent: a message that works for a fresh-agent also works for an agent that knows more. A prompt handed to a fork or a subagent that shares its writer's context needs no such test. Carry out what the fresh-agent writes. Separately, run each command the message names, so that a command, path or flag that does not work fails a test.

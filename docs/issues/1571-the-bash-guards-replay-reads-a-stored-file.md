@@ -1,5 +1,6 @@
 ---
 issue: "[The Bash guards replay reads a stored file of distinct recorded command pairs, reuses main's readings and reads many commands in each new process](https://github.com/nedschorus/nedschorus/issues/1571)"
+kind: design
 ---
 
 # The Bash guards replay reads a stored file of distinct recorded command pairs, reuses main's readings and reads many commands in each new process
@@ -21,7 +22,7 @@ Measured on ned-box on 2026-10-16 with the replay's own `recorded_command_pairs(
 - **One new process per command in new-process mode, before commit aa700745.** In new-process mode the shell reader, `nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py`, starts a new Python process for every reading (`_simple_commands_in_a_new_process()`, which runs the reader with `--read-command-on-standard-input` on one command). The replay's comment then put this at about 50 times slower than reading in-process, and every guard that loads the reader reads through it, so one pair starts several processes. Commit aa700745 replaced this, in the replay only, with one long-running child process per pool worker. A hook takes the same path when the parser was installed only for a new process, so the new-process mode tests a path real hooks use.
 - **What the transcripts record of the guards' verdict.** A Bash call that a PreToolUse hook refused has a tool result marked as an error whose text begins `PreToolUse:Bash hook error: ` followed by the refusal; the text does not name the hook. Context a PreToolUse hook added is recorded as an attachment of type `hook_additional_context` with `hookEvent` `PreToolUse`. Seen in ned-box's transcripts on 2026-10-16.
 
-Search receipt: `scripts/ghi-info-ask.py --include-closed` on 2026-10-16, asked for a GHI about a stored file of pairs for the replay, cached main readings, batched new-process reads or a daily job that adds to such a file, found none. The nearest is GHI [Replace the hand-written parsers in the project's hooks and scripts with real parsers](https://github.com/nedschorus/nedschorus/issues/1196), whose provisional-additions record replays as correctness evidence and say nothing of their cost.
+Search receipt: `scripts/ghi-guide-agent-ask.py --include-closed` on 2026-10-16, asked for a GHI about a stored file of pairs for the replay, cached main readings, batched new-process reads or a daily job that adds to such a file, found none. The nearest is GHI [Replace the hand-written parsers in the project's hooks and scripts with real parsers](https://github.com/nedschorus/nedschorus/issues/1196), whose provisional-additions record replays as correctness evidence and say nothing of their cost.
 
 ## What is decided
 

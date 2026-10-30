@@ -9,7 +9,8 @@ A partial append can leave a torn record that prevents subsequent records from b
 The runner's output is copied to stderr line by line as it arrives, so a run stopped before
 it ends still shows its progress; stdout keeps only the SUMMARY line and where the record went.
 
-Exit codes: 0 suites passed, 1 suite failed, 2 refused or unable to start, 4 failed step,
+Exit codes: 0 suites passed, 1 suite failed, 2 refused, unable to start, or no suite failed but
+one did not run because its test sandbox did not start, 4 failed step,
 5 record not written, 7 uncaught exception. Local logs and the record remain available for recovery."""
 
 import argparse
@@ -65,7 +66,7 @@ try:
     daily_full_test_run_of_main = module_loaded_by_path(
         "daily_full_test_run_of_main",
         Path(__file__).resolve().with_name("daily-full-test-run-of-main.py"))
-    daily_memory_review_mark = daily_full_test_run_of_main.daily_memory_review_mark
+    handoff_user_review_of_agent_memory_stores_mark = daily_full_test_run_of_main.handoff_user_review_of_agent_memory_stores_mark
     run_all_test_suites = daily_full_test_run_of_main.run_all_test_suites
     EXIT_CHECKOUT_REFUSED = run_all_test_suites.EXIT_COULD_NOT_RUN
     git_output = module_loaded_by_path(
@@ -84,6 +85,7 @@ PULL_REQUEST_HEAD_TEST_RUN_LOGS_DIRECTORY_NAME = "logs"
 PULL_REQUEST_HEAD_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME = "pull-request-head-test-run-record.txt"
 
 # Use the runner beside this program so a pull request cannot pass itself by modifying its runner.
+# The runner reads only its suite sandbox lists from the checkout under test.
 PULL_REQUEST_HEAD_TEST_RUN_RUNNER_BESIDE_THIS_FILE = Path(__file__).resolve().with_name(
     "run-all-test-suites.py")
 
@@ -197,7 +199,7 @@ def stream_for_the_runners_output():
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         prog=PROGRAM,
-        description="Run the test suites a pull request's head reaches and file the test "
+        description="Run the nc-test-suites a pull request's head reaches and file the test "
                     "log in the log-store under the head's commit hash.")
     parser.add_argument("--checkout", default=str(REPOSITORY_ROOT))
     parser.add_argument("--since", metavar="COMMIT")
@@ -214,7 +216,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
     arguments = parse_arguments(argv)
     now = now or datetime.now(timezone.utc)
     daily = daily_full_test_run_of_main
-    mark = daily_memory_review_mark
+    mark = handoff_user_review_of_agent_memory_stores_mark
     on_ned_box = mark.this_machine_is_ned_box()
     machine = (daily.DAILY_FULL_TEST_RUN_MACHINE_NAME_ON_NED_BOX if on_ned_box
                else daily.DAILY_FULL_TEST_RUN_MACHINE_NAME_ELSEWHERE)
@@ -295,7 +297,6 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
             completed, seconds_waiting_for_lock, lock_never_released = (
                 daily.run_test_suite_runner_waiting_for_the_machine_lock(
                     command, checkout, monotonic, stream_to=stream_for_the_runners_output()))
-            copy_failure = None
         except daily.RunnerOutputCopyFailed as failure:
             completed, lock_never_released, copy_failure = failure.completed, False, failure.reason
         if copy_failure is not None:
@@ -319,7 +320,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
               and daily.runner_summary_line(completed) is None):
             steps_failed.append((
                 f"{run_all_test_suites.PROGRAM} exited {completed.returncode} and printed "
-                f"no {daily.RUNNER_SUMMARY_LINE_PREFIX} line, which is no verdict",
+                f"no {run_all_test_suites.SUMMARY_LINE_PREFIX} line, which is no verdict",
                 "Read the runner's stderr in the record, then run this again."))
         if completed.returncode in (run_all_test_suites.EXIT_ALL_PASSED,
                                     run_all_test_suites.EXIT_SOME_FAILED):
@@ -347,7 +348,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
             record_lines.extend(printed)
             if summary is None:
                 record_lines.append(
-                    f"the runner printed no {daily.RUNNER_SUMMARY_LINE_PREFIX} line; its "
+                    f"the runner printed no {run_all_test_suites.SUMMARY_LINE_PREFIX} line; its "
                     f"stderr:")
                 record_lines.extend(f"  {line}"
                                     for line in completed.stderr.strip().splitlines())

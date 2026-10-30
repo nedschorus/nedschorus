@@ -1,5 +1,6 @@
 ---
 issue: "[refresh-design: when a system's code lands, bring its design, build-slice plan and overview into line — removing, never revising](https://github.com/nedschorus/nedschorus/issues/670)"
+kind: design
 ---
 
 # refresh-design: when a system's code lands, bring its design, build-slice plan and overview into line — removing, never revising
@@ -8,7 +9,7 @@ issue: "[refresh-design: when a system's code lands, bring its design, build-sli
 
 Build **`refresh-design`**: the step that brings a system's three documents — its design, its build-slice plan and its overview — into line with what has landed on main since the last refresh, removing and never revising. The name is the user's coinage (walk of 2026-09-22, item 6). Nothing performs this step today.
 
-**The glossary gets its entry only when the step exists.** The user's words, 2026-09-23: "I would not add this to the glossary yet. I'd try to keep the glossary true now, not true eventually. Instead I'd make a GHI for it, assuming there isn't one." Until it is built, this issue is where the definition lives. A search on 2026-09-23 found no issue for it: `scripts/ghi-info-ask.py --include-closed` over open and closed issues, and `gh issue list --state all --search 'refresh-design OR "refresh design" OR overview OR BIPP OR "design lifecycle"'`.
+**The glossary gets its entry only when the step exists.** The user's words, 2026-09-23: "I would not add this to the glossary yet. I'd try to keep the glossary true now, not true eventually. Instead I'd make a GHI for it, assuming there isn't one." Until it is built, this issue is where the definition lives. A search on 2026-09-23 found no issue for it: `scripts/ghi-guide-agent-ask.py --include-closed` over open and closed issues, and `gh issue list --state all --search 'refresh-design OR "refresh design" OR overview OR BIPP OR "design lifecycle"'`.
 
 ## The draft definition, as put to the user on 2026-09-23
 
@@ -22,7 +23,7 @@ The walk's minutes are shipped at its close to the log-store as `nedlern@ned-box
 
 1. **A design is pinned to what landed (item 5, accepted).** It is not refined between design-to-main runs. It carries decisions, never build status: decisions do not go out of phase, descriptions of the build do. The evidence: `nc-systems/main-gatekeeper/main-gatekeeper-design.md` carries a `status:` line and an Implementation status block and has been patched out of phase; `nc-systems/handoff/handoff-design.md` carries neither and has taken no substantive edit since moving.
 2. **What a refresh is (item 6; the user: "Y but be careful").**
-   - **It removes; it never revises.** A change that revises a decision is a **redesign** — a full design-to-main run with its own five-verdict review (`scripts/design-to-main/design-to-main-state-tables.py`: reject design, contract, implementation, tests, test-design). Checkable: a refresh commit's diff is deletions plus the pinned line. His caution, in his words: "We ran into endless problems with designs chasing code, code and test code chasing design changes … once the code lands on main (ie pasts all test) then we can refresh the design."
+   - **It removes; it never revises.** A change that revises a decision is a **redesign** — a full design-to-main run with its own five-verdict review (`scripts/design-to-main/design-to-main-state-tables-common.py`: reject design, contract, implementation, tests, test-design). Checkable: a refresh commit's diff is deletions plus the pinned line. His caution, in his words: "We ran into endless problems with designs chasing code, code and test code chasing design changes … once the code lands on main (ie pasts all test) then we can refresh the design."
    - **It runs at landing** (his word: "y").
    - **It refreshes all three documents.** His words: "Designs do go stale, that's why we need refresh-design (which probably should refresh all 3 documents)."
    - **The design does not move**, and each landing appends one pinned line carrying the **commit**, not only a date — so the next refresh's range is exact.

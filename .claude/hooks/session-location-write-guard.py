@@ -4,25 +4,31 @@
 Resolve sessions from payload cwd: CLAUDE_PROJECT_DIR can name the main checkout in forked sessions.
 A session-local approval marker permits one write; shell writes are outside this hook's visibility."""
 
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-# Resolve the sibling import from this file, independently of the hook process's cwd.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from guard_approval_marker import consume_approval_marker  # noqa: E402
+_marker_spec = importlib.util.spec_from_file_location(
+    "guard_approval_marker_common", Path(__file__).resolve().with_name("guard-approval-marker-common.py"))
+_guard_approval_marker_common = importlib.util.module_from_spec(_marker_spec)
+_marker_spec.loader.exec_module(_guard_approval_marker_common)
+consume_approval_marker = _guard_approval_marker_common.consume_approval_marker
 
 APPROVAL_MARKER_NAME = ".location-write-approved"
 
 # Use a status Git cannot return to distinguish launch failure from repository state.
 GIT_DID_NOT_RUN = -1
 
+# With -q, git symbolic-ref and git rev-parse --verify answer no with 1; any other nonzero is git failing.
 SYMBOLIC_REF_ON_A_BRANCH = 0
-SYMBOLIC_REF_NOT_A_BRANCH = 128     # detached HEAD, or no repository
+SYMBOLIC_REF_NOT_A_BRANCH = 1       # detached HEAD
 HEAD_COMMIT_EXISTS = 0
-HEAD_COMMIT_ABSENT = (1, 128)       # unborn repository, or no repository
+HEAD_COMMIT_ABSENT = 1              # a repository with no commit yet
+CHECK_IGNORE_IGNORED = 0
+CHECK_IGNORE_NOT_IGNORED = 1
 
 DETACHED_DENY_MESSAGE = (
     "Refusing to write {path}: this checkout is on a detached HEAD. A commit made here is "
@@ -44,34 +50,53 @@ DETACHED_DENY_MESSAGE = (
 UNBORN_DENY_MESSAGE = (
     "Refusing to write {path}: this session's checkout is a repository with no commits yet. "
     "HEAD names the branch {branch}, but that branch does not exist until something is "
-    "committed, so this is not the seat you were meant to be working in — most often it is a "
-    "stray `git init` directory. Check you are in the right checkout. If this really is where "
-    "the work belongs, make the first commit (git commit --allow-empty -m 'initial') and "
-    "resubmit. If the user has approved writing from this exact state, quote his approval "
-    "words into {marker} at the checkout root and resubmit — create it with a shell command "
-    "(printf/echo), because writing it with the Write tool would be refused by this same "
-    "guard."
+    "committed, so this is most often a stray `git init` directory, not the checkout you "
+    "were meant to work in.\n"
+    "Check that you are in the right checkout.\n"
+    "If this really is where the work belongs, make the first commit (git commit "
+    "--allow-empty -m 'initial'), then try the write again.\n"
+    "If the user has approved writing from this exact state, quote his approval words into "
+    "{marker} at the checkout root with a shell command (printf or echo), then try the "
+    "write again; the marker is used up by the one call it approves, and the Write tool "
+    "cannot create the marker, because this guard refuses that Write."
 )
 
 REFERENCE_DENY_MESSAGE = (
-    "Refusing to write {path}: this session sits in the machine's reference checkout — the "
-    "main worktree other agents read as the truth about main. Work belongs in your own "
-    "worktree; use it and leave this copy as reference. If this write IS legitimate work "
-    "in this checkout — merge-lane resolving conflicts, with the user's approval — "
-    "quote his approval words into {marker} at the checkout root and resubmit; the marker "
-    "is consumed by the one call it approves. Create the marker with a shell command "
-    "(printf/echo): writing it with the Write tool would be refused by this same guard."
+    "Refusing to write {path}: this session sits in the machine's reference checkout, the "
+    "main worktree other agents read as the truth about main.\n"
+    "Do the work in your own worktree, and leave this checkout as it is.\n"
+    "If the user has approved this write in this checkout, quote his approval words into "
+    "{marker} at the checkout root with a shell command (printf or echo), then try the write again; the "
+    "marker is used up by the one call it approves, and the Write tool cannot create the "
+    "marker, because this guard refuses that Write."
+)
+
+COULD_NOT_CHECK_MESSAGE = (
+    "session-location-write-guard did not check the write to {path}, and the write went "
+    "ahead: {cause}.\n"
+    "If your checkout is on a detached HEAD, and no rebase, merge, cherry-pick or revert is "
+    "stopped in it, run git switch -c <a-branch-name> before you commit, so the commit is "
+    "not lost when HEAD moves.\n"
+    "Tell the user this guard could not check the write, quoting this whole note. If {path} is "
+    "in the machine's reference-checkout, say so in that message. Do not revert the write "
+    "yourself. Then carry on with your task."
 )
 
 CROSS_REFERENCE_DENY_MESSAGE = (
-    "Refusing to write {path}: it lands inside the machine's reference checkout — the main "
-    "worktree other agents read as the truth about main — while this session is seated "
-    "elsewhere. Work belongs in your own worktree; if this write must land there, land it "
-    "through a branch and merge-lane instead. If it IS legitimate direct work — "
-    "merge-lane resolving conflicts, with the user's approval — quote his approval words "
-    "into {marker} at the root of your own checkout and resubmit; the marker is consumed "
-    "by the one call it approves."
+    "Refusing to write {path}: it is inside the machine's reference checkout, the main "
+    "worktree other agents read as the truth about main, and this session works in another "
+    "checkout.\n"
+    "Do the work in your own worktree.\n"
+    "If the change must reach the reference checkout, send it through a branch and "
+    "merge-lane.\n"
+    "If the user has approved writing {path} directly, quote his approval words into "
+    "{marker} at the root of your own "
+    "checkout, then try the write again; the marker is used up by the one call it approves."
 )
+
+
+class CheckCouldNotRun(Exception):
+    """git, or the module this guard reads, could not answer a question the check needs."""
 
 
 def run_git(arguments, working_directory: Path):
@@ -86,29 +111,43 @@ def run_git(arguments, working_directory: Path):
                                            f"{type(error).__name__}: {error}")
 
 
+def git_answer(arguments, working_directory: Path, answers=(0,)):
+    """The git result when its exit is one of answers; raises CheckCouldNotRun otherwise."""
+    result = run_git(arguments, working_directory)
+    if result.returncode not in answers:
+        raise CheckCouldNotRun(f"git {' '.join(arguments)} in {working_directory} exited "
+                               f"{result.returncode}: {result.stderr.strip() or 'no stderr'}")
+    return result
+
+
 def checkout_root_of(directory: Path):
+    """The checkout holding directory, or None outside one. Raises CheckCouldNotRun when git
+    cannot be launched or times out."""
+    # A deleted directory makes the launch fail too; it is not a checkout, so the reference-checkout check still runs.
+    if not directory.is_dir():
+        return None
     result = run_git(["rev-parse", "--show-toplevel"], directory)
+    if result.returncode == GIT_DID_NOT_RUN:
+        raise CheckCouldNotRun(f"git rev-parse --show-toplevel could not be started in "
+                               f"{directory}, or timed out: {result.stderr.strip()}")
     if result.returncode != 0:
         return None
     return Path(result.stdout.strip())
 
 
 def head_state_of(checkout: Path):
-    """Return (branch, unborn, detached, or unknown state; branch name or None)."""
-    symbolic = run_git(["symbolic-ref", "--short", "HEAD"], checkout)
-    verify = run_git(["rev-parse", "--verify", "--quiet", "HEAD"], checkout)
-
-    # Both HEAD questions must answer before inferring state; a failed command provides no repository evidence.
-    if symbolic.returncode not in (SYMBOLIC_REF_ON_A_BRANCH, SYMBOLIC_REF_NOT_A_BRANCH):
-        return "unknown", None
-    if verify.returncode != HEAD_COMMIT_EXISTS and verify.returncode not in HEAD_COMMIT_ABSENT:
-        return "unknown", None
-
+    """Return (branch, unborn or detached state; branch name or None). Raises CheckCouldNotRun
+    when git cannot answer."""
+    symbolic = git_answer(["symbolic-ref", "-q", "--short", "HEAD"], checkout,
+                          (SYMBOLIC_REF_ON_A_BRANCH, SYMBOLIC_REF_NOT_A_BRANCH))
+    verify = git_answer(["rev-parse", "--verify", "--quiet", "HEAD"], checkout,
+                        (HEAD_COMMIT_EXISTS, HEAD_COMMIT_ABSENT))
     head_exists = verify.returncode == HEAD_COMMIT_EXISTS
     if symbolic.returncode == SYMBOLIC_REF_ON_A_BRANCH:
         return ("branch" if head_exists else "unborn"), (symbolic.stdout.strip() or None)
-    # No branch plus a commit is detached; no branch and no commit is not a repository.
-    return ("detached" if head_exists else "unknown"), None
+    if not head_exists:
+        raise CheckCouldNotRun(f"git in {checkout} says HEAD is on no branch and names no commit")
+    return "detached", None
 
 
 def checkout_owning_git_directory(path: Path):
@@ -121,13 +160,14 @@ def checkout_owning_git_directory(path: Path):
 
 
 def is_reference_checkout(checkout: Path) -> bool:
-    """Return whether the checkout is the main worktree with linked worktrees."""
+    """Return whether the checkout is the main worktree with linked worktrees. Raises
+    CheckCouldNotRun when git cannot answer."""
     # A standalone scratch clone is also a main worktree but is not the shared reference.
     # Resolve --git-common-dir against the checkout: Git may return a relative path.
-    git_dir = run_git(["rev-parse", "--absolute-git-dir"], checkout).stdout.strip()
-    common_dir = run_git(["rev-parse", "--git-common-dir"], checkout).stdout.strip()
+    git_dir = git_answer(["rev-parse", "--absolute-git-dir"], checkout).stdout.strip()
+    common_dir = git_answer(["rev-parse", "--git-common-dir"], checkout).stdout.strip()
     if not git_dir or not common_dir:
-        return False
+        raise CheckCouldNotRun(f"git rev-parse in {checkout} printed no git directory")
     try:
         common = Path(common_dir)
         if not common.is_absolute():
@@ -168,11 +208,12 @@ def git_operation_in_progress(checkout: Path) -> bool:
     resolves it, so refusing it would leave the operation stuck. The markers are
     the freshness hook's list, so the two hooks cannot disagree about them, less
     BISECT_LOG: a bisect also detaches HEAD, but no write resolves it, and a commit
-    made at the commit under test is on no branch.
+    made at the commit under test is on no branch. Raises CheckCouldNotRun when git, or the
+    freshness hook's module, cannot answer.
     """
-    git_directory = run_git(["rev-parse", "--absolute-git-dir"], checkout)
-    if git_directory.returncode != 0 or not git_directory.stdout.strip():
-        return False
+    git_directory = git_answer(["rev-parse", "--absolute-git-dir"], checkout)
+    if not git_directory.stdout.strip():
+        raise CheckCouldNotRun(f"git rev-parse --absolute-git-dir in {checkout} printed nothing")
     try:
         import importlib.util
         freshness_path = (Path(__file__).resolve().parents[2] / "scripts"
@@ -183,15 +224,19 @@ def git_operation_in_progress(checkout: Path) -> bool:
         specification.loader.exec_module(freshness)
         markers = [marker for marker in freshness.GIT_IN_PROGRESS_MARKERS
                    if marker != "BISECT_LOG"]
-    except Exception:
-        return False
+    except Exception as error:
+        raise CheckCouldNotRun(f"the list of git's in-progress markers could not be read from "
+                               f"{freshness_path}: {type(error).__name__}: {error}")
     return any((Path(git_directory.stdout.strip()) / marker).exists() for marker in markers)
 
 
 def target_ignored_by_git(checkout: Path, file_path: str) -> bool:
     """Whether git ignores the target, so that it can never be committed: a detached
-    HEAD loses commits, and an ignored file has none to lose."""
-    return run_git(["check-ignore", "-q", "--", file_path], checkout).returncode == 0
+    HEAD loses commits, and an ignored file has none to lose. Raises CheckCouldNotRun when git
+    cannot answer."""
+    return git_answer(["check-ignore", "-q", "--", file_path], checkout,
+                      (CHECK_IGNORE_IGNORED, CHECK_IGNORE_NOT_IGNORED)
+                      ).returncode == CHECK_IGNORE_IGNORED
 
 
 def main() -> int:
@@ -208,8 +253,19 @@ def main() -> int:
     # Resolve relative targets against the session cwd, which can differ from the hook process cwd.
     if not Path(file_path).is_absolute():
         file_path = str(session_cwd / file_path)
-    checkout = checkout_root_of(session_cwd)
+    try:
+        return check_write(file_path, checkout_root_of(session_cwd))
+    except CheckCouldNotRun as error:
+        # Claude Code shows the model neither stderr nor exit 1; additionalContext is what it reads.
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": COULD_NOT_CHECK_MESSAGE.format(path=file_path, cause=error),
+        }}))
+        return 0
 
+
+def check_write(file_path: str, checkout) -> int:
+    """The hook's exit code for a write to file_path from a session in checkout."""
     if checkout is not None and target_inside(checkout, file_path):
         head_state, branch_name = head_state_of(checkout)
         message_fields = {}
@@ -223,7 +279,6 @@ def main() -> int:
         elif is_reference_checkout(checkout):
             deny_message = REFERENCE_DENY_MESSAGE
         else:
-            # Unknown HEAD state must not trigger a detached refusal; the reference-checkout check still applies.
             return 0
         marker_root = checkout
     else:

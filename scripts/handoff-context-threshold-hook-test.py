@@ -68,9 +68,30 @@ HANDOFF_INSTRUCTION_PATTERN = re.compile(
     r"reincarnation threshold\. Run the /handoff skill now\.")
 
 
+DO_NOT_RUN_HANDOFF_SKILL_YET_INSTRUCTION = (
+    "Do not run the /handoff skill now; carry on with your work, and a later "
+    "system message will tell you when to run it.")
+
+
+def opens_a_line_with_do_not_run_handoff_skill_yet(stderr):
+    return any(line.startswith(DO_NOT_RUN_HANDOFF_SKILL_YET_INSTRUCTION)
+               for line in stderr.splitlines())
+
+
 def is_handoff_instruction(stderr):
     """The hook's whole message is the handoff instruction, the share filled in."""
     return HANDOFF_INSTRUCTION_PATTERN.fullmatch(stderr.strip()) is not None
+
+
+COMPACTED_HANDOFF_INSTRUCTION_PATTERN = re.compile(
+    r"This session has used \d+% \(\d+% counting the tokens its compactions dropped\) "
+    r"of its context window, which has reached the reincarnation threshold\. "
+    r"Run the /handoff skill now\.")
+
+
+def is_compacted_handoff_instruction(stderr):
+    """The handoff instruction for a compacted session, both shares filled in."""
+    return COMPACTED_HANDOFF_INSTRUCTION_PATTERN.fullmatch(stderr.strip()) is not None
 
 
 def run_hook(stdin_payload, extra_arguments=(), extra_environment=None):
@@ -207,6 +228,56 @@ def subagent_completion_record(agent_id, record_type="attachment"):
             "message": {"role": "user", "content": notification}}
 
 
+# A real interim notification, trimmed to the fields the hook reads.
+INCIDENT_SUBAGENT_ID = "a68d25248370ee861"
+INCIDENT_INTERIM_NOTIFICATION = (
+    "<task-notification>\n"
+    "<task-id>a68d25248370ee861</task-id>\n"
+    "<tool-use-id>toolu_01ND98sByPRjfgSm7HcRmtiJ</tool-use-id>\n"
+    "<output-file>/private/tmp/claude-501/-Users-el-agents-cold-read-research/"
+    "edfee8d0-7356-4230-ab2f-89ee493a6701/tasks/a68d25248370ee861.output</output-file>\n"
+    "<status>completed</status>\n"
+    '<summary>Agent "Fix-round for PR 2045" is waiting on its own background work</summary>\n'
+    "<note>This agent stopped with background work of its own still running. It may resume "
+    "on its own when that work completes or reports, and the same task-id notifies again if "
+    "it does; the result below may be interim.</note>\n"
+    "<result>Waiting on the test run.</result>\n"
+    "<usage><subagent_tokens>284937</subagent_tokens><tool_uses>35</tool_uses>"
+    "<duration_ms>816408</duration_ms></usage>\n"
+    "</task-notification>")
+# The other interim form: the <result> says the report has not come yet.
+NOT_YET_REPORTED_INTERIM_NOTIFICATION = (
+    "<task-notification>\n"
+    "<task-id>a68d25248370ee861</task-id>\n"
+    "<status>completed</status>\n"
+    '<summary>Agent "Fix marker-before-ship in grid PR" finished</summary>\n'
+    "<result>This agent has not reported yet: it is waiting on its own background work and "
+    "will deliver its report through SubagentHandback when that finishes.\n</result>\n"
+    "</task-notification>")
+# The final notification for the same task-id.
+FINAL_NOTIFICATION_AFTER_INTERIM = (
+    "<task-notification>\n"
+    "<task-id>a68d25248370ee861</task-id>\n"
+    "<status>completed</status>\n"
+    '<summary>Agent "Fable check of decisions 4 and 5" finished</summary>\n'
+    "<note>A task-notification fires each time this agent stops with no live background "
+    "children of its own. The user can send it another message and resume it, so the same "
+    "task-id may notify more than once.</note>\n"
+    '<result>This agent\'s report was delivered to you as a message from "a68d25248370ee861" '
+    "(its SubagentHandback call). Read it there; it is not repeated here.\n</result>\n"
+    "</task-notification>")
+
+
+def notification_records(notification, timestamp="2026-10-27T21:31:58.572Z"):
+    """The enqueue and the user record the harness writes for one delivered notification."""
+    return [
+        {"type": "queue-operation", "operation": "enqueue", "timestamp": timestamp,
+         "content": notification},
+        {"type": "user", "timestamp": timestamp, "origin": {"kind": "task-notification"},
+         "message": {"role": "user", "content": notification}},
+    ]
+
+
 def monitor_start_record(task_id="b45e25tz2"):
     """A Monitor tool result: a taskId, and no agentId — not a subagent."""
     return {
@@ -216,6 +287,18 @@ def monitor_start_record(task_id="b45e25tz2"):
             "content": f"Monitor started (task {task_id}, persistent).",
         }]},
         "toolUseResult": {"taskId": task_id, "timeoutMs": 0, "persistent": True},
+    }
+
+
+def compaction_record(cumulative_dropped_tokens, pre_tokens=448_678, post_tokens=24_858):
+    """A compaction record as Claude Code writes it, trimmed to the fields beside the one the hook reads."""
+    return {
+        "type": "system", "subtype": "compact_boundary",
+        "content": "Conversation compacted", "level": "info",
+        "timestamp": "2026-10-21T05:54:37.110Z",
+        "compactMetadata": {"trigger": "auto", "preTokens": pre_tokens,
+                            "postTokens": post_tokens,
+                            "cumulativeDroppedTokens": cumulative_dropped_tokens},
     }
 
 
@@ -419,6 +502,35 @@ with tempfile.TemporaryDirectory() as workspace:
     check("tail read skips a partially-written final record",
           abs(hook.context_used_percentage_from_transcript(str(partial)) - 40.0) < 0.01)
 
+    # --- The tokens compactions dropped ----------------------------------
+    no_compaction = transcript_of(workspace, "no-compaction.jsonl", [usage_record(200_000)])
+    check("a transcript with no compaction record drops no tokens",
+          hook.compaction_dropped_tokens_from_transcript(str(no_compaction)) == 0,
+          str(hook.compaction_dropped_tokens_from_transcript(str(no_compaction))))
+    two_compactions = transcript_of(workspace, "two-compactions.jsonl", [
+        compaction_record(100_000), usage_record(300_000),
+        compaction_record(250_000), usage_record(200_000)])
+    check("the newest compaction record's running total is the one read",
+          hook.compaction_dropped_tokens_from_transcript(str(two_compactions)) == 250_000,
+          str(hook.compaction_dropped_tokens_from_transcript(str(two_compactions))))
+    # Quoting a compaction record, in a message or a hook's output, writes its subtype into another record.
+    quoted = transcript_of(workspace, "compaction-quoted.jsonl", [
+        compaction_record(100_000), usage_record(300_000),
+        {"type": "user", "message": {"content": json.dumps(compaction_record(900_000))}},
+        {"type": "system", "subtype": "stop_hook_summary",
+         "content": json.dumps(compaction_record(800_000))},
+        usage_record(200_000)])
+    check("a quoted compaction record is not read as one",
+          hook.compaction_dropped_tokens_from_transcript(str(quoted)) == 100_000,
+          str(hook.compaction_dropped_tokens_from_transcript(str(quoted))))
+    buried_compaction = Path(workspace) / "buried-compaction.jsonl"
+    buried_compaction.write_text("\n".join(
+        [json.dumps(compaction_record(250_000))] + [filler] * 6
+        + [json.dumps(usage_record(200_000))]) + "\n", encoding="utf-8")
+    check("a compaction record behind many large later records is still found",
+          hook.compaction_dropped_tokens_from_transcript(str(buried_compaction)) == 250_000,
+          str(hook.compaction_dropped_tokens_from_transcript(str(buried_compaction))))
+
     # --- Which subagents are still in flight -------------------------------
     # A reincarnation kills the session's in-process subagents with it (2026-08-27),
     # so the hook has to know which of them are running before it fires.
@@ -470,6 +582,34 @@ with tempfile.TemporaryDirectory() as workspace:
 
     check("an absent transcript reports nothing in flight",
           hook.spawned_subagent_ids_in_flight(str(Path(workspace) / "nope.jsonl")) == [])
+
+    # An interim notification is not the subagent's end: the last notification decides.
+    interim_last = transcript_of(workspace, "interim-notification-last.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(INCIDENT_SUBAGENT_ID, "Fix-round for PR 2045"),
+        *notification_records(INCIDENT_INTERIM_NOTIFICATION),
+    ])
+    check("a subagent whose last notification is interim is in flight",
+          hook.spawned_subagent_ids_in_flight(str(interim_last)) == [INCIDENT_SUBAGENT_ID],
+          str(hook.spawned_subagent_ids_in_flight(str(interim_last))))
+    not_yet_reported_last = transcript_of(workspace, "not-yet-reported-notification-last.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(INCIDENT_SUBAGENT_ID),
+        *notification_records(NOT_YET_REPORTED_INTERIM_NOTIFICATION),
+    ])
+    check("a last notification whose result says the report has not come is interim too",
+          hook.spawned_subagent_ids_in_flight(str(not_yet_reported_last))
+          == [INCIDENT_SUBAGENT_ID],
+          str(hook.spawned_subagent_ids_in_flight(str(not_yet_reported_last))))
+    final_after_interim = transcript_of(workspace, "final-notification-after-interim.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(INCIDENT_SUBAGENT_ID),
+        *notification_records(INCIDENT_INTERIM_NOTIFICATION),
+        *notification_records(FINAL_NOTIFICATION_AFTER_INTERIM, "2026-10-27T21:45:00.000Z"),
+    ])
+    check("a final notification after an interim one takes the subagent out of flight",
+          hook.spawned_subagent_ids_in_flight(str(final_after_interim)) == [],
+          str(hook.spawned_subagent_ids_in_flight(str(final_after_interim))))
 
     # --- Which background tasks are still in flight -------------------------
     # A reincarnation kills a background Bash task with the session too. On
@@ -645,13 +785,19 @@ with tempfile.TemporaryDirectory() as workspace:
         hook.HANDOFF_DIRECTORY / f"{UNKNOWN_PROBE_SESSION_ID}-handoff-asked")
     unknown_deferred_marker_file = (
         hook.HANDOFF_DIRECTORY / f"{UNKNOWN_PROBE_SESSION_ID}-handoff-deferred")
+    COMPACTED_PROBE_SESSION_ID = "handoff-threshold-hook-test-compacted-session"
+    compacted_marker_file = (
+        hook.HANDOFF_DIRECTORY / f"{COMPACTED_PROBE_SESSION_ID}-handoff-asked")
+    compacted_deferred_marker_file = (
+        hook.HANDOFF_DIRECTORY / f"{COMPACTED_PROBE_SESSION_ID}-handoff-deferred")
     CALLER_OWNED_PROBE_SESSION_ID = "handoff-threshold-hook-test-caller-owned-session"
     caller_owned_marker_file = (
         hook.HANDOFF_DIRECTORY / f"{CALLER_OWNED_PROBE_SESSION_ID}-handoff-asked")
     for probe_marker in (deferral_marker_file, ceiling_marker_file,
                          deferred_marker_file, ceiling_deferred_marker_file,
                          unknown_marker_file, unknown_deferred_marker_file,
-                         caller_owned_marker_file):
+                         caller_owned_marker_file, compacted_marker_file,
+                         compacted_deferred_marker_file):
         probe_marker.unlink(missing_ok=True)
     # On a fresh machine nothing has created the handoff directory yet.
     hook.HANDOFF_DIRECTORY.mkdir(parents=True, exist_ok=True)
@@ -694,18 +840,110 @@ with tempfile.TemporaryDirectory() as workspace:
         check("hook fires only once per session", result.returncode == 0, f"code {result.returncode}")
 
         marker_file.unlink(missing_ok=True)
+        # Both thresholds: with no compaction the second one measures the current context too.
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(loud)},
-                          ("--threshold-used-percentage", "75"))
+                          ("--threshold-used-percentage", "75",
+                           "--threshold-used-plus-compaction-dropped-percentage", "75"))
         check("threshold is configurable", result.returncode == 0, f"code {result.returncode}")
 
+        # The default threshold is a third of the window: 35% fires, 30% does not.
+        just_over = transcript_with_usage(workspace, "just-over-a-third.jsonl", 100_000,
+                                          cache_read=250_000)
+        just_under = transcript_with_usage(workspace, "just-under-a-third.jsonl", 100_000,
+                                           cache_read=200_000)
+        marker_file.unlink(missing_ok=True)
+        result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(just_under)})
+        check("by default the hook stays silent at 30% of the window",
+              result.returncode == 0 and not result.stderr.strip(),
+              f"code {result.returncode}, stderr {result.stderr[:120]}")
+        result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(just_over)})
+        check("by default the hook fires at 35% of the window",
+              result.returncode == 2 and is_handoff_instruction(result.stderr),
+              f"code {result.returncode}, stderr {result.stderr[:120]}")
+
+        # --- The current context plus what compactions dropped ---------------
+        # Idle compaction cuts a long session back to a few tens of thousands of tokens, so its current context can stay under 33%.
+        compacted_over = transcript_of(workspace, "compacted-over.jsonl", [
+            compaction_record(210_000), usage_record(200_000)])  # 20% + 21% = 41%
+        compacted_under = transcript_of(workspace, "compacted-under.jsonl", [
+            compaction_record(190_000), usage_record(200_000)])  # 20% + 19% = 39%
+        result = run_hook({"session_id": COMPACTED_PROBE_SESSION_ID,
+                           "transcript_path": str(compacted_under)})
+        check("a compacted session stays silent just under 40% with the dropped tokens",
+              result.returncode == 0 and not result.stderr.strip()
+              and not compacted_marker_file.exists(),
+              f"code {result.returncode}, stderr {result.stderr[:160]}")
+        result = run_hook({"session_id": COMPACTED_PROBE_SESSION_ID,
+                           "transcript_path": str(compacted_over)})
+        check("a compacted session under 33% fires past 40% with the dropped tokens",
+              result.returncode == 2 and is_compacted_handoff_instruction(result.stderr)
+              and compacted_marker_file.exists(),
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
+        check("the compacted handoff gives both shares",
+              "used 20% (41% counting the tokens its compactions dropped)" in result.stderr,
+              result.stderr[:200])
+        compacted_marker_file.unlink(missing_ok=True)
+
+        result = run_hook({"session_id": COMPACTED_PROBE_SESSION_ID,
+                           "transcript_path": str(compacted_over)},
+                          ("--threshold-used-plus-compaction-dropped-percentage", "50"))
+        check("the dropped-tokens threshold is configurable",
+              result.returncode == 0 and not result.stderr.strip(),
+              f"code {result.returncode}, stderr {result.stderr[:160]}")
+
+        compacted_running = transcript_of(workspace, "compacted-running.jsonl", [
+            compaction_record(210_000), usage_record(200_000),
+            subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool")])
+        result = run_hook({"session_id": COMPACTED_PROBE_SESSION_ID,
+                           "transcript_path": str(compacted_running)})
+        check("a compacted session past 40% defers while a subagent runs",
+              result.returncode == 2 and "handoff deferred" in result.stderr
+              and "Context at 20% (41% counting the tokens its compactions dropped)"
+              in result.stderr,
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
+        check("that deferral writes the deferral marker and not the fired one",
+              compacted_deferred_marker_file.exists() and not compacted_marker_file.exists(),
+              f"deferred={compacted_deferred_marker_file.exists()} "
+              f"fired={compacted_marker_file.exists()}")
+        compacted_deferred_marker_file.unlink(missing_ok=True)
+
+        def compacted_scan_that_cannot_read(_transcript_path, *_arguments, **_keywords):
+            raise hook.TranscriptCouldNotBeFullyRead("unreadable in this test")
+
+        code, stderr = run_hook_in_process(
+            {"session_id": COMPACTED_PROBE_SESSION_ID,
+             "transcript_path": str(compacted_over)},
+            scan_replacement=compacted_scan_that_cannot_read)
+        check("a compacted session past 40% with an unreadable transcript defers with both shares",
+              code == 2 and "unknown" in stderr
+              and "Context at 20% (41% counting the tokens its compactions dropped)" in stderr,
+              f"code {code}, stderr {stderr[:250]}")
+        check("that unknown-count deferral writes no fired marker",
+              not compacted_marker_file.exists(), str(compacted_marker_file))
+        compacted_deferred_marker_file.unlink(missing_ok=True)
+
+        # 55% current plus 50% dropped is 105%: past the ceiling only if the
+        # ceiling counted the dropped tokens.
+        compacted_past_ceiling_with_dropped = transcript_of(
+            workspace, "compacted-ceiling.jsonl", [
+                compaction_record(500_000), usage_record(100_000, cache_read=450_000),
+                subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool")])
+        result = run_hook({"session_id": COMPACTED_PROBE_SESSION_ID,
+                           "transcript_path": str(compacted_past_ceiling_with_dropped)})
+        check("the ceiling measures the current context only, not the dropped tokens",
+              result.returncode == 2 and "handoff deferred" in result.stderr
+              and not compacted_marker_file.exists(),
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
+        compacted_deferred_marker_file.unlink(missing_ok=True)
+
         # --- A session its caller reincarnates is left alone ---------------
-        # 2026-09-16: ghi-info, run by scripts/ghi-info-ask.py as `claude -p`
+        # 2026-09-16: ghi-guide-agent, run by scripts/ghi-guide-agent-ask.py as `claude -p`
         # turns, crossed the threshold mid-answer, and the handoff notice came
         # back to the caller in place of the reading list.
         result = run_hook(
             {"session_id": CALLER_OWNED_PROBE_SESSION_ID, "transcript_path": str(loud)},
             extra_environment={hook.REINCARNATION_OWNED_BY_CALLER_VARIABLE:
-                               "scripts/ghi-info-ask.py"})
+                               "scripts/ghi-guide-agent-ask.py"})
         check("hook stays silent past the threshold when the caller reincarnates the session",
               result.returncode == 0 and not result.stderr.strip()
               and not caller_owned_marker_file.exists(),
@@ -751,6 +989,16 @@ with tempfile.TemporaryDirectory() as workspace:
               "Context at 55%" in result.stderr, result.stderr[:200])
         check("the deferral tells the agent to spawn no more subagents",
               "Spawn no new subagents" in result.stderr, result.stderr[:200])
+        # Agents read "handoff" in the notice and ran the skill anyway.
+        check("the deferral tells the agent, on a line of its own, not to run the skill yet",
+              opens_a_line_with_do_not_run_handoff_skill_yet(result.stderr),
+              result.stderr[:400])
+        check("the deferral gives the ceiling as a number",
+              "65% ceiling" in result.stderr, result.stderr[:500])
+        # A reader could not tell whether the time limit bounds subagents too.
+        check("the deferral says the time limit bounds background tasks, not subagents",
+              "once every subagent has finished, and every background task has "
+              "either finished or run for" in result.stderr, result.stderr[:600])
         # The notice used to promise the handoff waits until the subagents
         # finish, full stop. The ceiling overrides that, and an agent reading
         # a guarantee its work is safe should be told the one thing that cuts
@@ -815,6 +1063,52 @@ with tempfile.TemporaryDirectory() as workspace:
         ceiling_marker_file.unlink(missing_ok=True)
         ceiling_deferred_marker_file.unlink(missing_ok=True)
 
+        # A subagent whose last notification is interim holds the handoff below
+        # the ceiling, and the ceiling still fires it if the subagent never ends.
+        INTERIM_PROBE_SESSION_ID = "handoff-threshold-hook-test-interim-session"
+        interim_marker_file = hook.HANDOFF_DIRECTORY / f"{INTERIM_PROBE_SESSION_ID}-handoff-asked"
+        interim_deferred_marker_file = (
+            hook.HANDOFF_DIRECTORY / f"{INTERIM_PROBE_SESSION_ID}-handoff-deferred")
+        interim_below_ceiling = transcript_of(workspace, "interim-below-ceiling.jsonl", [
+            usage_record(100_000, cache_read=450_000),  # 55%
+            subagent_spawn_record(INCIDENT_SUBAGENT_ID, "Fix-round for PR 2045"),
+            *notification_records(INCIDENT_INTERIM_NOTIFICATION),
+        ])
+        final_below_ceiling = transcript_of(workspace, "final-below-ceiling.jsonl", [
+            usage_record(100_000, cache_read=450_000),  # 55%
+            subagent_spawn_record(INCIDENT_SUBAGENT_ID, "Fix-round for PR 2045"),
+            *notification_records(INCIDENT_INTERIM_NOTIFICATION),
+            *notification_records(FINAL_NOTIFICATION_AFTER_INTERIM, "2026-10-27T21:45:00.000Z"),
+        ])
+        interim_past_ceiling = transcript_of(workspace, "interim-past-ceiling.jsonl", [
+            usage_record(100_000, cache_read=600_000),  # 70%
+            subagent_spawn_record(INCIDENT_SUBAGENT_ID, "Fix-round for PR 2045"),
+            *notification_records(INCIDENT_INTERIM_NOTIFICATION),
+        ])
+        try:
+            result = run_hook({"session_id": INTERIM_PROBE_SESSION_ID,
+                               "transcript_path": str(interim_below_ceiling)})
+            check("the hook defers while a subagent's last notification is interim",
+                  result.returncode == 2 and "handoff deferred" in result.stderr
+                  and "1 subagent(s) run" in result.stderr
+                  and not interim_marker_file.exists(),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+            interim_deferred_marker_file.unlink(missing_ok=True)
+            result = run_hook({"session_id": INTERIM_PROBE_SESSION_ID,
+                               "transcript_path": str(final_below_ceiling)})
+            check("the hook fires once the subagent's last notification is its report",
+                  result.returncode == 2 and is_handoff_instruction(result.stderr),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+            interim_marker_file.unlink(missing_ok=True)
+            result = run_hook({"session_id": INTERIM_PROBE_SESSION_ID,
+                               "transcript_path": str(interim_past_ceiling)})
+            check("above the ceiling the handoff fires though the last notification is interim",
+                  result.returncode == 2 and is_handoff_instruction(result.stderr),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+        finally:
+            interim_marker_file.unlink(missing_ok=True)
+            interim_deferred_marker_file.unlink(missing_ok=True)
+
         # --- A scan that could not finish defers, and says the count is
         # unknown (merge-lane review of #180, 2026-08-28). Firing here would
         # kill the very subagent whose spawn record could not be read.
@@ -833,6 +1127,12 @@ with tempfile.TemporaryDirectory() as workspace:
               result.stderr[:250])
         check("a truncated spawn record does not tell the agent to hand off",
               "Run the /handoff skill now." not in result.stderr, result.stderr[:200])
+        check("the unknown-count deferral tells the agent, on a line of its own, "
+              "not to run the skill yet",
+              opens_a_line_with_do_not_run_handoff_skill_yet(result.stderr),
+              result.stderr[:400])
+        check("the unknown-count deferral gives the ceiling as a number",
+              "65% ceiling" in result.stderr, result.stderr[:500])
         check("an unknown-count deferral writes the deferral marker, not the fired one",
               unknown_deferred_marker_file.exists() and not unknown_marker_file.exists(),
               f"deferred={unknown_deferred_marker_file.exists()} "
@@ -870,7 +1170,7 @@ with tempfile.TemporaryDirectory() as workspace:
         unknown_deferred_marker_file.unlink(missing_ok=True)
 
         below_threshold = transcript_of(workspace, "deferral-below-threshold.jsonl", [
-            usage_record(100_000, cache_read=300_000),  # 40% — nothing to say yet
+            usage_record(100_000, cache_read=150_000),  # 25% — nothing to say yet
             subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool"),
         ])
         result = run_hook({"session_id": DEFERRAL_PROBE_SESSION_ID,
@@ -1009,6 +1309,36 @@ with tempfile.TemporaryDirectory() as workspace:
             background_marker_file.unlink(missing_ok=True)
             background_deferred_marker_file.unlink(missing_ok=True)
 
+        # --- Between 20% and 40% with the dropped tokens, nothing fires ------
+        SHARE_PROBE_SESSION_ID = "handoff-threshold-hook-test-share-session"
+        share_fired_marker_file = hook.fired_marker_path(SHARE_PROBE_SESSION_ID)
+        share_payload = {"session_id": SHARE_PROBE_SESSION_ID}
+        # Live sessions keep walk-closed markers written before the lower threshold was removed.
+        share_walk_closed_marker_file = hook.HANDOFF_DIRECTORY / (
+            f"{SHARE_PROBE_SESSION_ID}"
+            "-handoff-due-at-lower-context-threshold-after-approval-walk-closed")
+        share_walk_closed_marker_file.write_text("", encoding="utf-8")
+
+        twenty_one = transcript_of(workspace, "twenty-one.jsonl", [
+            compaction_record(50_000), usage_record(160_000)])  # 16% + 5% = 21%
+        try:
+            result = run_hook({**share_payload, "transcript_path": str(twenty_one)})
+        finally:
+            share_walk_closed_marker_file.unlink(missing_ok=True)
+        check("the hook stays silent at 21% with the dropped tokens, "
+              "even with a walk-closed marker left on disk",
+              result.returncode == 0 and not result.stderr.strip()
+              and not share_fired_marker_file.exists(),
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
+
+        exactly_forty = transcript_of(workspace, "exactly-forty.jsonl", [
+            compaction_record(200_000), usage_record(200_000)])  # 20% + 20% = 40%
+        result = run_hook({**share_payload, "transcript_path": str(exactly_forty)})
+        check("the hook fires at exactly 40% with the dropped tokens",
+              result.returncode == 2 and is_compacted_handoff_instruction(result.stderr),
+              f"code {result.returncode}, stderr {result.stderr[:250]}")
+        share_fired_marker_file.unlink(missing_ok=True)
+
         result = run_hook({})
         check("hook stays silent with no session id", result.returncode == 0)
 
@@ -1027,6 +1357,8 @@ with tempfile.TemporaryDirectory() as workspace:
         unknown_marker_file.unlink(missing_ok=True)
         unknown_deferred_marker_file.unlink(missing_ok=True)
         caller_owned_marker_file.unlink(missing_ok=True)
+        compacted_marker_file.unlink(missing_ok=True)
+        compacted_deferred_marker_file.unlink(missing_ok=True)
 
 print()
 if failures:

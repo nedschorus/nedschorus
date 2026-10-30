@@ -2,7 +2,7 @@
 """Tests for work-snapshots: the hook, the shared module, the cleaner's step,
 and the handoff-supervisor's first-prompt list.
 
-Design: nc-systems/handoff/uncommitted-work-snapshots-across-crashes-design.md;
+Design: nc-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md;
 each section below is one bullet of its "How it will be tested".
 
 Every case works in a scratch clone with the programs copied into it, so the
@@ -47,6 +47,8 @@ HOOK_RELATIVE = Path("scripts/uncommitted-work-snapshot-hook.py")
 CLEANER_RELATIVE = Path("scripts/clean-worktrees.py")
 GIT_OUTPUT_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
+NEXT_STEP_LINES_MODULE_RELATIVE = Path(
+    "nc-systems/general-tools/failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
 
 
 def load(path, name):
@@ -127,7 +129,7 @@ def new_clone():
     main = base / "main"
     git(SCRATCH, "clone", "-q", str(origin), str(main))
     for relative in (MODULE_RELATIVE, HOOK_RELATIVE, CLEANER_RELATIVE,
-                     GIT_OUTPUT_MODULE_RELATIVE):
+                     GIT_OUTPUT_MODULE_RELATIVE, NEXT_STEP_LINES_MODULE_RELATIVE):
         (main / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPOSITORY_ROOT / relative, main / relative)
     (main / "tracked.txt").write_text("one\n")
@@ -389,6 +391,52 @@ def test_operation_trailer():
     snapshots.refresh_work_snapshot(worktree, "2-2", "seat", "")
     found = [s for s in snapshots.all_work_snapshots(main) if s["owner_key"] == "2-2"]
     check(found and found[0]["operation"] == "merge", name, found)
+
+
+def test_each_operation_is_read_from_its_own_marker():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "markers", "markers-branch")
+    git_directory = Path(git(worktree, "rev-parse", "--path-format=absolute", "--git-dir"))
+    check(snapshots.operation_in_progress(worktree) is None, "with no marker no operation is under way")
+    for marker, is_directory, expected in (("MERGE_HEAD", False, "merge"),
+                                           ("CHERRY_PICK_HEAD", False, "cherry-pick"),
+                                           ("REVERT_HEAD", False, "revert"),
+                                           ("rebase-merge", True, "rebase"),
+                                           ("rebase-apply", True, "rebase")):
+        path = git_directory / marker
+        path.mkdir() if is_directory else path.write_text("0" * 40 + "\n")
+        found = snapshots.operation_in_progress(worktree)
+        check(found == expected, f"the {marker} marker reads as {expected}", found)
+        if marker == "rebase-apply":
+            (path / "applying").write_text("")
+            found = snapshots.operation_in_progress(worktree)
+            check(found == "am", "rebase-apply holding applying reads as am", found)
+        shutil.rmtree(path) if is_directory else path.unlink()
+
+def test_git_path_line_count_other_than_five_is_reported():
+    # A path holding a newline, or git printing less than asked, cannot be made for real here,
+    # so git's output gains one line or loses one.
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "newline", "newline-branch")
+    real_run_git = snapshots.run_git
+    for count, change in ((6, lambda text: text.replace("\n", "\nsplit\n", 1)),
+                          (4, lambda text: text.split("\n", 1)[1])):
+        def run_git_with_changed_output(directory, *arguments, **options):
+            result = real_run_git(directory, *arguments, **options)
+            if "--git-path" in arguments:
+                result.stdout = change(result.stdout)
+            return result
+        snapshots.run_git = run_git_with_changed_output
+        name = f"a rev-parse that prints {count} lines for 5 paths raises WorkSnapshotError saying so"
+        try:
+            snapshots.operation_in_progress(worktree)
+            check(False, name, "nothing raised")
+        except snapshots.WorkSnapshotError as error:
+            check(f"printed {count} lines where the 5 paths should give one line each" in str(error), name, str(error))
+        except ValueError as error:
+            check(False, name, f"ValueError: {error}")
+        finally:
+            snapshots.run_git = real_run_git
 
 
 def test_hook_failure_is_reported():
@@ -761,7 +809,7 @@ def test_supervisor_appends_the_list():
     supervisor.launch_agent_session = (
         lambda command, session_id, working_directory, prompt, **keywords:
         launched.append(prompt) or (_ for _ in ()).throw(StopIteration()))
-    supervisor.sync_working_branch_with_main = lambda working_directory: "branch sync: test"
+    supervisor.launch_time_git_sync = lambda working_directory: "launch-time-git-sync: test"
     settings = supervisor.SupervisorSettings(
         agent="seat-four", working_directory=main, handoff_directory=handoffs,
         agent_command="claude", first_prompt="Founding prompt.",
@@ -1025,6 +1073,53 @@ def test_unreadable_head_is_reported():
           "an unborn HEAD is no commit, not a failure")
 
 
+def test_git_failures_are_not_read_as_answers():
+    """A git call whose exit 1 is an answer (unborn, detached, absent), failing
+    with 128 instead, raises with git's error."""
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "failing-git", "failing-git")
+    (worktree / "work.txt").write_text("work\n")
+    stub_directory = SCRATCH / "git-failing-on-one-call-bin"
+    stub_directory.mkdir(exist_ok=True)
+    stub = stub_directory / "git"
+    stub.write_text("#!/bin/sh\n"
+                    'case "$*" in\n'
+                    '  *"$FAIL_GIT_CALL_CONTAINING"*)\n'
+                    "    echo 'fatal: stub failure' >&2; exit 128 ;;\n"
+                    "esac\n"
+                    f'exec {shutil.which("git")} "$@"\n')
+    stub.chmod(0o755)
+    ref = snapshots.work_snapshot_ref("46-1", worktree)
+    check(snapshots.current_ref_value(worktree, ref) is None,
+          "a work-snapshot ref that does not exist reads as absent")
+
+    def raised_with(call, action):
+        path_before = os.environ["PATH"]
+        os.environ["PATH"] = f"{stub_directory}{os.pathsep}{path_before}"
+        os.environ["FAIL_GIT_CALL_CONTAINING"] = call
+        try:
+            action()
+        except snapshots.WorkSnapshotError as error:
+            return str(error)
+        finally:
+            os.environ["PATH"] = path_before
+            del os.environ["FAIL_GIT_CALL_CONTAINING"]
+        return None
+
+    for call, action in (
+            ("rev-parse --verify -q HEAD",
+             lambda: snapshots.build_work_snapshot_commit(worktree, "seat-x", "")),
+            ("symbolic-ref -q --short HEAD",
+             lambda: snapshots.build_work_snapshot_commit(worktree, "seat-x", "")),
+            (f"rev-parse --verify -q {ref}",
+             lambda: snapshots.current_ref_value(worktree, ref))):
+        raised = raised_with(call, action)
+        check(raised is not None and "fatal: stub failure" in raised,
+              f"a failed `git {call}` raises with git's error, not an answer", raised)
+    check(refs_of(main) == [], "no work-snapshot was written from a failed git call",
+          refs_of(main))
+
+
 def test_branch_ref_naming_a_missing_object_is_reported():
     main = new_clone()
     worktree = add_worktree(main, main / ".claude" / "worktrees" / "bad-branch", "bad-branch")
@@ -1274,6 +1369,8 @@ def main():
                      test_ref_names,
                      test_bash_commit_deletes_and_other_worktrees_follow,
                      test_overlapping_runs_end_on_the_final_state, test_operation_trailer,
+                     test_each_operation_is_read_from_its_own_marker,
+                     test_git_path_line_count_other_than_five_is_reported,
                      test_hook_failure_is_reported, test_other_repository_is_untouched,
                      test_worktree_discovery_failure_is_reported,
                      test_names_read_from_git_are_the_files_as_stored,
@@ -1285,6 +1382,7 @@ def main():
                      test_in_place_and_duplicate_leftovers,
                      test_same_tree_on_another_head_is_not_a_duplicate,
                      test_unreadable_head_is_reported,
+                     test_git_failures_are_not_read_as_answers,
                      test_branch_ref_naming_a_missing_object_is_reported,
                      test_unborn_head_snapshot_stays_in_place,
                      test_duplicates_count_only_within_one_agent_seat,

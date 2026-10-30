@@ -5,7 +5,8 @@ ends.
 A handoff that arrives as a session's exit; the stops with no terminal to ask
 on or to seat a successor on; the exit record a stop writes; the worktree
 cleanup between a retiring session's stop and its successor's launch; and
-resuming a session that ended without a handoff, after a death or by hand.
+resuming a session that ended without a handoff, after a death or by hand;
+and a supervisor killed while it rewrites its state file.
 The supervisor's other cases are in
 handoff-supervisor-successor-prompt-test.py and
 handoff-supervisor-session-launch-and-seat-lock-test.py, beside this file.
@@ -273,7 +274,7 @@ def run_agent_exit_record_cases(workspace: Path):
             return sessions.pop(0)
         return launch
 
-    no_branch_sync = lambda working_directory: "branch sync: not a git checkout, nothing to sync"
+    no_launch_time_git_sync = lambda working_directory: "launch-time-git-sync: not a git checkout, nothing to sync"
 
     # Cleared at launch: a record left by an earlier stop is gone from the state
     # file before the next session starts, and the stop after that session
@@ -292,7 +293,7 @@ def run_agent_exit_record_cases(workspace: Path):
     # exhausting the one-session list below.
     with supervisor_names_replaced(
             launch_agent_session=launch_recording([StubLaunchedSession(9)], snapshots, settings),
-            sync_working_branch_with_main=no_branch_sync, stdin_isatty=False), \
+            launch_time_git_sync=no_launch_time_git_sync, stdin_isatty=False), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
     state = supervisor.read_supervisor_state(settings.state_path)
@@ -350,7 +351,7 @@ def run_agent_exit_record_cases(workspace: Path):
             launch_agent_session=launch_writing_a_handoff(
                 settings, StubLaunchedSession(-15, ended=False),
                 "restart-counter: 2\nnext-step: stand down\ndont-restart: closing\n"),
-            sync_working_branch_with_main=no_branch_sync,
+            launch_time_git_sync=no_launch_time_git_sync,
             input=lambda prompt: "n", stdin_isatty=True), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
@@ -371,7 +372,7 @@ def run_agent_exit_record_cases(workspace: Path):
     launched = []
     with supervisor_names_replaced(
             launch_agent_session=lambda *arguments, **keywords: launched.append(1),
-            sync_working_branch_with_main=no_branch_sync,
+            launch_time_git_sync=no_launch_time_git_sync,
             input=lambda prompt: "n", stdin_isatty=True), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
@@ -383,26 +384,130 @@ def run_agent_exit_record_cases(workspace: Path):
           and supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state),
           str(state))
 
-    # The dialog extraction fails, so no successor is launched: the stopped
-    # session's end is recorded, and the handoff stays unconsumed.
+    # Extracting the dialog fails, so the successor starts from the next step:
+    # the handoff is consumed, and the exit recorded is the successor's own.
     settings = settings_for("extractionfailed")
     supervisor.write_supervisor_state(settings.state_path, {"consumed_counter": 1})
+    sessions = [StubLaunchedSession(-15, ended=False), StubLaunchedSession(0)]
+
+    def launch_writing_a_handoff_once(agent_command, session_id, working_directory, prompt, **_):
+        if len(sessions) == 2:
+            settings.handoff_path.write_text("restart-counter: 2\nnext-step: carry on\n",
+                                             encoding="utf-8")
+        return sessions.pop(0)
+
     with supervisor_names_replaced(
-            launch_agent_session=launch_writing_a_handoff(
-                settings, StubLaunchedSession(-15, ended=False),
-                "restart-counter: 2\nnext-step: carry on\n"),
-            sync_working_branch_with_main=no_branch_sync,
+            launch_agent_session=launch_writing_a_handoff_once,
+            launch_time_git_sync=no_launch_time_git_sync,
             extract_dialog=lambda session_id, working_directory, output_path: False,
+            remove_finished_worktrees_at_handoff=lambda working_directory: "worktrees: stubbed",
+            memory_review_due_lines=lambda: (),
             stdin_isatty=True), \
             contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         supervisor.supervise_sessions(settings)
     state = supervisor.read_supervisor_state(settings.state_path)
-    check("EXIT RECORD: a failed extraction records the stopped session, handoff unconsumed",
-          state.get("consumed_counter") == 1
+    check("EXIT RECORD: a failed extraction still starts the successor, which consumes the "
+          "handoff, and the exit recorded is the successor's",
+          sessions == [] and state.get("consumed_counter") == 2
           and supervisor.agent_exit_record_from_supervisor_state(state) is not None
-          and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15
-          and not supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state),
-          str(state))
+          and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == 0,
+          f"{state} sessions left: {len(sessions)}")
+
+
+def run_failed_extraction_at_a_handoff_case(workspace: Path):
+    """A handoff arrives and the retiring session's dialog cannot be extracted:
+    the failure is printed, naming the session, and the successor starts with
+    the handoff's next step as its prompt, told that the session-dialog could
+    not be extracted and where the transcript is, and the handoff is consumed.
+    The handoff names another session as its writer, so the extraction must be
+    tried on the writer, not on the session the supervisor launched. A second
+    handoff, whose writer has no transcript, gives a successor told so."""
+    handoff_directory = workspace / "failedextraction"
+    handoff_directory.mkdir(parents=True)
+    projects = workspace / "failedextraction-projects"
+    projects.mkdir()
+    settings = supervisor.SupervisorSettings(
+        agent="failedextraction", working_directory=workspace,
+        handoff_directory=handoff_directory, agent_command="unused-stub-agent",
+        first_prompt="")
+    launched_session_ids, launched_prompts, extracted_from = [], [], []
+    writer_session_id = "11111111-2222-3333-4444-555555555555"
+    writer_without_a_transcript = "66666666-7777-8888-9999-000000000000"
+    (projects / f"{writer_session_id}.jsonl").write_text("{}\n", encoding="utf-8")
+    handoffs_to_write = [
+        f"restart-counter: 1\nwritten-by-session: {writer_session_id}\nnext-step: carry on\n",
+        f"restart-counter: 2\nwritten-by-session: {writer_without_a_transcript}\n"
+        "next-step: carry on further\n",
+    ]
+
+    def launch(agent_command, session_id, working_directory, prompt, **_):
+        launched_session_ids.append(session_id)
+        launched_prompts.append(prompt)
+        if handoffs_to_write:
+            settings.handoff_path.write_text(handoffs_to_write.pop(0), encoding="utf-8")
+            return StubLaunchedSession(-15, ended=False)
+        return StubLaunchedSession(0)
+
+    def failing_extract_dialog(session_id, working_directory, output_path):
+        extracted_from.append(session_id)
+        return False
+
+    console, errors = io.StringIO(), io.StringIO()
+    with supervisor_names_replaced(
+            launch_agent_session=launch,
+            stop_session=lambda process: process.terminate(),
+            extract_dialog=failing_extract_dialog,
+            launch_time_git_sync=lambda working_directory: "launch-time-git-sync: stubbed",
+            remove_finished_worktrees_at_handoff=lambda working_directory: "worktrees: stubbed",
+            project_directory_for_working_directory=lambda working_directory: projects,
+            memory_review_due_lines=lambda: (),
+            stdin_isatty=True), \
+            contextlib.redirect_stdout(console), contextlib.redirect_stderr(errors):
+        exit_code = supervisor.supervise_sessions(settings)
+    state = supervisor.read_supervisor_state(settings.state_path)
+    check("FAILED EXTRACTION: a handoff whose dialog cannot be extracted still starts a successor",
+          exit_code == 0 and len(launched_session_ids) == 3
+          and len(set(launched_session_ids)) == 3,
+          f"{exit_code!r} {launched_session_ids!r} {extracted_from!r}")
+    check("FAILED EXTRACTION: the extraction is tried on the handoff's writer, "
+          "not on the launched session",
+          extracted_from == [writer_session_id, writer_without_a_transcript],
+          f"{extracted_from!r} {launched_session_ids!r}")
+    check("FAILED EXTRACTION: the failure is still printed, naming the session, "
+          "and nothing says it is not relaunching",
+          f"extracting session {writer_session_id}'s dialog failed" in errors.getvalue()
+          and "not relaunching" not in errors.getvalue() + console.getvalue(),
+          errors.getvalue()[-400:])
+    check("FAILED EXTRACTION: the console says the successor starts from the next step, "
+          "and why",
+          "starting a fresh agent-session from an unconsumed handoff, with its next step as "
+          f"the prompt; there is no conversation-tail because session {writer_session_id}'s "
+          "dialog could not be extracted" in console.getvalue(),
+          console.getvalue()[-600:])
+    successor_prompt = launched_prompts[1] if len(launched_prompts) > 1 else ""
+    check("FAILED EXTRACTION: the successor's prompt is the next step, then says the "
+          "session-dialog could not be extracted and gives the transcript's path",
+          successor_prompt.startswith(
+              "carry on\n\n(Recovered at a handoff: the previous session's conversation-tail "
+              "is unavailable, because the handoff-supervisor could not extract session "
+              f"{writer_session_id}'s session-dialog; this next-step and the repository are "
+              f"your context, and that session's transcript is "
+              f"{projects / (writer_session_id + '.jsonl')}, which you can read when the "
+              "next-step leaves out something you need.) "),
+          successor_prompt[:600])
+    last_prompt = launched_prompts[2] if len(launched_prompts) > 2 else ""
+    check("FAILED EXTRACTION: when the writer's transcript is not where it should be, the "
+          "successor's prompt says so instead of sending it there",
+          last_prompt.startswith(
+              "carry on further\n\n(Recovered at a handoff: the previous session's "
+              "conversation-tail is unavailable, because the handoff-supervisor could not "
+              f"extract session {writer_without_a_transcript}'s session-dialog, and that "
+              "session's transcript is not at "
+              f"{projects / (writer_without_a_transcript + '.jsonl')}; this next-step and the "
+              "repository are your whole context.) "),
+          last_prompt[:600])
+    check("FAILED EXTRACTION: each handoff is consumed",
+          state.get("consumed_counter") == 2, str(state))
 
 
 def process_is_gone_within_seconds(process_id: int, seconds: float) -> bool:
@@ -571,6 +676,98 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           "1 work-snapshot failure(s): work-snapshots: could not be listed" in listing_failure,
           listing_failure)
 
+    # A record the log-store refuses keeps its worktree, and the handoff report must
+    # name the worktree, the record and the shipper's line, once.
+    refused_store = root / "refused-store"
+    (refused_store / "cold-read-records" / "foo-2026-10-19").mkdir(parents=True)
+    (refused_store / "cold-read-records" / "foo-2026-10-19" / "fast-read.md").write_text(
+        "another read's report\n", encoding="utf-8")
+    holding_record = home / ".claude" / "worktrees" / "record-holding-worktree"
+    git_in(["worktree", "add", "--quiet", "-b", "record-holding-branch", str(holding_record)], home)
+    (holding_record / "cold-read-records" / "foo-2026-10-19").mkdir(parents=True)
+    (holding_record / "cold-read-records" / "foo-2026-10-19" / "fast-read.md").write_text(
+        "this read's report\n", encoding="utf-8")
+    os.utime(holding_record / ".git", (long_ago, long_ago))
+    os.environ["COLD_READ_RECORD_SHIP_DESTINATION"] = str(refused_store / "cold-read-records")
+    try:
+        refused_report = supervisor.remove_finished_worktrees_at_handoff(home)
+    finally:
+        del os.environ["COLD_READ_RECORD_SHIP_DESTINATION"]
+    check("WORKTREE CLEANUP: a worktree kept because the log-store refused its record is "
+          "named once in the report, with the record and the shipper's REFUSED line",
+          holding_record.exists()
+          and "1 worktree(s) kept because a record did not reach the log-store: "
+          "record-holding-worktree: record shipment FAILED, worktree kept — removing it would "
+          "delete a record the log-store does not hold: cold-read-records/foo-2026-10-19 "
+          "(REFUSED:" in refused_report
+          and refused_report.count("record-holding-worktree") == 1
+          and "exited 1" not in refused_report and "failed:" not in refused_report,
+          refused_report)
+    git_in(["worktree", "remove", "--force", str(holding_record)], home)
+
+    # A record that fails to ship, then one whose shipment hangs until the handoff's bound stops
+    # the cleaner: the report must still name the first failure.
+    # The ship request reaches ssh on stdin, so the stubs tell the calls apart by order:
+    # the first call fails as an unreachable ned-box does, and every later one hangs.
+    failing_then_hanging_stubs = root / "failing-then-hanging-ship-stubs"
+    failing_then_hanging_stubs.mkdir()
+    first_call_made = failing_then_hanging_stubs / "first-call-made"
+    for tool in ("ssh", "rsync"):
+        (failing_then_hanging_stubs / tool).write_text(
+            f"#!/bin/sh\nif [ -e '{first_call_made}' ]; then exec sleep 60; fi\n"
+            f": > '{first_call_made}'\nexit 255\n", encoding="utf-8")
+        (failing_then_hanging_stubs / tool).chmod(0o755)
+    hanging_record_worktree = home / ".claude" / "worktrees" / "hanging-record-worktree"
+    git_in(["worktree", "add", "--quiet", "-b", "hanging-record-branch",
+            str(hanging_record_worktree)], home)
+    for record_name in ("a-fails-2026-10-19", "b-hangs-2026-10-19"):
+        (hanging_record_worktree / "cold-read-records" / record_name).mkdir(parents=True)
+        (hanging_record_worktree / "cold-read-records" / record_name / "fast-read.md").write_text(
+            "a read's report\n", encoding="utf-8")
+    os.utime(hanging_record_worktree / ".git", (long_ago, long_ago))
+    saved_path = os.environ["PATH"]
+    os.environ["COLD_READ_RECORD_SHIP_DESTINATION"] = (
+        "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records")
+    os.environ["PATH"] = f"{failing_then_hanging_stubs}{os.pathsep}{saved_path}"
+    try:
+        hanging_ship_report = supervisor.remove_finished_worktrees_at_handoff(
+            home, timeout_seconds=15)
+    finally:
+        del os.environ["COLD_READ_RECORD_SHIP_DESTINATION"]
+        os.environ["PATH"] = saved_path
+    check("WORKTREE CLEANUP: a record that failed to ship is named in the report when a later "
+          "record's shipment hangs until the bound stops the cleaner",
+          hanging_record_worktree.exists()
+          and "1 worktree(s) kept because a record did not reach the log-store: "
+          "hanging-record-worktree" + supervisor.KEPT_FOR_RECORDS_MARKER
+          + "cold-read-records/a-fails-2026-10-19 (FAILED:" in hanging_ship_report
+          and "b-hangs-2026-10-19" not in hanging_ship_report
+          and "did not finish in 15 s" in hanging_ship_report,
+          hanging_ship_report)
+    git_in(["worktree", "remove", "--force", str(hanging_record_worktree)], home)
+
+    kept_marker = supervisor.KEPT_FOR_RECORDS_MARKER + "cold-read-records/r-2026-10-19 "
+    kept_summary = supervisor.summarize_worktree_cleanup_output([
+        "failed-ship-wt" + kept_marker + "(FAILED: r-2026-10-19 — ned-box unreachable)",
+        "failed-ship-wt" + supervisor.KEPT_FOR_RECORDS_MARKER
+        + "sanity-check-records/s-2026-10-19 (FAILED: s-2026-10-19 — ned-box unreachable)",
+        "silent-ship-wt" + kept_marker
+        + "(the shipper printed nothing (exit 1): NotADirectoryError: store)",
+        "locked-wt: removal FAILED — locked",
+    ])
+    check("WORKTREE CLEANUP: a kept worktree whose shipments FAILED is counted once, among the "
+          "kept, with each record named, and a removal failure is still counted among the failures",
+          "; 1 failed: locked-wt: removal FAILED — locked;" in kept_summary
+          and "2 worktree(s) kept because a record did not reach the log-store: failed-ship-wt"
+          in kept_summary and kept_summary.count("failed-ship-wt") == 2
+          and "cold-read-records/r-2026-10-19" in kept_summary
+          and "sanity-check-records/s-2026-10-19" in kept_summary, kept_summary)
+    check("WORKTREE CLEANUP: a kept worktree whose shipper printed nothing carries the "
+          "shipper's last error line into the summary",
+          "silent-ship-wt" + kept_marker
+          + "(the shipper printed nothing (exit 1): NotADirectoryError: store)" in kept_summary,
+          kept_summary)
+
     # With GIT_DIR naming another repository, the cleanup still acts on the
     # seat's own, and leaves the other alone.
     other = root / "other-repository"
@@ -650,6 +847,48 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           "not as nothing removed",
           "exited 1" in report and "the cleaner broke" in report, report)
 
+    # A printed failure explains a nonzero exit only when the cleaner went on to finish.
+    kept_for_record_line = ("rec-wt" + supervisor.KEPT_FOR_RECORDS_MARKER
+                            + "cold-read-records/r (FAILED: ned-box unreachable)")
+    for kind, printed in (
+            ("worktree kept for an unshipped record", f"print({kept_for_record_line!r})\n"),
+            ("failed removal", "print('locked-wt: removal FAILED — locked')\n")):
+        aborting = root / "aborting-after-printed-failure-cleaner.py"
+        aborting.write_text(printed + "raise OSError('listing the next worktree broke')\n",
+                            encoding="utf-8")
+        with supervisor_names_replaced(CLEAN_WORKTREES_PATH=aborting):
+            report = supervisor.remove_finished_worktrees_at_handoff(home)
+        check(f"WORKTREE CLEANUP: a cleaner that aborts after a {kind} is reported "
+              f"with its error, not hidden behind the printed failure",
+              "exited 1" in report and "listing the next worktree broke" in report, report)
+
+    stopped = root / "stopped-by-git-failure-cleaner.py"
+    stopped.write_text(
+        "import sys\n"
+        "print('clean-worktrees: stopped, because git worktree list failed (exit 128: fatal: broken)', file=sys.stderr)\n"
+        "print('If the rerun fails a second time, stop and tell the user', file=sys.stderr)\n"
+        "sys.exit(2)\n", encoding="utf-8")
+    with supervisor_names_replaced(CLEAN_WORKTREES_PATH=stopped):
+        report = supervisor.remove_finished_worktrees_at_handoff(home)
+    check("WORKTREE CLEANUP: a cleaner stopped by a git failure is reported with its "
+          "cause line, not the next-step line printed after it",
+          "exited 2: clean-worktrees: stopped, because git worktree list failed" in report
+          and "fails a second time" not in report, report)
+
+    finishing = root / "finishing-with-failure-cleaner.py"
+    finishing.write_text(
+        "import sys\n"
+        "print('locked-wt: removal FAILED — locked')\n"
+        "print('clean-worktrees: finished; each failure is named above')\n"
+        "print('stderr noise', file=sys.stderr)\n"
+        "sys.exit(1)\n", encoding="utf-8")
+    with supervisor_names_replaced(CLEAN_WORKTREES_PATH=finishing):
+        report = supervisor.remove_finished_worktrees_at_handoff(home)
+    check("WORKTREE CLEANUP: a cleaner that finished and named its failure adds no "
+          "exit line, since the failure line explains the exit",
+          "1 failed: locked-wt: removal FAILED" in report
+          and "exited 1" not in report and "stderr noise" not in report, report)
+
     unusable = root / "unusable-vacancy-cleaner.py"
     unusable.write_text(
         "print('agent-x: kept — the vacancy check (lsof) could not be run')\n"
@@ -697,7 +936,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
     with supervisor_names_replaced(
             launch_agent_session=launch, stop_session=stop,
             remove_finished_worktrees_at_handoff=cleanup,
-            sync_working_branch_with_main=lambda working_directory: "branch sync: stubbed",
+            launch_time_git_sync=lambda working_directory: "launch-time-git-sync: stubbed",
             carry_over_to_successor=lambda settings, retiring, fields, generation: (
                 f"successor-{generation}", None),
             stdin_isatty=True), \
@@ -721,7 +960,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
             launch_agent_session=lambda *arguments, **_: (
                 events.append("launch") or StubLaunchedSession(0)),
             remove_finished_worktrees_at_handoff=cleanup,
-            sync_working_branch_with_main=lambda working_directory: "branch sync: stubbed",
+            launch_time_git_sync=lambda working_directory: "launch-time-git-sync: stubbed",
             stdin_isatty=False), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
@@ -797,8 +1036,8 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     # --- The loop: what the supervisor actually does at a death -----------
     directory = workspace / "death-resume"
     directory.mkdir(parents=True, exist_ok=True)
-    no_branch_sync = lambda working_directory: (
-        "branch sync: not a git checkout, nothing to sync")
+    no_launch_time_git_sync = lambda working_directory: (
+        "launch-time-git-sync: not a git checkout, nothing to sync")
     first_prompt = "You are the seat. Do the work."
 
     def supervise_a_seat_whose_sessions_die(case: str, deaths, stdin_isatty=True,
@@ -870,7 +1109,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
         with supervisor_names_replaced(
                 launch_agent_session=launch,
                 project_directory_for_working_directory=lambda _: case_projects,
-                sync_working_branch_with_main=no_branch_sync,
+                launch_time_git_sync=no_launch_time_git_sync,
                 wait_for_handoff=wait_for_handoff,
                 stop_session=lambda process: None,
                 carry_over_to_successor=lambda settings, retiring, fields, generation: (
@@ -1113,8 +1352,8 @@ def run_by_hand_resume_cases(workspace: Path):
             handoff_directory=case_directory, agent_command="unused-stub-agent",
             first_prompt="")
 
-    no_branch_sync = lambda working_directory: (
-        "branch sync: not a git checkout, nothing to sync")
+    no_launch_time_git_sync = lambda working_directory: (
+        "launch-time-git-sync: not a git checkout, nothing to sync")
 
     def launch_once(settings):
         """(session_id, prompt, resume) of the one launch, which then ends."""
@@ -1127,7 +1366,7 @@ def run_by_hand_resume_cases(workspace: Path):
         with supervisor_names_replaced(
                 launch_agent_session=launch,
                 project_directory_for_working_directory=lambda _: projects,
-                sync_working_branch_with_main=no_branch_sync), \
+                launch_time_git_sync=no_launch_time_git_sync), \
                 contextlib.redirect_stdout(io.StringIO()):
             supervisor.supervise_sessions(settings)
         return launched[0] if launched else (None, None, None)
@@ -1183,7 +1422,7 @@ def run_by_hand_resume_cases(workspace: Path):
     with supervisor_names_replaced(
             launch_agent_session=launch_empty,
             project_directory_for_working_directory=lambda _: empty_projects,
-            sync_working_branch_with_main=no_branch_sync), \
+            launch_time_git_sync=no_launch_time_git_sync), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
     check("BY HAND: a seat whose every transcript is an empty successor starts fresh",
@@ -1215,7 +1454,7 @@ def run_by_hand_resume_cases(workspace: Path):
         with supervisor_names_replaced(
                 launch_agent_session=launch,
                 project_directory_for_working_directory=lambda _: project_directory,
-                sync_working_branch_with_main=no_branch_sync), \
+                launch_time_git_sync=no_launch_time_git_sync), \
                 contextlib.redirect_stdout(console):
             supervisor.supervise_sessions(settings)
         return (launched[0] if launched else (None, None, None)), console.getvalue()
@@ -1264,7 +1503,7 @@ def run_by_hand_resume_cases(workspace: Path):
           and "ignoring the first prompt" not in printed,
           (session_id, resume))
 
-    # recover-crashed-seats.py --ignite-fallback chose not to resume: its ignition
+    # recover-crashed-seats.py --fresh-session-from-conversation-tail chose not to resume: its ignition
     # prompt must win over the crashed transcript. Run through main() with the
     # supervisor arguments the recovery composes, so a flag the recovery stops
     # passing, or the supervisor stops honouring, turns this case red.
@@ -1287,7 +1526,7 @@ def run_by_hand_resume_cases(workspace: Path):
             with supervisor_names_replaced(
                     launch_agent_session=launch,
                     project_directory_for_working_directory=lambda _: projects,
-                    sync_working_branch_with_main=no_branch_sync), \
+                    launch_time_git_sync=no_launch_time_git_sync), \
                     contextlib.redirect_stdout(console):
                 exit_code = supervisor.main(argv)
         finally:
@@ -1297,26 +1536,26 @@ def run_by_hand_resume_cases(workspace: Path):
                 os.environ["CLAUDE_CODE_TASK_LIST_ID"] = saved_task_list_id
         return exit_code, (launched[0] if launched else (None, None, None)), console.getvalue()
 
-    ignition_directory = directory / "ignite-fallback"
+    ignition_directory = directory / "fresh-session-from-conversation-tail"
     ignition_directory.mkdir(parents=True, exist_ok=True)
     ignition_prompt_path = ignition_directory / "byhandignite-recovery-ignition-prompt.md"
-    ignition_prompt_path.write_text("Read the dialog extract and continue.", encoding="utf-8")
+    ignition_prompt_path.write_text("Read the conversation-tail and continue.", encoding="utf-8")
     ignition_argv = (
         ["--agent", "byhandignite", "--cd", str(workspace),
          "--agent-command", sys.executable]
         + shlex.split(recovery.compose_supervisor_arguments_for_seat_launch(
-            ignition_directory, recovery.IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS))
+            ignition_directory, recovery.IGNITION_FROM_CONVERSATION_TAIL_SUPERVISOR_ARGUMENTS))
         + ["--first-prompt-file", str(ignition_prompt_path)])
     exit_code, (session_id, prompt, resume), printed = run_main_once(ignition_argv)
-    check("IGNITION: --ignite-fallback's arguments start fresh on its ignition prompt "
+    check("IGNITION: --fresh-session-from-conversation-tail's arguments start fresh on its ignition prompt "
           "despite a crashed transcript",
           exit_code == 0 and resume is not True and session_id != crashed.stem
-          and prompt == "Read the dialog extract and continue.",
+          and prompt == "Read the conversation-tail and continue.",
           (exit_code, session_id, prompt, resume, printed[-400:]))
 
     # Control: the same launch without the recovery's flag resumes the transcript,
     # so the case above is the flag's doing.
-    control_directory = directory / "ignite-fallback-control"
+    control_directory = directory / "fresh-session-from-conversation-tail-control"
     control_directory.mkdir(parents=True, exist_ok=True)
     exit_code, (session_id, prompt, resume), printed = run_main_once(
         ["--agent", "byhandignitecontrol", "--cd", str(workspace),
@@ -1328,7 +1567,7 @@ def run_by_hand_resume_cases(workspace: Path):
 
     # The flag means nothing without a prompt file to win with; refused before any launch,
     # or the seat would resume its transcript as though the flag were not there.
-    refusal_directory = directory / "ignite-flag-without-file"
+    refusal_directory = directory / "fresh-session-flag-without-file"
     refusal_directory.mkdir(parents=True, exist_ok=True)
     refusal_stderr = io.StringIO()
     refusal_exit_code = None
@@ -1337,7 +1576,7 @@ def run_by_hand_resume_cases(workspace: Path):
             exit_code, (session_id, prompt, resume), printed = run_main_once(
                 ["--agent", "byhandigniteflagonly", "--cd", str(workspace),
                  "--agent-command", sys.executable, "--handoff-dir", str(refusal_directory),
-                 recovery.IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS])
+                 recovery.IGNITION_FROM_CONVERSATION_TAIL_SUPERVISOR_ARGUMENTS])
         refusal_exit_code = exit_code
     except SystemExit as refused:
         refusal_exit_code = refused.code
@@ -1351,7 +1590,7 @@ def run_by_hand_resume_cases(workspace: Path):
     # login-time restart pass. No case ran it through the loop until the
     # 2026-09-21 ruling renamed the flag it sets, so this one holds the path
     # that rename touched: the named session is resumed, not a fresh id, and a
-    # handoff waiting on disk is marked consumed rather than igniting over it.
+    # handoff waiting on disk is marked consumed rather than a fresh agent-session being started from it over the resume.
     settings = settings_for("resume-session-id")
     settings.resume_session_id = "session-named-by-recovery"
     supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
@@ -1363,9 +1602,98 @@ def run_by_hand_resume_cases(workspace: Path):
           (session_id, resume))
     check("RESUME-SESSION-ID: and tells it the previous session ended without a handoff",
           prompt == supervisor.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF, prompt)
-    check("RESUME-SESSION-ID: a waiting handoff is marked consumed, not ignited over the resume",
+    check("RESUME-SESSION-ID: a waiting handoff is marked consumed, no fresh agent-session started from it over the resume",
           supervisor.read_supervisor_state(settings.state_path).get("consumed_counter") == 4,
           str(supervisor.read_supervisor_state(settings.state_path)))
+
+
+class WriterKilledMidWrite(Exception):
+    pass
+
+
+def run_state_file_write_killed_midway_case(workspace: Path):
+    """A supervisor killed while it rewrites its state file must leave the
+    file it had readable: the agent-crash-watcher and the next supervisor's
+    startup read consumed_counter from it, and a cut-off file reads as fresh
+    state, which takes an already-consumed handoff for a waiting one.
+
+    The kill is injected: every file opened for writing in the state file's
+    directory gets the first half of what is written to it, then the write
+    raises, as a process killed mid-write would stop."""
+    state_path = workspace / "killed-midway" / "seat-supervisor-state.json"
+    old_state = {"consumed_counter": 27, supervisor.LAUNCHED_SESSION_ID_STATE_KEY: "session-27",
+                 "generation": 3}
+    supervisor.write_supervisor_state(state_path, old_state)
+    real_open = io.open
+
+    class HalfWrittenFile:
+        def __init__(self, file):
+            self.file = file
+
+        def write(self, text):
+            self.file.write(text[:len(text) // 2])
+            self.file.flush()
+            raise WriterKilledMidWrite()
+
+        def __getattr__(self, name):
+            return getattr(self.file, name)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exception):
+            self.file.close()
+
+    def open_killed_midway(file, mode="r", *arguments, **keywords):
+        opened = real_open(file, mode, *arguments, **keywords)
+        if "w" in mode and Path(file).parent == state_path.parent:
+            return HalfWrittenFile(opened)
+        return opened
+
+    new_state = dict(old_state, last_poll_at=datetime.now(timezone.utc).isoformat())
+    killed = False
+    builtin_module = sys.modules["builtins"]
+    builtin_module.open, io.open = open_killed_midway, open_killed_midway
+    try:
+        supervisor.write_supervisor_state(state_path, new_state)
+    except WriterKilledMidWrite:
+        killed = True
+    finally:
+        builtin_module.open, io.open = real_open, real_open
+    with contextlib.redirect_stderr(io.StringIO()) as stderr:
+        read_back = supervisor.read_supervisor_state(state_path)
+    check("KILLED-MID-WRITE: the injected kill stopped the write", killed)
+    check("KILLED-MID-WRITE: the state file still holds the state written before the kill",
+          read_back == old_state and not stderr.getvalue(),
+          (read_back, stderr.getvalue()))
+
+
+def run_state_file_written_to_disk_before_rename_case(workspace: Path):
+    """The new state must reach the disk before it replaces the old one: a
+    rename without the fsync can survive a machine crash that loses the
+    data it points to, leaving the state file empty."""
+    state_path = workspace / "fsynced-before-rename" / "seat-supervisor-state.json"
+    supervisor.write_supervisor_state(state_path, {"generation": 1})
+    new_state = {"generation": 2, "consumed_counter": 5}
+    synced = []
+    real_fsync = os.fsync
+
+    def recording_fsync(descriptor):
+        synced.append((os.fstat(descriptor), state_path.read_text(encoding="utf-8")))
+        real_fsync(descriptor)
+
+    os.fsync = recording_fsync
+    try:
+        supervisor.write_supervisor_state(state_path, new_state)
+    finally:
+        os.fsync = real_fsync
+    check("FSYNC BEFORE RENAME: the file that becomes the state file is fsynced whole, "
+          "while the old state file is still in place",
+          len(synced) == 1
+          and synced[0][0].st_size == len(json.dumps(new_state, indent=2))
+          and synced[0][1] == json.dumps({"generation": 1}, indent=2)
+          and os.path.samestat(synced[0][0], state_path.stat()),
+          synced)
 
 
 with fixture.handoff_supervisor_suite_workspace() as workspace:
@@ -1373,8 +1701,11 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_dont_restart_without_a_terminal_case(workspace)
     run_no_seat_recycle_refusal_case(workspace)
     run_agent_exit_record_cases(workspace)
+    run_failed_extraction_at_a_handoff_case(workspace)
     run_handoff_worktree_cleanup_cases(workspace)
     run_resume_after_a_death_without_a_handoff_cases(workspace)
     run_by_hand_resume_cases(workspace)
+    run_state_file_write_killed_midway_case(workspace)
+    run_state_file_written_to_disk_before_rename_case(workspace)
 
 fixture.print_summary_and_exit_nonzero_if_any_case_failed()

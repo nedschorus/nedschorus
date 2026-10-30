@@ -15,6 +15,7 @@ import json
 import os
 import pathlib
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -48,13 +49,13 @@ def check(case_name, condition, detail=""):
 def linux_only_cases_run_here(cases):
     """True on Linux; elsewhere prints why the cases are skipped and returns False.
 
-    Every case that builds or inspects a test sandbox, runs bwrap or reads /proc goes
+    Every case that builds or inspects an nc-test-sandbox, runs bwrap or reads /proc goes
     through this, since only Linux has them. scripts/run-all-test-suites-signal-sandbox-test.py
     runs this file as if on a Mac, and fails a case that does not.
     """
     if sys.platform.startswith("linux"):
         return True
-    print(f"SKIP  {cases}: test sandboxes, bwrap and /proc exist only on Linux")
+    print(f"SKIP  [this machine cannot run it] {cases}: nc-test-sandboxes, bwrap and /proc exist only on Linux")
     return False
 
 
@@ -114,9 +115,9 @@ with tempfile.TemporaryDirectory() as scratch_name:
 
     # --- The thresholds -------------------------------------------------------
     for cpu, available, admitted_expected, label in (
-            (49.9, 10 * GB + 1, True, "CPU just under 50% and memory just above 10 GB"),
-            (50.0, 40 * GB, False, "CPU at 50%"),
-            (80.0, 40 * GB, False, "CPU above 50%"),
+            (54.9, 10 * GB + 1, True, "CPU just under 55% and memory just above 10 GB"),
+            (55.0, 40 * GB, False, "CPU at 55%"),
+            (80.0, 40 * GB, False, "CPU above 55%"),
             (10.0, 10 * GB, False, "available memory at 10 GB"),
             (10.0, 2 * GB, False, "available memory below 10 GB")):
         directory = scratch / f"thresholds-{cpu}-{available}"
@@ -135,7 +136,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
               (waited == 0) == admitted_expected, (waited, said))
         if not admitted_expected:
             check(f"the run says what its suite waits for at {label}",
-                  said and ("CPU" in said[0] if cpu >= 50 else "memory" in said[0]), said)
+                  said and ("CPU" in said[0] if cpu >= 55 else "memory" in said[0]), said)
 
     # --- The ceiling of suites at once --------------------------------------
     directory = scratch / "ceiling"
@@ -578,6 +579,48 @@ with tempfile.TemporaryDirectory() as scratch_name:
     check("counters that were never written leave the numbers out and say why",
           cpu is None and peak is None and "not written" in why, why)
 
+    # --- The memory ceiling --------------------------------------------------------
+    killed = runner.processes_killed_at_memory_ceiling_from_suite_cgroup_statistics
+    check("the cgroup counters give how many of the suite's processes the kernel killed at "
+          "its memory ceiling, and none when the counters say none or nothing",
+          (killed("usage_usec 1\nmemory.peak 2\noom_kill 3\n"),
+           killed("usage_usec 1\noom_kill 0\n"), killed("")) == (3, 0, 0))
+    scope = runner.test_suite_cgroup_scope_command(123456789)
+    check("the suite's cgroup scope holds it to the memory ceiling given, with no swap, and "
+          "keeps the scope, its counting shell included, after a kill there",
+          all(scope[index:index + 2] == ("-p", setting) for setting, index in
+              ((setting, scope.index(setting) - 1) for setting in
+               ("MemoryMax=123456789", "MemorySwapMax=0", "OOMPolicy=continue")))
+          and scope[-1] == "--", scope)
+    check("the cgroup scope trial and every suite not named otherwise get the default ceiling",
+          runner.test_suite_cgroup_scope_command()
+          == runner.test_suite_cgroup_scope_command(runner.TEST_SUITE_MEMORY_CEILING_BYTES)
+          and runner.test_suite_memory_ceiling_bytes("scripts/a-test.py")
+          == runner.TEST_SUITE_MEMORY_CEILING_BYTES, runner.test_suite_cgroup_scope_command())
+    check("a suite named as needing more memory gets its own ceiling",
+          all(runner.test_suite_memory_ceiling_bytes(suite) == ceiling for suite, ceiling in
+              runner.TEST_SUITE_MEMORY_CEILING_BYTES_OF_SUITES_THAT_NEED_MORE.items()))
+    out_of_memory = {"suite": "scripts/a-test.py", "exit": 1, "seconds": 1.0, "skips": [],
+                     "out of memory": {"processes killed": 2, "ceiling": 4 * 10**9}}
+    lines = [runner.suite_line(out_of_memory),
+             f"FAIL scripts/a-test.py {runner.why_suite_failed(out_of_memory)} — log /a.log"]
+    check("a suite with processes killed at its memory ceiling fails, and its FAIL lines say "
+          "OUT OF MEMORY with the ceiling and how it exited",
+          runner.suite_failed(out_of_memory)
+          and all("exit 1, OUT OF MEMORY: the kernel killed 2 of its processes at its memory "
+                  "ceiling of 4 GB" in line for line in lines), lines)
+    check("each such FAIL line is read as the suite's own failure, naming the suite, so "
+          "nc-mutation-testing counts its mutant killed",
+          all(runner.SUITE_FAILED_LINE.match(line)
+              and runner.SUITE_FAILED_LINE.match(line)["suite"] == "scripts/a-test.py"
+              for line in lines)
+          and runner.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(
+              "\n".join(lines)), lines)
+    timed_out = {**out_of_memory, "timeout": {"limit": 600, "recorded": None}}
+    check("a suite that also ran past its time limit is reported as a timeout",
+          runner.why_suite_failed(timed_out).startswith("TIMEOUT after"),
+          runner.why_suite_failed(timed_out))
+
     # --- Case lines, timed as they arrive ----------------------------------------
     repository = scratch / "repository"
     repository.mkdir()
@@ -601,26 +644,36 @@ with tempfile.TemporaryDirectory() as scratch_name:
           == [("PASS", "first case", ""), ("FAIL", "second case", "it broke"),
               ("PASS", "third case", "")], cases)
     check("a case's seconds run from the case line before it, as the lines arrive",
-          len(cases) == 3 and cases[1]["seconds"] >= 0.35 and cases[0]["seconds"] < 0.35,
-          [case["seconds"] for case in cases])
+          len(cases) == 3 and cases[0]["began"] == 0.0
+          and all(case["began"] == before["ended"] for before, case in zip(cases, cases[1:]))
+          and all(case["seconds"] == case["ended"] - case["began"] for case in cases)
+          and cases[1]["seconds"] >= 0.35, cases)
     check("the suite's output still reaches its log whole",
           "a detail line" in result["log"].read_text(), result["log"].read_text())
 
     leaver = repository / "leaves-a-writer-test.py"
     leaver.write_text(
         "import subprocess, sys\n"
-        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+        "import pathlib\n"
+        "writer = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+        "pathlib.Path('writer-pid').write_text(str(writer.pid))\n"
         "print('PASS  started a writer')\n")
     original_drain = runner.TEST_SUITE_OUTPUT_DRAIN_SECONDS
     runner.TEST_SUITE_OUTPUT_DRAIN_SECONDS = 1
-    began = time.monotonic()
     leaver_result = runner.run_one_suite(repository, sys.executable, leaver.name,
                                          log_dir, platform="linux")
     runner.TEST_SUITE_OUTPUT_DRAIN_SECONDS = original_drain
+    writer_pid = int((repository / "writer-pid").read_text())
+    # ps, not kill -0: a writer that has exited may stay a zombie until it is reaped.
+    writer_state = subprocess.run(["ps", "-o", "stat=", "-p", str(writer_pid)],
+                                  capture_output=True, text=True, timeout=60).stdout.strip()
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(writer_pid, signal.SIGKILL)
     check("a process the suite leaves holding its output open does not hold up the run, "
           "and the result says so",
-          time.monotonic() - began < 10 and leaver_result["output_note"] is not None
-          and leaver_result["exit"] == 0, leaver_result)
+          writer_state and not writer_state.startswith("Z")
+          and leaver_result["output_note"] is not None and leaver_result["exit"] == 0,
+          (writer_state, leaver_result))
 
     # A log that cannot be written while the suite runs, such as on a full disk.
     class LogThatFillsUp:
@@ -741,9 +794,69 @@ with tempfile.TemporaryDirectory() as scratch_name:
         check("a suite run in a cgroup scope of its own gets its CPU seconds and peak memory, "
               "and keeps its own exit code",
               scoped["cpu_seconds"] is not None and scoped["peak_memory_bytes"]
-              and scoped["exit"] == 1, scoped)
+              and scoped["exit"] == 1 and "out of memory" not in scoped, scoped)
+        # The real scope and kernel, under a small ceiling: a suite that allocates without
+        # end, and one whose child does while the suite itself exits 0.
+        (repository / "allocates-without-end-test.py").write_text(
+            "chunks = []\nwhile True:\n    chunks.append(bytearray(10**6))\n")
+        (repository / "child-allocates-without-end-test.py").write_text(
+            "import subprocess, sys\n"
+            "subprocess.run([sys.executable, 'allocates-without-end-test.py'])\n")
+        real_ceiling = runner.test_suite_memory_ceiling_bytes
+        runner.test_suite_memory_ceiling_bytes = lambda suite: 200 * 10**6
+        try:
+            runaway = runner.run_one_suite(repository, sys.executable,
+                                           "allocates-without-end-test.py", log_dir,
+                                           in_cgroup_scope=True)
+            runaway_child = runner.run_one_suite(repository, sys.executable,
+                                                 "child-allocates-without-end-test.py",
+                                                 log_dir, in_cgroup_scope=True)
+        finally:
+            runner.test_suite_memory_ceiling_bytes = real_ceiling
+        check("a suite that allocates without end is killed at its memory ceiling, alone, and "
+              "fails out of memory with its counters kept",
+              runaway["exit"] == -signal.SIGKILL and runaway.get("out of memory")
+              and runaway["seconds"] < 60 and runaway["peak_memory_bytes"] <= 200 * 10**6,
+              runaway)
+        check("a suite whose child the kernel killed at the ceiling fails out of memory, "
+              "although the suite itself exited 0",
+              runaway_child["exit"] == -signal.SIGKILL and runaway_child.get("out of memory"),
+              runaway_child)
     else:
-        print(f"SKIP  the cgroup scope case: {cgroup_unavailable}")
+        # A trial that timed out or could not start may be a disturbed run, so is not marked.
+        machine = (cgroup_unavailable.endswith(" is not on PATH")
+                   or "Failed to connect to user scope bus" in cgroup_unavailable)
+        print(f"SKIP  {'[this machine cannot run it] ' if machine else ''}the cgroup scope case: "
+              f"{cgroup_unavailable}")
+
+    # --- A suite with a process killed at its memory ceiling fails, whatever it exits ---
+    # A stand-in for the cgroup scope: it runs the suite, then writes the counters a scope
+    # with one process killed at its ceiling gives.
+    def scope_that_killed_one_process(statistics_descriptor, in_bwrap, memory_ceiling_bytes):
+        ceilings.append(memory_ceiling_bytes)
+        return ("bash", "-c", '"$@"; status=$?; printf "usage_usec 1000000\\nmemory.peak 5\\n'
+                f'oom_kill 1\\n" >&{statistics_descriptor}; exit $status', "scope")
+
+    (repository / "exits-zero-test.py").write_text("print('PASS  a case')\n")
+    real_prefix = runner.command_prefix_running_one_suite_in_its_cgroup_scope
+    runner.command_prefix_running_one_suite_in_its_cgroup_scope = scope_that_killed_one_process
+    ceilings = []
+    try:
+        zero = runner.run_one_suite(repository, sys.executable, "exits-zero-test.py", log_dir,
+                                    in_cgroup_scope=True)
+        one = runner.run_one_suite(repository, sys.executable, "timed-test.py", log_dir,
+                                   in_cgroup_scope=True)
+    finally:
+        runner.command_prefix_running_one_suite_in_its_cgroup_scope = real_prefix
+    check("a suite that exits 0 after the kernel killed one of its processes at its memory "
+          "ceiling fails, reported as killed by SIGKILL, out of memory at the suite's ceiling",
+          zero["exit"] == -signal.SIGKILL and runner.suite_failed(zero)
+          and zero["out of memory"] == {"processes killed": 1,
+                                        "ceiling": runner.TEST_SUITE_MEMORY_CEILING_BYTES}
+          and ceilings == [runner.TEST_SUITE_MEMORY_CEILING_BYTES] * 2
+          and zero["peak_memory_bytes"] == 5, zero)
+    check("a suite that fails by its own exit after such a kill keeps its exit code, out of "
+          "memory", one["exit"] == 1 and one["out of memory"]["processes killed"] == 1, one)
 
     # --- On the Mac, the suite's output goes straight to its log, as it always did ---
     mac_result = runner.run_one_suite(repository, sys.executable, "timed-test.py", log_dir,
@@ -771,7 +884,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
         mac_under_bwrap, built = None, str(error)
     finally:
         runner.listening_unix_sockets_the_test_sandbox_would_show = original_listening
-    check("off Linux no test sandbox is built, whatever the prefix, so nothing reads /proc",
+    check("off Linux no nc-test-sandbox is built, whatever the prefix, so nothing reads /proc",
           built is None and mac_under_bwrap["exit"] == 1, (built, mac_under_bwrap))
 
     # --- The suites' environment carries no credential -----------------------------
@@ -794,8 +907,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
           and environment.get("KEEP_THIS_ONE") == "value-of-KEEP_THIS_ONE",
           sorted(name for name in saved if name in environment))
 
-    # --- A checkout whose git directory cannot be found gets no test sandbox ---------
-    if linux_only_cases_run_here("a test sandbox for a checkout with no git common directory"):
+    # --- A checkout whose git directory cannot be found gets no nc-test-sandbox ---------
+    if linux_only_cases_run_here("an nc-test-sandbox for a checkout with no git common directory"):
         original_common = runner.git_common_directory_of_checkout
         runner.git_common_directory_of_checkout = lambda top: None
         try:
@@ -805,11 +918,11 @@ with tempfile.TemporaryDirectory() as scratch_name:
             raised = str(error)
         finally:
             runner.git_common_directory_of_checkout = original_common
-        check("when the checkout's git common directory cannot be found, the test sandbox is "
+        check("when the checkout's git common directory cannot be found, the nc-test-sandbox is "
               "refused rather than built without its read-only git directory",
               raised is not None and "git common directory" in raised, raised)
 
-    # --- Every failure of admission or of a test sandbox ends the run with exit 2 ---
+    # --- Every failure of admission or of an nc-test-sandbox ends the run with exit 2 ---
     run_repository = scratch / "run-repository"
     run_repository.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=run_repository, check=True)
@@ -848,12 +961,12 @@ with tempfile.TemporaryDirectory() as scratch_name:
     def no_git_directory(top):
         return None
 
-    # These drive the run path taken where suites run in test sandboxes, which reads
+    # These drive the run path taken where suites run in nc-test-sandboxes, which reads
     # psutil and /proc.
-    if linux_only_cases_run_here("the exit-2 cases of a run in test sandboxes"):
+    if linux_only_cases_run_here("the exit-2 cases of a run in nc-test-sandboxes"):
         code, printed, _ = main_with("no-git-directory", git_common_directory_of_checkout=no_git_directory,
                                      **as_if_bwrap)
-        check("a test sandbox that cannot be built for the checkout stops the run before any "
+        check("an nc-test-sandbox that cannot be built for the checkout stops the run before any "
               "suite, with exit 2 and the reason",
               code == runner.EXIT_COULD_NOT_RUN and "git common directory" in printed
               and "Traceback" not in printed, (code, printed[-800:]))
@@ -889,7 +1002,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
                                                     "file is not empty; delete it")
 
         code, printed, _ = main_with("cover", run_one_suite=cover_breaks, **as_if_bwrap)
-        check("a test sandbox that fails while suites run ends the run with exit 2 and the "
+        check("an nc-test-sandbox that fails while suites run ends the run with exit 2 and the "
               "reason, not a traceback",
               code == runner.EXIT_COULD_NOT_RUN and "delete it" in printed
               and "Traceback" not in printed, (code, printed[-800:]))
@@ -897,18 +1010,26 @@ with tempfile.TemporaryDirectory() as scratch_name:
         def records_cannot_be_written(*arguments, **options):
             raise OSError(21, "Is a directory", "junit.xml")
 
-        code, printed, _ = main_with("records", **as_if_bwrap,
+        real_run_one_suite = runner.run_one_suite
+
+        def suite_ends_with(exit_code):
+            """A run_one_suite whose suite ends with exit_code, whether or not bwrap can start
+            here: inside a test sandbox, /usr/bin/bwrap cannot build another."""
+            def run(*arguments, **options):
+                result = {**real_run_one_suite(*arguments, **options), "exit": exit_code}
+                result.pop("test sandbox did not start", None)
+                return result
+            return run
+
+        suite_passes = suite_ends_with(0)
+
+        code, printed, _ = main_with("records", **as_if_bwrap, run_one_suite=suite_ends_with(1),
                                      write_case_times_suite_resources_and_junit_xml_of_run=records_cannot_be_written)
-        # The stand-in bwrap builds no real sandbox, so the suite itself fails here, and a
-        # failing suite outranks the missing records.
+        # A failing suite outranks the missing records.
         check("records that cannot be written while a suite failed end the run with exit 1, "
               "the failure's exit, naming the missing records and printing the SUMMARY",
               code == runner.EXIT_SOME_FAILED and "could not be written" in printed
               and "SUMMARY: " in printed, (code, printed[-800:]))
-        real_run_one_suite = runner.run_one_suite
-
-        def suite_passes(*arguments, **options):
-            return {**real_run_one_suite(*arguments, **options), "exit": 0}
 
         code, printed, _ = main_with("records-all-passed", **as_if_bwrap,
                                      run_one_suite=suite_passes,
@@ -952,6 +1073,35 @@ with tempfile.TemporaryDirectory() as scratch_name:
               "after the run reports the failure",
               code == runner.EXIT_COULD_NOT_RUN and len(started_suites) == 1,
               (code, started_suites, printed_out.getvalue()[-600:]))
+
+        suite_fails = suite_ends_with(1)
+        failed_first = threading.Event()
+
+        def first_fails_then_second_cannot_start(top, interpreter, suite, *arguments, **options):
+            if suite.endswith("a-test.py"):
+                result = suite_fails(top, interpreter, suite, *arguments, **options)
+                failed_first.set()
+                return result
+            failed_first.wait(30)
+            # Long enough for the run to report the failed suite first.
+            time.sleep(1)
+            raise runner.MachineWideTestSuiteAdmissionCouldNotDecide("slot-09 could not be opened")
+
+        run_scratch = scratch / "main-failed-then-admission-error"
+        run_scratch.mkdir()
+        with replaced(run_one_suite=first_fails_then_second_cannot_start, **as_if_bwrap), \
+                contextlib.redirect_stdout(io.StringIO()) as printed_out, \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = runner.main(["--checkout", str(two_suites), "-j", "2",
+                                "--lock-file", str(run_scratch / "run.lock"),
+                                "--log-dir", str(run_scratch / "logs"),
+                                "--recorded-inputs-directory", str(run_scratch / "recorded")])
+        printed = printed_out.getvalue()
+        check("admission that fails after a suite has failed ends the run with exit 1, not 2, "
+              "so no caller reads the failure as a run without a verdict",
+              code == runner.EXIT_SOME_FAILED and "FAIL a-test.py" in printed
+              and "admission failed: slot-09" in printed and "Traceback" not in printed,
+              (code, printed[-800:]))
 
         readings_fail = threading.Event()
         samplers = []
@@ -1010,14 +1160,29 @@ with tempfile.TemporaryDirectory() as scratch_name:
               history_paths == [tilde_home / "recorded-for-this-case"
                                 / runner.TEST_CASE_FAILURE_HISTORY_FILE_NAME], history_paths)
 
+        history_paths.clear()
+        run_scratch = scratch / "main-records-left-unchanged"
+        run_scratch.mkdir()
+        with replaced(append_test_case_failure_history=note_history_path, **as_if_bwrap), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = runner.main(["--checkout", str(run_repository),
+                                "--lock-file", str(run_scratch / "run.lock"),
+                                "--log-dir", str(run_scratch / "logs"),
+                                "--recorded-inputs-directory", str(run_scratch / "recorded"),
+                                "--leave-recorded-inputs-and-failure-history-unchanged"])
+        check("with --leave-recorded-inputs-and-failure-history-unchanged, a run in nc-test-"
+              "sandboxes adds nothing to the failure history, and still writes its JUnit XML",
+              history_paths == [] and (run_scratch / "logs" / runner.JUNIT_XML_FILE_NAME).exists(),
+              (code, history_paths))
+
     code, printed, logs = main_with(
         "no-bwrap", signal_sandbox=lambda **options: ((), "bwrap is not on PATH"))
-    check("without test sandboxes there is no admission, and no case times, JUnit XML or "
+    check("without nc-test-sandboxes there is no admission, and no case times, JUnit XML or "
           "failure history are written",
           code == runner.EXIT_ALL_PASSED and not (logs / runner.JUNIT_XML_FILE_NAME).exists()
           and runner.ADMISSION_WAITED_LINE_PREFIX not in printed, (code, printed[-800:]))
 
-    # --- On the Mac a run needs neither psutil nor /proc, and builds no test sandbox ---
+    # --- On the Mac a run needs neither psutil nor /proc, and builds no nc-test-sandbox ---
     mac_scratch = scratch / "main-mac"
     mac_scratch.mkdir()
     fake_sandbox_exec = mac_scratch / "sandbox-exec"
@@ -1073,9 +1238,11 @@ with tempfile.TemporaryDirectory() as scratch_name:
             # The line is said at most once per interval, so each report comes after one.
             clock.sleep(runner.TEST_SUITE_ADMISSION_WAIT_REPORT_INTERVAL_SECONDS)
             admission.report_waiting(suite, "the machine is busy")
-        check(f"with {len(suites)} suite(s) waiting, the waiting line says \"{verb}\"",
+        check(f"with {len(suites)} suite(s) waiting, the waiting line says \"{verb}\", and that "
+              f"the wait ends by itself",
               said[-1:] == [f"{len(suites)} suite{'s' if len(suites) != 1 else ''} of this run "
-                            f"{verb} to start: the machine is busy"], said)
+                            f"{verb} to start: the machine is busy. Each suite starts by itself "
+                            f"once the reason it waits for clears."], said)
 
 print(f"{len(failures)} failed" if failures else "all cases passed")
 sys.exit(1 if failures else 0)

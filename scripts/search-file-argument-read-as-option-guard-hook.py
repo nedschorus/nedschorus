@@ -84,8 +84,10 @@ REFUSAL_OF_OPTION_VALUE_TEMPLATE = (
 )
 REFUSAL_WITHOUT_COMMAND_TEMPLATE = (
     "Refused: {glob_word} expands to names beginning with -, such as {name}, "
-    "which {program} reads as options, not as files. Put -- after the last "
-    "option and before the file names, then run the command again."
+    "which {program} reads as options, not as files.\n"
+    "Write ./ in front of {glob_word}, as in ./{glob_word}, so that every name begins "
+    "with ./ instead of -.\n"
+    "Then run the command again."
 )
 
 
@@ -394,9 +396,7 @@ def unchecked_hook_output(why, report=None):
     message = (
         f"The search-file-argument guard let this command through without checking it, and "
         f"the command has run: {why}\n"
-        f"Look at the files the command's file patterns match. If one of them names a file "
-        f"whose name starts with -, the search read that name as an option, so run the search "
-        f"again with -- before the file names; if none does, the search ran as written.")
+        + PARSER_UNAVAILABLE_NEXT_STEP_LINES)
     if report is not None:
         message += "\n" + shell_reader.report_to_user_or_dispatching_agent_instruction_build(report)
     return json.dumps({"hookSpecificOutput": {
@@ -411,6 +411,12 @@ def deny(reason):
         "permissionDecision": "deny",
         "permissionDecisionReason": reason,
     }}))
+
+
+PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
+    "Look at the files the command's file patterns match. If any file those patterns match has "
+    "a name that starts with -, the search read that name as an option, so run the search again "
+    "with -- before the file names; if none does, the search ran as written.")
 
 
 def main(stdin=sys.stdin, clock=time.monotonic):
@@ -428,7 +434,7 @@ def main(stdin=sys.stdin, clock=time.monotonic):
         refusal = analyze_command_text(command, payload_cwd, clock)
     except shell_reader.ShellParserUnavailable as error:
         print(shell_reader.parser_unavailable_hook_output(
-            "The search-file-argument guard", error))
+            "The search-file-argument guard", error, PARSER_UNAVAILABLE_NEXT_STEP_LINES))
         return 0
     except ExpansionBudgetSpent:
         print(unchecked_hook_output(

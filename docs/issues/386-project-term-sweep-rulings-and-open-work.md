@@ -57,7 +57,7 @@ Commitment: add to `docs/nedschorus-wiki/nedschorus-glossary.md` the headword `a
 
 ### 3. "fresh reader or fresh agent"
 
-The glossary's entry `fresh reader or fresh agent` was the one headword PR [Glossary: project terms are hyphenated phrases, abbreviations or slash names; the seat model's words become headwords; CLAUDE.md says so](https://github.com/nedschorus/nedschorus/pull/384) left non-conforming. The rename to `fresh-agent` he had approved earlier in the day would have deleted "fresh reader" from five sentences of live instruction text: twice in `.claude/skills/cold-read/SKILL.md`, twice in `.claude/skills/cold-read/prompts/fast-clarify.md`, once in `.claude/skills/ghi-write/SKILL.md`.
+The glossary's entry `fresh reader or fresh agent` was the one headword PR [Glossary: project terms are hyphenated phrases, abbreviations or slash names; the seat model's words become headwords; CLAUDE.md says so](https://github.com/nedschorus/nedschorus/pull/384) left non-conforming. The rename to `fresh-agent` he had approved earlier in the day would have deleted "fresh reader" from five sentences of live instruction text: twice in `.claude/skills/cold-read/SKILL.md`, twice in `.claude/skills/cold-read/prompts/fast-clarify-prompt.md` (then named `fast-clarify.md`), once in `.claude/skills/ghi-write/SKILL.md`.
 
 His words: "My guess is that fresh-reader is more specific than fresh-agent, so we probably should keep both, but if so, make sure we use the right one in the right places"
 
@@ -93,8 +93,8 @@ Ruled "y": the naming rule binds new file names only. An existing file is rename
 
 ## Ruled 2026-09-16, in the cold-read-research seat's walk of the five seat-brief cold reads (item 1)
 
-1. **`info-agent`** joins the glossary. It is the user's name for the class of agents like ghi-info: "I proposed info-agent. I guess I have a preference for shorter names." The entry, approved as written: "info-agent — a long-lived agent that answers other agents' questions about one domain (the GHIs, PRs, the wiki, one system) and keeps that domain's knowledge current. It is not an agent-seat: a script runs it one question at a time, with no seat-brief and no handoffs, and the user does not talk to it. ghi-info is the first."
-2. **"domain-knowledge agent" is renamed to info-agent** in `docs/issues/26-dynamic-agent-team-model.md`, `docs/issues/46-ghi-info-agent-design.md` and the queue note `git show 93bcc041:docs/nedschorus-wiki/queue/26-lifecycle-revision-from-ghi-info.md`. That note was deleted on 2026-09-28 (queue-drain item 13) after its three lifecycle facts were written into `docs/issues/26-dynamic-agent-team-model.md` without the old term, so it needs no rename.
+1. **`info-agent`** joins the glossary. It is the user's name for the class of agents like ghi-guide-agent: "I proposed info-agent. I guess I have a preference for shorter names." The entry, approved as written: "info-agent — a long-lived agent that answers other agents' questions about one domain (the GHIs, PRs, the wiki, one system) and keeps that domain's knowledge current. It is not an agent-seat: a script runs it one question at a time, with no seat-brief and no handoffs, and the user does not talk to it. ghi-info is the first."
+2. **"domain-knowledge agent" is renamed to info-agent** in `docs/issues/26-dynamic-agent-team-model.md`, `docs/issues/46-ghi-guide-agent-design.md` and the queue note `git show 93bcc041:docs/nedschorus-wiki/queue/26-lifecycle-revision-from-ghi-info.md`. That note was deleted on 2026-09-28 (queue-drain item 13) after its three lifecycle facts were written into `docs/issues/26-dynamic-agent-team-model.md` without the old term, so it needs no rename.
 3. **`agent-seat` keeps its glossary definition.** The proposed rename to interactive-agent was declined: "I'm fine with an agent-seat as defined".
 
 Already applied: the ghi seat-brief calls ghi-info an info-agent, landed in PR [Five seat briefs rewritten against current state, with the cold read's fixes and the walk's rulings](https://github.com/nedschorus/nedschorus/pull/454).
@@ -137,7 +137,7 @@ The issue's original description records what happened next: "Approved the same 
 
 Proposed addition to step 7, making four ask-the-user cases five: "...and when the fix is renaming a term this document does not own. A term this document does not own is one other files use, so renaming it is a change across the project and his to approve: put him the reviewer's proposed name, and on his approval make the rename its own task and its own change rather than folding it into this one. Record in `dispositions.md` that the rename was approved and where it went, or that he declined it." A declined rename leaves the document's word as it is and the finding recorded as declined; the document is not held for it.
 
-No change is needed to `.claude/skills/cold-read/prompts/terminology.md`: it already asks each reviewer for the exact words of a fix, and its option (c) is a constructed name following `CLAUDE.md`'s naming rule, so the conforming name arrives in the report. Skill text is operative prose, so this change takes a cold read and the user's walk before a pull request, and the edit needs a `.walk-approved` marker quoting his words.
+No change is needed to `.claude/skills/cold-read/prompts/terminology-prompt.md` (then named `terminology.md`): it already asks each reviewer for the exact words of a fix, and its option (c) is a constructed name following `CLAUDE.md`'s naming rule, so the conforming name arrives in the report. Skill text is operative prose, so this change takes a cold read and the user's walk before a pull request, and the edit needs a `.walk-approved` marker quoting his words.
 
 ## Landed
 

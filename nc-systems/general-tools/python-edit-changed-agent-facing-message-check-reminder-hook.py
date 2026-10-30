@@ -49,6 +49,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -227,14 +228,28 @@ def messages_not_at_head(entries, file_path: Path):
     return changed
 
 
-def fast_read_target_path(relative_path: str, text: str) -> Path:
-    """The file for one message's text; its name becomes the cold-read-record's
-    name. The text's digest keeps checkouts sharing the temporary directory, and
-    source paths sharing a slug, from reading each other's texts."""
+def fast_read_target_file_name(relative_path: str, text: str) -> str:
+    """The name of the file for one message's text; it becomes the
+    cold-read-record's name. The text's digest keeps checkouts sharing the
+    temporary directory, and source paths sharing a slug, from reading each
+    other's texts. It needs no temporary directory, so it is known even when no
+    temporary directory can be found."""
     slug = re.sub(r"[^A-Za-z0-9]+", "-", relative_path.removesuffix(".py")).strip("-")
     digest = hashlib.sha256(text.encode()).hexdigest()[:16]
+    return f"{slug}-{digest}-agent-facing-message.md"
+
+
+def fast_read_target_path(relative_path: str, text: str) -> Path:
+    """The file for one message's text. tempfile.gettempdir() raises an OSError
+    when no temporary directory is usable."""
     return (Path(tempfile.gettempdir()) / FAST_READ_TARGET_DIRECTORY_NAME
-            / f"{slug}-{digest}-agent-facing-message.md")
+            / fast_read_target_file_name(relative_path, text))
+
+
+def cold_read_fast_read_review_command_line_for_target_file(target: Path) -> str:
+    """The cold-read-fast-read command for a target file, with the path shell-quoted
+    so a temporary directory with a space or a quote in its name still runs."""
+    return FAST_READ_COMMAND.format(target=shlex.quote(str(target)))
 
 
 def fast_read_target_written(relative_path: str, text: str) -> Path:
@@ -276,7 +291,7 @@ def reminder_text_listing(tool_name, relative_path, entries, listed_count, targe
             more=len(entries) - listed_count, path=relative_path))
     if targets_error is None:
         fast_read = FAST_READ_MESSAGE_TEMPLATE.format(commands="\n".join(
-            "  " + FAST_READ_COMMAND.format(target=targets[entry["text"]])
+            "  " + cold_read_fast_read_review_command_line_for_target_file(targets[entry["text"]])
             for entry in listed))
     else:
         fast_read = FAST_READ_FILES_NOT_WRITTEN_TEMPLATE.format(reason=targets_error)

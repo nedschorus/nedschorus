@@ -1,8 +1,9 @@
 #!/bin/sh
 # Refuses a push from a mutation-testing worktree, a push that rewrites or
 # deletes the head branch of an open pull request, a push of a branch that
-# conflicts with main, and a push whose selective test run has a failing suite;
-# lets every other push through. The work is done by four Python files,
+# conflicts with main or sets a file back to a version main has replaced, and a
+# push whose selective test run has a failing suite; lets every other push
+# through. The work is done by four Python files,
 # scripts/git-client-side-hooks-pre-push-mutation-testing-worktree-push-refusal.py,
 # scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py,
 # scripts/git-client-side-hooks-pre-push-conflict-check.py and
@@ -32,8 +33,8 @@
 # conflict check nor the selective test run. Such a push still runs the open
 # pull request check, which asks GitHub about a forced update or a deletion of
 # a branch on origin.
-# The filter matches branches_to_check in the Python file; the pre-push test
-# suite pins both against the same pushes.
+# The filter matches branches_to_check in the Python file; the pre-push nc-test-suite
+# pins both against the same pushes.
 
 hook_directory=$(dirname "$0")
 conflict_check="$hook_directory/../git-client-side-hooks-pre-push-conflict-check.py"
@@ -53,6 +54,7 @@ remote_url=$2
 
 branch_list=""
 unchecked_lines=""
+revert_lines=""
 if [ "$remote_name" = "$checked_remote" ]; then
     newline='
 '
@@ -83,6 +85,7 @@ if [ "$remote_name" = "$checked_remote" ]; then
         fi
         branch_list="$branch_list$branch ($commit)"
         unchecked_lines="${unchecked_lines}Check $branch by hand from your worktree: python3 scripts/branch-conflict-check.py --head $commit$newline"
+        revert_lines="${revert_lines}Once the hand conflict check of $branch prints VERDICT: CLEAN, check it for files set back too: python3 scripts/branch-reverts-a-file-to-an-older-main-version-check.py --head $commit$newline"
     done
     set +f
     IFS=$old_ifs
@@ -126,8 +129,11 @@ fi
 [ -n "$branch_list" ] || exit 0
 
 say_no_branch_checked() {
-    echo "pre-push: $1, so this push goes ahead with none of its branches checked for conflicts with origin/main: $branch_list." >&2
+    echo "pre-push: $1, so none of this push's branches was checked for conflicts with origin/main: $branch_list." >&2
     printf '%s' "$unchecked_lines" >&2
+    echo "Nor was any of them checked for files set back to a version that origin/main has replaced, because that check runs only on a branch the conflict check finds clean." >&2
+    printf '%s' "$revert_lines" >&2
+    echo "pre-push: neither the conflict check nor the revert check refuses this push, so it goes on to the selective test run, which can still refuse it." >&2
     echo "$tell_user_line" >&2
 }
 

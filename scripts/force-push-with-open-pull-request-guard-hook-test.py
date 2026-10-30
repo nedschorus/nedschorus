@@ -39,6 +39,13 @@ _spec = importlib.util.spec_from_file_location("force_push_guard", HOOK_SCRIPT)
 guard = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(guard)
 
+_rule_failure_lines_spec = importlib.util.spec_from_file_location(
+    "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common",
+    HOOK_SCRIPT.resolve().parent.parent / "nc-systems" / "general-tools"
+    / "rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py")
+RULE_FAILURE_LINES = importlib.util.module_from_spec(_rule_failure_lines_spec)
+_rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)
+
 FAST_READ_PULL_REQUEST = {
     "title": "Fast read: say when the cold-read-full-run is still required",
     "url": "https://github.com/nedschorus/nedschorus/pull/466",
@@ -657,7 +664,7 @@ with tempfile.TemporaryDirectory() as place:
         real = subprocess.run(["bash", "-c", f"{wrappers} pwd"], capture_output=True,
                               text=True, env={**os.environ, "HOME": f"{place}/home"}, cwd=place)
         if real.returncode != 0:
-            print(f"SKIP  {wrappers}: this env refuses it ({real.stderr.strip()[:80]})")
+            print(f"SKIP  [this machine cannot run it] {wrappers}: this env refuses it ({real.stderr.strip()[:80]})")
             continue
         saved_home = os.environ.get("HOME")
         os.environ["HOME"] = f"{place}/home"
@@ -982,13 +989,70 @@ guard_entries = [
     for hook in matcher_block.get("hooks", [])
     if HOOK_SCRIPT.name in hook.get("command", "")
 ]
+
+
+def guard_not_wired_once_failure_detail(entries):
+    return "\n".join([
+        f"found {entries}; .claude/settings.json must register "
+        f"scripts/force-push-with-open-pull-request-guard-hook.py exactly once, in the PreToolUse "
+        f"block whose matcher is Bash, so that the guard runs once before each Bash command.",
+        "If your change removed, duplicated or moved that entry, put back exactly one entry in "
+        "that block.",
+        RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(".claude/settings.json"),
+        RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
+
+
+def registered_timeout_not_above_budget_failure_detail(timeout, budget):
+    return "\n".join([
+        f"timeout {timeout} vs budget {budget}; the guard must finish its probes and answer "
+        f"before the harness stops it, so the timeout .claude/settings.json registers for it must "
+        f"be a number above PROBE_BUDGET_SECONDS in "
+        f"scripts/force-push-with-open-pull-request-guard-hook.py.",
+        "If the case above also failed, fix that first; this case reads the timeout from the entry "
+        "that case looks for.",
+        "If your change raised PROBE_BUDGET_SECONDS, lower it below the timeout, or ask the user "
+        "to approve a higher timeout in .claude/settings.json.",
+        "If your change lowered, removed or rewrote the timeout in .claude/settings.json, put back "
+        "a number above the budget.",
+        RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(".claude/settings.json"),
+        RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
+
+
 check("the guard is wired exactly once as a PreToolUse Bash hook",
-      len(guard_entries) == 1, str(guard_entries))
+      len(guard_entries) == 1, guard_not_wired_once_failure_detail(guard_entries))
 registered_timeout = guard_entries[0].get("timeout") if guard_entries else None
 check("the registered timeout exceeds the guard's probe budget",
       isinstance(registered_timeout, (int, float))
       and registered_timeout > guard.PROBE_BUDGET_SECONDS,
-      f"timeout {registered_timeout} vs budget {guard.PROBE_BUDGET_SECONDS}")
+      registered_timeout_not_above_budget_failure_detail(
+          registered_timeout, guard.PROBE_BUDGET_SECONDS))
+check("an unregistered guard's failure says where it must be registered and why, the fix, the "
+      "guarded-file line and the line for a rule main broke",
+      guard_not_wired_once_failure_detail([]).split("\n") == [
+          "found []; .claude/settings.json must register "
+          "scripts/force-push-with-open-pull-request-guard-hook.py exactly once, in the PreToolUse "
+          "block whose matcher is Bash, so that the guard runs once before each Bash command.",
+          "If your change removed, duplicated or moved that entry, put back exactly one entry in "
+          "that block.",
+          RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(".claude/settings.json"),
+          RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
+      guard_not_wired_once_failure_detail([]))
+check("a timeout not above the budget fails with why, one fix per cause, the guarded-file line "
+      "and the line for a rule main broke",
+      registered_timeout_not_above_budget_failure_detail(30, 40.0).split("\n") == [
+          "timeout 30 vs budget 40.0; the guard must finish its probes and answer before the "
+          "harness stops it, so the timeout .claude/settings.json registers for it must be a "
+          "number above PROBE_BUDGET_SECONDS in "
+          "scripts/force-push-with-open-pull-request-guard-hook.py.",
+          "If the case above also failed, fix that first; this case reads the timeout from the "
+          "entry that case looks for.",
+          "If your change raised PROBE_BUDGET_SECONDS, lower it below the timeout, or ask the user "
+          "to approve a higher timeout in .claude/settings.json.",
+          "If your change lowered, removed or rewrote the timeout in .claude/settings.json, put "
+          "back a number above the budget.",
+          RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(".claude/settings.json"),
+          RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
+      registered_timeout_not_above_budget_failure_detail(30, 40.0))
 
 # ---------------------------------------------------------------------------
 # The harness contract: what main() writes, and what it ignores.

@@ -25,9 +25,11 @@ import io
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
+import traceback
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 SHIP = SCRIPTS_DIR / "walk-files-ship.py"
@@ -779,6 +781,236 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-race-test-") as race_sc
                             "walk-text-grown-there", "minutes-landed",
                             "minutes-after-copy", "minutes-after-rename")),
           str(names))
+
+# --- A walk's close writes no handoff marker ----------------------------------
+with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-close-") as close_scratch_name:
+    close_scratch = pathlib.Path(close_scratch_name)
+    close_home = close_scratch / "home"
+    close_home.mkdir()
+    CLOSE_WALK = "close-demo-walk-2026-10-27"
+    closed_minutes = ("# minutes\n\nItem 1 ruled.\n\n#next_to_present item 2 of 2\n"
+                      "Item 2 ruled.\n\n#next_to_present none, closed\n")
+    close_walk_text = write_walk(close_scratch / "walks", CLOSE_WALK,
+                                 {**FILES, "-minutes": closed_minutes})
+    result = ship(str(close_scratch / "store" / "cold-read-records"), str(close_walk_text),
+                  extra_env={"HOME": str(close_home),
+                             "CLAUDE_CODE_SESSION_ID": "walk-files-ship-test-session"})
+    handoffs_directory = close_home / ".claude" / "handoffs"
+    handoff_files = (sorted(str(path) for path in handoffs_directory.rglob("*"))
+                     if handoffs_directory.exists() else [])
+    check("shipping closed minutes with a session id set exits 0 and writes "
+          "nothing under ~/.claude/handoffs",
+          result.returncode == 0 and result.stdout.startswith("shipped:")
+          and not handoff_files,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}; "
+          f"under ~/.claude/handoffs: {handoff_files}")
+
+# --- Failures after part of a shipment reached the store ---------------------
+with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-") as partial_scratch_name:
+    partial_scratch = pathlib.Path(partial_scratch_name)
+    PARTIAL_WALK = "partial-demo-walk-2026-10-24"
+    partial_minutes = "# minutes\n\nItem 1 ruled.\n\n#next_to_present item 2 of 2\n"
+
+    # The minutes land, then the add-only placement fails.
+    partial_spec = importlib.util.spec_from_file_location("walk_files_ship_partial", SHIP)
+    partial = importlib.util.module_from_spec(partial_spec)
+    partial_spec.loader.exec_module(partial)
+    partial_walks = partial_scratch / "partial-walks"
+    write_walk(partial_walks, PARTIAL_WALK, {**FILES, "-minutes": partial_minutes})
+    partial_store = partial_scratch / "partial-store" / "walk"
+    partial_store.mkdir(parents=True)
+    partial_destination = partial.WalkStoreDestination(
+        None, None, pathlib.PurePosixPath(partial_store))
+    real_placement = partial.shipper.link_staged_files_never_over_existing
+
+    def placement_that_fails(copy_host, staging_dir, walk_path, names):
+        return subprocess.CompletedProcess([], 255, "", "injected: ssh exit 255\n"), None
+
+    def ship_in_process():
+        # An injected OSError that escapes ship_walk fails the calling case by
+        # name, instead of ending this file before its later cases run.
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = partial.ship_walk(partial_destination, PARTIAL_WALK, partial_walks)
+        except OSError:
+            check("ship_walk returns rather than raising OSError", False,
+                  traceback.format_exc())
+            return None, out.getvalue(), err.getvalue()
+        return code, out.getvalue(), err.getvalue()
+
+    partial.shipper.link_staged_files_never_over_existing = placement_that_fails
+    try:
+        failed_code, failed_out, failed_err = ship_in_process()
+        partial.shipper.link_staged_files_never_over_existing = real_placement
+        retry_code, retry_out, retry_err = ship_in_process()
+    finally:
+        partial.shipper.link_staged_files_never_over_existing = real_placement
+    check("a run whose minutes land but whose add-only placement fails is FAILED, exit 1",
+          failed_code == 1 and failed_out.startswith("FAILED:")
+          and (partial_store / f"{PARTIAL_WALK}-minutes.md").is_file(),
+          f"exit {failed_code}: {failed_out}{failed_err}")
+    check("the retry after that partial failure ships the rest",
+          retry_code == 0 and retry_out.startswith("shipped:")
+          and "already there unchanged" in retry_out,
+          f"exit {retry_code}: {retry_out}{retry_err}")
+
+    # The renames of the replaced files put the minutes in place, then fail
+    # without saying which were done.
+    partial_walks = partial_scratch / "partial-walks-renames"
+    write_walk(partial_walks, PARTIAL_WALK, {**FILES, "-minutes": partial_minutes})
+    partial_store = partial_scratch / "partial-store-renames" / "walk"
+    partial_store.mkdir(parents=True)
+    partial_destination = partial.WalkStoreDestination(
+        None, None, pathlib.PurePosixPath(partial_store))
+    real_renames = partial.shipper.replace_with_staged_files
+    minutes_file_name = f"{PARTIAL_WALK}-minutes.md"
+
+    def renames_that_fail_after_the_minutes(copy_host, staging_dir, walk_path, files):
+        os.replace(pathlib.Path(staging_dir) / minutes_file_name,
+                   pathlib.Path(walk_path) / minutes_file_name)
+        return subprocess.CompletedProcess([], 255, "", "injected: ssh exit 255\n"), None
+
+    partial.shipper.replace_with_staged_files = renames_that_fail_after_the_minutes
+    try:
+        failed_code, failed_out, failed_err = ship_in_process()
+        partial.shipper.replace_with_staged_files = real_renames
+        retry_code, retry_out, retry_err = ship_in_process()
+    finally:
+        partial.shipper.replace_with_staged_files = real_renames
+    check("a run whose renames put the minutes in place, then fail without "
+          "saying which were done, is FAILED, exit 1",
+          failed_code == 1 and failed_out.startswith("FAILED:")
+          and (partial_store / minutes_file_name).is_file(),
+          f"exit {failed_code}: {failed_out}{failed_err}")
+    check("the retry after those failed renames ships the rest",
+          retry_code == 0 and retry_out.startswith("shipped:")
+          and "already there unchanged" in retry_out,
+          f"exit {retry_code}: {retry_out}{retry_err}")
+
+    # The minutes are in the store unchanged and only the dispositions are replaced.
+    partial_walks = partial_scratch / "partial-walks-dispositions"
+    write_walk(partial_walks, PARTIAL_WALK,
+               {**FILES, "-minutes": partial_minutes, "-dispositions": "# dispositions\n"})
+    partial_store = partial_scratch / "partial-store-dispositions" / "walk"
+    partial_store.mkdir(parents=True)
+    partial_destination = partial.WalkStoreDestination(
+        None, None, pathlib.PurePosixPath(partial_store))
+    try:
+        first_code, first_out, first_err = ship_in_process()
+        (partial_walks / f"{PARTIAL_WALK}-dispositions.md").write_text(
+            "# dispositions\n\nItem 1: approved.\n", encoding="utf-8")
+
+        def renames_that_fail(copy_host, staging_dir, walk_path, files):
+            return subprocess.CompletedProcess([], 255, "", "injected: ssh exit 255\n"), None
+
+        partial.shipper.replace_with_staged_files = renames_that_fail
+        failed_code, failed_out, failed_err = ship_in_process()
+    finally:
+        partial.shipper.replace_with_staged_files = real_renames
+    check("the first shipment of the walk with dispositions succeeds",
+          first_code == 0 and first_out.startswith("shipped:"),
+          f"exit {first_code}: {first_out}{first_err}")
+    check("a run whose minutes are already in the store unchanged, and whose renames "
+          "of the replaced dispositions fail, is FAILED, exit 1",
+          failed_code == 1 and failed_out.startswith("FAILED:")
+          and "while putting the copied files in place" in failed_out,
+          f"exit {failed_code}: {failed_out}{failed_err}")
+
+    # On the local path a rename that fails raises OSError, which must reach
+    # ship_walk as a failed result.
+    saved_os_replace = os.replace
+    for failing_suffix, minutes_land in (("-dispositions", True), ("-minutes", False)):
+        partial_walks = partial_scratch / f"local-rename{failing_suffix}-walks"
+        write_walk(partial_walks, PARTIAL_WALK,
+                   {**FILES, "-minutes": partial_minutes, "-dispositions": "# dispositions\n"})
+        partial_store = partial_scratch / f"local-rename{failing_suffix}-store" / "walk"
+        partial_store.mkdir(parents=True)
+        partial_destination = partial.WalkStoreDestination(
+            None, None, pathlib.PurePosixPath(partial_store))
+        failing_name = f"{PARTIAL_WALK}{failing_suffix}.md"
+
+        def replace_that_fails_on(source, destination, *args, **kwargs):
+            if pathlib.Path(destination) == partial_store / failing_name:
+                raise OSError(28, "No space left on device (injected)")
+            saved_os_replace(source, destination, *args, **kwargs)
+
+        os.replace = replace_that_fails_on
+        try:
+            failed_code, failed_out, failed_err = ship_in_process()
+            os.replace = saved_os_replace
+            minutes_after_failed_run = (partial_store / minutes_file_name).is_file()
+            retry_code, retry_out, retry_err = ship_in_process()
+        finally:
+            os.replace = saved_os_replace
+        check(f"a local run whose rename of {failing_name} raises OSError is FAILED, "
+              f"exit 1, and names the OS's reason",
+              failed_code == 1 and failed_out.startswith("FAILED:")
+              and one_line(failed_out) and "No space left on device" in failed_out
+              and minutes_after_failed_run == minutes_land,
+              f"exit {failed_code}: {failed_out}{failed_err}")
+        check(f"the retry after the local rename of {failing_name} failed ships the rest",
+              retry_code == 0 and retry_out.startswith("shipped:"),
+              f"exit {retry_code}: {retry_out}{retry_err}")
+
+    # A local read of one file in the store that fails. The store starts
+    # empty, the staged copies sit in a directory below it, and a replaced
+    # file is read before its rename only when the store holds it, so a file
+    # the run puts there is first read by the read-back after it is placed.
+    saved_read_bytes = pathlib.Path.read_bytes
+
+    def ship_with_read_failing_for(failing_name):
+        def read_bytes_that_fails(path):
+            if path == partial_store / failing_name:
+                raise OSError(28, "No space left on device (injected)")
+            return saved_read_bytes(path)
+
+        pathlib.Path.read_bytes = read_bytes_that_fails
+        try:
+            return ship_in_process()
+        finally:
+            pathlib.Path.read_bytes = saved_read_bytes
+
+    def fresh_walk_and_store(label):
+        global partial_walks, partial_store, partial_destination
+        partial_walks = partial_scratch / f"local-read-{label}-walks"
+        write_walk(partial_walks, PARTIAL_WALK, {**FILES, "-minutes": partial_minutes})
+        partial_store = partial_scratch / f"local-read-{label}-store" / "walk"
+        partial_store.mkdir(parents=True)
+        partial_destination = partial.WalkStoreDestination(
+            None, None, pathlib.PurePosixPath(partial_store))
+
+    fresh_walk_and_store("after-rename")
+    failed_code, failed_out, failed_err = ship_with_read_failing_for(minutes_file_name)
+    check("a local run whose read-back of the stored digests after the renames raises "
+          "OSError is FAILED, exit 1, and names the OS's reason, the minutes being "
+          "in the store",
+          failed_code == 1 and failed_out.startswith("FAILED:")
+          and one_line(failed_out) and "No space left on device" in failed_out
+          and (partial_store / minutes_file_name).is_file(),
+          f"exit {failed_code}: {failed_out}{failed_err}")
+
+    fresh_walk_and_store("after-link")
+    draft_name = f"{PARTIAL_WALK}-draft.md"
+    failed_code, failed_out, failed_err = ship_with_read_failing_for(draft_name)
+    check("a local run whose read-back after the add-only links raises OSError is "
+          "FAILED, exit 1, and names the OS's reason and not an ssh exit",
+          failed_code == 1
+          and failed_out.startswith(f"FAILED: {PARTIAL_WALK} — No space left on device "
+                                    f"(injected) while putting the copied files in place")
+          and "ssh" not in failed_out,
+          f"exit {failed_code}: {failed_out}{failed_err}")
+
+    fresh_walk_and_store("listing")
+    (partial_store / draft_name).write_text(FILES["-draft"], encoding="utf-8")
+    failed_code, failed_out, failed_err = ship_with_read_failing_for(draft_name)
+    check("a local run whose listing of the store raises OSError is FAILED, exit 1, "
+          "names the OS's reason and not an ssh exit, and copies nothing",
+          failed_code == 1
+          and failed_out.startswith(f"FAILED: {PARTIAL_WALK} — No space left on device "
+                                    f"(injected); the walk's files stay on disk")
+          and "ssh" not in failed_out and not (partial_store / minutes_file_name).exists(),
+          f"exit {failed_code}: {failed_out}{failed_err}")
 
 print()
 if failures:

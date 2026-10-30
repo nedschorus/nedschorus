@@ -94,6 +94,13 @@ _transcript_mirror_spec = importlib.util.spec_from_file_location(
 transcript_mirror = importlib.util.module_from_spec(_transcript_mirror_spec)
 _transcript_mirror_spec.loader.exec_module(transcript_mirror)
 
+_interim_recognizer_spec = importlib.util.spec_from_file_location(
+    "claude_code_subagent_task_notification_interim_recognizer_common",
+    REPOSITORY_ROOT / "scripts" / "claude-code-subagent-task-notification-interim-recognizer-common.py"
+)
+interim_recognizer = importlib.util.module_from_spec(_interim_recognizer_spec)
+_interim_recognizer_spec.loader.exec_module(interim_recognizer)
+
 
 NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
 NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
@@ -120,8 +127,11 @@ DEFAULT_AGENT_NAME_RULE_TEXT = (
 # Number each subagent field: the reader takes only the first occurrence of a key.
 SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
 
-# Only spawn and resume imply ongoing work; unrecognized notification statuses count as ended.
-STILL_WORKING_SUBAGENT_LAST_EVENTS = ("spawned", "resumed")
+# An interim task-notification carries <status>completed</status>, so it gets an event of its own.
+WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT = "waiting on its own background work"
+
+# Only these imply ongoing work; unrecognized notification statuses count as ended.
+STILL_WORKING_SUBAGENT_LAST_EVENTS = ("spawned", "resumed", WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT)
 
 # Prefilter megabytes of tool output before parsing possible subagent events.
 SUBAGENT_EVENT_RECORD_MARKERS = ("async_launched", "resumedAgentId", "<task-notification>")
@@ -290,6 +300,9 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
             status = re.search(r"<status>(.*?)</status>", notification)
             if status is None:
                 continue
+            event = (WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT
+                     if interim_recognizer.task_notification_is_interim(notification)
+                     else status.group(1))
             # One notification can assign a single status to several task IDs.
             for task_id in re.findall(r"<task-id>(.*?)</task-id>",
                                       notification):
@@ -297,8 +310,8 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
                 if entry is None:
                     continue
                 # Repeated notifications are echoes, not new events; preserve the first arrival time.
-                if status.group(1) != entry["last_event"]:
-                    entry["last_event"] = status.group(1)
+                if event != entry["last_event"]:
+                    entry["last_event"] = event
                     entry["last_event_at"] = stamp
     return roster
 
@@ -401,7 +414,7 @@ def log_store_task_list_copy_location_in_scp_form(host, store_list_directory) ->
         return f"{host}:{store_list_directory}"
     if os.environ.get(transcript_mirror.DESTINATION_ENVIRONMENT_VARIABLE):
         return str(store_list_directory)
-    store_host, _ = transcript_mirror.split_destination(transcript_mirror.LOG_STORE_TRANSCRIPTS_DESTINATION)
+    store_host, _ = transcript_mirror.split_destination(transcript_mirror.LOG_STORE_AGENT_SESSION_FILES_DESTINATION)
     return f"{store_host}:{store_list_directory}"
 
 
@@ -761,7 +774,7 @@ def main(argv=None) -> int:
         f"reincarnate it. The handoff is written at {handoff_path}; nothing will act on it by itself. "
         "Tell the user: to seat a supervised successor, run "
         f"`scripts/resupervise-seat.py {agent} --machine {machine}` — it clears this seat's stale "
-        "tmux session and relaunches, and the supervisor ignites from the handoff. Relaunching "
+        "tmux session and relaunches, and the supervisor starts a fresh agent-session from the handoff. Relaunching "
         "`claude` by hand instead produces another unsupervised seat. Until then, keep working."
     )
     return 1

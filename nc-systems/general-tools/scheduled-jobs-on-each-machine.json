@@ -49,14 +49,14 @@
       }
     },
     {
-      "name": "daily-clean-worktrees",
+      "name": "clean-worktrees",
       "program": "scripts/clean-worktrees.py",
       "arguments": ["--remove"],
-      "output": ".claude/daily-clean-worktrees.log",
+      "output": ".claude/clean-worktrees.log",
       "on": {
         "mac": {
           "scheduler": "launchd",
-          "label": "com.nedschorus.daily-clean-worktrees",
+          "label": "com.nedschorus.clean-worktrees",
           "launchd_keys": {"StartCalendarInterval": {"Hour": 6, "Minute": 30}}
         },
         "ned-box": {"scheduler": "cron", "schedule": "30 6 * * *"}
@@ -67,6 +67,15 @@
       "program": "nc-systems/handoff/handoff-agent-seat-died-without-session-handoff-restart-watcher.py",
       "arguments": [],
       "output": ".claude/handoff-agent-seat-died-without-session-handoff-restart-watcher.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "* * * * *"}
+      }
+    },
+    {
+      "name": "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher",
+      "program": "nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py",
+      "arguments": [],
+      "output": ".claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log",
       "on": {
         "ned-box": {"scheduler": "cron", "schedule": "* * * * *"}
       }
@@ -86,17 +95,26 @@
       }
     },
     {
-      "name": "daily-guarded-file-versions-and-approvals-store-removed-checkout-copies-prune",
+      "name": "guarded-file-versions-and-approvals-store-removed-checkout-copies-prune",
       "program": "nc-systems/general-tools/guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py",
       "arguments": [],
-      "output": ".claude/daily-guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.log",
+      "output": ".claude/guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.log",
       "on": {
         "mac": {
           "scheduler": "launchd",
-          "label": "com.nedschorus.daily-guarded-file-versions-and-approvals-store-removed-checkout-copies-prune",
+          "label": "com.nedschorus.guarded-file-versions-and-approvals-store-removed-checkout-copies-prune",
           "launchd_keys": {"StartCalendarInterval": {"Hour": 7, "Minute": 0}}
         },
         "ned-box": {"scheduler": "cron", "schedule": "0 7 * * *"}
+      }
+    },
+    {
+      "name": "claude-code-temp-folders-of-exited-agent-sessions-delete",
+      "program": "nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py",
+      "arguments": [],
+      "output": ".claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "30 7 * * *"}
       }
     }
   ]

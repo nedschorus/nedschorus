@@ -48,7 +48,6 @@ program.TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 101
 program.TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE = -1
 sys.exit(program.main(arguments))
 '''
-MUTATION_SCRIPT_PATH = SCRIPTS_DIR / "pull-request-mutation-testing-survivors.py"
 
 failures = []
 cases_run = 0
@@ -67,13 +66,13 @@ def check(case_name, condition, detail=""):
 def linux_only_cases_run_here(cases):
     """True on Linux; elsewhere prints why the cases are skipped and returns False.
 
-    Every case that builds or inspects a test sandbox, runs bwrap or reads /proc goes
+    Every case that builds or inspects an nc-test-sandbox, runs bwrap or reads /proc goes
     through this, since only Linux has them. The check at the end of this file runs this
     file and the other runner test files as if on a Mac, and fails a case that does not.
     """
     if sys.platform.startswith("linux"):
         return True
-    print(f"SKIP  {cases}: test sandboxes, bwrap and /proc exist only on Linux")
+    print(f"SKIP  [this machine cannot run it] {cases}: nc-test-sandboxes, bwrap and /proc exist only on Linux")
     return False
 
 
@@ -85,7 +84,6 @@ def load(name, path):
 
 
 runner = load("run_all_test_suites", RUNNER_PATH)
-mutation = load("pull_request_mutation_testing_survivors", MUTATION_SCRIPT_PATH)
 
 
 class Completed:
@@ -227,6 +225,12 @@ check("the report line for a run without the sandbox says so and why",
       and "bwrap is not on PATH" in runner.signal_sandbox_line((), "bwrap is not on PATH"))
 check("the refusal names the program that refused",
       runner.signal_sandbox_refusal("x", "some-program").startswith("some-program: not run"))
+_bwrap_arguments = runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE
+runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE = ("--ro-bind", "/a b", "/a b")
+_bwrap_check = runner.signal_sandbox_refusal("x").split("check that `", 1)[1].split("`", 1)[0]
+runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE = _bwrap_arguments
+check("the bwrap command the refusal says to try keeps a path holding a space as one argument",
+      shlex.split(_bwrap_check) == ["bwrap", "--ro-bind", "/a b", "/a b", "true"], _bwrap_check)
 
 # --- The runner refuses when bwrap is on PATH but broken ---------------------
 
@@ -281,7 +285,15 @@ def scratch_checkout(scratch, suites):
     return repository
 
 
-def run_runner(scratch, repository, path):
+def printed_command(text, prefix):
+    """The arguments a shell gives the command printed after prefix, up to the end of its line."""
+    for line in text.splitlines():
+        if prefix in line:
+            return shlex.split(line.split(prefix, 1)[1])
+    return None
+
+
+def run_runner(scratch, repository, path, extra_arguments=()):
     environment = {name: value for name, value in os.environ.items()
                    if name != runner.SIGNAL_SANDBOX_INSIDE_VARIABLE}
     environment["PATH"] = path
@@ -289,7 +301,7 @@ def run_runner(scratch, repository, path):
         [sys.executable, "-c", ADMISSION_OPENED_DRIVER, str(RUNNER_PATH), "--checkout", str(repository),
          "--log-dir", str(scratch / "logs"),
          "--lock-file", str(scratch / "run.lock"),
-         "--recorded-inputs-directory", str(scratch / "recordings")],
+         "--recorded-inputs-directory", str(scratch / "recordings"), *extra_arguments],
         capture_output=True, text=True, env=environment, stdin=subprocess.DEVNULL, check=False)
     report_file = scratch / "logs" / runner.REPORT_FILE_NAME
     report = report_file.read_text() if report_file.exists() else ""
@@ -314,7 +326,7 @@ if linux_only_cases_run_here("the report's sandbox lines"):
         repository = scratch_checkout(scratch, ["a-test.py"])
         completed, report = run_runner(scratch, repository, str(path_without_bwrap))
         without = "suites run WITHOUT the signal sandbox"
-        check("without bwrap, the run's output and report.txt say the suites ran without "
+        check("without bwrap, the run's output and test-run-report.txt say the suites ran without "
               "the sandbox, and why",
               completed.returncode == 0
               and all(without in text and "bwrap is not on PATH" in text
@@ -324,7 +336,9 @@ if linux_only_cases_run_here("the report's sandbox lines"):
               "PID namespace" not in report, report[-600:])
 
     with tempfile.TemporaryDirectory() as scratch_name:
-        scratch = pathlib.Path(scratch_name)
+        # Resolved, as the runner resolves the checkout it names, where TMPDIR is reached
+        # through a link.
+        scratch = pathlib.Path(scratch_name).resolve()
         fake_bin = scratch / "bin"
         fake_bin.mkdir()
         # Stands in for a working bwrap: skips the sandbox's own arguments, names the
@@ -335,8 +349,8 @@ if linux_only_cases_run_here("the report's sandbox lines"):
             "status_fd=\n"
             "while [ $# -gt 0 ]; do\n"
             "  case \"$1\" in\n"
-            "    --dev-bind|--bind|--ro-bind|--ro-bind-try|--setenv) shift 3 ;;\n"
-            "    --proc|--dev|--tmpfs|--overlay-src|--tmp-overlay|--unsetenv) shift 2 ;;\n"
+            "    --dev-bind|--bind|--ro-bind|--ro-bind-try|--setenv|--symlink) shift 3 ;;\n"
+            "    --proc|--dev|--tmpfs|--dir|--overlay-src|--tmp-overlay|--unsetenv) shift 2 ;;\n"
             "    --json-status-fd) status_fd=$2; shift 2 ;;\n"
             "    --unshare-pid|--unshare-net|--unshare-ipc|--die-with-parent) shift ;;\n"
             "    *) break ;;\n"
@@ -348,31 +362,192 @@ if linux_only_cases_run_here("the report's sandbox lines"):
         repository = scratch_checkout(scratch, ["a-test.py", OUTSIDE_SUITE])
         completed, report = run_runner(
             scratch, repository, f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
-        check("with the sandbox on, report.txt says each suite runs in its own test sandbox, named by the bwrap program",
+        check("with the sandbox on, test-run-report.txt says each suite runs in its own nc-test-sandbox, named by the bwrap program",
               completed.returncode == 0
-              and f"each suite runs in its own test sandbox: {fake_bin / 'bwrap'}" in report,
+              and f"each suite runs in its own nc-test-sandbox: {fake_bin / 'bwrap'}" in report,
               (completed.returncode, report[-600:]))
-        check("with the sandbox on, report.txt names a suite that runs outside it, and why",
+        check("with the sandbox on, test-run-report.txt names a suite that runs outside it, and why",
               f"{OUTSIDE_SUITE} runs WITHOUT the signal sandbox: "
               f"{runner.SUITES_RUN_WITHOUT_ANY_SANDBOX[OUTSIDE_SUITE]}" in report,
               report[-600:])
+        check("a checkout without scripts/run-all-test-suites.py gets the runner's own "
+              "suite sandbox lists, and the report says so",
+              f"{runner.SUITE_SANDBOX_LISTS_SOURCE_LINE_PREFIX}{RUNNER_PATH}, since the "
+              f"checkout has no scripts/run-all-test-suites.py" in report, report[-600:])
 
-# --- The mutation script's test command --------------------------------------
+        # A pull request renames a suite that runs without any sandbox, and its entry in the
+        # list with it; the runner that tests the merged tree is main's, which lists the old path.
+        renamed = "scripts/renamed-by-the-pull-request-test.py"
+        marking_bin = scratch / "marking-bin"
+        marking_bin.mkdir()
+        (marking_bin / "bwrap").write_text(
+            (fake_bin / "bwrap").read_text().replace(
+                'exec "$@"\n', 'export RAN_UNDER_THE_STAND_IN_BWRAP=1\nexec "$@"\n'))
+        (marking_bin / "bwrap").chmod(0o755)
+        renaming = scratch / "renaming"
+        renaming.mkdir()
+        repository = scratch_checkout(renaming, ["a-test.py", renamed])
+        (repository / renamed).write_text(
+            "import os, sys\n"
+            "sys.exit('ran under bwrap' if os.environ.get('RAN_UNDER_THE_STAND_IN_BWRAP') "
+            "else 0)\n")
+        (repository / "scripts" / "run-all-test-suites.py").write_text(
+            RUNNER_PATH.read_text().replace(OUTSIDE_SUITE, renamed))
+        subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(repository), "-c", "user.name=t", "-c",
+                        "user.email=t@t", "commit", "-qm", "the rename"], check=True)
+        completed, report = run_runner(
+            renaming, repository, f"{marking_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+        check("a suite the checkout's own scripts/run-all-test-suites.py lists to run without "
+              "any sandbox, under a path the runner's own list lacks, runs without it, and "
+              "the report says so and names that file as the lists' source",
+              completed.returncode == 0
+              and f"{renamed} runs WITHOUT the signal sandbox: " in report
+              and (f"{runner.SUITE_SANDBOX_LISTS_SOURCE_LINE_PREFIX}"
+                   f"{repository / 'scripts' / 'run-all-test-suites.py'}\n") in report,
+              (completed.returncode, completed.stderr[-600:], report[-1200:]))
 
-command = mutation.test_command_for(["a-test.py"], "/usr/bin/python3",
-                                    ("/usr/bin/bwrap", "--unshare-pid", "--setenv", "X", "1"))
-check("each mutant's suites run inside the sandbox prefix",
-      command == "sh -c '/usr/bin/bwrap --unshare-pid --setenv X 1 /usr/bin/python3 -u a-test.py'",
-      command)
-check("without a sandbox, the mutant's test command is unchanged",
-      mutation.test_command_for(["a-test.py"], "/usr/bin/python3")
-      == "sh -c '/usr/bin/python3 -u a-test.py'")
+        # Each way the checkout's lists cannot be read refuses the run, exit 2.
+        lists_unreadable_cases = (
+            ("is a directory", None, "could not be read (IsADirectoryError"),
+            ("is not UTF-8", b"\xff\n", "is not UTF-8 text (UnicodeDecodeError"),
+            ("is not valid Python", "SUITES_RUN_WITHOUT_ANY_SANDBOX = {\n",
+             "is not valid Python"),
+            ("lacks one list", "SUITES_RUN_WITHOUT_ANY_SANDBOX = {}\n"
+             "SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK = {}\n",
+             "does not assign "
+             "SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY a literal"),
+            ("builds a list by a call", "SUITES_RUN_WITHOUT_ANY_SANDBOX = dict(a='b')\n"
+             "SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY = {}\n"
+             "SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK = {}\n",
+             "does not assign SUITES_RUN_WITHOUT_ANY_SANDBOX a literal"),
+            ("assigns a list that is not a dict", "SUITES_RUN_WITHOUT_ANY_SANDBOX = ['a-test.py']\n"
+             "SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY = {}\n"
+             "SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK = {}\n",
+             "does not assign SUITES_RUN_WITHOUT_ANY_SANDBOX a literal"),
+        )
+        for number, (how, source, refusal) in enumerate(lists_unreadable_cases):
+            # The space shows that each path in a printed shell command stays one argument.
+            case_scratch = scratch / f"unreadable {number}"
+            case_scratch.mkdir()
+            repository = scratch_checkout(case_scratch, ["a-test.py"])
+            lists_file = repository / "scripts" / "run-all-test-suites.py"
+            lists_file.parent.mkdir(exist_ok=True)
+            if source is None:
+                lists_file.mkdir()
+                (lists_file / "kept-test.txt").write_text("so git keeps the directory\n")
+            elif isinstance(source, bytes):
+                lists_file.write_bytes(source)
+            else:
+                lists_file.write_text(source)
+            subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
+            subprocess.run(["git", "-C", str(repository), "-c", "user.name=t", "-c",
+                            "user.email=t@t", "commit", "-qm", how], check=True)
+            completed, report = run_runner(
+                case_scratch, repository, f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+            check(f"when the checkout's scripts/run-all-test-suites.py {how}, the run refuses "
+                  f"with exit 2, names the file, says to rerun the command, and runs no suite",
+                  completed.returncode == runner.EXIT_COULD_NOT_RUN
+                  and f"not run — {lists_file} " in completed.stderr
+                  and refusal in completed.stderr
+                  and "rerun the command you ran." in completed.stderr
+                  and not (case_scratch / "logs" / "a-test.py.log").exists(),
+                  (completed.returncode, completed.stderr[-600:]))
+            restore = ["git", "-C", str(repository), "checkout", "--",
+                       "scripts/run-all-test-suites.py"]
+            if how == "is a directory":
+                check("when the checkout's scripts/run-all-test-suites.py is a directory, the "
+                      "refusal says how to grant read permission and how to move the directory "
+                      "aside and restore the file, each command keeping the checkout path, "
+                      "which holds a space, as one argument, and when to stop and tell the user",
+                      printed_command(completed.stderr, "such as with: ")
+                      == ["chmod", "u+r", str(lists_file)]
+                      and printed_command(completed.stderr, "restore the file with: ")
+                      == ["mv", str(lists_file), f"{lists_file}.moved-aside", "&&", *restore]
+                      and "If neither case fits, a step fails, or this same error appears "
+                          "again after you rerun, stop and tell the user" in completed.stderr
+                      and "UTF-8" not in completed.stderr,
+                      completed.stderr[-1200:])
+            if how == "is not UTF-8":
+                check("when the checkout's scripts/run-all-test-suites.py is not UTF-8, the "
+                      "refusal says to restore it from git, keeping the checkout path, which "
+                      "holds a space, as one argument, or re-save it as UTF-8, and when to "
+                      "stop and tell the user, and gives none of the OSError steps",
+                      printed_command(completed.stderr, "restore it with: ") == restore
+                      and "re-save it as UTF-8, keeping that change.\n" in completed.stderr
+                      and "If a step fails, or this same error appears again after you rerun, "
+                          "stop and tell the user" in completed.stderr
+                      and "chmod" not in completed.stderr and "mv " not in completed.stderr,
+                      completed.stderr[-1200:])
+
+        try:
+            runner.checkout_top_directory(str(repository / "scripts"))
+        except runner.CouldNotRun as error:
+            not_top = str(error)
+        else:
+            not_top = ""
+        check("a --checkout below the checkout's top is refused with the top to pass, kept as "
+              "one argument although its path holds a space",
+              printed_command(not_top, "and its value with: ") == ["--checkout", str(repository)], not_top)
+
+        # A bwrap that cannot build one suite's test sandbox, as when a path it must bind
+        # over vanished, while it builds the run's trial sandbox and every other suite's.
+        unstartable = "unstartable-test.py"
+        failing_bin = scratch / "failing-bin"
+        failing_bin.mkdir()
+        (failing_bin / "bwrap").write_text(
+            (fake_bin / "bwrap").read_text().replace(
+                "done\n",
+                "done\n"
+                f"case \"$*\" in *{unstartable}*)\n"
+                "  echo \"bwrap: Can't create file at /gone.sock: Read-only file system\" >&2\n"
+                "  exit 1 ;;\n"
+                "esac\n", 1))
+        (failing_bin / "bwrap").chmod(0o755)
+        failing_path = f"{failing_bin}{os.pathsep}{os.environ.get('PATH', '')}"
+        for case_name, suites, failing_suite, extra_arguments, expected_exit, summary in (
+                ("a suite whose test sandbox did not start, beside one that passed",
+                 ["a-test.py", unstartable], None, (), runner.EXIT_COULD_NOT_RUN,
+                 "SUMMARY: 1 passed, 0 failed, 1 not run, 2 total"),
+                ("a suite whose test sandbox did not start, beside one that failed",
+                 ["a-test.py", "b-test.py", unstartable], "b-test.py", (),
+                 runner.EXIT_SOME_FAILED, "SUMMARY: 1 passed, 1 failed, 1 not run, 3 total"),
+                # git lists z-test.py last, so with -j 1 it starts after the suite not run.
+                ("a suite whose test sandbox did not start, with --stop-at-first-failing-suite, "
+                 "which it does not stop",
+                 [unstartable, "z-test.py"], None, ("--stop-at-first-failing-suite", "-j", "1"),
+                 runner.EXIT_COULD_NOT_RUN,
+                 "SUMMARY: 1 passed, 0 failed, 1 not run, 2 total")):
+            case_scratch = scratch / f"not run {expected_exit} {len(suites)} {len(extra_arguments)}"
+            case_scratch.mkdir()
+            repository = scratch_checkout(case_scratch, suites)
+            if failing_suite is not None:
+                (repository / failing_suite).write_text("import sys\nsys.exit(1)\n")
+                subprocess.run(["git", "-C", str(repository), "-c", "user.name=t", "-c",
+                                "user.email=t@t", "commit", "-qam", "fails"], check=True)
+            completed, report = run_runner(case_scratch, repository, failing_path,
+                                           extra_arguments)
+            passing = next(suite for suite in suites if suite not in (unstartable, failing_suite))
+            check(f"{case_name}: the run exits {expected_exit}, and the suite is NOT RUN, "
+                  f"listed with its log under the suites not run, and counted as not run",
+                  completed.returncode == expected_exit
+                  and any(line.startswith(f"NOT RUN {unstartable} did not start: bwrap could "
+                                          f"not build its nc-test-sandbox (exit 1) (")
+                          for line in report.splitlines())
+                  and any(line.startswith(f"NOT RUN {unstartable} did not start: ")
+                          and " — log " in line for line in report.splitlines())
+                  and "1 not run, because bwrap could not build the nc-test-sandbox" in report
+                  and not any(line.startswith(f"FAIL {unstartable}")
+                              for line in report.splitlines())
+                  and summary in report
+                  and f"PASS {passing} " in report,
+                  (completed.returncode, completed.stderr[-600:], report[-1500:]))
 
 # --- A signalled suite inside bwrap is reported as the signal ----------------
 
 with tempfile.TemporaryDirectory() as scratch_name:
     scratch = pathlib.Path(scratch_name)
-    # A checkout, since a test sandbox keeps the checkout's git directory read-only.
+    # A checkout, since an nc-test-sandbox keeps the checkout's git directory read-only.
     subprocess.run(["git", "init", "-q"], cwd=scratch, check=True)
     (scratch / "dies-test.sh").write_text("kill -TERM $$\n")
     (scratch / "exits-143-test.sh").write_text("exit 143\n")
@@ -413,12 +588,6 @@ for suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX:
     check(f"the suite listed to run outside the sandbox exists: {suite}",
           (SCRIPTS_DIR.parent / suite).is_file())
 
-command = mutation.test_command_for(["a-test.py", "b-test.py"], "/usr/bin/python3",
-                                    ("/usr/bin/bwrap", "--unshare-pid"), {"b-test.py": "why"})
-check("a mutant's suite listed to run outside the sandbox runs without the prefix",
-      command == "sh -c '/usr/bin/bwrap --unshare-pid /usr/bin/python3 -u a-test.py "
-                 "&& /usr/bin/python3 -u b-test.py'", command)
-
 
 # --- Covers over listening sockets that vanish or cannot be reached -----------
 
@@ -430,7 +599,7 @@ def proc_net_unix_listing(paths):
     return "\n".join(rows) + "\n"
 
 
-if linux_only_cases_run_here("the covers over listening sockets, and a test sandbox that cannot start"):
+if linux_only_cases_run_here("the covers over listening sockets, and an nc-test-sandbox that cannot start"):
     with tempfile.TemporaryDirectory(dir=pathlib.Path.home()) as home_scratch_name, \
             tempfile.TemporaryDirectory() as scratch_name:
         home_scratch = pathlib.Path(home_scratch_name)
@@ -465,12 +634,12 @@ if linux_only_cases_run_here("the covers over listening sockets, and a test sand
                   line is not None and unreachable_path in line and vanished not in line
                   and "the run goes on" in line, line)
             check("one uncovered listening socket is named in the singular",
-                  line is not None and line.startswith("a listening socket that the test sandbox does not hide")
+                  line is not None and line.startswith("a listening socket that the nc-test-sandbox does not hide")
                   and "cannot reach it and" in line, line)
             listing.write_text(proc_net_unix_listing([unreachable_path, unreachable_path + "2"]))
             line = runner.uncovered_listening_sockets_report_line_or_none(str(listing))
             check("two uncovered listening sockets are named in the plural",
-                  line is not None and line.startswith("listening sockets that the test sandbox does not hide")
+                  line is not None and line.startswith("listening sockets that the nc-test-sandbox does not hide")
                   and "cannot reach them and" in line, line)
         else:
             print("SKIP  an unreachable socket: root can reach every path")
@@ -493,21 +662,36 @@ if linux_only_cases_run_here("the covers over listening sockets, and a test sand
                                       sandbox_prefix=(str(fake_bin / "bwrap"),),
                                       note_suite_process=lambda *arguments, **options: None)
         text = failed["log"].read_text()
-        check("a suite whose test sandbox could not start fails, with bwrap's message kept in its log",
+        check("a suite whose nc-test-sandbox could not start fails, with bwrap's message kept in its log",
               failed["exit"] != 0 and "Can't create file at /var/gone.sock" in text, text)
-        check("a suite whose test sandbox could not start says so plainly in its log, and what to do",
-              "the suite did not start: bwrap could not build its test sandbox" in text
+        check("a suite whose nc-test-sandbox could not start says so plainly in its log, and what to do",
+              "the suite did not start: bwrap could not build its nc-test-sandbox" in text
               and "run the suite again" in text, text)
+        line = runner.suite_line({**failed, "admitted": False})
+        check("a suite whose nc-test-sandbox could not start says so on its NOT RUN line, which "
+              "judges no suite failing",
+              line.startswith("NOT RUN plain-test.sh did not start: bwrap could not build its "
+                              "nc-test-sandbox (exit 1)")
+              and not runner.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(line), line)
+        # A sandbox program that names no suite process and still exits 0.
+        (fake_bin / "bwrap").write_text("#!/bin/sh\nexit 0\n")
+        passed = runner.run_one_suite(scratch, sys.executable, "plain-test.sh", scratch,
+                                      sandbox_prefix=(str(fake_bin / "bwrap"),),
+                                      note_suite_process=lambda *arguments, **options: None)
+        check("a suite that exits 0 though no suite process was named is PASS, not NOT RUN",
+              passed["exit"] == 0 and not passed.get("test sandbox did not start")
+              and runner.suite_line({**passed, "admitted": False}).startswith(
+                  "PASS plain-test.sh"), passed)
 
 
 # --- Hiding by default: fixed directories ----------------------------------------
 
 # Written out here, not read from the runner, so a runner that stops hiding one fails a case:
 # /mnt holds the backup drive's snapshots of the home directory, credentials included.
-if linux_only_cases_run_here("the fixed directories every test sandbox hides"):
+if linux_only_cases_run_here("the fixed directories every nc-test-sandbox hides"):
     fixed_pairs = list(zip(runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE, runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE[1:]))
     for directory in ("/mnt", "/media", "/var/snap"):
-        check(f"every test sandbox hides {directory} whole with an empty tmpfs",
+        check(f"every nc-test-sandbox hides {directory} whole with an empty tmpfs",
               ("--tmpfs", directory) in fixed_pairs, runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE)
 
 # --- Hiding by default: writable directories, and sockets left visible ---------
@@ -576,7 +760,7 @@ def stub_interpreter(path, loaded, status=0):
     return str(path)
 
 
-if linux_only_cases_run_here("what a suite's test sandbox shows and hides"):
+if linux_only_cases_run_here("what a suite's nc-test-sandbox shows and hides"):
     with tempfile.TemporaryDirectory(
             dir=runner.REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX) as home_name:
         home_scratch = pathlib.Path(home_name).resolve()
@@ -836,7 +1020,7 @@ MACOS_PROBE = (
     "print(' '.join(results))\n")
 
 if sys.platform != "darwin":
-    print("SKIP  the end-to-end sandbox-exec case: sandbox-exec exists only on macOS")
+    print("SKIP  [this machine cannot run it] the end-to-end sandbox-exec case: sandbox-exec exists only on macOS")
 # Inside an inherited sandbox, the probe signals the process outside it that the
 # runner named, and this file's own process, which shares the sandbox, is allowed.
 MACOS_INHERITED_SANDBOX_PROBE = (
@@ -897,7 +1081,7 @@ if sys.platform == "darwin" and os.environ.get(runner.SIGNAL_SANDBOX_INSIDE_VARI
     check("on macOS, inside the runner's sandbox-exec, a signal to the runner outside it is "
           "refused, while the probe stops its own child", passed, detail)
 elif sys.platform == "darwin" and not os.path.isfile(runner.SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC):
-    print(f"SKIP  the end-to-end sandbox-exec case: {runner.SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC} "
+    print(f"SKIP  [this machine cannot run it] the end-to-end sandbox-exec case: {runner.SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC} "
           f"is not on this Mac")
 elif sys.platform == "darwin":
     # Not confined yet: a process in a fresh sandbox-exec may signal neither this

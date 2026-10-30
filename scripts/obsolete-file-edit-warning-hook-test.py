@@ -4,7 +4,7 @@
 Run: python3 scripts/obsolete-file-edit-warning-hook-test.py
 Prints one line per case and exits non-zero if any case fails. Every case
 runs against throwaway repositories under a temporary directory: an "origin"
-reached by path, and a clone on a topic branch standing in for a seat's
+reached by path, and a clone on an nc-topic-branch standing in for a seat's
 checkout.
 
 Two things are asserted by INSTRUMENT rather than by inspection, because
@@ -34,6 +34,13 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 SCRIPT_PATH = Path(__file__).with_name("obsolete-file-edit-warning-hook.py")
 
 failures = []
@@ -48,8 +55,13 @@ def check(case_name, condition, detail=""):
 
 
 def git(arguments, cwd: Path):
-    return subprocess.run(["git", *arguments], cwd=str(cwd),
-                          capture_output=True, text=True, check=False)
+    """Run a fixture's git step; a step that fails stops the suite, with git's error."""
+    result = subprocess.run(["git", *arguments], cwd=str(cwd),
+                            capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise SystemExit(f"ABORT: fixture step git {' '.join(arguments)} in {cwd} "
+                         f"exited {result.returncode}: {result.stderr.strip()}")
+    return result
 
 
 def configure_identity(repository: Path):
@@ -114,6 +126,48 @@ def silent(result) -> bool:
     return result.returncode == 0 and result.stdout.strip() == ""
 
 
+LOCK_FILE_WAIT_CLAUSE = next_step_lines.lock_file_named_by_git_error_wait_then_rerun_instruction(
+    "the command below this paragraph")
+GIT_FAILURE_RERUN_LINE = (
+    "A later run of this hook checks only the file that run's Edit or Write touched, so check "
+    "{path} by running the command printed on its own line below this paragraph. If git's error above names no lock file, run that "
+    "command now. "
+    + next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION + ", "
+    + LOCK_FILE_WAIT_CLAUSE.replace("{", "{{").replace("}", "}}")
+    + ". The command "
+    "prints nothing when there is nothing new to tell you about the file. Otherwise it prints JSON "
+    "whose hookSpecificOutput.additionalContext field holds one of two texts: this hook's warning, "
+    "whose instructions you follow; or, when git fails again, a git-failure message like this one, "
+    "and the last line here says what to do then.")
+GIT_FAILURE_RERUN_FAILS_TOO_LINE = (
+    next_step_lines.hook_agent_instruction_if_rerun_command_reports_git_failure_tell_user_both_outputs_line(
+        "obsolete-file-edit-warning-hook:"))
+
+
+def named_rerun_command(result, edited_path) -> str:
+    """The command a git-failure report tells the agent to run on edited_path, or "" when the report names none."""
+    lines = agent_text(result).splitlines()
+    if len(lines) != 4 or lines[1] != GIT_FAILURE_RERUN_LINE.format(path=edited_path):
+        return ""
+    return lines[2]
+
+
+def reported_git_failure(result, command_words, git_error, edited_path) -> bool:
+    """A git failure: exit 0 and nothing on stderr, because Claude Code never passes a
+    PostToolUse exit 1's stderr to the model; in additionalContext, a cause line naming
+    the git command and quoting git's error, then a line giving the command that reruns
+    the hook on the edited file and the command itself, then the line for when that
+    rerun fails too."""
+    lines = agent_text(result).splitlines()
+    return (result.returncode == 0 and result.stderr == "" and len(lines) == 4
+            and lines[0].startswith("obsolete-file-edit-warning-hook: git " + command_words)
+            and git_error in lines[0]
+            and lines[0].endswith(", so the edited file was not checked against "
+                                  "origin/main; the edit itself succeeded.")
+            and named_rerun_command(result, edited_path) != ""
+            and lines[3] == GIT_FAILURE_RERUN_FAILS_TOO_LINE)
+
+
 def reported(result, fault_words) -> bool:
     """A fault: exit 1, no warning on stdout, one stderr line naming the hook and the fault."""
     lines = result.stderr.splitlines()
@@ -144,11 +198,24 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         f'exec "{real_git}" "$@"\n', encoding="utf-8")
     (recording_git_directory / "git").chmod(0o755)
 
+    def git_failing_when(name: str, condition: str, exit_code: int = 128):
+        """A directory holding a `git` that, when the shell test condition holds,
+        prints "fatal: shimmed <name>" and exits exit_code, and otherwise runs the
+        real git."""
+        directory = tmp / name
+        directory.mkdir()
+        (directory / "git").write_text(
+            "#!/bin/sh\n"
+            f"if {condition}; then\n"
+            f'  printf "fatal: shimmed {name}\\n" >&2\n'
+            f"  exit {exit_code}\n"
+            "fi\n"
+            f'exec "{real_git}" "$@"\n', encoding="utf-8")
+        (directory / "git").chmod(0o755)
+        return directory
+
     # A `git` that always fails, and a PATH with no git on it at all.
-    failing_git_directory = tmp / "failing-git"
-    failing_git_directory.mkdir()
-    (failing_git_directory / "git").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-    (failing_git_directory / "git").chmod(0o755)
+    failing_git_directory = git_failing_when("failing-git", "true")
     no_git_directory = tmp / "no-git-on-path"
     no_git_directory.mkdir()
 
@@ -163,7 +230,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         f'printf "%s\\n" "$1" >> "{every_call_log}"\n'
         'if [ "$1" = "diff" ]; then\n'
         '  printf "shimmed: this diff fails, every other call does not\\n" >&2\n'
-        "  exit 3\n"
+        "  exit 128\n"
         "fi\n"
         f'exec "{real_git}" "$@"\n', encoding="utf-8")
     (diff_failing_git_directory / "git").chmod(0o755)
@@ -176,7 +243,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                 log.read_text(encoding="utf-8").splitlines()].count(subcommand)
 
     # The "remote", and a clone standing in for a seat's checkout, on its own
-    # topic branch cut from main.
+    # nc-topic-branch cut from main.
     origin = tmp / "origin-repo"
     origin.mkdir()
     git(["init", "-q", "-b", "main"], origin)
@@ -493,22 +560,53 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           silent(run_hook(vanished)), "")
 
     # -----------------------------------------------------------------------
-    # GIT ITSELF FAILING. A shim that exits 1, and a PATH carrying no git.
-    # Both are silence, not a traceback on the agent's tool call.
+    # GIT ITSELF FAILING: exit 0, the cause and what to do next in additionalContext,
+    # never the silence that reads as "not obsolete".
     # -----------------------------------------------------------------------
     result = run_hook(hook_payload(checkout, edited_file), path_prefix=failing_git_directory)
-    check("a git that exits 1 on every call exits 0 and prints nothing",
-          silent(result), result.stdout + result.stderr)
+    check("a git that fails on every call is reported in additionalContext, exit 0",
+          reported_git_failure(result, "rev-parse", "fatal: shimmed failing-git", edited_file),
+          result.stdout + result.stderr)
+    rerun_line = (agent_text(result).splitlines() + ["", ""])[1]
+    check("a git failure's rerun line says to run the command now when git names no lock file, "
+          "and gives the lock-file wait otherwise",
+          "names no lock file, run that command now. " + next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION
+          + ", " + LOCK_FILE_WAIT_CLAUSE + "." in rerun_line, rerun_line)
+    check("a git failure's rerun line says what the command prints when git fails again "
+          "and points to the closing line",
+          "or, when git fails again, a git-failure message like this one, and the last line here "
+          "says what to do then." in rerun_line, rerun_line)
 
     result = run_hook(hook_payload(checkout, edited_file),
                       path_replacement=no_git_directory)
-    check("no git on PATH at all exits 0 and prints nothing",
-          silent(result), result.stdout + result.stderr)
+    check("no git on PATH at all is reported in additionalContext, exit 0",
+          reported_git_failure(result, "rev-parse --show-toplevel", "FileNotFoundError", edited_file),
+          result.stdout + result.stderr)
+
+    # Only the four-answer rev-parse fails; HEAD and origin/main both exist, so
+    # the failure is git's, not a missing revision.
+    checkout_facts_failing_git_directory = git_failing_when(
+        "checkout-facts-failing-git", '[ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]')
+    result = run_hook(hook_payload(checkout, edited_file),
+                      path_prefix=checkout_facts_failing_git_directory)
+    check("a failed rev-parse of the checkout's facts, with HEAD and origin/main present, "
+          "is reported in additionalContext, exit 0",
+          reported_git_failure(result, "rev-parse --show-toplevel --absolute-git-dir HEAD "
+                               "origin/main", "fatal: shimmed checkout-facts-failing-git", edited_file),
+          result.stdout + result.stderr)
+
+    no_commit_repository = tmp / "no-commit-repository"
+    no_commit_repository.mkdir()
+    git(["init", "-q", "-b", "main"], no_commit_repository)
+    (no_commit_repository / "first.py").write_text("not committed\n", encoding="utf-8")
+    check("a repository with no commit yet exits 0 and prints nothing",
+          silent(run_hook(hook_payload(no_commit_repository,
+                                       no_commit_repository / "first.py"))), "")
 
     # -----------------------------------------------------------------------
     # A FAILED DIFF IS NOT AN EMPTY ANSWER (user-ruled 2026-09-17). git answers
     # every other call here, so the hook gets as far as the diff and the diff
-    # alone fails. It must stay silent AND cache nothing: a failure written to
+    # alone fails. It must be reported AND cache nothing: a failure written to
     # the cache as "nothing obsolete" would silence this hook for every edit
     # until the next commit or fetch. The file below is one the checkout is
     # genuinely behind on, so anything cached would be wrong as well as sticky.
@@ -518,8 +616,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     call_log.unlink()
     result = run_hook(hook_payload(checkout, edited_file),
                       path_prefix=diff_failing_git_directory)
-    check("a git whose diff fails exits 0 and prints nothing",
-          silent(result), result.stdout + result.stderr)
+    check("a git whose diff fails is reported in additionalContext with git's error, exit 0",
+          reported_git_failure(result, "diff -z --name-only --no-renames HEAD...origin/main",
+                               "shimmed: this diff fails, every other call does not", edited_file),
+          result.stdout + result.stderr)
     check("the failed diff was actually reached, not short-circuited earlier",
           recorded_calls("diff") == 1, call_log.read_text(encoding="utf-8"))
     check("a failed diff writes NO cache file",
@@ -530,8 +630,21 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_hook(hook_payload(checkout, edited_file),
                       path_prefix=diff_failing_git_directory)
     check("and the NEXT call attempts the diff again rather than trusting a cache",
-          recorded_calls("diff") == 1 and silent(result),
-          call_log.read_text(encoding="utf-8") + result.stdout)
+          recorded_calls("diff") == 1 and reported_git_failure(
+              result, "diff -z --name-only --no-renames HEAD...origin/main",
+              "shimmed: this diff fails, every other call does not", edited_file),
+          call_log.read_text(encoding="utf-8") + result.stdout + result.stderr)
+
+    # The skipped file is checked by the command the report names, run once git works again.
+    rerun = subprocess.run(named_rerun_command(result, edited_file) or "false", shell=True,
+                           capture_output=True, text=True, check=False, cwd=str(tmp))
+    check("the command a failed diff's report names reruns the hook on the edited file, "
+          "which then warns that origin/main has changed the file",
+          rerun.returncode == 0 and agent_text(rerun).startswith(
+              f"obsolete-file-edit-warning: you just changed {edited_file.relative_to(checkout)}, "),
+          rerun.stdout + rerun.stderr)
+    if cache_path.exists():
+        cache_path.unlink()
 
     call_log.unlink()
     result = run_hook(hook_payload(checkout, edited_file),
@@ -539,6 +652,23 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("once git answers again, the warning comes back and the cache is written",
           "scripts/recover-crashed-seats.py" in agent_text(result) and cache_path.exists(),
           result.stdout + result.stderr)
+
+    # A COMMIT COUNT GIT CANNOT GIVE is said in the warning, which is given again
+    # at the next edit rather than held back as a repeat.
+    count_failing_git_directory = git_failing_when(
+        "count-failing-git", '[ "$1" = "rev-list" ] && [ "$3" = "HEAD..origin/main" ]')
+    count_failure_warnings = [
+        agent_text(run_hook(hook_payload(checkout, edited_file),
+                            path_prefix=count_failing_git_directory))
+        for _ in range(2)]
+    check("a commit count git cannot give is said in the warning, with git's error",
+          "so your edit is built on an old copy of the file. git could not count the "
+          "commits on origin/main that changed the file (git rev-list --count "
+          "HEAD..origin/main -- scripts/recover-crashed-seats.py in " in count_failure_warnings[0]
+          and "fatal: shimmed count-failing-git)). This branch has never been pushed"
+          in count_failure_warnings[0], count_failure_warnings[0])
+    check("the count-failure warning is given again at the next edit",
+          count_failure_warnings[1] == count_failure_warnings[0], count_failure_warnings[1])
 
     # -----------------------------------------------------------------------
     # A FILE MAIN RENAMED AWAY from the path this branch still holds it at.
@@ -560,8 +690,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the branch still holds the renamed file at the old path, so the case is real",
           renamed_away_file.is_file(), str(renamed_away_file))
     check("and origin/main no longer has that path at all, so an edit there must conflict",
-          git(["cat-file", "-e", "origin/main:scripts/main-will-rename-this.py"],
-              checkout).returncode != 0,
+          subprocess.run(["git", "cat-file", "-e",
+                          "origin/main:scripts/main-will-rename-this.py"],
+                         cwd=str(checkout), capture_output=True, check=False).returncode != 0,
           "origin/main still has scripts/main-will-rename-this.py")
     result = run_hook(hook_payload(checkout, renamed_away_file),
                       path_prefix=recording_git_directory)
@@ -745,6 +876,52 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "not as a deleted file",
               "git could not read lib/shared.py on origin/main (" in warning
               and "no longer has" not in warning, warning)
+
+    # THE OVERLAP CHECK'S OWN GIT STEPS failing: each is said in the warning,
+    # never dropped, so the agent is not left believing the check ran.
+    for case_name, shim_name, condition, exit_code, command_words in (
+            ("a merge base git cannot find", "merge-base-failing-git",
+             '[ "$1" = "merge-base" ]', 128, "git merge-base HEAD origin/main"),
+            ("a merge-base copy git cannot read", "base-copy-failing-git",
+             '[ "$1" = "show" ] && [ "${2#origin/main:}" = "$2" ]', 128, "git show "),
+            ("a git merge-file that fails", "merge-file-failing-git",
+             '[ "$1" = "merge-file" ]', 255, "git merge-file -p -q ")):
+        shim_directory = git_failing_when(shim_name, condition, exit_code)
+        result = run_hook(hook_payload(detached, shared_file), path_prefix=shim_directory)
+        last_line = agent_text(result).split("\n")[-1]
+        check(f"detached: {case_name} is said in the warning, with git's error, exit 0",
+              result.returncode == 0
+              and last_line.startswith("git could not tell whether main's changes to "
+                                       "lib/shared.py overlap this checkout's copy ("
+                                       + command_words)
+              and f"fatal: shimmed {shim_name})" in last_line
+              and last_line.endswith(": stop and tell the user before you make the branch "
+                                     "or commit."), result.stdout + result.stderr)
+        repeated = run_hook(hook_payload(detached, shared_file), path_prefix=shim_directory)
+        check(f"detached: {case_name} is said again at the next edit",
+              agent_text(repeated).split("\n")[-1].startswith(
+                  "git could not tell whether main's changes to lib/shared.py overlap"),
+              agent_text(repeated))
+
+    no_common_ancestor_git_directory = git_failing_when(
+        "no-common-ancestor-git", '[ "$1" = "merge-base" ]', 1)
+    lines = agent_text(run_hook(hook_payload(detached, shared_file),
+                                path_prefix=no_common_ancestor_git_directory)).split("\n")
+    check("detached: no merge base at all, git merge-base's exit 1, gives no overlap line",
+          len(lines) == 2 and lines[1].startswith("This checkout is on a detached HEAD"),
+          "\n".join(lines))
+
+    commit_file(detached_origin, "lib/added-on-main.py", "main's new file\n", "main adds a file")
+    git(["fetch", "-q", "origin"], detached)
+    added_file = detached / "lib/added-on-main.py"
+    added_file.write_text("the agent's own copy\n", encoding="utf-8")
+    result = run_hook(hook_payload(detached, added_file))
+    lines = agent_text(result).split("\n")
+    added_file.unlink()
+    check("detached: a file the merge base lacks gives no overlap line, and no failure",
+          result.returncode == 0 and len(lines) == 2
+          and lines[1].startswith("This checkout is on a detached HEAD"),
+          result.stdout + result.stderr)
 
     branch_state_failing_git_directory = tmp / "branch-state-failing-git"
     branch_state_failing_git_directory.mkdir()

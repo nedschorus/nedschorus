@@ -33,7 +33,8 @@ at low. The measurements: about 100-110 s per document (single runs on a
 658-word skill and a 1,967-word walk draft); on the ghi-write candidate defect
 list, medium found 42% of the rows against 19% at low, and medium and high hit
 the same rows. It is the one cold-read-tier this launcher pins. The `deep` and
-`second` cold-read-tiers stay on the Claude and Codex launchers, and this
+`second-strongest-model` (the agent-binary's second-strongest model)
+cold-read-tiers stay on the Claude and Codex launchers, and this
 launcher refuses them (exit 64 from argparse) rather than running a Gemini
 model under a stamp that names a cold-read-tier the roster never measured it on.
 
@@ -46,7 +47,10 @@ committed): `agy --add-dir <repo> --dangerously-skip-permissions --model <id>
 repository's AGENTS.md does not load. `--dangerously-skip-permissions` is what
 lets the Write of the report happen headless. Antigravity's model ids carry the
 effort as a suffix (gemini-3.8-flash-{low,medium,high}); `--effort` is passed
-as well, exactly as the campaign passed it.
+as well, exactly as the campaign passed it. agy does not always stop at
+`--print-timeout`, so the cell runs agy in a process group of its own and kills
+that group 60 seconds after agy's own deadline; the attempt then fails with
+the cause `timed-out`, like any other failed attempt.
 
 THE CHAT-INSTEAD-OF-FILE QUIRK, and how it is handled. The campaign measured
 that gemini-3.8-flash sometimes answers the whole review in chat instead of
@@ -92,6 +96,18 @@ logged in with the real files masked.
 With no such sandbox on the machine, this program refuses before agy runs:
 agy is never run unguarded.
 
+THE GEMINI API KEY. agy's settings name the Gemini model provider, so agy
+needs GEMINI_API_KEY in its environment. When the variable is unset or empty,
+this program reads the key from the file ~/.config/nedschorus/gemini-api.key,
+a fixed path and not one an environment variable can change, strips the
+surrounding whitespace, and gives the key to agy's environment alone; a value
+the caller set is passed on unchanged. The file is read here, outside the
+sandbox, because the sandbox masks ~/.config/nedschorus/. When the variable is
+unset or empty and the file is missing, unreadable, not UTF-8 text, or empty once stripped,
+agy runs
+without a key and fails, and the cell's cause line names the file and why it
+gave no key. The key itself is never printed.
+
 WHY THIS LEG'S STAMP CARRIES NO `tokens=` FIELD. The Antigravity CLI prints
 no "tokens used" line the way the Codex CLI does, so the field is omitted
 rather than filled with a zero; if it starts printing one, the shared parser in
@@ -99,6 +115,8 @@ nc-systems/cold-read/cold-read-cell-common.py picks it up with no change here.
 """
 
 import importlib.util
+import json
+import os
 import pathlib
 import re
 import shutil
@@ -122,7 +140,20 @@ TIER_TO_REASONING_EFFORT = {
     "fast": "medium",
 }
 
-AGY_PRINT_TIMEOUT = "30m"
+COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60
+AGY_PRINT_TIMEOUT = f"{COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS // 60}m"
+# agy does not always honour --print-timeout, so the cell kills agy's process
+# group this long after agy's own deadline. The fast read on the Mac sizes its
+# ssh time limit from the sum.
+COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS = 60
+COLD_READ_AGY_CELL_PER_MODEL_RUN_KILL_AFTER_SECONDS = (
+    COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS
+    + COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS)
+
+GEMINI_API_KEY_FILE = pathlib.Path.home() / ".config" / "nedschorus" / "gemini-api.key"
+AGY_MISSING_GEMINI_API_KEY_LINE_PREFIX = (
+    'modelProvider is set to "gemini" in settings.json, '
+    "but the GEMINI_API_KEY environment variable is not set")
 
 # Exclude brief acknowledgements from stdout report recovery.
 STDOUT_REVIEW_MINIMUM_WORDS = 120
@@ -133,6 +164,32 @@ def stdout_is_a_review(runtime_stdout: str) -> str:
     if len(runtime_stdout.split()) >= STDOUT_REVIEW_MINIMUM_WORDS:
         return runtime_stdout
     return ""
+
+
+def agy_environment_and_key_file_problem(environment) -> tuple:
+    """Return (agy's environment, why GEMINI_API_KEY_FILE gave no key or None)."""
+    if environment.get("GEMINI_API_KEY"):
+        return dict(environment), None
+    try:
+        key = GEMINI_API_KEY_FILE.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        return dict(environment), error.strerror or str(error)
+    except UnicodeDecodeError:
+        # The error's own text quotes a byte of the file, which may be key.
+        return dict(environment), "the file is not UTF-8 text"
+    if not key:
+        return dict(environment), "the file is empty"
+    return {**environment, "GEMINI_API_KEY": key}, None
+
+
+def missing_key_failure_texts(key_file_problem):
+    """Return the recognised-failure callback naming the key file agy lacked."""
+    detail = (f"GEMINI_API_KEY is not set, and {GEMINI_API_KEY_FILE} gave no key: "
+              f"{key_file_problem}")
+    def recognised_failure_texts_for_model(model: str) -> list:
+        return [common.RecognisedFailureText(
+            "logged-out", AGY_MISSING_GEMINI_API_KEY_LINE_PREFIX, detail)]
+    return recognised_failure_texts_for_model
 
 
 def credential_sandbox_program(platform: str = sys.platform):
@@ -156,11 +213,31 @@ def sandbox_exec_profile() -> str:
     return "(version 1)(allow default)(deny file-read* file-write* " + "".join(rules) + ")"
 
 
-def credential_sandbox_prefix(platform: str = sys.platform) -> list:
-    """Return the sandbox argv prefix for agy."""
+def credential_sandbox_prefix(platform: str = sys.platform, *,
+                              writable_paths=None, network: bool = True) -> list:
+    """Return the sandbox argv prefix, optionally restricting writes and network.
+
+    writable_paths contains (path, is_directory) pairs; None preserves the
+    cold-read-cell's write access. Credential denials override write grants.
+    """
     if platform == "darwin":
-        return ["sandbox-exec", "-p", sandbox_exec_profile()]
-    prefix = ["bwrap", "--dev-bind", "/", "/"]
+        profile = sandbox_exec_profile()
+        if writable_paths is not None:
+            exceptions = "".join(
+                f'(require-not ({"subpath" if directory else "literal"} '
+                f'{json.dumps(str(path))}))' for path, directory in writable_paths)
+            profile += f"(deny file-write* (require-all {exceptions}))"
+        if not network:
+            profile += "(deny network*)"
+        return ["sandbox-exec", "-p", profile]
+    prefix = ["bwrap", "--dev-bind" if writable_paths is None else "--ro-bind", "/", "/"]
+    if writable_paths is not None:
+        # --ro-bind mounts / nodev, which leaves /dev/null and /dev/urandom unusable.
+        prefix += ["--dev", "/dev"]
+        for path, _directory in writable_paths:
+            prefix += ["--bind", str(path), str(path)]
+    if not network:
+        prefix += ["--unshare-net"]
     for directory in common.credential_directories_present():
         prefix += ["--tmpfs", directory]
     for path in (common.credential_files_found_now()
@@ -200,6 +277,7 @@ def main() -> int:
               f"{PROGRAM}: if you cannot install it, run this cold read on the Mac.",
               file=sys.stderr)
         return common.EXIT_BAD_INVOCATION
+    agy_environment, key_file_problem = agy_environment_and_key_file_problem(os.environ)
     return common.run_cell(
         program=PROGRAM, runtime="agy", description=__doc__,
         model_help="explicit Antigravity model id (effort suffix included, "
@@ -208,6 +286,10 @@ def main() -> int:
         tier_to_effort=TIER_TO_REASONING_EFFORT,
         invocation_builder=invocation_builder,
         recover_report_from_stdout=stdout_is_a_review,
+        recognised_failure_texts_for_model=(
+            missing_key_failure_texts(key_file_problem) if key_file_problem else None),
+        child_environment=agy_environment,
+        per_model_run_timeout_seconds=COLD_READ_AGY_CELL_PER_MODEL_RUN_KILL_AFTER_SECONDS,
     )
 
 

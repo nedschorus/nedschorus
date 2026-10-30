@@ -189,6 +189,28 @@ def ordinary_hyphenated_words(checkout: Path):
     return set(ORDINARY_HYPHENATED_WORD_LINE_PATTERN.findall(text))
 
 
+def listed_word_or_its_form(phrase: str, listed_words) -> bool:
+    """Say whether phrase is a listed word or its -s, -ed or -ing form, such as re-runs,
+    re-running, near-misses or hard-coding.
+
+    The spelling rules are loose, so a misspelt form of a listed word also passes.
+    """
+    if phrase in listed_words:
+        return True
+    for suffix in ("s", "es", "d", "ed", "ing"):
+        if not phrase.endswith(suffix):
+            continue
+        stem = phrase[:-len(suffix)]
+        bases = {stem}
+        if suffix in ("ed", "ing") and len(stem) >= 2 and stem[-1] == stem[-2]:
+            bases.add(stem[:-1])
+        if suffix == "ing":
+            bases.add(stem + "e")
+        if bases & listed_words:
+            return True
+    return False
+
+
 def candidates_in_file(path: str, text: str, checkout: Path, main_commit: str):
     """Return the (kind, name) candidates one file defines, before any check against main."""
     suffix = PurePosixPath(path).suffix
@@ -264,7 +286,7 @@ def new_shared_names(checkout: Path, branch_names=(), already_reported=frozenset
             if f"{kind}\t{name}" in already_reported:
                 continue
             if kind == KIND_MARKDOWN_HYPHENATED_PHRASE and (
-                    name in known_terms or name in exempt_phrases):
+                    name in known_terms or listed_word_or_its_form(name, exempt_phrases)):
                 continue
             candidates.append((path, kind, name))
     for stale in set(file_cache) - set(paths):

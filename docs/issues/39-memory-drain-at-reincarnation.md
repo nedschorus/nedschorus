@@ -1,5 +1,6 @@
 ---
 issue: "[Memory: a daily review of both memory stores with the user](https://github.com/nedschorus/nedschorus/issues/39)"
+kind: design
 ---
 
 # Memory: a daily review of both memory stores with the user
@@ -8,7 +9,7 @@ The working document of issue [Memory: a daily review of both memory stores with
 
 ## Outcome
 
-PR [From noon Pacific, a reincarnated Mac seat is asked for the day's review of both memory stores](https://github.com/nedschorus/nedschorus/pull/823) builds the daily review described in the next section. The line is `memory_review_due_lines` in `nc-systems/handoff/handoff-supervisor.py`, and the marks are written by `nc-systems/handoff/daily-memory-review-mark.py`.
+PR [From noon Pacific, a reincarnated Mac seat is asked for the day's review of both memory stores](https://github.com/nedschorus/nedschorus/pull/823) builds the daily review described in the next section. The line is `memory_review_due_lines` in `nc-systems/handoff/handoff-supervisor.py`, and the marks are written by `nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py`.
 
 It builds only the daily review. The rest of the 2026-09-17 design below was dropped (user-ruled 2026-09-30): the read counts, the drain markers, the change to the instruction-file guard, and the change to CLAUDE.md's memory rule. Each memory write still needs the user's approval, and the daily review is what runs.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run every test suite on main once a day on this machine, and record the result in the log-store.
+"""Run every nc-test-suite on main once a day on this machine, and record the result in the log-store.
 
 Usage:
   scripts/daily-full-test-run-of-main.py [--clone DIR] [--log-store-root DIR]
@@ -72,12 +72,12 @@ THE RECORD is one text file per machine and day in the log-store:
 
   nedlern@ned-box:/home/nedlern/nedschorus-logs/daily-full-test-runs/<machine>/<YYYY-MM-DD>.txt
 
-<machine> is `ned-box` or `mac`, the spellings the log-store's transcripts/
+<machine> is `ned-box` or `mac`, the spellings the log-store's agent-session-files-by-machine/
 directory uses. The date is the date in America/Los_Angeles when the run
 started, never the machine's own zone. The record holds: this program's
 name, the machine, the date and the UTC time the run started; origin/main's
 commit; the runner's first line (checkout, commit, suite count, Python);
-every line the runner printed that opens `FAIL`; every line for a skipped
+every line the runner printed that opens `FAIL` or `NOT RUN`; every line for a skipped
 case, which the runner prints as `<suite>: SKIP ...`; the `SUMMARY:` line; the
 runner's exit code; the seconds spent waiting for the machine's lock; on
 Linux, the runner's line on the seconds its suites waited for admission; the
@@ -111,7 +111,7 @@ therefore remove the worktree the first is testing. So a run holds an
 exclusive lock on daily-full-test-run-of-main.lock in its directory, and a
 second run exits 6 having done nothing.
 
-WHAT IS REUSED. nc-systems/handoff/daily-memory-review-mark.py is loaded by
+WHAT IS REUSED. nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py is loaded by
 path, the way nc-systems/handoff/handoff-supervisor.py loads it, for the
 Pacific date (pacific_time_of), the test that this machine is ned-box
 (this_machine_is_ned_box), ned-box's ssh target, and
@@ -121,8 +121,9 @@ write_daily_memory_review_mark is not reused: it builds its target from the
 marks' directory, so this program hands run_on_ned_box_or_here the same
 `mkdir -p ... && cat > ...` command over its own directory.
 scripts/run-all-test-suites.py is loaded the same way for the runner's name,
-its exit code for a held lock, and the environment its own git calls run in,
-which drops the variables that send git into another repository.
+its exit code for a held lock, the prefixes of the output lines this program
+picks out, and the environment its own git calls run in, which drops the
+variables that send git into another repository.
 
 SCHEDULE. Installed on each machine by
 nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py, from the
@@ -150,11 +151,13 @@ to the user (user-ruled, his "y" at 2026-10-01T04:43:20Z in the same Mac
 session, item 12 of the same walk).
 
 Exit codes: the runner's own when it ran and every step of this program
-worked — 0 every suite passed, 1 a suite failed, 2 the runner could not
-start; 2 also for a bad invocation of this program; 4 a step of this program
-failed, which the record names, the runner was killed by a signal, or it
-exited 0 or 1 without a `SUMMARY:` line, which is no verdict; 5 the record
-was not written; 6 another daily run holds this program's lock.
+worked — 0 every suite passed, 1 a suite failed, 2 no suite failed but
+the runner gave no full verdict, such as a suite whose test sandbox did not
+start or a run that could not start; 2 also for a bad invocation of this
+program; 4 a step of this program failed, which the record names, the
+runner was killed by a signal, or it exited 0 or 1 without a `SUMMARY:`
+line, which is no verdict; 5 the record was not written; 6 another daily
+run holds this program's lock.
 """
 # A machine-local failure may have no code diff, so selected suites cannot cover it.
 
@@ -186,9 +189,9 @@ def module_loaded_by_path(module_name: str, path: Path):
     return module
 
 
-daily_memory_review_mark = module_loaded_by_path(
-    "daily_memory_review_mark",
-    REPOSITORY_ROOT / "nc-systems" / "handoff" / "daily-memory-review-mark.py")
+handoff_user_review_of_agent_memory_stores_mark = module_loaded_by_path(
+    "handoff_user_review_of_agent_memory_stores_mark",
+    REPOSITORY_ROOT / "nc-systems" / "handoff" / "handoff-user-review-of-agent-memory-stores-mark.py")
 run_all_test_suites = module_loaded_by_path(
     "run_all_test_suites", Path(__file__).resolve().with_name("run-all-test-suites.py"))
 
@@ -212,8 +215,6 @@ DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = 3600
 DAILY_FULL_TEST_RUN_RECORD_WRITE_TIMEOUT_SECONDS = 30
 
 RUNNER_SKIPPED_CASE_LINE = re.compile(r"^(?:\S+: )?SKIP\s")
-RUNNER_FAILED_SUITE_LINE_PREFIX = "FAIL "
-RUNNER_SUMMARY_LINE_PREFIX = "SUMMARY:"
 
 EXIT_STEP_OF_THIS_PROGRAM_FAILED = 4
 EXIT_RECORD_NOT_WRITTEN = 5
@@ -412,7 +413,7 @@ def lock_never_taken_step_failed(completed, seconds_waiting_for_lock):
 def runner_summary_line(completed):
     """Return the last SUMMARY: line, or None."""
     summary = [line for line in completed.stdout.splitlines()
-               if line.startswith(RUNNER_SUMMARY_LINE_PREFIX)]
+               if line.startswith(run_all_test_suites.SUMMARY_LINE_PREFIX)]
     return summary[-1] if summary else None
 
 
@@ -431,13 +432,15 @@ def runner_output_lines_for_the_record(completed):
     if printed and printed[0].startswith(f"{run_all_test_suites.PROGRAM}: "):
         kept.append(printed[0])
     kept.extend(line for line in printed
-                if line.startswith(RUNNER_FAILED_SUITE_LINE_PREFIX)
+                if line.startswith((run_all_test_suites.FAILED_SUITE_LINE_PREFIX,
+                                    run_all_test_suites.NOT_RUN_SUITE_LINE_PREFIX))
                 or RUNNER_SKIPPED_CASE_LINE.match(line))
     summary = runner_summary_line(completed)
     if summary is not None:
         kept.append(summary)
     else:
-        kept.append(f"the runner printed no {RUNNER_SUMMARY_LINE_PREFIX} line; its stderr:")
+        kept.append(f"the runner printed no {run_all_test_suites.SUMMARY_LINE_PREFIX} line; "
+                    f"its stderr:")
         kept.extend(f"  {line}" for line in completed.stderr.strip().splitlines())
     return kept
 
@@ -451,7 +454,7 @@ def write_record_command(log_store_root: str, machine: str, file_name: str) -> s
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         prog=PROGRAM,
-        description="Run every test suite on main on this machine and record the result "
+        description="Run every nc-test-suite on main on this machine and record the result "
                     "in the log-store.")
     parser.add_argument("--clone", default=str(REPOSITORY_ROOT))
     parser.add_argument("--log-store-root", default=DAILY_FULL_TEST_RUN_DEFAULT_LOG_STORE_ROOT)
@@ -464,7 +467,7 @@ def parse_arguments(argv):
 def main(argv=None, now=None, monotonic=time.monotonic) -> int:
     arguments = parse_arguments(argv)
     now = now or datetime.now(timezone.utc)
-    mark = daily_memory_review_mark
+    mark = handoff_user_review_of_agent_memory_stores_mark
     on_ned_box = mark.this_machine_is_ned_box()
     machine = (DAILY_FULL_TEST_RUN_MACHINE_NAME_ON_NED_BOX if on_ned_box
                else DAILY_FULL_TEST_RUN_MACHINE_NAME_ELSEWHERE)
@@ -489,7 +492,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
 
 def daily_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, machine,
                                    pacific_date, clone, directory) -> int:
-    mark = daily_memory_review_mark
+    mark = handoff_user_review_of_agent_memory_stores_mark
     worktree = directory / DAILY_FULL_TEST_RUN_WORKTREE_DIRECTORY_NAME
     logs = directory / DAILY_FULL_TEST_RUN_LOGS_DIRECTORY_NAME
     run_started = monotonic()
@@ -548,8 +551,8 @@ def daily_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, machin
                       and runner_summary_line(completed) is None):
                     steps_failed.append((
                         f"{run_all_test_suites.PROGRAM} exited {completed.returncode} "
-                        f"and printed no {RUNNER_SUMMARY_LINE_PREFIX} line, which is no "
-                        f"verdict",
+                        f"and printed no {run_all_test_suites.SUMMARY_LINE_PREFIX} line, "
+                        f"which is no verdict",
                         "Read the runner's stderr in the record, then run this again."))
             finally:
                 not_removed = remove_worktree_of_main(clone, worktree)

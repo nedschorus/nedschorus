@@ -115,12 +115,13 @@ def make_record(root: pathlib.Path, name: str, files: dict) -> pathlib.Path:
     return record
 
 
-def ship(destination, *args, extra_env=None, script=SHIP):
+def ship(destination, *args, extra_env=None, script=SHIP, current_directory=None):
     env = dict(os.environ)
     env[DESTINATION_VARIABLE] = destination
     env.update(extra_env or {})
     return subprocess.run([sys.executable, str(script), *args],
-                          capture_output=True, text=True, check=False, env=env)
+                          capture_output=True, text=True, check=False, env=env,
+                          cwd=current_directory)
 
 
 REPORT_A = "<!-- provenance: runtime=claude model=opus -->\n# A\n\nfinding one\n"
@@ -151,7 +152,7 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     check("the README lists all twelve kinds",
           all(f"- `{kind}/` -- " in readme_text
               for kind in ("cold-read-records", "sanity-check-records", "walk",
-                           "transcripts", "session-dialogs", "seats", "analysis",
+                           "agent-session-files-by-machine", "session-dialogs", "seats", "analysis",
                            "daily-full-test-runs", "pull-request-head-test-runs",
                            "daily-memory-review-marks",
                            "handoff-agent-seat-died-without-session-handoff-restart-watcher",
@@ -786,6 +787,81 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           "REPLACED" in result.stderr and stored_triage_digest in result.stderr,
           result.stderr)
 
+    # --- A FAILED ssh IS SAID, NOT READ AS AN ANSWER -------------------------
+    # This stub `ssh` answers the inventory with a digest for a.md that is not
+    # the local one, fails `head -n 1` and `rm -rf` as a dropped link does, and
+    # passes everything else to the recorder. The stub `rsync` exits as
+    # RECORD_SHIP_TEST_RSYNC_EXIT says.
+    failing_ssh_stubs = scratch / "stub-bin-ssh-failing-reads-and-removals"
+    failing_ssh_stubs.mkdir()
+    (failing_ssh_stubs / "ssh").write_text(STUB_RECORDER.replace(
+        "import json, os, sys\n", "import json, os, sys\n"
+        "script = sys.argv[-1]\n"
+        "if script.startswith('head -n 1 ') or script.startswith('rm -rf '):\n"
+        "    with open(os.environ['RECORD_SHIP_TEST_ARGV_LOG'], 'a') as log:\n"
+        "        log.write(json.dumps(sys.argv) + '\\n')\n"
+        "    sys.stderr.write('Connection closed by remote host\\n')\n"
+        "    sys.exit(255)\n"
+        "if 'sha256sum' in script and os.environ.get('RECORD_SHIP_TEST_STORE_HOLDS_OTHER_A'):\n"
+        "    print('0' * 64 + '  ./a.md')\n"
+        "    sys.exit(0)\n", 1), encoding="utf-8")
+    (failing_ssh_stubs / "ssh").chmod(0o755)
+    (failing_ssh_stubs / "rsync").write_text(
+        "#!/usr/bin/env python3\nimport os, sys\n"
+        "sys.exit(int(os.environ.get('RECORD_SHIP_TEST_RSYNC_EXIT', '0')))\n", encoding="utf-8")
+    (failing_ssh_stubs / "rsync").chmod(0o755)
+    failing_ssh_path = f"{failing_ssh_stubs}{os.pathsep}{os.environ.get('PATH', '')}"
+
+    unread_record = make_record(records, "2026-09-21-store-copy-unread", {"a.md": REPORT_A})
+    result = ship(RULED_DESTINATION, str(unread_record), extra_env={
+        "PATH": failing_ssh_path,
+        "RECORD_SHIP_TEST_ARGV_LOG": str(scratch / "argv-store-copy-unread.jsonl"),
+        "RECORD_SHIP_TEST_STORE_HOLDS_OTHER_A": "1"})
+    check("a store copy whose first line ssh could not read is REFUSED saying so, "
+          "not described as having no provenance comment",
+          result.returncode == 2 and result.stdout.startswith("REFUSED:")
+          and "store: (could not be read: ssh exit 255: Connection closed by remote host)"
+          in result.stdout
+          and f"local: {REPORT_A.splitlines()[0]}" in result.stdout,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+
+    left_record = make_record(records, "2026-09-21-staging-left", {"a.md": REPORT_A})
+    left_log = scratch / "argv-staging-left.jsonl"
+    result = ship(RULED_DESTINATION, str(left_record), extra_env={
+        "PATH": failing_ssh_path, "RECORD_SHIP_TEST_ARGV_LOG": str(left_log),
+        "RECORD_SHIP_TEST_RSYNC_EXIT": "23"})
+    removal_calls = [json.loads(line) for line in left_log.read_text().splitlines()
+                     if '"rm -rf ' in line]
+    staging_named = (shlex.split(removal_calls[0][-1])[-1] if removal_calls else "")
+    check("a failed copy whose staging directory ssh could not remove names that "
+          "directory and why on the FAILED line",
+          result.returncode == 1 and result.stdout.startswith("FAILED:")
+          and "rsync exit 23 during the copy" in result.stdout
+          and ".ship-staging-2026-09-21-staging-left-" in staging_named
+          and f"the staging directory nedlern@ned-box:{staging_named}, if the copy made it, "
+              f"could not be removed (ssh exit 255: Connection closed by remote host)"
+          in result.stdout
+          and f"if {staging_named} is there, delete it" in result.stderr,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}; removals={removal_calls}")
+
+    # The local legs, in process: a first line that cannot be read, and a
+    # staging path that cannot be removed.
+    local_spec = importlib.util.spec_from_file_location("cold_read_record_ship_local_legs", SHIP)
+    local_legs = importlib.util.module_from_spec(local_spec)
+    local_spec.loader.exec_module(local_legs)
+    missing_report = scratch / "no-such-report.md"
+    described = local_legs.described_provenance_comment(local_legs.local_first_line, missing_report)
+    check("a local first line that cannot be read is described as unreadable",
+          described.startswith("(could not be read: ") and str(missing_report) in described,
+          described)
+    not_a_directory = scratch / "a-file-where-a-staging-directory-was-expected"
+    not_a_directory.write_text("x\n", encoding="utf-8")
+    check("a local staging path that cannot be removed returns why",
+          local_legs.remove_staging_directory(None, not_a_directory) is not None,
+          "returned None")
+    check("a local staging directory that is already gone is not a failure",
+          local_legs.remove_staging_directory(None, scratch / "never-made") is None)
+
     # --- IN-PROCESS: on ned-box the copy is local, the citation is not ------
     # Loaded in this process so socket.gethostname can be patched; the
     # override is removed so the constant decides, as it does in production.
@@ -1060,11 +1136,16 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
               in lines for name in ("m.md", "w x.md", "v.md", "renamed.md")),
           replayed.stdout)
 
-    # Shipped in this process, with what it prints captured.
+    # Shipped in this process, with what it prints captured. An OSError that
+    # escapes ship_one is returned as the printed text, so the calling case
+    # fails by name instead of ending this file.
     def ship_in_process(store, record):
         printed, announced = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(announced):
-            code = racing.ship_one(None, pathlib.PurePosixPath(store), record)
+        try:
+            with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(announced):
+                code = racing.ship_one(None, pathlib.PurePosixPath(store), record)
+        except OSError as escaped:
+            return None, f"raised {escaped!r}", announced.getvalue()
         return code, printed.getvalue(), announced.getvalue()
 
     # Another shipment of the name landing a file between the placing step's
@@ -1271,6 +1352,157 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-overlap-test-") a
           ran.returncode == 0 and ran.stdout.startswith("replaced ")
           and (overlap_store / "x").read_text(encoding="utf-8") == "this shipment\n",
           repr(ran.stdout) + ran.stderr)
+
+# --- A local store step that hits an OS error returns the failed result -----
+# The ssh path's failure is exit nonzero and a value of None; the local path
+# must fail the same way, not raise, so each caller prints its FAILED line.
+_failing_spec = importlib.util.spec_from_file_location("cold_read_record_ship_local_failure", SHIP)
+failing_shipper = importlib.util.module_from_spec(_failing_spec)
+_failing_spec.loader.exec_module(failing_shipper)
+
+
+@contextlib.contextmanager
+def os_error_from(owner, attribute, raises_for):
+    """Patch owner.attribute so a call whose arguments raises_for accepts
+    raises OSError 28; every other call runs the real one."""
+    real = getattr(owner, attribute)
+
+    def patched(*args, **kwargs):
+        if raises_for(*args, **kwargs):
+            raise OSError(28, "No space left on device (injected)")
+        return real(*args, **kwargs)
+
+    setattr(owner, attribute, patched)
+    try:
+        yield
+    finally:
+        setattr(owner, attribute, real)
+
+
+def returned_or_raised(call):
+    """call()'s value, or the OSError it raised: a step that raises again then
+    fails its case by name instead of ending this file."""
+    try:
+        return call()
+    except OSError as escaped:
+        return escaped
+
+
+def failed_as_ssh_fails(outcome):
+    """Whether a (process, value) outcome is the ssh path's failed result."""
+    return (isinstance(outcome, tuple) and outcome[0].returncode == 1
+            and outcome[1] is None
+            and outcome[0].stdout == "No space left on device (injected)")
+
+
+with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-local-failure-test-") as failing_name:
+    failing_scratch = pathlib.Path(failing_name)
+
+    records_path = failing_scratch / "ensure-store" / "cold-read-records"
+    with os_error_from(pathlib.Path, "mkdir", lambda path, *a, **k: path == records_path):
+        ensured = returned_or_raised(lambda: (
+            failing_shipper.ensure_store(None, pathlib.PurePosixPath(records_path)), None))
+        record = make_record(failing_scratch / "ensure-records", "ensure-2026-10-25",
+                             {"a.md": REPORT_A})
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(io.StringIO()):
+            code = returned_or_raised(lambda: failing_shipper.ship_one(
+                None, pathlib.PurePosixPath(records_path), record))
+    check("a local ensure_store whose mkdir raises OSError returns exit 1 with the "
+          "OS's reason, and ship_one prints a FAILED line",
+          failed_as_ssh_fails(ensured) and code == 1
+          and printed.getvalue().startswith("FAILED: ensure-2026-10-25"),
+          f"{ensured!r}; exit {code}: {printed.getvalue()}")
+
+    inventory_store = failing_scratch / "inventory-store" / "cold-read-records"
+    stored_file = inventory_store / "inventory-2026-10-25" / "a.md"
+    stored_file.parent.mkdir(parents=True)
+    stored_file.write_text(REPORT_A, encoding="utf-8")
+    record = make_record(failing_scratch / "inventory-records", "inventory-2026-10-25",
+                         {"a.md": REPORT_A})
+    with os_error_from(pathlib.Path, "read_bytes", lambda path: path == stored_file):
+        listed = returned_or_raised(lambda: failing_shipper.store_inventory(
+            None, pathlib.PurePosixPath(stored_file.parent)))
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(io.StringIO()):
+            code = returned_or_raised(lambda: failing_shipper.ship_one(
+                None, pathlib.PurePosixPath(inventory_store), record))
+    check("a local store_inventory whose read raises OSError returns exit 1 and None, and "
+          "ship_one's FAILED line names the OS's reason, not an ssh exit",
+          failed_as_ssh_fails(listed) and code == 1
+          and printed.getvalue().startswith(
+              "FAILED: inventory-2026-10-25 — No space left on device (injected);")
+          and "ssh" not in printed.getvalue(),
+          f"{listed!r}; exit {code}: {printed.getvalue()}")
+
+    link_staging = failing_scratch / "link-store" / ".ship-staging-l-0123456789ab"
+    link_store = failing_scratch / "link-store"
+    (link_staging / "sub").mkdir(parents=True)
+    (link_staging / "sub" / "x").write_text("x\n", encoding="utf-8")
+    with os_error_from(pathlib.Path, "mkdir", lambda path, *a, **k: path == link_store / "sub"):
+        placed = returned_or_raised(lambda: failing_shipper.link_staged_files_never_over_existing(
+            None, pathlib.PurePosixPath(link_staging), pathlib.PurePosixPath(link_store),
+            ["sub/x"]))
+    check("a local link_staged_files_never_over_existing whose mkdir raises OSError "
+          "returns exit 1 and None, and removes the staging directory",
+          failed_as_ssh_fails(placed) and not link_staging.exists(), repr(placed))
+
+    replace_store = failing_scratch / "replace-store"
+    replace_staging = replace_store / ".ship-staging-r-0123456789ab"
+    replace_staging.mkdir(parents=True)
+    (replace_staging / "m.md").write_text("new minutes\n", encoding="utf-8")
+    (replace_store / "m.md").write_text("old minutes\n", encoding="utf-8")
+    renamed_targets = set()
+    real_os_replace = os.replace
+
+    def replace_and_note(source, target, *args, **kwargs):
+        real_os_replace(source, target, *args, **kwargs)
+        renamed_targets.add(pathlib.Path(target))
+
+    os.replace = replace_and_note
+    try:
+        with os_error_from(pathlib.Path, "read_bytes",
+                           lambda path: path in renamed_targets):
+            renamed = returned_or_raised(lambda: failing_shipper.replace_with_staged_files(
+                None, pathlib.PurePosixPath(replace_staging),
+                pathlib.PurePosixPath(replace_store), [("m.md", "m.md", None)]))
+    finally:
+        os.replace = real_os_replace
+    check("a local replace_with_staged_files whose read-back after the renames raises "
+          "OSError returns exit 1 and None, the rename done",
+          failed_as_ssh_fails(renamed)
+          and (replace_store / "m.md").read_text(encoding="utf-8") == "new minutes\n",
+          repr(renamed))
+
+# --- A failed store step's reason: local stdout, ned-box unreachable, ssh exit --
+failure_reason = (failing_shipper
+                  .failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit)
+check("a failed local store step's reason is its stdout, the OS's reason, not an ssh exit",
+      failure_reason(None, subprocess.CompletedProcess([], 1, "Permission denied", ""))
+      == "Permission denied")
+check("a failed remote store step that ssh exited 255 on gives 'ned-box unreachable'",
+      failure_reason("nedlern@ned-box", subprocess.CompletedProcess([], 255, "out", ""))
+      == "ned-box unreachable")
+check("a failed remote store step with any other exit gives 'ssh exit N'",
+      failure_reason("nedlern@ned-box", subprocess.CompletedProcess([], 1, "out", ""))
+      == "ssh exit 1")
+
+# --- A relative record directory means the one under the current directory --
+# Run from a directory outside the shipper's checkout with a relative path:
+# the record under that directory is the one shipped.
+with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-relative-test-") as relative_name:
+    relative_scratch = pathlib.Path(relative_name)
+    relative_store = relative_scratch / "store" / "cold-read-records"
+    relative_record = make_record(relative_scratch / "records", "2026-10-21-relative-path",
+                                  {"a.md": REPORT_A})
+    result = ship(str(relative_store), "records/2026-10-21-relative-path",
+                  current_directory=relative_scratch)
+    check("a relative record directory is shipped from under the current directory, "
+          "not the shipper's checkout",
+          result.returncode == 0 and result.stdout.startswith("shipped:")
+          and (relative_store / relative_record.name / "a.md").read_text(encoding="utf-8")
+          == REPORT_A,
+          result.stdout + result.stderr)
 
 print()
 if failures:

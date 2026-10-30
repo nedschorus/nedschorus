@@ -47,8 +47,8 @@ MARKER_PATTERNS = {
 # markers it may hold: awaiting the comment trim. A file may only go down.
 FILES_AWAITING_THE_COMMENT_TRIM = {
     ".claude/hooks/backup-and-snapshot-write-guard-test.py": 3,
-    ".claude/hooks/ghi-issue-write-redirect-test.py": 3,
-    ".claude/hooks/ghi-issue-write-redirect.py": 21,
+    ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal-test.py": 3,
+    ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py": 21,
     ".claude/hooks/instruction-file-guard-test.py": 8,
     ".claude/hooks/session-location-write-guard-test.py": 6,
     "nc-systems/cold-read/cold-read-agy-cell.py": 14,
@@ -64,7 +64,7 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "nc-systems/cold-read/tests/cold-read-codex-cell-test.py": 4,
     "nc-systems/cold-read/tests/cold-read-fast-read-test.py": 30,
     "nc-systems/cold-read/tests/cold-read-grid-test.py": 53,
-    "nc-systems/cold-read/tests/cold-read-record-names-test.py": 5,
+    "nc-systems/cold-read/tests/cold-read-record-names-common-test.py": 5,
     "nc-systems/cold-read/tests/cold-read-record-ship-test.py": 20,
     "nc-systems/cold-read/tests/cold-read-restater-judge-cell-test.py": 6,
     "nc-systems/cold-read/tests/cold-read-restater-judge-runner-test.py": 4,
@@ -75,8 +75,8 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "nc-systems/general-tools/tests/install-scheduled-jobs-on-this-machine-test.py": 1,
     "nc-systems/handoff/handoff-supervisor.py": 7,
     "nc-systems/handoff/handoff-write-and-check-supervisor.py": 1,
-    "nc-systems/handoff/tests/daily-memory-review-mark-test.py": 4,
-    "nc-systems/handoff/tests/daily-overview-refresh-reminder-mark-test.py": 4,
+    "nc-systems/handoff/tests/handoff-user-review-of-agent-memory-stores-mark-test.py": 4,
+    "nc-systems/handoff/tests/handoff-architecture-overview-refresh-user-shown-mark-test.py": 4,
     "nc-systems/handoff/tests/handoff-supervisor-session-end-and-resume-test.py": 26,
     "nc-systems/handoff/tests/handoff-supervisor-session-launch-and-seat-lock-test.py": 19,
     "nc-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py": 82,
@@ -111,8 +111,8 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/find-deleted-path-across-backups-test.py": 37,
     "scripts/find-deleted-path-across-backups.py": 33,
     "scripts/force-push-with-open-pull-request-guard-hook-test.py": 2,
-    "scripts/ghi-info-ask-test.py": 18,
-    "scripts/ghi-info-ask.py": 38,
+    "scripts/ghi-guide-agent-ask-test.py": 18,
+    "scripts/ghi-guide-agent-ask.py": 38,
     "scripts/ghi-issue-write-test.py": 38,
     "scripts/ghi-issue-write.py": 76,
     "scripts/ghi-mirror-refresh-test.py": 4,
@@ -151,7 +151,7 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/sanity-check-record-ship-test.py": 4,
     "scripts/sanity-check-record-ship.py": 5,
     "scripts/seat-shared-file-ship-test.py": 10,
-    "scripts/seat-task-list-read-test.py": 7,
+    "scripts/seat-task-list-read-nbd-test.py": 7,
     "scripts/session-statusline-command-test.py": 3,
     "scripts/stale-code-citation-check-test.py": 3,
     "scripts/supervisor-file-names-defined-once-test.py": 32,
@@ -161,7 +161,7 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/transcript-mirror-to-log-store.py": 9,
     "scripts/walk-file-endings-match-the-skill-test.py": 3,
     "scripts/walk-files-ship-test.py": 12,
-    "scripts/walk-files-ship.py": 12,
+    "scripts/walk-files-ship.py": 1,
 }
 
 # Lines whose marker is data the code needs, not history: (path, text): reason.
@@ -169,8 +169,6 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
 # edit above the line does not move it; it must be found in exactly one comment
 # or docstring line of the file that holds a marker.
 ALLOWED_DATA_LINES = {
-    ("scripts/agent-seat-due-task-raise-hook.py", 'such as "2026-10-03T09:00:00Z"'):
-        "an example of the timestamp form the due_utc field takes",
     ("scripts/transcript-mirror-to-log-store.py", "like `2026-10-03T23:40:12Z`, to MIRROR_PASS_STAMP_FILE_NAME"):
         "an example of the timestamp form the pass stamp file holds",
     ("scripts/locate-user-approval-by-question-subject-test.py", "# 2026-10-01T02:00:00Z"):

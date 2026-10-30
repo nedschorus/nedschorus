@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Request a handoff before context runs out.
 
+It fires at a share of the context window, or when the context used plus the tokens the
+session's compactions dropped reaches a second, higher share.
+
 Stop-hook payloads lack context usage; headless sessions lack a status line.
 The transcript supplies usage for both interactive and headless sessions."""
 
@@ -20,6 +23,19 @@ _stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_locat
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
 stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
 _stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
+
+_transcript_records_specification = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_records_read_backward_common",
+    Path(__file__).resolve().with_name("claude-code-session-transcript-records-read-backward-common.py"))
+transcript_records = importlib.util.module_from_spec(_transcript_records_specification)
+_transcript_records_specification.loader.exec_module(transcript_records)
+
+_interim_recognizer_specification = importlib.util.spec_from_file_location(
+    "claude_code_subagent_task_notification_interim_recognizer_common",
+    Path(__file__).resolve().with_name(
+        "claude-code-subagent-task-notification-interim-recognizer-common.py"))
+interim_recognizer = importlib.util.module_from_spec(_interim_recognizer_specification)
+_interim_recognizer_specification.loader.exec_module(interim_recognizer)
 
 HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
 
@@ -48,24 +64,42 @@ DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
 
 FIRST_TAIL_READ_BYTES = 256 * 1024
 
+# Messages below follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 # Keep the procedure in the skill so hook instructions cannot drift from it.
 HANDOFF_INSTRUCTION = (
-    "This session has used {used_percentage:.0f}% of its context window, which has "
+    "This session has used {share} of its context window, which has "
     "reached the reincarnation threshold. Run the /handoff skill now."
 )
 
+# Idle compaction keeps the current context low, so a long session also counts what compactions dropped.
+SHARE_WITH_COMPACTION_DROPPED = (
+    "{used_percentage:.0f}% ({used_plus_dropped_percentage:.0f}% counting the "
+    "tokens its compactions dropped)"
+)
+
 HANDOFF_DEFERRED_NOTICE = (
-    "Context at {used_percentage:.0f}% — handoff deferred while {running} run. "
-    "Spawn no new subagents and start no new background tasks; the handoff "
-    "fires when they finish, when a background task outlives its "
-    "{wait_minutes:g} minute wait, or when context reaches the ceiling."
+    "Context at {share} — handoff deferred while {running} run, because a "
+    "handoff now would stop them.\n"
+    "Do not run the /handoff skill now; carry on with your work, and a later "
+    "system message will tell you when to run it. That message comes once "
+    "every subagent has finished, and every background task has either "
+    "finished or run for {wait_minutes:g} minutes since its launch, or once "
+    "this session's context reaches the {ceiling:g}% ceiling; a handoff then "
+    "stops whatever is still running.\n"
+    "Spawn no new subagents and start no new background tasks, because each "
+    "one delays the handoff and is stopped if still running at the ceiling."
 )
 
 HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE = (
-    "Context at {used_percentage:.0f}% — handoff deferred: the transcript "
-    "could not be fully read, so what is running is unknown. Spawn no new "
-    "subagents and start no new background tasks; the handoff fires when "
-    "they finish, or when context reaches the ceiling."
+    "Context at {share} — handoff deferred: the transcript could not be fully "
+    "read, so what is running is unknown, and a handoff now could stop it.\n"
+    "Do not run the /handoff skill now; carry on with your work, and a later "
+    "system message will tell you when to run it. That message comes once "
+    "the hook can read the whole transcript and finds nothing running, or "
+    "once this session's context reaches the {ceiling:g}% ceiling; a handoff "
+    "then stops whatever is still running.\n"
+    "Spawn no new subagents and start no new background tasks, because each "
+    "one delays the handoff and is stopped if still running at the ceiling."
 )
 
 # Allow a slow cold-read cell plus one retry; the context ceiling still bounds deferral.
@@ -80,7 +114,8 @@ SPAWNED_SUBAGENT_STATUS = "async_launched"
 # Check a toolUseResult key, not raw text: foreground grep output can contain the launch marker.
 BACKGROUND_TASK_LAUNCH_KEY = "backgroundTaskId"
 
-# Completion notifications use this tag across several record types.
+# Completion notifications use these tags across several record types.
+TASK_NOTIFICATION_PATTERN = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
 TASK_NOTIFICATION_TASK_ID_PATTERN = re.compile(r"<task-id>([^<]+)</task-id>")
 
 
@@ -134,8 +169,8 @@ def newest_assistant_message(path: Path):
         window *= 2
 
 
-def context_used_percentage_from_transcript(transcript_path: str):
-    """Return used context as a percentage, or None when unavailable."""
+def context_used_tokens_and_window_from_transcript(transcript_path: str):
+    """Return (used context tokens, context window tokens), or None when unavailable."""
     if not transcript_path:
         return None
     path = Path(transcript_path).expanduser()
@@ -149,8 +184,28 @@ def context_used_percentage_from_transcript(transcript_path: str):
     if message is None:
         return None
 
-    return 100.0 * used_tokens_of(message["usage"]) / context_window_for(
-        message.get("model", ""))
+    return used_tokens_of(message["usage"]), context_window_for(message.get("model", ""))
+
+
+def context_used_percentage_from_transcript(transcript_path: str):
+    """Return used context as a percentage, or None when unavailable."""
+    reading = context_used_tokens_and_window_from_transcript(transcript_path)
+    if reading is None:
+        return None
+    used_tokens, window = reading
+    return 100.0 * used_tokens / window
+
+
+COMPACTION_RECORD_SUBTYPE = "compact_boundary"
+
+
+def compaction_dropped_tokens_from_transcript(transcript_path: str) -> int:
+    """Return the tokens all of the session's compactions dropped; 0 when it has none."""
+    # Claude Code keeps the running total on each compaction record, so the newest one suffices.
+    for record in transcript_records.records_newest_first(Path(transcript_path).expanduser()):
+        if record.get("subtype") == COMPACTION_RECORD_SUBTYPE:
+            return record["compactMetadata"]["cumulativeDroppedTokens"]
+    return 0
 
 
 USED_TOKEN_FIELDS = ("input_tokens", "cache_read_input_tokens",
@@ -230,7 +285,8 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
     spawned_ids = []
     launched_task_ids = []
     launched_task_age = {}
-    finished_ids = set()
+    # The last notification for a task-id decides: an interim one leaves its subagent running.
+    last_notification_is_interim = {}
     try:
         with path.open("r", encoding="utf-8", errors="replace") as handle:
             for line in handle:
@@ -257,9 +313,15 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                             launched_task_ids.append(task_id)
                             launched_task_age[task_id] = record_age_seconds(record, now)
                 if "<task-id>" in line:
-                    finished_ids.update(TASK_NOTIFICATION_TASK_ID_PATTERN.findall(line))
+                    for notification in TASK_NOTIFICATION_PATTERN.findall(line):
+                        interim = interim_recognizer.task_notification_is_interim(notification)
+                        for task_id in TASK_NOTIFICATION_TASK_ID_PATTERN.findall(notification):
+                            last_notification_is_interim[task_id] = interim
     except OSError as problem:
         raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
+
+    finished_ids = {task_id for task_id, interim in last_notification_is_interim.items()
+                    if not interim}
 
     def still_within_wait(task_id):
         age = launched_task_age[task_id]
@@ -274,7 +336,12 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Fire the handoff skill when context runs low.")
-    parser.add_argument("--threshold-used-percentage", type=float, default=50.0)
+    parser.add_argument("--threshold-used-percentage", type=float, default=33.0)
+    parser.add_argument(
+        "--threshold-used-plus-compaction-dropped-percentage", type=float, default=40.0,
+        help="the handoff also fires when the current context plus the tokens the "
+             "session's compactions dropped reaches this share",
+    )
     parser.add_argument(
         "--ceiling-used-percentage", type=float, default=65.0,
         help="above this used share the handoff fires even with work in flight",
@@ -298,9 +365,19 @@ def main(argv=None) -> int:
         return 0
 
     transcript_path = payload.get("transcript_path", "")
-    used = context_used_percentage_from_transcript(transcript_path)
-    if used is None or used < arguments.threshold_used_percentage:
+    reading = context_used_tokens_and_window_from_transcript(transcript_path)
+    if reading is None:
         return 0
+    used_tokens, window = reading
+    used = 100.0 * used_tokens / window
+    share = f"{used:.0f}%"
+    if used < arguments.threshold_used_percentage:
+        used_plus_dropped = 100.0 * (
+            used_tokens + compaction_dropped_tokens_from_transcript(transcript_path)) / window
+        if used_plus_dropped < arguments.threshold_used_plus_compaction_dropped_percentage:
+            return 0
+        share = SHARE_WITH_COMPACTION_DROPPED.format(
+            used_percentage=used, used_plus_dropped_percentage=used_plus_dropped)
 
     fired_marker = fired_marker_path(session_id)
     if fired_marker.exists():
@@ -330,11 +407,13 @@ def main(argv=None) -> int:
 
             notice = (
                 HANDOFF_DEFERRED_NOTICE.format(
-                    used_percentage=used, running=running_phrase(flight),
+                    share=share, running=running_phrase(flight),
                     wait_minutes=arguments.background_task_wait_minutes,
+                    ceiling=arguments.ceiling_used_percentage,
                 )
                 if count_is_known
-                else HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE.format(used_percentage=used)
+                else HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE.format(
+                    share=share, ceiling=arguments.ceiling_used_percentage)
             )
             print(notice, file=sys.stderr)
             return 2  # exit 2 surfaces stderr to the agent as a system message
@@ -347,7 +426,7 @@ def main(argv=None) -> int:
         pass
 
     print(
-        HANDOFF_INSTRUCTION.format(used_percentage=used),
+        HANDOFF_INSTRUCTION.format(share=share),
         file=sys.stderr,
     )
     return 2

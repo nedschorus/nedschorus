@@ -40,6 +40,11 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/ned-box-path-in-agent-reply-unclickable-on-mac-warning-hook.py",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/walk-me-through/walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py",
+            "timeout": 10
           }
         ]
       }
@@ -54,6 +59,11 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/checkout-freshness-catch-up.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/checkout-freshness-changed-skill-invoke-again-refusal-stop-hook.py",
+            "timeout": 30
           },
           {
             "type": "command",
@@ -74,6 +84,11 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/walk-me-through/walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/walk-me-through/walk-me-through-agent-question-to-user-outside-approval-walk-items-refusal-stop-hook.py",
+            "timeout": 60
           }
         ]
       }
@@ -105,7 +120,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ghi-issue-write-redirect.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
             "timeout": 30
           },
           {
@@ -120,7 +135,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/hand-typed-codex-exec-redirect-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/hand-typed-codex-exec-command-refusal-hook.py",
             "timeout": 30
           },
           {
@@ -164,7 +179,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/style-guide-word-checker-markdown-edit-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/style-guide-word-checker-markdown-edit-hook-nbd.py",
             "timeout": 30
           },
           {
@@ -174,7 +189,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-nbd.py",
             "timeout": 30
           }
         ]
@@ -204,6 +219,16 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/python-edit-changed-agent-facing-message-check-reminder-hook.py",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "TaskCreate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/agent-seat-due-task-prerequisites-recording-reminder-after-task-create-hook.py",
             "timeout": 30
           }
         ]

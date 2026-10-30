@@ -17,7 +17,7 @@ says), masking fenced code, code spans, links and bare URLs, the record of
 the last reply noted, the hook output, and the test for a headless
 `claude -p` child, where the hook stays silent. It stays silent on every
 machine but ned-box, as this_machine_is_ned_box() from
-nc-systems/handoff/daily-memory-review-mark.py decides: a session on the Mac
+nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py decides: a session on the Mac
 names its own files by their Mac paths.
 
 NOTED, outside fenced code blocks:
@@ -148,10 +148,10 @@ def bare_number_hook():
 
 
 @functools.lru_cache(maxsize=None)
-def daily_memory_review_mark():
+def handoff_user_review_of_agent_memory_stores_mark():
     return _load_module_by_path(
-        "daily_memory_review_mark",
-        Path(__file__).resolve().parents[1] / "nc-systems" / "handoff" / "daily-memory-review-mark.py")
+        "handoff_user_review_of_agent_memory_stores_mark",
+        Path(__file__).resolve().parents[1] / "nc-systems" / "handoff" / "handoff-user-review-of-agent-memory-stores-mark.py")
 
 
 class UnopenablePath:
@@ -274,9 +274,9 @@ def previous_reply_note(payload, environment):
     transcript_file = Path(transcript_path).expanduser()
     if not transcript_file.exists():
         return None
-    records = hook.transcript_records(transcript_file)
     reply, message_id = hook.previous_reply(
-        records, hook._load_absence_claim_hook().is_human_or_parent_message)
+        hook.previous_turn_records(transcript_file),
+        hook._load_absence_claim_hook().is_human_or_parent_message)
     if not reply.strip():
         return None
     record_path = note_record_path_for(payload.get("session_id"))
@@ -311,7 +311,7 @@ def run(stdin_text, environment, on_ned_box):
 
 def main():
     try:
-        output = run(sys.stdin.read(), os.environ, daily_memory_review_mark().this_machine_is_ned_box())
+        output = run(sys.stdin.read(), os.environ, handoff_user_review_of_agent_memory_stores_mark().this_machine_is_ned_box())
         if output is not None:
             print(output)
     except Exception as error:

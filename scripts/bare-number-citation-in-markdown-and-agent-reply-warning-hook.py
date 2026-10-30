@@ -7,7 +7,7 @@ in the agent's previous reply.
 One program, two hook events, told apart by the payload's hook_event_name:
 
   PostToolUse on Edit and Write of a .md or .markdown file: scan the text just
-      written, as style-guide-word-checker-markdown-edit-hook.py does. Edit
+      written, as style-guide-word-checker-markdown-edit-hook-nbd.py does. Edit
       scans new_string alone. Write scans only the lines HEAD does not already
       hold, so an edit to a file whose old bare numbers are kept on purpose
       (agent-only files such as those under scripts/ and .claude/hooks/) is
@@ -32,7 +32,7 @@ matches. Not scanned: fenced code blocks, a block quote's included, inline
 code spans, a whole Markdown link `[text](target "title")` (its text included:
 a link is already a citation that can be opened), a bare URL, and a line a
 program reads: one that starts with `supports-issues:` or `issue-marker:`, or
-is, whole, one of ghi-info's reply lines, which ghi-info-ask.py parses
+is, whole, one of ghi-guide-agent's reply lines, which ghi-guide-agent-ask.py parses
 (`verdict: related #<n>,#<m>`, `read #<n>, #<m>`). A fence opened inside a
 block quote closes where the block quote ends. A skipped span is blanked to a
 barrier character no match can cross, so `PR [title](url) 2 hours` is not read
@@ -60,9 +60,24 @@ its number is the URL's; when the number differs, the link is noted, and the
 note says the number is wrong. All titles come from one `gh api graphql` call per
 run, with a timeout of GH_TIMEOUT_SECONDS, because the hook runs on every
 prompt. When gh fails, times out, is not installed, or reports any error other
-than an item that does not exist, titles are not checked and the note says so
-in one line; nothing else changes. A number GitHub has no item for is not
-reported.
+than an item that does not exist, titles are not checked, and the note says so
+and gives the command that checks those links now: a later run of the hook
+scans only the text that run is about, so it never checks them. The bare-number
+part of the note is unchanged. A number GitHub has no item for is not reported.
+
+THE LINK-TITLE RECHECK is that command, a mode of this program an agent runs:
+
+    python3 <this file> --recheck-link-titles-in-file <path> <link> [<link> ...]
+    python3 <this file> --recheck-link-titles-in-reply <link> [<link> ...]
+
+Each <link> is one Markdown link, [text](url), as the note printed it; <path>
+is the Markdown file the links were written to, used only in the output. It
+checks the links as the hook does, with a timeout of
+LINK_TITLES_RECHECK_GH_TIMEOUT_SECONDS, and prints plain text: the hook's
+title note for the links whose text is not the title, exit 0; one line saying
+nothing needs doing, exit 0; or, when gh fails again, the failure and the
+rerun-once-then-stop lines, exit 1. --help prints the two forms and exits 0;
+a command line of any other form prints them and exits 2.
 
 OUTPUT is a note, never a refusal and never a blocked prompt:
 hookSpecificOutput.additionalContext with the hook's event name, listing up to
@@ -89,10 +104,14 @@ non-blocking error and keeps the write and the prompt; stderr after exit 0 is
 recorded nowhere, so a fault reported that way would read as "no bare numbers".
 """
 
+# Agent-facing messages follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+
+import functools
 import importlib.util
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -101,6 +120,11 @@ from pathlib import Path
 MARKDOWN_SUFFIXES = (".md", ".markdown")
 HIT_LINES_LISTED_AT_MOST = 10
 GH_TIMEOUT_SECONDS = 5
+# The recheck runs once, at the agent's request, so it can wait for a slow gh that the hook could not.
+LINK_TITLES_RECHECK_GH_TIMEOUT_SECONDS = 30
+LINK_TITLES_RECHECK_IN_FILE_COMMAND_LINE_FLAG = "--recheck-link-titles-in-file"
+LINK_TITLES_RECHECK_IN_REPLY_COMMAND_LINE_FLAG = "--recheck-link-titles-in-reply"
+EXIT_BAD_INVOCATION = 2
 GITHUB_REPOSITORY_OWNER = "nedschorus"
 GITHUB_REPOSITORY_NAME = "nedschorus"
 TITLE_ATTEMPT_WORDS_AT_LEAST = 3
@@ -120,10 +144,10 @@ BARE_REFERENCE_PATTERN = re.compile(
     re.IGNORECASE)
 FENCE_PATTERN = re.compile(r"^\s*(?:>\s?)*\s*(?:[-*+]\s+|\d+[.)]\s+)?(`{3,}|~{3,})")
 ISSUE_NUMBER_LIST = r"#\d+(?:[ \t]*,[ \t]*#\d+)*"
-# ghi-info tags each closed issue in a reading list with "(closed <date>)" after its number.
+# ghi-guide-agent tags each closed issue in a reading list with "(closed <date>)" after its number.
 READING_LIST_ENTRY = r"#\d+(?:[ \t]*\(closed[ \t]+\d{4}-\d{2}-\d{2}\))?"
 READING_LIST = READING_LIST_ENTRY + r"(?:[ \t]*,[ \t]*" + READING_LIST_ENTRY + r")*"
-# ghi-info's two reply shapes count only as whole lines, so a sentence that starts "Read #<n> before ..." is still read.
+# ghi-guide-agent's two reply shapes count only as whole lines, so a sentence that starts "Read #<n> before ..." is still read.
 PROGRAM_READ_LINE_PATTERN = re.compile(
     r"^\s*(?:(?:supports-issues|issue-marker):"
     r"|verdict:[ \t]*(?:(?:too-similar|related)[ \t]*" + ISSUE_NUMBER_LIST + r"|unrelated)[ \t]*$"
@@ -245,7 +269,32 @@ PREVIOUS_REPLY_WRONG_NUMBER_LINE = (
 TITLES_NOT_CHECKED_LINE = (
     "bare-number-citation-in-markdown-and-agent-reply-warning-hook: the text of {count} link(s) to pull "
     "requests or GitHub issues was not checked against their titles on GitHub, because gh could not "
-    "report the titles: {reason}. Nothing needs doing; the check runs again next time.")
+    "report the titles: {reason}. A later run of this hook checks only the text written, or the reply "
+    "sent, after this one, never these links, so check them now by running the command on the next "
+    "line. The command prints what to do next: a note on each link whose text is not its title, a "
+    "line saying nothing needs doing, or, if gh fails again, how to retry.\n{command}")
+LINK_TITLES_RECHECK_GH_FAILED_MESSAGE_LINES = (
+    "bare-number-citation-in-markdown-and-agent-reply-warning-hook {flag}: the text of {count} link(s) "
+    "to pull requests or GitHub issues was not checked against their titles on GitHub, because gh "
+    "could not report the titles: {reason}.",
+    "Run exactly this command once more:\n{command}",
+)
+LINK_TITLES_RECHECK_GH_FAILED_TEXT_TO_LOOK_FOR = "could not report the titles"
+LINK_TITLES_RECHECK_NOTHING_TO_DO_LINE = (
+    "bare-number-citation-in-markdown-and-agent-reply-warning-hook {flag}: none of the {count} link(s) "
+    "has text that differs from the title GitHub reports. Nothing needs doing about the link text.")
+# After the shared rerun-then-stop line, so that "stop" is not read as stopping the whole task.
+LINK_TITLES_RECHECK_STOP_MEANS_ONLY_STOP_RERUNNING_LINE = (
+    "Stopping means only that you stop running this command: put that report in your next message "
+    "to its recipient, without waiting for an answer, leave the links as they are, and carry on with "
+    "the rest of your task.")
+LINK_TITLES_RECHECK_USAGE_LINES = (
+    "bare-number-citation-in-markdown-and-agent-reply-warning-hook: the command line was not one this "
+    "program accepts, so no link was checked. Run it in one of these forms, with each <link> one "
+    "Markdown link to a pull request or GitHub issue of this repository, [text](url), quoted for the shell:",
+    "python3 {program} " + LINK_TITLES_RECHECK_IN_FILE_COMMAND_LINE_FLAG + " <path of the Markdown file> <link> [<link> ...]",
+    "python3 {program} " + LINK_TITLES_RECHECK_IN_REPLY_COMMAND_LINE_FLAG + " <link> [<link> ...]",
+)
 WRITE_TITLE_HIT_LINE = '{path}:{line}: "{text}" links {url}; the title on GitHub is "{title}"{number_note}'
 EXCERPT_TITLE_HIT_LINE = '"{text}" links {url}; the title on GitHub is "{title}"{number_note}'
 WRONG_NUMBER_NOTE_TEMPLATE = "; the number {prefix_number} in the link text is not the link's number {number}"
@@ -479,22 +528,32 @@ def github_titles(numbers, timeout_seconds=GH_TIMEOUT_SECONDS):
     return titles
 
 
-def link_title_mismatches_in(text: str, line_numbers_to_report=None):
-    """Return (mismatches, reason titles were not checked or None, links found)."""
+def link_title_mismatches_in(text: str, line_numbers_to_report=None,
+                             timeout_seconds=GH_TIMEOUT_SECONDS):
+    """Return (mismatches, reason titles were not checked or None, the links
+    found, as repository_item_links_in gives them)."""
     links = repository_item_links_in(text, line_numbers_to_report)
     if not links:
-        return [], None, 0
+        return [], None, links
     try:
-        titles = github_titles([number for _, _, _, number in links])
+        titles = github_titles([number for _, _, _, number in links], timeout_seconds)
     except GithubTitlesUnavailable as error:
-        return [], str(error), len(links)
+        return [], str(error), links
     mismatches = [
         mismatch for mismatch in (
             link_title_mismatch(line_number, link_text, url, number, titles[number])
             for line_number, link_text, url, number in links
             if titles.get(number) is not None)
         if mismatch is not None]
-    return mismatches, None, len(links)
+    return mismatches, None, links
+
+
+def link_titles_recheck_shell_command_text(links, path=None) -> str:
+    """The shell command that checks links now, in the file at path, or in a reply when path is None."""
+    flag_and_path = ([LINK_TITLES_RECHECK_IN_REPLY_COMMAND_LINE_FLAG] if path is None
+                     else [LINK_TITLES_RECHECK_IN_FILE_COMMAND_LINE_FLAG, str(path)])
+    return shlex.join(["python3", str(Path(__file__).resolve()), *flag_and_path,
+                       *(f"[{text}]({url})" for _, text, url, _ in links)])
 
 
 def wrong_number_line_text(template, title_lines_shown):
@@ -505,9 +564,10 @@ def wrong_number_line_text(template, title_lines_shown):
 
 def title_note_lines(opening_lines, wrong_number_line, checked, path=None,
                      with_line_numbers=False):
-    mismatches, reason, link_count = checked
+    mismatches, reason, links = checked
     if reason is not None:
-        return [TITLES_NOT_CHECKED_LINE.format(count=link_count, reason=reason)]
+        return [TITLES_NOT_CHECKED_LINE.format(count=len(links), reason=reason,
+                                               command=link_titles_recheck_shell_command_text(links, path))]
     if not mismatches:
         return []
     listed = mismatches[:HIT_LINES_LISTED_AT_MOST]
@@ -616,6 +676,19 @@ def markdown_edit_note(payload: dict):
 
 # --- UserPromptSubmit: the agent's previous reply -----------------------------
 
+COMPACT_BOUNDARY_SUBTYPE = "compact_boundary"
+
+@functools.lru_cache(maxsize=None)
+def _load_claude_code_session_transcript_records_read_backward_common():
+    specification = importlib.util.spec_from_file_location(
+        "claude_code_session_transcript_records_read_backward_common",
+        Path(__file__).resolve().with_name("claude-code-session-transcript-records-read-backward-common.py"))
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+@functools.lru_cache(maxsize=None)
 def _load_absence_claim_hook():
     specification = importlib.util.spec_from_file_location(
         "absence_claim_locator_reminder_hook",
@@ -625,22 +698,28 @@ def _load_absence_claim_hook():
     return module
 
 
-def transcript_records(transcript_path: Path):
-    records = []
-    with open(transcript_path, encoding="utf-8") as transcript:
+def previous_turn_records(transcript_path: Path):
+    """The transcript's records from the previous turn's start to its end, read from the end."""
+    return _load_claude_code_session_transcript_records_read_backward_common().records_from_newest_boundary_to_end(
+        transcript_path, _load_absence_claim_hook().is_human_or_parent_message)
+
+
+def compaction_count(transcript_path: Path) -> int:
+    count = 0
+    with open(transcript_path, "rb") as transcript:
         for line in transcript:
+            # Only a line naming the subtype can be a compaction record, so the rest of a file of
+            # tens of megabytes is never parsed. Claude Code writes the subtype unescaped.
+            if COMPACT_BOUNDARY_SUBTYPE.encode() not in line:
+                continue
             try:
-                record = json.loads(line)
+                record = json.loads(line.decode("utf-8"))
             except ValueError:
                 continue
-            if isinstance(record, dict):
-                records.append(record)
-    return records
-
-
-def compaction_count(records) -> int:
-    return sum(1 for record in records
-               if record.get("type") == "system" and record.get("subtype") == "compact_boundary")
+            if (isinstance(record, dict) and record.get("type") == "system"
+                    and record.get("subtype") == COMPACT_BOUNDARY_SUBTYPE):
+                count += 1
+    return count
 
 
 def previous_reply(records, is_turn_start):
@@ -713,8 +792,8 @@ def previous_reply_note(payload: dict, environment):
     transcript_file = Path(transcript_path).expanduser()
     if not transcript_file.exists():
         return None
-    records = transcript_records(transcript_file)
-    reply, message_id = previous_reply(records, _load_absence_claim_hook().is_human_or_parent_message)
+    reply, message_id = previous_reply(previous_turn_records(transcript_file),
+                                       _load_absence_claim_hook().is_human_or_parent_message)
     if not reply.strip():
         return None
     record_path = note_record_path_for(payload.get("session_id"))
@@ -726,7 +805,7 @@ def previous_reply_note(payload: dict, environment):
                                 link_title_mismatches_in(reply))
     if not references and not sections:
         return None
-    compactions = compaction_count(records)
+    compactions = compaction_count(transcript_file)
     full_note_sent = record.get("full_note_sent_after_compactions") == compactions
     failures = []
     if record_path is not None:
@@ -749,6 +828,53 @@ def previous_reply_note(payload: dict, environment):
     return hook_output("UserPromptSubmit", "\n".join(sections + failures))
 
 
+# --- The link-title recheck, run by an agent ---------------------------------
+
+def _load_failed_command_next_step_lines():
+    specification = importlib.util.spec_from_file_location(
+        "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+        Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+        / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def link_titles_recheck_run_from_command_line_arguments(arguments):
+    """Return (the text to print, the exit code) for the recheck's command line."""
+    flag, rest = (arguments[0], arguments[1:]) if arguments else (None, [])
+    if flag == LINK_TITLES_RECHECK_IN_FILE_COMMAND_LINE_FLAG and len(rest) > 1:
+        path, links = rest[0], rest[1:]
+        opening_lines, wrong_number_line = MARKDOWN_TITLE_OPENING_LINES, MARKDOWN_WRONG_NUMBER_LINE
+    elif flag == LINK_TITLES_RECHECK_IN_REPLY_COMMAND_LINE_FLAG and rest:
+        path, links = None, rest
+        opening_lines, wrong_number_line = (PREVIOUS_REPLY_TITLE_OPENING_LINES,
+                                            PREVIOUS_REPLY_WRONG_NUMBER_LINE)
+    else:
+        program = shlex.quote(str(Path(__file__).resolve()))
+        lines = [line.format(program=program) for line in LINK_TITLES_RECHECK_USAGE_LINES]
+        if arguments in (["--help"], ["-h"]):
+            return "\n".join(["usage:", *lines[1:]]), 0
+        return "\n".join(lines), EXIT_BAD_INVOCATION
+    # One link per line, so that no link's text can run into the next link.
+    checked = link_title_mismatches_in("\n".join(links),
+                                       timeout_seconds=LINK_TITLES_RECHECK_GH_TIMEOUT_SECONDS)
+    mismatches, reason, found = checked
+    if reason is not None:
+        lines = [line.format(flag=flag, count=len(found), reason=reason,
+                             command=link_titles_recheck_shell_command_text(found, path))
+                 for line in LINK_TITLES_RECHECK_GH_FAILED_MESSAGE_LINES]
+        lines.append(_load_failed_command_next_step_lines()
+                     .agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+                         LINK_TITLES_RECHECK_GH_FAILED_TEXT_TO_LOOK_FOR,
+                         next_step_to_skip_when_the_rerun_fails_too="run it a third time"))
+        lines.append(LINK_TITLES_RECHECK_STOP_MEANS_ONLY_STOP_RERUNNING_LINE)
+        return "\n".join(lines), 1
+    if not mismatches:
+        return LINK_TITLES_RECHECK_NOTHING_TO_DO_LINE.format(flag=flag, count=len(found)), 0
+    return "\n".join(title_note_lines(opening_lines, wrong_number_line, checked, path)), 0
+
+
 def run(stdin_text: str, environment):
     """Return the text to print, or None."""
     payload = json.loads(stdin_text or "{}")
@@ -764,6 +890,10 @@ def run(stdin_text: str, environment):
 
 def main() -> int:
     try:
+        if sys.argv[1:]:
+            text, exit_code = link_titles_recheck_run_from_command_line_arguments(sys.argv[1:])
+            print(text)
+            return exit_code
         output = run(sys.stdin.read(), os.environ)
         if output is not None:
             print(output)

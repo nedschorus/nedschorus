@@ -2,7 +2,7 @@
 """Cases for the Stop hook that, during an open approval-walk, blocks the
 agent's stop when its reply to the user does not name the waiting item.
 
-Each case runs the hook as a subprocess, its real stdin-to-stdout path, in a
+Each case but one runs the hook as a subprocess, its real stdin-to-stdout path, in a
 scratch checkout this suite made, with a transcript this suite wrote. The exit
 code is asserted on every case: the hook exits 0 unless it hit a fault, which
 it names on stderr with exit 1.
@@ -46,7 +46,7 @@ The poem page goes in the wiki, next to the glossary and the style guide, so tha
 
 ## Item 4.1 of 9: how a poem row reads
 
-One row per job an agent is about to do, written "to do X, use Y", with one example call and the mistake it prevents, so an agent reading the row can act on it without opening anything else. SUB_STEP_EXTRA
+One row per job an agent is about to do, written "to do X, use Y", with one example call and the mistake it prevents, so an agent reading the row can act on it without opening anything else.
 
 ## Item 5 of 9: the hook
 
@@ -84,8 +84,6 @@ The page lists the components an agent uses before writing its own, one row per 
 
 The strongest case for N: the old opening is shorter. Recommendation: Y.
 """
-SUB_STEP_EXTRA = " ".join(["Each row also names the default component where two could do the job."] * 8)
-WALK_DOCUMENT = WALK_DOCUMENT.replace("SUB_STEP_EXTRA", SUB_STEP_EXTRA)
 
 ITEM_2_REPLY = """Recorded your answer to item 1.
 
@@ -139,10 +137,12 @@ class Case:
                             "message": {"id": f"message-{index}", "content": content}})
         self.transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
 
-    def run(self, stop_hook_active=False, environment_extra=None, stdin_text=None):
+    def run(self, stop_hook_active=False, environment_extra=None, stdin_text=None, last_assistant_message=None):
         payload = {"hook_event_name": "Stop", "session_id": "test-session",
                    "transcript_path": str(self.transcript), "cwd": str(self.checkout),
                    "stop_hook_active": stop_hook_active}
+        if last_assistant_message is not None:
+            payload["last_assistant_message"] = last_assistant_message
         environment = {name: value for name, value in os.environ.items()
                        if name not in ("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
                                        "CLAUDE_CODE_SESSION_ATTENDED")}
@@ -200,7 +200,7 @@ def test_a_reply_naming_the_waiting_item_passes_and_one_leaving_it_out_is_sent_b
             ("a reply naming the item in a backwards range is sent back", "Items 3 to 1 of 9 are waiting.")):
         case.reply(reply)
         check_reminded(case_name, case.run(), "`Item 2 of 9`",
-                       "`Item 2 of 9 is waiting for your answer.`")
+                       "`[Item 2 of 9, <the point>](<page link>) · A approve · ...`")
     case.reply("Nothing here.")
     reason = blocked_reason(case.run()) or ""
     check("the reminder names the walk, its walk-document and its minutes",
@@ -220,6 +220,37 @@ def test_every_text_of_the_turn_counts():
         {"type": "assistant", "message": {"id": "m4", "content": [{"type": "text", "text": "Recorded."}]}}]
     case.transcript.write_text("".join(json.dumps(record) + "\n" for record in shown_before_answer))
     check_reminded("an item named before the user typed into the turn does not count after it", case.run())
+    shown_in_earlier_turn = [USER_PROMPT, {"type": "assistant", "message": {"id": "m1", "content": [
+        {"type": "text", "text": ITEM_2_REPLY}]}}, USER_PROMPT,
+        {"type": "assistant", "message": {"id": "m2", "content": [{"type": "text", "text": "Recorded."}]}}]
+    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in shown_in_earlier_turn))
+    check_reminded("an item named in an earlier turn does not count in the next one", case.run())
+
+
+# The two records Claude Code writes when it compacts a conversation, in the shape of a real
+# transcript: the summary is a user record that is not isMeta, and its content is a string.
+COMPACT_BOUNDARY = {"type": "system", "subtype": "compact_boundary", "content": "Conversation compacted",
+                    "isMeta": False, "level": "info", "parentUuid": None,
+                    "compactMetadata": {"trigger": "auto", "preTokens": 276544}}
+COMPACT_SUMMARY = {"type": "user", "isCompactSummary": True, "isVisibleInTranscriptOnly": True,
+                   "promptId": "p1", "turnPosition": {"promptIndex": 1, "turnIndex": 76},
+                   "message": {"role": "user", "content":
+                               "This session is being continued from a previous conversation that ran out "
+                               "of context. The summary below covers the earlier portion of the conversation."}}
+
+
+def test_a_compaction_does_not_start_a_turn():
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    recorded = {"type": "assistant", "message": {"id": "m4", "content": [{"type": "text", "text": "Recorded."}]}}
+    shown = {"type": "assistant", "message": {"id": "m1", "content": [{"type": "text", "text": ITEM_2_REPLY}]}}
+    compacted_mid_turn = [USER_PROMPT, shown, TOOL_CALL, TOOL_RESULT, COMPACT_BOUNDARY, COMPACT_SUMMARY, recorded]
+    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in compacted_mid_turn))
+    check_silent("an item shown before a compaction in the same turn still counts", case.run())
+    compacted_between_turns = [USER_PROMPT, shown, COMPACT_BOUNDARY, COMPACT_SUMMARY, USER_PROMPT, recorded]
+    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in compacted_between_turns))
+    check_reminded("an item shown in the turn before a compaction does not count in the turn after it",
+                   case.run())
 
 
 def test_an_ended_walk_is_closed_by_the_line_the_reminder_gives():
@@ -240,7 +271,7 @@ def test_items_waiting_together():
     case.walk_files(minutes="#next_to_present items 5 and 6 of 9.")
     case.reply("Recorded.")
     check_reminded("a reply naming neither of two waiting items is sent back with both", case.run(),
-                   "`Item 5 of 9` and `Item 6 of 9`", "`Items 5 and 6 of 9 are waiting for your answer.`")
+                   "`Item 5 of 9` and `Item 6 of 9`", "`[Items 5 and 6 of 9, <the point>](<page link>) · A approve · ...`")
     case.reply("Item 5 of 9: the hook. Text.")
     check_reminded("a reply naming one of two waiting items is sent back with the other", case.run(),
                    "does not name `Item 6 of 9`,")
@@ -263,6 +294,26 @@ def test_part_without_recommendation():
     case.walk_files(minutes="#next_to_present item 4.1 of 9.")
     case.reply("Recorded.")
     check_reminded("a reply leaving out a waiting part is sent back", case.run())
+
+
+def test_item_added_by_re_planning_with_a_dotted_number():
+    document = ("# A walk\n\n## Item 37 of 44: a rule\n\nRecommendation: leave the filter out.\n\n"
+                "## Item 37.2 of 44: a case item 37 missed\n\nRecommendation: add the filter.\n\n"
+                "## Item 38 of 44: the next rule\n\nRecommendation: keep it.\n")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 37.2 of 44.", document=document)
+    for case_name, reply in (
+            ("a reply ending with a line naming a dotted item passes",
+             "Recorded.\n\nItem 37.2 of 44 is waiting for your answer."),
+            ("a reply showing a dotted item in full passes",
+             "**Item 37.2 of 44: a case item 37 missed**\n\nRecommendation: add the filter.")):
+        case.reply(reply)
+        check_silent(case_name, case.run())
+    for case_name, reply in (
+            ("a reply naming only the item a dotted item follows is sent back", "Item 37 of 44 is waiting."),
+            ("a reply naming the dotted number with another total is sent back", "Item 37.2 of 4 is waiting.")):
+        case.reply(reply)
+        check_reminded(case_name, case.run(), "`Item 37.2 of 44`")
 
 
 def test_item_holding_original_and_proposed_sections():
@@ -409,6 +460,35 @@ def test_only_a_turn_that_answers_the_user_is_checked():
     check_silent("unusable minutes do not block a turn that does not answer the user", case.run())
     case.transcript.write_text("".join(json.dumps(record) + "\n" for record in (PEER_PROMPT, REPLY_TEXT, USER_PROMPT, REPLY_TEXT)))
     check_blocked("unusable minutes block a turn that answers the user", case.run(), "runs backwards")
+
+
+def test_the_final_message_counts_before_the_transcript_holds_it():
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    progress_line = {"type": "assistant", "message": {"id": "m5", "content": [
+        {"type": "text", "text": "I'm checking the other walk for overlap."}]}}
+    written_so_far = [USER_PROMPT, TOOL_CALL, TOOL_RESULT, USER_ANSWER_WHILE_WORKING, TOOL_CALL, TOOL_RESULT,
+                      progress_line, TOOL_CALL, TOOL_RESULT]
+    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in written_so_far))
+    check_silent("an item shown in a final message the transcript does not yet hold passes",
+                 case.run(last_assistant_message=ITEM_2_REPLY))
+    with case.transcript.open("a") as transcript:
+        transcript.write(json.dumps({"type": "assistant", "message": {"id": "m6", "content": [
+            {"type": "text", "text": ITEM_2_REPLY}]}})[:40])
+    check_silent("an item shown in a final message the transcript holds only part of passes",
+                 case.run(last_assistant_message=ITEM_2_REPLY))
+    check_reminded("a final message that leaves out the item is sent back",
+                   case.run(last_assistant_message="Recorded."))
+
+
+def test_a_final_message_that_is_the_turn_only_text_is_checked():
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    written_so_far = [USER_PROMPT, TOOL_CALL, TOOL_RESULT, USER_ANSWER_WHILE_WORKING, TOOL_CALL, TOOL_RESULT,
+                      TOOL_CALL, TOOL_RESULT]
+    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in written_so_far))
+    check_reminded("a final message that is the turn's only text and leaves out the item is sent back",
+                   case.run(last_assistant_message="Recorded."))
 
 
 RANGE_WALK_DOCUMENT = """# A walk with ranges
@@ -822,6 +902,33 @@ def test_newest_open_walk_is_checked():
     case.walk_files(name="newer-walk", minutes="#next_to_present item 2 of 9.", modified=2_000)
     case.reply("Recorded.")
     check_reminded("the most recently modified open walk's item is the one checked", case.run())
+    case = Case()
+    case.walk_files(name="newer-closed-walk", minutes="#next_to_present none, closed.", modified=3_000)
+    case.walk_files(name="open-walk", minutes="#next_to_present item 2 of 9.", modified=2_000)
+    older = case.walk_files(name="older-walk", minutes="#next_to_present item 5 of 9.", modified=1_000)
+    older.write_bytes(b"#next_to_present \xff\xfe item 5 of 9.\n")
+    os.utime(older, (1_000, 1_000))
+    case.reply(ITEM_2_REPLY)
+    check_silent("a newer closed walk is passed over, and minutes older than the newest open walk are not read",
+                 case.run())
+
+
+def test_minutes_without_a_marker_are_not_parsed():
+    specification = importlib.util.spec_from_file_location("walk_stop_hook_under_test", HOOK_SCRIPT)
+    hook = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(hook)
+
+    class ParserThatMustNotRun:
+        def parse(self, text):
+            raise AssertionError("parsed")
+
+    try:
+        outcome = hook.walk_finder.next_to_present("# Minutes\n\nItem 1: approved.\n", ParserThatMustNotRun())
+    except AssertionError:
+        outcome = "parsed"
+    check("minutes holding no marker are not parsed", outcome is None, f"got {outcome!r}")
+    outcome = hook.walk_finder.next_to_present("# Minutes\n\n#next_to_present item 3 of 9.\n", hook.walk_finder.markdown_parser())
+    check("minutes holding a marker still give its value", outcome == ("item 3 of 9.", False), f"got {outcome!r}")
 
 
 def test_silent_cases():

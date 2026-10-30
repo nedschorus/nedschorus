@@ -150,6 +150,7 @@ class MacLaunchSandbox:
                    '  case "$argument" in (has-session) exit 1;; esac\n'
                    'done\n'
                    f'printf \'%s\\n\' "$@" > "{self.captures}/tmux-argv.txt"\n'
+                   f'pwd -P > "{self.captures}/tmux-working-directory.txt"\n'
                    'pane_command=""\n'
                    'for argument in "$@"; do\n'
                    '  case "$argument" in (*handoff-supervisor.py*) '
@@ -210,6 +211,18 @@ class MacLaunchSandbox:
                    + GIT_IDENTITY_ECHO_LINES +
                    ' } '
                    f'> "{self.captures}/after-exit-environment.txt"\n')
+
+    def boot_programs_fail(self):
+        """Make the python3 stub fail clean-worktrees.py and
+        checkout-freshness-catch-up.py the way a broken run does: a line on
+        stderr naming the program, then exit 2."""
+        python3 = self.stubs / "python3"
+        python3.write_text(python3.read_text(encoding="utf-8").replace(
+            'case "${1:-}" in (*' + UPDATE_LOCK_HELPER_NAME + ')',
+            'case "${1:-}" in (*clean-worktrees.py|*checkout-freshness-catch-up.py) '
+            'echo "stand-in failure of ${1##*/}" >&2; exit 2;; esac\n'
+            'case "${1:-}" in (*' + UPDATE_LOCK_HELPER_NAME + ')', 1),
+            encoding="utf-8")
 
     def write_seat_token(self, account: str, token: str,
                          trailing_newline: bool = True) -> Path:
@@ -282,6 +295,10 @@ class MacLaunchSandbox:
         path = self.captures / "tmux-argv.txt"
         return (path.read_text(encoding="utf-8").splitlines()
                 if path.is_file() else [])
+
+    def tmux_working_directory(self):
+        path = self.captures / "tmux-working-directory.txt"
+        return path.read_text(encoding="utf-8").strip() if path.is_file() else ""
 
     def supervisor_environment(self):
         return environment_lines(self.captures / "supervisor-environment.txt")
@@ -391,7 +408,8 @@ class AnotherUpdateHoldsTheLock:
 
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="launch-claude-mac-test-") as scratch:
-        root = Path(scratch)
+        # Resolved, as the cwd the launcher reports is, where TMPDIR is reached through a link.
+        root = Path(scratch).resolve()
 
         # --- ~user root: refused before anything runs ----------------------
         sandbox = MacLaunchSandbox(root / "tilde-user")
@@ -426,6 +444,26 @@ def main() -> int:
         check("~/ root: nothing leaked into the working directory",
               not any(sandbox.workdir.iterdir()),
               sorted(str(p) for p in sandbox.workdir.iterdir()))
+        # A server started in the caller's agent-home makes the caller's own
+        # crash recovery refuse.
+        check("tmux starts in $HOME, not in the caller's working directory",
+              sandbox.tmux_working_directory() == str(sandbox.home.resolve()),
+              (sandbox.tmux_working_directory(), str(sandbox.workdir)))
+
+        # --- relative root: resolved against the caller's directory, not the
+        # $HOME the launcher changes to before it starts tmux
+        sandbox = MacLaunchSandbox(root / "relative-root")
+        result = sandbox.run("relative agents")
+        tmux_argv = sandbox.tmux_argv()
+        seat_directory = f"{sandbox.workdir}/relative agents/seat-t"
+        check("relative root: tmux -c is the seat directory under the caller's directory",
+              result.returncode == 0
+              and any(previous == "-c" and current == seat_directory
+                      for previous, current in zip(tmux_argv, tmux_argv[1:])),
+              (result.returncode, result.stderr[:300], tmux_argv))
+        check("relative root: the seat directory was created under the caller's directory",
+              Path(seat_directory).is_dir()
+              and not (sandbox.home / "relative agents").exists(), seat_directory)
 
         # --- the update step resolves the SEAT's claude, not the ambient one
         # The launcher exports ~/.local/bin ahead of the inherited PATH before
@@ -562,6 +600,38 @@ def main() -> int:
               (sandbox.claude_updates(), sandbox.update_lock_path().exists(),
                result.returncode, result.stderr[:300]))
 
+        # --- the launch-time worktree report and fast-forward fail: each
+        # failure's own error and lines saying the launch goes on reach
+        # stderr, and the seat still starts. --------------------------------
+        sandbox = MacLaunchSandbox(root / "boot-programs-fail")
+        sandbox.boot_programs_fail()
+        result = sandbox.run("~/agents", seat_name="seat-f")
+        check("boot programs fail: the launcher still runs to its tmux launch (exit 0)",
+              result.returncode == 0 and sandbox.tmux_argv(),
+              (result.returncode, result.stderr[:300]))
+        for program, step in (("clean-worktrees.py", "worktree report"),
+                              ("checkout-freshness-catch-up.py", "fast-forward")):
+            check(f"boot programs fail: {program}'s own error reaches stderr",
+                  f"stand-in failure of {program}" in result.stderr, result.stderr)
+            lines = result.stderr.splitlines()
+            first = [index for index, line in enumerate(lines)
+                     if line.startswith(f"launch-claude-mac: the launch-time {step}")
+                     and "failed with exit 2" in line and "the launch goes on" in line]
+            check(f"boot programs fail: stderr says the {step} failed with exit 2, "
+                  "that the launch goes on, where its error is, and who acts",
+                  len(first) == 1
+                  and (lines + ["", ""])[first[0] + 1].startswith(f"launch-claude-mac: any error the ")
+                  and "if none is there" in (lines + ["", ""])[first[0] + 1]
+                  and (lines + ["", "", ""])[first[0] + 2].startswith(f"launch-claude-mac: if you are an agent that ran this launch, tell the user")
+                  and (lines + ["", "", ""])[first[0] + 3].startswith(f"launch-claude-mac: if you are the user, run the command in the first of these lines")
+                  and "if it fails and prints nothing, ask an agent" in (lines + ["", "", ""])[first[0] + 3],
+                  result.stderr)
+        sandbox = MacLaunchSandbox(root / "boot-programs-succeed")
+        result = sandbox.run("~/agents", seat_name="seat-g")
+        check("boot programs succeed: no line says the launch goes on after a failure",
+              result.returncode == 0 and "the launch goes on" not in result.stderr,
+              (result.returncode, result.stderr[:300]))
+
         # --- task-list persistence, detached: both variables reach the
         # supervisor's environment, and the list id is derived from the SEAT
         # NAME. Two different seat names are the teeth: an id arriving from
@@ -575,6 +645,16 @@ def main() -> int:
         check("detached: tmux gets mouse mode on and copy-command pbcopy",
               tmux_argv_sets_mouse_mode_and_pbcopy(sandbox.tmux_argv()),
               sandbox.tmux_argv())
+        # A pane command that ends with the supervisor call lets the pane's
+        # shell exec into it, and tmux, then its parent, wakes it from a
+        # `kill -STOP` at once.
+        detached_pane_commands = [argument for argument in sandbox.tmux_argv()
+                                  if "handoff-supervisor.py" in argument]
+        check("detached: the pane command ends with `; exit $?`, so the shell "
+              "stays the supervisor's parent",
+              len(detached_pane_commands) == 1
+              and detached_pane_commands[0].endswith("; exit $?"),
+              detached_pane_commands)
         check("task list: the pin reaches the supervisor as nedschorus-<seat>-tasks",
               sandbox.supervisor_environment().get("CLAUDE_CODE_TASK_LIST_ID")
               == "nedschorus-seat-a-tasks",
