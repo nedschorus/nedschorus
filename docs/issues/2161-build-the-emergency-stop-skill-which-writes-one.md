@@ -31,9 +31,21 @@ The user's words that shaped the design, in the same approval-walk on 2026-10-28
 - "I'm a little concerned that if things really go wrong, I won't remember the keywords to trigger it. And I'm actually okay with agents triggering it too, if something is really terribly wrong".
 - "This kind of sounds like a skill. Like if I type /emergency kind of thing. ... if it's a skill, we can try to more carefully define what an emergency is, but your first pass is decent."
 
+On 2026-10-30 at 08:28 UTC the user answered A (approve), to all four parts, item 3 of the approval-walk prime-intellect-handed-over-items-2026-10-29 (walk-minutes `nedlern@ned-box:/home/nedlern/agents/prime-intellect/docs/walk/prime-intellect-handed-over-items-2026-10-29-minutes.md`, line 27; the item's text is in the walk-document beside them). The four parts he approved, word for word:
+
+> Part 1, where the stop is kept: one file per stop, in the log-store folder `nedlern@ned-box:/home/nedlern/nedschorus-logs/emergency-stop/`, named by the UTC time it started. A stop is in force while the newest file has no lift line. Nothing else writes or tidies that folder.
+>
+> Part 2, who coordinates the repair: the agent-seat that started the stop, or, when you started it, the agent-seat you told, until you name another. If that agent-seat stops and no successor of it starts, every agent-seat lets running work finish and takes no new work until you name another. Every agent-seat may still take work from you.
+>
+> Part 3, how a stop is lifted: you tell any agent-seat, in any words, and it runs the skill. This adds one thing to the approved "Only the user lifts a stop": you may hand the lift to a named agent-seat, as you did on 2026-10-28, and its lift then counts as your word. The line written is `#emergency_stop_lifted <your words>`, with your words lifting it or handing the lift over, in place of `#lifted`, so that a reader sees an emergency stop was lifted.
+>
+> Part 4, the other 20 questions: the builder settles each, taking the GHI-MD's recommendation where it gives one, and records the answers in the GHI-MD. The answers that change what you see or must do come to you together, as one approval-walk item, before that part is built.
+
+The item's recommendation, which he approved with it, was: "approve all four parts; prime-intellect records them in the GHI-MD and builds the skill." So questions 8, 10, 11 and 17 below are settled by parts 1, 3, 2 and 3; question 20 by that recommendation, which makes prime-intellect the builder; question 21 by part 4; and questions 1 to 7, 9, 12 to 16, 18, 19 and 22 to 24 are the builder's to settle, as part 4 says.
+
 ## Deferred-decisions
 
-These are the user's to decide, before the build as question 21 says, because each changes what he sees or must do, or what every agent-seat does during a stop; none is decided. They were raised by a fast read of the approved text (record cited above), a fast read and a full cold read of this GHI-MD (`nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/emergency-stop-skill-2026-10-28/` and `.../emergency-stop-skill-2026-10-28-2/`), and, for the lift line's name, a check against `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md` whose report was not kept; question 10 carries its finding. Questions 20 to 24 come from findings of that full cold read which the rewrite did not settle, and from the names the reviewers proposed; each carries the recommendation of the agent that wrote this GHI-MD, which the user has not ruled on.
+These were put to the user as the user's to decide. Questions 8, 10, 11, 17, 20 and 21 are settled by his approval of 2026-10-30 under What is decided; the rest the builder settles, as part 4 there says, and records here. They were raised by a fast read of the approved text (record cited above), a fast read and a full cold read of this GHI-MD (`nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/emergency-stop-skill-2026-10-28/` and `.../emergency-stop-skill-2026-10-28-2/`), and, for the lift line's name, a check against `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md` whose report was not kept; question 10 carries its finding. Questions 20 to 24 come from findings of that full cold read which the rewrite did not settle, and from the names the reviewers proposed; each carries the recommendation of the agent that wrote this GHI-MD, which the user has not ruled on.
 
 When a stop starts:
 
@@ -47,13 +59,13 @@ When a stop starts:
 
 The stop file:
 
-8. What is the stop file's path in the log-store, how is a lifted stop kept apart from a later stop, and how is the file kept from being moved or deleted by anything that tidies the log-store?
+8. What is the stop file's path in the log-store, how is a lifted stop kept apart from a later stop, and how is the file kept from being moved or deleted by anything that tidies the log-store? Settled by part 1 under What is decided.
 9. Is "its brief" the coordinating agent-seat's seat-brief, or a brief written for this repair, and what does "the repair" cover? Recommended: a brief written for this repair, kept in the log-store beside the stop file, since a seat-brief says nothing about the emergency.
-10. Should the lift line be named `#emergency_stop_lifted` rather than `#lifted`? Given only `#lifted`, a fresh-reader could not tell what was lifted; `#emergency_stop_lifted` follows the snake_case of the project's other `#` lines, such as `#root_cause_not_fixed`. Recommended: yes.
+10. Should the lift line be named `#emergency_stop_lifted` rather than `#lifted`? Given only `#lifted`, a fresh-reader could not tell what was lifted; `#emergency_stop_lifted` follows the snake_case of the project's other `#` lines, such as `#root_cause_not_fixed`. Recommended: yes. Settled by part 3 under What is decided: yes.
 
 During a stop:
 
-11. Who names the coordinating agent-seat, and what does each agent-seat do before one is named, or when the named one stops running? Until one is named, "takes work only from the coordinating agent-seat" leaves no agent-seat any work it may take; read literally, it also bars every agent-seat from taking work from the user.
+11. Who names the coordinating agent-seat, and what does each agent-seat do before one is named, or when the named one stops running? Until one is named, "takes work only from the coordinating agent-seat" leaves no agent-seat any work it may take; read literally, it also bars every agent-seat from taking work from the user. Settled by part 2 under What is decided.
 12. What counts as running work (a command, a task, a pull request), and what does an agent-seat do when that work does not finish, or is itself what is losing or damaging work?
 13. Does "without pushing" bar only the running work's pushes, or every push until the lift, including the repair's? Does it bar merge-lane-2's merges and other writes to GitHub? What happens to finished work that was not pushed, and does pushing resume by itself after the lift?
 14. What happens to an approval-walk that is open when a stop starts, and to it after the lift?
@@ -62,14 +74,14 @@ During a stop:
 
 Lifting a stop:
 
-17. How does the user tell the skill to lift a stop, and in which agent-session does the skill then run? May he delegate the lift to an agent-seat, as he did on 2026-10-28, and does a delegated lift count as "the user's word"?
+17. How does the user tell the skill to lift a stop, and in which agent-session does the skill then run? May he delegate the lift to an agent-seat, as he did on 2026-10-28, and does a delegated lift count as "the user's word"? Settled by part 3 under What is decided.
 18. If the user does not answer for hours after an agent-seat starts a stop on its own, for example overnight, does the stop simply last, or is he reminded?
 19. How does an agent-session learn that a stop was lifted, so that it stops following the stop's rules?
 
 The work itself:
 
-20. Which agent-seat puts these questions to the user and records his user-rulings, which builds the skill and hooks, and does the build go through design-to-main? Recommended: agent-instructions-editor runs the approval-walk, because the skill and hooks are files the instruction-file guard protects, and the build goes through design-to-main, because this GHI-MD is an approved design.
-21. Which of questions 1 to 19 must be ruled on before the build starts? Recommended: all of them except 1 and 18, which can be sharpened after the first real stop.
+20. Which agent-seat puts these questions to the user and records his user-rulings, which builds the skill and hooks, and does the build go through design-to-main? Recommended: agent-instructions-editor runs the approval-walk, because the skill and hooks are files the instruction-file guard protects, and the build goes through design-to-main, because this GHI-MD is an approved design. Settled under What is decided: prime-intellect builds the skill.
+21. Which of questions 1 to 19 must be ruled on before the build starts? Recommended: all of them except 1 and 18, which can be sharpened after the first real stop. Settled by part 4 under What is decided: the builder settles them.
 22. Until the build lands, do agent-seats follow any interim rule for a stop? Recommended: no; a stop is relayed as today, and the build is the fix.
 23. Must the work's completion include a check that every agent-seat runs the new hooks? An agent-home can stay on an older checkout when its launch-time-git-sync cannot fast-forward it, and its agent-sessions are then never shown the stop file. Recommended: yes; the check is that each agent-home's checkout contains the merge commit.
 24. Should the name "stop" be written in full, "emergency stop", in the skill, the hooks and their messages, to keep it apart from Claude Code's Stop hook event, which the /walk-me-through hooks already use? Should the glossaries gain `/emergency-stop` (the skill) and "emergency-stop file" (the file it writes), and the SDLC-terms "incident commander" for the coordinating agent-seat and "incident response" for the repair? Recommended: yes to writing "emergency stop" in full; add `/emergency-stop` and "emergency-stop file" to the glossaries when the skill lands; no to the two SDLC-terms, since the approved text says "the agent-seat that coordinates the repair".
@@ -80,8 +92,8 @@ These are settled by the build, not by the user:
 - What the hook does when the file is missing, unreadable or half-written, or when the hook itself fails. A behavior the build chooses here that changes what the user sees goes to him before it is built.
 - Which hook event shows the file.
 - What time the file records and in which time zone.
-- How the lift line is kept apart from a line beginning `#lifted` inside the user's words or the evidence.
+- How the lift line is kept apart from a line beginning `#emergency_stop_lifted` inside the user's words or the evidence.
 
 ## Next action
 
-An agent-seat puts questions 1 to 24 under Deferred-decisions to the user in an approval-walk and records his user-rulings in this GHI-MD with edit-GHI; a question he defers stays here, and the build waits until he has ruled on every question the build needs. The build then makes the emergency-stop skill under `.claude/skills/emergency-stop/`; the hook that, until the stop file holds its lift line, shows the file to every agent-session at each turn; and the change, for a stop, to the hooks of /walk-me-through, which today are `nc-systems/skills/walk-me-through/walk-me-through-agent-question-to-user-outside-approval-walk-items-refusal-stop-hook.py` and `nc-systems/skills/walk-me-through/walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py`. The work is done when its pull request has merged, every agent-seat on both machines runs the new hooks, and the outcome is recorded in an Outcome section at the top of this GHI-MD.
+The builder settles each question under Deferred-decisions that part 4 under What is decided leaves to it, taking the recommendation where one is given, and records each answer here with edit-GHI; the answers that change what the user sees or must do go to him together, as one approval-walk item, before that part is built. The build makes the emergency-stop skill under `.claude/skills/emergency-stop/`; the hook that, until the stop file holds its lift line, shows the file to every agent-session at each turn; and the change, for a stop, to the hooks of /walk-me-through, which today are `nc-systems/skills/walk-me-through/walk-me-through-agent-question-to-user-outside-approval-walk-items-refusal-stop-hook.py` and `nc-systems/skills/walk-me-through/walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py`. The work is done when its pull request has merged, every agent-seat on both machines runs the new hooks, and the outcome is recorded in an Outcome section at the top of this GHI-MD.
