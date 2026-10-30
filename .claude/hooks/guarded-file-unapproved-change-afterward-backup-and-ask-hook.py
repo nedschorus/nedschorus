@@ -40,6 +40,7 @@ from pathlib import Path
 
 HOOK_PATH = Path(__file__).resolve()
 CLONE_ROOT = HOOK_PATH.parents[2]
+GUARD_HOOKS_DIRECTORY = CLONE_ROOT / ".claude" / "guard-hooks"
 HOOK_NAME = HOOK_PATH.stem
 
 LOG_STORE_KIND = "guarded-file-versions-and-approvals"
@@ -198,7 +199,7 @@ def loaded(name, path):
 def guard():
     """instruction-file-guard.py, whose functions decide what is guarded, so the two hooks
     cannot disagree."""
-    return loaded("instruction_file_guard", HOOK_PATH.parent / "instruction-file-guard.py")
+    return loaded("instruction_file_guard", GUARD_HOOKS_DIRECTORY / "instruction-file-guard.py")
 
 
 def snapshots():
@@ -680,7 +681,7 @@ def checkout_files(checkout: Path, decisions: dict):
     ignored = git_text(checkout, "ls-files", "-z", "--others", "--ignored", "--exclude-standard",
                        "--", ":(glob)**/CLAUDE.local.md",
                        ":(glob)**/.claude/settings.local.json")
-    guard_version = str(stat_data(str(HOOK_PATH.parent / "instruction-file-guard.py")))
+    guard_version = str(stat_data(str(GUARD_HOOKS_DIRECTORY / "instruction-file-guard.py")))
     if decisions.get("") != guard_version:
         decisions.clear()
         decisions[""] = guard_version
@@ -736,7 +737,7 @@ def entries_after(entries, position):
 
 def git_operation_in_progress(checkout: Path):
     location_guard = loaded("session_location_write_guard",
-                            HOOK_PATH.parent / "session-location-write-guard.py")
+                            GUARD_HOOKS_DIRECTORY / "session-location-write-guard.py")
     return location_guard.git_operation_in_progress(checkout)
 
 

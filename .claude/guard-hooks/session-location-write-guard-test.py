@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for session-location-write-guard.py.
 
-Run: python3 .claude/hooks/session-location-write-guard-test.py
+Run: python3 .claude/guard-hooks/session-location-write-guard-test.py
 Prints one line per case and exits non-zero if any case fails. Cases run
 against throwaway repositories mirroring the fleet layout: a clone whose main
 worktree is the reference copy, with linked worktrees as seats. As with the
@@ -404,15 +404,17 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # relative to the guard's own file; a copy of the guard beside a broken module shows
     # that a module that cannot be loaded is reported.
     broken_tree = tmp / "broken-freshness-tree"
-    (broken_tree / ".claude" / "hooks").mkdir(parents=True)
+    (broken_tree / ".claude" / "guard-hooks").mkdir(parents=True)
+    (broken_tree / ".claude" / "hooks").mkdir()
     (broken_tree / "scripts").mkdir()
     import shutil as _copier
-    for name in ("session-location-write-guard.py", "guard-approval-marker-common.py"):
-        _copier.copy(SCRIPT_PATH.with_name(name), broken_tree / ".claude" / "hooks" / name)
+    _copier.copy(SCRIPT_PATH, broken_tree / ".claude" / "guard-hooks" / SCRIPT_PATH.name)
+    _copier.copy(SCRIPT_PATH.resolve().parents[1] / "hooks" / "guard-approval-marker-common.py",
+                 broken_tree / ".claude" / "hooks" / "guard-approval-marker-common.py")
     (broken_tree / "scripts" / "checkout-freshness-catch-up.py").write_text(
         "raise RuntimeError('stand-in broken module')\n", encoding="utf-8")
     result = run_hook(detached, str(detached / "notes.md"), decoy,
-                      script_path=broken_tree / ".claude" / "hooks" / "session-location-write-guard.py",
+                      script_path=broken_tree / ".claude" / "guard-hooks" / "session-location-write-guard.py",
                       expect_note=True)
     check("a marker list that cannot be loaded is reported, not read as \"no operation in progress\"",
           "in-progress markers" in result.note and "stand-in broken module" in result.note,

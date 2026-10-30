@@ -19,7 +19,7 @@ missing from the local repository cannot be shown to be an ancestor, so the upda
 not a fast-forward.
 
 ESCAPE_HATCH_ASSIGNMENT in front of the git push command lets a push merge-lane-2 asked for
-through unchecked; scripts/force-push-with-open-pull-request-guard-hook.py reads the same one.
+through unchecked; .claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py reads the same one.
 """
 
 import json

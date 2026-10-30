@@ -18,7 +18,7 @@ before a line was written. Each is the failure it predicted:
   D4  the refusal names the pull request by title and url, never by number
   D5  the ruling "stop rather than reverse" is the refusal's second line
 
-Run: python3 scripts/force-push-with-open-pull-request-guard-hook-test.py
+Run: python3 .claude/guard-hooks/force-push-with-open-pull-request-guard-hook-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -41,7 +41,7 @@ _spec.loader.exec_module(guard)
 
 _rule_failure_lines_spec = importlib.util.spec_from_file_location(
     "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common",
-    HOOK_SCRIPT.resolve().parent.parent / "nc-systems" / "general-tools"
+    HOOK_SCRIPT.resolve().parents[2] / "nc-systems" / "general-tools"
     / "rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py")
 RULE_FAILURE_LINES = importlib.util.module_from_spec(_rule_failure_lines_spec)
 _rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)
@@ -980,7 +980,7 @@ check("a force push later in a chain is still found",
 # budget: the guard then always answers first, and can say what it skipped.
 # ---------------------------------------------------------------------------
 
-SETTINGS_PATH = HOOK_SCRIPT.resolve().parent.parent / ".claude" / "settings.json"
+SETTINGS_PATH = HOOK_SCRIPT.resolve().parents[2] / ".claude" / "settings.json"
 settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
 guard_entries = [
     hook
@@ -994,7 +994,7 @@ guard_entries = [
 def guard_not_wired_once_failure_detail(entries):
     return "\n".join([
         f"found {entries}; .claude/settings.json must register "
-        f"scripts/force-push-with-open-pull-request-guard-hook.py exactly once, in the PreToolUse "
+        f".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py exactly once, in the PreToolUse "
         f"block whose matcher is Bash, so that the guard runs once before each Bash command.",
         "If your change removed, duplicated or moved that entry, put back exactly one entry in "
         "that block.",
@@ -1007,7 +1007,7 @@ def registered_timeout_not_above_budget_failure_detail(timeout, budget):
         f"timeout {timeout} vs budget {budget}; the guard must finish its probes and answer "
         f"before the harness stops it, so the timeout .claude/settings.json registers for it must "
         f"be a number above PROBE_BUDGET_SECONDS in "
-        f"scripts/force-push-with-open-pull-request-guard-hook.py.",
+        f".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py.",
         "If the case above also failed, fix that first; this case reads the timeout from the entry "
         "that case looks for.",
         "If your change raised PROBE_BUDGET_SECONDS, lower it below the timeout, or ask the user "
@@ -1030,7 +1030,7 @@ check("an unregistered guard's failure says where it must be registered and why,
       "guarded-file line and the line for a rule main broke",
       guard_not_wired_once_failure_detail([]).split("\n") == [
           "found []; .claude/settings.json must register "
-          "scripts/force-push-with-open-pull-request-guard-hook.py exactly once, in the PreToolUse "
+          ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py exactly once, in the PreToolUse "
           "block whose matcher is Bash, so that the guard runs once before each Bash command.",
           "If your change removed, duplicated or moved that entry, put back exactly one entry in "
           "that block.",
@@ -1043,7 +1043,7 @@ check("a timeout not above the budget fails with why, one fix per cause, the gua
           "timeout 30 vs budget 40.0; the guard must finish its probes and answer before the "
           "harness stops it, so the timeout .claude/settings.json registers for it must be a "
           "number above PROBE_BUDGET_SECONDS in "
-          "scripts/force-push-with-open-pull-request-guard-hook.py.",
+          ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py.",
           "If the case above also failed, fix that first; this case reads the timeout from the "
           "entry that case looks for.",
           "If your change raised PROBE_BUDGET_SECONDS, lower it below the timeout, or ask the user "

@@ -43,7 +43,7 @@ Line numbers are at origin/main commit `1846c5282`, and each cites the line that
 - `scripts/ned-box-path-in-agent-reply-unclickable-on-mac-warning-hook.py:83` (UserPromptSubmit): the hook broke; tells the agent how to link a ned-box file for the Mac, and to tell the user if the failure recurs.
 - `scripts/absence-claim-locator-reminder-hook.py:525` (Stop and SubagentStop): the hook broke; tells the agent to run the hook's test and tell the user what it reports if the failure recurs.
 - `scripts/agent-seat-due-task-raise-hook.py:513` (Stop): a `HookFault`, such as a state file that cannot be written; tells the agent which directory to make writable.
-- `.claude/hooks/session-location-write-guard.py:243` (PreToolUse): the guard could not check a write; tells the agent to carry on when the write is into its own checkout on a branch, and otherwise to tell the user.
+- `.claude/guard-hooks/session-location-write-guard.py:243` (PreToolUse): the guard could not check a write; tells the agent to carry on when the write is into its own checkout on a branch, and otherwise to tell the user.
 
 ### News that the hook's work was not done
 

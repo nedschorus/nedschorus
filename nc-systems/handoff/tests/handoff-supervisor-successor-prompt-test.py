@@ -2219,7 +2219,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
 
     def instruction_file_guard_exit_code(relative_path: str) -> int:
         return subprocess.run(
-            [sys.executable, str(REPOSITORY_ROOT / ".claude" / "hooks" / "instruction-file-guard.py")],
+            [sys.executable, str(REPOSITORY_ROOT / ".claude" / "guard-hooks" / "instruction-file-guard.py")],
             input=json.dumps({"cwd": str(guarded_checkout),
                               "tool_input": {"file_path": str(guarded_checkout / relative_path)}}),
             capture_output=True, text=True, check=False).returncode

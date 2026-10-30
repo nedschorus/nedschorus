@@ -26,7 +26,7 @@ from pathlib import Path
 
 _shell_reader_spec = importlib.util.spec_from_file_location(
     "shell_command_tree_sitter_bash_reader_common",
-    Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
     / "shell-command-tree-sitter-bash-reader-common.py")
 shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
 _shell_reader_spec.loader.exec_module(shell_reader)
@@ -48,7 +48,7 @@ COMMAND_RUNNING_PREFIX_VALUE_OPTIONS = {
 SHELL_STRING_RUNNERS = shell_reader.SHELL_STRING_RUNNERS
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
-RUNNER_PATH = Path(__file__).resolve().parent / "run-codex-task-from-brief.py"
+RUNNER_PATH = Path(__file__).resolve().parents[2] / "scripts" / "run-codex-task-from-brief.py"
 # Codex exec's options that take the next word as their value.
 CODEX_EXEC_VALUE_OPTIONS = {
     "-c", "--config", "--enable", "--disable", "-i", "--image", "-m", "--model",

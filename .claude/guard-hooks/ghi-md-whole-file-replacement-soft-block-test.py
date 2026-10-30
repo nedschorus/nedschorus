@@ -8,7 +8,7 @@ the way Claude Code does. One case runs the file end to end as a subprocess,
 so its imports by path are exercised as Claude Code loads them. No case runs
 git or any command the hook reads.
 
-Run: python3 .claude/hooks/ghi-md-whole-file-replacement-soft-block-test.py
+Run: python3 .claude/guard-hooks/ghi-md-whole-file-replacement-soft-block-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 

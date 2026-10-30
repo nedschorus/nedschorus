@@ -1869,14 +1869,14 @@ except r.ShellParserUnavailable as error:
 
     # --- each Bash guard lets the command through and says so ---
     GUARDS = [
-        ("scripts/synthetic-keystroke-guard-hook.py", "The synthetic keystroke guard"),
-        ("scripts/force-push-with-open-pull-request-guard-hook.py", "The force-push guard"),
-        (".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py", "The GHI write redirect guard"),
-        ("scripts/search-file-argument-read-as-option-guard-hook.py",
+        (".claude/guard-hooks/synthetic-keystroke-guard-hook.py", "The synthetic keystroke guard"),
+        (".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py", "The force-push guard"),
+        (".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py", "The GHI write redirect guard"),
+        (".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py",
          "The search-file-argument guard"),
-        ("nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-"
+        (".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-"
          "server-selection-refusal-hook.py", "The tmux kill guard"),
-        ("scripts/hand-typed-codex-exec-command-refusal-hook.py", "The hand-typed codex exec guard"),
+        (".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py", "The hand-typed codex exec guard"),
     ]
     for relative, guard_name in GUARDS:
         guard = load(REPOSITORY_ROOT / relative, "guard_" + Path(relative).stem.replace("-", "_"))

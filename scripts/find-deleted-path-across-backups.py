@@ -118,7 +118,7 @@ never replaces a file already in that folder. A version this run can only
 reach through a mount it did not make, a Time Machine snapshot or an unmounted
 local snapshot, gets a printed command that copies it into the same folder.
 It never writes backup state, which
-agents are forbidden to do (.claude/hooks/backup-and-snapshot-write-guard.py
+agents are forbidden to do (.claude/guard-hooks/backup-and-snapshot-write-guard.py
 holds the tool path; the rule binds shell commands too). Two calls it makes
 change mount state and nothing else. `diskutil mount` on the Time Machine
 destination mounts a disk the user already attached, which is how you read a

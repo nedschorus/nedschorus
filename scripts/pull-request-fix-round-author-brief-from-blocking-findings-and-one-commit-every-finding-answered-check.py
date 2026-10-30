@@ -88,7 +88,7 @@ WORKTREE_DISPATCH_INSTRUCTION = (
 # worktree to a branch an earlier round's worktree still has checked out, and the agent harness
 # may keep that worktree locked.
 LOCAL_BRANCH_NAME_FORMAT = "fix-round-pull-request-{number}-review-{review_id}"
-# The subagent works on a local branch, not a detached HEAD: .claude/hooks/session-location-write-guard.py
+# The subagent works on a local branch, not a detached HEAD: .claude/guard-hooks/session-location-write-guard.py
 # refuses every Edit or Write to a tracked file while HEAD is detached.
 WORKTREE_REMOVAL_INSTRUCTION = (
     "For the author, when the subagent has finished: remove its worktree, and then the local branch "

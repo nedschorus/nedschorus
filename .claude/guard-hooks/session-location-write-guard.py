@@ -12,7 +12,8 @@ import sys
 from pathlib import Path
 
 _marker_spec = importlib.util.spec_from_file_location(
-    "guard_approval_marker_common", Path(__file__).resolve().with_name("guard-approval-marker-common.py"))
+    "guard_approval_marker_common",
+    Path(__file__).resolve().parents[1] / "hooks" / "guard-approval-marker-common.py")
 _guard_approval_marker_common = importlib.util.module_from_spec(_marker_spec)
 _marker_spec.loader.exec_module(_guard_approval_marker_common)
 consume_approval_marker = _guard_approval_marker_common.consume_approval_marker

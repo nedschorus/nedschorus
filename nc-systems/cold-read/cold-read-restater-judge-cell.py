@@ -81,7 +81,7 @@ it -- which is the correct refusal: nothing should judge anything until
 the user has read what the judge is told to do. The file's home once
 he has walked it is .claude/skills/cold-read/prompts/restater-judge.md,
 beside every other cold-read-cell's prompt, and .claude/ changes only
-through that walk (.claude/hooks/instruction-file-guard.py, user-walked
+through that walk (.claude/guard-hooks/instruction-file-guard.py, user-walked
 2026-08-07, nedschorus#45). This is not the cold-read-fast-read's ruling
 (nc-systems/cold-read/cold-read-fast-read.py holds its prompt in the file because the user
 ruled that for the fast cold-read-cell).

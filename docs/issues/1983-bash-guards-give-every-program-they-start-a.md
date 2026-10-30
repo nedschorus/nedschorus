@@ -28,12 +28,12 @@ The user approved filing this GHI on 2026-10-26, at 13:58 by the minutes' clock,
 
 The check, run on 2026-10-26 on main at commit 29fb37b38. Its scope was the seven Bash guards listed in `.claude/settings.json` and the modules they load. Each file was parsed with Python's `ast` module. Every call of `subprocess.run`, `subprocess.Popen`, `subprocess.check_output`, `subprocess.check_call` or `subprocess.call` was found, and also every call of a function the guard names `runner`, which is how these guards take `subprocess.run` as an argument so that a test or the replay can pass a stand-in. Each call was checked for a `timeout=` argument. A `grep` of the same files for `os.system`, `os.popen`, `os.exec`, `os.spawn`, `create_subprocess`, `pty.`, `.communicate(` and `.wait(` found nothing.
 
-- `scripts/synthetic-keystroke-guard-hook.py` line 296: has `timeout`.
-- `scripts/force-push-with-open-pull-request-guard-hook.py` lines 283 and 318: have `timeout`.
-- `.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py` line 418: has `timeout`; the function of `scripts/ghi-issue-write.py` it calls, `run()`, passes its `timeout` on to `subprocess.run`.
+- `.claude/guard-hooks/synthetic-keystroke-guard-hook.py` line 296: has `timeout`.
+- `.claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py` lines 283 and 318: have `timeout`.
+- `.claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py` line 418: has `timeout`; the function of `scripts/ghi-issue-write.py` it calls, `run()`, passes its `timeout` on to `subprocess.run`.
 - `nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py` line 143: has `timeout`.
 - `nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py`, the shell reader, which every guard loads, lines 426, 743 and 1648: have `timeout`.
-- `scripts/search-file-argument-read-as-option-guard-hook.py`, `nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py`, `scripts/hand-typed-codex-exec-command-refusal-hook.py` and `nc-systems/general-tools/tmux-target-or-server-does-not-exist-error-pattern-common.py`: no call that starts a program.
+- `.claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py`, `.claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py`, `.claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py` and `nc-systems/general-tools/tmux-target-or-server-does-not-exist-error-pattern-common.py`: no call that starts a program.
 
 The check looked for a `timeout=` argument, not at its value.
 
