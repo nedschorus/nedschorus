@@ -4,7 +4,15 @@
 The harness also labels tool results, reminders, and command output as user
 turns; exclude those when searching for the user’s own words. A message the
 user types while the agent is mid-turn has no user turn: it is a queued_command
-attachment whose origin is human."""
+attachment whose origin is human.
+
+A user turn that Claude Code marks with an origin other than human, or as meta,
+is not his: such turns carry other agents' messages, hook feedback and delivery
+notices. Neither is a turn of a `claude -p` agent-session, whose entrypoint is
+sdk-cli and whose prompts a program wrote, nor the summary Claude Code writes
+when it compacts a conversation, nor the opening prompt the handoff-supervisor
+gives a successor agent-session. Turns written before Claude Code recorded an
+origin are read by their text alone."""
 
 import argparse
 import glob
@@ -16,6 +24,25 @@ import time
 
 DEFAULT_PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 WRAPPED_BLOCK = re.compile(r"\A\s*<[a-z-]+>.*</[a-z-]+>\s*\Z", re.DOTALL)
+PROGRAM_PROMPT_ENTRYPOINT = "sdk-cli"
+COMPACTION_SUMMARY_OPENING = "This session is being continued from a previous conversation"
+# Copies of scripts/recover-crashed-seats.py's constants; its test keeps them equal.
+REINCARNATION_OPENER_MARKER = "the dialog from the session you are continuing"
+REINCARNATION_OPENER_PATTERN = re.compile(
+    r"Read .+? — (?:it is )?" + re.escape(REINCARNATION_OPENER_MARKER))
+IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER = "the previous session's conversation-tail is unavailable"
+
+
+def written_by_a_program(record, text):
+    """Whether a user turn's text came from Claude Code, a hook or a program rather than the user."""
+    if record.get("isMeta") or record.get("entrypoint") == PROGRAM_PROMPT_ENTRYPOINT:
+        return True
+    origin = record.get("origin")
+    if "origin" in record and (not isinstance(origin, dict) or origin.get("kind") != "human"):
+        return True
+    return (text.startswith(COMPACTION_SUMMARY_OPENING)
+            or REINCARNATION_OPENER_PATTERN.match(text) is not None
+            or IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER in text)
 
 
 def typed_by_user(record):
@@ -31,6 +58,8 @@ def typed_by_user(record):
     if WRAPPED_BLOCK.match(text):
         return None
     if text.startswith("Caveat:"):
+        return None
+    if written_by_a_program(record, text):
         return None
     return text
 
@@ -86,13 +115,51 @@ def assistant_text(record):
     return joined or None
 
 
+class TurnReader:
+    """Reads one transcript's records in order and returns each turn of the user's or the agent's.
+
+    Its state is a dict of plain values, so a reader that stops part way through a
+    transcript can save the state and resume at the next record."""
+
+    def __init__(self, state=None):
+        state = state or {}
+        # After an interrupt the harness re-sends a queued message as a user turn; the same words
+        # typed again later are a new message, so only that re-send is dropped.
+        self.queued_text_awaiting_resend = state.get("queued_text_awaiting_resend")
+        self.interrupted_since_queued = bool(state.get("interrupted_since_queued"))
+
+    def state(self):
+        return {"queued_text_awaiting_resend": self.queued_text_awaiting_resend,
+                "interrupted_since_queued": self.interrupted_since_queued}
+
+    def turn(self, record):
+        """("user" or "agent", text) for a record that is a turn, else None."""
+        if is_interrupt_notice(record):
+            self.interrupted_since_queued = True
+            return None
+        text = queued_by_user(record)
+        if text is not None:
+            self.queued_text_awaiting_resend = text
+            self.interrupted_since_queued = False
+            return ("user", text)
+        text = typed_by_user(record)
+        if text is not None:
+            if self.interrupted_since_queued and text == self.queued_text_awaiting_resend:
+                self.queued_text_awaiting_resend = None
+                return None
+            self.queued_text_awaiting_resend = None
+            return ("user", text)
+        text = assistant_text(record)
+        if text is not None:
+            self.queued_text_awaiting_resend = None
+            return ("agent", text)
+        return None
+
+
 def read_turns(path):
     """Every turn in one transcript: (index, speaker, text, timestamp)."""
     turns = []
-    # After an interrupt the harness re-sends a queued message as a user turn; the same words
-    # typed again later are a new message, so only that re-send is dropped.
-    queued_text_awaiting_resend = None
-    interrupted_since_queued = False
+    reader = TurnReader()
     with open(path, "r", errors="replace") as handle:
         for line in handle:
             line = line.strip()
@@ -104,28 +171,9 @@ def read_turns(path):
                 continue
             if not isinstance(record, dict):
                 continue
-            stamp = record.get("timestamp", "")
-            if is_interrupt_notice(record):
-                interrupted_since_queued = True
-                continue
-            text = queued_by_user(record)
-            if text is not None:
-                turns.append((len(turns), "user", text, stamp))
-                queued_text_awaiting_resend = text
-                interrupted_since_queued = False
-                continue
-            text = typed_by_user(record)
-            if text is not None:
-                if interrupted_since_queued and text == queued_text_awaiting_resend:
-                    queued_text_awaiting_resend = None
-                    continue
-                turns.append((len(turns), "user", text, stamp))
-                queued_text_awaiting_resend = None
-                continue
-            text = assistant_text(record)
-            if text is not None:
-                turns.append((len(turns), "agent", text, stamp))
-                queued_text_awaiting_resend = None
+            turn = reader.turn(record)
+            if turn is not None:
+                turns.append((len(turns), turn[0], turn[1], record.get("timestamp", "")))
     return turns
 
 
