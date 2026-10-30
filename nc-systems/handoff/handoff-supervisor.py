@@ -99,12 +99,19 @@ Starting a supervisor requires a nonempty CLAUDE_CODE_TASK_LIST_ID from
 scripts/launch-claude-mac or scripts/launch-claude-ubuntu.
 
 Exit codes: 0 clean stop, 2 bad invocation, 3 the agent command is missing,
-4 the supervisor lock could not be claimed.
+4 the supervisor lock could not be claimed, 5 the agent-seat's GitHub token could not be read.
+
+GitHub identity: at startup the supervisor sets GH_TOKEN, in its own environment and so in
+every agent-session it starts, to the token of the GitHub account the agent-seat acts as
+(agent_seat_github_account_lookup_and_token_file_read), replacing any GH_TOKEN it inherited. Every way
+an agent-seat is started runs this program, so this is the one place that decides the
+account.
 """
 
 import argparse
 import ctypes
 import fcntl
+import getpass
 import importlib.util
 import json
 import os
@@ -818,6 +825,89 @@ def written_at_wariness_sentence(written_at: str) -> str:
 def pinned_task_list_id() -> str:
     """Return the launcher-pinned task list ID, or an empty string when unpinned."""
     return os.environ.get("CLAUDE_CODE_TASK_LIST_ID", "").strip()
+
+
+# Every other agent-seat acts as its machine's account: ubuntu-claude on ned-box, mac-claude on the Mac.
+AGENT_SEAT_GITHUB_ACCOUNTS_OTHER_THAN_THE_MACHINE_DEFAULT = {
+    # GitHub refuses an approving review from a pull request's author, so the merge-lane must not
+    # open its own pull requests as the account the other agent-seats use.
+    "merge-lane-2": "ned-review-merge",
+}
+
+
+AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS = 5
+
+
+class AgentSeatGithubTokenUnreadableError(Exception):
+    def __init__(self, agent_seat_name: str, account: str, token_file: Path, why: str,
+                 file_is_there: bool):
+        super().__init__(f"the token file {token_file} of the GitHub account {account}, which the "
+                         f"agent-seat {agent_seat_name} acts as, {why}")
+        self.agent_seat_name = agent_seat_name
+        self.account = account
+        self.token_file = token_file
+        self.file_is_there = file_is_there
+
+
+def agent_seat_github_account_lookup_and_token_file_read(agent_seat_name: str):
+    """Return (account, token): the GitHub account the agent-seat acts as, and its token.
+
+    Raises AgentSeatGithubTokenUnreadableError when ~/.config/nedschorus/<account>.token
+    is missing, unreadable or empty.
+    """
+    account = AGENT_SEAT_GITHUB_ACCOUNTS_OTHER_THAN_THE_MACHINE_DEFAULT.get(agent_seat_name)
+    if account is None:
+        account = ("ubuntu-claude"
+                   if handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
+                   else "mac-claude")
+    token_file = Path.home() / ".config" / "nedschorus" / f"{account}.token"
+    try:
+        lines = token_file.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError as error:
+        raise AgentSeatGithubTokenUnreadableError(
+            agent_seat_name, account, token_file, "does not exist", False) from error
+    except (OSError, UnicodeDecodeError) as error:
+        raise AgentSeatGithubTokenUnreadableError(
+            agent_seat_name, account, token_file, f"could not be read: {error}", True) from error
+    token = lines[0].strip() if lines else ""
+    if not token:
+        raise AgentSeatGithubTokenUnreadableError(
+            agent_seat_name, account, token_file, "is empty or its first line is blank", False)
+    return account, token
+
+
+def agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build(program_name: str,
+                                              error: AgentSeatGithubTokenUnreadableError,
+                                              start_again_instruction: str) -> str:
+    """Return the report of an agent-seat not started for want of its GitHub token.
+
+    start_again_instruction says how to start the agent-seat again once the file is fixed;
+    it depends on the program that refused.
+    """
+    # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md
+    machine = ("ned-box" if handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
+               else "the Mac")
+    unix_user = getpass.getuser()
+    if error.file_is_there:
+        what_the_user_does = (
+            f"make {error.token_file} on {machine} readable by the Unix user {unix_user}, "
+            f"for example with `chmod 600 {error.token_file}` when {unix_user} owns it")
+    else:
+        what_the_user_does = (
+            f"write the GitHub token of {error.account} to {error.token_file} on {machine}, as one "
+            "line, mode 600; docs/nedschorus-wiki/nedschorus-github-identities-and-token-policy.md "
+            "says where each token comes from")
+    return (f"{program_name}: the agent-seat {error.agent_seat_name} was not started, because "
+            f"{error}.\n"
+            f"Every agent-session of {error.agent_seat_name} acts on GitHub through that token; "
+            "without it, gh and git would act as the account gh's own login holds, which is the "
+            "wrong account for this agent-seat.\n"
+            "Only the user handles token files. If you are an agent, do not open, write or change "
+            f"the file; tell the user: \"The agent-seat {error.agent_seat_name} on {machine} did not "
+            f"start. To start it, {what_the_user_does}.\" A subagent tells the agent that "
+            "dispatched it instead.\n"
+            f"Once the file is fixed: {start_again_instruction}\n"
+            "Do not start the agent-seat any other way: it would act on GitHub as the wrong account.")
 
 
 def project_directory_for_working_directory(working_directory: Path) -> Path:
@@ -2343,6 +2433,18 @@ def main(argv=None) -> int:
             file=sys.stderr,
         )
         return 2
+
+    try:
+        _, os.environ["GH_TOKEN"] = agent_seat_github_account_lookup_and_token_file_read(arguments.agent)
+    except AgentSeatGithubTokenUnreadableError as error:
+        print(agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build(
+            "handoff-supervisor", error,
+            "start the agent-seat again with its launcher, from the Mac: "
+            f"`launch-claude-ubuntu {arguments.agent}` for an agent-seat on ned-box, "
+            f"`launch-claude-mac {arguments.agent}` for one on the Mac. If the launcher left a "
+            "shell open in the agent-seat's tmux session, exit that shell first."),
+            file=sys.stderr)
+        return AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS
 
     if bool(arguments.adopt_session_id) != bool(arguments.adopt_process_id):
         parser.error("--adopt-session-id and --adopt-process-id must be given together")

@@ -711,6 +711,14 @@ def by_hand_launch_command_for_seat(name: str, seat_directory: Path, handoff_dir
 def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
                 extra_supervisor_arguments: str, first_prompt_file: Path = None):
     """Start the seat detached under its supervisor on its own tmux server."""
+    # The supervisor refuses to start without the agent-seat's GitHub token, but its refusal goes
+    # to a detached pane that closes; reading the token here first puts the cause in this report.
+    try:
+        supervisor.agent_seat_github_account_lookup_and_token_file_read(name)
+    except supervisor.AgentSeatGithubTokenUnreadableError as error:
+        print(supervisor.agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build(
+            "recover-crashed-seats", error, "run this recovery again."), file=sys.stderr)
+        return 1
     # Pin the assessed agents root and handoff directory so launch defaults cannot select another seat.
     launcher = launcher_path()
     # Recovery often runs from another agent-session's shell, whose variables must not reach the seat.

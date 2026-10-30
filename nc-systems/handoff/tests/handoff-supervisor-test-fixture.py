@@ -49,6 +49,17 @@ atexit.register(shutil.rmtree, SCRATCH_HOME_DIRECTORY, True)
 os.environ["HOME"] = str(SCRATCH_HOME_DIRECTORY)
 SCRATCH_CLAUDE_JSON_PATH = SCRATCH_HOME_DIRECTORY / ".claude.json"
 
+# The supervisor refuses to start without the agent-seat's GitHub token, read from
+# ~/.config/nedschorus/<account>.token, so the scratch HOME holds a made-up token for
+# each account an agent-seat can act as. Never a real credential.
+FIXTURE_GITHUB_TOKEN_BY_ACCOUNT = {
+    account: f"github_pat_{account.upper().replace('-', '_')}_TEST_ONLY_not-a-real-credential"
+    for account in ("ubuntu-claude", "mac-claude", "ned-review-merge")}
+(SCRATCH_HOME_DIRECTORY / ".config" / "nedschorus").mkdir(parents=True)
+for _account, _token in FIXTURE_GITHUB_TOKEN_BY_ACCOUNT.items():
+    (SCRATCH_HOME_DIRECTORY / ".config" / "nedschorus" / f"{_account}.token").write_text(
+        _token + "\n", encoding="utf-8")
+
 _spec = importlib.util.spec_from_file_location("handoff_supervisor", SCRIPT_PATH)
 supervisor = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(supervisor)

@@ -63,6 +63,21 @@ atexit.register(shutil.rmtree, CLAUDE_JSON_SCRATCH_DIRECTORY, True)
 CLAUDE_JSON_SCRATCH_PATH = CLAUDE_JSON_SCRATCH_DIRECTORY / ".claude.json"
 recovery.claude_json_presets.claude_json_path = lambda: CLAUDE_JSON_SCRATCH_PATH
 
+# launch_seat reads the agent-seat's GitHub token before it starts anything, from
+# ~/.config/nedschorus/<account>.token. No case may read a real token: HOME is a
+# scratch directory holding a made-up token for each account, for this process and
+# every supervisor a case starts. The "GITHUB TOKEN:" cases empty it on purpose.
+SCRATCH_HOME_DIRECTORY = Path(tempfile.mkdtemp(prefix="recover-crashed-seats-home-"))
+atexit.register(shutil.rmtree, SCRATCH_HOME_DIRECTORY, True)
+os.environ["HOME"] = str(SCRATCH_HOME_DIRECTORY)
+GITHUB_TOKEN_BY_ACCOUNT = {
+    account: f"github_pat_{account.upper().replace('-', '_')}_TEST_ONLY_not-a-real-credential"
+    for account in ("ubuntu-claude", "mac-claude", "ned-review-merge")}
+(SCRATCH_HOME_DIRECTORY / ".config" / "nedschorus").mkdir(parents=True)
+for _account, _token in GITHUB_TOKEN_BY_ACCOUNT.items():
+    (SCRATCH_HOME_DIRECTORY / ".config" / "nedschorus" / f"{_account}.token").write_text(
+        _token + "\n", encoding="utf-8")
+
 # A real run on ned-box opens a window on the user's Mac after each seat it brings
 # up. No case may reach the Mac: every case records its window requests here, the
 # "MAC WINDOW:" cases put the real opener back on purpose behind a stub opener, and
@@ -1045,6 +1060,88 @@ def run_claude_json_presets_cases(root: Path):
         recovery.run_tmux = real_run_tmux
         patch("launch_seat", launch_seat_before_these_cases)
         CLAUDE_JSON_SCRATCH_PATH.unlink(missing_ok=True)
+
+
+def run_github_token_cases(root: Path):
+    """A seat recovery brings up, after a crash or at login, acts on GitHub as its own
+    account: the supervisor its pane command starts sets GH_TOKEN for the agent-sessions,
+    replacing whatever the recovering shell exported. And when the account's token file
+    cannot be read, launch_seat starts nothing and says why, on either branch."""
+    real_launcher_path = recovery.launcher_path
+    real_run_tmux = recovery.run_tmux
+    real_subprocess_run = recovery.subprocess.run
+    workspace = Workspace(root / "github-token", name="merge-lane-2")
+    record_path = root / "github-token" / "gh-token.json"
+    stub_agent = root / "github-token" / "stub-agent"
+    stub_agent.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os\n"
+        f"open({str(record_path)!r}, 'w').write(json.dumps(os.environ.get('GH_TOKEN')))\n",
+        encoding="utf-8")
+    stub_agent.chmod(0o755)
+    tmux_calls = []
+
+    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None):
+        tmux_calls.append((arguments_after_tmux, environment))
+
+        class Done:
+            returncode = 0
+        return Done()
+
+    saved_gh_token = os.environ.get("GH_TOKEN")
+    recovery.launcher_path = lambda: None
+    recovery.run_tmux = capture_tmux
+    try:
+        os.environ["GH_TOKEN"] = "decoy-token-of-the-recovering-shell"
+        exit_code = real_launch_seat(
+            workspace.name, workspace.seat_directory, workspace.handoffs,
+            f"--agent-command {shlex.quote(str(stub_agent))} --agent-update-timeout-seconds 0")
+        pane_command = tmux_calls[0][0][-1] if tmux_calls else ""
+        pane_environment = tmux_calls[0][1] if tmux_calls else {}
+        # What tmux would do with the pane command: run it in a shell, in the
+        # environment recovery handed the seat's tmux server.
+        completed = subprocess.run(
+            ["/bin/sh", "-c", pane_command], cwd=str(workspace.seat_directory),
+            env=pane_environment, capture_output=True, text=True, timeout=120,
+            stdin=subprocess.DEVNULL, check=False)
+        recorded = json.loads(record_path.read_text()) if record_path.is_file() else "no session"
+        check("GITHUB TOKEN: merge-lane-2 recovered on ned-box gets the token of "
+              "ned-review-merge, not the recovering shell's GH_TOKEN",
+              exit_code == 0 and recorded == GITHUB_TOKEN_BY_ACCOUNT["ned-review-merge"],
+              (exit_code, recorded, completed.returncode, completed.stderr[-600:]))
+        check("GITHUB TOKEN: the token's text is not in the pane command tmux is given",
+              GITHUB_TOKEN_BY_ACCOUNT["ned-review-merge"] not in pane_command, pane_command)
+
+        os.environ["HOME"] = str(root / "github-token" / "home-without-token-files")
+        for branch in ("box", "mac"):
+            tmux_calls.clear()
+            launcher_runs = []
+            if branch == "mac":
+                recovery.launcher_path = lambda: Path("/fake/launch-claude-mac")
+                recovery.subprocess.run = lambda *arguments, **keywords: launcher_runs.append(
+                    arguments) or subprocess.CompletedProcess(arguments, 0)
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                exit_code = real_launch_seat(workspace.name, workspace.seat_directory,
+                                             workspace.handoffs, "")
+            check(f"GITHUB TOKEN: with no token file the {branch} branch starts nothing, "
+                  "exits 1 and names the agent-seat, the account and the file",
+                  exit_code == 1 and tmux_calls == [] and launcher_runs == []
+                  and "recover-crashed-seats: the agent-seat merge-lane-2 was not started"
+                  in stderr.getvalue()
+                  and "home-without-token-files/.config/nedschorus/ned-review-merge.token"
+                  in stderr.getvalue()
+                  and "Once the file is fixed: run this recovery again." in stderr.getvalue(),
+                  (exit_code, tmux_calls, launcher_runs, stderr.getvalue()))
+    finally:
+        os.environ["HOME"] = str(SCRATCH_HOME_DIRECTORY)
+        if saved_gh_token is None:
+            os.environ.pop("GH_TOKEN", None)
+        else:
+            os.environ["GH_TOKEN"] = saved_gh_token
+        recovery.launcher_path = real_launcher_path
+        recovery.run_tmux = real_run_tmux
+        recovery.subprocess.run = real_subprocess_run
 
 
 def run_came_up_cases(root: Path):
@@ -2750,7 +2847,7 @@ with tempfile.TemporaryDirectory() as temporary:
     for stub in stub_directory.iterdir():
         stub.chmod(0o755)
     sandbox_home = root / "r21-home"
-    sandbox_home.mkdir()
+    shutil.copytree(SCRATCH_HOME_DIRECTORY / ".config", sandbox_home / ".config")
     saved_path_env = os.environ["PATH"]
     saved_home_env = os.environ.get("HOME")
     saved_agents_root_env = os.environ.get("NEDSCHORUS_AGENTS_ROOT")
@@ -3115,6 +3212,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("shell_words keeps a word with an unquoted # inside it, and the words after it",
           shell_words("echo a#b c") == ["echo", "a#b", "c"], shell_words("echo a#b c"))
     run_claude_json_presets_cases(root)
+    run_github_token_cases(root)
     run_came_up_cases(root)
     run_reach_clause_cases(root)
     run_seat_listing_cases(root)
