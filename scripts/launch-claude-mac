@@ -421,6 +421,10 @@ if [ -n "${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS:-}" ]; then
     SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND $LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"
 fi
 unset LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS
+# The caller's GH_TOKEN would stay in the tmux server's environment, and so in the
+# after-exit shell and every window later opened on the server, where a `gh` would act
+# as the caller's account; the supervisor sets the seat's own for its agent-sessions.
+unset GH_TOKEN
 
 # When the supervisor exits, the pane becomes an interactive shell in the
 # agent's directory rather than closing: a stopped
