@@ -65,7 +65,10 @@ The rest is code, kept in a log of each message the job sent, with its time, in 
 
 - **nudge**: on the first `wake`, the job sends one message whose first line is "." and whose second line is the model's reason, such as "You announced "I'm starting the PR 1633 work now" 15 minutes ago and have not started it", or "Your handoff was put off at 22:54Z; is now a good time to hand off?".
 - **escalate**: when the agent-seat is idle again X minutes after a nudge, and the model still answers `wake`, the job sends the user's text, with X filled in: "You've given this X minutes, please check; if not sure, hand off".
-- **tell the user**: when the agent-seat is idle again X minutes after an escalation, the job tells the user instead of the agent-seat.
+- **tell the user**: when the agent-seat is idle again X minutes after an escalation, the job tells the user instead of the agent-seat. After that the job sends nothing more about the agent-seat until it spends tokens and goes idle again, which starts the steps over.
+- **a session limit**: when the agent-seat's last turn ended on Claude's session-limit message, which names the reset time, such as "You've hit your session limit · resets 1am (America/Los_Angeles)", the job runs none of the steps above. Code sends one "." a few minutes after that reset time, with no model call, and the steps start over if the agent-seat is still idle 15 minutes later. Whether a cross-session message sent after a reset resumes the agent-seat is tested when the job is built.
+
+In the escalation, X is the number of minutes the agent-seat has been idle, counted from the end of its last turn.
 
 ### How the message reaches the agent-seat
 
