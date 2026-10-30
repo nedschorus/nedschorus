@@ -60,7 +60,7 @@ The user reviews each change to these files that `docs/nedschorus-wiki/nedschoru
 - every MD file in `docs/agents/` and `docs/nedschorus-wiki/`;
 - every MD file under `nc-systems/skills/`;
 - every design, a file whose name ends `-design.md`, except a test-design;
-- every reusable prompt, a file whose name ends `-prompt.md` or `-instructions.md`;
+- every file of standing instructions, whose name ends `-prompt.md` or `-instructions.md`;
 - `CLAUDE.md`, any `CLAUDE.local.md`, and everything under `.claude/` except its working space: `worktrees/`, `jobs/` and `handoffs/`.
 
 The list does not reach the places for documents pending approval, where agents write them freely: any `queue/` directory, such as `docs/agents/queue/`, `docs/issues/queue/` or `docs/nedschorus-wiki/queue/`, `nc-queue/`, and `docs/drafts/`. Test-designs and design-contracts are not on the list, wherever they sit, `nc-systems/skills/` included: design-to-main brings them to the user. Nor are the frozen copies inside `cold-read-records/`, `md-review-records/` and `sanity-check-records/`. `.claude/hooks/instruction-file-guard.py` enforces the list for an agent's file-editing tools; a shell command, `git mv` or a program is not checked.
