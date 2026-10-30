@@ -27,9 +27,9 @@ A file in a queue directory is named as it will be in its final location, apart 
   - **Test-design name:** its design's name with `-design.md` replaced by `-test-design.md`
   - **Test-design location:** beside its design
   - **Design-contract Name:** its design's name with `-design.md` replaced by `-contract.md`, beside its design
-- **agent-instructions kept in `docs/agents/`: instructions and initial-agent-instructions**
-  - **Location:** `docs/agents/`; pending approval, `docs/agents/queue/`
-  - **Naming:** `<subject>-instructions.md` or `<subject>-first-prompt.md`
+- **agent-instructions: instructions, initial-agent-instructions and prompts a program appends**
+  - **Location:** `docs/agents/` when more than one system uses them, otherwise their system's directory; pending approval, `docs/agents/queue/`
+  - **Naming:** `<subject>-instructions.md`; for initial-agent-instructions, `<subject>-first-prompt.md`; for a prompt a program appends, `<subject>-prompt.md`.
 - **Wiki page**
   - **Location:** pending approval, `docs/nedschorus-wiki/queue/`; approved, `docs/nedschorus-wiki/`
   - **Naming:** `nedschorus-<subject>.md`, which every page on main follows
@@ -40,7 +40,7 @@ A file in a queue directory is named as it will be in its final location, apart 
   - **Location:** Before its GHI is filed, `docs/issues/queue/`. Once its GHI is filed, `docs/issues/`, where it is refined in place until its code lands; from then it is revised only to fix a flaw found in it, and only after human review, and each merge appends a `**Pinned to what landed:** commit [<sha>]` line naming its commit. When its GHI closes, the design moves, with its test-design and design-contract where it has them, to the `docs/` subdirectory of the directory its code is in, `nc-systems/<system-name>/docs/` or `nc-systems/general-tools/docs/`, and the GHI's link is updated.
   - **Naming:** `<multi-part-name>-design.md` before its GHI is filed; `<issue number>-<multi-part-name>-design.md` once it is filed; `<multi-part-name>-design.md` again once it moves to its code's `docs/`. The `-design` suffix stays in all three, though not every GHI has a design.
 - **Other system or subsystem MDs**
-  - **Location:** `nc-systems/<system-name>/docs/`, beside the system's `tests/`. A subsystem, which has a subdirectory of its system's directory, keeps its MDs in that subdirectory's `docs/`. A skill keeps only its `SKILL.md` in `.claude/skills/<skill name>/`; the rest of it lives in `nc-systems/skills/<skill name>/`, its MDs other than its prompts in that directory's `docs/`. Project MDs that belong to no one system stay in the top-level `docs/`, as the entries above say.
+  - **Location:** `nc-systems/<system-name>/docs/`, beside the system's `tests/`. A subsystem, which has a subdirectory of its system's directory, keeps its MDs in that subdirectory's `docs/`. A skill keeps only its `SKILL.md` in `.claude/skills/<skill name>/`; the rest of it lives in `nc-systems/skills/<skill name>/`, its MDs other than its prompts in that directory's `docs/`. A document that belongs to no one system stays in the top-level `docs/`, unless it is a design or data for a program in `nc-systems/general-tools/`, which keeps it in that directory's `docs/`.
   - **Naming:** `<system-name>-<subject>.md`; for a skill, `<skill name>-<subject>.md`
 - **Program, in Python or shell**
   - **Location:** `nc-systems/<system-name>/` for a system's own, its subsystem's subdirectory for a subsystem's; `nc-systems/general-tools/` for one that belongs to no system
