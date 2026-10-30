@@ -940,8 +940,10 @@ class IgnitionPlanWithoutConversationTail:
     # Set when an extraction was tried and failed; the successor can still read the transcript.
     unextracted_session_id: str = ""
     unextracted_transcript_path: Optional[Path] = None
-    # Set instead of the path when the transcript lookup found no transcript, or several.
-    unextracted_transcript_lookup_problem: str = ""
+    # Set instead of the path when no project folder holds the transcript: where it was expected.
+    unextracted_transcript_expected_path: Optional[Path] = None
+    # Set instead of the path when two or more project folders hold the transcript.
+    unextracted_transcript_paths_in_several_folders: tuple = ()
 
     def compose(self, launch_time_git_sync_report: str,
                 overview_refresh_due: tuple = (),
@@ -953,14 +955,22 @@ class IgnitionPlanWithoutConversationTail:
                 "session-dialog; this next-step and the repository are your context, and "
                 f"that session's transcript is {self.unextracted_transcript_path}, which you "
                 "can read when the next-step leaves out something you need.")
-        elif self.unextracted_transcript_lookup_problem:
+        elif self.unextracted_transcript_paths_in_several_folders:
+            paths = [str(path) for path in self.unextracted_transcript_paths_in_several_folders]
             recovery_note = (
                 "the previous session's conversation-tail is unavailable, because the "
                 f"handoff-supervisor could not extract session {self.unextracted_session_id}'s "
-                "session-dialog, and its search for that session's transcript reported: "
-                f"\"{self.unextracted_transcript_lookup_problem}\". This next-step and the "
-                "repository are your context; when that report names transcripts that exist, "
-                "you can read them when the next-step leaves out something you need.")
+                "session-dialog; this next-step and the repository are your context, and "
+                "that session's transcript is in more than one folder, at "
+                f"{', '.join(paths[:-1])} and {paths[-1]}, which you can read when the "
+                "next-step leaves out something you need.")
+        elif self.unextracted_transcript_expected_path is not None:
+            recovery_note = (
+                "the previous session's conversation-tail is unavailable, because the "
+                f"handoff-supervisor could not extract session {self.unextracted_session_id}'s "
+                "session-dialog, and that session's transcript is not at "
+                f"{self.unextracted_transcript_expected_path} or in any other folder under "
+                f"{PROJECTS_ROOT}/; this next-step and the repository are your whole context.")
         else:
             recovery_note = ("the previous session's conversation-tail is unavailable; "
                              "this next-step and the repository are your whole context.")
@@ -1956,16 +1966,15 @@ def successor_session_id_and_ignition_plan_without_conversation_tail(
     retiring_session_id is the session whose extraction failed, or None when no
     earlier session was recorded; occasion names when the supervisor started it.
     """
-    transcript_path, transcript_lookup_problem = None, ""
-    if retiring_session_id:
-        try:
-            transcript_path = handoff_extract_conversation.find_transcript_path(
-                retiring_session_id, settings.working_directory)
-        except handoff_extract_conversation.TranscriptProblem as problem:
-            transcript_lookup_problem = str(problem)
+    transcript_paths = (handoff_extract_conversation.transcript_paths_for_session(
+        retiring_session_id, settings.working_directory) if retiring_session_id else [])
+    expected_path = (
+        project_directory_for_working_directory(settings.working_directory)
+        / f"{retiring_session_id}.jsonl" if retiring_session_id and not transcript_paths else None)
     plan = IgnitionPlanWithoutConversationTail(
-        next_step_from(handoff_fields), occasion, retiring_session_id or "", transcript_path,
-        transcript_lookup_problem)
+        next_step_from(handoff_fields), occasion, retiring_session_id or "",
+        transcript_paths[0] if len(transcript_paths) == 1 else None, expected_path,
+        tuple(transcript_paths) if len(transcript_paths) > 1 else ())
     why_no_conversation_tail = (
         f"session {retiring_session_id}'s dialog could not be extracted"
         if retiring_session_id else "no earlier session was recorded")

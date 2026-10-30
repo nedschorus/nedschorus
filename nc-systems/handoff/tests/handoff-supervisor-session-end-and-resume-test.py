@@ -510,29 +510,29 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
           successor_prompt[:600])
     no_transcript_prompt = launched_prompts[2] if len(launched_prompts) > 2 else ""
     check("FAILED EXTRACTION: when no project folder holds the writer's transcript, the "
-          "successor's prompt quotes where the search looked instead of sending it there",
+          "successor's prompt says it is not where it was expected nor in any other project "
+          "folder, and that the next step and the repository are its whole context",
           no_transcript_prompt.startswith(
               "carry on further\n\n(Recovered at a handoff: the previous session's "
               "conversation-tail is unavailable, because the handoff-supervisor could not "
-              f"extract session {writer_without_a_transcript}'s session-dialog, and its search "
-              "for that session's transcript reported: \"no transcript for session "
-              f"{writer_without_a_transcript}: looked at "
-              f"{keyed_project_directory / (writer_without_a_transcript + '.jsonl')} and "
-              f"searched {supervisor.PROJECTS_ROOT}/*/\". This next-step and the repository "
-              "are your context; "),
+              f"extract session {writer_without_a_transcript}'s session-dialog, and that "
+              "session's transcript is not at "
+              f"{keyed_project_directory / (writer_without_a_transcript + '.jsonl')} or in any "
+              f"other folder under {supervisor.PROJECTS_ROOT}/; this next-step and the "
+              "repository are your whole context.) "),
           no_transcript_prompt[:900])
     two_folders_prompt = launched_prompts[3] if len(launched_prompts) > 3 else ""
     check("FAILED EXTRACTION: when two project folders hold the writer's transcript, the "
-          "successor's prompt names both",
+          "successor's prompt names both, joined by \"and\"",
           two_folders_prompt.startswith(
               "carry on still\n\n(Recovered at a handoff: the previous session's "
               "conversation-tail is unavailable, because the handoff-supervisor could not "
-              f"extract session {writer_in_two_project_folders}'s session-dialog, and its "
-              "search for that session's transcript reported: \"session "
-              f"{writer_in_two_project_folders} appears in several project directories: "
-              f"{another_project_directory / (writer_in_two_project_folders + '.jsonl')}, "
-              f"{other_project_directory / (writer_in_two_project_folders + '.jsonl')}\". "
-              "This next-step and the repository are your context; "),
+              f"extract session {writer_in_two_project_folders}'s session-dialog; this "
+              "next-step and the repository are your context, and that session's transcript "
+              "is in more than one folder, at "
+              f"{another_project_directory / (writer_in_two_project_folders + '.jsonl')} and "
+              f"{other_project_directory / (writer_in_two_project_folders + '.jsonl')}, which "
+              "you can read when the next-step leaves out something you need.) "),
           two_folders_prompt[:900])
     check("FAILED EXTRACTION: each handoff is consumed",
           state.get("consumed_counter") == 3, str(state))

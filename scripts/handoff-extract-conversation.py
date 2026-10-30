@@ -111,13 +111,18 @@ def project_directory_for_working_directory(working_directory: Path) -> Path:
     return PROJECTS_ROOT / re.sub(r"[^a-zA-Z0-9]", "-", str(Path(working_directory).resolve()))
 
 
+def transcript_paths_for_session(session_id: str, working_directory: Path) -> list:
+    """Return the keyed transcript when it exists, else every project directory's copy, sorted."""
+    keyed_path = project_directory_for_working_directory(working_directory) / f"{session_id}.jsonl"
+    if keyed_path.is_file():
+        return [keyed_path]
+    return sorted(PROJECTS_ROOT.glob(f"*/{session_id}.jsonl"))
+
+
 def find_transcript_path(session_id: str, working_directory: Path) -> Path:
     """Find a session transcript by keyed lookup, then by search."""
     keyed_path = project_directory_for_working_directory(working_directory) / f"{session_id}.jsonl"
-    if keyed_path.is_file():
-        return keyed_path
-
-    matches = sorted(PROJECTS_ROOT.glob(f"*/{session_id}.jsonl"))
+    matches = transcript_paths_for_session(session_id, working_directory)
     if len(matches) == 1:
         return matches[0]
     if not matches:
