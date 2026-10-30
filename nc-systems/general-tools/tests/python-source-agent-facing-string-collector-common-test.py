@@ -164,6 +164,30 @@ check("the returned local that holds the recovery note is found too, with each +
       [entry[0] for entry in found if entry[2] == "prompt = in IgnitionPlan.compose()"] == [18, 22, 24], found)
 check("a list the recovery note's f-string reads through a join call is not text", not any(
     entry[2].startswith("paths =") for entry in found), found)
+compose_kinds = {(entry["label"].split(" ")[0], entry["kind"]) for entry in entries(COMPOSE_SOURCE)}
+check("the recovery note and the prompt it is returned in are prompts, and the module instruction is a message",
+      compose_kinds == {("recovery_note", "prompt"), ("prompt", "prompt"), ("ITEMS_INSTRUCTION", "message")},
+      compose_kinds)
+
+KINDS = (
+    ("a printed local", 'def main(n):\n    text = f"{n} failed"\n    print(text)\n', ["message"]),
+    ("a local returned by a function with no prompt in its name",
+     'def line(n):\n    text = f"{n} failed"\n    return text\n', ["message"]),
+    ("a local returned by a function whose name holds prompt",
+     'def build_ignition_prompt(n):\n    text = f"Start at step {n}."\n    return text\n', ["prompt"]),
+    ("a local returned by a method whose name holds Prompt",
+     'class Plan:\n    def handoffPrompt(self):\n        text = "Start here."\n        return text\n', ["prompt"]),
+    ("a local named in capitals with PROMPT, printed",
+     'def main():\n    SYSTEM_PROMPT_TEXT = "Answer in one line."\n    print(SYSTEM_PROMPT_TEXT)\n', ["prompt"]),
+    ("a local printed first and then folded into a returned prompt",
+     'def compose():\n    note = "Read the transcript."\n    print(note)\n    prompt = "Resume. " + note\n    return prompt\n',
+     ["prompt", "prompt"]),
+    ("a string printed directly in a function whose name holds prompt",
+     'def prompt_failure():\n    print("the prompt could not be built")\n', ["message"]),
+)
+for case_name, source, expected in KINDS:
+    found = [entry["kind"] for entry in entries(source)]
+    check(f"kind: {case_name}", found == expected, entries(source))
 
 LOCAL_NAME_FORMS = (
     ("a local f-string that is printed", 'def main(n):\n    text = f"{n} failed"\n    print(text)\n',

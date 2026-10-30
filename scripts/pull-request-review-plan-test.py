@@ -593,10 +593,32 @@ def run_agent_text_cases(fixture):
     head = fixture.commit_fixture_changes("recovery note changed")
     fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
     delta = fixture.read_review_plan()["agent_facing_text_delta"]
-    check("a changed recovery note built in a local name and returned in a prompt is listed, and nothing else",
-          [(entry["label"], entry["old_text"], entry["new_text"]) for entry in delta]
+    check("a changed recovery note built in a local name and returned in a prompt is listed, needing approval",
+          [(entry["label"], entry["old_text"], entry["new_text"], entry["needs_user_approval"]) for entry in delta]
           == [("recovery_note = in IgnitionPlan.compose()", "f'old note, transcript at {self.transcript_path}.'",
-               "f'new note, transcript at {self.transcript_path}.'")], delta)
+               "f'new note, transcript at {self.transcript_path}.'", True)], delta)
+    text_plan = fixture.run_review_plan(json_output=False).stdout
+    check("the text plan marks the changed prompt as needing the user's approval",
+          review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE in text_plan, text_plan)
+    skeleton_path = fixture.control_directory / "prompt-brief.md"
+    fixture.run_review_plan("--brief-skeleton", str(skeleton_path))
+    skeleton = skeleton_path.read_text() if skeleton_path.exists() else ""
+    check("the brief skeleton marks the changed prompt as needing the user's approval",
+          review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE in skeleton, skeleton)
+    fixture.reset_fixture_to_base()
+    printed_before = compose_before.replace("return prompt", "print(prompt)").replace("prompt", "line")
+    fixture.write_fixture_file("nc-systems/handoff/recovery-note-program.py", printed_before)
+    earlier = fixture.commit_fixture_changes("printed note")
+    fixture.write_fixture_file("nc-systems/handoff/recovery-note-program.py",
+                               printed_before.replace("old note, transcript", "new note, transcript"))
+    head = fixture.commit_fixture_changes("printed note changed")
+    fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
+    delta = fixture.read_review_plan()["agent_facing_text_delta"]
+    text_plan = fixture.run_review_plan(json_output=False).stdout
+    check("a changed message built in a local name and printed is listed with no approval needed",
+          [(entry["label"], entry["needs_user_approval"]) for entry in delta]
+          == [("recovery_note = in IgnitionPlan.compose()", False)]
+          and review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE not in text_plan, (delta, text_plan))
 
 
 def run_fast_read_command_cases(fixture):
