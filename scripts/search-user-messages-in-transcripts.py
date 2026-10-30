@@ -153,12 +153,15 @@ def transcripts(projects_dir, seats, since_hours):
 def claude_code_session_transcript_paths_prefilter_on_raw_json(projects_dir, paths, patterns, all_terms):
     """Return (the paths whose raw JSON holds a pattern's text, a note on what was not prefiltered, or "").
 
-    Every path is kept when a pattern could match text that JSON escapes, or the search fails, so a
-    prefilter never drops a transcript that holds a match."""
+    Every path is kept when a pattern could match text that JSON escapes or that ripgrep folds
+    differently, or the search fails, so a prefilter never drops a transcript that holds a match."""
     prefilters = [claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcript_raw_json_prefilter_pattern(pattern)
                   for pattern in patterns]
-    if not paths or None in prefilters:
+    if not paths:
         return paths, ""
+    if None in prefilters:
+        return paths, (f"every transcript was read, because ripgrep might not find the pattern "
+                       f"{patterns[prefilters.index(None)]!r} wherever Python would")
     groups = [[prefilter] for prefilter in prefilters] if all_terms else [prefilters]
     kept = {os.path.normpath(path) for path in paths}
     for group in groups:
@@ -238,10 +241,12 @@ def main():
                     print(f"  [{near[1]}] {near[2][:400]}")
 
     print("=" * 72)
+    skipped = len(paths) - len(read)
     print(
-        f"{total_hits} matching user message(s) in {len(paths)} transcript(s), "
-        f"{len(read)} of which held a pattern's text and were read; "
-        f"{total_user_messages} user message(s) scanned."
+        f"{total_hits} matching user message(s) found among {len(paths)} transcript(s)"
+        + (f"; ripgrep found none of the search pattern(s) in {skipped} of them, so only the other "
+           f"{len(read)} were opened" if skipped else "")
+        + f"; {total_user_messages} user message(s) read in the transcript(s) opened."
     )
     return 0 if total_hits else 1
 

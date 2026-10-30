@@ -232,9 +232,9 @@ def run_text_search_cases():
             paths, problems = search([root], ["kingfisher"], include_subagents=True, ripgrep_program=ripgrep)
             check(f"text search ({label}): include_subagents lists subagent transcripts too",
                   paths == sorted([top, subagent]) and problems == [], (paths, problems))
-            paths, problems = search([root], [r"kingfisher \d+", "heron"], include_subagents=False,
+            paths, problems = search([root], [r"kingfisher \w+", "heron"], include_subagents=False,
                                      ripgrep_program=ripgrep)
-            check(f"text search ({label}): any pattern matches, and a backslash-d is read as a number",
+            check(f"text search ({label}): any pattern matches",
                   paths == sorted([top, other]) and problems == [], (paths, problems))
             paths, problems = search([root], ["osprey"], include_subagents=True, ripgrep_program=ripgrep)
             check(f"text search ({label}): no match is no paths and no problem",
@@ -252,6 +252,19 @@ def run_text_search_cases():
                       paths == [top] and len(problems) == 1 and "unreadable.jsonl" in problems[0],
                       (paths, problems))
 
+        if shutil.which("rg") is not None:
+            paths, problems = search([root], [r"kingfisher \d+"], include_subagents=False)
+            check("text search (ripgrep): a backslash-d is read as a number",
+                  paths == [top] and problems == [], (paths, problems))
+        arabic_digits = write(root / "-seat" / "c.jsonl", '{"text":"count ١٢٣"}\n')
+        for pattern in (r"count \d+", "count ١"):
+            paths, problems = search([root], [pattern], include_subagents=False, ripgrep_program=missing_program)
+            check(f"text search (grep, ripgrep missing): {pattern!r}, which grep could read otherwise than "
+                  f"ripgrep, is a problem that names it, not an empty success",
+                  paths == [] and len(problems) == 1 and repr(pattern) in problems[0]
+                  and "no transcript was searched" in problems[0], (paths, problems))
+        arabic_digits.unlink()
+
         paths, problems = search([root], ["kingfisher"], include_subagents=False,
                                  ripgrep_program=missing_program, grep_program=missing_program)
         check("text search: neither ripgrep nor grep installed is a problem, not an empty success",
@@ -265,7 +278,10 @@ def run_text_search_cases():
 
 def run_raw_json_prefilter_cases():
     prefilter = claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcript_raw_json_prefilter_pattern
-    for pattern, expected in (("^approve it$", "approve it"), (r"walk \d+|item\w", r"walk \d+|item\w"),
+    for pattern, expected in (("^approve$", "approve"), ("^approve it$", "approve [iIİı]t"),
+                              (r"walk \d+|item\w", "wal[kK\u212a] \\d+|[iI\u0130\u0131]tem\\w"),
+                              ("Kelvin", "[kKK]elv[iIİı]n"), ("yes", "ye[sSſ]"),
+                              ("İtem", None), ("(?i)approve", None),
                               ("a.b", None), (r"line\nbreak", None), ('say "yes"', None), ("[ab]c", None)):
         check(f"raw JSON prefilter: {pattern!r} gives {expected!r}", prefilter(pattern) == expected,
               prefilter(pattern))

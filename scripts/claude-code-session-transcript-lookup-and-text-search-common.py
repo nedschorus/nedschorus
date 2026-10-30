@@ -67,11 +67,17 @@ def claude_code_session_transcripts_matching_any_pattern_ignoring_case(
             stdin=subprocess.DEVNULL, capture_output=True)
         searcher = "ripgrep"
     except FileNotFoundError:
+        untranslatable = [pattern for pattern in patterns
+                          if r"\d" in pattern or any(ord(character) > 0x7f for character in pattern)]
+        if untranslatable:
+            # grep -E has no \d, and how it folds a non-ASCII letter depends on the locale, so it
+            # could leave out a transcript that ripgrep or Python would match.
+            return [], [f"ripgrep ({ripgrep_program}) is not installed, and grep cannot search for "
+                        f"{untranslatable[0]!r} as ripgrep would, so no transcript was searched"]
         try:
             completed = subprocess.run(
                 [grep_program, "-r", "-l", "-i", "-E", "--include=*.jsonl",
-                 # grep -E has no \d.
-                 *[argument for pattern in patterns for argument in ("-e", pattern.replace(r"\d", "[0-9]"))],
+                 *[argument for pattern in patterns for argument in ("-e", pattern)],
                  "--", *roots],
                 stdin=subprocess.DEVNULL, capture_output=True)
         except FileNotFoundError:
@@ -141,8 +147,16 @@ def claude_code_session_transcript_raw_json_prefilter_pattern(pattern):
     pattern that could match one of those characters in a message could fail to match its
     escape, so it gets no prefilter. Anchors are dropped first, since in the JSON a message is
     one string inside a longer line.
+
+    Python's re.IGNORECASE folds more than ripgrep's --ignore-case: "İtem" matches "item" in
+    Python and not in ripgrep. So a pattern with a non-ASCII character gets no prefilter, and each
+    ASCII letter Python folds onto a non-ASCII one becomes a class of all of them. A group opened
+    with "(?" can hold flags or a name that this rewrite would break, so it gets no prefilter.
     """
     pattern = pattern_without_anchors(pattern)
+    if "(?" in pattern or any(ord(character) > 0x7f for character in pattern):
+        return None
+    kept = []
     index = 0
     while index < len(pattern):
         character = pattern[index]
@@ -152,9 +166,20 @@ def claude_code_session_transcript_raw_json_prefilter_pattern(pattern):
             # letter or digit (\s, \S, \W, \D, \b, \n, \t, \x, \u, \p, back-references) may not.
             if following in ("\\", '"') or (following.isalnum() and following not in "wd"):
                 return None
+            kept.append(pattern[index:index + 2])
             index += 2
             continue
         if character in '.["' or ord(character) < 0x20:
             return None
+        kept.append(ASCII_LETTERS_THAT_PYTHON_IGNORECASE_FOLDS_ONTO_NON_ASCII_LETTERS.get(character, character))
         index += 1
-    return pattern
+    return "".join(kept)
+
+
+# Each ASCII letter that Python's re.IGNORECASE matches with a non-ASCII letter, as a class of all
+# the letters it matches, found by testing every code point.
+ASCII_LETTERS_THAT_PYTHON_IGNORECASE_FOLDS_ONTO_NON_ASCII_LETTERS = {
+    letter: f"[{lower}{lower.upper()}{others}]"
+    for lower, others in (("i", "İı"), ("k", "K"), ("s", "ſ"))
+    for letter in (lower, lower.upper())
+}
