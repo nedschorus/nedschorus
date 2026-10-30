@@ -109,7 +109,6 @@ check("literal_text leaves out every {...} placeholder",
 NOT_RECOGNIZED_FORMS = (
     ("a systemMessage, which the user sees and the agent does not",
      'output = {"systemMessage": "user text"}\n'),
-    ("a string held in a local variable", 'def main():\n    text = "local text"\n    return {"additionalContext": text}\n'),
     ("a name assigned twice at module level",
      'TEXT = "first"\nTEXT = "second"\noutput = {"additionalContext": TEXT}\n'),
     ("a string assigned to a name with no message suffix", 'GREETING = "plain text"\n'),
@@ -122,6 +121,111 @@ for case_name, source in NOT_RECOGNIZED_FORMS:
     check(f"not recognized: {case_name}", found == [], found)
 
 SAY = 'def say(stream, text):\n    stream.write(text + "\\n")\n'
+
+# Modelled on IgnitionPlanWithoutConversationTail.compose() in nc-systems/handoff/handoff-supervisor.py,
+# whose recovery note reaches the agent only through a second local name and a return.
+COMPOSE_SOURCE = """ITEMS_INSTRUCTION = "Show the user every waiting item in one approval-walk."
+
+
+class IgnitionPlan:
+    def compose(self, report, lines=()):
+        if self.transcript_path is not None:
+            recovery_note = (
+                "the conversation-tail is unavailable; "
+                f"that session's transcript is {self.transcript_path}.")
+        elif self.transcript_paths:
+            paths = [str(path) for path in self.transcript_paths]
+            recovery_note = (
+                "the conversation-tail is unavailable; that session's transcript is in "
+                f"more than one folder, at {', '.join(paths[:-1])} and {paths[-1]}.")
+        else:
+            recovery_note = "the conversation-tail is unavailable; this next-step is your whole context."
+        prompt = (
+            f"{self.next_step}\\n\\n(Recovered at {self.occasion}: {recovery_note}) "
+            + ITEMS_INSTRUCTION
+        )
+        if report:
+            prompt += " " + report
+        for line in lines:
+            prompt += " " + line
+        return prompt
+"""
+found = [(entry["line"], entry["end_line"], entry["label"], entry["text"]) for entry in entries(COMPOSE_SOURCE)]
+check("a recovery note built in a local name and returned through another is found, each branch at its own lines",
+      [entry for entry in found if entry[2] == "recovery_note = in IgnitionPlan.compose()"] == [
+          (8, 9, "recovery_note = in IgnitionPlan.compose()",
+           "f\"the conversation-tail is unavailable; that session's transcript is {self.transcript_path}.\""),
+          (13, 14, "recovery_note = in IgnitionPlan.compose()",
+           "f\"the conversation-tail is unavailable; that session's transcript is in more than one folder, "
+           "at {', '.join(paths[:-1])} and {paths[-1]}.\""),
+          (16, 16, "recovery_note = in IgnitionPlan.compose()",
+           "the conversation-tail is unavailable; this next-step is your whole context.")], found)
+check("the returned local that holds the recovery note is found too, with each += at its own line",
+      [entry[0] for entry in found if entry[2] == "prompt = in IgnitionPlan.compose()"] == [18, 22, 24], found)
+check("a list the recovery note's f-string reads through a join call is not text", not any(
+    entry[2].startswith("paths =") for entry in found), found)
+
+LOCAL_NAME_FORMS = (
+    ("a local f-string that is printed", 'def main(n):\n    text = f"{n} failed"\n    print(text)\n',
+     [("f'{n} failed'", "text = in main()")]),
+    ("a local string a raise hands to the exception it builds",
+     'def main():\n    detail = "no branch"\n    raise SystemExit(detail)\n', [("no branch", "detail = in main()")]),
+    ("a local string as a hook output value",
+     'def main():\n    text = "local text"\n    return {"additionalContext": text}\n',
+     [("local text", "text = in main()")]),
+    ("a local string inside a hook output f-string",
+     'def main():\n    text = "local text"\n    return {"additionalContext": f"see {text}"}\n',
+     [("f'see {text}'", '"additionalContext" value in main()'), ("local text", "text = in main()")]),
+    ("a local string a helper printer is handed",
+     SAY + 'def main():\n    text = "said later"\n    say(sys.stderr, text)\n',
+     [("said later", "text = in main()")]),
+    ("a local string assigned to a name with a message suffix",
+     'def main(n):\n    count = f"{n} files"\n    STOP_MESSAGE = "stopped after " + count\n',
+     [("f'{n} files'", "count = in main()"), ("stopped after {count}", "STOP_MESSAGE = in main()")]),
+    ("a local string % something that is printed", 'def main(n):\n    text = "%d failed" % n\n    print(text)\n',
+     [("%d failed", "text = in main()")]),
+    ("a local join whose pieces are listed",
+     'def main(items):\n    text = "\\n".join(["Fix these:", *items])\n    print(text)\n',
+     [("\n", "text = in main()"), ("Fix these:", "text = in main()")]),
+    ("a local joined from another local",
+     'def main():\n    head = "Fix these"\n    text = " ".join([head])\n    print(text)\n',
+     [("Fix these", "head = in main()"), (" ", "text = in main()")]),
+    ("a local chosen by a condition, its condition left out",
+     'def main(row):\n    verb = "resuming" if row["kind"] == "known" else "launching"\n    print(f"{verb} now")\n',
+     [("resuming", "verb = in main()"), ("launching", "verb = in main()"), ("f'{verb} now'", "print in main()")]),
+    ("a local returned as part of a built string",
+     'def line(n):\n    count = f"{n} files"\n    return "checked " + count\n', [("f'{n} files'", "count = in line()")]),
+    ("a local annotated with its type", 'def line():\n    text: str = "annotated text"\n    return text\n',
+     [("annotated text", "text = in line()")]),
+)
+for case_name, source, expected in LOCAL_NAME_FORMS:
+    found = [(entry["text"], entry["label"]) for entry in entries(source)]
+    check(f"recognized: {case_name}", sorted(found) == sorted(expected), found)
+
+LOCAL_NAME_FORMS_NOT_RECOGNIZED = (
+    ("a local path handed to open and Path",
+     'from pathlib import Path\ndef save(root):\n    path = f"{root}/notes.json"\n'
+     '    with open(path, "w") as handle:\n        handle.write("{}")\n    Path(path).touch()\n'),
+    ("a local path returned through a call",
+     'from pathlib import Path\ndef where(root):\n    path = f"{root}/notes.json"\n    return Path(path)\n'),
+    ("a local subprocess argument, run and returned in a list",
+     'import subprocess\ndef fetch(branch):\n    ref = f"origin/{branch}"\n'
+     '    subprocess.run(["git", "fetch", ref])\n    return ["git", "log", ref]\n'),
+    ("a local log key", 'def record(log, agent):\n    key = f"{agent}-last-run"\n    log[key] = 1\n    print(len(log))\n'),
+    ("a local printed only through a call",
+     'import json\ndef main(n):\n    text = f"{n}"\n    print(json.dumps(text))\n'),
+    ("a local of an enclosing function printed by a function nested in it",
+     'def outer():\n    text = "outer text"\n    def inner():\n        print(text)\n    inner()\n'),
+    ("an empty local string that is printed", 'def main():\n    text = ""\n    print(text)\n'),
+    ("a local string returned in a tuple", 'def main():\n    text = "tuple text"\n    return text, 1\n'),
+    ("a local string returned only when a condition holds, as a name",
+     'def main(flag):\n    text = "chosen text"\n    return text if flag else None\n'),
+    ("a string printed by name outside any function", 'text = "module text"\nprint(text)\n'),
+)
+for case_name, source in LOCAL_NAME_FORMS_NOT_RECOGNIZED:
+    found = texts(source)
+    check(f"not recognized: {case_name}", found == [], found)
+
 HELPER_PRINTER_FORMS = (
     ("a string passed to a helper that writes its parameter to a stream parameter",
      SAY + 'say(sys.stderr, "said text")\n', [("said text", "say()")]),

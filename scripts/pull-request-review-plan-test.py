@@ -579,6 +579,24 @@ def run_agent_text_cases(fixture):
     fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
     plan = fixture.read_review_plan()
     check("reflowed identical messages are omitted", plan["agent_facing_text_delta"] == [], plan)
+    # Modelled on pull request 2119, which changed only the recovery note that
+    # IgnitionPlanWithoutConversationTail.compose() builds in a local name and returns in its prompt.
+    compose_before = ('class IgnitionPlan:\n    def compose(self):\n        if self.transcript_path is None:\n'
+                      '            recovery_note = "old note, whole context."\n        else:\n'
+                      '            recovery_note = f"old note, transcript at {self.transcript_path}."\n'
+                      '        prompt = f"{self.next_step} (Recovered: {recovery_note})"\n        return prompt\n')
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file("nc-systems/handoff/recovery-note-program.py", compose_before)
+    earlier = fixture.commit_fixture_changes("recovery note")
+    fixture.write_fixture_file("nc-systems/handoff/recovery-note-program.py",
+                               compose_before.replace("old note, transcript", "new note, transcript"))
+    head = fixture.commit_fixture_changes("recovery note changed")
+    fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
+    delta = fixture.read_review_plan()["agent_facing_text_delta"]
+    check("a changed recovery note built in a local name and returned in a prompt is listed, and nothing else",
+          [(entry["label"], entry["old_text"], entry["new_text"]) for entry in delta]
+          == [("recovery_note = in IgnitionPlan.compose()", "f'old note, transcript at {self.transcript_path}.'",
+               "f'new note, transcript at {self.transcript_path}.'")], delta)
 
 
 def run_fast_read_command_cases(fixture):
