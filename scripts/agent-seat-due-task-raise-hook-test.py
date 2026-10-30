@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 HOOK_SCRIPT = Path(__file__).with_name("agent-seat-due-task-raise-hook.py")
@@ -30,15 +31,26 @@ _hook_spec = importlib.util.spec_from_file_location("agent_seat_due_task_raise_h
 hook = importlib.util.module_from_spec(_hook_spec)
 _hook_spec.loader.exec_module(hook)
 TASK_LIST_ID = "nedschorus-test-seat-tasks"
-PAST_DUE = "2020-01-01T00:00:00Z"
-OTHER_PAST_DUE = "2021-06-01T12:00:00Z"
-FUTURE_DUE = "2999-01-01T00:00:00Z"
+MERGED_PR = 900
+MET = {"prerequisites": [{"pr_merged": MERGED_PR}]}
 STOP_PAYLOAD = json.dumps({
     "session_id": "test-session", "transcript_path": "/nonexistent.jsonl",
     "cwd": "/", "hook_event_name": "Stop", "stop_hook_active": False,
 })
-DEFER_LINE = ("If a task above cannot be acted on yet, give it a later "
-              "metadata.due_utc, a new metadata.waits_on, or both, with TaskUpdate instead.")
+DEFER_LINE = ("If a task above cannot be acted on yet, record what it now waits on with "
+              "TaskUpdate instead: a pull request or a GHI in a new metadata.prerequisites, "
+              "or a task with addBlockedBy.")
+WAITS_ON_CHANGE = ("metadata.waits_on is the old name of metadata.prerequisites: set "
+                   "metadata.prerequisites to the same list, unless metadata.prerequisites "
+                   "already holds what the task waits on, then set metadata.waits_on to null")
+DUE_UTC_CHANGE = ("metadata.due_utc held a due time, which no hook reads any more: set "
+                  "metadata.due_utc to null, and if the task waits on a pull request or a GHI, "
+                  "record it in metadata.prerequisites, or on a task, with addBlockedBy")
+
+
+def old_keys_text(task_id, subject, *changes):
+    return (f'Task {task_id} "{subject}" still carries an old metadata key; change it with '
+            f"TaskUpdate: {'; and '.join(changes)}.")
 
 GH_STAND_IN = """#!{python}
 import json, os, sys, time
@@ -97,6 +109,9 @@ class Seat:
         gh.chmod(0o755)
         self.gh_log = self.home / "gh-calls.log"
         self.gh_responses = self.home / "gh-responses.json"
+        self.responses = {f"pr:{MERGED_PR}": {"state": "MERGED", "title": "Merged",
+                                                "url": f"https://x/{MERGED_PR}"}}
+        self.respond({})
         self.state_path = (self.home / ".local" / "state" / "claude"
                            / "agent-seat-due-task-raise-state" / f"{TASK_LIST_ID}.json")
 
@@ -116,7 +131,9 @@ class Seat:
         (self.task_directory / f"{task_id}.json").write_text(json.dumps(task, indent=2))
 
     def respond(self, responses):
-        self.gh_responses.write_text(json.dumps(responses))
+        """Add to, or replace, the answers the gh stand-in gives; pr:900 is merged."""
+        self.responses.update(responses)
+        self.gh_responses.write_text(json.dumps(self.responses))
 
     def gh_calls(self):
         if not self.gh_log.exists():
@@ -170,22 +187,22 @@ def reported(result, fault_words):
             and fault_words in lines[0])
 
 
-# --- due time passed raises, with the exact text -----------------------------
+
+
+# --- prerequisites met raises, with the exact text ------------------------------
 seat = Seat()
-seat.task("7", metadata={"due_utc": PAST_DUE}, subject="Check the\nnightly run")
+seat.task("7", metadata=MET, subject="Check the\nnightly run")
 result = seat.run()
-check("due time passed: exit 0", result.returncode == 0, result.returncode)
+check("prerequisites met: exit 0", result.returncode == 0, result.returncode)
 output = json.loads(result.stdout) if result.stdout.strip() else {}
-check("due time passed: the Stop hook's JSON, no decision, no systemMessage",
+check("prerequisites met: the Stop hook's JSON, no decision, no systemMessage",
       set(output) == {"hookSpecificOutput"}
       and output["hookSpecificOutput"].get("hookEventName") == "Stop",
       result.stdout)
-expected_text = (f'Act on task 7 "Check the nightly run" now: its due time {PAST_DUE} '
-                 f"has passed.\n{DEFER_LINE}")
-check("due time passed: the exact text handed to the agent",
+expected_text = (f'Act on task 7 "Check the nightly run" now: its prerequisites are met: '
+                 f'PR "Merged" (https://x/{MERGED_PR}) is merged.\n{DEFER_LINE}')
+check("prerequisites met: the exact text handed to the agent",
       context_of(result) == expected_text, repr(context_of(result)))
-check("due time passed: no gh call for a task with no waits_on",
-      seat.gh_calls() == [], seat.gh_calls())
 
 # --- raised once, then silent ------------------------------------------------
 second = seat.run()
@@ -193,7 +210,7 @@ check("raised once: the next stop is silent", silent(second), second)
 
 # --- silent while the agent answers a Stop hook, raised at the next stop -----
 answering_seat = Seat()
-answering_seat.task("12", metadata={"due_utc": PAST_DUE})
+answering_seat.task("12", metadata=MET)
 answering = answering_seat.run(json.dumps({**json.loads(STOP_PAYLOAD), "stop_hook_active": True}))
 check("stop_hook_active: silent while the agent answers a Stop hook", silent(answering), answering)
 check("stop_hook_active: no state written, so the raise is not lost",
@@ -202,48 +219,32 @@ later = answering_seat.run()
 check("stop_hook_active: the next ordinary stop raises the task",
       context_of(later) is not None and "task 12" in context_of(later), later.stdout)
 
-# --- due time moved raises again ---------------------------------------------
-seat.task("7", metadata={"due_utc": OTHER_PAST_DUE}, subject="Check the nightly run")
-moved = seat.run()
-check("due time moved to another passed time: raised again",
-      context_of(moved) is not None and OTHER_PAST_DUE in context_of(moved), moved.stdout)
-check("due time moved: then silent again", silent(seat.run()))
-
-# --- not yet due --------------------------------------------------------------
+# --- not yet met --------------------------------------------------------------
 seat = Seat()
-seat.task("8", metadata={"due_utc": FUTURE_DUE})
-check("not yet due: silent", silent(seat.run()))
-check("not yet due: no state written", not seat.state_path.exists())
-
-# --- due times written other ways -------------------------------------------
-seat = Seat()
-seat.task("9", metadata={"due_utc": "2020-01-01T00:00:00"})
-seat.task("10", metadata={"due_utc": "2020-01-01T05:00:00+05:00"})
-seat.task("11", metadata={"due_utc": "2020-01-01T00:00:00.5Z"})
-seat.task("12", metadata={"due_utc": "next tuesday"})
-text = context_of(seat.run()) or ""
-check("a due time with no offset, with an offset, and with fractional seconds all raise",
-      all(f"Act on task {task_id} " in text for task_id in ("9", "10", "11")), text)
-check("an unreadable due time does not raise", "task 12 " not in text, text)
+seat.task("8", metadata={"prerequisites": [{"pr_merged": 901}]})
+seat.respond({"pr:901": {"state": "OPEN", "title": "T", "url": "https://x/901"}})
+check("prerequisites not met: silent", silent(seat.run()))
+check("prerequisites not met: nothing recorded as raised",
+      json.loads(seat.state_path.read_text())["raised"] == {})
 
 # --- in_progress raises; completed never does --------------------------------
 seat = Seat()
-seat.task("20", status="in_progress", metadata={"due_utc": PAST_DUE})
-seat.task("21", status="completed", metadata={"due_utc": PAST_DUE})
+seat.task("20", status="in_progress", metadata=MET)
+seat.task("21", status="completed", metadata=MET)
 text = context_of(seat.run()) or ""
-check("in_progress task due: raised", "Act on task 20 " in text, text)
-check("completed task due: never raised", "task 21 " not in text, text)
+check("in_progress task met: raised", "Act on task 20 " in text, text)
+check("completed task met: never raised", "task 21 " not in text, text)
 
 seat = Seat()
-seat.task("22", status="completed", metadata={"due_utc": PAST_DUE,
-                                               "waits_on": [{"pr_merged": 5}]})
+seat.task("22", status="completed", metadata={"prerequisites": [{"pr_merged": 5}],
+                                               "due_utc": "2020-01-01T00:00:00Z"})
 seat.respond({"pr:5": {"state": "MERGED", "title": "T", "url": "https://x/5"}})
-check("completed task with due and met waits_on: silent", silent(seat.run()))
+check("completed task with met prerequisites and an old key: silent", silent(seat.run()))
 check("completed task: gh never asked", seat.gh_calls() == [], seat.gh_calls())
 
 # --- blockedBy ----------------------------------------------------------------
 seat = Seat()
-seat.task("30", metadata={"due_utc": PAST_DUE}, blocked_by=["31"])
+seat.task("30", metadata=MET, blocked_by=["31"])
 seat.task("31", status="in_progress")
 check("blockedBy incomplete: held, silent", silent(seat.run()))
 check("blockedBy incomplete: nothing recorded as raised",
@@ -254,18 +255,17 @@ text = context_of(seat.run()) or ""
 check("blockedBy completed: raised", "Act on task 30 " in text, text)
 
 seat = Seat()
-seat.task("32", metadata={"due_utc": PAST_DUE}, blocked_by=["999"])
+seat.task("32", metadata=MET, blocked_by=["999"])
 text = context_of(seat.run()) or ""
 check("blockedBy naming a task with no file: not held", "Act on task 32 " in text, text)
 
 seat = Seat()
-seat.task("33", metadata={"due_utc": PAST_DUE}, blocked_by=["34"])
+seat.task("33", metadata=MET, blocked_by=["34"])
 (seat.task_directory / "34.json").write_text("{ not json")
 check("blockedBy naming an unreadable task file: held", silent(seat.run()))
 
 seat = Seat()
-seat.task("35", metadata={"due_utc": PAST_DUE, "waits_on": [{"pr_merged": 6}]},
-          blocked_by=["36"])
+seat.task("35", metadata={"prerequisites": [{"pr_merged": 6}]}, blocked_by=["36"])
 seat.task("36")
 seat.respond({"pr:6": {"state": "MERGED", "title": "T", "url": "https://x/6"}})
 check("blockedBy incomplete: gh not asked for the held task",
@@ -310,15 +310,10 @@ seat.task("58", status="completed")
 check("blockedBy alone, one blocker completed and one deleted: not raised", silent(seat.run()))
 
 seat = Seat()
-seat.task("59", metadata={"due_utc": FUTURE_DUE}, blocked_by=["60"])
-seat.task("60", status="completed")
-check("blockers completed but a due time still ahead: silent", silent(seat.run()))
-
-seat = Seat()
-seat.task("61", metadata={"waits_on": [{"pr_merged": 7}]}, blocked_by=["62"])
+seat.task("61", metadata={"prerequisites": [{"pr_merged": 7}]}, blocked_by=["62"])
 seat.task("62", status="completed")
 seat.respond({"pr:7": {"state": "OPEN", "title": "T", "url": "https://x/7"}})
-check("blockers completed but waits_on not met: silent", silent(seat.run()))
+check("blockers completed but prerequisites not met: silent", silent(seat.run()))
 
 seat = Seat()
 seat.task("63")
@@ -326,9 +321,9 @@ check("a task with no metadata and no blockedBy: silent", silent(seat.run()))
 check("a task with no metadata and no blockedBy: no state written",
       not seat.state_path.exists())
 
-# --- waits_on -----------------------------------------------------------------
+# --- prerequisites ------------------------------------------------------------
 seat = Seat()
-seat.task("40", metadata={"waits_on": [{"pr_merged": 101}, {"issue_closed": 202}]})
+seat.task("40", metadata={"prerequisites": [{"pr_merged": 101}, {"issue_closed": 202}]})
 seat.respond({
     "pr:101": {"state": "MERGED", "title": "Add the\nthing", "url": "https://github.com/nedschorus/nedschorus/pull/101"},
     "issue:202": {"state": "CLOSED", "title": "The bug", "url": "https://github.com/nedschorus/nedschorus/issues/202"},
@@ -339,61 +334,62 @@ expected_text = (
     'PR "Add the thing" (https://github.com/nedschorus/nedschorus/pull/101) is merged; '
     'GHI "The bug" (https://github.com/nedschorus/nedschorus/issues/202) is closed.'
     f"\n{DEFER_LINE}")
-check("waits_on met: raised with each prerequisite cited by title and link",
+check("prerequisites met: raised with each prerequisite cited by title and link",
       context_of(result) == expected_text, repr(context_of(result)))
 calls = seat.gh_calls()
-check("waits_on met: gh asked read-only view calls on the project repository",
+check("prerequisites met: gh asked read-only view calls on the project repository",
       sorted(call["argv"] for call in calls) == [
           ["issue", "view", "202", "--repo", "nedschorus/nedschorus", "--json", "state,title,url"],
           ["pr", "view", "101", "--repo", "nedschorus/nedschorus", "--json", "state,title,url"]],
       calls)
-check("waits_on met: GH_TOKEN removed before gh runs",
+check("prerequisites met: GH_TOKEN removed before gh runs",
       calls and not any(call["gh_token_present"] for call in calls), calls)
-check("waits_on met: raised once, then silent", silent(seat.run()))
+check("prerequisites met: raised once, then silent", silent(seat.run()))
 
 seat = Seat()
-seat.task("41", metadata={"waits_on": [{"pr_merged": 101}, {"issue_closed": 202}]})
+seat.task("41", metadata={"prerequisites": [{"pr_merged": 101}, {"issue_closed": 202}]})
 seat.respond({"pr:101": {"state": "MERGED", "title": "A", "url": "https://x/101"},
               "issue:202": {"state": "OPEN", "title": "B", "url": "https://x/202"}})
-check("waits_on partly met: silent", silent(seat.run()))
+check("prerequisites partly met: silent", silent(seat.run()))
 
 seat = Seat()
-seat.task("42", metadata={"waits_on": [{"pr_merged": 103}]})
+seat.task("42", metadata={"prerequisites": [{"pr_merged": 103}]})
 seat.respond({"pr:103": "fail"})
 result = seat.run()
 GH_COMMAND_103 = "`gh pr view 103 --repo nedschorus/nedschorus --json state,title,url`"
+GH_FAILURE_103 = ("This hook could not ask GitHub whether PR 103 is merged, so no task "
+                  f"waiting on it was raised: {GH_COMMAND_103} exited 1: gh stand-in: "
+                  "failing on purpose. It asks again at the first stop at least 5 minutes "
+                  "from now.")
 check("gh failing: reported on stderr with gh's command and error, exit 1, nothing raised",
-      reported(result, "This hook could not ask GitHub whether PR 103 is merged, so no task "
-                       f"waiting on it was raised: {GH_COMMAND_103} exited 1: gh stand-in: "
-                       "failing on purpose. It asks again at the first stop at least 5 minutes "
-                       "from now."), result)
+      reported(result, GH_FAILURE_103), result)
 check("gh failing: it was asked", len(seat.gh_calls()) == 1, seat.gh_calls())
 check("gh failing: the next stop within five minutes is silent and does not ask again",
       silent(seat.run()) and len(seat.gh_calls()) == 1, seat.gh_calls())
 
 seat = Seat()
-seat.task("40", metadata={"due_utc": PAST_DUE}, subject="Due anyway")
-seat.task("42", metadata={"waits_on": [{"pr_merged": 103}]})
+seat.task("40", metadata=MET, subject="Met anyway")
+seat.task("42", metadata={"prerequisites": [{"pr_merged": 103}]})
 seat.respond({"pr:103": "fail"})
 result = seat.run()
 text = context_of(result) or ""
-check("gh failing at a stop that raises a due task: exit 0, the raise, then the gh failure "
+check("gh failing at a stop that raises a task: exit 0, the raise, then the gh failure "
       "line for the agent",
-      result.returncode == 0 and text.startswith('Act on task 40 "Due anyway" now')
+      result.returncode == 0 and text.startswith('Act on task 40 "Met anyway" now')
       and text.splitlines()[-1].startswith(
           "This hook could not ask GitHub whether PR 103 is merged, so no task waiting on it "
           f"was raised: {GH_COMMAND_103} exited 1")
       and "Act on task 42" not in text, (result, text))
 
 seat = Seat()
-seat.task("43", metadata={"waits_on": [{"pr_merged": 104}]})
+seat.task("43", metadata={"prerequisites": [{"pr_merged": 104}]})
 seat.respond({"pr:104": "garbage"})
 check("gh answering unparsable output: reported, exit 1",
       reported(seat.run(), "`gh pr view 104 --repo nedschorus/nedschorus --json "
                            "state,title,url` exited 0 without printing a JSON object"))
 
 seat = Seat()
-seat.task("44", metadata={"waits_on": [{"pr_merged": 105}]})
+seat.task("44", metadata={"prerequisites": [{"pr_merged": 105}]})
 seat.respond({"pr:105": {"state": "MERGED", "title": "T", "url": "https://x/105"}})
 broken_path = seat.home / "fake-bin" / "gh"
 broken_path.unlink()
@@ -425,23 +421,31 @@ check("gh timing out is a gh failure naming the command and its time limit, not 
       timed_out)
 
 seat = Seat()
-seat.task("45", metadata={"waits_on": []})
-seat.task("46", metadata={"waits_on": [{"pr_merged": 107}, {"merged_by": "x"}]})
-seat.task("47", metadata={"waits_on": [{"pr_merged": "107"}]})
+seat.task("45", metadata={"prerequisites": []})
+seat.task("46", metadata={"prerequisites": [{"pr_merged": 107}, {"merged_by": "x"}]})
+seat.task("47", metadata={"prerequisites": [{"pr_merged": "107"}]})
 seat.respond({"pr:107": {"state": "MERGED", "title": "T", "url": "https://x/107"}})
-check("empty waits_on, an unknown condition, a non-number condition: never raise",
+check("empty prerequisites, an unknown condition, a non-number condition: never raise",
       silent(seat.run()), seat.gh_calls())
 
 seat = Seat()
-seat.task("48", metadata={"waits_on": [{"pr_merged": 108}]})
+seat.task("48", metadata={"prerequisites": [{"pr_merged": 108}]})
 seat.respond({"pr:108": {"state": "MERGED"}})
 text = context_of(seat.run()) or ""
-check("waits_on met but gh gave no title: cited by number",
+check("prerequisites met but gh gave no title: cited by number",
       'its prerequisites are met: PR 108 is merged.' in text, text)
+
+seat = Seat()
+seat.task("49", metadata={"prerequisites": [{"pr_merged": 109}]})
+seat.state_path.parent.mkdir(parents=True)
+seat.state_path.write_text(json.dumps({"raised": {}, "checks": {
+    "pr_merged:109": {"met": 1, "checked_at_epoch": time.time()}}}))
+check("a cached answer whose met is 1, not true: not met, so not raised",
+      silent(seat.run()) and seat.gh_calls() == [], seat.gh_calls())
 
 # --- the five-minute cache -----------------------------------------------------
 seat = Seat()
-seat.task("50", metadata={"waits_on": [{"pr_merged": 110}]})
+seat.task("50", metadata={"prerequisites": [{"pr_merged": 110}]})
 seat.respond({"pr:110": {"state": "OPEN", "title": "T", "url": "https://x/110"}})
 check("cache: first stop, unmet, silent", silent(seat.run()))
 check("cache: first stop asked gh once", len(seat.gh_calls()) == 1, seat.gh_calls())
@@ -487,7 +491,7 @@ check("cache boundary: 300 seconds old asks gh",
       CountingChecker.asked == [("pr_merged", 1)], CountingChecker.asked)
 
 seat = Seat()
-seat.task("51", metadata={"waits_on": [{"pr_merged": 111}]})
+seat.task("51", metadata={"prerequisites": [{"pr_merged": 111}]})
 seat.respond({"pr:111": "fail"})
 seat.run()
 seat.run()
@@ -495,8 +499,8 @@ check("cache: a failed check also waits five minutes", len(seat.gh_calls()) == 1
       seat.gh_calls())
 
 seat = Seat()
-seat.task("52", metadata={"waits_on": [{"pr_merged": 112}]})
-seat.task("53", metadata={"waits_on": [{"pr_merged": 112}]})
+seat.task("52", metadata={"prerequisites": [{"pr_merged": 112}]})
+seat.task("53", metadata={"prerequisites": [{"pr_merged": 112}]})
 seat.respond({"pr:112": {"state": "MERGED", "title": "T", "url": "https://x/112"}})
 text = context_of(seat.run()) or ""
 check("one condition named by two tasks: one gh call, both raised",
@@ -504,22 +508,134 @@ check("one condition named by two tasks: one gh call, both raised",
       (text, seat.gh_calls()))
 
 # --- prerequisite set changed raises again --------------------------------------
-seat.task("52", metadata={"waits_on": [{"pr_merged": 112}, {"issue_closed": 113}]})
-seat.respond({"pr:112": {"state": "MERGED", "title": "T", "url": "https://x/112"},
-              "issue:113": {"state": "CLOSED", "title": "U", "url": "https://x/113"}})
+seat.task("52", metadata={"prerequisites": [{"pr_merged": 112}, {"issue_closed": 113}]})
+seat.respond({"issue:113": {"state": "CLOSED", "title": "U", "url": "https://x/113"}})
 text = context_of(seat.run()) or ""
-check("waits_on changed and met: raised again", "Act on task 52 " in text
+check("prerequisites changed and met: raised again", "Act on task 52 " in text
       and "task 53 " not in text, text)
 
-# --- due and prerequisites in one line ---------------------------------------------
+# --- a task raised for its prerequisites, then given a blocker ------------------
 seat = Seat()
-seat.task("54", metadata={"due_utc": PAST_DUE, "waits_on": [{"issue_closed": 114}]})
-seat.respond({"issue:114": {"state": "CLOSED", "title": "U", "url": "https://x/114"}})
+seat.task("110", metadata=MET, subject="Wait again")
+check("raised for prerequisites", "Act on task 110 " in (context_of(seat.run()) or ""))
+seat.task("110", metadata=MET, blocked_by=["111"], subject="Wait again")
+seat.task("111", status="in_progress")
+check("given a blocker after the raise: held, silent", silent(seat.run()))
+seat.task("111", status="completed")
+result = seat.run()
+check("the blocker completed: raised for it, with the exact text",
+      context_of(result) == ('Act on task 110 "Wait again" now: the tasks it waited on are '
+                             f"completed: task 111.\n{DEFER_LINE}"), repr(context_of(result)))
+check("the blocker completed: raised once, then silent", silent(seat.run()))
+
+seat = Seat()
+seat.task("112", metadata=MET, blocked_by=["113"])
+seat.task("113", status="completed")
 text = context_of(seat.run()) or ""
-check("due and prerequisites both: one line naming both reasons",
-      text.splitlines()[0:1] == [
-          f'Act on task 54 "Subject of task 54" now: its due time {PAST_DUE} has passed, '
-          'and its prerequisites are met: GHI "U" (https://x/114) is closed.'], text)
+check("prerequisites met and blockers already completed: raised once, for the prerequisites",
+      "Act on task 112 " in text and "its prerequisites are met" in text
+      and "the tasks it waited on" not in text, text)
+check("prerequisites met and blockers already completed: then silent", silent(seat.run()))
+
+seat = Seat()
+seat.task("114", metadata={"prerequisites": [{"pr_merged": 902}]}, blocked_by=["115"])
+seat.task("115", status="completed")
+seat.respond({"pr:902": {"state": "OPEN", "title": "T", "url": "https://x/902"}})
+check("prerequisites not yet met, blockers completed: silent", silent(seat.run()))
+
+seat = Seat()
+seat.task("116", metadata={"prerequisites": []}, blocked_by=["117"])
+seat.task("117", status="completed")
+check("unreadable prerequisites, blockers completed: never raised", silent(seat.run()))
+
+# --- the old keys: waits_on still read, both named until changed -----------------
+seat = Seat()
+seat.task("100", metadata={"waits_on": [{"pr_merged": MERGED_PR}]}, subject="Old list")
+result = seat.run()
+check("waits_on alone and met: raised, then the line naming the old key, exact text",
+      result.returncode == 0 and context_of(result) == (
+          f'Act on task 100 "Old list" now: its prerequisites are met: PR "Merged" '
+          f"(https://x/{MERGED_PR}) is merged.\n{DEFER_LINE}\n"
+          + old_keys_text("100", "Old list", WAITS_ON_CHANGE)),
+      repr(context_of(result)))
+check("waits_on alone: raised and named once, then silent", silent(seat.run()))
+check("waits_on alone: recorded under the new key",
+      "prerequisites" in json.loads(seat.state_path.read_text())["raised"]["100"]
+      and "waits_on" not in json.loads(seat.state_path.read_text())["raised"]["100"],
+      seat.state_path.read_text())
+seat.task("100", metadata={"prerequisites": [{"pr_merged": MERGED_PR}]}, subject="Old list")
+check("the list moved to prerequisites unchanged: silent", silent(seat.run()))
+check("the list moved: the old-key record is cleared",
+      "old_keys" not in json.loads(seat.state_path.read_text())["raised"]["100"],
+      seat.state_path.read_text())
+
+seat = Seat()
+seat.state_path.parent.mkdir(parents=True)
+seat.state_path.write_text(json.dumps({"raised": {"101": {
+    "waits_on": hook.canonical_prerequisites([{"pr_merged": MERGED_PR}])}}, "checks": {}}))
+seat.task("101", metadata={"prerequisites": [{"pr_merged": MERGED_PR}]})
+check("a raise recorded under waits_on counts for the same list under prerequisites: silent",
+      silent(seat.run()) and seat.gh_calls() == [], seat.gh_calls())
+
+seat = Seat()
+seat.task("102", metadata={"prerequisites": [{"pr_merged": 301}],
+                           "waits_on": [{"pr_merged": MERGED_PR}]}, subject="Both lists")
+seat.respond({"pr:301": {"state": "OPEN", "title": "T", "url": "https://x/301"}})
+result = seat.run()
+check("prerequisites and waits_on both: prerequisites decides, waits_on is only named",
+      result.returncode == 0
+      and context_of(result) == old_keys_text("102", "Both lists", WAITS_ON_CHANGE)
+      and [call["argv"][2] for call in seat.gh_calls()] == ["301"],
+      (repr(context_of(result)), seat.gh_calls()))
+
+seat = Seat()
+seat.task("103", metadata={"due_utc": "2020-01-01T00:00:00Z"}, subject="Old due time")
+result = seat.run()
+check("due_utc alone: named with the exact text, exit 0, no raise and no defer line",
+      result.returncode == 0 and result.stderr == ""
+      and context_of(result) == old_keys_text("103", "Old due time", DUE_UTC_CHANGE),
+      (repr(context_of(result)), result.stderr))
+check("due_utc alone: named once, then silent", silent(seat.run()))
+seat.task("103", metadata={"due_utc": "2021-01-01T00:00:00Z"}, subject="Old due time")
+check("due_utc changed: named again",
+      context_of(seat.run()) == old_keys_text("103", "Old due time", DUE_UTC_CHANGE))
+seat.task("103", metadata={}, subject="Old due time")
+check("due_utc removed: silent", silent(seat.run()))
+check("due_utc removed: no record left for the task",
+      "103" not in json.loads(seat.state_path.read_text())["raised"],
+      seat.state_path.read_text())
+
+seat = Seat()
+seat.task("104", metadata={"due_utc": "2020-01-01T00:00:00Z", "waits_on": [{"pr_merged": 302}]},
+          subject="Both old keys", blocked_by=["105"])
+seat.task("105", status="in_progress")
+result = seat.run()
+check("both old keys, held by blockedBy: named in one line, gh not asked",
+      context_of(result) == old_keys_text("104", "Both old keys", WAITS_ON_CHANGE, DUE_UTC_CHANGE)
+      and seat.gh_calls() == [], (repr(context_of(result)), seat.gh_calls()))
+
+seat = Seat()
+seat.task("106", metadata={"due_utc": "2020-01-01T00:00:00Z"}, subject="Old due time")
+seat.task("42", metadata={"prerequisites": [{"pr_merged": 103}]})
+seat.respond({"pr:103": "fail"})
+result = seat.run()
+check("an old key named and gh failing, nothing raised: exit 0, the name, then the gh failure",
+      result.returncode == 0 and context_of(result) == (
+          old_keys_text("106", "Old due time", DUE_UTC_CHANGE) + "\n" + GH_FAILURE_103
+          + " If gh's error says PR 103 does not exist, correct the metadata.prerequisites "
+          "that names it with TaskUpdate. If it says gh is not logged in or its credentials "
+          "are bad, ask the user to run `gh auth login` on this machine."),
+      (repr(context_of(result)), result.stderr))
+
+seat = Seat()
+seat.task("107", metadata={"due_utc": "2020-01-01T00:00:00Z"})
+seat.state_path.parent.parent.mkdir(parents=True)
+seat.state_path.parent.write_text("a file where the state directory should be")
+result = seat.run()
+check("state cannot be written with an old key to name: reported, saying it went unnamed",
+      reported(result, "no task was due at this stop, so none went unraised, and 1 task(s) "
+                       "still carrying an old key were not named; that stop names them"),
+      result)
 
 # --- malformed input ----------------------------------------------------------------
 seat = Seat()
@@ -527,16 +643,16 @@ seat = Seat()
 (seat.task_directory / "61.json").write_text(json.dumps(["a", "list"]))
 (seat.task_directory / "62.json").write_text(json.dumps({"subject": "no id",
                                                           "status": "pending",
-                                                          "metadata": {"due_utc": PAST_DUE}}))
+                                                          "metadata": MET}))
 seat.task("63", metadata="not a dict")
 check("malformed task files alone: silent", silent(seat.run()))
-seat.task("64", metadata={"due_utc": PAST_DUE})
+seat.task("64", metadata=MET)
 text = context_of(seat.run()) or ""
 check("malformed task files beside a due task: the due task still raised",
       text.startswith("Act on task 64 ") and text.count("Act on task") == 1, text)
 
 seat = Seat()
-seat.task("65", metadata={"due_utc": PAST_DUE})
+seat.task("65", metadata=MET)
 for name, stdin_text, fault_words in (
         ("not JSON", "not json at all", "no task was checked at this stop"),
         ("a JSON list", "[1, 2]", "JSON, but not an object, so no task was checked"),
@@ -547,7 +663,7 @@ for name, stdin_text, fault_words in (
 check("malformed payload: nothing recorded", not seat.state_path.exists())
 
 seat = Seat()
-seat.task("66", metadata={"due_utc": PAST_DUE})
+seat.task("66", metadata=MET)
 check("no task list id in the environment: silent", silent(seat.run(list_id=None)))
 check("a task list id that is a path, even to a real list: silent",
       silent(seat.run(list_id=f"../tasks/{TASK_LIST_ID}")))
@@ -556,11 +672,11 @@ check("a task list with no directory: silent",
 
 # --- a headless child of an agent-seat is never raised ------------------------------
 seat = Seat()
-seat.task("68", metadata={"due_utc": PAST_DUE})
+seat.task("68", metadata=MET)
 result = seat.run(environment_changes={"CLAUDE_CODE_SESSION_ATTENDED": "0"})
 check("unattended session (a claude -p child): silent", silent(result), result)
 result = seat.run(environment_changes={
-    "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "scripts/ghi-info-ask.py"})
+    "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "scripts/ghi-guide-agent-ask.py"})
 check("session whose caller owns its reincarnation: silent", silent(result), result)
 check("silenced sessions record nothing, so the seat's own session still raises the task",
       not seat.state_path.exists(), seat.state_path)
@@ -569,7 +685,7 @@ check("attended variable missing: the task is raised", "Act on task 68 " in text
 check("the attended session after them: silent, the task already raised", silent(seat.run()))
 
 seat = Seat()
-seat.task("67", metadata={"due_utc": PAST_DUE})
+seat.task("67", metadata=MET)
 seat.state_path.parent.mkdir(parents=True)
 seat.state_path.write_text("{ torn")
 text = context_of(seat.run()) or ""
@@ -578,35 +694,36 @@ check("unparsable state file: replaced, so the next stop is silent", silent(seat
 
 # --- the record is written before anything is printed ------------------------------
 seat = Seat()
-seat.task("70", metadata={"due_utc": PAST_DUE})
+seat.task("70", metadata=MET)
 seat.state_path.parent.parent.mkdir(parents=True)
 seat.state_path.parent.write_text("a file where the state directory should be")
 result = seat.run()
 check("state cannot be written: reported on stderr, exit 1, and no raise goes unrecorded",
       reported(result, "could not be written, and so 1 due task(s) were not raised at this "
                        "stop; the first stop after the state file can be written raises them")
-      and "no task was checked" not in result.stderr, result)
+      and "no task was checked" not in result.stderr
+      and "old key" not in result.stderr, result)
 seat.state_path.parent.unlink()
 text = context_of(seat.run()) or ""
 check("state writable again: the task the failed write left unraised is raised",
       text.startswith("Act on task 70 "), text)
 
 seat = Seat()
-seat.task("71", metadata={"waits_on": [{"pr_merged": 140}]})
+seat.task("71", metadata={"prerequisites": [{"pr_merged": 140}]})
 seat.respond({"pr:140": "fail"})
 seat.state_path.parent.parent.mkdir(parents=True)
 seat.state_path.parent.write_text("a file where the state directory should be")
 result = seat.run()
 check("state cannot be written with nothing due: reported, saying no task went unraised",
       reported(result, "could not be written, and no task was due at this stop, so none "
-                       "went unraised")
+                       "went unraised. Make ")
       and "were not raised" not in result.stderr
       and "no task was checked" not in result.stderr, result)
 
 # --- task files are never written ------------------------------------------------
 seat = Seat()
-seat.task("80", metadata={"due_utc": PAST_DUE, "waits_on": [{"pr_merged": 120}]},
-          blocked_by=["81"])
+seat.task("80", metadata={"prerequisites": [{"pr_merged": 120}],
+                          "due_utc": "2020-01-01T00:00:00Z"}, blocked_by=["81"])
 seat.task("81", status="completed")
 seat.respond({"pr:120": {"state": "MERGED", "title": "T", "url": "https://x/120"}})
 before = {path.name: path.read_bytes() for path in seat.task_directory.iterdir()}
@@ -620,11 +737,13 @@ check("the state file is outside the task directory",
 
 # --- state is pruned ------------------------------------------------------------------
 seat = Seat()
-seat.task("90", metadata={"due_utc": PAST_DUE, "waits_on": [{"pr_merged": 130}]})
+seat.task("90", metadata={"prerequisites": [{"pr_merged": 130}]})
+seat.task("89", metadata=MET)
 seat.respond({"pr:130": "fail"})
 seat.run()
 (seat.task_directory / "90.json").unlink()
-seat.task("91", metadata={"due_utc": FUTURE_DUE})
+(seat.task_directory / "89.json").unlink()
+seat.task("91")
 seat.run()
 state = json.loads(seat.state_path.read_text())
 check("state pruned of deleted tasks and conditions no open task names",

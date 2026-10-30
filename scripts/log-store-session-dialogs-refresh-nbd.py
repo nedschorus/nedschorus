@@ -35,13 +35,15 @@ time, because the mirror keeps the Mac's modification times only to the
 whole second, so a Mac transcript that grows again within the same second
 keeps the same modification time; the change time is set by ned-box's own
 file system whenever rsync puts a new copy in place. The extractor is known
-by the sha256 of its bytes and its subagent tracker's
-(scripts/handoff-extract-conversation-subagent-tracker-nbd.py), kept in
-session-dialogs/ after each pass that had no failure; a pass that finds
-either file changed rewrites every dialog, so one change rewrites every
-dialog once. A transcript with no
-dialog in it still gets a dialog, one saying it holds no turns, so it is not
-read again until it changes.
+by the sha256 of its bytes, its subagent tracker's
+(scripts/handoff-extract-conversation-subagent-tracker-nbd.py) and those of
+the module the tracker loads
+(scripts/claude-code-subagent-task-notification-interim-recognizer-common.py),
+kept in session-dialogs/ after each pass that had no failure; a pass that
+finds any of the three files changed rewrites every dialog, so one change
+rewrites every dialog once. A transcript with no dialog in it still gets a
+dialog, one saying it holds no turns, so it is not read again until it
+changes.
 
 OUTPUT AND FAILURE. A transcript that cannot be read, a directory or file on
 the way to the transcripts that cannot be listed or examined, or a dialog that cannot be written, prints
@@ -100,6 +102,9 @@ STALE_DIALOG_WARNING_TIME_FORMAT = "%Y-%m-%d %H:%M UTC"
 EXTRACTOR_PATH = pathlib.Path(__file__).resolve().with_name("handoff-extract-conversation.py")
 SUBAGENT_TRACKER_PATH = pathlib.Path(__file__).resolve().with_name(
     "handoff-extract-conversation-subagent-tracker-nbd.py")
+SUBAGENT_TRACKER_PATHS = (
+    SUBAGENT_TRACKER_PATH,
+    pathlib.Path(__file__).resolve().with_name("claude-code-subagent-task-notification-interim-recognizer-common.py"))
 
 EXIT_REFRESHED = 0
 EXIT_FAILED = 1
@@ -107,10 +112,11 @@ EXIT_LOCKED = 3
 
 
 def load_extractor():
-    """Return (the extractor module, the sha256 of its bytes and its subagent tracker's, the error reading the tracker or None).
+    """Return (the extractor module, the sha256 of its bytes and its subagent tracker's files', (path, error) or None).
 
-    A tracker that cannot be read counts as empty in the digest: the extractor then writes each dialog without
-    subagent turns and says so in it, which beats leaving every dialog stale.
+    The tracker's files are SUBAGENT_TRACKER_PATHS; (path, error) names the first that cannot be read. When one
+    cannot be read, all count as empty in the digest: the extractor then writes each dialog without subagent turns
+    and says so in it, which beats leaving every dialog stale.
     """
     # One read for both, so a change to the file during a pass cannot pair old code with the new digest.
     source = EXTRACTOR_PATH.read_bytes()
@@ -118,11 +124,14 @@ def load_extractor():
     module.__file__ = str(EXTRACTOR_PATH)
     sys.modules[module.__name__] = module
     exec(compile(source, str(EXTRACTOR_PATH), "exec"), module.__dict__)
-    try:
-        tracker_source, tracker_error = SUBAGENT_TRACKER_PATH.read_bytes(), None
-    except OSError as error:
-        tracker_source, tracker_error = b"", error
-    return module, hashlib.sha256(source + tracker_source).hexdigest(), tracker_error
+    tracker_source, tracker_failure = b"", None
+    for path in SUBAGENT_TRACKER_PATHS:
+        try:
+            tracker_source += path.read_bytes()
+        except OSError as error:
+            tracker_source, tracker_failure = b"", (path, error)
+            break
+    return module, hashlib.sha256(source + tracker_source).hexdigest(), tracker_failure
 
 
 def store_root() -> pathlib.Path:
@@ -212,14 +221,15 @@ def refresh_all(root: pathlib.Path, failures_only: bool) -> int:
         print(f"FAILED: no {transcripts_directory} directory to read transcripts from; "
               "scripts/transcript-mirror-to-log-store.py creates it on its first pass")
         return EXIT_FAILED
-    extractor, extractor_sha256, tracker_error = load_extractor()
+    extractor, extractor_sha256, tracker_failure = load_extractor()
     dialogs_directory = root / SESSION_DIALOGS_DIRECTORY_NAME
     extractor_sha256_file = dialogs_directory / EXTRACTOR_SHA256_FILE_NAME
     written = current = failed = 0
-    if tracker_error is not None:
+    if tracker_failure is not None:
+        unreadable_tracker_path, tracker_error = tracker_failure
         # Counted as a failure, so the digest is not kept and every dialog is written again once the tracker is back.
         failed += 1
-        print(f"FAILED: cannot read {SUBAGENT_TRACKER_PATH}, so every dialog this pass writes leaves out its "
+        print(f"FAILED: cannot read {unreadable_tracker_path}, so every dialog this pass writes leaves out its "
               f"subagent tasks and reports and says so — {type(tracker_error).__name__}: {tracker_error}")
         # The kept digest names the working tracker; without it the dialogs written now would pass for current later.
         try:

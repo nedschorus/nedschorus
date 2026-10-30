@@ -384,49 +384,81 @@ def run_agent_exit_record_cases(workspace: Path):
           and supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state),
           str(state))
 
-    # Extracting the dialog fails, so no successor is launched: the stopped
-    # session's end is recorded, and the handoff stays unconsumed.
+    # Extracting the dialog fails, so the successor starts from the next step:
+    # the handoff is consumed, and the exit recorded is the successor's own.
     settings = settings_for("extractionfailed")
     supervisor.write_supervisor_state(settings.state_path, {"consumed_counter": 1})
+    sessions = [StubLaunchedSession(-15, ended=False), StubLaunchedSession(0)]
+
+    def launch_writing_a_handoff_once(agent_command, session_id, working_directory, prompt, **_):
+        if len(sessions) == 2:
+            settings.handoff_path.write_text("restart-counter: 2\nnext-step: carry on\n",
+                                             encoding="utf-8")
+        return sessions.pop(0)
+
     with supervisor_names_replaced(
-            launch_agent_session=launch_writing_a_handoff(
-                settings, StubLaunchedSession(-15, ended=False),
-                "restart-counter: 2\nnext-step: carry on\n"),
+            launch_agent_session=launch_writing_a_handoff_once,
             launch_time_git_sync=no_launch_time_git_sync,
             extract_dialog=lambda session_id, working_directory, output_path: False,
+            remove_finished_worktrees_at_handoff=lambda working_directory: "worktrees: stubbed",
+            memory_review_due_lines=lambda: (),
             stdin_isatty=True), \
             contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         supervisor.supervise_sessions(settings)
     state = supervisor.read_supervisor_state(settings.state_path)
-    check("EXIT RECORD: a failed extraction records the stopped session, handoff unconsumed",
-          state.get("consumed_counter") == 1
+    check("EXIT RECORD: a failed extraction still starts the successor, which consumes the "
+          "handoff, and the exit recorded is the successor's",
+          sessions == [] and state.get("consumed_counter") == 2
           and supervisor.agent_exit_record_from_supervisor_state(state) is not None
-          and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15
-          and not supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state),
-          str(state))
+          and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == 0,
+          f"{state} sessions left: {len(sessions)}")
 
 
 def run_failed_extraction_at_a_handoff_case(workspace: Path):
-    """A handoff arrives, the retiring session's dialog cannot be extracted: no
-    successor starts, the handoff stays unconsumed, the exit is recorded, and
-    the console says so and names the session whose extraction failed. The
-    handoff names another session as its writer, so the extraction must be
-    tried on the writer, not on the session the supervisor launched."""
+    """A handoff arrives and the retiring session's dialog cannot be extracted:
+    the failure is printed, naming the session, and the successor starts with
+    the handoff's next step as its prompt, told that the session-dialog could
+    not be extracted and where the transcript is, and the handoff is consumed.
+    The handoff names another session as its writer, so the extraction must be
+    tried on the writer, not on the session the supervisor launched. The
+    writer's transcript is in another seat's project folder, which the
+    transcript search still finds. A second handoff, whose writer has no
+    transcript, and a third, whose writer's transcript is in two project
+    folders, give successors told what the search reported."""
     handoff_directory = workspace / "failedextraction"
     handoff_directory.mkdir(parents=True)
+    keyed_project_directory = supervisor.project_directory_for_working_directory(workspace)
+    other_project_directory = supervisor.PROJECTS_ROOT / "failedextraction-other-project"
+    another_project_directory = supervisor.PROJECTS_ROOT / "failedextraction-another-project"
+    other_project_directory.mkdir(parents=True)
+    another_project_directory.mkdir(parents=True)
     settings = supervisor.SupervisorSettings(
         agent="failedextraction", working_directory=workspace,
         handoff_directory=handoff_directory, agent_command="unused-stub-agent",
         first_prompt="")
-    launched_session_ids, extracted_from = [], []
+    launched_session_ids, launched_prompts, extracted_from = [], [], []
     writer_session_id = "11111111-2222-3333-4444-555555555555"
+    writer_without_a_transcript = "66666666-7777-8888-9999-000000000000"
+    writer_in_two_project_folders = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    (other_project_directory / f"{writer_session_id}.jsonl").write_text("{}\n", encoding="utf-8")
+    for project_directory in (other_project_directory, another_project_directory):
+        (project_directory / f"{writer_in_two_project_folders}.jsonl").write_text(
+            "{}\n", encoding="utf-8")
+    handoffs_to_write = [
+        f"restart-counter: 1\nwritten-by-session: {writer_session_id}\nnext-step: carry on\n",
+        f"restart-counter: 2\nwritten-by-session: {writer_without_a_transcript}\n"
+        "next-step: carry on further\n",
+        f"restart-counter: 3\nwritten-by-session: {writer_in_two_project_folders}\n"
+        "next-step: carry on still\n",
+    ]
 
     def launch(agent_command, session_id, working_directory, prompt, **_):
         launched_session_ids.append(session_id)
-        settings.handoff_path.write_text(
-            f"restart-counter: 1\nwritten-by-session: {writer_session_id}\n"
-            "next-step: carry on\n", encoding="utf-8")
-        return StubLaunchedSession(-15, ended=False)
+        launched_prompts.append(prompt)
+        if handoffs_to_write:
+            settings.handoff_path.write_text(handoffs_to_write.pop(0), encoding="utf-8")
+            return StubLaunchedSession(-15, ended=False)
+        return StubLaunchedSession(0)
 
     def failing_extract_dialog(session_id, working_directory, output_path):
         extracted_from.append(session_id)
@@ -438,25 +470,72 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
             stop_session=lambda process: process.terminate(),
             extract_dialog=failing_extract_dialog,
             launch_time_git_sync=lambda working_directory: "launch-time-git-sync: stubbed",
+            remove_finished_worktrees_at_handoff=lambda working_directory: "worktrees: stubbed",
+            memory_review_due_lines=lambda: (),
             stdin_isatty=True), \
             contextlib.redirect_stdout(console), contextlib.redirect_stderr(errors):
         exit_code = supervisor.supervise_sessions(settings)
     state = supervisor.read_supervisor_state(settings.state_path)
-    check("FAILED EXTRACTION: a handoff whose dialog cannot be extracted starts no successor",
-          exit_code == 0 and len(launched_session_ids) == 1,
+    check("FAILED EXTRACTION: a handoff whose dialog cannot be extracted still starts a successor",
+          exit_code == 0 and len(launched_session_ids) == 4
+          and len(set(launched_session_ids)) == 4,
           f"{exit_code!r} {launched_session_ids!r} {extracted_from!r}")
     check("FAILED EXTRACTION: the extraction is tried on the handoff's writer, "
           "not on the launched session",
-          extracted_from == [writer_session_id], f"{extracted_from!r} {launched_session_ids!r}")
-    check("FAILED EXTRACTION: the console names the session whose extraction failed "
-          "and says it is not relaunching",
+          extracted_from == [writer_session_id, writer_without_a_transcript,
+                             writer_in_two_project_folders],
+          f"{extracted_from!r} {launched_session_ids!r}")
+    check("FAILED EXTRACTION: the failure is still printed, naming the session, "
+          "and nothing says it is not relaunching",
           f"extracting session {writer_session_id}'s dialog failed" in errors.getvalue()
-          and "not relaunching (the transcript is intact — recover by hand)" in errors.getvalue(),
+          and "not relaunching" not in errors.getvalue() + console.getvalue(),
           errors.getvalue()[-400:])
-    check("FAILED EXTRACTION: the handoff stays unconsumed and the exit is recorded",
-          state.get("consumed_counter") is None
-          and supervisor.agent_exit_record_from_supervisor_state(state) is not None,
-          str(state))
+    check("FAILED EXTRACTION: the console says the successor starts from the next step, "
+          "and why",
+          "starting a fresh agent-session from an unconsumed handoff, with its next step as "
+          f"the prompt; there is no conversation-tail because session {writer_session_id}'s "
+          "dialog could not be extracted" in console.getvalue(),
+          console.getvalue()[-600:])
+    successor_prompt = launched_prompts[1] if len(launched_prompts) > 1 else ""
+    check("FAILED EXTRACTION: the successor's prompt is the next step, then says the "
+          "session-dialog could not be extracted and gives the path of the transcript, "
+          "which is in another seat's project folder",
+          successor_prompt.startswith(
+              "carry on\n\n(Recovered at a handoff: the previous session's conversation-tail "
+              "is unavailable, because the handoff-supervisor could not extract session "
+              f"{writer_session_id}'s session-dialog; this next-step and the repository are "
+              f"your context, and that session's transcript is "
+              f"{other_project_directory / (writer_session_id + '.jsonl')}, which you can read "
+              "when the next-step leaves out something you need.) "),
+          successor_prompt[:600])
+    no_transcript_prompt = launched_prompts[2] if len(launched_prompts) > 2 else ""
+    check("FAILED EXTRACTION: when no project folder holds the writer's transcript, the "
+          "successor's prompt says it is not where it was expected nor in any other project "
+          "folder, and that the next step and the repository are its whole context",
+          no_transcript_prompt.startswith(
+              "carry on further\n\n(Recovered at a handoff: the previous session's "
+              "conversation-tail is unavailable, because the handoff-supervisor could not "
+              f"extract session {writer_without_a_transcript}'s session-dialog, and that "
+              "session's transcript is not at "
+              f"{keyed_project_directory / (writer_without_a_transcript + '.jsonl')} or in any "
+              f"other folder under {supervisor.PROJECTS_ROOT}/; this next-step and the "
+              "repository are your whole context.) "),
+          no_transcript_prompt[:900])
+    two_folders_prompt = launched_prompts[3] if len(launched_prompts) > 3 else ""
+    check("FAILED EXTRACTION: when two project folders hold the writer's transcript, the "
+          "successor's prompt names both, joined by \"and\"",
+          two_folders_prompt.startswith(
+              "carry on still\n\n(Recovered at a handoff: the previous session's "
+              "conversation-tail is unavailable, because the handoff-supervisor could not "
+              f"extract session {writer_in_two_project_folders}'s session-dialog; this "
+              "next-step and the repository are your context, and that session's transcript "
+              "is in more than one folder, at "
+              f"{another_project_directory / (writer_in_two_project_folders + '.jsonl')} and "
+              f"{other_project_directory / (writer_in_two_project_folders + '.jsonl')}, which "
+              "you can read when the next-step leaves out something you need.) "),
+          two_folders_prompt[:900])
+    check("FAILED EXTRACTION: each handoff is consumed",
+          state.get("consumed_counter") == 3, str(state))
 
 
 def process_is_gone_within_seconds(process_id: int, seconds: float) -> bool:

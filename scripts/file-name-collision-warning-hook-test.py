@@ -55,12 +55,20 @@ HOOK_MODULE_SPEC = importlib.util.spec_from_file_location(
 HOOK_MODULE = importlib.util.module_from_spec(HOOK_MODULE_SPEC)
 HOOK_MODULE_SPEC.loader.exec_module(HOOK_MODULE)
 
+_rule_failure_lines_spec = importlib.util.spec_from_file_location(
+    "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py")
+RULE_FAILURE_LINES = importlib.util.module_from_spec(_rule_failure_lines_spec)
+_rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)
+
 # Named here rather than read from the hook: a test that asks the code under
 # test which names are exempt cannot notice the set changing.
 EXEMPT_FILE_NAMES_IN_TEST = {"skill.md", "readme.md", ".gitkeep"}
 
 failures = []
 
+LOCK_FILE_CONDITION = HOOK_MODULE.next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION
 LOCK_FILE_WAIT_CLAUSE = HOOK_MODULE.next_step_lines.lock_file_named_by_git_error_wait_then_rerun_instruction(
     "the command below this paragraph")
 
@@ -439,8 +447,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               len(failure_lines) == 4
               and failure_lines[1] == (f"A later run of this hook checks only the file that run's Write or Edit "
                                        f"touched, so check {written} by running the command printed on its own line below this paragraph. If git's "
-                                       "error above names no lock file, run that command now. If git's error names "
-                                       f"a lock file, {LOCK_FILE_WAIT_CLAUSE}. The command prints nothing when no other tracked file has the "
+                                       "error above names no lock file, run that command now. "
+                                       f"{LOCK_FILE_CONDITION}, {LOCK_FILE_WAIT_CLAUSE}. The command prints nothing when no other tracked file has the "
                                        "basename, and also when this hook skips the file without checking: a file "
                                        "outside the checkout, a file git ignores, a file named SKILL.md, README.md "
                                        "or .gitkeep in any letter case, or a working directory that no longer "
@@ -455,7 +463,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         rerun_line = failure_lines[1] if len(failure_lines) > 1 else ""
         check(f"a failing git {failing_subcommand}'s rerun line says to run the command now when git names no lock "
               "file, and gives the lock-file wait otherwise",
-              "names no lock file, run that command now. If git's error names a lock file, "
+              "names no lock file, run that command now. " + LOCK_FILE_CONDITION + ", "
               + LOCK_FILE_WAIT_CLAUSE + "." in rerun_line, repr(rerun_line))
         check(f"a failing git {failing_subcommand}'s rerun line says what the command prints when git fails again "
               "and points to the closing line",
@@ -528,6 +536,26 @@ def tracked_name_collisions(repository_root: Path):
                    if len(paths) > 1 and name not in EXEMPT_FILE_NAMES_IN_TEST}
 
 
+def tracked_name_collisions_failure_detail(tracked_names, collisions):
+    listing = f"over {len(tracked_names)} names: " + "; ".join(
+        f"{name}: {', '.join(paths)}" for name, paths in sorted(collisions.items()))
+    return "\n".join([
+        listing,
+        "Two tracked files may not share a basename, compared ignoring case, except SKILL.md, "
+        "README.md and .gitkeep: the rule is in scripts/file-name-collision-warning-hook.py, "
+        "because checks that find a moved file search by its name.",
+        "If a file your change added or renamed is among those files, rename it by CLAUDE.md's "
+        "naming rule and update what points at it.",
+        RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
+
+
+def tracked_files_unlisted_failure_detail(error):
+    return "\n".join([
+        str(error),
+        "The suite could not list this checkout's tracked files, so it did not check their names.",
+        "Fix what the line above reports, then run this suite again."])
+
+
 with tempfile.TemporaryDirectory() as planted_temporary_directory:
     planted = Path(planted_temporary_directory).resolve() / "checkout"
     planted.mkdir()
@@ -554,6 +582,19 @@ with tempfile.TemporaryDirectory() as planted_temporary_directory:
           "readme.md" in planted_names
           and "readme.md" not in planted_collisions,
           planted_failure or repr(sorted(planted_names)))
+    planted_detail = tracked_name_collisions_failure_detail(planted_names, planted_collisions)
+    check("a planted collision's failure lists the files, says the rule and its home, gives the fix, "
+          "and ends with the line for a rule main broke",
+          planted_detail.split("\n") == [
+              f"over {len(planted_names)} names: named-twice-on-purpose.py: "
+              + ", ".join(planted_collisions.get("named-twice-on-purpose.py", [])),
+              "Two tracked files may not share a basename, compared ignoring case, except SKILL.md, "
+              "README.md and .gitkeep: the rule is in scripts/file-name-collision-warning-hook.py, "
+              "because checks that find a moved file search by its name.",
+              "If a file your change added or renamed is among those files, rename it by CLAUDE.md's "
+              "naming rule and update what points at it.",
+              RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
+          planted_detail)
 
     unlistable = Path(planted_temporary_directory).resolve() / "not-a-checkout"
     unlistable.mkdir()
@@ -562,6 +603,12 @@ with tempfile.TemporaryDirectory() as planted_temporary_directory:
     except RuntimeError as unanswered:
         check("a repository git cannot list is a failure, not a clean result",
               "git ls-files exited" in str(unanswered), str(unanswered))
+        check("a repository git cannot list fails with git's error and says its names went unchecked",
+              tracked_files_unlisted_failure_detail(unanswered) == "\n".join([
+                  str(unanswered),
+                  "The suite could not list this checkout's tracked files, so it did not check their names.",
+                  "Fix what the line above reports, then run this suite again."]),
+              tracked_files_unlisted_failure_detail(unanswered))
     else:
         check("a repository git cannot list is a failure, not a clean result",
               False, "tracked_name_collisions returned instead of raising")
@@ -570,13 +617,10 @@ try:
     tracked_names, collisions = tracked_name_collisions(REPOSITORY_ROOT)
 except RuntimeError as unanswered:
     check("no two tracked files in this repository share a name", False,
-          str(unanswered))
+          tracked_files_unlisted_failure_detail(unanswered))
 else:
     check("no two tracked files in this repository share a name",
-          not collisions,
-          f"over {len(tracked_names)} names: " + "; ".join(
-              f"{name}: {', '.join(paths)}"
-              for name, paths in sorted(collisions.items())))
+          not collisions, tracked_name_collisions_failure_detail(tracked_names, collisions))
 
 several = HOOK_MODULE.collision_warning_line(
     PurePath("docs/new/shared-name.md"), ["docs/a/shared-name.md", "docs/b/shared-name.md"])

@@ -19,6 +19,11 @@ COLD_READ_RECORD_SHIP_DESTINATION, the shipper's own test destination, and
 names each record with the real nc-systems/cold-read/cold-read-record-names-common.py,
 as the fast read does. Only the fast read itself is a stand-in.
 
+One case runs a copy of the real nc-systems/cold-read/cold-read-fast-read.py,
+with stub models and a log-store that cannot be reached, built by
+nc-systems/cold-read/tests/cold-read-scratch-repository-test-fixture.py, to
+show the program reads that program's own output.
+
 The case on a REFUSED record line takes that line from the real shipper,
 shipping two records of one name and different content to a scratch store.
 The case on a failed cell takes the launcher's lines from the real
@@ -62,6 +67,11 @@ SEAT_NAME_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
 COLD_READ_DIRECTORY = REPO_ROOT / "nc-systems" / "cold-read"
 RECORD_SHIPPER = COLD_READ_DIRECTORY / "cold-read-record-ship.py"
 AGY_CELL_LAUNCHER = COLD_READ_DIRECTORY / "cold-read-agy-cell.py"
+_cold_read_scratch_fixture_spec = importlib.util.spec_from_file_location(
+    "cold_read_scratch_repository_test_fixture",
+    COLD_READ_DIRECTORY / "tests" / "cold-read-scratch-repository-test-fixture.py")
+cold_read_scratch_fixture = importlib.util.module_from_spec(_cold_read_scratch_fixture_spec)
+_cold_read_scratch_fixture_spec.loader.exec_module(cold_read_scratch_fixture)
 SHIP_DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 TELL_HIM_RECORD_INSTRUCTION = ("Tell the user what the record line above says, "
                                "remedy included, before your closing line.")
@@ -84,7 +94,7 @@ GOOD_INPUT = (
 )
 
 STAND_IN_SOURCE = r'''#!/usr/bin/env python3
-import json, os, pathlib, shutil, subprocess, sys, time
+import json, os, pathlib, shutil, signal, subprocess, sys, time
 plan = json.loads(os.environ["STAND_IN_PLAN"])
 log = pathlib.Path(os.environ["STAND_IN_LOG"])
 target = pathlib.Path(sys.argv[sys.argv.index("--target") + 1])
@@ -105,12 +115,18 @@ if "report_source" in plan:
     report = pathlib.Path(plan["report_copy"])
     shutil.copyfile(plan["report_source"], report)
     print("stand-in progress line", file=sys.stderr)
-    print(plan.get("record_line", "cold-read-fast-read: record: FAILED: ned-box "
-          "could not be reached; the record stays on disk."), file=sys.stderr)
+    record_line = plan.get("record_line", "cold-read-fast-read: record: FAILED: ned-box "
+                           "could not be reached; the record stays on disk.")
+    print(record_line, file=sys.stderr)
     print(report)
-    sys.exit(0)
+    # As the real fast read does: exit 1 when the record did not reach the log-store.
+    sys.exit(0 if "record: shipped:" in record_line else 1)
 print(plan.get("stdout", ""), end="")
 print(plan.get("stderr", ""), end="", file=sys.stderr)
+if plan.get("killed_by_sigterm"):
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.kill(os.getpid(), signal.SIGTERM)
 sys.exit(plan.get("exit", 0))
 '''
 
@@ -259,6 +275,58 @@ def main() -> int:
         check("a record line saying REFUSED does not tell him",
               TELL_HIM_RECORD_INSTRUCTION not in completed.stdout,
               completed.stdout[-600:])
+
+        # Oracle: exit code and stdout. Red: a report named on stdout with
+        # exit 1 and no record line on stderr is printed as a report: exit 1
+        # means other failures too.
+        completed, _ = run_program(
+            scratch, {"stdout": f"{report_copy}\n", "exit": 1}, GOOD_INPUT)
+        check("a fast read that names a report and exits 1 with no record line is a failure",
+              completed.returncode == 1
+              and "The fresh-reader's read failed." in completed.stdout
+              and "Report: " not in completed.stdout,
+              f"exit {completed.returncode}, stdout {completed.stdout!r}")
+        completed, _ = run_program(
+            scratch, {"stdout": f"{report_copy}\n", "exit": 4,
+                      "stderr": "cold-read-fast-read: record: FAILED: ned-box could not be reached\n"},
+            GOOD_INPUT)
+        check("a record line does not excuse an exit other than 1",
+              completed.returncode == 1
+              and "The fresh-reader's read failed." in completed.stdout,
+              f"exit {completed.returncode}, stdout {completed.stdout!r}")
+        completed, _ = run_program(
+            scratch, {"stdout": f"{report_copy}\n", "killed_by_sigterm": True,
+                      "stderr": "cold-read-fast-read: record: FAILED: ned-box could not be reached\n"},
+            GOOD_INPUT)
+        check("a record line does not excuse a fast read killed by a signal",
+              completed.returncode == 1
+              and "The fresh-reader's read failed." in completed.stdout,
+              f"exit {completed.returncode}, stdout {completed.stdout!r}")
+
+        # Oracle: exit code and stdout from the real fast read, whose record
+        # cannot reach the log-store. Red: its exit 1 read as no fast read.
+        # The scratch is reached through a symlink, as a Mac temporary
+        # directory is through /var -> /private/var.
+        (scratch / "real-fast-read-target").mkdir()
+        (scratch / "real-fast-read").symlink_to(scratch / "real-fast-read-target")
+        fast_read_copy, fast_read_environment = (
+            cold_read_scratch_fixture.cold_read_fast_read_scratch_repository_whose_stub_agy_answers_in_chat(
+                scratch / "real-fast-read", "nobody@no-such-host.invalid:/tmp/no-store"))
+        fast_read_environment[OVERRIDE_VARIABLE] = str(fast_read_copy)
+        fast_read_environment.pop(SEAT_NAME_VARIABLE, None)
+        real = subprocess.run(
+            [sys.executable, str(PROGRAM)], input=GOOD_INPUT, capture_output=True, text=True,
+            env=fast_read_environment, check=False, timeout=300, cwd=scratch)
+        real_records = fast_read_copy.parents[2] / "cold-read-records"
+        check("the real fast read, exiting 1 because its record could not reach the "
+              "log-store, has its report printed, with the record line and the "
+              "instruction to tell him, and exit 0",
+              real.returncode == 0
+              and f"Report: {real_records}/" in real.stdout
+              and "word149" in real.stdout
+              and re.search(r"cold-read-fast-read: record: FAILED: [^\n]*\n"
+                            + re.escape(TELL_HIM_RECORD_INSTRUCTION), real.stdout) is not None,
+              f"exit {real.returncode}, stdout {real.stdout[-800:]!r}, stderr {real.stderr[-400:]!r}")
 
         # Oracle: stdout. Red: the tell-him instruction printed after a record
         # line that says the record arrived.

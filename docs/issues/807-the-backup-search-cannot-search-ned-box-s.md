@@ -1,5 +1,6 @@
 ---
 issue: "[The backup search cannot search ned-box's Timeshift when it runs on ned-box, because it reaches \"the box\" by ssh to itself](https://github.com/nedschorus/nedschorus/issues/807)"
+kind: design
 ---
 
 # The backup search cannot search ned-box's Timeshift when it runs on ned-box, because it reaches "the box" by ssh to itself

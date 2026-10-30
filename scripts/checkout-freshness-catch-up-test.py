@@ -360,7 +360,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           merge_note.endswith("\n" + NOT_FOR_THE_USER_LINE), merge_note)
     check("and only once",
           "merge commit(s) from main" not in agent_text(run_catch_up(["--cwd", str(merge_seat)])))
-    # A merge of another topic branch is not the banned thing.
+    # A merge of another nc-topic-branch is not the banned thing.
     topic_seat = tmp / "topic-merge-worktree"
     git(["worktree", "add", "-q", "-b", "topic-a", str(topic_seat), "main"], reference)
     configure_identity(topic_seat)
@@ -372,7 +372,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     commit_file(other, "topic-b.txt", "b\n", "topic b work")
     git(["-c", "core.editor=true", "merge", "--no-ff", "--no-edit", "topic-b"], topic_seat)
     result = run_catch_up(["--cwd", str(topic_seat)])
-    check("a merge of another topic branch is NOT reported as a merge from main",
+    check("a merge of another nc-topic-branch is NOT reported as a merge from main",
           "merge commit(s) from main" not in agent_text(result), agent_text(result))
 
     # -----------------------------------------------------------------------
@@ -754,12 +754,12 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           agent_text(result))
     git(["cherry-pick", "--abort"], sequencing)
 
-    # The ghi-info shape (nedschorus#334): no commits of its own, far behind,
+    # The ghi-guide-agent shape (nedschorus#334): no commits of its own, far behind,
     # never pushed — so it is simply brought level, the same fast-forward the
-    # box's ghi-info-ask now does for itself (#375).
-    ghi = tmp / "ghi-info-worktree"
+    # box's ghi-guide-agent-ask now does for itself (#375).
+    ghi = tmp / "ghi-guide-agent-worktree"
     first_commit = git(["rev-list", "--max-parents=0", "main"], reference).stdout.strip()
-    git(["worktree", "add", "-q", "-b", "ghi-info", str(ghi), first_commit], reference)
+    git(["worktree", "add", "-q", "-b", "ghi-guide-agent", str(ghi), first_commit], reference)
     configure_identity(ghi)
     result = run_catch_up(["--cwd", str(ghi)])
     check("a never-pushed branch with no own commits, far behind, is brought level",

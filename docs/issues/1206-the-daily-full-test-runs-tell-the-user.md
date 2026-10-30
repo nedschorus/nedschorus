@@ -1,5 +1,6 @@
 ---
 issue: "[The daily full test runs tell the user about failures and about test cases that run nowhere or lack a tool, and every test suite prints a skipped test case in one format](https://github.com/nedschorus/nedschorus/issues/1206)"
+kind: design
 ---
 
 # The daily full test runs tell the user about failures and about test cases that run nowhere or lack a tool, and every test suite prints a skipped test case in one format
@@ -63,7 +64,7 @@ The `SKIP` line also reads badly. In "SKIP a C program compiled with cc stands i
 - GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956) sets the form of messages to agents; the skip line here is read by the user and by the check.
 - PR [Work-snapshot test: a fake process tree replaces the four claude stand-ins; a weekly owner check runs the hook in a real claude session](https://github.com/nedschorus/nedschorus/pull/1212) added the weekly work-snapshot owner check that this check also reads. The user ruled on 2026-10-13, as item 21 of ned-box-helper's approval-walk fast-cold-read-of-agent-facing-prose-design-questions-2026-10-10 (minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/fast-cold-read-of-agent-facing-prose-design-questions-2026-10-10-minutes.md`), that this check reads the weekly records rather than a separate program. The weekly check skips no test cases; the check reads its `FAIL` lines and `VERDICT:` line as they are.
 
-Searched for an existing GHI covering the check or the format: ghi-info, asked on 2026-10-11, found none for either; it named GHI 1055 for tool prerequisites, covered above.
+Searched for an existing GHI covering the check or the format: ghi-guide-agent, asked on 2026-10-11, found none for either; it named GHI 1055 for tool prerequisites, covered above.
 
 ## How the report reaches the user (decided)
 

@@ -528,7 +528,7 @@ try:
             guard.analyze_command_text = real_analyze
         whom = ("Tell the user" in LET_THROUGH_MESSAGES[0] if attended
                 else "do not tell the user" in LET_THROUGH_MESSAGES[0]
-                and "If you are a subagent, tell the agent that dispatched you" in LET_THROUGH_MESSAGES[0]
+                and guard.shell_reader.report_to_user_or_dispatching_agent_instruction_build("", environment={"CLAUDE_CODE_SESSION_ATTENDED": "0"}) in LET_THROUGH_MESSAGES[0]
                 and "Tell the user" not in LET_THROUGH_MESSAGES[0]) if LET_THROUGH_MESSAGES else False
         check(f"when the guard fails with {type(failure).__name__}, with the session variables "
               f"{session}, it lets the command through, says it was not checked, quotes the error "

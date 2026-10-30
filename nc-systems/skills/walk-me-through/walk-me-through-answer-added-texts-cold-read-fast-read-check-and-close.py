@@ -84,7 +84,9 @@ checkout's cold-read-records/ and in the log-store's. The log-store's
 cold-read-records directory is the path in cold-read-record-ship.py's
 LOG_STORE_RECORDS_DESTINATION, read on ned-box as it is and on the Mac through
 the Mac's mount of ned-box's home. For each text with none, it saves the text to
-a scratch file and runs cold-read-fast-read.py --target on that file. Then it
+a scratch file and runs cold-read-fast-read.py --target on that file; the
+scratch file's directory is removed when the fast read ends, whatever ends it,
+SIGTERM and SIGHUP included, since the cold-read-record keeps its own copy. Then it
 writes the answer line, which names each part's answer in part number order
 when --part-answer is given, and one status line per text, naming its mark and
 its number, from 1 in the walk-document's order, among the item's texts with
@@ -104,7 +106,11 @@ before each check run.
 A fast read that prints a line opening FAILED, or exits nonzero, ends CHECK
 before the walk-minutes are written: the program prints that line, or a FAILED
 line of its own, then says the item stays waiting and tells the agent to ask
-the user whether to run check again, and exits 1. A fast read that succeeds but says on stderr that its record was not
+the user whether to run check again, and exits 1. The one exception is a fast
+read that names its report on stdout and exits 1 because its record did not
+reach the log-store, which its stderr says in a `record: FAILED` or
+`record: REFUSED` line: its report is used like any other. A fast read whose
+report is used but says on stderr that its record was not
 shipped, or that its target changed during the read, has that line added to its
 status line. An unshipped record, a log-store this machine cannot reach, and a
 counts line that cannot be written are each printed after the rest, saying the
@@ -150,11 +156,14 @@ docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-h
 """
 import argparse
 import collections
+import contextlib
 import datetime
 import importlib.util
 import os
 import re
 import shlex
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -205,8 +214,10 @@ NO_PROPOSED_TEXT = "no proposed text marked"
 STATUS_ALREADY_DONE = "`{mark}` text {number}, \"{excerpt}\": fast read already done ({record})."
 STATUS_HAD_TO_BE_RUN = "`{mark}` text {number}, \"{excerpt}\": fast read had to be run ({record})."
 STATUS_FAST_READ_NOTE = " The fast read also said: {note}"
-# The fast read reports these on stderr and still exits 0, because its report was written.
-FAST_READ_NOTE_MARKERS = ("cold-read-fast-read: record: FAILED", "#cold_read_target_changed_during_run")
+# The fast read reports these on stderr after writing its report; an unshipped record also makes it exit 1.
+FAST_READ_RECORD_NOT_SHIPPED_MARKERS = ("cold-read-fast-read: record: FAILED",
+                                        "cold-read-fast-read: record: REFUSED")
+FAST_READ_NOTE_MARKERS = FAST_READ_RECORD_NOT_SHIPPED_MARKERS + ("#cold_read_target_changed_during_run",)
 CHECK_JUDGEMENT_LINES = (
     "Read the fast-read report of each text above whose status line says \"fast read had to be run\".",
     "If a finding holds and changes how a text is understood but not what the item decides, "
@@ -226,6 +237,8 @@ LOG_STORE_UNREACHABLE = ("this machine reaches the log-store at neither {paths},
 RECORDS_NOT_SHIPPED = (
     "The minutes record the answer, but the fast read of `{mark}` text {number} did not ship its record: {note}",
     "The record stays at {record}; once ned-box can be reached, run `python3 {shipper} {record}`.",
+    "If the line above says REFUSED, first rename {record} with a -2 suffix, or the next number not taken, "
+    "and ship the renamed directory instead.",
     "Include these lines in your next message to the user, and carry on as the lines above say.",
 )
 FAST_READ_FAILED_LINES = (
@@ -233,6 +246,14 @@ FAST_READ_FAILED_LINES = (
     "Tell the user the line above, and ask whether to run `python3 {program} check{flags}` again or "
     "answer the item another way.",
 )
+STOP_SIGNAL_SCRATCH_NOT_REMOVED_LINES = (
+    "{program} check: a {signal} stopped this check step while a cold-read-fast-read was running, so the "
+    "walk-minutes do not record the user's answer, and the scratch directory {directory}, which held the text "
+    "sent to that cold-read-fast-read, could not be removed: {error}\n"
+    "Run `chmod -R u+rwX {quoted_directory} && rm -rf {quoted_directory}`, because nothing else removes that "
+    "directory, and the disk it is on can fill.\n"
+    "Then run the same `python3 {quoted_program_path} check` command again, with the same answer, so that the "
+    "walk-minutes record his answer.")
 CHECK_MINUTES = ("{item}: the user answered {answered}{hashtag}{rating} ({date_and_time}), which makes its change. "
                  "Fast reads:")
 CHECK_NOT_ASKED_MINUTES = ("{item}: settled without asking the user, {answered}{rating} ({date_and_time}), which makes "
@@ -470,23 +491,74 @@ def fast_read_record_holding(text, record_directories):
     return None
 
 
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
+
+
+@contextlib.contextmanager
+def scratch_directory_removed_on_every_exit():
+    """Make a scratch directory and yield its path; remove it when the block ends, however the block ends. A
+    SIGTERM or SIGHUP during the block removes it and then ends the program as that signal's default does; one
+    the program was started with ignored, as under nohup, stays ignored.
+
+    The handler raises nothing: an exception raised inside subprocess's own code, between Popen._wait()'s lock
+    acquire and its try, leaves the lock held, and the wait() that subprocess.run() then makes blocks forever.
+    stop-signal-sigterm-or-sighup-raises-system-exit-so-cleanup-runs-common.py raises, so it does not fit here.
+    """
+    made = []
+
+    def remove_then_end(number, _):
+        for directory in made:
+            try:
+                shutil.rmtree(directory)
+            except OSError as error:
+                print(STOP_SIGNAL_SCRATCH_NOT_REMOVED_LINES.format(
+                    program=PROGRAM, signal=signal.Signals(number).name,
+                    quoted_program_path=shlex.quote(str(Path(__file__).resolve())), directory=directory,
+                    quoted_directory=shlex.quote(directory), error=error), file=sys.stderr)
+        signal.signal(number, signal.SIG_DFL)
+        os.kill(os.getpid(), number)
+
+    previous = {number: signal.signal(number, remove_then_end)
+                for number in STOP_SIGNALS if signal.getsignal(number) != signal.SIG_IGN}
+    try:
+        # Blocked until the path is in made, so a stop signal between the two cannot leave the directory behind.
+        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
+        try:
+            scratch = tempfile.mkdtemp(prefix=PROGRAM + "-")
+            made.append(scratch)
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        yield scratch
+    finally:
+        for directory in made:
+            shutil.rmtree(directory)
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+
+
 def run_fast_read(text, name, fast_read_program):
     """Fast-read the text from a scratch file; return (the report's directory, the lines the fast read printed
-    on stderr about an unshipped record or a changed target), or raise FastReadFailed."""
-    scratch = Path(tempfile.mkdtemp(prefix=PROGRAM + "-"))
-    target = scratch / f"{name}.md"
-    target.write_text(text + "\n", encoding="utf-8")
-    result = subprocess.run([sys.executable, str(fast_read_program), "--target", str(target)],
-                            capture_output=True, text=True)
+    on stderr about an unshipped record or a changed target), or raise FastReadFailed.
+
+    The scratch directory is removed on every exit, SIGTERM and SIGHUP included: the fast read keeps its own copy
+    of the text in its record's target/, which is where a later check looks for it."""
+    with scratch_directory_removed_on_every_exit() as scratch:
+        target = Path(scratch) / f"{name}.md"
+        target.write_text(text + "\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, str(fast_read_program), "--target", str(target)],
+                                capture_output=True, text=True)
     lines = result.stdout.strip().split("\n")
     failed = [line for line in lines if line.startswith("FAILED")]
     if failed:
         raise FastReadFailed(failed[0])
-    if result.returncode != 0 or not lines[-1]:
-        raise FastReadFailed(f"FAILED: {fast_read_program} --target {target} exited {result.returncode} "
-                             f"without naming a report; its stderr: {result.stderr.strip()[-500:]}")
     notes = [line.strip() for line in result.stderr.split("\n")
              if any(marker in line for marker in FAST_READ_NOTE_MARKERS)]
+    # Exit 1 means other failures too, so only the stderr line says the record was all that failed.
+    only_the_record_not_shipped = result.returncode == 1 and any(
+        note.startswith(FAST_READ_RECORD_NOT_SHIPPED_MARKERS) for note in notes)
+    if (result.returncode != 0 and not only_the_record_not_shipped) or not lines[-1]:
+        raise FastReadFailed(f"FAILED: {fast_read_program} --target {target} exited {result.returncode} "
+                             f"without naming a report; its stderr: {result.stderr.strip()[-500:]}")
     return Path(lines[-1]).parent, notes
 
 
@@ -739,7 +811,7 @@ def check(arguments):
         statuses.append(STATUS_HAD_TO_BE_RUN.format(mark=mark, number=number, excerpt=excerpt(text), record=record)
                         + "".join(STATUS_FAST_READ_NOTE.format(note=note) for note in notes))
         for note in notes:
-            if note.startswith(FAST_READ_NOTE_MARKERS[0]):
+            if note.startswith(FAST_READ_RECORD_NOT_SHIPPED_MARKERS):
                 problems += [line.format(mark=mark, number=number, note=note, record=record,
                                          shipper=RECORD_SHIPPER_FILE)
                              for line in RECORDS_NOT_SHIPPED]

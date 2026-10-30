@@ -1,5 +1,6 @@
 ---
 issue: "[What NC preserves, where it goes, how that is codified, and how it is kept from drifting — design pair (destination: wiki page with subpages)](https://github.com/nedschorus/nedschorus/issues/32)"
+kind: design
 ---
 
 Issue: https://github.com/nedschorus/nedschorus/issues/32

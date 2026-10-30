@@ -67,21 +67,21 @@ md-review-records/
 # scripts/sanity-check-record-ship.py puts them in (user-ruled 2026-09-15)
 sanity-check-records/
 
-# ghi-info's local GHI mirror (nedschorus#46, docs/issues/46-ghi-info-agent-design.md
+# ghi-guide-agent's local GHI mirror (nedschorus#46, docs/issues/46-ghi-guide-agent-design.md
 # § The GHI mirror): derived from GitHub by scripts/ghi-mirror-refresh.py,
 # regenerable on any machine — a committed mirror would pollute the history the
 # user reads with pure derived churn (the design's own "Deliberately not in
 # version 1" table). Includes the ask wrapper's session state
-# (.ghi-info-state.json) alongside it.
+# (.ghi-guide-agent-state.json) alongside it.
 ghi-mirror/
-.ghi-info-state.json
-.ghi-info-state.lock
+.ghi-guide-agent-state.json
+.ghi-guide-agent-state.lock
 # A contended ask publishes into a private mirror it removes in a `finally`,
 # which a SIGHUP skips — reachable when the Mac side's ssh timeout kills a
 # box-side ask mid-run. Each leftover is a corpus-sized copy, which is the
 # class nedschorus#50 (worktree file hygiene) closed a ruling on.
 .ghi-mirror-throwaway-*/
-.ghi-info-state.json.tmp
+.ghi-guide-agent-state.json.tmp
 
 # fix-round answers files: written at a worktree's root by the fix-round's forked subagent and read
 # by scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py --check;

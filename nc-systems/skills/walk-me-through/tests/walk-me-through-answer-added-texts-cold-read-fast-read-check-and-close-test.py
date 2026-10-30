@@ -4,9 +4,12 @@ change in an open approval-walk: its check step, which fast-reads each text
 the answer adds to the waiting item, `#new` or `#new_if_d`, that has not had a
 fast read, and its close step.
 
-Each case runs the program as a subprocess in a scratch checkout this suite
-made. cold-read-fast-read.py is replaced by a stand-in this suite writes, so no
-case calls a model. The exit code is asserted on every case.
+Most cases run the program as a subprocess in a scratch checkout this suite
+made; the rest load it into this process, in a forked child where a signal
+must end the process. cold-read-fast-read.py is replaced by a stand-in this suite writes, so no
+case calls a model, except one case that runs a copy of the real
+cold-read-fast-read.py with stub models, to show the check reads that
+program's own output. The exit code is asserted on every case.
 """
 
 import contextlib
@@ -17,9 +20,11 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 # Before anything runs git: a GIT_DIR or similar variable inherited from the
@@ -34,6 +39,12 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 PROGRAM = (Path(__file__).resolve().parents[1]
            / "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py")
+_cold_read_scratch_fixture_spec = importlib.util.spec_from_file_location(
+    "cold_read_scratch_repository_test_fixture",
+    Path(__file__).resolve().parents[3] / "cold-read" / "tests"
+    / "cold-read-scratch-repository-test-fixture.py")
+cold_read_scratch_fixture = importlib.util.module_from_spec(_cold_read_scratch_fixture_spec)
+_cold_read_scratch_fixture_spec.loader.exec_module(cold_read_scratch_fixture)
 SUITE_ROOT = Path(tempfile.mkdtemp(prefix="answer-added-texts-fast-read-check-test-")).resolve()
 WALK_NAME = "poem-page-2026-10-12"
 FAILURE_PREFIX = "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close "
@@ -42,12 +53,22 @@ failures = []
 # Behaves as cold-read-fast-read.py does on the records route: writes a
 # cold-read-record with fast-read.md and target/, prints the report's path.
 STAND_IN = r'''
-import os, sys
+import os, signal, sys, time
 from pathlib import Path
 target = Path(sys.argv[sys.argv.index("--target") + 1])
 with open(os.environ["STAND_IN_CALLS"], "a") as calls:
     calls.write(target.read_text())
 mode = os.environ.get("STAND_IN_MODE", "")
+if mode.startswith("stopped-unremovable "):
+    (target.parent / "locked").mkdir()
+    (target.parent / "locked" / "file").write_text("x")
+    (target.parent / "locked").chmod(0o500)
+if mode.startswith("signalled-then-reports "):
+    os.kill(os.getppid(), getattr(signal, mode.split()[1]))
+if mode.startswith("stopped"):
+    os.kill(os.getppid(), getattr(signal, mode.split()[1]))
+    time.sleep(2)  # The check is stopped while it waits for this fast read.
+    sys.exit(0)
 if mode == "failed":
     print("FAILED: the stand-in cold-read-cell failed twice")
     sys.exit(1)
@@ -60,11 +81,22 @@ record = Path(os.environ["STAND_IN_RECORDS"]) / (target.stem + "-2026-10-17")
 print(record / "fast-read.md")
 if mode == "path-then-exit":
     sys.exit(4)
+if mode == "path-then-exit-1":
+    sys.exit(1)
 if mode == "target-changed":
     sys.stderr.write("cold-read-fast-read: #cold_read_target_changed_during_run: the target changed while it was read.\n")
-if mode == "record-not-shipped":
+if mode in ("record-not-shipped", "record-not-shipped-then-exit-4", "record-not-shipped-then-killed"):
     sys.stderr.write("cold-read-fast-read: record: FAILED: ned-box could not be reached (ssh exit 255); "
                      "the record stays on disk.\n")
+    sys.stdout.flush()
+    sys.stderr.flush()
+    if mode == "record-not-shipped-then-killed":
+        import signal
+        os.kill(os.getpid(), signal.SIGTERM)
+    sys.exit(4 if mode == "record-not-shipped-then-exit-4" else 1)
+if mode == "record-refused":
+    sys.stderr.write("cold-read-fast-read: record: REFUSED: already in the store with different content.\n")
+    sys.exit(1)
 '''
 
 WALK_DOCUMENT = """# A walk
@@ -145,7 +177,7 @@ class Case:
 
     counter = 0
 
-    def __init__(self, next_to_present="item 3 of 9", document=WALK_DOCUMENT):
+    def __init__(self, next_to_present="item 3 of 9", document=WALK_DOCUMENT, temporary_directory_name="tmp"):
         Case.counter += 1
         self.root = SUITE_ROOT / f"case-{Case.counter}"
         self.checkout = self.root / "checkout"
@@ -163,6 +195,11 @@ class Case:
         self.calls.write_text("")
         self.stand_in = self.root / "cold-read-fast-read-stand-in.py"
         self.stand_in.write_text(STAND_IN)
+        self.temporary_directory = self.root / temporary_directory_name
+        self.temporary_directory.mkdir()
+
+    def left_in_temporary_directory(self):
+        return sorted(path.name for path in self.temporary_directory.iterdir())
 
     def record_holding(self, text):
         record = self.records / "earlier-read-2026-10-15"
@@ -171,14 +208,23 @@ class Case:
         (record / "fast-read.md").write_text("findings\n")
         return record
 
-    def run(self, step, *flags, mode="", counts_log=None):
-        environment = dict(os.environ, STAND_IN_MODE=mode, STAND_IN_CALLS=str(self.calls),
-                           STAND_IN_RECORDS=str(self.records))
+    def run(self, step, *flags, mode="", counts_log=None, fast_read_program=None, environment=None,
+            ignored_signal=None):
+        environment = dict(environment or os.environ, STAND_IN_MODE=mode, STAND_IN_CALLS=str(self.calls),
+                           STAND_IN_RECORDS=str(self.records), TMPDIR=str(self.temporary_directory))
+
+        def stop_signal_dispositions():
+            # Set explicitly: a child left to inherit would get SIG_IGN when this suite runs under nohup.
+            for number in (signal.SIGTERM, signal.SIGHUP):
+                signal.signal(number, signal.SIG_IGN if number == ignored_signal else signal.SIG_DFL)
+
         return subprocess.run(
             [sys.executable, str(PROGRAM), step, *flags, "--cwd", str(self.checkout),
-             "--cold-read-records", str(self.records), "--fast-read-program", str(self.stand_in),
+             "--cold-read-records", str(self.records),
+             "--fast-read-program", str(fast_read_program or self.stand_in),
              "--counts-log", str(counts_log or self.counts_log)],
-            capture_output=True, text=True, env=environment, cwd=self.checkout)
+            capture_output=True, text=True, env=environment, cwd=self.checkout,
+            preexec_fn=stop_signal_dispositions)
 
 
 def described(result):
@@ -214,6 +260,8 @@ def test_missing_fast_reads_are_run_and_reported():
     check("a text the earlier check fast-read is already done the next time",
           again.returncode == 0 and again.stdout.count("fast read already done") == 2
           and "Read each fast-read report" not in again.stdout, described(again))
+    check("check removes the scratch directory of each cold-read-fast-read it ran",
+          not case.left_in_temporary_directory(), case.left_in_temporary_directory())
 
 
 NEW_TEXTS = "The page lists one poem per job an agent does.\nEach row names the mistake it prevents.\n"
@@ -294,6 +342,8 @@ def test_a_failed_fast_read_stops_the_check():
           and "close.py check --obvious` again" in result.stdout, described(result))
     check("after a FAILED fast read the minutes do not record the answer", case.minutes.read_text() == before,
           case.minutes.read_text())
+    check("after a FAILED fast read the scratch directory is removed",
+          not case.left_in_temporary_directory(), case.left_in_temporary_directory())
     for flags in (("--after-advisor",), ("--disapproved",), ("--option", "2"), ("--part-answer", "1=A", "--part-answer", "2=D")):
         case = Case()
         result = case.run("check", *flags, mode="failed")
@@ -308,6 +358,166 @@ def test_a_fast_read_that_exits_nonzero_without_a_line_is_a_failure():
     check("a fast read that exits nonzero and prints nothing is reported as FAILED",
           result.returncode == 1 and result.stdout.startswith("FAILED: ") and "exited 3" in result.stdout,
           described(result))
+    check("after a fast read that exits nonzero the scratch directory is removed",
+          not case.left_in_temporary_directory(), case.left_in_temporary_directory())
+
+
+def test_a_check_stopped_by_sigterm_or_sighup_removes_its_scratch_directory_and_ends_as_the_signal_does():
+    for number in (signal.SIGTERM, signal.SIGHUP):
+        case = Case()
+        before = case.minutes.read_text()
+        result = case.run("check", mode=f"stopped {number.name}")
+        check(f"a {number.name} during a cold-read-fast-read ends the check as {number.name} does, and the minutes "
+              f"stay as they were",
+              result.returncode == -number and case.minutes.read_text() == before, described(result))
+        check(f"a {number.name} during a cold-read-fast-read removes the scratch directory",
+              not case.left_in_temporary_directory(), case.left_in_temporary_directory())
+
+
+def test_a_check_started_with_a_stop_signal_ignored_keeps_ignoring_it():
+    for number in (signal.SIGTERM, signal.SIGHUP):
+        case = Case()
+        result = case.run("check", mode=f"signalled-then-reports {number.name}", ignored_signal=number)
+        check(f"a check started with {number.name} ignored, as under nohup, is not ended by a {number.name} during "
+              f"its cold-read-fast-read, and records the answer",
+              result.returncode == 0 and "the user answered approved" in case.minutes.read_text()
+              and not case.left_in_temporary_directory(), described(result))
+
+
+def test_a_scratch_directory_a_stop_signal_cannot_remove_is_reported_with_the_command_that_removes_it():
+    for number in (signal.SIGTERM, signal.SIGHUP):
+        # A space in the path shows the command quotes the directory.
+        case = Case(temporary_directory_name="scratch root")
+        result = case.run("check", mode=f"stopped-unremovable {number.name}")
+        left = [case.temporary_directory / name for name in case.left_in_temporary_directory()]
+        command = re.search(r"Run `(.+?)`", result.stderr)
+        check(f"a scratch directory a {number.name} cannot remove is named, with the command that removes it, "
+              f"and the check still ends as {number.name} does",
+              result.returncode == -number and len(left) == 1 and command is not None
+              and f"a {number.name} stopped this check step" in result.stderr
+              and f"the scratch directory {left[0]}, which held the text" in result.stderr
+              and f"Then run the same `python3 {shlex.quote(str(PROGRAM))} check` command again, with the same "
+                  f"answer" in result.stderr,
+              described(result))
+        check(f"the {number.name} message names no answer's flags, and gives a reason for the removal that "
+              f"holds wherever TMPDIR points",
+              "flag" not in result.stderr and "/tmp has a quota" not in result.stderr
+              and "the disk it is on can fill" in result.stderr,
+              described(result))
+        removal = subprocess.run(["sh", "-c", command.group(1) if command else "false"], capture_output=True,
+                                 text=True)
+        check(f"the command the {number.name} message gives, run as printed, removes the scratch directory it "
+              f"left unremovable",
+              removal.returncode == 0 and not case.left_in_temporary_directory(),
+              f"exit {removal.returncode}, stderr {removal.stderr!r}, left {case.left_in_temporary_directory()}")
+        for directory in left:
+            if (directory / "locked").exists():
+                (directory / "locked").chmod(0o700)  # Else the suite's own removal leaves it behind.
+
+
+def test_a_fast_read_that_raises_partway_leaves_no_scratch_directory_and_restores_the_stop_signal_handlers():
+    program = load_program()
+    case = Case()
+
+    def raising_run(*_, **__):
+        raise RuntimeError("raised partway, while the fast read ran")
+
+    program.subprocess = types.SimpleNamespace(run=raising_run)
+    before_handlers = [signal.getsignal(number) for number in (signal.SIGTERM, signal.SIGHUP)]
+    saved_tempdir, tempfile.tempdir = tempfile.tempdir, str(case.temporary_directory)
+    try:
+        program.run_fast_read("A text.", "a-name", case.stand_in)
+        raised = None
+    except RuntimeError as error:
+        raised = error
+    finally:
+        tempfile.tempdir = saved_tempdir
+    check("a fast read that raises partway leaves no scratch directory, and the error reaches the caller",
+          raised is not None and not case.left_in_temporary_directory(),
+          f"raised {raised!r}; left {case.left_in_temporary_directory()}")
+    after_handlers = [signal.getsignal(number) for number in (signal.SIGTERM, signal.SIGHUP)]
+    check("run_fast_read puts back the SIGTERM and SIGHUP handlers its caller had",
+          all(after is before for after, before in zip(after_handlers, before_handlers)), after_handlers)
+
+
+def test_a_stop_signal_right_after_the_scratch_directory_is_made_removes_it():
+    """The signal cannot be timed into that window from outside, so a stand-in mkdtemp sends it to its own
+    process right after making the directory, in a forked child, since the signal ends that process."""
+    program = load_program()
+    case = Case()
+
+    def mkdtemp_then_stopped(**keywords):
+        directory = tempfile.mkdtemp(dir=case.temporary_directory, **keywords)
+        os.kill(os.getpid(), signal.SIGTERM)
+        return directory
+
+    child = os.fork()
+    if child == 0:
+        try:
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            program.tempfile = types.SimpleNamespace(mkdtemp=mkdtemp_then_stopped)
+            with program.scratch_directory_removed_on_every_exit():
+                pass
+        finally:
+            os._exit(0)
+    _, status = os.waitpid(child, 0)
+    check("a SIGTERM right after the scratch directory is made, before it is registered for removal, removes it "
+          "and ends the process as SIGTERM does",
+          os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGTERM
+          and not case.left_in_temporary_directory(), f"status {status}, left {case.left_in_temporary_directory()}")
+
+
+def test_the_check_command_a_stop_signal_message_gives_quotes_the_programs_path():
+    """The program's real path holds no character a shell splits on, so a forked child gives the loaded program a
+    path with a space, and a removal that fails, then sends itself SIGTERM."""
+    program = load_program()
+    program.__file__ = str(SUITE_ROOT / "a checkout" / PROGRAM.name)
+    case = Case()
+
+    def rmtree_failing(_):
+        raise OSError("Permission denied")
+
+    read_end, write_end = os.pipe()
+    child = os.fork()
+    if child == 0:
+        try:
+            os.dup2(write_end, 2)
+            tempfile.tempdir = str(case.temporary_directory)
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            program.shutil = types.SimpleNamespace(rmtree=rmtree_failing)
+            with program.scratch_directory_removed_on_every_exit():
+                os.kill(os.getpid(), signal.SIGTERM)
+        finally:
+            os._exit(0)
+    os.close(write_end)
+    with os.fdopen(read_end) as stderr:
+        message = stderr.read()
+    os.waitpid(child, 0)
+    check("the check command a stop signal's message gives names the program's path quoted for the shell",
+          f"Then run the same `python3 {shlex.quote(program.__file__)} check` command again" in message, message)
+
+
+def test_a_scratch_directory_that_cannot_be_made_leaves_the_stop_signals_unblocked_and_their_handlers_restored():
+    program = load_program()
+
+    def mkdtemp_failing(**_):
+        raise OSError("Disk quota exceeded")
+
+    program.tempfile = types.SimpleNamespace(mkdtemp=mkdtemp_failing)
+    before_handlers = [signal.getsignal(number) for number in (signal.SIGTERM, signal.SIGHUP)]
+    try:
+        with program.scratch_directory_removed_on_every_exit():
+            pass
+        raised = None
+    except OSError as error:
+        raised = error
+    blocked = signal.pthread_sigmask(signal.SIG_BLOCK, [])
+    after_handlers = [signal.getsignal(number) for number in (signal.SIGTERM, signal.SIGHUP)]
+    check("a scratch directory that cannot be made raises to the caller, leaves SIGTERM and SIGHUP unblocked, and "
+          "puts back the handlers its caller had",
+          raised is not None and signal.SIGTERM not in blocked and signal.SIGHUP not in blocked
+          and all(after is before for after, before in zip(after_handlers, before_handlers)),
+          f"raised {raised!r}, blocked {blocked}, handlers {after_handlers}")
 
 
 def test_a_fast_read_that_names_a_report_but_exits_nonzero_is_a_failure():
@@ -329,13 +539,63 @@ def test_counts_that_cannot_be_logged_are_reported():
           and "item 4 of 9: the user answered approved #case_against_none (" in case.minutes.read_text(), described(result))
 
 
+def test_a_fast_read_that_names_a_report_and_exits_1_without_a_record_line_is_a_failure():
+    case = Case()
+    before = case.minutes.read_text()
+    result = case.run("check", mode="path-then-exit-1")
+    check("a fast read that names a report and exits 1 with no record line on stderr is reported as FAILED",
+          result.returncode == 1 and result.stdout.startswith("FAILED: ") and "exited 1" in result.stdout
+          and case.minutes.read_text() == before, described(result))
+
+
+def test_a_record_line_does_not_excuse_an_exit_other_than_1():
+    for mode, exit_code in (("record-not-shipped-then-exit-4", 4), ("record-not-shipped-then-killed", -15)):
+        case = Case()
+        before = case.minutes.read_text()
+        result = case.run("check", mode=mode)
+        check(f"a fast read that did not ship its record but exits {exit_code} is reported as FAILED",
+              result.returncode == 1 and result.stdout.startswith("FAILED: ")
+              and f"exited {exit_code} " in result.stdout
+              and "its stderr: cold-read-fast-read: record: FAILED: ned-box could not be reached" in result.stdout
+              and case.minutes.read_text() == before, described(result))
+
+
+def test_a_fast_read_whose_record_was_refused_is_used_and_reported():
+    case = Case()
+    result = case.run("check", mode="record-refused")
+    note = "cold-read-fast-read: record: REFUSED: already in the store with different content."
+    check("a fast read that exits 1 because the store refused its record is used, and the refusal reported, "
+          "with exit 2",
+          result.returncode == 2
+          and result.stdout.split("\n")[0].endswith(f"The fast read also said: {note}")
+          and "did not ship its record: " + note in result.stdout
+          and "with a -2 suffix" in result.stdout
+          and "the user answered approved" in case.minutes.read_text(), described(result))
+
+
+def test_the_real_fast_read_whose_record_did_not_ship_is_used():
+    case = Case()
+    fast_read_program, environment = (
+        cold_read_scratch_fixture.cold_read_fast_read_scratch_repository_whose_stub_agy_answers_in_chat(
+            case.root, "nobody@no-such-host.invalid:/tmp/no-store"))
+    result = case.run("check", fast_read_program=fast_read_program, environment=environment)
+    records = fast_read_program.parents[2] / "cold-read-records"
+    check("the real fast read, exiting 1 because its record could not reach the log-store, is used: the item's "
+          "answer is recorded, each status line names its report, and the record line is reported, with exit 2",
+          result.returncode == 2
+          and result.stdout.count(f"fast read had to be run ({records}/") == 2
+          and result.stdout.count("did not ship its record: cold-read-fast-read: record: FAILED: ") == 2
+          and "the user answered approved" in case.minutes.read_text()
+          and len(list(records.glob("*/fast-read.md"))) == 2, described(result))
+
+
 def test_a_fast_read_whose_record_was_not_shipped_is_reported():
     case = Case()
     result = case.run("check", mode="record-not-shipped")
     note = ("cold-read-fast-read: record: FAILED: ned-box could not be reached (ssh exit 255); the record stays "
             "on disk.")
-    check("a fast read that exits 0 but did not ship its record has its line in the status line, in the minutes, "
-          "and in what to do, with exit 2",
+    check("a fast read that exits 1 because it did not ship its record is used, and has its line in the status "
+          "line, in the minutes, and in what to do, with exit 2",
           result.returncode == 2
           and result.stdout.split("\n")[0].endswith(f"The fast read also said: {note}")
           and "The minutes record the answer, but the fast read of `#new` text 1 did not ship its record: "
@@ -1503,7 +1763,12 @@ def test_a_git_grep_that_fails_is_reported_and_writes_nothing():
           and "fatal: stub grep failure" in result.stderr and case.minutes.read_text() == before, described(result))
 
 
+def stopped_by_sigterm(*_):
+    raise SystemExit(1)  # So main()'s finally removes the suite's scratch directory.
+
+
 def main():
+    signal.signal(signal.SIGTERM, stopped_by_sigterm)
     try:
         for name, function in sorted(globals().items()):
             if name.startswith("test_") and callable(function):

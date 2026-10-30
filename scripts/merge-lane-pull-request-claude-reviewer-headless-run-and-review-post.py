@@ -9,8 +9,8 @@ before the reviewer ran.
 
 Usage:
   scripts/merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py
-      <pull request number> <tag> <head commit>
-      [--merge-lane-worktrees-and-outputs-directory DIR] [--review-tools-worktree-at-main DIR]
+      <pull request number> <tag> <nc-head-commit>
+      [--merge-lane-worktrees-and-outputs-directory DIR] [--merge-lane-review-worktrees-directory DIR] [--review-tools-worktree-at-main DIR]
       [--time-limit-seconds N]
 
 The review program runs this as its fifth step, after the head test run. The
@@ -22,7 +22,7 @@ reviewer runs as
   claude -p --json-schema <schema> --output-format json --permission-mode dontAsk
       --allowedTools Read Grep Glob Bash WebFetch WebSearch
 
-in wt/pr<n>-head, which step 1 built detached at the head commit; a refused
+in pr<n>-head, which step 1 built detached at the nc-head-commit; a refused
 tool call does not wait for anyone, and is listed in the output's
 permission_denials, each of which is printed. The reviewer's environment has no
 GH_TOKEN or GITHUB_TOKEN, and GH_CONFIG_DIR is an empty directory, so gh has no
@@ -36,11 +36,11 @@ answer the schema accepts; only structured_output being null shows that. So
 the answer is checked here against
 merge-lane-pull-request-claude-reviewer-review-schema.json's rules, and never
 taken on claude's exit code. A COULD_NOT_REVIEW verdict is a review that did not
-finish. After the run, the head worktree must still be at the head commit:
+finish. After the run, the head worktree must still be at the nc-head-commit:
 the project's freshness hook fast-forwards a detached checkout with no commits
 of its own, and a review of a moved checkout is not of this head.
 
-Each run's records are kept in claude-reviews/pr<n>-<head commit>/ under the
+Each run's records are kept in claude-reviews/pr<n>-<nc-head-commit>/ under the
 worktrees and outputs directory, or -2, -3 and on for later runs on the same
 head: run.json, claude's whole output; run-stderr.txt; resume.txt, the session
 id and the directory the run started in; note.txt, the answer's note for
@@ -129,11 +129,11 @@ def parse_arguments(argv):
                     "its answer against the review schema, and post it as mac-claude.")
     parser.add_argument("pull_request", type=int, help="the pull request's number")
     parser.add_argument("tag", help="the brief's tag, as in briefs/brief-<tag>-mac-claude.md")
-    parser.add_argument("head_commit", help="the full hash of the head commit under review")
+    parser.add_argument("head_commit", help="the full hash of the nc-head-commit under review")
     parser.add_argument("--time-limit-seconds", type=float, default=DEFAULT_TIME_LIMIT_SECONDS,
                         help=f"how long the reviewer may run (default: "
                              f"{DEFAULT_TIME_LIMIT_SECONDS})")
-    common.add_directory_options(parser, "wt/, briefs/ and claude-reviews/")
+    common.add_directory_options(parser, "briefs/ and claude-reviews/")
     return common.resolve_path_options(parser.parse_args(argv))
 
 
@@ -275,7 +275,7 @@ def main(argv=None):
     arguments = parse_arguments(argv)
     number, tag, head = arguments.pull_request, arguments.tag, arguments.head_commit
     helpers = arguments.merge_lane_worktrees_and_outputs_directory
-    head_worktree = helpers / "wt" / f"pr{number}-head"
+    head_worktree = common.pull_request_head_worktree(arguments, number)
     here = Path(__file__).resolve().parent
     try:
         brief_file = helpers / "briefs" / f"brief-{tag}-mac-claude.md"
@@ -285,7 +285,7 @@ def main(argv=None):
             raise Refused(f"the posting script {here / POST_SCRIPT_NAME} is missing")
         at = git(head_worktree, "rev-parse", "HEAD")
         if at.returncode != 0 or at.stdout.strip() != head:
-            raise Refused(f"the head worktree {head_worktree} is not at the head commit {head}"
+            raise Refused(f"the head worktree {head_worktree} is not at the nc-head-commit {head}"
                           f" ({at.stdout.strip() or at.stderr.strip()})")
     except Refused as refusal:
         print(REFUSED.format(number=number, reason=refusal), flush=True)
@@ -347,7 +347,7 @@ def review_and_post(arguments, number, head, brief, schema_text, head_worktree, 
     if reason is None and (at.returncode != 0 or at.stdout.strip() != head):
         reason = (f"the head worktree {head_worktree} moved to "
                   f"{at.stdout.strip() or at.stderr.strip()} during the review, so the review "
-                  f"is not of the head commit {head}")
+                  f"is not of the nc-head-commit {head}")
     if isinstance(answer, dict) and not answer_problems(answer):
         hand_over_note(answer["note"], record, number)
     if reason is not None:

@@ -1,5 +1,6 @@
 ---
 issue: "[Hourly cold-read-full-run of the important markdown file that changed most or has waited longest](https://github.com/nedschorus/nedschorus/issues/1064)"
+kind: design
 ---
 
 # Hourly cold-read-full-run of the important markdown file that changed most or has waited longest
@@ -31,7 +32,7 @@ Checked on main at commit `365cd8e` and in the log-store on ned-box on 2026-10-0
 
 So the simple record the user asks for does not exist yet. The cold-read-records hold most of the history, but a program cannot read from them, reliably, which file a run was for, whether the run was a cold-read-full-run, or the content that merged afterwards.
 
-Search receipt: `scripts/ghi-info-ask.py --include-closed` on 2026-10-05, asked for a GHI about periodically re-running the cold-read-full-run on important markdown files or about a record of when each file last had one, found none. Related: GHI [cold-read: say that MODIFYING a skill triggers the full run, not only writing one](https://github.com/nedschorus/nedschorus/issues/344), the rule that a change to a skill triggers a cold-read-full-run; GHI [Before a seat is retired, report what still cites the paths the retirement removes](https://github.com/nedschorus/nedschorus/issues/226), which records the user's ruling that regular maintenance goes into the daily noon step rather than onto a weekly schedule; GHI [Relaunch stopped agent-seats with open tasks daily](https://github.com/nedschorus/nedschorus/issues/936), a daily job in `nc-systems/general-tools/scheduled-jobs-on-each-machine.json`; GHI [cold-read skill: about a hundred findings from its 2026-09-19 six-reviewer read await their walk](https://github.com/nedschorus/nedschorus/issues/531), which shows how many findings one cold-read-full-run can produce for the user to rule on.
+Search receipt: `scripts/ghi-guide-agent-ask.py --include-closed` on 2026-10-05, asked for a GHI about periodically re-running the cold-read-full-run on important markdown files or about a record of when each file last had one, found none. Related: GHI [cold-read: say that MODIFYING a skill triggers the full run, not only writing one](https://github.com/nedschorus/nedschorus/issues/344), the rule that a change to a skill triggers a cold-read-full-run; GHI [Before a seat is retired, report what still cites the paths the retirement removes](https://github.com/nedschorus/nedschorus/issues/226), which records the user's ruling that regular maintenance goes into the daily noon step rather than onto a weekly schedule; GHI [Relaunch stopped agent-seats with open tasks daily](https://github.com/nedschorus/nedschorus/issues/936), a daily job in `nc-systems/general-tools/scheduled-jobs-on-each-machine.json`; GHI [cold-read skill: about a hundred findings from its 2026-09-19 six-reviewer read await their walk](https://github.com/nedschorus/nedschorus/issues/531), which shows how many findings one cold-read-full-run can produce for the user to rule on.
 
 ## How this relates to the daily maintenance
 
@@ -51,7 +52,7 @@ GHI [Regular maintenance: the list of maintenance jobs, how often each runs, and
 
 ## Deferred-decisions
 
-1. **Which commit each file's last cold-read-full-run read, and where that is kept.** Partly settled on 2026-10-20: the differences come from git, computed by code. Still open: the frozen copy is the text before the rewrite, so what must be kept is the commit on main that merged the file's revision, written after the merge; whether that is kept in a file in the repository, a file in the log-store, or a small database; and whether existing cold-read-records seed it or every file starts as due.
+1. **Which commit each file's last cold-read-full-run read, and where that is kept.** Partly settled on 2026-10-20: the differences come from git, computed by code. Still open: what must be kept is the commit the cold-read-full-run read, so that the rewrite answering it counts as a change; whether that is kept in a file in the repository, a file in the log-store, or a small database; and whether existing cold-read-records seed it or every file starts as due.
 2. **How a change is counted.** Whether any change makes a file due, or only a change larger than the exception in step 2 of the /cold-read skill (one sentence, or a mechanical search-and-replace change such as a rename), which gets a cold-read-fast-read instead.
 3. **The list of important files.** Whether to repair the definition first so the skill and the program agree, including how a GHI-MD that is a design is recognised.
 4. **How the cold-read-full-runs are spread.** Settled on 2026-10-20: one cold-read-full-run every 60 minutes, in the alternating order under The hourly run (user-ruled 2026-10-20, approval-walk agent-instructions-editor-every-open-decision-2026-10-15, items 25 and 25.1).
@@ -60,6 +61,7 @@ GHI [Regular maintenance: the list of maintenance jobs, how often each runs, and
 7. **A file that moves, is renamed or is deleted.** The record is keyed by path, and files move: `nedschorus-style-guide.md` moved out of `docs/nedschorus-wiki/queue/`. Whether a moved file keeps its entry, and how the entry of a deleted file is removed, is open.
 8. **A cold-read-full-run that does not finish.** Settled on 2026-10-20: a file whose run failed goes to the end of the list, and a file whose run waits for its findings to be handled is not due (user-ruled 2026-10-20, approval-walk agent-instructions-editor-every-open-decision-2026-10-15, item 25). Still open: whether a file whose pull request has not merged counts as waiting for its findings.
 9. **Files waiting in a queue.** Whether files in the queue directories, such as `docs/nedschorus-wiki/queue/` and `docs/agents/queue/`, and files whose names end in `-draft.md` are left out, as GHI 1058 leaves out `docs/nedschorus-wiki/queue/`.
+10. **Whether the rewrite answering a cold-read-full-run that the hourly job started makes the file due again, and how the job tells such a rewrite apart.** A yes gives every file another cold-read-full-run after each one, and the research of 2026-10-27 (`claude-report.md` and `codex-report.md` in `nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/second-cold-read-full-run-value-2026-10-27/`) found a cold-read-full-run of a rewrite rarely pays off (user-ruled 2026-10-27, approval-walk cold-read-skill-rebuild-so-programs-do-the-mechanical-steps-2026-10-23, item 2.2).
 
 ## Next action
 

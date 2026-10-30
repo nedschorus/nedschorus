@@ -1,5 +1,6 @@
 ---
 issue: "[Agents put each question for the user on a page that pops up on his Mac, and hold the dialog with him there](https://github.com/nedschorus/nedschorus/issues/1186)"
+kind: design
 ---
 
 # Agents put each question for the user on a page that pops up on his Mac, and hold the dialog with him there
@@ -70,7 +71,7 @@ Each build-slice is one pull request that leaves main working.
 - GHI [A small service on ned-box keeps one record of every agent-seat on both machines](https://github.com/nedschorus/nedschorus/issues/972): a web server on ned-box, which this design no longer needs.
 - GHI [Wake idle agent-seats that have unfinished work, after a usage limit resets and after a change request goes unanswered](https://github.com/nedschorus/nedschorus/issues/1152): wakes agent-seats; this design reaches the user.
 - GHI [Seat mailboxes across machines and runtimes](https://github.com/nedschorus/nedschorus/issues/749): messages between agent-seats.
-- Search receipt: ghi-info on 2026-10-10, asked twice, open and closed GHIs: no GHI covers a single place for the user's questions.
+- Search receipt: ghi-guide-agent on 2026-10-10, asked twice, open and closed GHIs: no GHI covers a single place for the user's questions.
 
 ## Provisional additions (not yet vetted by the user)
 

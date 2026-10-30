@@ -3,8 +3,8 @@
 
 Usage:
   scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py <pull request number>
-      <head commit, all 40 characters> <reviewed-since>
-      [--merge-lane-worktrees-and-outputs-directory DIR] [--review-tools-worktree-at-main DIR]
+      <nc-head-commit, all 40 characters> <reviewed-since>
+      [--merge-lane-worktrees-and-outputs-directory DIR] [--merge-lane-review-worktrees-directory DIR] [--review-tools-worktree-at-main DIR]
 
 Runs --review-tools-worktree-at-main's scripts/merge-gate.sh, never the pull
 request's own copy, with the three arguments. While the gate
@@ -12,7 +12,10 @@ refuses with "mergeStateStatus is UNKNOWN", it runs the gate again, 5 seconds
 apart, at most 8 times in all. When the gate passes, the merge command it
 prints must be exactly the one this program expects; then every open pull
 request whose base branch is this pull request's branch is retargeted to this
-pull request's base branch, and the merge command runs.
+pull request's base branch, and the merge command runs. Once the merge
+succeeds, git in --review-tools-worktree-at-main removes the pull request's
+review worktrees, pr<n>-head and pr<n>-merged, with any changes in them; a
+worktree not there is left alone.
 
 The merge command deletes the pull request's branch, and GitHub closes every
 open pull request whose base branch is deleted. The retarget is here, not in
@@ -27,12 +30,13 @@ Before the gate runs, this program fetches origin in
 --review-tools-worktree-at-main and refuses unless that worktree's HEAD is
 origin/main, so a stale worktree never lets an older gate decide a merge.
 
-Exit codes: 0 merged; 1 the gate refused, printed a merge command other than
-the expected one, or the merge failed; 2 the token file could not be read or
+Exit codes: 0 merged, with the review worktrees removed; 1 the gate refused,
+printed a merge command other than the expected one, or the merge failed; 2 the token file could not be read or
 was empty, --review-tools-worktree-at-main has no scripts/merge-gate.sh, could
 not be fetched or is not at origin/main, the gate could not run or exited with
 a code it does not document, or a read or a retarget on GitHub failed, each
-before any merge.
+before any merge; 3 merged, but a review worktree could not be removed, named
+on stdout.
 """
 
 import argparse
@@ -65,6 +69,7 @@ OPEN_PULL_REQUEST_LIST_LIMIT = 1000
 EXIT_MERGED = 0
 EXIT_REFUSED = 1
 EXIT_COULD_NOT_RUN = 2
+EXIT_MERGED_REVIEW_WORKTREE_NOT_REMOVED = 3
 MERGE_GATE_DOCUMENTED_EXITS = (0, 1, 2)
 MERGE_GATE = Path("scripts") / "merge-gate.sh"
 
@@ -75,10 +80,10 @@ def parse_arguments(argv):
                     "open pull requests based on its branch, then run the merge command the "
                     "gate printed.")
     parser.add_argument("pull_request", help="the pull request's number")
-    parser.add_argument("head_commit", help="the head commit, all 40 characters")
+    parser.add_argument("head_commit", help="the nc-head-commit, all 40 characters")
     parser.add_argument("reviewed_since",
                         help="the reviewed-since time merge-gate.sh takes, YYYY-MM-DDTHH:MM:SSZ")
-    common.add_directory_options(parser, "wt/")
+    common.add_directory_options(parser, "nothing this program uses")
     return common.resolve_path_options(parser.parse_args(argv))
 
 
@@ -185,6 +190,30 @@ def stacked_pull_requests_retarget(pull_request, environment):
     return EXIT_MERGED
 
 
+def review_worktrees_remove(arguments):
+    """Remove the pull request's review worktrees; return an exit code."""
+    checkout = arguments.review_tools_worktree_at_main
+    exit_code = EXIT_MERGED
+    for worktree in (common.pull_request_head_worktree(arguments, arguments.pull_request),
+                     common.pull_request_merged_worktree(arguments, arguments.pull_request)):
+        if not worktree.exists():
+            continue
+        removal = subprocess.run(
+            ["git", "-C", str(checkout), "worktree", "remove", "--force", str(worktree)],
+            capture_output=True, text=True, stdin=subprocess.DEVNULL,
+            env=common.run_all_test_suites.environment_without_git_redirecting_variables())
+        if removal.returncode != 0:
+            print(f"STOP: merged, but the review worktree {worktree} was not removed: git "
+                  f"worktree remove exited {removal.returncode}: {removal.stderr.strip()}\n"
+                  f"If git names a cause you can fix, fix it and remove the worktree: "
+                  f"git -C {checkout} worktree remove --force {worktree}\n"
+                  f"Otherwise, tell the user this message.")
+            exit_code = EXIT_MERGED_REVIEW_WORKTREE_NOT_REMOVED
+            continue
+        print(f"removed the review worktree {worktree}")
+    return exit_code
+
+
 def main(argv=None, wait=time.sleep):
     arguments = parse_arguments(argv)
     try:
@@ -238,7 +267,9 @@ def main(argv=None, wait=time.sleep):
     print(state.stdout.strip() if state.returncode == 0
           else f"could not read pull request {arguments.pull_request}'s state after the "
                f"merge: {gh_error(state)}")
-    return EXIT_MERGED if merge.returncode == 0 else EXIT_REFUSED
+    if merge.returncode != 0:
+        return EXIT_REFUSED
+    return review_worktrees_remove(arguments)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 ---
 issue: "[Warn an agent when its reply names a document for the user without a link the user can open on his Mac](https://github.com/nedschorus/nedschorus/issues/1213)"
+kind: design
 ---
 
 # Warn an agent when its reply names a document for the user without a link the user can open on his Mac

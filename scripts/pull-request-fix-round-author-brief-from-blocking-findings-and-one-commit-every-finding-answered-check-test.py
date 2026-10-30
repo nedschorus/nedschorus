@@ -31,6 +31,9 @@ REVIEWS = f"api --paginate repos/{{owner}}/{{repo}}/pulls/{NUMBER}/reviews --jq 
 PR_VIEW = f"pr view {NUMBER} --json url,headRefOid,headRefName"
 BRANCH = "topic-branch-of-the-pull-request"
 URL = f"https://github.com/o/r/pull/{NUMBER}"
+ADVISOR_SENTENCE = ("This is the pull request's third fix-round, its last before merge-lane-2 brings it to "
+                    "the user: before you change anything, call the advisor with the blocking findings and "
+                    "the fix you plan.")
 
 FAKE_GH = r'''#!/usr/bin/env python3
 import json, os, sys
@@ -174,6 +177,8 @@ def brief_cases(root, repository, base, frozen_head):
     code, out, err = run(root, repository, routes_for(frozen_head, [review(commit_id=frozen_head)]))
     check("brief: exit 0 for a changes-requested review of the current head", code == 0, err)
     check("brief: names the frozen-head", f"Frozen-head: {frozen_head}" in out, out)
+    check("brief: the first changes-requested review's brief does not ask for the advisor",
+          ADVISOR_SENTENCE not in out and "advisor" not in out, out)
     check("brief: carries both blocking findings word for word, in order, and not the note",
           out.index("hook.py swallows") < out.index("no case for the timeout")
           and "A non-blocking note" not in out and "1. hook.py:12" in out and "2. test.py (" in out, out)
@@ -385,6 +390,47 @@ def brief_cases(root, repository, base, frozen_head):
     check("brief: with two changes-requested reviews of different commits, only the latest sets the round",
           code == 0 and f"Frozen-head: {frozen_head}" in out and "Blocking findings (2)" in out
           and "an earlier round's finding" not in out, err + out)
+    check("brief: the second changes-requested review's brief does not ask for the advisor",
+          code == 0 and "advisor" not in out, err + out)
+
+    def earlier_rounds(count):
+        return [review(commit_id=base, review_id=review_id) for review_id in range(11 - count, 11)]
+
+    code, out, err = run(root, repository, routes_for(
+        frozen_head, earlier_rounds(2) + [review(commit_id=frozen_head, review_id=11)]))
+    check("brief: the third changes-requested review's brief asks for the advisor, word for word, before the findings",
+          code == 0 and out.count(ADVISOR_SENTENCE) == 1
+          and out.index(f"merge-lane-2's review: {URL}#pullrequestreview-11\n\n{ADVISOR_SENTENCE}\n\n")
+          < out.index("Blocking findings (2)") < out.index("For the subagent, the rules of the round"), err + out)
+    code, out, err = run(root, repository, routes_for(
+        frozen_head, earlier_rounds(2) + [review(commit_id=frozen_head, review_id=11),
+                                          review(state="COMMENTED", commit_id=frozen_head, review_id=12,
+                                                 body="Noted.")]) | comments_route(12, []))
+    check("brief: a comment-only review after the third changes-requested review keeps the advisor sentence",
+          code == 0 and out.count(ADVISOR_SENTENCE) == 1, err + out)
+    for uncounted_state in ["COMMENTED", "DISMISSED"]:
+        uncounted = review(state=uncounted_state, commit_id=base, review_id=8, body="Held for the user.")
+        code, out, err = run(root, repository, routes_for(
+            frozen_head, [review(commit_id=base, review_id=9), uncounted,
+                          review(commit_id=frozen_head, review_id=11)]))
+        check(f"brief: a {uncounted_state} review of an earlier commit does not make the second "
+              "changes-requested review's brief ask for the advisor",
+              code == 0 and "advisor" not in out, err + out)
+        code, out, err = run(root, repository, routes_for(
+            frozen_head, [review(commit_id=base, review_id=9), uncounted, review(commit_id=base, review_id=10),
+                          review(commit_id=frozen_head, review_id=11)]))
+        check(f"brief: a {uncounted_state} review of an earlier commit leaves the advisor sentence "
+              "on the third changes-requested review's brief",
+              code == 0 and out.count(ADVISOR_SENTENCE) == 1, err + out)
+    code, out, err = run(root, repository, routes_for(
+        frozen_head, earlier_rounds(3) + [review(commit_id=frozen_head, review_id=11)]))
+    check("brief: the fourth changes-requested review's brief does not ask for the advisor",
+          code == 0 and "advisor" not in out, err + out)
+    code, out, err = run(root, repository, routes_for(
+        frozen_head, earlier_rounds(2) + [review(commit_id=frozen_head, review_id=11)]),
+        "--check", "--answers", answers_file(root, GOOD_ANSWERS))
+    check("check: the third round's check passes and prints no advisor sentence",
+          code == 0 and "Nothing pushed" in out and "advisor" not in out, err + out)
 
     code, out, err = run(root, repository, routes_for(
         frozen_head, [review(commit_id=frozen_head),
@@ -412,6 +458,36 @@ def brief_cases(root, repository, base, frozen_head):
         frozen_head, [review(commit_id=frozen_head)], comments=[BLOCKING_COMMENTS[1]]))
     check("brief: a review with no **Blocks.** comment refuses with exit 1",
           code == 1 and "none of its 1 inline comments" in err, err)
+
+    for spelling in ["**Blocks.**", "**Blocks:**", "**Blocks**", "**Blocks** (fast-read hold)",
+                     "**Blocks the merge.**", "  **Blocks.**"]:
+        code, out, err = run(root, repository, routes_for(
+            frozen_head, [review(commit_id=frozen_head, body="**Blocking: 1**")],
+            comments=[comment("hook.py", f"{spelling} the spelling under test.")]))
+        check(f"brief: a comment starting {spelling!r} is a blocking finding",
+              code == 0 and "Blocking findings (1)" in out and "the spelling under test" in out, err + out)
+
+    mixed = [comment("a.py", "**Blocks.** first.", comment_id=21),
+             comment("b.py", "**Blocks.** second.", comment_id=22),
+             comment("c.py", "**Blocks** (cold-read-fast-read hold on the docstring) third.", comment_id=23),
+             comment("d.py", "**Blocks** (cold-read-fast-read hold on the progress line) fourth.", comment_id=24),
+             comment("e.py", "Non-blocking. A note.", comment_id=25)]
+    code, out, err = run(root, repository, routes_for(
+        frozen_head, [review(commit_id=frozen_head, body="Four findings block.\n\n**Blocking: 4**")],
+        comments=mixed))
+    check("brief: a review mixing **Blocks.** and **Blocks** (...) counts all four, as pull request 2145's did",
+          code == 0 and "Blocking findings (4)" in out
+          and all(word in out for word in ["first.", "second.", "third.", "fourth."])
+          and "A note." not in out, err + out)
+
+    for body in ["**Blocking** is not the mark.", "**Blockset** is not the mark.",
+                 "**Blocks unclosed is not bold.", "Note: **Blocks.** in the middle is not the mark.",
+                 "**Blocks\nacross a line** is not the mark."]:
+        code, out, err = run(root, repository, routes_for(
+            frozen_head, [review(commit_id=frozen_head, body="no count stated")],
+            comments=[comment("hook.py", body)]))
+        check(f"brief: a comment starting {body.splitlines()[0][:20]!r} is not a blocking finding",
+              code == 1 and "none of its 1 inline comments starts with the bold word **Blocks**" in err, err)
 
     code, out, err = run(root, repository, routes_for(
         frozen_head, [review(commit_id=frozen_head, body="**Blocking: 3**")]))

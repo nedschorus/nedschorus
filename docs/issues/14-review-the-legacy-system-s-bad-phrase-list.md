@@ -1,5 +1,6 @@
 ---
 issue: "[A project style guide: words to avoid, a mechanical checker, and a check on unbacked promises](https://github.com/nedschorus/nedschorus/issues/14)"
+kind: design
 ---
 
 # A project style guide: words to avoid, a mechanical checker, and a check on unbacked promises

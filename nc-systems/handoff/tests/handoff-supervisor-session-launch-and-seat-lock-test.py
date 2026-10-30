@@ -852,11 +852,125 @@ def run_launched_session_seat_environment_cases(workspace: Path):
           f"{recorded} state session_id={state.get('session_id')}")
 
 
+def run_launched_session_github_token_cases(workspace: Path):
+    """Every launched session gets GH_TOKEN set to the token of the GitHub account its
+    agent-seat acts as: merge-lane-2 as ned-review-merge, every other agent-seat as its
+    machine's account. Every way an agent-seat is started runs the supervisor, so this is
+    what makes a crash recovery or a restart at login act as the right account.
+
+    The supervisor is started with a decoy GH_TOKEN, as a recovery run from another
+    agent-session's shell would start it, so an inherited token cannot pass for the one
+    the supervisor set. When the token file is missing, empty or unreadable the supervisor
+    starts no session, exits 5 and names the account and the file."""
+    directory = workspace / "github-token-cases"
+    directory.mkdir(parents=True, exist_ok=True)
+    record_path = directory / "gh-token.json"
+    stub_agent = directory / "stub-agent"
+    stub_agent.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os\n"
+        f"open({str(record_path)!r}, 'w').write(json.dumps(os.environ.get('GH_TOKEN')))\n",
+        encoding="utf-8")
+    stub_agent.chmod(0o755)
+    machine_account = ("ubuntu-claude"
+                       if supervisor.handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
+                       else "mac-claude")
+
+    def start_supervisor(agent, home=None):
+        record_path.unlink(missing_ok=True)
+        seat_directory = directory / f"{agent}-directory"
+        seat_directory.mkdir(exist_ok=True)
+        environment = dict(os.environ, GH_TOKEN="decoy-inherited-token")
+        if home is not None:
+            environment["HOME"] = str(home)
+        completed = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--agent", agent, "--cd", str(seat_directory),
+             "--handoff-dir", str(directory / f"{agent}-handoffs"),
+             "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
+            capture_output=True, text=True, check=False,
+            stdin=subprocess.DEVNULL, timeout=60, env=environment)
+        recorded = json.loads(record_path.read_text()) if record_path.is_file() else "no session"
+        return completed, recorded
+
+    for agent, account in (("merge-lane-2", "ned-review-merge"),
+                           ("github-token-ordinary-seat", machine_account)):
+        completed, recorded = start_supervisor(agent)
+        check(f"a session of {agent} gets the token of {account}, not the inherited GH_TOKEN",
+              recorded == fixture.FIXTURE_GITHUB_TOKEN_BY_ACCOUNT[account],
+              f"{recorded!r}; exit {completed.returncode}: {completed.stderr[-600:]}")
+
+    user_fills_the_file = "write the GitHub token of ned-review-merge to"
+    for label, prepare, remedy in (
+            ("missing", lambda token_file: None, user_fills_the_file),
+            ("empty", lambda token_file: token_file.write_text("\n", encoding="utf-8"),
+             user_fills_the_file),
+            ("unreadable", lambda token_file: (token_file.write_text("x\n", encoding="utf-8"),
+                                               token_file.chmod(0)),
+             "readable by the Unix user"),
+    ):
+        home = directory / f"home-with-{label}-token-file"
+        (home / ".config" / "nedschorus").mkdir(parents=True, exist_ok=True)
+        token_file = home / ".config" / "nedschorus" / "ned-review-merge.token"
+        prepare(token_file)
+        completed, recorded = start_supervisor("merge-lane-2", home=home)
+        check(f"a {label} token file: the supervisor starts no session and exits 5, "
+              "naming the agent-seat, the account and the file",
+              completed.returncode == supervisor.AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS == 5
+              and recorded == "no session"
+              and "the agent-seat merge-lane-2 was not started" in completed.stderr
+              and "ned-review-merge" in completed.stderr
+              and str(token_file) in completed.stderr
+              and "Do not start the agent-seat any other way" in completed.stderr
+              and remedy in completed.stderr
+              and "If you are an agent, do not open, write or change the file" in completed.stderr
+              and "`launch-claude-ubuntu merge-lane-2`" in completed.stderr,
+              f"{recorded!r}; exit {completed.returncode}: {completed.stderr[-800:]}")
+        if token_file.exists():
+            token_file.chmod(0o600)
+
+
+def run_launched_session_claude_code_tmpdir_cases(workspace: Path):
+    """On ned-box a launched session gets CLAUDE_CODE_TMPDIR, the main-disk directory the daily
+    temp-folder deletion also sweeps; elsewhere the supervisor leaves the variable as it found it,
+    since that path exists only on ned-box."""
+    directory = workspace / "tmpdir-cases"
+    directory.mkdir(parents=True, exist_ok=True)
+    record_path = directory / "tmpdir.json"
+    stub_agent = directory / "stub-agent"
+    stub_agent.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os\n"
+        f"open({str(record_path)!r}, 'w').write(json.dumps(os.environ.get('CLAUDE_CODE_TMPDIR')))\n",
+        encoding="utf-8")
+    stub_agent.chmod(0o755)
+    for on_ned_box, expected in ((True, supervisor.NED_BOX_CLAUDE_CODE_TMPDIR),
+                                 (False, "decoy-inherited-tmpdir")):
+        record_path.unlink(missing_ok=True)
+        with mock.patch.object(supervisor.handoff_user_review_of_agent_memory_stores_mark,
+                               "this_machine_is_ned_box", return_value=on_ned_box), \
+                mock.patch.dict(os.environ, {"CLAUDE_CODE_TMPDIR": "decoy-inherited-tmpdir"}):
+            supervisor.launch_agent_session(str(stub_agent), "tmpdir-session", directory,
+                                            "prompt").wait(timeout=60)
+        recorded = json.loads(record_path.read_text()) if record_path.is_file() else None
+        check(f"a session launched {'on ned-box' if on_ned_box else 'off ned-box'} runs with "
+              f"CLAUDE_CODE_TMPDIR={expected}", recorded == expected, str(recorded))
+    deletion_path = (Path(SCRIPT_PATH).resolve().parents[1] / "general-tools"
+                     / "claude-code-temp-folders-of-exited-agent-sessions-delete.py")
+    deletion_spec = importlib.util.spec_from_file_location("temp_folders_delete", deletion_path)
+    deletion = importlib.util.module_from_spec(deletion_spec)
+    deletion_spec.loader.exec_module(deletion)
+    check("the daily temp-folder deletion sweeps the directory ned-box sessions are given",
+          supervisor.NED_BOX_CLAUDE_CODE_TMPDIR in deletion.DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES,
+          str(deletion.DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES))
+
+
 with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_adoption_cases(workspace)
     run_appended_system_prompt_cases(workspace)
     run_appended_system_prompt_agent_part_cases(workspace)
     run_launched_session_seat_environment_cases(workspace)
+    run_launched_session_github_token_cases(workspace)
+    run_launched_session_claude_code_tmpdir_cases(workspace)
     run_process_identity_cases(workspace)
     run_lock_cases(workspace)
 
