@@ -62,7 +62,7 @@ def log_is_allowed_in_git(path):
 
 def logs_outside_the_exceptions(paths):
     return [path for path in paths
-            if classify.log_suffix_and_extension_file_kind(path) == classify.LOG
+            if classify.log_suffix_and_extension_file_classify_as_log_not_a_log_or_unlisted(path) == classify.LOG
             and not log_is_allowed_in_git(path)]
 
 

@@ -23,7 +23,7 @@ PAGE_PATH = REPOSITORY_ROOT / "docs" / "nedschorus-wiki" / "nedschorus-file-nami
 _spec = importlib.util.spec_from_file_location("log_suffix_and_extension_file_classify_common", MODULE_PATH)
 classify = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(classify)
-kind = classify.log_suffix_and_extension_file_kind
+kind = classify.log_suffix_and_extension_file_classify_as_log_not_a_log_or_unlisted
 
 failures = 0
 
@@ -57,17 +57,17 @@ if log_list and not_a_log_list:
           classify.LOG_SUFFIX_LOG_EXTENSIONS == tuple(page_log_extensions),
           (classify.LOG_SUFFIX_LOG_EXTENSIONS, page_log_extensions))
     check("the extensions that are not logs match the page, in its order",
-          classify.LOG_SUFFIX_NOT_A_LOG_EXTENSIONS == tuple(page_not_a_log_extensions),
-          (classify.LOG_SUFFIX_NOT_A_LOG_EXTENSIONS, page_not_a_log_extensions))
+          classify.LOG_SUFFIX_IGNORED_CODE_SETTINGS_AND_PICTURE_EXTENSIONS == tuple(page_not_a_log_extensions),
+          (classify.LOG_SUFFIX_IGNORED_CODE_SETTINGS_AND_PICTURE_EXTENSIONS, page_not_a_log_extensions))
 check("the suffixes match the page, in its order",
-      classify.LOG_SUFFIXES == tuple(page_suffixes), (classify.LOG_SUFFIXES, page_suffixes))
+      classify.FILENAME_STEM_SUFFIXES_THAT_MARK_A_LOG == tuple(page_suffixes), (classify.FILENAME_STEM_SUFFIXES_THAT_MARK_A_LOG, page_suffixes))
 
 # Each suffix with each listed extension.
-for suffix in classify.LOG_SUFFIXES:
+for suffix in classify.FILENAME_STEM_SUFFIXES_THAT_MARK_A_LOG:
     for extension in classify.LOG_SUFFIX_LOG_EXTENSIONS:
         name = f"docs/x/run{suffix}{extension}"
         check(f"log: {name}", kind(name) == classify.LOG, kind(name))
-    for extension in classify.LOG_SUFFIX_NOT_A_LOG_EXTENSIONS:
+    for extension in classify.LOG_SUFFIX_IGNORED_CODE_SETTINGS_AND_PICTURE_EXTENSIONS:
         name = f"scripts/run{suffix}{extension}"
         check(f"not a log: {name}", kind(name) == classify.NOT_A_LOG, kind(name))
 

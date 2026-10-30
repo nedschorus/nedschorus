@@ -20,9 +20,9 @@ Load it by path, under the snake_case form of its file name:
 
 from pathlib import PurePosixPath
 
-LOG_SUFFIXES = ("-log", "-report", "-capture", "-draft", "-candidate", "-analysis")
+FILENAME_STEM_SUFFIXES_THAT_MARK_A_LOG = ("-log", "-report", "-capture", "-draft", "-candidate", "-analysis")
 LOG_SUFFIX_LOG_EXTENSIONS = (".md", ".txt", ".log", ".out", ".err", ".json", ".jsonl", ".patch")
-LOG_SUFFIX_NOT_A_LOG_EXTENSIONS = (
+LOG_SUFFIX_IGNORED_CODE_SETTINGS_AND_PICTURE_EXTENSIONS = (
     ".py", ".sh", ".js", ".mjs", ".cjs", ".ts", ".cts", ".yml", ".yaml", ".toml", ".png", ".svg")
 
 LOG = "log"
@@ -30,7 +30,7 @@ NOT_A_LOG = "not a log"
 UNLISTED = "unlisted"
 
 
-def log_suffix_and_extension_file_kind(path):
+def log_suffix_and_extension_file_classify_as_log_not_a_log_or_unlisted(path):
     """Return LOG, NOT_A_LOG or UNLISTED for `path`, a str or path, by its file name alone.
 
     The extension is the part from the name's last dot; a name with no dot after
@@ -41,10 +41,10 @@ def log_suffix_and_extension_file_kind(path):
     name = PurePosixPath(path).name
     extension = PurePosixPath(name).suffix
     stem = name[:len(name) - len(extension)]
-    if not stem.endswith(LOG_SUFFIXES):
+    if not stem.endswith(FILENAME_STEM_SUFFIXES_THAT_MARK_A_LOG):
         return NOT_A_LOG
     if extension in LOG_SUFFIX_LOG_EXTENSIONS:
         return LOG
-    if extension in LOG_SUFFIX_NOT_A_LOG_EXTENSIONS:
+    if extension in LOG_SUFFIX_IGNORED_CODE_SETTINGS_AND_PICTURE_EXTENSIONS:
         return NOT_A_LOG
     return UNLISTED
