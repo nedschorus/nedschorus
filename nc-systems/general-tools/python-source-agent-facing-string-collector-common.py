@@ -396,9 +396,10 @@ def nodes_in_own_scope(function):
     pending = list(function.body)
     while pending:
         node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            continue
         yield node
-        pending.extend(child for child in ast.iter_child_nodes(node) if not isinstance(
-            child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)))
+        pending.extend(ast.iter_child_nodes(node))
 
 
 def local_string_bindings(function):

@@ -182,6 +182,8 @@ KINDS = (
     ("a local printed first and then folded into a returned prompt",
      'def compose():\n    note = "Read the transcript."\n    print(note)\n    prompt = "Resume. " + note\n    return prompt\n',
      ["prompt", "prompt"]),
+    ("a local printed twice, which stays a message",
+     'def main():\n    text = "Twice."\n    print(text)\n    print(text)\n', ["message"]),
     ("a string printed directly in a function whose name holds prompt",
      'def prompt_failure():\n    print("the prompt could not be built")\n', ["message"]),
 )
@@ -221,6 +223,12 @@ LOCAL_NAME_FORMS = (
      'def line(n):\n    count = f"{n} files"\n    return "checked " + count\n', [("f'{n} files'", "count = in line()")]),
     ("a local annotated with its type", 'def line():\n    text: str = "annotated text"\n    return text\n',
      [("annotated text", "text = in line()")]),
+    ("a local of a nested function as a hook output value, its enclosing function binding nothing",
+     'def outer():\n    def inner():\n        text = "inner text"\n        return {"additionalContext": text}\n'
+     '    return inner()\n', [("inner text", "text = in outer.inner()")]),
+    ("a local printed after a nested function's definition",
+     'def outer():\n    text = "outer text"\n    def inner():\n        pass\n    print(text)\n',
+     [("outer text", "text = in outer()")]),
 )
 for case_name, source, expected in LOCAL_NAME_FORMS:
     found = [(entry["text"], entry["label"]) for entry in entries(source)]
@@ -240,11 +248,19 @@ LOCAL_NAME_FORMS_NOT_RECOGNIZED = (
      'import json\ndef main(n):\n    text = f"{n}"\n    print(json.dumps(text))\n'),
     ("a local of an enclosing function printed by a function nested in it",
      'def outer():\n    text = "outer text"\n    def inner():\n        print(text)\n    inner()\n'),
+    ("a local of a nested function, when the enclosing function prints its own name of that spelling",
+     'def outer(text):\n    def inner():\n        text = "inner text"\n        store(text)\n    print(text)\n'),
     ("an empty local string that is printed", 'def main():\n    text = ""\n    print(text)\n'),
     ("a local string returned in a tuple", 'def main():\n    text = "tuple text"\n    return text, 1\n'),
     ("a local string returned only when a condition holds, as a name",
      'def main(flag):\n    text = "chosen text"\n    return text if flag else None\n'),
     ("a string printed by name outside any function", 'text = "module text"\nprint(text)\n'),
+    ("a local built with a string method other than join, such as format",
+     'def main(n):\n    text = "{} failed".format(n)\n    print(text)\n'),
+    ("a local built with a string method other than join, such as strip",
+     'def main():\n    text = " padded ".strip()\n    print(text)\n'),
+    ("an attribute assigned a string, which is not a local name",
+     'def main(self):\n    self.note = "attribute text"\n    print(self.note)\n'),
 )
 for case_name, source in LOCAL_NAME_FORMS_NOT_RECOGNIZED:
     found = texts(source)
