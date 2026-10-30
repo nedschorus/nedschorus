@@ -88,6 +88,7 @@ takes, which argparse says on stderr, followed by what to do.
 import argparse
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -99,12 +100,20 @@ _git_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
-_defect_line_reader_spec = importlib.util.spec_from_file_location(
-    "pull_request_description_defect_line_root_cause_status_and_follow_up_link_reader",
-    Path(__file__).resolve().with_name(
-        "pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py"))
-defect_line_reader = importlib.util.module_from_spec(_defect_line_reader_spec)
-_defect_line_reader_spec.loader.exec_module(defect_line_reader)
+
+
+def load_script_beside_this_one(file_name):
+    spec = importlib.util.spec_from_file_location(
+        Path(file_name).stem.replace("-", "_"), Path(__file__).resolve().with_name(file_name))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+defect_line_reader = load_script_beside_this_one(
+    "pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
+pre_push_conflict_check = load_script_beside_this_one("git-client-side-hooks-pre-push-conflict-check.py")
+pre_push_selective_test_run = load_script_beside_this_one("git-client-side-hooks-pre-push-selective-test-run.py")
 
 PROGRAM = "scripts/" + Path(__file__).name
 FOLLOW_UP_REQUEST_LINE_PATTERN = re.compile(r"^#follow_up_request pull request (\d+)[ \t]*$")
@@ -117,8 +126,7 @@ FINDING_ANSWERS_FILE_NAME_FORMAT = "pull-request-{number}-follow-up-finding-answ
 FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME = "follow-up-pull-request-title-and-description.md"
 HARNESS_LOCK_REASON_START = "claude agent"
 GH_TIMEOUT_SECONDS = 60
-# The pre-push hook runs the test suites, and may first wait up to 600 s for their lock.
-PUSH_TIMEOUT_SECONDS = 3600
+PUSH_ITSELF_SECONDS = 120
 FETCH_TIMEOUT_SECONDS = 300
 # gh pr create's words, when a pull request for the head branch is already open, before its link.
 PULL_REQUEST_ALREADY_OPEN_WORDS = "already exists"
@@ -129,6 +137,12 @@ NEEDS_USER_DECISION_REASON = "\"Needs the user's decision: <what the finding wou
 DO_NOT_COMMIT_LINE = "Do not commit it: it is never part of the pull request."
 # Each text this program hands an agent follows
 # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+
+
+def push_time_limit_seconds(environment):
+    # Sized from the time budgets the two pre-push hooks bound themselves to, plus the push itself.
+    return (pre_push_conflict_check.time_budget_seconds(environment)
+            + pre_push_selective_test_run.time_budget_seconds(environment) + PUSH_ITSELF_SECONDS)
 
 
 class Refused(Exception):
@@ -474,7 +488,7 @@ def open_pull_request(number, findings):
     description_file = Path(worktree) / FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME
     title, description = read_title_and_description(description_file)
     try:
-        git_output.run_git(".", ["push", "-u", "origin", branch], timeout_seconds=PUSH_TIMEOUT_SECONDS)
+        git_output.run_git(".", ["push", "-u", "origin", branch], timeout_seconds=push_time_limit_seconds(os.environ))
     except git_output.GitCommandFailed as failure:
         if failure.returncode is None:
             raise StepFailed(f"git push -u origin {branch} failed ({failure.stderr}), so no pull request "

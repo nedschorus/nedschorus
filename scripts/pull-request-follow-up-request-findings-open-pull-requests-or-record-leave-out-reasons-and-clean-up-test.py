@@ -474,8 +474,8 @@ def test_open_failures():
         check("a refused push calls no gh, records nothing and keeps the file",
               case.gh_calls() == [] and "answers" not in case.answers() and description.exists())
         hook.write_text("#!/bin/sh\nsleep 5\n")
-        original_timeout, original_directory = program.PUSH_TIMEOUT_SECONDS, os.getcwd()
-        program.PUSH_TIMEOUT_SECONDS = 0.5
+        original_time_limit, original_directory = program.push_time_limit_seconds, os.getcwd()
+        program.push_time_limit_seconds = lambda environment: 0.5
         os.chdir(worktree)
         try:
             program.open_pull_request(NUMBER, [1])
@@ -486,8 +486,34 @@ def test_open_failures():
         else:
             check("a push that does not finish in time is a StepFailed with the usual instructions", False)
         finally:
-            program.PUSH_TIMEOUT_SECONDS = original_timeout
+            program.push_time_limit_seconds = original_time_limit
         original_run_git = program.git_output.run_git
+
+        def push_times_out(directory, arguments, **options):
+            if arguments[0] == "push":
+                pushes.append(options["timeout_seconds"])
+                raise program.git_output.GitCommandFailed(
+                    arguments, directory, None, f"did not finish within {options['timeout_seconds']} s")
+            return original_run_git(directory, arguments, **options)
+        pushes = []
+        program.git_output.run_git = push_times_out
+        saved_environment = dict(os.environ)
+        os.environ[program.pre_push_conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE] = "7"
+        os.environ[program.pre_push_selective_test_run.TIME_BUDGET_ENVIRONMENT_VARIABLE] = "11"
+        try:
+            with contextlib.redirect_stderr(io.StringIO()) as stderr:
+                code = program.main([str(NUMBER), "open-pull-request", "--handled-finding-numbers", "1"])
+        finally:
+            program.git_output.run_git = original_run_git
+            os.environ.clear()
+            os.environ.update(saved_environment)
+        check("a push that times out is given the hooks' budgets from the environment plus 120 s, and tells the "
+              "agent to tell the user, not to run the command again",
+              code == 2 and pushes == [138.0] and stderr.getvalue() ==
+              "FAILED: git push -u origin topic-one failed (did not finish within 138.0 s), so no pull request was opened.\n"
+              "open-pull-request stopped there; what it did before the failure stays done.\n"
+              "Tell the user, in one sentence, that open-pull-request fails with the error above and " + TELL_THE_USER_END,
+              f"{code} {pushes} {stderr.getvalue()!r}")
 
         def push_cannot_start(directory, arguments, **options):
             if arguments[0] == "push":
@@ -566,6 +592,24 @@ def test_open_failures():
               and case.answers() == {"started": {"1": "topic-one"}, "answers": {"1": {"link": OPEN_LINK, "branch": "topic-one"}}}, out + err)
     finally:
         case.close()
+
+
+def test_push_time_limit_is_the_pre_push_hooks_budgets_plus_120_seconds():
+    hooks = []
+    for file_name in ("git-client-side-hooks-pre-push-conflict-check.py",
+                      "git-client-side-hooks-pre-push-selective-test-run.py"):
+        spec = importlib.util.spec_from_file_location(
+            file_name[:-3].replace("-", "_") + "_for_test", PROGRAM.with_name(file_name))
+        hooks.append(importlib.util.module_from_spec(spec))
+        spec.loader.exec_module(hooks[-1])
+    conflict_check, selective_test_run = hooks
+    for environment in ({}, {conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE: "7",
+                             selective_test_run.TIME_BUDGET_ENVIRONMENT_VARIABLE: "11"}):
+        expected = (conflict_check.time_budget_seconds(environment)
+                    + selective_test_run.time_budget_seconds(environment) + 120)
+        check(f"the push time limit is the two pre-push hooks' budgets plus 120 s, environment {environment}",
+              program.push_time_limit_seconds(environment) == expected,
+              f"{program.push_time_limit_seconds(environment)} != {expected}")
 
 
 def test_open_title_and_description_file_removal_failure():
@@ -943,7 +987,8 @@ def test_next_step_branch_choice():
 
 
 for test in (test_help, test_block_parsing, test_brief_text, test_no_saved_block, test_start,
-             test_open_refusals, test_open, test_open_failures, test_open_title_and_description_file_removal_failure,
+             test_open_refusals, test_open, test_open_failures, test_push_time_limit_is_the_pre_push_hooks_budgets_plus_120_seconds,
+             test_open_title_and_description_file_removal_failure,
              test_leave_out_and_finish, test_three_findings,
              test_state_failures, test_clean_up, test_clean_up_goes_on_past_each_worktree_and_branch,
              test_clean_up_failure, test_next_step, test_next_step_branch_choice):
