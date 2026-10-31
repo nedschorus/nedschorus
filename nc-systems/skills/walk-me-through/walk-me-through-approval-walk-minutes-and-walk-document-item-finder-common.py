@@ -16,6 +16,13 @@ count, `item N`, `item 4.1`, `items 5 and 6`, `items 10 to 12`, with or
 without `of M`. Among the minutes files in docs/walk/, the open approval-walk
 is the most recently modified one whose value is not closed.
 
+A PAUSED APPROVAL-WALK. A `#approval_walk_paused <reason>` line, found as the
+marker is, pauses the walk when it comes after the minutes' last marker; a
+later `#next_to_present` line resumes it. A paused walk is still the newest
+open one, so no older walk is taken for it, but open_walk returns None for it,
+so the hooks treat it as no open walk. newest_unclosed_approval_walk_including_paused returns it
+with its pause, so the check program can say how to resume it.
+
 ITEMS IN THE WALK-DOCUMENT. An item starts at its running count, `Item N of
 M`, `Items 5 and 6 of M`, `Items 10 to 12 of M` or `Items 12 to 12.3 of M`,
 on a top-level heading or paragraph opening with `**`, outside any list or
@@ -92,10 +99,13 @@ CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 WALK_DIRECTORY = Path("docs") / "walk"
 MINUTES_SUFFIX = "-minutes.md"
 # Group 1 is set only for the hashtag; the old form is read so that open walks it marks are migrated.
-# The value runs to the line's end or the next marker, so two markers on a line are read as two.
+# The value runs to the line's end, the next marker or a pause hashtag, so two markers on a line are read as two
+# and a pause on the marker's line is not read as part of the value.
 NEXT_MARKER = re.compile(
-    r"(?:(#next_to_present)\b|Next to present:)[*_`\s:]*((?:(?!#next_to_present\b|Next to present:)[^\n])*)",
+    r"(?:(#next_to_present)\b|Next to present:)[*_`\s:]*"
+    r"((?:(?!#next_to_present\b|Next to present:|#approval_walk_paused\b)[^\n])*)",
     re.I)
+PAUSE_MARKER = re.compile(r"#approval_walk_paused\b", re.I)
 CLOSED_VALUE = re.compile(r"^(?:none|closed)\b", re.I)
 NUMBER = r"\d+(?:\.\d+)*"
 NUMBER_JOINER = r"\s*(?:,|&|\band\b|\bto\b|-|\u2013)\s*"
@@ -208,20 +218,24 @@ def item_opening_lines(text, parser, tokens=None):
 
 
 def next_to_present(minutes_text, parser):
-    """Return (value, whether the marker is the old form) for the minutes' last marker outside code, or None."""
+    """Return (value, whether the marker is the old form, whether a pause line follows it) for the minutes'
+    last marker outside code, or None when they hold no marker."""
     # Most minutes hold no marker at all, and parsing is most of the walk hooks' run time.
     if not NEXT_MARKER.search(minutes_text):
         return None
     markers = []
     for line in prose_lines(minutes_text, parser):
         spans = [span.span() for span in CODE_SPAN.finditer(line)]
-        for marker in NEXT_MARKER.finditer(line):
-            if not any(start <= marker.start() < end for start, end in spans):
-                markers.append((marker[1], marker[2].replace("`", "").strip()))
-    if not markers:
+        found = [(marker.start(), (marker[1], marker[2].replace("`", "").strip()))
+                 for marker in NEXT_MARKER.finditer(line)]
+        found += [(pause.start(), None) for pause in PAUSE_MARKER.finditer(line)]
+        markers += [marker for position, marker in sorted(found, key=lambda each: each[0])
+                    if not any(start <= position < end for start, end in spans)]
+    last = max((index for index, marker in enumerate(markers) if marker is not None), default=None)
+    if last is None:
         return None
-    hashtag, value = markers[-1]
-    return value, not hashtag
+    hashtag, value = markers[last]
+    return value, not hashtag, last < len(markers) - 1
 
 
 def newest_item_page_link_per_item_from_walk_minutes(minutes_text, parser):
@@ -327,16 +341,25 @@ def parse_items(value):
     return expand_numbers(match[1]), match[2]
 
 
-def open_walk(walk_directory, parser):
-    """Return (minutes path, value, whether the marker is the old form) for the open approval-walk, or None."""
+def newest_unclosed_approval_walk_including_paused(walk_directory, parser):
+    """Return (minutes path, value, whether the marker is the old form, whether the walk is paused) for the
+    newest minutes whose value is not closed, or None when there are none."""
     newest_first = sorted(walk_directory.glob("*" + MINUTES_SUFFIX),
                           key=lambda minutes: minutes.stat().st_mtime, reverse=True)
     for minutes in newest_first:
         marker = next_to_present(minutes.read_text(encoding="utf-8"), parser)
         if marker is not None and not is_closed(marker[0]):
-            value, old_form = marker
-            return minutes, value, old_form
+            return (minutes, *marker)
     return None
+
+
+def open_walk(walk_directory, parser):
+    """Return (minutes path, value, whether the marker is the old form) for the open approval-walk, or None
+    when none is open or the open one is paused."""
+    walk = newest_unclosed_approval_walk_including_paused(walk_directory, parser)
+    if walk is None or walk[3]:
+        return None
+    return walk[:3]
 
 
 def item_unit_spans(document_text, parser):
