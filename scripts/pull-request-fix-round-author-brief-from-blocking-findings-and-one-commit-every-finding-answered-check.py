@@ -22,7 +22,8 @@ and the --check command to finish with, which the subagent runs in its own workt
 With --check, run in the worktree or checkout that holds the round's commit: the commits from the frozen-head to --commit (default
 HEAD) must be none, or one non-merge commit, or with --after-conflict-merge a merge of origin/main
 followed by at most one non-merge commit. The answers file holds one entry per blocking finding,
-each starting "<n>. " on its own line; by default it is ANSWERS_FILE_NAME_FORMAT at the root of
+each starting "<n>. " on its own line; an entry that goes on with MOVED_TO_PULL_REQUEST_PATTERN must
+name a pull request gh pr view finds, or --check refuses it. By default it is ANSWERS_FILE_NAME_FORMAT at the root of
 the worktree or checkout --check runs in, and --check refuses when the checked commit's tree holds
 an answers file the frozen-head's tree does not, since a branch cut before .gitignore named the file does not leave it out of
 commits. It prints the files the fix commit changes that no blocking
@@ -55,6 +56,26 @@ BLOCKING_MARKER_PATTERN = re.compile(r"\*\*Blocks\b[^*\n]*\*\*")
 BLOCKING_MARKER_DESCRIPTION = "the bold word **Blocks**"
 BLOCKING_COUNT_PATTERN = re.compile(r"\*\*Blocking:\s*(\d+)\*\*")
 ANSWER_START_PATTERN = re.compile(r"^(\d+)\.\s+(\S.*)$")
+MOVED_TO_PULL_REQUEST_PREFIX = "Moved to pull request "
+MOVED_TO_PULL_REQUEST_PATTERN = re.compile(
+    re.escape(MOVED_TO_PULL_REQUEST_PREFIX) + r"(#?\d+|https://github\.com/[^/\s]+/[^/\s]+/pull/\d+)\b",
+    re.IGNORECASE)
+MOVE_CHANGE_TO_OWN_PULL_REQUEST_INSTRUCTION = (
+    "   If a blocking finding shows that one change in this pull request should not land with the rest, "
+    "you may move that change to a pull request of its own instead of fixing it here, so that the rest "
+    "can merge. Undo the change on this branch as part of step 4's one commit; never amend or rewrite a "
+    "pushed commit. Once that commit is made, carry the change, with its tests, to a new topic branch in "
+    "this same worktree, because the agent harness refuses a worktree-isolated agent's git commands in any "
+    "other worktree: run git switch -c <new topic branch> origin/main, bring the change over from the "
+    "frozen-head (git checkout {frozen_head} -- <path> copies a whole file, so use it only for a file "
+    "whose every change belongs to the moved change, and edit any other file by hand), run step 6's test "
+    "command, commit only the change's files, so the answers file stays out, push "
+    "with git push origin <new topic branch>, open its pull request as CLAUDE.md says, then switch back "
+    "with git switch {local_branch}. Answer the finding in step 5 with an entry that starts "
+    f"\"{MOVED_TO_PULL_REQUEST_PREFIX}\" followed by the new pull request's number or URL; the check in "
+    "step 7 refuses the entry when no such pull request exists.")
+# What gh pr view prints on stderr for a number or URL that names no pull request.
+PULL_REQUEST_NOT_FOUND_MARKER = "Could not resolve to a PullRequest"
 GH_TIMEOUT_SECONDS = 60
 PROGRAM = "scripts/" + Path(__file__).name
 ANSWERS_FILE_NAME_FORMAT = "fix-round-answers-pull-request-{number}.md"
@@ -100,6 +121,7 @@ ADVISOR_FIX_ROUND_INSTRUCTION = (
     "before you change anything, call the advisor with the blocking findings and the fix you plan.")
 
 
+# Messages to agents follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 class Refused(Exception):
     """The review or the round breaks a rule; the text says which and what to do."""
 
@@ -312,11 +334,13 @@ def print_brief(number, reviewer_login):
         "3. Change nothing else, apart from the tests, callers, documents and citations that "
         "keep the pull request atomic. Findings that do not block, in this review or any other, "
         "are not part of this round: merge-lane-2 sends them after the merge.",
+        MOVE_CHANGE_TO_OWN_PULL_REQUEST_INSTRUCTION.format(frozen_head=frozen_head, local_branch=local_branch),
         "4. Put every change in one commit on top of the branch as step 1 left it. "
         "If no finding holds, make no commit.",
         f"5. Write the answers file {answers_name} at the root of your worktree, one entry per "
         "finding above, each starting \"<n>. \" on its own line, with any further lines of the "
-        "entry after it: what you fixed, or why the finding does not hold. Never commit it: "
+        "entry after it: what you fixed, why the finding does not hold, or, for a change moved as "
+        "step 3 says, the new pull request. Never commit it: "
         "the branch's .gitignore may not leave it out, and the check in step 7 refuses a commit "
         "that holds it.",
         f"6. Run the affected nc-test-suites: {PRE_PUSH_TEST_COMMAND}",
@@ -380,6 +404,34 @@ def read_answers(path, finding_count):
                       "Give each finding, numbered as the brief numbers it, exactly one entry "
                       "starting \"<n>. \" on its own line.")
     return {number: " ".join(parts) for number, parts in sorted(answers.items())}
+
+
+def refuse_moved_to_missing_pull_request(answers, path):
+    """An entry that says its change moved to a new pull request must name one that exists."""
+    for index, answer in answers.items():
+        moved = MOVED_TO_PULL_REQUEST_PATTERN.match(answer)
+        if not moved:
+            continue
+        named = moved.group(1).lstrip("#")
+        try:
+            gh(["pr", "view", named, "--json", "number"])
+        except StepFailed as failure:
+            if PULL_REQUEST_NOT_FOUND_MARKER not in str(failure):
+                raise
+            raise Refused(f"The answers file {path} says in entry {index} that the finding's change moved "
+                          f"to pull request {named}, but GitHub has no such pull request ({failure}). "
+                          "An entry that moves a change must name the pull request that now carries it, "
+                          "or the change leaves this pull request and lands nowhere.\n"
+                          "If you have not opened the new pull request yet, open it as CLAUDE.md says, "
+                          f"make the entry start \"{MOVED_TO_PULL_REQUEST_PREFIX}\" followed by its number "
+                          "or URL, then run the check again.\n"
+                          "If the entry names the wrong number or URL, correct it so that the entry starts "
+                          f"\"{MOVED_TO_PULL_REQUEST_PREFIX}\" followed by the number or URL of the pull "
+                          "request that carries the change, then run the check again.\n"
+                          "If the change did not move after all, put it back in the round's commit, rewrite "
+                          "the entry to say what you fixed or why the finding does not hold, then run the "
+                          "check again.\n"
+                          f"The check is: {shlex.join(['python3', *sys.argv])}") from None
 
 
 def commits_since(frozen_head, commit):
@@ -457,7 +509,9 @@ def unnamed_files(base, fix_commit, findings):
 def check_round(number, reviewer_login, answers_path, commit_name, after_conflict_merge):
     (url, head, _branch, review_link, _review_id, frozen_head, findings,
      _fix_round_number) = round_facts(number, reviewer_login)
-    answers = read_answers(answers_path or default_answers_path(number), len(findings))
+    answers_path = answers_path or default_answers_path(number)
+    answers = read_answers(answers_path, len(findings))
+    refuse_moved_to_missing_pull_request(answers, answers_path)
     commit = git(["rev-parse", "--verify", f"{commit_name}^{{commit}}"]).strip()
     git(["cat-file", "-e", f"{frozen_head}^{{commit}}"])
     fix_range = fix_commit_range(frozen_head, commits_since(frozen_head, commit), after_conflict_merge)
