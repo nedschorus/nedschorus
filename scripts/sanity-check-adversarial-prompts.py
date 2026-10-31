@@ -227,9 +227,8 @@ Running a sanity-check, and reading its output:
   the printed instruction, and a timeout. The classification is read from the
   CLI's own output, matched only at the start of a line and only on a launch
   that failed; a launch whose text misleads it is told to the user, who can
-  see the line. The cold-read-grid relaunches whatever the cause and uses the
-  class for its report alone; here the class decides, because a relaunch of a
-  logged-out CLI is a wasted launch and its failure sends the audit to triage
+  see the line. The class decides whether the runner relaunches, because a
+  relaunch of a logged-out CLI is a wasted launch and its failure sends the audit to triage
   with one report. The instructions do not depend on which agent finished
   first, or on whether this run launched the other runtime: a rerun of one
   agent is a run that launched one runtime, and the other runtime's report is

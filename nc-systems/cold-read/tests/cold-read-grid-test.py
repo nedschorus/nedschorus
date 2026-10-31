@@ -37,7 +37,8 @@ WHAT IS PINNED HERE.
     user can clear, whose FAILED line tells the user at once while the other
     cells read, once per agent-binary and cause; and an attempt the grid
     stopped at its time limit, shortened here to seconds, whose cause is
-    timed-out. Every run closes with ONE closing text in four
+    timed-out, and whose report, when it had written one before hanging, is
+    deleted as unfinished. Every run closes with ONE closing text in four
     variants built from what landed -- all landed, some landed (the set is
     valid and incomplete, and is triaged), none landed, or the target
     changed -- replacing the Opus-absent and Fable-only branches of
@@ -249,6 +250,8 @@ TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 # whose report name contains COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT,
 # which does not wait. One fast cell that edits the target while five slow
 # ones read is how a case moves the target mid-run.
+# COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS, when set, is how long the
+# stub hangs after writing its report: a reviewer that wrote and never exited.
 STUB_MODEL_RUNTIME = r'''#!/usr/bin/env python3
 import json, os, pathlib, re, sys, time
 
@@ -329,6 +332,7 @@ if near_miss_character:
     given.parent.mkdir(parents=True, exist_ok=True)
 with open(given, "w", encoding="utf-8") as handle:
     handle.write("STUB REVIEW: one restatement\n")
+time.sleep(float(os.environ.get("COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS") or 0))
 edited_path = os.environ.get("COLD_READ_GRID_TEST_STUB_EDIT_PATH")
 if edited_path:
     with open(edited_path, "a", encoding="utf-8") as handle:
@@ -1030,6 +1034,27 @@ with tempfile.TemporaryDirectory() as scratch:
     time.sleep(stub_reading_seconds + 1 - elapsed if elapsed < stub_reading_seconds else 0)
     record_directory = record_directory_of(repository)
     check("the stopped stubs never wrote their reports",
+          sorted(path.name for path in record_directory.glob("*.md")) == ["reference-check.md"],
+          sorted(path.name for path in record_directory.glob("*.md")))
+
+    # --- A cell that writes its report and then hangs is stopped, report deleted
+    hang_seconds = 30
+    repository = build_scratch_repository(scratch, "checkout-wrote-then-hung")
+    started = time.monotonic()
+    result = run_grid(repository, stubs, {
+        "COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS": str(hang_seconds),
+        "COLD_READ_GRID_CELL_ATTEMPT_TIMEOUT_SECONDS": "3"})
+    elapsed = time.monotonic() - started
+    failed_lines = lines_opening(result, "FAILED")
+    check("a timed-out cell that had written its report: FAILED says the unfinished report is deleted",
+          elapsed < hang_seconds and lines_opening(result, "saved:") == []
+          and len(failed_lines) == 6
+          and all(" — timed-out — timed out after 4 hours (stderr kept: " in line
+                  and line.endswith(".stderr.log); the unfinished report it had written is deleted")
+                  for line in failed_lines),
+          f"elapsed {elapsed:.1f}s; stdout={result.stdout!r}")
+    record_directory = record_directory_of(repository)
+    check("the hung cells' unfinished reports are not left in the record",
           sorted(path.name for path in record_directory.glob("*.md")) == ["reference-check.md"],
           sorted(path.name for path in record_directory.glob("*.md")))
 

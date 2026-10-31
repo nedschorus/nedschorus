@@ -81,8 +81,9 @@ retry would only meet again, and an attempt stopped at the time limit. The
 time limit is 4 hours per attempt, counted on time.monotonic(), which leaves
 out time the machine was asleep on both Linux (CLOCK_MONOTONIC) and macOS
 (mach_absolute_time), so a Mac that sleeps overnight does not trip it; the
-attempt is stopped with its children and its cause is `timed-out — timed out
-after 4 hours`. The `FAILED` line of an attempt whose cause the user can
+attempt is stopped with its children, its cause is `timed-out — timed out
+after 4 hours`, and a report it had written is deleted as unfinished, so it
+neither ships nor counts as a review. The `FAILED` line of an attempt whose cause the user can
 clear ends with "Tell the user: ...", once per agent-binary and cause, so
 the user hears of it while the other cold-read-cells run. When
 every cold-read-cell of one agent-binary has landed or is absent for the same
@@ -278,6 +279,7 @@ CELL_ATTEMPT_TIMEOUT_OVERRIDE_VARIABLE = "COLD_READ_GRID_CELL_ATTEMPT_TIMEOUT_SE
 CELL_ATTEMPT_TIMEOUT_DEFAULT_SECONDS = 4 * 60 * 60
 TIMED_OUT_CAUSE_CLASS = "timed-out"
 TIMED_OUT_CAUSE_DETAIL = "timed out after 4 hours"
+TIMED_OUT_CELL_PARTIAL_REPORT_DELETED_PHRASE ="; the unfinished report it had written is deleted"
 
 
 def record_clock_reading() -> datetime.datetime:
@@ -838,9 +840,13 @@ def wait_for_cells(running: dict,
             code = None if attempt.process is None else attempt.process.poll()
             timed_out = (attempt.process is not None and code is None
                          and time.monotonic() - attempt.started_at >= cell_attempt_timeout_seconds)
+            partial_report_deleted = False
             if timed_out:
                 cell_common.stop_process_tree(attempt.process)
                 code = attempt.process.returncode
+                # A report written before the hang is unfinished; as a .md it would ship and count as a review.
+                partial_report_deleted = report_path.is_file()
+                report_path.unlink(missing_ok=True)
                 print(f"WRITE CHECK DID NOT RUN: {report_path.name} — "
                       f"{STOPPED_CELL_WRITE_CHECK_LINE.format(cell=cell_name_of(report_path))}",
                       flush=True)
@@ -882,7 +888,9 @@ def wait_for_cells(running: dict,
                         told_the_user.add((report.runtime, cause_class))
                         tell = f". Tell the user: {user_clearable_cause_text(report)}."
                     print(f"FAILED (exit {exit_text}): {name}{cell_common.CAUSE_SEPARATOR}"
-                          f"{cause} (stderr kept: {attempt.stderr_path}){tell}", flush=True)
+                          f"{cause} (stderr kept: {attempt.stderr_path})"
+                          f"{TIMED_OUT_CELL_PARTIAL_REPORT_DELETED_PHRASE if partial_report_deleted else ''}{tell}",
+                          flush=True)
                     outcome.absent[name] = report
             announce_agent_binary_down(cells_by_runtime, outcome)
         if running and time.monotonic() - last_target_check >= target_check_interval_seconds:
