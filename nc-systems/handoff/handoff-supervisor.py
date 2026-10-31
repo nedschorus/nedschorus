@@ -222,11 +222,11 @@ CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET = 1
 
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
 
-_transcript_project_directory_spec = importlib.util.spec_from_file_location(
-    "claude_code_session_transcript_project_directory_for_agent_seat_common",
-    SCRIPTS_DIRECTORY / "claude-code-session-transcript-project-directory-for-agent-seat-common.py")
-transcript_project_directory = importlib.util.module_from_spec(_transcript_project_directory_spec)
-_transcript_project_directory_spec.loader.exec_module(transcript_project_directory)
+_claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_lookup_and_text_search_common",
+    SCRIPTS_DIRECTORY / "claude-code-session-transcript-lookup-and-text-search-common.py")
+claude_code_session_transcript_lookup_and_text_search_common = importlib.util.module_from_spec(_claude_code_session_transcript_lookup_and_text_search_common_spec)
+_claude_code_session_transcript_lookup_and_text_search_common_spec.loader.exec_module(claude_code_session_transcript_lookup_and_text_search_common)
 # Live supervisors resolve this path at import; moving the extractor would break those processes.
 EXTRACTOR_PATH = SCRIPTS_DIRECTORY / "handoff-extract-conversation.py"
 _handoff_extract_conversation_spec = importlib.util.spec_from_file_location(
@@ -284,8 +284,10 @@ def agent_seat_launch_environment_without_calling_agent_session_tmux_and_supervi
     # A new tmux server copies its starter's environment into every window, the after-exit shell
     # included, so the caller's tmux and supervisor variables are dropped here too. IS_DEMO is
     # dropped because launch_agent_session sets it for the agent-sessions it starts; a claude
-    # typed in the after-exit shell would otherwise start in Claude Code's demo mode.
-    caller_only = {"TMUX", "TMUX_PANE", "IS_DEMO",
+    # typed in the after-exit shell would otherwise start in Claude Code's demo mode. GH_TOKEN is
+    # dropped because the supervisor sets it for its own agent-sessions; a gh typed in the after-exit
+    # shell would otherwise act as the caller's GitHub account.
+    caller_only = {"TMUX", "TMUX_PANE", "IS_DEMO", "GH_TOKEN",
                    HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE,
                    HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE,
                    HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE}
@@ -912,7 +914,7 @@ def agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build(p
 
 def project_directory_for_working_directory(working_directory: Path) -> Path:
     """Return the harness project directory holding the worktree's sessions."""
-    return transcript_project_directory.project_directory_for_seat(working_directory, PROJECTS_ROOT)
+    return claude_code_session_transcript_lookup_and_text_search_common.project_directory_for_seat(working_directory, PROJECTS_ROOT)
 
 
 def substantive_turn_count_of_session_transcript(session_id: str, working_directory: Path) -> int:
@@ -2064,8 +2066,8 @@ def successor_session_id_and_ignition_plan_without_conversation_tail(
     retiring_session_id is the session whose extraction failed, or None when no
     earlier session was recorded; occasion names when the supervisor started it.
     """
-    transcript_paths = (handoff_extract_conversation.transcript_paths_for_session(
-        retiring_session_id, settings.working_directory) if retiring_session_id else [])
+    transcript_paths = (claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcript_paths_for_session_id_in_working_directory_project_directory_if_present_else_in_every_project_directory(
+        retiring_session_id, settings.working_directory, PROJECTS_ROOT) if retiring_session_id else [])
     expected_path = (
         project_directory_for_working_directory(settings.working_directory)
         / f"{retiring_session_id}.jsonl" if retiring_session_id and not transcript_paths else None)
@@ -2178,8 +2180,17 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             and not settings.first_prompt_wins_over_crashed_transcript
             and adopted is None and ignition_plan is None
             and agent_exit_record_from_supervisor_state(state) is None):
-        by_hand_session_id, by_hand_detail = worth_resuming.newest_real_transcript(
-            project_directory_for_working_directory(settings.working_directory))
+        project_directory = project_directory_for_working_directory(settings.working_directory)
+        try:
+            by_hand_session_id, by_hand_detail = worth_resuming.newest_real_transcript(project_directory)
+        except OSError as error:
+            # A fresh session's transcript would become the newest and bury the crashed one.
+            print(f"handoff-supervisor: startup stopped: whether this seat has a transcript "
+                  f"worth resuming could not be decided, because {project_directory} could not "
+                  f"be read: {error.filename}: {error.strerror}.\n"
+                  f"When that folder's permissions are fixed, start the seat again.",
+                  file=sys.stderr)
+            return 5
         if by_hand_session_id is not None:
             print("handoff-supervisor: no waiting handoff and no recorded exit — "
                   f"resuming this seat's last transcript {by_hand_session_id} "

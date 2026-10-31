@@ -23,6 +23,14 @@ overwriting the earlier one, so a running session's dialog is never more than
 one pass behind its transcript, and an ended session's dialog is there whether
 or not a handoff wrote one. The subagents' own transcripts under
 `<session-id>/subagents/` are read only through the session's own records.
+The past-discussion search
+(scripts/log-store-past-discussions-regex-search-newest-first.py) also
+writes, before it searches, each dialog whose transcript changed; both find
+the transcripts and write a dialog with
+scripts/log-store-session-dialogs-refresh-common.py, so the two
+writers agree on what is current and never write into one temporary file.
+The search writes only when its own extractor's digest is the one this
+program last recorded, so a dialog it writes is one this program would.
 
 WHEN A DIALOG IS WRITTEN. When there is none yet, when its modification
 time differs from its transcript's change time (st_ctime), or when the
@@ -82,116 +90,30 @@ store's root for the tests, which point it at a scratch directory.
 import argparse
 import datetime
 import fcntl
-import hashlib
+import importlib.util
 import os
 import pathlib
-import stat
 import sys
-import types
 
 PROGRAM = "log-store-session-dialogs-refresh"
 LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
 STORE_ROOT_ENVIRONMENT_VARIABLE = "LOG_STORE_SESSION_DIALOGS_REFRESH_LOG_STORE_ROOT_OVERRIDE"
-TRANSCRIPTS_DIRECTORY_NAME = "agent-session-files-by-machine"
-SESSION_DIALOGS_DIRECTORY_NAME = "session-dialogs"
-SESSION_DIALOG_SUFFIX = "-dialog-complete.md"
 LOCK_FILE_NAME = ".log-store-session-dialogs-refresh.lock"
-EXTRACTOR_SHA256_FILE_NAME = ".dialogs-written-by-extractor-sha256"
 STALE_DIALOG_WARNING_OPENING = "This dialog could not be refreshed since "
 STALE_DIALOG_WARNING_TIME_FORMAT = "%Y-%m-%d %H:%M UTC"
-EXTRACTOR_PATH = pathlib.Path(__file__).resolve().with_name("handoff-extract-conversation.py")
-SUBAGENT_TRACKER_PATH = pathlib.Path(__file__).resolve().with_name(
-    "handoff-extract-conversation-subagent-tracker-nbd.py")
-SUBAGENT_TRACKER_PATHS = (
-    SUBAGENT_TRACKER_PATH,
-    pathlib.Path(__file__).resolve().with_name("claude-code-subagent-task-notification-interim-recognizer-common.py"))
+_refresh_common_specification = importlib.util.spec_from_file_location(
+    "log_store_session_dialogs_refresh_common",
+    pathlib.Path(__file__).resolve().with_name("log-store-session-dialogs-refresh-common.py"))
+refresh_common = importlib.util.module_from_spec(_refresh_common_specification)
+_refresh_common_specification.loader.exec_module(refresh_common)
 
 EXIT_REFRESHED = 0
 EXIT_FAILED = 1
 EXIT_LOCKED = 3
 
 
-def load_extractor():
-    """Return (the extractor module, the sha256 of its bytes and its subagent tracker's files', (path, error) or None).
-
-    The tracker's files are SUBAGENT_TRACKER_PATHS; (path, error) names the first that cannot be read. When one
-    cannot be read, all count as empty in the digest: the extractor then writes each dialog without subagent turns
-    and says so in it, which beats leaving every dialog stale.
-    """
-    # One read for both, so a change to the file during a pass cannot pair old code with the new digest.
-    source = EXTRACTOR_PATH.read_bytes()
-    module = types.ModuleType("handoff_extract_conversation")
-    module.__file__ = str(EXTRACTOR_PATH)
-    sys.modules[module.__name__] = module
-    exec(compile(source, str(EXTRACTOR_PATH), "exec"), module.__dict__)
-    tracker_source, tracker_failure = b"", None
-    for path in SUBAGENT_TRACKER_PATHS:
-        try:
-            tracker_source += path.read_bytes()
-        except OSError as error:
-            tracker_source, tracker_failure = b"", (path, error)
-            break
-    return module, hashlib.sha256(source + tracker_source).hexdigest(), tracker_failure
-
-
 def store_root() -> pathlib.Path:
     return pathlib.Path(os.environ.get(STORE_ROOT_ENVIRONMENT_VARIABLE) or LOG_STORE_ROOT)
-
-
-def sorted_entries(directory: pathlib.Path, unreadable: list):
-    """Return the directory's entries, sorted, or none, adding (directory, error) to unreadable when it cannot be listed."""
-    # Path.glob skips a directory it cannot list without saying so, which would leave its sessions undialogued unseen.
-    try:
-        return sorted(directory.iterdir())
-    except OSError as error:
-        unreadable.append((directory, error))
-        return []
-
-
-def is_of_kind(path: pathlib.Path, kind_test, unreadable: list) -> bool:
-    """Return whether path exists and passes kind_test, adding (path, error) to unreadable when it cannot be examined."""
-    # Path.is_dir and Path.is_file answer False on a permission error, which would skip a directory in silence.
-    try:
-        return kind_test(path.stat().st_mode)
-    except FileNotFoundError:
-        return False
-    except OSError as error:
-        unreadable.append((path, error))
-        return False
-
-
-def session_transcripts(transcripts_directory: pathlib.Path, unreadable: list):
-    """Yield (machine, project key, transcript path) for every mirrored session transcript.
-
-    Each directory or file on the way that cannot be listed or examined is added to unreadable as (path, error).
-    """
-    for machine_directory in sorted_entries(transcripts_directory, unreadable):
-        projects_directory = machine_directory / "projects"
-        if not is_of_kind(projects_directory, stat.S_ISDIR, unreadable):
-            continue
-        for project_directory in sorted_entries(projects_directory, unreadable):
-            if not is_of_kind(project_directory, stat.S_ISDIR, unreadable):
-                continue
-            for transcript in sorted_entries(project_directory, unreadable):
-                if transcript.suffix == ".jsonl" and is_of_kind(transcript, stat.S_ISREG, unreadable):
-                    yield machine_directory.name, project_directory.name, transcript
-
-
-def refresh_one(extractor, extractor_unchanged: bool, transcript: pathlib.Path, dialog: pathlib.Path) -> bool:
-    """Write the transcript's dialog unless it exists, carries the transcript's change time, and the extractor is unchanged.
-
-    Return whether it was written.
-    """
-    transcript_changed = transcript.stat().st_ctime_ns
-    if extractor_unchanged and dialog.exists() and dialog.stat().st_mtime_ns == transcript_changed:
-        return False
-    text = extractor.render_complete_dialog_of_transcript_as_markdown(transcript)
-    dialog.parent.mkdir(parents=True, exist_ok=True)
-    partial = dialog.with_name(dialog.name + ".partial")
-    partial.write_text(text, encoding="utf-8")
-    os.utime(partial, ns=(transcript_changed, transcript_changed))
-    os.replace(partial, dialog)
-    return True
 
 
 def mark_dialog_stale(dialog: pathlib.Path, error: BaseException) -> None:
@@ -207,23 +129,19 @@ def mark_dialog_stale(dialog: pathlib.Path, error: BaseException) -> None:
         text = text.removeprefix("\n")
     reason = " ".join(f"{type(error).__name__}: {error}".split())
     warning = f"{STALE_DIALOG_WARNING_OPENING}{since}: {reason}; what follows may be out of date.\n"
-    dialog.parent.mkdir(parents=True, exist_ok=True)
-    partial = dialog.with_name(dialog.name + ".partial")
-    partial.write_text(warning + ("\n" + text if text else ""), encoding="utf-8")
     # No change time is 0, so the next pass never takes a stale dialog for current, even within one timestamp tick.
-    os.utime(partial, ns=(0, 0))
-    os.replace(partial, dialog)
+    refresh_common.write_text_through_temporary_file(dialog, warning + ("\n" + text if text else ""), 0)
 
 
 def refresh_all(root: pathlib.Path, failures_only: bool) -> int:
-    transcripts_directory = root / TRANSCRIPTS_DIRECTORY_NAME
+    transcripts_directory = root / refresh_common.AGENT_SESSION_FILES_FOLDER_IN_LOG_STORE
     if not transcripts_directory.is_dir():
         print(f"FAILED: no {transcripts_directory} directory to read transcripts from; "
               "scripts/transcript-mirror-to-log-store.py creates it on its first pass")
         return EXIT_FAILED
-    extractor, extractor_sha256, tracker_failure = load_extractor()
-    dialogs_directory = root / SESSION_DIALOGS_DIRECTORY_NAME
-    extractor_sha256_file = dialogs_directory / EXTRACTOR_SHA256_FILE_NAME
+    extractor, extractor_sha256, tracker_failure = refresh_common.load_extractor()
+    dialogs_directory = root / refresh_common.SESSION_DIALOGS_DIRECTORY_NAME
+    extractor_sha256_file = dialogs_directory / refresh_common.EXTRACTOR_SHA256_FILE_NAME
     written = current = failed = 0
     if tracker_failure is not None:
         unreadable_tracker_path, tracker_error = tracker_failure
@@ -248,10 +166,11 @@ def refresh_all(root: pathlib.Path, failures_only: bool) -> int:
         print(f"FAILED: cannot read {extractor_sha256_file}, so every dialog is rewritten on every pass — "
               f"{type(error).__name__}: {error}; make it a file readable and writable by this user, or remove it")
     unreadable = []
-    for machine, project_key, transcript in session_transcripts(transcripts_directory, unreadable):
-        dialog = dialogs_directory / machine / project_key / f"{transcript.stem}{SESSION_DIALOG_SUFFIX}"
+    for machine, project_key, transcript in refresh_common.find_session_transcripts_mirrored_in_log_store(
+            transcripts_directory, unreadable):
+        dialog = refresh_common.session_dialog_path_for_transcript(dialogs_directory, machine, project_key, transcript)
         try:
-            if refresh_one(extractor, extractor_unchanged, transcript, dialog):
+            if refresh_common.refresh_session_dialog_unless_current(extractor, extractor_unchanged, transcript, dialog):
                 written += 1
             else:
                 current += 1
@@ -291,7 +210,7 @@ def main(argv=None) -> int:
                         help="print FAILED lines only, for cron")
     failures_only = parser.parse_args(argv).failures_only
     root = store_root()
-    dialogs_directory = root / SESSION_DIALOGS_DIRECTORY_NAME
+    dialogs_directory = root / refresh_common.SESSION_DIALOGS_DIRECTORY_NAME
     try:
         dialogs_directory.mkdir(parents=True, exist_ok=True)
         lock = (dialogs_directory / LOCK_FILE_NAME).open("w")
