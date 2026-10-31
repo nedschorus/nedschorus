@@ -43,6 +43,10 @@ THE TEXT CHECKED is the reply, line by line, without:
   not text he reads. A line with no link, with anything outside the link but
   the answer letters, such as a list mark, bold marks or a sentence, or that
   names another item or total, is checked;
+- the line a sub-step that asks for no decision ends with, `[No decision
+  here; type N or next to continue.](<page link>)`, alone on its line, when a
+  waiting item is a sub-step, with a dotted number such as `Item 4.1 of 9`;
+  the link target is not compared, as the closing line's is not;
 - a sentence that only names waiting items, `Item 4 of 9 is waiting for your
   answer.`, the line the walk-me-through skill ended every message with before
   the closing line, when every item it names is waiting and its total is the
@@ -377,7 +381,8 @@ def checked_lines(reply, document_text, units, parser, waiting_numbers, total):
     shown = shown_item_lines(lines, document_lines, units)
     kept, written, introduced_list = [], [], False
     for line in lines:
-        if normalized(line) in shown or is_closing_line(line, waiting_numbers, total):
+        if normalized(line) in shown or is_closing_line(line, waiting_numbers, total) or (
+                any("." in number for number in waiting_numbers) and walk_finder.SUB_STEP_NO_DECISION_CLOSING_LINE.match(line)):
             continue
         if line.lstrip().startswith(">") and normalized(line) in normalized_document:
             continue
@@ -486,8 +491,7 @@ def closing_lines(minutes, name, document_text, units, parser, numbers, total, n
     """(each waiting item's closing line, in code marks, once the walk's count M is new_total, built by the answer
     hook's closing_line with the link of the item's `#item_page` line, or NO_PAGE_LINK when the minutes record no
     page for it; the numbers of the items the minutes record no page for)."""
-    pages = dict(answer_hook.ITEM_PAGE.findall(
-        "\n".join(walk_finder.prose_lines(minutes.read_text(encoding="utf-8"), parser))))
+    pages = walk_finder.minutes_newest_item_page_link_by_item_number(minutes.read_text(encoding="utf-8"), parser)
     without_page = [number for number in numbers if number not in pages]
     pages.update(dict.fromkeys(without_page, NO_PAGE_LINK))
     points = answer_hook.heading_points(document_text.split("\n"), units, total, parser)

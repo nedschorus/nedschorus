@@ -82,7 +82,12 @@ is used, if its headings carry only one.
 THE REPLY NAMES AN ITEM when it holds a running count with the walk's
 total that covers it, in any of the forms above: `Item 11 of 12`, or
 `Items 10 and 11 of 12` for both. A count with another total, such as `item
-2 of 90` for item 2 of 9, names nothing.
+2 of 90` for item 2 of 9, names nothing. A waiting sub-step, an item with a
+dotted number such as `Item 4.1 of 9`, is also named by a line that is
+`[No decision here; type N or next to continue.](<page link>)`, the line a
+sub-step that asks for no decision ends with, when its link is the one the
+minutes' newest `#item_page` line for that sub-step records; with no such
+line in the minutes, it names nothing.
 
 SILENT while the agent answers a Stop hook (stop_hook_active set), as the
 Stop-hook silence rule's module requires, when the agent-session is a
@@ -157,6 +162,10 @@ REPLY_LEAVES_OUT_INSTRUCTIONS = (
     "If he ended or abandoned the approval-walk, add the line `#next_to_present none, closed` "
     "at the end of {minutes} instead of naming the item, and end the turn.",
 )
+NO_DECISION_INSTRUCTION = (
+    "If the waiting item is a sub-step that asks for no decision, you may end your reply instead with "
+    "`[No decision here; type N or next to continue.](<page link>)`, where <page link> is the link of the "
+    "sub-step's `#item_page` line in {minutes}; record that line first if the minutes have none.")
 OLD_MARKER_INSTRUCTIONS = (
     "Add this line at the end of {minutes}, below every earlier marker line, and leave "
     "the old lines as they are: {new_line}",
@@ -312,12 +321,20 @@ def output_for(payload, environment):
     except walk_finder.UnusableRange as problem:
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=str(problem))
     named_in_reply = items_named_in(reply, total)
+    no_decision_links = set(walk_finder.SUB_STEP_NO_DECISION_CLOSING_LINE.findall(reply))
+    if no_decision_links:
+        pages = walk_finder.minutes_newest_item_page_link_by_item_number(minutes.read_text(encoding="utf-8"), parser)
+        named_in_reply.update(number for number in numbers
+                              if "." in number and pages.get(number) in no_decision_links)
     left_out = [number for number in numbers if number not in named_in_reply]
     if not left_out:
         return None
     example = (f"Item {numbers[0]} of {total}" if len(numbers) == 1
                else f"Items {', '.join(numbers[:-1])} and {numbers[-1]} of {total}")
-    return block(REPLY_LEAVES_OUT_OPENING_TEMPLATE, REPLY_LEAVES_OUT_INSTRUCTIONS,
+    instructions = REPLY_LEAVES_OUT_INSTRUCTIONS
+    if any("." in number for number in left_out):
+        instructions += (NO_DECISION_INSTRUCTION,)
+    return block(REPLY_LEAVES_OUT_OPENING_TEMPLATE, instructions,
                  named=" and ".join(f"`Item {number} of {total}`" for number in left_out),
                  example=example)
 

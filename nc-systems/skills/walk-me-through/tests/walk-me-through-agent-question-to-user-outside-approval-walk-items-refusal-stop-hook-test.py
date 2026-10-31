@@ -783,6 +783,24 @@ def test_the_closing_line_and_the_item_ending_are_the_walk_skills():
           ending in skill and ending in hook.REFUSAL_INSTRUCTIONS[1], hook.REFUSAL_INSTRUCTIONS[1])
 
 
+SUB_STEP_2_1_NO_DECISION_CLOSING_LINE = "[No decision here; type N or next to continue.](https://claude.ai/artifact/p21)"
+
+
+def test_a_no_decision_sub_steps_line_is_skipped_only_while_a_sub_step_waits():
+    sub_step = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + INTERRUPTION_ITEM,
+                    minutes="#next_to_present item 2.1 of 11")
+    sub_step.reply("PR 1922 merged.\n\n" + SUB_STEP_2_1_NO_DECISION_CLOSING_LINE)
+    check_silent("the no-decision line passes while a sub-step waits", sub_step.run(model="yes"))
+    check("the no-decision line never reaches the model", sub_step.model_calls() == [], sub_step.model_calls())
+    sub_step.reply("PR 1922 merged.\n\n" + SUB_STEP_2_1_NO_DECISION_CLOSING_LINE + " Agree?")
+    check_blocked("the no-decision line with text after it is checked", sub_step.run(model="yes"),
+                  "approval-walk question check")
+    whole_item = Case()
+    whole_item.reply("PR 1922 merged.\n\n" + SUB_STEP_2_1_NO_DECISION_CLOSING_LINE)
+    check_blocked("the no-decision line is checked while a whole item waits", whole_item.run(model="yes"),
+                  "approval-walk question check")
+
+
 def test_a_fault_exits_1_and_names_it():
     case = Case()
     result = case.run(stdin_text="not json")

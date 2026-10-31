@@ -49,6 +49,12 @@ are empty, or the parser's own tokens, as item starts are, so a line in code or
 in a comment is never an item's start, a marker, a recommendation or a recorded
 answer.
 
+ITEM PAGES. The minutes record each item's page as `#item_page item N of M
+<link>`, and the newest line for an item counts; minutes_newest_item_page_link_by_item_number reads them.
+SUB_STEP_NO_DECISION_CLOSING_LINE matches the line a sub-step that asks for no decision ends
+with, `[No decision here; type N or next to continue.](<page link>)`, alone
+on its line, and captures its link.
+
 Agent-facing messages follow
 docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 """
@@ -89,6 +95,8 @@ ITEM_LABEL = re.compile(
     rf"^(?:(?P<bold>\*\*|__)item\s+(?P<bold_number>{WHOLE_NUMBER})(?:\s+of\s+(?P<total>\d+))?"
     rf"(?=\s*[:.,]|(?P=bold)\s*(?:[:.,\-–—]|$))"
     rf"|item\s+(?P<plain_number>{WHOLE_NUMBER})[:.](?=\s|$))", re.I)
+ITEM_PAGE = re.compile(rf"^#item_page\s+item\s+({NUMBER})\s+of\s+\d+\s+(\S+)\s*$", re.I | re.M)
+SUB_STEP_NO_DECISION_CLOSING_LINE = re.compile(r"^\s*\[No decision here; type N or next to continue\.\]\((\S+)\)\s*$", re.M)
 REPLY_COUNT = re.compile(rf"\bitems?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
 # Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
 REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
@@ -188,6 +196,11 @@ def next_to_present(minutes_text, parser):
         return None
     hashtag, value = markers[-1]
     return value, not hashtag
+
+
+def minutes_newest_item_page_link_by_item_number(minutes_text, parser):
+    """Return {item number: the link of its newest `#item_page` line} from the minutes, outside code."""
+    return dict(ITEM_PAGE.findall("\n".join(prose_lines(minutes_text, parser))))
 
 
 def is_closed(value):
