@@ -1287,7 +1287,7 @@ def test_each_check_command_the_hook_names_runs_on_the_real_program():
     # Z's text names the check step and its flag, not the whole command.
     case = Case(next_to_present="item 3 of 9")
     lines = case.lines("z") or []
-    result = subprocess.run(CHECK.strip("`").split() + ["--deferred", "--counts-log", str(case.checkout.parent / "z.tsv")],
+    result = subprocess.run(CHECK.strip("`").split() + ["--deferred"],
                             capture_output=True, text=True, cwd=case.checkout)
     check("Z's text names --deferred, and the check step run with it records the answer as deferred",
           any("--deferred" in line for line in lines) and result.returncode == 0
