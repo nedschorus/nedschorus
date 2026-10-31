@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Request a handoff before context runs out.
 
-It fires at a share of the context window, or when the context used plus the tokens the
-session's compactions dropped reaches a second, higher share.
+It fires at a share of the context window.
 
 Stop-hook payloads lack context usage; headless sessions lack a status line.
 The transcript supplies usage for both interactive and headless sessions."""
@@ -69,12 +68,6 @@ FIRST_TAIL_READ_BYTES = 256 * 1024
 HANDOFF_INSTRUCTION = (
     "This session has used {share} of its context window, which has "
     "reached the reincarnation threshold. Run the /handoff skill now."
-)
-
-# Idle compaction keeps the current context low, so a long session also counts what compactions dropped.
-SHARE_WITH_COMPACTION_DROPPED = (
-    "{used_percentage:.0f}% ({used_plus_dropped_percentage:.0f}% counting the "
-    "tokens its compactions dropped)"
 )
 
 HANDOFF_DEFERRED_NOTICE = (
@@ -197,18 +190,6 @@ def context_used_percentage_from_transcript(transcript_path: str):
         return None
     used_tokens, window = reading
     return 100.0 * used_tokens / window
-
-
-COMPACTION_RECORD_SUBTYPE = "compact_boundary"
-
-
-def compaction_dropped_tokens_from_transcript(transcript_path: str) -> int:
-    """Return the tokens all of the session's compactions dropped; 0 when it has none."""
-    # Claude Code keeps the running total on each compaction record, so the newest one suffices.
-    for record in transcript_records.records_newest_first(Path(transcript_path).expanduser()):
-        if record.get("subtype") == COMPACTION_RECORD_SUBTYPE:
-            return record["compactMetadata"]["cumulativeDroppedTokens"]
-    return 0
 
 
 USED_TOKEN_FIELDS = ("input_tokens", "cache_read_input_tokens",
@@ -395,11 +376,6 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Fire the handoff skill when context runs low.")
     parser.add_argument("--threshold-used-percentage", type=float, default=33.0)
     parser.add_argument(
-        "--threshold-used-plus-compaction-dropped-percentage", type=float, default=40.0,
-        help="the handoff also fires when the current context plus the tokens the "
-             "session's compactions dropped reaches this share",
-    )
-    parser.add_argument(
         "--ceiling-used-percentage", type=float, default=65.0,
         help="above this used share the handoff fires even with work in flight",
     )
@@ -429,12 +405,7 @@ def main(argv=None) -> int:
     used = 100.0 * used_tokens / window
     share = f"{used:.0f}%"
     if used < arguments.threshold_used_percentage:
-        used_plus_dropped = 100.0 * (
-            used_tokens + compaction_dropped_tokens_from_transcript(transcript_path)) / window
-        if used_plus_dropped < arguments.threshold_used_plus_compaction_dropped_percentage:
-            return 0
-        share = SHARE_WITH_COMPACTION_DROPPED.format(
-            used_percentage=used, used_plus_dropped_percentage=used_plus_dropped)
+        return 0
 
     fired_marker = fired_marker_path(session_id)
     if fired_marker.exists():
