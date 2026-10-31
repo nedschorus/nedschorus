@@ -1033,7 +1033,7 @@ with tempfile.TemporaryDirectory() as scratch:
     git(checkout, "config", "user.name", "clean-worktrees test")
     (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
     (checkout / ".gitignore").write_text(
-        "cold-read-records/\nsanity-check-records/\n", encoding="utf-8")
+        "cold-read-records/\nsanity-check-records/\ndocs/walk/\n", encoding="utf-8")
     git(checkout, "add", "-A")
     git(checkout, "commit", "-m", "seed")
     subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
@@ -1195,6 +1195,120 @@ with tempfile.TemporaryDirectory() as scratch:
           and silent.stderr.strip().splitlines()[-1] in silent.stdout,
           silent.stdout + silent.stderr)
     remove_worktree_for_next_case(silent_wt)
+
+# --- Walks in docs/walk/ are shipped before the removal; a REFUSED or FAILED walk keeps the worktree ---
+    walk_name = "demo-walk-2026-10-31"
+
+    def worktree_holding_a_walk(name):
+        path = managed / name
+        git(checkout, "worktree", "add", "-b", f"{name}-branch", str(path), "origin/main")
+        walk_directory = path / "docs" / "walk"
+        walk_directory.mkdir(parents=True)
+        for suffix, text in (("", "# walk\n\n## Item 1 of 1\n"), ("-minutes", "# minutes\n\nItem 1 ruled.\n"),
+                             ("-draft", "# draft\n")):
+            (walk_directory / f"{walk_name}{suffix}.md").write_text(text, encoding="utf-8")
+        (walk_directory / "never-presented-2026-10-31-draft.md").write_text("# draft\n", encoding="utf-8")
+        (walk_directory / f"{walk_name}-round-1-draft.md").write_text("# round 1\n", encoding="utf-8")
+        (walk_directory / "notes.txt").write_text("not a walk file\n", encoding="utf-8")
+        return path
+
+    walk_store = scratch / "walk-store"
+    reported_walk_wt = worktree_holding_a_walk("reported-walk-wt")
+    reported = run_clean_shipping_to(str(walk_store / "cold-read-records")).stdout
+    check("the report names a done worktree's walk and says --remove ships it first",
+          f"--remove first ships its 1 record(s) to the log-store and keeps it if one does not ship: "
+          f"docs/walk/{walk_name}-minutes.md" in reported, reported)
+    check("the report ships no walk", not (walk_store / "walk").exists())
+    remove_worktree_for_next_case(reported_walk_wt)
+
+    walk_wt = worktree_holding_a_walk("walk-wt")
+    shipped = run_clean_shipping_to(str(walk_store / "cold-read-records"), None, "--remove")
+    check("--remove ships a done worktree's walk to the log-store's walk/ before removing it",
+          (walk_store / "walk" / f"{walk_name}-minutes.md").is_file()
+          and (walk_store / "walk" / f"{walk_name}.md").is_file()
+          and f"walk-wt: shipped: {walk_name}" in shipped.stdout
+          and not walk_wt.exists() and shipped.returncode == 0, shipped.stdout + shipped.stderr)
+    check("--remove names the docs/walk/ files no walk ships, a walk never presented and a file of "
+          "no walk role, and removes the worktree anyway",
+          "walk-wt: 3 file(s) in docs/walk/ no walk ships" in shipped.stdout
+          and "docs/walk/notes.txt" in shipped.stdout
+          and "docs/walk/never-presented-2026-10-31-draft.md" in shipped.stdout
+          and f"docs/walk/{walk_name}-round-1-draft.md" in shipped.stdout
+          and not (walk_store / "walk" / "never-presented-2026-10-31-draft.md").exists(),
+          shipped.stdout)
+    remove_worktree_for_next_case(walk_wt)
+
+    unreachable_walk_wt = worktree_holding_a_walk("unreachable-walk-wt")
+    unreachable = run_clean_shipping_to(
+        "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records",
+        unreachable_stubs, "--remove")
+    check("--remove keeps a worktree whose walk fails to ship, exits 1, and says why",
+          unreachable_walk_wt.exists()
+          and (unreachable_walk_wt / "docs" / "walk" / f"{walk_name}-minutes.md").is_file()
+          and f"unreachable-walk-wt: record shipment FAILED, worktree kept — removing it would delete "
+          f"a record the log-store does not hold: docs/walk/{walk_name}-minutes.md (FAILED:"
+          in unreachable.stdout
+          and unreachable.returncode == 1
+          and "unreachable-walk-wt: removed" not in unreachable.stdout,
+          unreachable.stdout + unreachable.stderr)
+    check("--remove tells a worktree whose walk failed to ship that the next --remove retries, "
+          "on a line with no FAILED in it",
+          "unreachable-walk-wt: for each record whose line does not start REFUSED:, do nothing now: "
+          "the next scripts/clean-worktrees.py --remove, daily or at a handoff, ships the record again; "
+          "if the record fails the same way there, fix the cause its line names" in unreachable.stdout
+          and "whose line starts REFUSED:" not in unreachable.stdout
+          and "file(s) in docs/walk/ no walk ships" not in unreachable.stdout,
+          unreachable.stdout)
+    remove_worktree_for_next_case(unreachable_walk_wt)
+
+    refused_walk_store = scratch / "refused-walk-store"
+    (refused_walk_store / "walk").mkdir(parents=True)
+    (refused_walk_store / "walk" / f"{walk_name}-draft.md").write_text(
+        "# another checkout's draft\n", encoding="utf-8")
+    refused_walk_wt = worktree_holding_a_walk("refused-walk-wt")
+    refused = run_clean_shipping_to(str(refused_walk_store / "cold-read-records"), None, "--remove")
+    check("--remove keeps a worktree whose walk was REFUSED a draft, exits 1, and says the walk's "
+          "owner decides which copy is right",
+          refused_walk_wt.exists()
+          and (refused_walk_wt / "docs" / "walk" / f"{walk_name}-draft.md").is_file()
+          and "refused-walk-wt: record shipment FAILED, worktree kept — " in refused.stdout
+          and f"(REFUSED: {walk_name}" in refused.stdout
+          and "refused-walk-wt: for each walk whose line starts REFUSED:, the log-store holds "
+          "another copy of each file that line names" in refused.stdout
+          and "refused-walk-wt: removed" not in refused.stdout and refused.returncode == 1,
+          refused.stdout + refused.stderr)
+    remove_worktree_for_next_case(refused_walk_wt)
+
+    # A walk shipped once, then revised in place: the store's walk text is not a prefix of the local one.
+    revised_walk_store = scratch / "revised-walk-store"
+    (revised_walk_store / "walk").mkdir(parents=True)
+    (revised_walk_store / "walk" / f"{walk_name}.md").write_text(
+        "# walk\n\n## Item 1 of 1, before its revision\n", encoding="utf-8")
+    revised_walk_wt = worktree_holding_a_walk("revised-walk-wt")
+    revised = run_clean_shipping_to(str(revised_walk_store / "cold-read-records"), None, "--remove")
+    check("--remove keeps a .claude/worktrees/ worktree whose revised walk text the log-store "
+          "refuses, so the revised text is not deleted, and exits 1",
+          revised_walk_wt.exists()
+          and (revised_walk_wt / "docs" / "walk" / f"{walk_name}.md").read_text(encoding="utf-8")
+          == "# walk\n\n## Item 1 of 1\n"
+          and "revised-walk-wt: record shipment FAILED, worktree kept — " in revised.stdout
+          and f"(REFUSED: {walk_name}" in revised.stdout
+          and "revised-walk-wt: removed" not in revised.stdout and revised.returncode == 1,
+          revised.stdout + revised.stderr)
+    remove_worktree_for_next_case(revised_walk_wt)
+
+    unreadable_walk_wt = worktree_holding_a_walk("unreadable-walk-wt")
+    (unreadable_walk_wt / "docs" / "walk" / f"{walk_name}.md").chmod(0)
+    unreadable = run_clean_shipping_to(str(scratch / "unreadable-walk-store" / "cold-read-records"),
+                                       None, "--remove")
+    check("--remove keeps a worktree whose walk text the walk shipper cannot read, and carries "
+          "the shipper's FAILED line",
+          unreadable_walk_wt.exists()
+          and "unreadable-walk-wt: record shipment FAILED, worktree kept — " in unreadable.stdout
+          and "Permission denied" in unreadable.stdout and unreadable.returncode == 1,
+          unreadable.stdout + unreadable.stderr)
+    (unreadable_walk_wt / "docs" / "walk" / f"{walk_name}.md").chmod(0o644)
+    remove_worktree_for_next_case(unreadable_walk_wt)
 
 # --- A worktree with a git operation stopped partway is kept ---
 # Mid-rebase, HEAD is detached at a commit already on origin/main, so the landed check passes, and a
