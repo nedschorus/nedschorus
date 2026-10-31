@@ -755,7 +755,7 @@ def next_step(number):
                 "waits for the user's decision: "
                 f"{finding_text(request, finding)}",
                 f"It would change {answers[str(finding)][WAITING_KEY]}.",
-                "Ask the user whether he wants that change.",
+                "Put it to the user as an item of an approval-walk: whether he wants that change.",
                 "If he does, run: " + command(number, REOPEN_ARGUMENTS.replace("<n>", str(finding))),
                 "If he does not, run: " + command(number, LEAVE_OUT_ARGUMENTS.replace("<n>", str(finding)).replace(
                     '"<why>"', '"The user decided against it: <his words>"')),

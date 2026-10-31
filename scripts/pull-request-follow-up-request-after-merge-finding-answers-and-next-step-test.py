@@ -1251,7 +1251,7 @@ def test_waiting_for_user_ruling():
                                    f"Finding 2 of the follow-up of {FOLLOWED_UP} waits for the user's decision: "
                                    "mac-claude (inline at :713): send every R through repeat_line.\n"
                                    "It would change the hard-wrap rule.\n"
-                                   "Ask the user whether he wants that change.\n"
+                                   "Put it to the user as an item of an approval-walk: whether he wants that change.\n"
                                    f"If he does, run: python3 {program.PROGRAM} {NUMBER} {reopen} 2 --user-ruling "
                                    "\"<his words>\"\n"
                                    f"If he does not, run: python3 {program.PROGRAM} {NUMBER} "
