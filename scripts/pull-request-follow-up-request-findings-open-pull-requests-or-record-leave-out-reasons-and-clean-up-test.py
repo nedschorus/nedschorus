@@ -487,8 +487,23 @@ def test_open():
               and len(case.gh_calls()) == 1, err)
         git(worktree, "switch", "-q", "-c", "unrecorded")
         case.commit_change("unrecorded.txt")
-        git(worktree, "switch", "-q", "--detach", "main")
         case.write_description("Title\n\n- **Root cause:** the old label still counts.\n")
+        for label, checked_out in (("a branch start-topic-branch did not record", "unrecorded"),
+                                   ("a detached HEAD", "no branch")):
+            if checked_out == "no branch":
+                git(worktree, "switch", "-q", "--detach", "unrecorded")
+            commits = git(worktree, "log", "--oneline", "origin/main..HEAD")
+            code, out, err = case.run(worktree, "open-pull-request")
+            check(f"open refuses {label}, listing HEAD's commits and the recorded topic branches",
+                  code == 1 and out == "" and err == f"REFUSED: this worktree has {checked_out} checked out, which "
+                  "start-topic-branch did not record for pull request 1964's follow-up, so open-pull-request pushed "
+                  "nothing.\nHEAD holds these commits that are not on origin/main:\n"
+                  f"{commits}\n"
+                  "Switch to the topic branch whose pull request you are opening, one of topic-one and topic-two, "
+                  "with git switch <topic-branch>, and run the same open-pull-request command again.\n"
+                  and len(commits.splitlines()) == 2 and "unrecorded" not in git(case.origin, "branch")
+                  and len(case.gh_calls()) == 1, err)
+        git(worktree, "switch", "-q", "topic-two")
         code, out, err = case.run(worktree, "open-pull-request", FAKE_GH_CREATE_OUTPUT=f"see {OPEN_LINK}\n{LINK}")
         check("open without --handled-finding-numbers handles the findings start-topic-branch recorded for the branch",
               "for finding 2 of pull request 1964's follow-up request" in out
@@ -497,11 +512,31 @@ def test_open():
               case.answers()["answers"]["2"]["link"] == LINK, str(case.answers()))
         check("open of the last finding says every finding has an answer",
               code == 0 and f"Every finding has an answer: run python3 {program.PROGRAM} {NUMBER} finish-follow-up-request-and-print-merge-lane-2-message" in out, out + err)
-        check("open accepts the merge gate's old defect label, and on a detached HEAD pushes the last "
-              "recorded topic branch, not what is checked out",
+        check("open accepts the merge gate's old defect label, and pushes the checked-out topic branch",
               git(case.origin, "rev-parse", "topic-two") == git(worktree, "rev-parse", "topic-two")
               and "unrecorded" not in git(case.origin, "branch")
               and case.gh_calls()[-1].startswith("pr create --base main --head topic-two "), str(case.gh_calls()))
+    finally:
+        case.close()
+
+
+def test_open_pushes_the_checked_out_recorded_branch_not_the_last():
+    case = Case()
+    try:
+        worktree = started(case, "topic-one", "1")
+        code, out, err = case.run(worktree, "start-topic-branch", "topic-two", "--finding-numbers", "2")
+        assert code == 0, err
+        git(worktree, "switch", "-q", "topic-one")
+        case.commit_change()
+        case.write_description()
+        code, out, err = case.run(worktree, "open-pull-request")
+        check("open pushes the checked-out recorded topic branch, not the last one recorded",
+              code == 0 and git(case.origin, "for-each-ref", "--format=%(objectname)", "refs/heads/topic-one")
+              == git(worktree, "rev-parse", "topic-one") and "topic-two" not in git(case.origin, "branch")
+              and case.gh_calls()[-1].startswith("pr create --base main --head topic-one "), out + err)
+        check("open by default handles the findings recorded for the checked-out branch",
+              "for finding 1 of pull request 1964's follow-up request" in out
+              and case.answers()["answers"] == {"1": {"link": LINK, "branch": "topic-one"}}, str(case.answers()))
     finally:
         case.close()
 
@@ -1046,10 +1081,11 @@ def judge_text(*findings):
             f"python3 {program.PROGRAM} {NUMBER} start-topic-branch <topic-branch> --finding-numbers <n>[,<n>...]\n")
 
 
-def branch_text(branch, findings):
+def branch_text(branch, findings, switch=False):
     return (f"Next: topic branch {branch} takes on {findings}, which {'have' if 'and' in findings else 'has'} no pull "
             "request yet.\n"
-            "On that branch, make the change with its tests, and commit, unless you have.\n"
+            + (f"First run: git switch {branch}\n" if switch else "")
+            + "On that branch, make the change with its tests, and commit, unless you have.\n"
             f"Write {program.FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME} at your worktree's root: the pull "
             "request's title on the first line, a blank line, then the description.\n"
             "Do not commit it: it is never part of the pull request.\n"
@@ -1131,11 +1167,12 @@ def test_next_step_branch_choice():
               code == 0 and out == branch_text("topic-both", "findings 1 and 2"), out + err)
         case.run(worktree, "start-topic-branch", "topic-two", "--finding-numbers", "2")
         code, out, err = case.run(worktree, "next-step")
-        check("next-step names the branch of the lowest started finding, and only that branch's findings",
-              code == 0 and out == branch_text("topic-both", "finding 1"), out + err)
+        check("next-step names the branch of the lowest started finding, and only that branch's findings, "
+              "first telling the agent to switch to it when another is checked out",
+              code == 0 and out == branch_text("topic-both", "finding 1", switch=True), out + err)
         case.run(worktree, "record-finding-leave-out-reason", "1", "--reason", "fixed")
         code, out, err = case.run(worktree, "next-step")
-        check("next-step skips a started finding that has an answer",
+        check("next-step skips a started finding that has an answer, with no switch line on the checked-out branch",
               code == 0 and out == branch_text("topic-two", "finding 2"), out + err)
         case.run(worktree, "record-finding-leave-out-reason", "2", "--reason", "fixed")
         code, out, err = case.run(worktree, "next-step")
@@ -1146,7 +1183,8 @@ def test_next_step_branch_choice():
 
 
 for test in (test_help, test_block_parsing, test_brief_text, test_no_saved_block, test_start,
-             test_open_refusals, test_open, test_open_failures, test_open_gh_pr_create_second_try_and_gh_pr_list,
+             test_open_refusals, test_open, test_open_pushes_the_checked_out_recorded_branch_not_the_last,
+             test_open_failures, test_open_gh_pr_create_second_try_and_gh_pr_list,
              test_push_time_limit_is_the_pre_push_hooks_budgets_plus_120_seconds,
              test_open_title_and_description_file_removal_failure,
              test_leave_out_and_finish, test_three_findings,

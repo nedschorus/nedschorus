@@ -23,7 +23,8 @@ remove-recorded-topic-branches-and-worktrees.
 next-step, in the subagent's worktree: git fetch origin, then print the one step that comes next,
 decided from the records alone, first match wins: "Done" once finish-follow-up-request-and-print-merge-lane-2-message
 has recorded the follow-up finished; the topic branch of the lowest finding start-topic-branch took on that has no
-answer yet, to make the change, commit, write the title and description, and run open-pull-request; the findings with
+answer yet, to switch to it first when the worktree has another checked out, make the change, commit, write the title
+and description, and run open-pull-request; the findings with
 no answer, to judge each against origin/main and either run record-finding-leave-out-reason or group it into a topic
 and run start-topic-branch; and, every finding answered, finish-follow-up-request-and-print-merge-lane-2-message and
 the message to merge-lane-2. The judging and the change stay with the subagent.
@@ -40,12 +41,12 @@ open-pull-request, in that worktree, with the change committed on its topic bran
 --handled-finding-numbers, handle the findings start-topic-branch recorded for the branch that have no answer, and
 refuse when there are none; refuse a
 finding that does not exist or already has an answer, a worktree start-topic-branch recorded no
-branch for, and a FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME at the worktree's root that is
+branch for, a worktree whose checked-out branch, or detached HEAD, is not one start-topic-branch recorded for it,
+and a FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME at the worktree's root that is
 missing, is not a title, a blank line and a description, or whose description
 has no defect line, the rule scripts/merge-gate.sh applies, read by the same
-reader; then git push -u origin <branch>, where <branch> is the last topic branch start-topic-branch
-recorded for the worktree, whatever the worktree has checked out, and whose pre-push hook runs the test
-suites; gh pr create against main; record the pull request's link against each
+reader; then git push -u origin <branch>, where <branch> is the recorded topic branch the worktree has
+checked out, and whose pre-push hook runs the test suites; gh pr create against main; record the pull request's link against each
 finding in FINDING_ANSWERS_FILE_NAME_FORMAT; then remove FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME, so the
 next topic branch's pull request cannot take this one's title and description. A gh pr create that fails, other than
 by gh not starting, is tried once more, and a second try that passes is printed as a notice; when a try refuses
@@ -77,9 +78,7 @@ Not handled: whether a pull request handles its findings, which merge-lane-2
 judges; two subagents following up one pull request at once, whose records
 can overwrite each other; a finding that spans more than one line, which the
 hook does not save; the branch the agent harness made the worktree on, which
-start-topic-branch leaves; commits made on any branch but the recorded one, which the push leaves out; a topic
-branch started while an earlier one in the same worktree has no pull request yet, which open-pull-request never
-pushes, since it pushes the last.
+start-topic-branch leaves; commits made on any branch but the checked-out one, which the push leaves out.
 
 Each text that has the agent tell the user something hands it the finished sentence, which names the pull request
 followed up by its link, built from REPOSITORY, and by its title when gh pr view gives it within
@@ -506,7 +505,16 @@ def open_pull_request(number, findings):
                       "follow-up, so open-pull-request has no branch to push, and pushed nothing.\n"
                       f"Run {command(number, START_ARGUMENTS)} in this worktree, make "
                       "and commit the change on that branch, and run the same open-pull-request command again.")
-    branch = recorded[-1]
+    branch = git(".", ["branch", "--show-current"]).strip()
+    if branch not in recorded:
+        commits = git(".", ["log", "--oneline", "origin/main..HEAD"]).rstrip("\n")
+        raise Refused(f"this worktree has {branch or 'no branch'} checked out, which start-topic-branch did not "
+                      f"record for pull request {number}'s follow-up, so open-pull-request pushed nothing.\n"
+                      "HEAD holds these commits that are not on origin/main:\n"
+                      f"{commits}\n"
+                      "Switch to the topic branch whose pull request you are opening, one of "
+                      f"{numbers_text(recorded)}, with git switch <topic-branch>, and run the same open-pull-request "
+                      "command again.")
     if findings is None:
         findings = unanswered_started_findings(record, branch)
         if not findings:
@@ -659,8 +667,11 @@ def next_step(number):
     if started:
         branch = record["started"][str(started[0])]
         findings = unanswered_started_findings(record, branch)
+        switch = ("" if git(".", ["branch", "--show-current"]).strip() == branch
+                  else f"First run: git switch {branch}\n")
         print(f"Next: topic branch {branch} takes on {findings_text(findings)}, which "
               f"{'has' if len(findings) == 1 else 'have'} no pull request yet.\n"
+              + switch +
               "On that branch, make the change with its tests, and commit, unless you have.\n"
               f"Write {FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME} at your worktree's root: "
               f"{TITLE_AND_DESCRIPTION_FORM}.\n"
