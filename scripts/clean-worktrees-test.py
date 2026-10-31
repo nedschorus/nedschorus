@@ -96,6 +96,12 @@ _ship_store_for_every_run = tempfile.mkdtemp(prefix="clean-worktrees-test-ship-s
 atexit.register(shutil.rmtree, _ship_store_for_every_run, ignore_errors=True)
 os.environ[SHIP_DESTINATION_VARIABLE] = str(Path(_ship_store_for_every_run) / "cold-read-records")
 
+REMOVALS_LOG_OVERRIDE_VARIABLE = "CLEAN_WORKTREES_REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE"
+# Without this, every --remove run in the suite would append to the real log-store's log of removals.
+_removals_log_for_every_run = tempfile.mkdtemp(prefix="clean-worktrees-test-removals-log-")
+atexit.register(shutil.rmtree, _removals_log_for_every_run, ignore_errors=True)
+os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(Path(_removals_log_for_every_run) / "log.txt")
+
 ORPHANED_BRANCH_REF_LINE_MARKER = (
     "branch ref(s) with no worktree, nothing beyond origin/main:")
 
@@ -1622,6 +1628,122 @@ with tempfile.TemporaryDirectory() as scratch:
     finally:
         if (unreadable_topic / "locked-directory").exists():
             (unreadable_topic / "locked-directory").chmod(0o755)
+
+# --- The log of removals ---
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch).resolve()
+    checkout = scratch / "checkout"
+    origin = scratch / "origin.git"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
+    git(checkout, "remote", "add", "origin", str(origin))
+    git(checkout, "push", "-u", "origin", "main")
+    managed = checkout / ".claude" / "worktrees"
+    main_commit = git(checkout, "rev-parse", "origin/main").strip()
+
+    def run_clean_logging_to(log_file):
+        environment = dict(os.environ)
+        environment[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(log_file)
+        return subprocess.run(
+            [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), "--remove"],
+            capture_output=True, text=True, check=False, env=environment)
+
+    def fields_of(line):
+        time_field, machine, event, *pairs = line.split("\t")
+        return time_field, machine, event, dict(pair.split("=", 1) for pair in pairs)
+
+    logged_wt = managed / "logged-wt"
+    git(checkout, "worktree", "add", "-b", "logged-wt-branch", str(logged_wt), "origin/main")
+    (logged_wt / "notes.txt").write_text("discarded\n", encoding="utf-8")
+    git(checkout, "branch", "orphaned-branch", "origin/main")
+    log_file = scratch / "store" / "kind" / "ned-box.txt"
+    logged = run_clean_logging_to(log_file)
+    lines = log_file.read_text(encoding="utf-8").splitlines() if log_file.is_file() else []
+    by_event = {}
+    for line in lines:
+        time_field, machine, event, fields = fields_of(line)
+        by_event.setdefault(event, []).append((time_field, machine, fields))
+    removed = by_event.get("removed-worktree", [])
+    deleted = {fields["branch"]: fields for _, _, fields in by_event.get("deleted-branch", [])}
+    check("--remove logs a removed worktree with its UTC time, machine, path, branch, head commit, "
+          "discarded-file count, repository and the process that ran it",
+          logged.returncode == 0 and not logged_wt.exists() and len(removed) == 1
+          and time.strptime(removed[0][0], "%Y-%m-%dT%H:%M:%SZ")
+          and removed[0][1] in ("ned-box", "mac")
+          and removed[0][2]["path"] == str(logged_wt)
+          and removed[0][2]["branch"] == "logged-wt-branch"
+          and removed[0][2]["head"] == main_commit
+          and removed[0][2]["discarded-files"] == "1"
+          and removed[0][2]["repo"] == str(checkout)
+          and removed[0][2]["run-by"].startswith(f"{os.getpid()} "),
+          logged.stdout + logged.stderr + "\n".join(lines))
+    check("--remove logs the branch it deleted with its worktree and the orphaned branch it "
+          "deleted, each with its commit",
+          set(deleted) == {"logged-wt-branch", "orphaned-branch"}
+          and all(fields["commit"] == main_commit for fields in deleted.values()),
+          "\n".join(lines))
+
+    unwritable_wt = managed / "unwritable-log-wt"
+    git(checkout, "worktree", "add", "-b", "unwritable-log-wt-branch", str(unwritable_wt),
+        "origin/main")
+    git(checkout, "branch", "second-orphaned-branch", "origin/main")
+    not_a_directory = scratch / "a-file"
+    not_a_directory.write_text("", encoding="utf-8")
+    unwritten = run_clean_logging_to(not_a_directory / "ned-box.txt")
+    output_lines = unwritten.stdout.splitlines()
+    check("a log line that cannot be written is printed with FAILED and its cause, and the run "
+          "still removes the worktree and deletes both branches, then exits 1",
+          unwritten.returncode == 1 and not unwritable_wt.exists()
+          and git(checkout, "branch", "--list", "unwritable-log-wt-branch",
+                  "second-orphaned-branch") == ""
+          and sum(1 for line in output_lines
+                  if ": log of removals line(s) FAILED to be written to " in line) == 2
+          and any(line.startswith("unwritable-log-wt: log of removals line(s) FAILED")
+                  and "mkdir" in line for line in output_lines)
+          and any(line.startswith("branch second-orphaned-branch: log of removals line(s) FAILED")
+                  for line in output_lines)
+          and "clean-worktrees: finished; each failure is named above" in output_lines,
+          unwritten.stdout + unwritten.stderr)
+    by_hand = [line for line in output_lines
+               if line.startswith("unwritable-log-wt: to record it, run this once: ")]
+    check("the failure names a command that writes the unwritten lines once the cause is fixed",
+          len(by_hand) == 1, unwritten.stdout)
+    if by_hand:
+        # The cause removed, the printed command must write the line where the run could not.
+        not_a_directory.unlink()
+        command = by_hand[0].split("run this once: ", 1)[1]
+        subprocess.run(["/bin/sh", "-c", command], capture_output=True, check=False)
+        repaired = not_a_directory / "ned-box.txt"
+        written = repaired.read_text(encoding="utf-8").splitlines() if repaired.is_file() else []
+        check("that command appends the very lines the run could not write",
+              [fields_of(line)[2] for line in written] == ["removed-worktree", "deleted-branch"]
+              and fields_of(written[0])[3]["path"] == str(unwritable_wt)
+              and fields_of(written[1])[3]["branch"] == "unwritable-log-wt-branch",
+              command + "\n" + "\n".join(written))
+
+    module = load_clean_worktrees_module()
+    check("a commit git cannot read is logged as unknown",
+          module.commit_of(scratch / "not-a-repository", "HEAD") == "unknown")
+    real_run = module.subprocess.run
+
+    def ps_that_cannot_start(arguments, *rest, **options):
+        if arguments[0] == "ps":
+            raise FileNotFoundError("ps")
+        return real_run(arguments, *rest, **options)
+
+    module.subprocess.run = ps_that_cannot_start
+    try:
+        unknown_caller = module.parent_process_id_and_command_line()
+    finally:
+        module.subprocess.run = real_run
+    check("a parent process whose command line ps cannot give is logged by its pid and unknown",
+          unknown_caller == f"{os.getppid()} unknown", unknown_caller)
 
 check("no run of the suite shipped into the store every run defaults to",
       not any(Path(_ship_store_for_every_run).iterdir()),
