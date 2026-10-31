@@ -36,8 +36,10 @@ POST /events answers:
   400  the body is not a JSON object, or has no event ID
   422  an unknown machine; an occurred_at or seat_id that is not a string or
        null, or a field that is not a string, a number SQLite can store, true,
-       false or null; a seat ID with no agent-seat row; or an agent-seat name
-       another agent-seat not retired holds
+       false or null, where NaN and infinity, which the body may hold as NaN,
+       Infinity or a number too large for a float, are numbers SQLite cannot
+       store; a seat ID with no agent-seat row; or an agent-seat name another
+       agent-seat not retired holds
   409  an unknown operation, or keys or fields other than the operation's; the
        caller leaves the event queued until the service knows the operation
   500  any other error, as {"error": "<its type>: <its message>"}; nothing is
@@ -56,6 +58,7 @@ Exit codes: 2 a bad invocation; otherwise the program runs until stopped.
 
 import argparse
 import json
+import math
 import os
 import sqlite3
 import sys
@@ -241,7 +244,9 @@ def parse_event(raw_body):
 def sqlite_can_store(value):
     if isinstance(value, int) and not isinstance(value, bool):
         return -2 ** 63 <= value < 2 ** 63
-    return value is None or isinstance(value, (str, float, bool))
+    if isinstance(value, float):
+        return math.isfinite(value)
+    return value is None or isinstance(value, (str, bool))
 
 
 def check_event_fits_its_operation(connection, event):
@@ -263,12 +268,17 @@ def check_event_fits_its_operation(connection, event):
     if wrong:
         raise Answer(422, {"error": f"agent-seat-database-service.py did not store event "
                                     f"{event['event_id']} ({operation}, from {event['machine']}): "
-                                    f"the value under each of these keys has a JSON type it "
-                                    f"cannot store: {', '.join(wrong)}. occurred_at and seat_id "
-                                    f"are each a string or null. Each value in the fields object "
-                                    f"is a string, an integer from -2**63 to 2**63-1, a number "
-                                    f"with a decimal point, true, false or null, never a list or "
-                                    f"an object. agent-seat-database-local-events-file-sender.py "
+                                    f"each of these holds a value it cannot store: "
+                                    f"{', '.join(wrong)}. A name fields.<name> is the field "
+                                    f"<name> inside the event's fields object. These rules give "
+                                    f"the JSON type only: occurred_at and seat_id are each a "
+                                    f"string or null, and each value in the fields object is a "
+                                    f"string, an integer from -2**63 to 2**63-1, a finite number "
+                                    f"with a decimal point, true, false or null, never NaN, "
+                                    f"Infinity, a list or an object. Only "
+                                    f"{', '.join(sorted(OPERATIONS_THAT_NAME_NO_AGENT_SEAT))} "
+                                    f"takes a null seat_id; every other operation takes a string. "
+                                    f"agent-seat-database-local-events-file-sender.py "
                                     f"keeps this answer in the event's rejected column of the "
                                     f"outbox_event table in that machine's local events file, "
                                     f"and does not send the event again. Correct the program "

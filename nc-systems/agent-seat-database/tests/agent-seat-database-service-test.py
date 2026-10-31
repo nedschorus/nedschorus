@@ -170,13 +170,21 @@ with tempfile.TemporaryDirectory() as scratch:
             ("a number too large for SQLite", event("agent-seat-created",
                                                     dict(SEAT_FIELDS, task_list_name=2 ** 63)),
              "fields.task_list_name"),
+            ("a field that is NaN", event("agent-seat-created",
+                                          dict(SEAT_FIELDS, task_list_name=float("nan"))),
+             "fields.task_list_name"),
+            ("a field that is infinity", event("agent-seat-created",
+                                               dict(SEAT_FIELDS, task_list_name=float("-inf"))),
+             "fields.task_list_name"),
             ("a seat ID that is an object", event("agent-seat-paused", {}, seat_id={"a": 1}),
              "seat_id"),
             ("an occurred_at that is a list", event("agent-seat-paused", {}, at=[1]),
              "occurred_at")):
         status, answer = request("/events", body)
         check(f"422: {name} names the value and stores nothing", status == 422
-              and f"type it cannot store: {named}." in answer["error"]
+              and f"holds a value it cannot store: {named}." in answer["error"]
+              and "fields.<name> is the field <name> inside" in answer["error"]
+              and "Only machine-booted takes a null seat_id" in answer["error"]
               and body["event_id"] in answer["error"]
               and events_stored() == before,
               (status, answer))
