@@ -4,8 +4,9 @@
 Each case starts the service on a loopback port with a database and an
 accepted-tokens file under a temporary directory, sends real HTTP requests,
 and reads the database back: tokens and 401, the generation ID and 412, the
-400, 422 and 409 answers, an event sent twice, the state each operation
-leaves, and the newest backup's mark in every answer.
+400, 422 and 409 answers, values of the wrong type, an event sent twice, the
+state each operation leaves, the newest backup's mark in every answer, and the
+500 answer to an error no check foresaw.
 
 Run: python3 nc-systems/agent-seat-database/tests/agent-seat-database-service-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -160,6 +161,40 @@ with tempfile.TemporaryDirectory() as scratch:
     status, answer = request("/events", event("agent-seat-paused", {}, seat_id="no-such-seat"))
     check("422: a seat ID with no agent-seat row", status == 422
           and "no-such-seat" in answer["error"] and events_stored() == before, (status, answer))
+    for name, body, named in (
+            ("a field that is a list", event("agent-seat-created",
+                                             dict(SEAT_FIELDS, seat_name=["x"])), "fields.seat_name"),
+            ("a field that is an object", event("agent-seat-created",
+                                                dict(SEAT_FIELDS, seat_directory={"a": 1})),
+             "fields.seat_directory"),
+            ("a number too large for SQLite", event("agent-seat-created",
+                                                    dict(SEAT_FIELDS, task_list_name=2 ** 63)),
+             "fields.task_list_name"),
+            ("a field that is NaN", event("agent-seat-created",
+                                          dict(SEAT_FIELDS, task_list_name=float("nan"))),
+             "fields.task_list_name"),
+            ("a field that is infinity", event("agent-seat-created",
+                                               dict(SEAT_FIELDS, task_list_name=float("-inf"))),
+             "fields.task_list_name"),
+            ("a seat ID that is an object", event("agent-seat-paused", {}, seat_id={"a": 1}),
+             "seat_id"),
+            ("an occurred_at that is a list", event("agent-seat-paused", {}, at=[1]),
+             "occurred_at")):
+        status, answer = request("/events", body)
+        check(f"422: {name} names the value and stores nothing", status == 422
+              and f"holds a value it cannot store: {named}." in answer["error"]
+              and "fields.<name> is the field <name> inside" in answer["error"]
+              and "Only machine-booted takes a null seat_id" in answer["error"]
+              and body["event_id"] in answer["error"]
+              and events_stored() == before,
+              (status, answer))
+    status, answer = request("/events", event("agent-seat-created",
+                                              dict(SEAT_FIELDS, task_list_name=2 ** 63 - 1)))
+    check("the largest number SQLite stores is accepted as a field",
+          status == 200 and events_stored() == before + 1, (status, answer))
+    db.execute("DELETE FROM agent_seat")
+    db.execute("DELETE FROM event")
+    db.execute("DELETE FROM sqlite_sequence")
 
     # 409
     for name, body in (
@@ -343,6 +378,19 @@ with tempfile.TemporaryDirectory() as scratch:
     sequences = [row[0] for row in db.execute("SELECT sequence FROM event ORDER BY sequence")]
     check("sequence numbers rise by one per stored event, in the order stored",
           sequences == list(range(1, len(sequences) + 1)), sequences)
+
+    # 500: an error no check foresaw is answered, and its transaction rolled back
+    def fail_to_apply(connection, applied):
+        raise RuntimeError("the state tables could not be updated")
+
+    applying, service.apply_event = service.apply_event, fail_to_apply
+    before = events_stored()
+    status, answer = request("/events", event("agent-seat-paused", {}))
+    service.apply_event = applying
+    check("500: an unforeseen error is answered with its type and message, and nothing is stored",
+          status == 500 and answer == {"error": "RuntimeError: the state tables could not be "
+                                                "updated"} and events_stored() == before,
+          (status, answer))
     server.shutdown()
 
     try:

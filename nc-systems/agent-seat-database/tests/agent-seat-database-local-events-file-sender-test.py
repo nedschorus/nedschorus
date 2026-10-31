@@ -7,7 +7,8 @@ The cases run the real service on a loopback port, and fake services that give
 one fixed answer, and read the local events file back: an event queued and
 sent by the sender it starts, the first 412 and a restore's 412, rejected rows,
 the answers that stop the sender, an unreachable service, a second sender, a
-sender lock file that cannot be opened, a missing token file, the deletion
+row queued while the holder ends its transaction, a sender lock file that
+cannot be opened, a missing token file, the deletion
 of sent rows a backup holds, and the stop report a stopped sender leaves for
 the next event's writer to print.
 
@@ -360,6 +361,28 @@ with tempfile.TemporaryDirectory() as scratch:
     code, errors = run_sender(held_file, url, token_file)
     check("once the transaction is free, the next sender sends the row",
           code == 0 and rows(held_file)[0][1] == 1, (code, errors))
+
+    # A row queued after the holder found the queue empty, while it still held the transaction:
+    # its writer's sender found the transaction taken and exited, so the holder must send it.
+    late_file = local_events_file("late")
+    first_row = queue(late_file)
+    late_rows = []
+    sending = sender.send_queued_rows
+
+    def send_then_queue_one_late_row(connection, service_url, token):
+        stopped = sending(connection, service_url, token)
+        if not late_rows:
+            late_rows.append(queue(late_file))
+        return stopped
+
+    sender.send_queued_rows = send_then_queue_one_late_row
+    try:
+        code, errors = run_sender(late_file, url, token_file)
+    finally:
+        sender.send_queued_rows = sending
+    check("a row queued while the holder ends its transaction is sent by the same holder",
+          code == 0 and [row[:2] for row in rows(late_file)]
+          == [(first_row, 1), (late_rows[0], 1)], (code, errors, rows(late_file)))
 
     broken_lock_file = local_events_file("broken_lock")
     queue(broken_lock_file)
