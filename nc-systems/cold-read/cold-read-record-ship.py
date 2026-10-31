@@ -47,7 +47,7 @@ with the design:
      judged on the inventory taken before the copy, not again in the placing
      step, for the reason NO LOCK gives below. The cold-read programs choose
      a record name free both in their checkout and in the store
-     (first_record_directory_unused_in_checkout_and_log_store_and_log_store_listing_error), so this refusal is
+     (cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error), so this refusal is
      met only when the store could not be listed when the name was chosen,
      a directory was named by hand, or a file was removed from the local
      directory after it shipped.
@@ -367,7 +367,7 @@ def citation_host_for_this_machine():
     return host
 
 
-def cold_read_record_directory_names_listed_from_log_store(host, records_path: pathlib.PurePosixPath) -> tuple:
+def log_store_listed_record_directory_names_or_listing_failure_reason(host, records_path: pathlib.PurePosixPath) -> tuple:
     """(the names of the record directories the store holds, None), or
     (None, why they could not be listed). A store not yet made holds none."""
     if host is None:
@@ -390,13 +390,13 @@ def cold_read_record_directory_names_listed_from_log_store(host, records_path: p
     return set(listed.stdout.splitlines()), None
 
 
-def first_record_directory_unused_in_checkout_and_log_store_and_log_store_listing_error(base: pathlib.Path) -> tuple:
+def cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(base: pathlib.Path) -> tuple:
     """(the first of base, base-2, base-3 ... that names no directory on disk
     nor in the log-store this machine ships to, None), or, when the store
     could not be listed, (the first free on disk, why the store could not be
     listed) for the caller to print; shipping then refuses a name another
     read holds in the store."""
-    names, unlisted = cold_read_record_directory_names_listed_from_log_store(*destination_for_this_machine())
+    names, unlisted = log_store_listed_record_directory_names_or_listing_failure_reason(*destination_for_this_machine())
     return record_names.fresh_record_directory(
         base, names_taken_in_log_store=names or set()), unlisted
 
@@ -1146,7 +1146,7 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     if triage_differs:
         differing.remove(TRIAGE_FILE_REPLACED_IN_THE_STORE)
     def rename_and_ship_instruction():
-        names, unlisted = cold_read_record_directory_names_listed_from_log_store(
+        names, unlisted = log_store_listed_record_directory_names_or_listing_failure_reason(
             host, records_path)
         # Only a name that ends in its date loses its -N here: a date-first name
         # such as 2026-10-25-item-19 may end in digits of its own.

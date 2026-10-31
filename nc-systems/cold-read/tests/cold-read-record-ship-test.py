@@ -1525,10 +1525,10 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
     (names_store / "b-2026-10-25").mkdir()
     (names_store / "not-a-record.md").write_text("x\n", encoding="utf-8")
 
-    names, unlisted = names_shipper.cold_read_record_directory_names_listed_from_log_store(None, names_store)
+    names, unlisted = names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason(None, names_store)
     check("locally, the store's names are its directories, not its files",
           names == {"a-2026-10-25", "b-2026-10-25"} and unlisted is None, f"{names} {unlisted}")
-    names, unlisted = names_shipper.cold_read_record_directory_names_listed_from_log_store(
+    names, unlisted = names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason(
         None, names_scratch / "no-store-yet")
     check("a store not yet made holds no names", names == set() and unlisted is None,
           f"{names} {unlisted}")
@@ -1537,7 +1537,7 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
         unreadable_store.mkdir()
         unreadable_store.chmod(0)
         try:
-            names, unlisted = names_shipper.cold_read_record_directory_names_listed_from_log_store(None, unreadable_store)
+            names, unlisted = names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason(None, unreadable_store)
         finally:
             unreadable_store.chmod(0o755)
         check("a local store that cannot be listed gives no names and says why",
@@ -1551,15 +1551,15 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
                                "ssh-replay"]
     names_shipper.SSH_COMMAND = ["sh", "-c", 'eval "$2"', "ssh-replay"]
     try:
-        remote_names, remote_unlisted = names_shipper.cold_read_record_directory_names_listed_from_log_store(
+        remote_names, remote_unlisted = names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason(
             "nobody@ned-box", names_store)
-        absent_names, absent_unlisted = names_shipper.cold_read_record_directory_names_listed_from_log_store(
+        absent_names, absent_unlisted = names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason(
             "nobody@ned-box", names_scratch / "no store yet")
         names_shipper.SSH_COMMAND = unreachable_ssh_command
-        failed_names, failed_unlisted = names_shipper.cold_read_record_directory_names_listed_from_log_store(
+        failed_names, failed_unlisted = names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason(
             "nobody@ned-box", names_store)
         names_shipper.SSH_COMMAND = ["sh", "-c", "kill -TERM $$", "ssh-replay"]
-        killed_names, killed_unlisted = names_shipper.cold_read_record_directory_names_listed_from_log_store(
+        killed_names, killed_unlisted = names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason(
             "nobody@ned-box", names_store)
     finally:
         names_shipper.SSH_COMMAND = real_ssh_command
@@ -1584,18 +1584,18 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
     os.environ[DESTINATION_VARIABLE] = str(names_store)
     try:
         handoff_record, handoff_unlisted = (
-            names_shipper.first_record_directory_unused_in_checkout_and_log_store_and_log_store_listing_error(
+            names_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
                 names_records / "SKILL-handoff-2026-10-25"))
         item_record, item_unlisted = (
-            names_shipper.first_record_directory_unused_in_checkout_and_log_store_and_log_store_listing_error(
+            names_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
                 names_records / "item-19-1-2026-10-25"))
-        free_record, _ = names_shipper.first_record_directory_unused_in_checkout_and_log_store_and_log_store_listing_error(
+        free_record, _ = names_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
             names_records / "c-2026-10-25")
         os.environ[DESTINATION_VARIABLE] = "nobody@ned-box:" + str(names_store)
         names_shipper.SSH_COMMAND = unreachable_ssh_command
         try:
             unlisted_record, unlisted_reason = (
-                names_shipper.first_record_directory_unused_in_checkout_and_log_store_and_log_store_listing_error(
+                names_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
                     names_records / "SKILL-handoff-2026-10-25"))
         finally:
             names_shipper.SSH_COMMAND = real_ssh_command
@@ -1660,15 +1660,15 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
 
     # The same refusal when the store's names cannot be read after its
     # inventory: the rename is free in this checkout only, and says so.
-    real_listing = names_shipper.cold_read_record_directory_names_listed_from_log_store
-    names_shipper.cold_read_record_directory_names_listed_from_log_store = (
+    real_listing = names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason
+    names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason = (
         lambda host, records_path: (None, "listing failed: injected"))
     unlisted_stdout = io.StringIO()
     try:
         with contextlib.redirect_stdout(unlisted_stdout):
             unlisted_code = names_shipper.ship_one(None, names_store, fast_read_record)
     finally:
-        names_shipper.cold_read_record_directory_names_listed_from_log_store = real_listing
+        names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason = real_listing
     check("when the store's names cannot be read, the refusal's rename is to the first -N "
           "free in this checkout, and it says the store may hold that name",
           unlisted_code == 2

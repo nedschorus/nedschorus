@@ -743,7 +743,7 @@ def fast_read_report_path_for_target(
         target, checkout_root_holding(target))
     if suggestions is not None:
         return suggestions
-    record_dir, store_unlisted = record_shipper.first_record_directory_unused_in_checkout_and_log_store_and_log_store_listing_error(
+    record_dir, store_unlisted = record_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
         RECORDS_DIR / record_directory_name_for_target(target, now))
     if store_unlisted is not None:
         print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(PROGRAM, record_dir, store_unlisted),

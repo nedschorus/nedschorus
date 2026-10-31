@@ -190,7 +190,7 @@ def build_runner_argument_parser():
 def make_record_directory_for(restater_class: str, today: str) -> pathlib.Path:
     """Create a fresh record directory for the restater."""
     # Reserve the name with mkdir: reusing a directory would let report pre-clearing erase earlier results.
-    record_dir, store_unlisted = record_shipper.first_record_directory_unused_in_checkout_and_log_store_and_log_store_listing_error(
+    record_dir, store_unlisted = record_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
         RECORDS_DIR / f"{today}-restater-judge-{restater_class}")
     if store_unlisted is not None:
         print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(

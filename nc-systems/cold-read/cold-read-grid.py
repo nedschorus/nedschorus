@@ -442,7 +442,7 @@ def earlier_full_runs_of(target: pathlib.Path) -> tuple:
 def make_record_dir(target: pathlib.Path, now: datetime.datetime) -> pathlib.Path:
     """Create and return the first record directory for this document and day
     unused both here and in the log-store."""
-    record_dir, store_unlisted = record_shipper.first_record_directory_unused_in_checkout_and_log_store_and_log_store_listing_error(
+    record_dir, store_unlisted = record_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
         RECORDS_DIR / record_directory_name_for_target(target, now))
     if store_unlisted is not None:
         print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(
