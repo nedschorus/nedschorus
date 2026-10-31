@@ -8,9 +8,10 @@ Usage:
 The round is set by merge-lane-2's latest review that requests changes, as long as every later
 review of merge-lane-2's comments on the same commit, where merge-lane-2 can add or re-post
 blockers. That commit is the frozen-head. The round's reviews are that review, then every other
-review of the frozen-head posted after merge-lane-2's review before it, whoever posted it and
-whatever its state, apart from PENDING and DISMISSED: the commissioned reviewer posts its review as
-a comment, before merge-lane-2's. The blocking findings are the round's reviews' inline comments
+review of the frozen-head, whoever posted it and whatever its state, apart from PENDING and
+DISMISSED: the commissioned reviewer posts its review as a comment, before merge-lane-2's, and
+merge-lane-2 may split its own review of one head into several changes-requested reviews. The
+round's number counts the commits merge-lane-2 has requested changes on. The blocking findings are the round's reviews' inline comments
 whose body starts with a match of BLOCKING_MARKER_PATTERN; the bodies' free text is never parsed for findings. A blocker
 re-posted with the same path, line and body counts once. A review's stated **Blocking: N** is
 checked against its own marked comments, or, when it has none, against those of the reviews after
@@ -18,7 +19,7 @@ it in that order, which then re-post its blockers.
 
 Without --check, run in the author's checkout: refuse when the pull request's head has moved past
 the frozen-head, else print the brief: the frozen-head, ADVISOR_FIX_ROUND_INSTRUCTION when the
-round is merge-lane-2's third changes-requested review and on no other, each blocking finding word for word, how to
+round's number is ADVISOR_FIX_ROUND_NUMBER and on no other, each blocking finding word for word, how to
 dispatch the fix-round subagent in a git worktree of its own and push from it, the round's rules,
 and the --check command to finish with, which the subagent runs in its own worktree.
 
@@ -177,9 +178,8 @@ def pull_request(number):
 
 
 def round_reviews(number, reviewer_login):
-    """merge-lane-2's latest changes-requested review, then every other review of the same commit
-    posted after merge-lane-2's review before it; and the round's number, which counts
-    merge-lane-2's changes-requested reviews."""
+    """merge-lane-2's latest changes-requested review, then every other review of the same commit;
+    and the round's number, which counts the commits merge-lane-2 requested changes on."""
     reviews = gh_json_lines(["api", "--paginate", f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews",
                              "--jq", ".[]"])
     own = [(position, review) for position, review in enumerate(reviews)
@@ -195,14 +195,10 @@ def round_reviews(number, reviewer_login):
         frozen_head = anchor.get("commit_id")
         if all(review.get("state") == "COMMENTED" and review.get("commit_id") == frozen_head
                for _, review in own[requested[-1] + 1:]):
-            # The commissioned reviewer posts before merge-lane-2's changes-requested review, so
-            # the round starts after merge-lane-2's previous review, which closed the round before.
-            start = own[requested[-1] - 1][0] + 1 if requested[-1] else 0
             others = [review for position, review in enumerate(reviews)
-                      if position >= start and position != anchor_position
-                      and review.get("commit_id") == frozen_head
+                      if position != anchor_position and review.get("commit_id") == frozen_head
                       and review.get("state") not in ("PENDING", "DISMISSED")]
-            return [anchor, *others], len(requested)
+            return [anchor, *others], len({own[index][1].get("commit_id") for index in requested})
     latest = own[-1][1]
     on_commit = f" on commit {latest.get('commit_id')}" if latest.get("state") == "COMMENTED" else ""
     raise Refused(f"merge-lane-2's latest review of pull request {number} ({latest.get('html_url')}) "

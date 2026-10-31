@@ -262,10 +262,11 @@ def brief_cases(root, repository, base, frozen_head):
           git(worktree, "diff", "--cached", "--name-only") == "" and git(worktree, "status", "--porcelain") == "",
           git(worktree, "status", "--porcelain", "--ignored"))
 
-    # A second changes-requested review of the same frozen-head, while the first round's worktree
-    # still has its branch checked out: the second round's step 0 must work in a worktree of its own.
+    # A second changes-requested review of the same frozen-head, while the first brief's worktree
+    # still has its branch checked out: the second brief's step 0 must work in a worktree of its own.
     code, second_out, err = run(root, repository, routes_for(
-        frozen_head, [review(commit_id=frozen_head), review(commit_id=frozen_head, review_id=12)], review_id=12))
+        frozen_head, [review(commit_id=frozen_head), review(commit_id=frozen_head, review_id=12)], review_id=12)
+        | comments_route(11, BLOCKING_COMMENTS))
     second_step_zero = next((line for line in second_out.splitlines() if line.startswith("0. ")), "")
     second_switch = second_step_zero.split(" && ", 1)[-1].split()
     check("brief: a second changes-requested review of the same frozen-head names a different local branch",
@@ -390,7 +391,8 @@ def brief_cases(root, repository, base, frozen_head):
           code == 0 and "advisor" not in out, err + out)
 
     def earlier_rounds(count):
-        return [review(commit_id=base, review_id=review_id) for review_id in range(11 - count, 11)]
+        return [review(commit_id=f"earlier-head-{review_id}", review_id=review_id)
+                for review_id in range(11 - count, 11)]
 
     code, out, err = run(root, repository, routes_for(
         frozen_head, earlier_rounds(2) + [review(commit_id=frozen_head, review_id=11)]))
@@ -414,7 +416,8 @@ def brief_cases(root, repository, base, frozen_head):
               "changes-requested review's brief ask for the advisor",
               code == 0 and "advisor" not in out, err + out)
         code, out, err = run(root, repository, routes_for(
-            frozen_head, [review(commit_id=base, review_id=9), uncounted, review(commit_id=base, review_id=10),
+            frozen_head, [review(commit_id=base, review_id=9), uncounted,
+                          review(commit_id="earlier-head-10", review_id=10),
                           review(commit_id=frozen_head, review_id=11)]))
         check(f"brief: a {uncounted_state} review of an earlier commit leaves the advisor sentence "
               "on the third changes-requested review's brief",
@@ -821,25 +824,52 @@ def commissioned_reviewer_cases(root, repository, base, frozen_head):
     check("brief: a dismissed review of the frozen-head gives no blocking finding",
           code == 0 and "Blocking findings (3)" in out and "include_subagents" not in out, err + out)
 
-    # Two rounds on the same frozen-head, each with its commissioned reviewer's comment before
-    # merge-lane-2's changes-requested review: the second round holds only its own reviews.
-    first_reviewer = review(state="COMMENTED", commit_id=frozen_head, login="mac-claude", review_id=20,
-                            body="First round.")
-    second_reviewer = review(state="COMMENTED", commit_id=frozen_head, login="mac-claude", review_id=22,
-                             body="Second round.")
-    same_head = {**routes_for(frozen_head, [first_reviewer, review(commit_id=frozen_head, review_id=21),
-                                            second_reviewer, review(commit_id=frozen_head, review_id=23)],
-                              review_id=23),
-                 **comments_route(20, [comment("first.py", "**Blocks.** the first round's finding.", comment_id=30)]),
-                 **comments_route(21, [comment("first.py", "**Blocks.** merge-lane-2's first round.", comment_id=31)]),
-                 **comments_route(22, [comment("second.py", "**Blocks.** the second round's finding.",
-                                               comment_id=32)])}
-    code, out, err = run(root, repository, same_head)
-    check("brief: a second round on the same frozen-head reads only the reviews after merge-lane-2's previous one",
-          code == 0 and "Blocking findings (3)" in out and "the second round's finding" in out
-          and "first round" not in out and f"{URL}#pullrequestreview-23 and {URL}#pullrequestreview-22" in out,
-          err + out)
     del base
+
+
+def split_review_cases(root, repository, base, frozen_head):
+    """Pull request 2131's reviews, ids, logins, states and order as GitHub returned them, bodies shortened.
+
+    merge-lane-2 requested changes on an earlier head, then on the frozen-head it posted its review
+    in two changes-requested parts, 14 s apart, after the commissioned reviewer's comment-only
+    review; each part holds one **Blocks.** comment. base stands in for the earlier head."""
+    grid = "nc-systems/cold-read/cold-read-grid.py"
+    reviews = [
+        review(review_id=5721655691, commit_id=base, body="merge-lane-2: the head test run failed again."),
+        review(state="COMMENTED", review_id=5722014373, commit_id=frozen_head, login="mac-claude",
+               body="REQUEST_CHANGES\n\nOne blocking finding: a docstring in another program is false."),
+        review(review_id=5722016079, commit_id=frozen_head,
+               body="merge-lane-2's graded review of head 68002364d.\n\n**Blocking (2, each a comment of "
+                    "this review, because the reviewer's own comment sits outside the diff):**"),
+        review(review_id=5722016646, commit_id=frozen_head,
+               body="merge-lane-2's second part of its graded review of 68002364d: blocking finding 2."),
+    ]
+    routes = {**routes_for(frozen_head, reviews, comments=[], review_id=5722014373),
+              **comments_route(5722016079, [comment(grid, "**Blocks.** At :841-843, a cell that hangs past "
+                                                          "the time limit.", line=1, comment_id=1)]),
+              **comments_route(5722016646, [comment(grid, "**Blocks.** In `scripts/sanity-check-adversarial-"
+                                                          "prompts.py`, the docstring.", line=1, comment_id=2)])}
+    code, out, err = run(root, repository, routes)
+    check("2131: the brief reads the Blocks of both changes-requested parts of merge-lane-2's review of one head",
+          code == 0 and "Blocking findings (2)" in out and "hangs past the time limit" in out
+          and "sanity-check-adversarial-prompts.py" in out, err + out)
+    check("2131: the brief names every review of the frozen-head, the latest changes-requested part first",
+          f"The round's reviews: {URL}#pullrequestreview-5722016646 and {URL}#pullrequestreview-5722014373 "
+          f"and {URL}#pullrequestreview-5722016079\n" in out, out)
+    check("2131: two changes-requested reviews of one head are one round, so the second head's brief "
+          "does not ask for the advisor", code == 0 and "advisor" not in out, out)
+    code, out, err = run(root, repository, routes, "--check", "--answers", answers_file(root, GOOD_ANSWERS))
+    check("2131: the check takes answers to both parts' Blocks", code == 0 and "2 findings answered" in out,
+          err + out)
+    code, out, err = run(root, repository, routes, "--check", "--answers",
+                         answers_file(root, "1. Fixed the time limit.\n"))
+    check("2131: the check refuses an answers file with no entry for the first part's Block",
+          code == 1 and "no entry for finding 2" in err, err)
+    third_head = dict(routes, **{REVIEWS: {"stdout": lines(
+        [review(review_id=5721600000, commit_id="earlier-head-5721600000"), *reviews])}})
+    code, out, err = run(root, repository, third_head)
+    check("2131: a review split in two on the third head reviewed asks for the advisor once",
+          code == 0 and out.count(ADVISOR_SENTENCE) == 1, err + out)
 
 
 def gh_timeout_case():
@@ -866,5 +896,6 @@ gh_timeout_case()
 case("brief", brief_cases)
 case("check", check_cases)
 case("commissioned reviewer", commissioned_reviewer_cases)
+case("split review", split_review_cases)
 print(f"{'FAILED' if failures else 'PASSED'}: {len(failures)} failed")
 sys.exit(1 if failures else 0)
