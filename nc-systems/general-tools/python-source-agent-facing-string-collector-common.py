@@ -16,10 +16,13 @@ binding below may be, or a name assigned a string once at module level; and the 
 whose source holds the text __doc__ anywhere, comments and strings included,
 since argparse prints __doc__ for --help. A string written in a function's return statement is a message too when a
 call of that function, by its bare name, reaches one of the forms above the way a local name
-may, below, as print(stopped_line(...)) does; a string that function's returned call carries
-in turn follows the same way. The function is matched by its name alone, so every function of
-that name in the file is followed. A dict literal's keys and a subscript's index are not text,
-so in raise Answer(400, {"error": text}) only text is a message. A message built with + is one message,
+may, below, as print(stopped_line(...)) does, or is carried by the binding of a local name that is
+followed, as in text = f"failed: {detail()}" then print(text); a string that function's returned
+call carries in turn follows the same way. The function is matched by its name alone, so every function of
+that name in the file is followed. A dict literal's keys, a subscript's index and a comprehension's
+if-conditions are not text, so in raise Answer(400, {"error": text}) only text is a message; nor is
+a name a comprehension binds as its target, so " ".join(note for note in items) carries items, not
+a local note. A message built with + is one message,
 its literal pieces joined and each other operand shown as {source}; an f-string
 field in the chain keeps its conversion and format spec, {x!r} and {x:.1f}, as ast.unparse writes
 the field of a standalone f-string. Each entry also holds literal_text, the message's literal
@@ -43,12 +46,14 @@ other call, or inside a list or tuple that is returned, is not followed.
 Where a followed name may be bound: in the function that holds the form. A function nested in
 it follows only its own local names, never the outer function's, and names bound at module level
 are not followed. A lambda or a class body nested in a function follows that function's local
-names, with two exceptions: a lambda's parameter hides the function's local of the same name
-inside the lambda, and a name the class body assigns hides the function's local of the same name
+names, with two exceptions: a lambda's parameter, or a name it binds with :=, hides the function's
+local of the same name inside the lambda, and a name the class body binds, by assignment, import,
+except ... as or a match capture, hides the function's local of the same name
 everywhere in the class body, lambdas nested in it included. So when the class body assigns
 `text`, a lambda in the class does not follow the function's local `text`, though Python's own
-scoping would let it. A function's or lambda's defaults and decorators, and a
-class's decorators, bases and keywords, are read in the scope the definition stands in.
+scoping would let it. A function's or lambda's defaults and decorators, a
+class's decorators, bases and keywords, and a type parameter's bound and default, are read in the
+scope the definition stands in.
 
 A message built any other way is not found.
 
@@ -138,18 +143,29 @@ def string_nodes_without_f_string_parts(expression):
         yield expression
     elif isinstance(expression, ast.Constant) and isinstance(expression.value, str):
         yield expression
-    elif isinstance(expression, ast.IfExp):
-        # The condition's strings are compared, not shown.
-        yield from string_nodes_without_f_string_parts(expression.body)
-        yield from string_nodes_without_f_string_parts(expression.orelse)
-    elif isinstance(expression, ast.Dict):
-        for value in expression.values:
-            yield from string_nodes_without_f_string_parts(value)
-    elif isinstance(expression, ast.Subscript):
-        yield from string_nodes_without_f_string_parts(expression.value)
     else:
-        for child in ast.iter_child_nodes(expression):
+        for child in text_carrying_children(expression):
             yield from string_nodes_without_f_string_parts(child)
+
+
+COMPREHENSION_TYPES = (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)
+
+
+def text_carrying_children(expression):
+    """The child nodes whose text the expression's value may carry: a conditional expression's
+    branches, not its condition; a dict literal's values, not its keys; a subscript's value, not
+    its index; a comprehension's element, or a dict comprehension's value, and the iterables it
+    loops over, not its targets or if-conditions; and every child of any other node."""
+    if isinstance(expression, ast.IfExp):
+        return [expression.body, expression.orelse]
+    if isinstance(expression, ast.Dict):
+        return [value for value in expression.values if value is not None]
+    if isinstance(expression, ast.Subscript):
+        return [expression.value]
+    if isinstance(expression, COMPREHENSION_TYPES):
+        element = expression.value if isinstance(expression, ast.DictComp) else expression.elt
+        return [element, *(generator.iter for generator in expression.generators)]
+    return list(ast.iter_child_nodes(expression))
 
 
 def text_of_string_node(node):
@@ -202,8 +218,8 @@ def printed_arguments(call, helper_printers, receiver_names=()):
 
 def calls_and_parameters_they_see(nodes, parameters):
     """Each call among the nodes, with the parameters a name in it still refers to: inside a
-    nested lambda its own parameters hide them, inside a nested function its parameters and the
-    names its body binds, and inside a nested class body the names that body binds, in the whole
+    nested lambda its own parameters and the names it binds with := hide them, inside a nested
+    function its parameters and the names its body binds, as scope_assigned_names says, and inside a nested class body the names that body binds, in the whole
     class, functions and lambdas nested in it included, though Python skips class scope for those.
     A nested definition's defaults, decorators and bases see the parameters as its enclosing scope
     does."""
@@ -211,7 +227,7 @@ def calls_and_parameters_they_see(nodes, parameters):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
             yield from calls_and_parameters_they_see(definition_time_expressions(node), parameters)
             if isinstance(node, ast.Lambda):
-                hidden = function_parameter_names(node)
+                hidden = function_parameter_names(node) | scope_assigned_names(node)
             elif isinstance(node, ast.ClassDef):
                 hidden = scope_assigned_names(node)
             else:
@@ -316,7 +332,8 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
         outer = self.enclosing_local_string_bindings[-1] if self.enclosing_local_string_bindings else {}
         if isinstance(node, ast.Lambda):
             parameters = function_parameter_names(node)
-            bindings = {name: values for name, values in outer.items() if name not in parameters}
+            hidden = parameters | scope_assigned_names(node)
+            bindings = {name: values for name, values in outer.items() if name not in hidden}
         elif isinstance(node, ast.ClassDef):
             parameters = set()
             assigned = scope_assigned_names(node)
@@ -360,6 +377,7 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
             for value in bindings[name]:
                 self.collect_expression_strings(value, f"{name} =",
                                                 "prompt" if reached_as_prompt else "message")
+                self.function_names_called_for_text.update(function_names_called_for_text(value))
                 pending.extend((used, reached_as_prompt) for used in names_carried_as_text(value))
 
     def collect_sink_expression(self, expression, label):
@@ -459,19 +477,24 @@ def is_join_on_string_literal(expression):
 
 
 def names_carried_as_text(expression):
-    """The names whose text the expression's value carries: those outside a call, those in the
-    arguments of a string literal's join, and of a conditional expression, those in its branches,
-    its condition left out."""
+    """The names whose text the expression's value carries: those outside a call and those in the
+    arguments of a string literal's join, in the children text_carrying_children names. A name a
+    comprehension binds as its target is the comprehension's own, so it is left out there."""
     if isinstance(expression, ast.Name):
         yield expression.id
-    elif isinstance(expression, ast.IfExp):
-        yield from names_carried_as_text(expression.body)
-        yield from names_carried_as_text(expression.orelse)
     elif is_join_on_string_literal(expression):
         for argument in expression.args:
             yield from names_carried_as_text(argument)
+    elif isinstance(expression, COMPREHENSION_TYPES):
+        bound = set()
+        # The first iterable is evaluated outside the comprehension, before any target is bound.
+        for generator in expression.generators:
+            yield from (name for name in names_carried_as_text(generator.iter) if name not in bound)
+            bound |= {node.id for node in ast.walk(generator.target) if isinstance(node, ast.Name)}
+        element = expression.value if isinstance(expression, ast.DictComp) else expression.elt
+        yield from (name for name in names_carried_as_text(element) if name not in bound)
     elif not isinstance(expression, ast.Call):
-        for child in ast.iter_child_nodes(expression):
+        for child in text_carrying_children(expression):
             yield from names_carried_as_text(child)
 
 
@@ -484,21 +507,22 @@ def function_names_called_for_text(expression):
         elif is_join_on_string_literal(expression):
             for argument in expression.args:
                 yield from function_names_called_for_text(argument)
-    elif isinstance(expression, ast.IfExp):
-        yield from function_names_called_for_text(expression.body)
-        yield from function_names_called_for_text(expression.orelse)
     else:
-        for child in ast.iter_child_nodes(expression):
+        for child in text_carrying_children(expression):
             yield from function_names_called_for_text(child)
 
 
 def definition_time_expressions(definition):
     """The expressions a function, lambda or class definition evaluates in the scope it stands
     in: decorators, parameter defaults and annotations, the return annotation, and a class's
-    bases and keywords."""
+    bases and keywords, and a type parameter's bound and default, as in class Holder[T: bound]."""
+    type_parameter_expressions = [expression for parameter in getattr(definition, "type_params", [])
+                                  for expression in (getattr(parameter, "bound", None),
+                                                     getattr(parameter, "default_value", None))
+                                  if expression is not None]
     if isinstance(definition, ast.ClassDef):
         return [*definition.decorator_list, *definition.bases,
-                *(keyword.value for keyword in definition.keywords)]
+                *(keyword.value for keyword in definition.keywords), *type_parameter_expressions]
     arguments = definition.args
     expressions = [*arguments.defaults, *(default for default in arguments.kw_defaults if default is not None)]
     if isinstance(definition, ast.Lambda):
@@ -506,22 +530,43 @@ def definition_time_expressions(definition):
     annotations = [argument.annotation for argument in
                    [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs,
                     arguments.vararg, arguments.kwarg] if argument is not None]
-    return [*definition.decorator_list, *expressions,
+    return [*definition.decorator_list, *expressions, *type_parameter_expressions,
             *(annotation for annotation in [*annotations, definition.returns] if annotation is not None)]
 
 
 def scope_assigned_names(scope):
-    """The names a function's or class's own body binds: names it stores to, and the functions
-    and classes it defines."""
-    names = {node.id for node in nodes_in_own_scope(scope)
-             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)}
-    return names | {definition.name for definition in scope_direct_definitions(scope)}
+    """The names a function's, lambda's or class's own body binds: names it stores to, outside a
+    comprehension's target, which is the comprehension's own; names it imports, catches with
+    except ... as, or captures in a match pattern; and the functions and classes it defines. A
+    name it declares nonlocal is left out, since it binds the enclosing function's name."""
+    nodes = list(nodes_in_own_scope(scope))
+    comprehension_targets = {id(name) for node in nodes if isinstance(node, ast.comprehension)
+                             for name in ast.walk(node.target)}
+    names = set()
+    nonlocal_names = set()
+    for node in nodes:
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and id(node) not in comprehension_targets:
+            names.add(node.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            names.update(alias.asname or alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
+            names.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            names.add(node.rest)
+        elif isinstance(node, ast.Nonlocal):
+            nonlocal_names.update(node.names)
+    return (names | {definition.name for definition in scope_direct_definitions(scope)}) - nonlocal_names
+
+
+def scope_body_nodes(scope):
+    """A function's or class's body statements, or a lambda's body expression, as a list."""
+    return [scope.body] if isinstance(scope, ast.Lambda) else list(scope.body)
 
 
 def scope_direct_definitions(scope):
     """The functions and classes defined in the scope's own body, not inside a nested one."""
     found = []
-    pending = list(scope.body)
+    pending = scope_body_nodes(scope)
     while pending:
         node = pending.pop()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -534,9 +579,9 @@ def scope_direct_definitions(scope):
 
 
 def nodes_in_own_scope(function):
-    """The nodes of the function's body, leaving out the bodies of the functions, lambdas and
-    classes defined inside it, which have names of their own."""
-    pending = list(function.body)
+    """The nodes of the function's, lambda's or class's body, leaving out the bodies of the
+    functions, lambdas and classes defined inside it, which have names of their own."""
+    pending = scope_body_nodes(function)
     while pending:
         node = pending.pop()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
