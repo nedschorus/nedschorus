@@ -38,13 +38,16 @@ with the design:
      refused the same way, before anything is copied: a record directory only
      gains files, so that store record is another read's, and adding this
      directory's files to it would file two reads under one name. Its one
-     line gives the `mv` to the first name, counted from the record's date,
-     free in the checkout and in the store, and the command that ships the
-     renamed directory. This is
+     line gives the `mv` to the first name free in the checkout and in the
+     store, and the command that ships the renamed directory. For a name
+     that ends in its date the -N is counted from the date, so a second
+     rename gives -3, not -2-2; any other name, such as a date-first
+     sanity-check record, keeps its whole name and gains the -N, because a
+     date-first name may end in digits of its own. This is
      judged on the inventory taken before the copy, not again in the placing
      step, for the reason NO LOCK gives below. The cold-read programs choose
      a record name free both in their checkout and in the store
-     (first_record_directory_unused_in_checkout_and_log_store_and_log_store_listing_error), so this refusal is
+     (cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error), so this refusal is
      met only when the store could not be listed when the name was chosen,
      a directory was named by hand, or a file was removed from the local
      directory after it shipped.
@@ -364,7 +367,7 @@ def citation_host_for_this_machine():
     return host
 
 
-def cold_read_record_directory_names_listed_from_log_store(host, records_path: pathlib.PurePosixPath) -> tuple:
+def log_store_listed_record_directory_names_or_listing_failure_reason(host, records_path: pathlib.PurePosixPath) -> tuple:
     """(the names of the record directories the store holds, None), or
     (None, why they could not be listed). A store not yet made holds none."""
     if host is None:
@@ -387,13 +390,13 @@ def cold_read_record_directory_names_listed_from_log_store(host, records_path: p
     return set(listed.stdout.splitlines()), None
 
 
-def first_record_directory_unused_in_checkout_and_log_store_and_log_store_listing_error(base: pathlib.Path) -> tuple:
+def cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(base: pathlib.Path) -> tuple:
     """(the first of base, base-2, base-3 ... that names no directory on disk
     nor in the log-store this machine ships to, None), or, when the store
     could not be listed, (the first free on disk, why the store could not be
     listed) for the caller to print; shipping then refuses a name another
     read holds in the store."""
-    names, unlisted = cold_read_record_directory_names_listed_from_log_store(*destination_for_this_machine())
+    names, unlisted = log_store_listed_record_directory_names_or_listing_failure_reason(*destination_for_this_machine())
     return record_names.fresh_record_directory(
         base, names_taken_in_log_store=names or set()), unlisted
 
@@ -1143,9 +1146,10 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     if triage_differs:
         differing.remove(TRIAGE_FILE_REPLACED_IN_THE_STORE)
     def rename_and_ship_instruction():
-        names, unlisted = cold_read_record_directory_names_listed_from_log_store(
+        names, unlisted = log_store_listed_record_directory_names_or_listing_failure_reason(
             host, records_path)
-        # The -N is counted from the date, so a second rename does not stack suffixes.
+        # Only a name that ends in its date loses its -N here: a date-first name
+        # such as 2026-10-25-item-19 may end in digits of its own.
         base = record_dir.with_name(re.sub(
             rf"({record_names.RECORD_DATE_PATTERN})-\d+$", r"\1", name))
         free = record_names.fresh_record_directory(
@@ -1156,7 +1160,7 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         return (f"Rename this directory with "
                 f"`mv {shlex.quote(str(record_dir))} {shlex.quote(str(free))}`, a name "
                 f"free {free_where}, then ship the renamed directory with "
-                f"`{sys.argv[0]} {shlex.quote(str(free))}`.")
+                f"`{shlex.join([sys.argv[0], str(free)])}`.")
 
     def refuse(differing_files):
         # The loop only gathers; the one print comes after it, so a

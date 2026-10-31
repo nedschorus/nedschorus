@@ -1460,7 +1460,7 @@ def fresh_record_dir(target_stem: str) -> pathlib.Path:
     cannot be listed, the name is checked against this checkout alone and a
     warning on stderr says so."""
     base = RECORDS_ROOT / f"{datetime.date.today().isoformat()}-{target_stem}"
-    names_in_store, unlisted = record_ship.shipper.cold_read_record_directory_names_listed_from_log_store(
+    names_in_store, unlisted = record_ship.shipper.log_store_listed_record_directory_names_or_listing_failure_reason(
         *record_ship.destination_for_this_machine())
     names_in_store = names_in_store or set()
     counter = 1
