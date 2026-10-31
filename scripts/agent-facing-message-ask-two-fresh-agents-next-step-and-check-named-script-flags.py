@@ -72,7 +72,7 @@ Do not carry anything out. Change no file except the one named below.
 Write to {REPORT_PATH} exactly what you would do next: the exact commands or tool calls, in order, and any message you would send to the user or to another agent-seat, quoted. Write nothing else.
 """
 
-SCRIPT_PATH_PATTERN = re.compile(r"(?<![\w./~-])(?:~?/)?(?:[\w.-]+/)*[\w-][\w.-]*\.(?:py|sh)(?![\w-])")
+SCRIPT_PATH_PATTERN = re.compile(r"(?<![\w./~-])(?:~?/)?(?:[\w.-]+/)*[\w-][\w.-]*\.(?:py|sh)(?!\.?[\w-])")
 FLAG_PATTERN = re.compile(r"(?<![\w-])--[A-Za-z][\w-]*")
 FLAG_SPAN_END_PATTERN = re.compile(r"[`;|&]")
 
