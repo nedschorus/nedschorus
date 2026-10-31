@@ -131,9 +131,16 @@ shipper). So the files are copied into a staging directory in walk/
 place by the record shipper's two steps: an add-only file by hard link, which
 is never made over an existing file (link_staged_files_never_over_existing),
 and a replaced file by rename, the store's digest of what it displaces read
-in the same step (replace_with_staged_files). A walk text the walk only added to is renamed
-in only while the store still holds the copy it was tested against and no newer
-revised copy has been added. The
+in the same step (replace_with_staged_files). For a walk text the walk only
+added to, that step makes two checks in the one shell that renames, just
+before the rename, and renames only when both hold: the store's copy still has
+the sha256 the APPENDED TO test was made against, and the revised copy the
+next shipment would add, <name>-revised-<n+1>.md with n the highest the
+listing at the start of this run found (<name>-revised-1.md when it found
+none), does not exist. Copies are numbered one after another, so that file's
+absence shows no newer revised copy was added (PlannedWalkFileReplacement
+says how the two are passed). When either check fails, the walk text is not
+renamed and the store's copy stays as it was. The
 outcome is judged on what the store holds afterwards: an add-only file
 holding another shipment's bytes is REFUSED by name, a walk text changed in
 the store meanwhile is REFUSED by name, a minutes or dispositions file another
@@ -141,7 +148,11 @@ shipment landed first is replaced and its digest announced as any
 replacement is, a walk text whose latest copy another shipment followed with
 a newer revised copy is REFUSED by name, and a file that does not hold this run's bytes afterwards --
 another shipment's rename came after this one's, or the file is missing --
-makes the line FAILED, exit 1. The replace step takes no lock: a walk's
+makes the line FAILED, exit 1. A walk text REFUSED either way was never
+renamed in: the REFUSED line names the store's copy this run tested,
+<name>.md or its highest-numbered revised copy, and for the second check also
+the revised copy that overtook it. As for any REFUSED file (ADD-ONLY above),
+the run's other files are still placed under their own rules. The replace step takes no lock: a walk's
 files are shipped by the seat that runs the walk, one shipment after
 another. A read-back cannot see a rename that runs after it, so instead the
 replace step renames nothing while another staging directory for the same

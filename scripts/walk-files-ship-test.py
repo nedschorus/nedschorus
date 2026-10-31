@@ -1266,7 +1266,9 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
     # The same, with an add-only file refused: 1 wins over 2.
     walks, store, destination = left_walk_and_store("refused-too")
     first = ship_left(walks, destination, removal=real_removal)
-    (walks / f"{LEFT_WALK}.md").write_text("# walk, rewritten\n", encoding="utf-8")
+    # The draft, not the walk text: a rewritten walk text ships as a revised
+    # copy, and placing that copy removes the staging directory itself.
+    (walks / f"{LEFT_WALK}-draft.md").write_text("# draft, rewritten\n", encoding="utf-8")
     (walks / f"{LEFT_WALK}-minutes.md").write_text("# minutes\n\nItem 2 ruled.\n",
                                                     encoding="utf-8")
     code, out, err = ship_left(walks, destination)
@@ -1274,7 +1276,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
           "is FAILED, exit 1, and lists the refused file after it",
           first[0] == 0 and code == 1 and out.startswith(f"FAILED: {LEFT_WALK} — This run's")
           and one_line(out) and names_the_directory_and_its_deletion(out, store)
-          and out.index("staging directory") < out.index(f"Refused, add-only: {LEFT_WALK}.md")
+          and out.index("staging directory") < out.index(f"Refused, add-only: {LEFT_WALK}-draft.md")
           and out.rstrip().endswith(f"minutes at {store}/{LEFT_WALK}-minutes.md"),
           f"exit {code}: {out}{err}")
 
