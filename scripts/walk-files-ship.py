@@ -579,10 +579,9 @@ def staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_
             f"of its own; delete it with `{command}`.")
 
 
-def stopped_shipment_failed_line_with_rerun_command(copy_host, name: str,
-                                                    directory: pathlib.Path,
-                                                    staging_dir, what_failed: str,
-                                                    why: typing.Optional[str]) -> str:
+def walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
+        copy_host, name: str, directory: pathlib.Path, staging_dir,
+        what_failed: str, why: typing.Optional[str]) -> str:
     """The FAILED line of a copy or placing step that failed: it ends with the
     command that reruns this shipment, after the deletion of this run's
     staging directory when that could not be removed, since the rerun's
@@ -737,7 +736,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
             reason = ("ned-box unreachable"
                       if copied.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED
                       else f"rsync exit {copied.returncode}")
-            print(stopped_shipment_failed_line_with_rerun_command(
+            print(walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
                 destination.copy_host, name, directory, staging_dir,
                 f"{reason} during the copy", why))
             sys.stderr.write(copied.stderr)
@@ -762,7 +761,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                 why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
                 reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
                     destination.copy_host, renamed)
-                print(stopped_shipment_failed_line_with_rerun_command(
+                print(walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
                     destination.copy_host, name, directory, staging_dir,
                     f"{reason} while putting the copied files in place", why))
                 sys.stderr.write(renamed.stderr)
@@ -802,7 +801,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                 why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
                 reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
                     destination.copy_host, placed)
-                print(stopped_shipment_failed_line_with_rerun_command(
+                print(walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
                     destination.copy_host, name, directory, staging_dir,
                     f"{reason} while putting the copied files in place", why))
                 sys.stderr.write(placed.stderr)
