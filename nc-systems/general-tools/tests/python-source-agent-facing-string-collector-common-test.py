@@ -184,6 +184,8 @@ KINDS = (
      ["prompt", "prompt"]),
     ("a local printed twice, which stays a message",
      'def main():\n    text = "Twice."\n    print(text)\n    print(text)\n', ["message"]),
+    ("a local returned through a string literal's join from a function whose name holds prompt",
+     'def build_prompt():\n    note = "Read the transcript."\n    return "\\n".join([note])\n', ["prompt"]),
     ("a string printed directly in a function whose name holds prompt",
      'def prompt_failure():\n    print("the prompt could not be built")\n', ["message"]),
 )
@@ -229,6 +231,18 @@ LOCAL_NAME_FORMS = (
     ("a local printed after a nested function's definition",
      'def outer():\n    text = "outer text"\n    def inner():\n        pass\n    print(text)\n',
      [("outer text", "text = in outer()")]),
+    ("a local returned through a string literal's join",
+     'def build_prompt():\n    note = "Read the transcript."\n    return "\\n".join([note])\n',
+     [("Read the transcript.", "note = in build_prompt()")]),
+    ("a local printed through a string literal's join",
+     'def main():\n    note = "Read the transcript."\n    print(" ".join([note]))\n',
+     [(" ", "print in main()"), ("Read the transcript.", "note = in main()")]),
+    ("a local in a + chain as a hook output value",
+     'def main():\n    note = "Read the transcript."\n    return {"additionalContext": "Instructions: " + note}\n',
+     [("Instructions: {note}", '"additionalContext" value in main()'), ("Read the transcript.", "note = in main()")]),
+    ("a printed conditional's branches, its condition left out",
+     'def main(mode):\n    state = "internal data"\n    print("Resume" if state == "known" else "Stop")\n',
+     [("Resume", "print in main()"), ("Stop", "print in main()")]),
 )
 for case_name, source, expected in LOCAL_NAME_FORMS:
     found = [(entry["text"], entry["label"]) for entry in entries(source)]
@@ -250,6 +264,16 @@ LOCAL_NAME_FORMS_NOT_RECOGNIZED = (
      'def outer():\n    text = "outer text"\n    def inner():\n        print(text)\n    inner()\n'),
     ("a local of a nested function, when the enclosing function prints its own name of that spelling",
      'def outer(text):\n    def inner():\n        text = "inner text"\n        store(text)\n    print(text)\n'),
+    ("a local of an enclosing function, when a lambda prints its own parameter of that spelling",
+     'def main():\n    prompt = "unused"\n    callback = lambda prompt: print(prompt)\n'),
+    ("a local of an enclosing function printed by a lambda nested in it",
+     'def main():\n    text = "outer text"\n    callback = lambda: print(text)\n'),
+    ("a local of an enclosing function printed in the body of a class nested in it",
+     'def main():\n    text = "outer text"\n    class Holder:\n        text = 3\n        print(text)\n'),
+    ("a string bound in a class body and printed there, as at module level",
+     'def main():\n    class Holder:\n        text = "class text"\n        print(text)\n'),
+    ("a local in a returned conditional's condition",
+     'def build_prompt():\n    state = "internal data"\n    return "Resume" if state else "Stop"\n'),
     ("an empty local string that is printed", 'def main():\n    text = ""\n    print(text)\n'),
     ("a local string returned in a tuple", 'def main():\n    text = "tuple text"\n    return text, 1\n'),
     ("a local string returned only when a condition holds, as a name",
@@ -312,6 +336,8 @@ HELPER_PRINTER_FORMS_NOT_RECOGNIZED = (
     ("a string passed to a function whose parameter hides a helper printer's name",
      'def say(text):\n    print(text)\ndef route(say, payload):\n    say(payload)\n'
      'route(lambda p: None, {"key": "value"})\n'),
+    ("a string passed to a lambda's parameter that hides a helper printer's name",
+     SAY + 'route = lambda say: say(sys.stderr, "hidden text")\n'),
     ("a print keyword that names where to print, not what",
      'def show(text, out):\n    print(text, file=out)\nshow(None, out="file text")\n'),
 )

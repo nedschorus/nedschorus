@@ -11,8 +11,8 @@ keyword of that parameter; a string in a raise statement; a string
 assigned to a name ending in one of AGENT_STRING_NAME_SUFFIXES, or in one of
 them followed by S; the value, in a dict literal, of one of
 AGENT_FACING_HOOK_OUTPUT_KEYS, the keys through which a Claude Code hook's JSON
-output reaches the agent, when that value is a string, an f-string or a name
-assigned a string once at module level; and the module docstring of a file
+output reaches the agent, when that value is a string-building expression, as a local name's
+binding below may be, or a name assigned a string once at module level; and the module docstring of a file
 whose source holds the text __doc__ anywhere, comments and strings included,
 since argparse prints __doc__ for --help. A message built with + is one message,
 its literal pieces joined and each other operand shown as {source}; an f-string
@@ -25,10 +25,11 @@ non-empty string literal, an f-string, a + chain holding a string literal, a str
 and the name reaches one of the forms above, or a return statement that returns the name or
 a string built from it, directly or through another such local name; each binding is then
 an entry at its own lines, labelled with the name, and only the binding's string-building
-branches are read. The returned name is listed whatever its caller does with it, since the
+branches are read. A conditional expression's condition is not read, in a binding or at a
+form, so its strings and names are not text. The returned name is listed whatever its caller does with it, since the
 caller is not read. A local name is not followed when it reaches the form through any call
-but a string literal's join or the exception a raise statement builds, inside a list or tuple that is returned, from a function nested
-inside its own, or at module level. A message built any other way is not found.
+but a string literal's join or the exception a raise statement builds, inside a list or tuple that is returned, from a function,
+lambda or class body nested inside its own, or at module level. A message built any other way is not found.
 
 An entry's kind is "prompt", text a program hands an agent as its instructions, when it was
 found by following local names and reached the form through a local name containing
@@ -116,6 +117,10 @@ def string_nodes_without_f_string_parts(expression):
         yield expression
     elif isinstance(expression, ast.Constant) and isinstance(expression.value, str):
         yield expression
+    elif isinstance(expression, ast.IfExp):
+        # The condition's strings are compared, not shown.
+        yield from string_nodes_without_f_string_parts(expression.body)
+        yield from string_nodes_without_f_string_parts(expression.orelse)
     else:
         for child in ast.iter_child_nodes(expression):
             yield from string_nodes_without_f_string_parts(child)
@@ -262,26 +267,35 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
         self.generic_visit(node)
         self.enclosing_names.pop()
 
-    def visit_function_definition(self, node):
-        self.enclosing_parameter_names.append(function_parameter_names(node))
-        self.enclosing_local_string_bindings.append(local_string_bindings(node))
-        self.visit_enclosing_definition(node)
+    def visit_scope(self, node):
+        """Visit a function, lambda or class body with its own local names, so it follows none of
+        its enclosing function's; its own parameters hide a helper printer's name, as the
+        enclosing function's still do."""
+        is_function = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        self.enclosing_parameter_names.append(
+            set() if isinstance(node, ast.ClassDef) else function_parameter_names(node))
+        self.enclosing_local_string_bindings.append(local_string_bindings(node) if is_function else {})
+        if isinstance(node, ast.Lambda):
+            self.generic_visit(node)
+        else:
+            self.visit_enclosing_definition(node)
         self.enclosing_local_string_bindings.pop()
         self.enclosing_parameter_names.pop()
 
-    visit_FunctionDef = visit_function_definition
-    visit_AsyncFunctionDef = visit_function_definition
-    visit_ClassDef = visit_enclosing_definition
+    visit_FunctionDef = visit_scope
+    visit_AsyncFunctionDef = visit_scope
+    visit_Lambda = visit_scope
+    visit_ClassDef = visit_scope
 
     def collect_local_strings_reaching(self, expression, is_prompt=False):
         """Collect, at its own lines, each string bound to a local name of the innermost
-        function that the expression uses outside a call, and through those strings each
-        local they use in turn. A string is a prompt when is_prompt is set or it reaches
-        the expression through a name containing "prompt"."""
+        function whose text the expression carries, as names_carried_as_text says, and through
+        those strings each local they carry in turn. A string is a prompt when is_prompt is set
+        or it reaches the expression through a name containing "prompt"."""
         if expression is None or not self.enclosing_local_string_bindings:
             return
         bindings = self.enclosing_local_string_bindings[-1]
-        pending = [(name, is_prompt) for name in names_outside_calls(expression)]
+        pending = [(name, is_prompt) for name in names_carried_as_text(expression)]
         followed = set()
         while pending:
             name, reached_as_prompt = pending.pop()
@@ -292,7 +306,7 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
             for value in bindings[name]:
                 self.collect_expression_strings(value, f"{name} =",
                                                 "prompt" if reached_as_prompt else "message")
-                pending.extend((used, reached_as_prompt) for used in names_in_string_building_part(value))
+                pending.extend((used, reached_as_prompt) for used in names_carried_as_text(value))
 
     def collect_sink_expression(self, expression, label):
         self.collect_expression_strings(expression, label)
@@ -340,7 +354,7 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
                 elif value.id in self.module_string_values and not variable_name_has_agent_facing_message_suffix(value.id):
                     self.collect_expression_strings(self.module_string_values[value.id],
                                                     f"{label} {value.id} =")
-            elif is_string_expression(value):
+            elif string_building_parts(value):
                 self.collect_sink_expression(value, label)
         self.generic_visit(node)
 
@@ -383,11 +397,21 @@ def is_join_on_string_literal(expression):
             and expression.func.attr == "join" and is_string_literal_node(expression.func.value))
 
 
-def names_in_string_building_part(part):
-    """The names the part uses outside a call, and for a join, the names in its argument."""
-    if is_join_on_string_literal(part):
-        return [name for argument in part.args for name in names_outside_calls(argument)]
-    return list(names_outside_calls(part))
+def names_carried_as_text(expression):
+    """The names whose text the expression's value carries: those outside a call, those in the
+    arguments of a string literal's join, and of a conditional expression, those in its branches,
+    its condition left out."""
+    if isinstance(expression, ast.Name):
+        yield expression.id
+    elif isinstance(expression, ast.IfExp):
+        yield from names_carried_as_text(expression.body)
+        yield from names_carried_as_text(expression.orelse)
+    elif is_join_on_string_literal(expression):
+        for argument in expression.args:
+            yield from names_carried_as_text(argument)
+    elif not isinstance(expression, ast.Call):
+        for child in ast.iter_child_nodes(expression):
+            yield from names_carried_as_text(child)
 
 
 def nodes_in_own_scope(function):
