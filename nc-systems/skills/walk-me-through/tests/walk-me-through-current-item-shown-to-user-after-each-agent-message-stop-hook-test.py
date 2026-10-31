@@ -399,6 +399,47 @@ def test_a_no_decision_line_linked_to_the_waiting_sub_steps_page_names_it():
           "No decision here" not in (blocked_reason(result) or ""), blocked_reason(result))
 
 
+def test_a_no_decision_line_without_its_link_names_a_sub_step_whose_publish_failed():
+    bare = "No decision here; type N or next to continue."
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 4.1 of 9.",
+                    pages="#item_page item 4.1 of 9 publish failed: the Artifact tool timed out\n")
+    case.reply("Recorded.\n\n" + bare)
+    check_silent("a no-decision line without its link passes for a sub-step whose newest publish failed", case.run())
+    case.reply("Recorded.\n\n" + no_decision_line("https://claude.ai/artifact/p41"))
+    check_reminded("a no-decision line with a link, for a sub-step whose newest publish failed, is sent back",
+                   case.run(), "`Item 4.1 of 9`", f"end your reply with `{bare}` without a link instead")
+    published = Case()
+    published.walk_files(minutes="#item_page item 4.1 of 9 https://claude.ai/artifact/p41\n"
+                                 "#next_to_present item 4.1 of 9.")
+    published.reply("Recorded.\n\n" + bare)
+    check_reminded("a no-decision line without its link, for a sub-step that has a page, is sent back",
+                   published.run(), "`Item 4.1 of 9`")
+
+
+def test_the_closing_line_nearest_the_end_decides():
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    wrong = "https://claude.ai/artifact/SomeOtherPage"
+    case.reply(f"Recorded.\n\n{closing(2)}\n\n{closing(2, link=wrong)}")
+    check_reminded("a wrong closing line below a right one for the same item is sent back", case.run(),
+                   f"the closing line for `Item 2 of 9` links to {wrong}")
+    case.reply(f"Recorded.\n\n{closing(2, link=wrong)}\n\n{closing(2)}")
+    check_silent("a right closing line below a wrong one for the same item passes", case.run())
+
+
+def test_a_closing_line_whose_count_is_not_plain_text_is_sent_back():
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    for case_name, line in (
+            ("a closing line whose count is in bold is sent back", closing(2).replace("[Item 2 of 9", "[**Item 2 of 9**")),
+            ("a closing line whose count is a code span is sent back",
+             closing(2).replace("[Item 2 of 9", "[`Item 2 of 9`")),
+            ("a closing line whose total is in bold is sent back", closing(2).replace("of 9,", "of **9**,"))):
+        case.reply("Recorded.\n\n" + line)
+        check_reminded(case_name, case.run(), "no closing line for `Item 2 of 9` ends the reply")
+
+
 def test_the_no_decision_line_is_the_walk_skills():
     skill = (Path(__file__).resolve().parents[4] / ".claude" / "skills" / "walk-me-through" / "SKILL.md").read_text()
     check("SKILL.md ends a no-decision sub-step with the line the hook reads",

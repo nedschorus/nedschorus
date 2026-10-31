@@ -87,26 +87,23 @@ failed: <reason>`, the item has no page and its closing line no link.
 
 THE CLOSING LINES are the lines at the end of the reply, blank lines aside,
 each of which is a closing line, the last line of the reply included. A
-closing line, as the Markdown parser reads the line without its outer
-spaces, is one link that opens the line, to any target, a file: link
-included, whose text is a running count with an optional point, `Item 4 of 9`
-or `Item 4 of 9, <the point>`, also `Items 10 and 11 of 12`, then ` · ` and
-the answer hook's ANSWER_LETTERS_TEXT and nothing more. A closing line
-without its link is the same line with only the link's text: `Item 4 of 9,
-<the point> · A approve · ...`. The point is not compared with the
-walk-document, so a point written with or without escapes passes. A count
-that names no item, such as a range that runs backwards, makes no closing
-line.
+closing line, with or without its link, is what WALK_FINDER_FILE's
+approval_walk_closing_line_read reads, as that module's docstring says, with
+the answer hook's ANSWER_LETTERS_TEXT after the link: `[Item 4 of 9, <the
+point>](<page link>) · A approve · ...`, or `Item 4 of 9, <the point> · A
+approve · ...` without its link. The point is not compared with the
+walk-document, so a point written with or without escapes passes.
 
-THE REPLY PASSES when, for every item the minutes name, a closing line names
-the item with the walk's total, and its link is the item's page, or, for an
-item whose publish failed, it has no link. A count with another total, such
-as `Item 2 of 90` for item 2 of 9, names nothing.
+THE REPLY PASSES when, for every item the minutes name, the closing line
+nearest the reply's end that names the item with the walk's total links to
+the item's page, or, for an item whose publish failed, has no link. A count
+with another total, such as `Item 2 of 90` for item 2 of 9, names nothing.
 
 A WAITING SUB-STEP, an item with a dotted number such as `Item 4.1 of 9`, also
 passes when the reply holds a line that is `[No decision here; type N or next
 to continue.](<page link>)`, the line a sub-step that asks for no decision
-ends with, and its link is the sub-step's page.
+ends with, and its link is the sub-step's page; or, for a sub-step whose
+publish failed, that line without its link, as WALK_FINDER_FILE reads it.
 
 SILENT while the agent answers a Stop hook (stop_hook_active set), as the
 Stop-hook silence rule's module requires, when the agent-session is a
@@ -128,7 +125,6 @@ hook's exit 1 as a non-blocking error and still ends the turn.
 import importlib.util
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -146,7 +142,6 @@ TRANSCRIPT_READER_FILE = (walk_finder.REPOSITORY_TOP / "scripts"
 # The answer hook holds the closing line's answer letters, which its test checks against the walk-me-through skill.
 ANSWER_HOOK_FILE = (Path(__file__).resolve().parent / "walk-me-through-user-short-answer-to-approval-walk-item-"
                     "expanded-into-instructions-user-prompt-submit-hook.py")
-CLOSING_LINE_LABEL = re.compile(rf"Items?\s+({walk_finder.NUMBER_LIST})\s+of\s+(\d+)(?:,\s.*)?", re.S)
 # A record from one of these starts a turn even when Claude Code marks it isMeta.
 TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator", "task-notification")
 USER_TURN_ORIGIN = "human"
@@ -221,7 +216,9 @@ NO_DECISION_INSTRUCTIONS = (
     "`[No decision here; type N or next to continue.](<page link>)`, where <page link> is the link that "
     "ends the sub-step's line in {minutes} of the form {page_line}.",
     "If {minutes} has no such line, add it at the end of {minutes} first, with the link of the page "
-    "you published for the sub-step with the Artifact tool.")
+    "you published for the sub-step with the Artifact tool.",
+    "If the newest such line for the sub-step records that its publish failed, end your reply with "
+    "`No decision here; type N or next to continue.` without a link instead.")
 OLD_MARKER_INSTRUCTIONS = (
     "Add this line at the end of {minutes}, below every earlier marker line, and leave "
     "the old lines as they are: {new_line}",
@@ -306,39 +303,13 @@ def turn_reply_text(records):
     return "\n".join(texts)
 
 
-def closing_line_read(line, parser, letters):
-    """Return (item numbers, total, link or None) when line is a closing line, with or without its link, as the
-    module docstring says; otherwise None."""
-    line = line.strip()
-    tokens = parser.parseInline(line)[0].children
-    link = None
-    if tokens and tokens[0].type == "link_open":
-        close = next(index for index, token in enumerate(tokens) if token.type == "link_close")
-        tail = tokens[close + 1:]
-        if not (len(tail) == 1 and tail[0].type == "text" and tail[0].content == f" · {letters}"):
-            return None
-        label = "".join(token.content for token in tokens[1:close])
-        link = tokens[0].attrs.get("href")
-    elif any(token.type == "link_open" for token in tokens) or not line.endswith(f" · {letters}"):
-        return None
-    else:
-        label = line[:-len(f" · {letters}")]
-    count = CLOSING_LINE_LABEL.fullmatch(label)
-    if not count:
-        return None
-    try:
-        return walk_finder.expand_numbers(count[1]), count[2], link
-    except walk_finder.UnusableRange:
-        return None
-
-
 def ending_closing_lines(reply, parser, letters):
-    """The closing lines that end the reply, blank lines aside, as the module docstring says."""
+    """The closing lines that end the reply, blank lines aside, as the module docstring says, the last line first."""
     found = []
     for line in reversed(reply.rstrip().split("\n")):
         if not line.strip():
             continue
-        closing = closing_line_read(line, parser, letters)
+        closing = walk_finder.approval_walk_closing_line_read(line, parser, letters)
         if closing is None:
             break
         found.append(closing)
@@ -351,10 +322,11 @@ def closing_line_problems(numbers, total, closing_lines, pages, parser):
     for number in numbers:
         page = pages[number]
         expected = None if page == walk_finder.ITEM_PAGE_PUBLISH_FAILED else parser.normalizeLink(page)
+        # Nearest the reply's end first, since that is the line the user reads.
         written = [link for line_numbers, line_total, link in closing_lines
                    if number in line_numbers and line_total == total]
         values = {"number": number, "total": total, "page": page}
-        if expected in written:
+        if written and written[0] == expected:
             continue
         if not written:
             problems.append(NO_CLOSING_LINE_PROBLEM.format(**values))
@@ -447,7 +419,8 @@ def output_for(payload, environment):
         return block(UNPUBLISHED_OPENING_TEMPLATE, UNPUBLISHED_INSTRUCTIONS + no_decision_instructions(unpublished),
                      named=" and ".join(f"`Item {number} of {total}`" for number in unpublished),
                      page_line=sub_step_page_line(unpublished, total))
-    no_decision_links = set(walk_finder.SUB_STEP_NO_DECISION_CLOSING_LINE.findall(reply))
+    no_decision_links = {walk_finder.approval_walk_sub_step_no_decision_closing_line_page_link_or_none(line)
+                         for line in reply.split("\n")}
     numbers_needing_closing_line = [number for number in numbers
                                     if not ("." in number and pages[number] in no_decision_links)]
     letters = walk_finder.load_module(
