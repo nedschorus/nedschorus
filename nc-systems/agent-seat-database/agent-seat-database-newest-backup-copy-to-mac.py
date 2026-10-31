@@ -49,10 +49,11 @@ NED_BOX_BACKUP_DIRECTORY = f"{ned_box_paths.NED_BOX_HOME}/backups/agent-seat-dat
 def not_copied(what_failed, detail):
     print(f"{PROGRAM}: FAILED — {what_failed}, so the Mac holds no copy of ned-box's newest "
           f"agent-seat database backup from this run.\n{detail}\n"
-          f"The Mac's older copies stay, and the next nightly run tries again. Tell the user "
-          f"that the Mac's nightly copy of the agent-seat database backup failed, quoting the "
-          f"two lines above. If you are a subagent, tell the agent that dispatched you instead, "
-          f"with the same quote.", file=sys.stderr)
+          f"The Mac's older copies stay, and the next nightly run tries again.\n"
+          f"If you are a subagent, tell the agent that dispatched you; otherwise tell the user.\n"
+          f"Say that copying ned-box's newest agent-seat database backup to the Mac failed, and "
+          f"quote this message from the FAILED line through the line that ends \"tries again.\"",
+          file=sys.stderr)
     return EXIT_NOT_COPIED
 
 

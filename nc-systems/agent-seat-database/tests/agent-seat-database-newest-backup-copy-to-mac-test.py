@@ -71,7 +71,9 @@ with tempfile.TemporaryDirectory() as scratch:
     code, printed, errors = run(mac)
     check("ssh failing while listing: exit 1, naming the step and what ssh said",
           code == 1 and "listing nedlern@ned-box:/home/nedlern/backups/agent-seat-database failed"
-          in errors and "No such file" in errors, (code, errors))
+          in errors and "No such file" in errors
+          and "quote this message from the FAILED line through the line that ends \"tries again.\"" in errors,
+          (code, errors))
 
     remote.mkdir()
     (remote / "agent-seat-database-20261025T021500Z.sqlite3.failed-integrity-check").write_bytes(b"x")

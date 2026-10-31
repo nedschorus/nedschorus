@@ -67,8 +67,16 @@ def main(argv=None):
               f"{arguments.reference_checkout} exited {changed.returncode}, so this merge's "
               f"changes to the agent-seat database service are unknown and the service was not "
               f"restarted: {changed.stderr.strip()}\n"
-              f"If the merge changed {', '.join(SERVICE_FILES)}, restart the service on ned-box "
-              f"with `systemctl --user restart {UNIT_NAME}`.", file=sys.stderr)
+              f"Run `XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user restart {UNIT_NAME}` "
+              f"on ned-box. A restart is safe even if the merge did not change the service.\n"
+              f"If systemctl says the unit was not found, the unit's install step has not run "
+              f"on ned-box yet; that step is the user's, so do nothing.\n"
+              f"If systemctl fails for another reason, run `journalctl --user -u {UNIT_NAME} -n 50` "
+              f"on ned-box. Then, if you are a subagent, tell the agent that dispatched you; "
+              f"otherwise tell the user. Say that the agent-seat database service could not be "
+              f"restarted after a merge, and quote this message from the FAILED line up to, but "
+              f"not including, the line that starts \"Run\", what systemctl said and journalctl's last lines.",
+              file=sys.stderr)
         return EXIT_FAILED
     if not changed.stdout.strip():
         return EXIT_DONE
