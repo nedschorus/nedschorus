@@ -513,7 +513,8 @@ print(failures)
 """], capture_output=True, text=True)
     check("a dialog that cannot be read again to find its last line keeps its hit, and the failure is listed",
           unreadable.returncode == 0 and unreadable.stdout.startswith("False\n")
-          and "could not read" in unreadable.stdout and "is shown as a hit" in unreadable.stdout,
+          and "could not read" in unreadable.stdout and "is shown as a hit" in unreadable.stdout
+          and "the dialog's last non-blank line, which names" in unreadable.stdout,
           unreadable.stdout + unreadable.stderr)
     plover_dialog.unlink()
     plover_transcript.unlink()

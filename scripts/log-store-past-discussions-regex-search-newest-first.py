@@ -456,7 +456,7 @@ def is_session_dialog_extractor_sha256_last_line(path, number, text, root, failu
         lines = path.read_text(encoding="utf-8", errors="replace").split("\n")
     except OSError as error:
         failures.append(f"could not read {path} again ({error}) to tell whether its line {number} is the dialog's "
-                        f"last line, which names the extractor that wrote the dialog and is never a hit, or a turn "
+                        f"last non-blank line, which names the extractor that wrote the dialog and is never a hit, or a turn "
                         f"quoting that line, so line {number} is shown as a hit; when the dialog can be read and its "
                         f"last non-blank line is line {number}, ignore that hit")
         return False
