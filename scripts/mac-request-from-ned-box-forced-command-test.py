@@ -217,12 +217,20 @@ for request in ["open-agent-seat-window", "open-agent-seat-window a b", "open-ag
           (result.returncode, opened, result.stderr))
 def launcher_accepts_seat_name(name, bash_options=(), locale_environment=None, bash="bash"):
     """Run the real launch-claude-ubuntu up to its seat-name check, and no further."""
-    # An invalid account name makes the launcher stop at the check right after the seat-name
-    # check, before it reaches ssh, so a name it accepts launches nothing.
-    environment = dict(os.environ, NEDSCHORUS_SEAT_GITHUB_ACCOUNT="not a valid account!",
-                       **(locale_environment or {}))
-    result = subprocess.run([bash, *bash_options, str(PROGRAM_PATH.with_name("launch-claude-ubuntu")), name],
-                            capture_output=True, text=True, env=environment, timeout=30)
+    # A set account override makes the launcher stop at the refusal right after the seat-name
+    # check, before it reaches ssh, so a name it accepts launches nothing. A launcher without that
+    # refusal reaches the stub ssh first on PATH, which exits 1 at once, so it never reaches a seat.
+    with tempfile.TemporaryDirectory(prefix="launcher-seat-name-check-") as scratch:
+        stub_directory = Path(scratch) / "bin"
+        stub_directory.mkdir()
+        stub_ssh = stub_directory / "ssh"
+        stub_ssh.write_text("#!/bin/sh\necho 'stub ssh reached' >&2\nexit 1\n", encoding="utf-8")
+        stub_ssh.chmod(0o755)
+        environment = dict(os.environ, NEDSCHORUS_SEAT_GITHUB_ACCOUNT="any-account", HOME=scratch,
+                           PATH=f"{stub_directory}{os.pathsep}{os.environ.get('PATH', '')}",
+                           **(locale_environment or {}))
+        result = subprocess.run([bash, *bash_options, str(PROGRAM_PATH.with_name("launch-claude-ubuntu")), name],
+                                capture_output=True, text=True, env=environment, timeout=30)
     if "NEDSCHORUS_SEAT_GITHUB_ACCOUNT" in result.stderr:
         return True
     if "agent names are" in result.stderr or "cannot start with -" in result.stderr:
@@ -310,9 +318,9 @@ def launcher_name_check_patterns(launcher_name):
             if line.strip().startswith("(*[!") and line.strip().endswith(";;")]
 
 
-check("launch-claude-mac's seat-name and account-name patterns are launch-claude-ubuntu's",
+check("launch-claude-mac's seat-name pattern is launch-claude-ubuntu's",
       launcher_name_check_patterns("launch-claude-mac") == launcher_name_check_patterns("launch-claude-ubuntu")
-      and len(launcher_name_check_patterns("launch-claude-ubuntu")) == 2,
+      and len(launcher_name_check_patterns("launch-claude-ubuntu")) == 1,
       (launcher_name_check_patterns("launch-claude-mac"), launcher_name_check_patterns("launch-claude-ubuntu")))
 check("a refused window request names the --agent-seat form too",
       "open-mac-window-from-ned-box.py --agent-seat <seat>" in run_program("open-windowx tmux")[0].stderr)

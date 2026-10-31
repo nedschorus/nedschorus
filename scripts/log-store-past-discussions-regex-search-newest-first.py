@@ -234,6 +234,13 @@ COMPACTION_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z
 NOT_FOUND_IN_TRANSCRIPT_NOTE = "session's last activity: its turn was not found in the transcript"
 
 
+_claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_lookup_and_text_search_common",
+    Path(__file__).resolve().parent / "claude-code-session-transcript-lookup-and-text-search-common.py")
+claude_code_session_transcript_lookup_and_text_search_common = importlib.util.module_from_spec(_claude_code_session_transcript_lookup_and_text_search_common_spec)
+_claude_code_session_transcript_lookup_and_text_search_common_spec.loader.exec_module(claude_code_session_transcript_lookup_and_text_search_common)
+
+
 def this_machine():
     return os.environ.get(THIS_MACHINE_OVERRIDE) or socket.gethostname().split(".")[0]
 
@@ -749,76 +756,6 @@ def dated_file_hits(hits, root, seat, machine, since, until, failures, own_sessi
     return kept
 
 
-def pattern_without_anchors(pattern):
-    """The pattern with its line and text anchors removed, for ripgrep to pick transcripts by.
-
-    ripgrep reads a transcript's raw JSON records, where a message is one quoted string inside
-    a longer line, so an anchor such as ^ or $ would miss it. Without its anchors the pattern
-    matches wherever it matched before, and the user's messages are then matched with them.
-    """
-    kept = []
-    in_class = False
-    index = 0
-    while index < len(pattern):
-        character = pattern[index]
-        if character == "\\" and index + 1 < len(pattern):
-            if in_class or pattern[index + 1] not in "AzZ":
-                kept.append(pattern[index:index + 2])
-            index += 2
-            continue
-        if in_class:
-            closing = pattern.find(":]", index + 2)
-            if pattern.startswith("[:", index) and closing != -1:
-                kept.append(pattern[index:closing + 2])
-                index = closing + 2
-                continue
-            if character == "]":
-                in_class = False
-        elif character == "[":
-            in_class = True
-            kept.append("[")
-            index += 1
-            # A ] first in a class, or right after its ^, is a literal ].
-            for opening in "^]":
-                if pattern[index:index + 1] == opening:
-                    kept.append(opening)
-                    index += 1
-            continue
-        elif character in "^$":
-            index += 1
-            continue
-        kept.append(character)
-        index += 1
-    return "".join(kept)
-
-
-def raw_json_prefilter(pattern):
-    """The pattern for ripgrep to pick transcripts by, or None when every transcript must be read.
-
-    ripgrep reads a transcript's raw JSON, where a line break, a tab, a quote mark, a backslash
-    and other control characters are each written as an escape of two or more characters. A
-    pattern that could match one of those characters in a message could fail to match its
-    escape, so it gets no prefilter. Anchors are dropped first, since in the JSON a message is
-    one string inside a longer line.
-    """
-    pattern = pattern_without_anchors(pattern)
-    index = 0
-    while index < len(pattern):
-        character = pattern[index]
-        if character == "\\":
-            following = pattern[index + 1:index + 2]
-            # \w and \d match only characters JSON writes as themselves; every other escaped
-            # letter or digit (\s, \S, \W, \D, \b, \n, \t, \x, \u, \p, back-references) may not.
-            if following in ("\\", '"') or (following.isalnum() and following not in "wd"):
-                return None
-            index += 2
-            continue
-        if character in '.["' or ord(character) < 0x20:
-            return None
-        index += 1
-    return pattern
-
-
 def every_transcript(directories, failures):
     """Every <project-key>/<session>.jsonl under the given projects directories."""
     paths = []
@@ -858,13 +795,14 @@ def transcript_candidates(root, pattern, seat, machine, since, failures, own_ses
             failures.append(f"the log-store has no {directory}, so {each}'s transcripts were not searched")
     if not directories:
         return []
-    prefilter = raw_json_prefilter(pattern)
+    prefilter = claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcript_raw_json_prefilter_pattern(pattern)
     if prefilter is None:
         paths = every_transcript(directories, failures)
     else:
-        output = run_ripgrep(ripgrep_command(["--files-with-matches", "--max-depth", "2", "--glob", "*.jsonl"],
-                                             prefilter, directories), failures)
-        paths = output.splitlines()
+        paths, problems = claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcripts_matching_any_pattern_ignoring_case(
+            directories, [prefilter], include_subagents=False,
+            ripgrep_program=os.environ.get(RIPGREP_OVERRIDE) or "rg")
+        failures += problems
     candidates = []
     for line in sorted(paths):
         path = Path(line)

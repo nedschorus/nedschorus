@@ -148,11 +148,11 @@ _mirror_spec = importlib.util.spec_from_file_location(
 mirror_refresh = importlib.util.module_from_spec(_mirror_spec)
 _mirror_spec.loader.exec_module(mirror_refresh)
 
-_project_directory_spec = importlib.util.spec_from_file_location(
-    "claude_code_session_transcript_project_directory_for_agent_seat_common",
-    SCRIPT_DIRECTORY / "claude-code-session-transcript-project-directory-for-agent-seat-common.py")
-project_directory_module = importlib.util.module_from_spec(_project_directory_spec)
-_project_directory_spec.loader.exec_module(project_directory_module)
+_claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_lookup_and_text_search_common",
+    SCRIPT_DIRECTORY / "claude-code-session-transcript-lookup-and-text-search-common.py")
+claude_code_session_transcript_lookup_and_text_search_common = importlib.util.module_from_spec(_claude_code_session_transcript_lookup_and_text_search_common_spec)
+_claude_code_session_transcript_lookup_and_text_search_common_spec.loader.exec_module(claude_code_session_transcript_lookup_and_text_search_common)
 
 _threshold_hook_spec = importlib.util.spec_from_file_location(
     "handoff_context_threshold_hook", SCRIPT_DIRECTORY / "handoff-context-threshold-hook.py")
@@ -504,7 +504,7 @@ def state_lock(lock_path: Path):
 def transcript_path_for(seat_dir: Path, session_id: str, projects_root: Path):
     if not session_id:
         return None
-    project_directory = project_directory_module.project_directory_for_seat(seat_dir, projects_root)
+    project_directory = claude_code_session_transcript_lookup_and_text_search_common.project_directory_for_seat(seat_dir, projects_root)
     return project_directory / f"{session_id}.jsonl"
 
 

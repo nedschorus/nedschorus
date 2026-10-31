@@ -647,9 +647,11 @@ def run_reviewer_program_in_own_process_group_until_timeout(
             stop_process_tree(process, REVIEWER_PROCESS_GROUP_STOP_GRACE_SECONDS)
             stdout, stderr = process.communicate()
             return subprocess.CompletedProcess(command, None, stdout, stderr)
-    finally:
-        if process.poll() is None:
-            stop_process_tree(process, REVIEWER_PROCESS_GROUP_STOP_GRACE_SECONDS)
+    except BaseException:
+        # Not gated on the leader running: it may have exited while a
+        # descendant still holds its pipes, which keeps communicate waiting.
+        stop_process_tree(process, REVIEWER_PROCESS_GROUP_STOP_GRACE_SECONDS)
+        raise
 
 
 def run_model_chain(

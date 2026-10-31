@@ -124,8 +124,11 @@ HISTORY_MARKERS = ("git history", "git show")
 FOREIGN_ROOT_MARKERS = ("~/Projects/nedlern", "nedlern/docs", "legacy system",
                         "~/Projects/nedsmessenger")
 
-# These citations are frozen measurements; changing them invalidates published scores.
-FROZEN_MEASURED_DATA_DIRECTORIES = ("cold-read-reviewer-test-cases",)
+# Paths relative to the repository root. Their citations record what was true when the data
+# was measured or captured: changing them invalidates published scores, or makes a captured
+# GitHub response one that GitHub never sent.
+FROZEN_MEASURED_DATA_DIRECTORIES = ("cold-read-reviewer-test-cases",
+                                    "scripts/merge-gate-test-captured-github-responses")
 
 _basename_index_cache = {}
 _git_ignore_cache = {}
@@ -572,7 +575,8 @@ def in_frozen_measured_data(path: Path, repo_root: Path) -> bool:
         parts = path.resolve().relative_to(repo_root.resolve()).parts
     except ValueError:
         return False
-    return bool(parts) and parts[0] in FROZEN_MEASURED_DATA_DIRECTORIES
+    return any(parts[:len(frozen.parts)] == frozen.parts
+               for frozen in map(Path, FROZEN_MEASURED_DATA_DIRECTORIES))
 
 
 def lint_markdown(path: Path, repo_root: Path, architecture_overview_checks=False):

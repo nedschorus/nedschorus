@@ -1326,6 +1326,16 @@ try:
           pairs == [["ls", "/a"], ["ls", "/b"]], pairs)
     check("transcripts: a line that is not JSON is counted, not dropped silently", lines_not_json == 1, lines_not_json)
 
+    subagent_transcript = transcripts / "a" / "subagents" / "agent-1.jsonl"
+    subagent_transcript.parent.mkdir(parents=True)
+    subagent_transcript.write_text(bash_call("ls", "/e") + "\n")
+    pairs, _ = replay.recorded_command_pairs([str(Path(scratch) / "transcripts")])
+    check("transcripts: a Bash call found only in a subagent's transcript is read too",
+          sorted(pairs) == [["ls", "/a"], ["ls", "/b"], ["ls", "/e"]], pairs)
+    subagent_transcript.unlink()
+    subagent_transcript.parent.rmdir()
+    subagent_transcript.parent.parent.rmdir()
+
     unreadable = transcripts / "unreadable.jsonl"
     unreadable.write_text(bash_call("ls", "/d"))
     unreadable.chmod(0)

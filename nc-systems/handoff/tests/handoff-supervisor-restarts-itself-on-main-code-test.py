@@ -278,7 +278,8 @@ def recovery_note_for_a_missing_transcript(occasion: str, session_id: str, works
     return (f"(Recovered at {occasion}: the previous session's conversation-tail is unavailable, "
             "because the handoff-supervisor could not extract session "
             f"{session_id}'s session-dialog, and that session's transcript is not at "
-            f"{transcript}; this next-step and the repository are your whole context.) ")
+            f"{transcript} or in any other folder under {supervisor.PROJECTS_ROOT}/; this "
+            "next-step and the repository are your whole context.) ")
 
 
 def run_missing_transcript_cases(workspace: Path):
