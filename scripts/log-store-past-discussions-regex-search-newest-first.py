@@ -832,7 +832,7 @@ def transcript_candidates(root, pattern, seat, machine, since, failures, own_ses
             failures.append(f"the log-store has no {directory}, so {each}'s transcripts were not searched")
     if not directories:
         return []
-    prefilter = claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcript_raw_json_prefilter_pattern(pattern)
+    prefilter = claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcript_raw_json_ripgrep_prefilter_pattern_from_search_text_or_none_when_not_plain_text(pattern)
     if prefilter is None:
         paths = every_transcript(directories, failures)
     else:

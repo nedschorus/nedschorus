@@ -54,7 +54,7 @@ def claude_code_session_transcripts_matching_any_pattern_ignoring_case(
     patterns, ignoring case, sorted; and one line for each thing the search could not read or do.
 
     Runs ripgrep, and grep -E when ripgrep is not installed. A pattern is a regular expression both
-    read alike, such as one claude_code_session_transcript_raw_json_prefilter_pattern returns.
+    read alike, such as one claude_code_session_transcript_raw_json_ripgrep_prefilter_pattern_from_search_text_or_none_when_not_plain_text returns.
     Without include_subagents, only <root>/<project directory>/<session>.jsonl files are listed, not
     the subagent transcripts in <session>/subagents/. When problems is not empty, paths may miss files.
     """
@@ -68,10 +68,10 @@ def claude_code_session_transcripts_matching_any_pattern_ignoring_case(
         searcher = "ripgrep"
     except FileNotFoundError:
         untranslatable = [pattern for pattern in patterns
-                          if r"\d" in pattern or any(ord(character) > 0x7f for character in pattern)]
+                          if any(ord(character) > 0x7f for character in pattern)]
         if untranslatable:
-            # grep -E has no \d, and how it folds a non-ASCII letter depends on the locale, so it
-            # could leave out a transcript that ripgrep or Python would match.
+            # How grep folds a non-ASCII letter depends on the locale, so it could leave out a
+            # transcript that ripgrep or Python would match.
             return [], [f"ripgrep ({ripgrep_program}) is not installed, and grep cannot search for "
                         f"{untranslatable[0]!r} as ripgrep would, so no transcript was searched"]
         try:
@@ -96,7 +96,7 @@ def claude_code_session_transcripts_matching_any_pattern_ignoring_case(
     return sorted(paths), problems
 
 
-def claude_code_session_transcript_raw_json_prefilter_pattern(pattern):
+def claude_code_session_transcript_raw_json_ripgrep_prefilter_pattern_from_search_text_or_none_when_not_plain_text(pattern):
     """The pattern for ripgrep to pick transcripts by, or None when every transcript must be read.
 
     Only plain text gets a prefilter, since Python's re and ripgrep read many escapes and classes
