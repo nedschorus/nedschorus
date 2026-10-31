@@ -196,6 +196,14 @@ def brief_cases(root, repository, base, frozen_head):
     check("brief: says what to do when the check refuses and when a step fails after the push",
           "git commit --amend is allowed before the push" in out
           and "do not push again or rewrite the branch" in out, out)
+    check("brief: step 3 lets a change that fails review move to its own pull request, answered by naming it",
+          "should not land with the rest, you may move that change to a pull request of its own" in out
+          and "entry that starts \"Moved to pull request \"" in out
+          and out.index("3. Change nothing else") < out.index("Moved to pull request")
+          < out.index("4. Put every change")
+          and "or, for a change moved as step 3 says, the new pull request." in out
+          and f"git checkout {frozen_head} -- <path>" in out
+          and f"switch back with git switch fix-round-pull-request-{NUMBER}-review-11." in out, out)
     check("brief: a conflict defers to the conflict check's report, and asks for no merge itself",
           "If it reports VERDICT: CONFLICT, do what its report says." in out
           and "merge origin/main as its report says" not in out and "merge nothing" not in out, out)
@@ -642,6 +650,45 @@ def check_cases(root, repository, base, frozen_head):
         code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                              "--check", "--answers", answers_file(root, text))
         check(f"check: answers file refused: {expected}", code == 1 and expected in err, err)
+
+    moved_answers = answers_file(root, "1. Fixed.\n2. Moved to pull request #41, which carries the timeout change.\n")
+    moved_routes = routes_for(frozen_head, reviews)
+    moved_routes["pr view 41 --json number"] = {"stdout": json.dumps({"number": 41})}
+    code, out, err = run(root, repository, moved_routes, "--check", "--answers", moved_answers)
+    check("check: an entry naming an existing new pull request counts as answered",
+          code == 0 and "2. test.py: Moved to pull request #41" in out, out + err)
+    moved_by_url = answers_file(root, "1. Fixed.\n2. Moved to pull request https://github.com/o/r/pull/41\n")
+    moved_routes["pr view https://github.com/o/r/pull/41 --json number"] = {"stdout": json.dumps({"number": 41})}
+    code, out, err = run(root, repository, moved_routes, "--check", "--answers", moved_by_url)
+    check("check: an entry naming an existing new pull request by URL counts as answered",
+          code == 0 and "Nothing pushed" in out, out + err)
+    # Lower case, so that an entry whose writer did not copy the prefix exactly is still checked.
+    moved_answers = answers_file(root, "1. Fixed.\n2. moved to pull request #41, which carries the timeout change.\n")
+    missing_routes = routes_for(frozen_head, reviews)
+    missing_routes["pr view 41 --json number"] = {
+        "exit": 1, "stderr": "GraphQL: Could not resolve to a PullRequest with the number of 41. "
+                             "(repository.pullRequest)\n"}
+    code, out, err = run(root, repository, missing_routes, "--check", "--answers", moved_answers)
+    check("check: an entry naming a pull request that does not exist refuses with exit 1, naming it",
+          code == 1 and "entry 2" in err and "pull request 41" in err and "no such pull request" in err
+          and "open it as CLAUDE.md says" in err and "correct it so that the entry starts" in err
+          and "If the change did not move after all" in err and "carries it, or" in err
+          and f"The check is: python3 {PROGRAM} {NUMBER} --check --answers {moved_answers}" in err, out + err)
+    failing_routes = routes_for(frozen_head, reviews)
+    failing_routes["pr view 41 --json number"] = {"exit": 1, "stderr": "error connecting to api.github.com\n"}
+    code, out, err = run(root, repository, failing_routes, "--check", "--answers", moved_answers)
+    check("check: gh failing for another cause while checking a moved entry fails with exit 2",
+          code == 2 and "error connecting" in err and "no such pull request" not in err, out + err)
+    for text in ("Moved to pull request soon, once it is opened", "Moved to pull request #",
+                 "Moved to pull request: #41"):
+        prefix_only = answers_file(root, f"1. Fixed.\n2. {text}\n")
+        code, out, err = run(root, repository, routes_for(frozen_head, reviews),
+                             "--check", "--answers", prefix_only)
+        check(f"check: a moved entry with no pull request number or URL refuses with exit 1: {text!r}",
+              code == 1 and "entry 2" in err and "no pull request number or URL follows" in err
+              and "open it as CLAUDE.md says" in err and "If the change did not move after all" in err
+              and f"The check is: python3 {PROGRAM} {NUMBER} --check --answers {prefix_only}" in err,
+              out + err)
 
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", str(root / "no-such-file"))
