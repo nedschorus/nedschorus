@@ -429,6 +429,30 @@ with tempfile.TemporaryDirectory() as workspace:
           problems_for("all 9999 cases in `scripts/real-script.py`", root) == [])
     check("a backtick number naming only an md file is not checked",
           problems_for("the value `9999` per [d](docs/real-doc.md)", root) == [])
+    # A paragraph is one line, so a number and a code file in different
+    # sentences of it are different claims. The shape is
+    # nc-systems/handoff/handoff-design.md:114, whose exit codes `143` and
+    # `137` belong to the handoff-supervisor it names in prose, not to the
+    # one script the paragraph cites as a path, several sentences later.
+    findings = problems_for(
+        "it exits with `9999`. The fallback is `scripts/real-script.py`.", root)
+    check("a number in another sentence of the line is not paired with the code file",
+          findings == [], str(findings))
+    findings = problems_for(
+        "it exits with `9999`; the fallback is `scripts/real-script.py`.", root)
+    check("a semicolon ends the number's sentence too",
+          findings == [], str(findings))
+    findings = problems_for(
+        "The script is new. Its floor is `9999` in `scripts/real-script.py`. It runs daily.",
+        root)
+    check("a number and a code file in one sentence of a longer line are still checked",
+          findings == ["number 9999 not found in real-script.py"], str(findings))
+    # A sentence end inside a command span does not split it: a split there
+    # leaves the span's backticks unpaired, so the number goes unchecked.
+    findings = problems_for(
+        "after `cd x; ls` the floor is `9999` in `scripts/real-script.py`", root)
+    check("a semicolon inside a backtick span does not end the sentence",
+          findings == ["number 9999 not found in real-script.py"], str(findings))
 
     # --- JSON duplicate keys ----------------------------------------------
     good_json = root / "good.json"
