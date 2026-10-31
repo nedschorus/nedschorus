@@ -555,6 +555,23 @@ with tempfile.TemporaryDirectory() as frozen_workspace:
     check("a file nested inside a frozen-data directory reports nothing",
           findings == [], str(findings))
 
+    # A frozen-data directory below the top level is matched by its whole path:
+    # its top-level ancestor, and a sibling sharing its name's prefix, are checked.
+    captured = frozen_root / "scripts" / "merge-gate-test-captured-github-responses"
+    captured.mkdir(parents=True)
+    findings = problems_for(frozen_text, frozen_root,
+                            name="scripts/merge-gate-test-captured-github-responses/body.md")
+    check("a file in a frozen-data directory below the top level reports nothing",
+          findings == [], str(findings))
+    findings = problems_for(frozen_text, frozen_root, name="scripts/ordinary.md")
+    check("a file beside that directory, in its top-level ancestor, is still reported",
+          findings == ["path does not exist: scripts/long-gone.py"], str(findings))
+    (frozen_root / "scripts" / "merge-gate-test-captured-github-responses-old").mkdir()
+    findings = problems_for(frozen_text, frozen_root,
+                            name="scripts/merge-gate-test-captured-github-responses-old/body.md")
+    check("a directory below the top level that merely shares the prefix is still checked",
+          findings == ["path does not exist: scripts/long-gone.py"], str(findings))
+
 
 # An nc-architecture-overview gets the overview checks of
 # docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md on
