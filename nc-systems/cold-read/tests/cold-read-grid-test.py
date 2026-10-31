@@ -254,6 +254,11 @@ TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 # COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS, when set, is how long the
 # stub hangs after writing its report: a reviewer that wrote and never exited.
 # The fast cell does not hang either, so it can still edit the target.
+# COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET_AFTER_THESE_REPORT_FILES_EXIST, when set, is a
+# comma-separated list of report names in the stub's own record directory;
+# the stub that edits its given target first waits, for at most 30 seconds,
+# until every one of them exists, so the edit cannot come before a slow
+# launcher has written its report.
 STUB_MODEL_RUNTIME = r'''#!/usr/bin/env python3
 import json, os, pathlib, re, sys, time
 
@@ -350,6 +355,12 @@ if prompt_log:
     with open(prompt_log, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(prompt) + "\n")
 if os.environ.get("COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET") and target_match:
+    awaited_reports = [given.parent / name for name in filter(None, os.environ.get(
+        "COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET_AFTER_THESE_REPORT_FILES_EXIST", "").split(","))]
+    deadline = time.monotonic() + 30
+    while (not all(report.is_file() for report in awaited_reports)
+           and time.monotonic() < deadline):
+        time.sleep(0.1)
     # A reviewer editing the very document it was handed. The frozen copy is
     # read-only, so this forces the mode first: the point of the case is the
     # fingerprint catching an edit to the copy, not the mode bit stopping a
@@ -712,14 +723,16 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch, "checkout-target-moves-mid-report")
     hung_stubs = scratch / "stub-bin-target-moves-mid-report"
     hang_seconds = 120
+    hung_cells = ("claude-hunt-deep", "claude-hunt-second-strongest-model",
+                  "claude-terminology-deep", "codex-hunt-deep", "codex-terminology-deep")
     started = time.monotonic()
     result = run_grid(repository, hung_stubs, {
         "COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS": str(hang_seconds),
         "COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT": "codex-hunt-second-strongest-model",
-        "COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET": "1"})
+        "COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET": "1",
+        "COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET_AFTER_THESE_REPORT_FILES_EXIST":
+            ",".join(f"{name}.md" for name in hung_cells)})
     elapsed = time.monotonic() - started
-    hung_cells = ("claude-hunt-deep", "claude-hunt-second-strongest-model",
-                  "claude-terminology-deep", "codex-hunt-deep", "codex-terminology-deep")
     check("a frozen copy moved mid-report stops the run before the hung cells exit, exit 3",
           elapsed < 60 and result.returncode == 3,
           f"{elapsed:.0f} s, exit {result.returncode}; stdout={result.stdout!r}")
