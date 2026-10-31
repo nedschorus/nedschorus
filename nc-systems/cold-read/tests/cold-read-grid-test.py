@@ -33,7 +33,12 @@ WHAT IS PINNED HERE.
     with the attempt's cause and keeps the attempt-1 log; a retry that
     lands prints saved: and its log is deleted; a retry that fails prints
     FAILED (exit N): with the second attempt's cause, keeps both logs, and
-    the report is absent. Every run closes with ONE closing text in four
+    the report is absent. Two first failures are not retried: a cause the
+    user can clear, whose FAILED line tells the user at once while the other
+    cells read, once per agent-binary and cause; and an attempt the grid
+    stopped at its time limit, shortened here to seconds, whose cause is
+    timed-out, and whose report, when it had written one before hanging, is
+    deleted as unfinished. Every run closes with ONE closing text in four
     variants built from what landed -- all landed, some landed (the set is
     valid and incomplete, and is triaged), none landed, or the target
     changed -- replacing the Opus-absent and Fable-only branches of
@@ -41,10 +46,10 @@ WHAT IS PINNED HERE.
     reports are listed with their causes, every .md file in the record is
     marked INCOMPLETE SET, an agent-binary whose every cell is absent for one
     agent-binary-wide cause gets one AGENT-BINARY DOWN: line, and a cause the user
-    can clear ends the text with "Tell the user:". A cause changes what is
-    reported, never what is decided: the cases below drive the stub through
-    the real limit texts and check that the retry, the closing text and the
-    exit code are the same whatever the cause said. The grid's FELL BACK
+    can clear ends the text with "Tell the user:". Apart from the retry, a
+    cause changes what is reported, never what is decided: the cases below
+    drive the stub through the real limit texts and check that the closing
+    text and the exit code turn only on what landed. The grid's FELL BACK
     line (2026-08-25, "I just don't want it to fail silently") has no
     positive control through the grid since no pinned chain has a second
     model; the lift machinery stays.
@@ -245,6 +250,8 @@ TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 # whose report name contains COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT,
 # which does not wait. One fast cell that edits the target while five slow
 # ones read is how a case moves the target mid-run.
+# COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS, when set, is how long the
+# stub hangs after writing its report: a reviewer that wrote and never exited.
 STUB_MODEL_RUNTIME = r'''#!/usr/bin/env python3
 import json, os, pathlib, re, sys, time
 
@@ -325,6 +332,7 @@ if near_miss_character:
     given.parent.mkdir(parents=True, exist_ok=True)
 with open(given, "w", encoding="utf-8") as handle:
     handle.write("STUB REVIEW: one restatement\n")
+time.sleep(float(os.environ.get("COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS") or 0))
 edited_path = os.environ.get("COLD_READ_GRID_TEST_STUB_EDIT_PATH")
 if edited_path:
     with open(edited_path, "a", encoding="utf-8") as handle:
@@ -851,11 +859,17 @@ with tempfile.TemporaryDirectory() as scratch:
           down_lines == ["AGENT-BINARY DOWN: claude — account-limit — resets 8:50pm "
                          "(America/Los_Angeles); 3 reports absent"],
           f"down lines were {down_lines!r}; stdout={result.stdout!r}")
-    check("every RETRYING and FAILED line names account-limit with the reset text",
-          len(lines_opening(result, "RETRYING:")) == 3
+    failed_lines = lines_opening(result, "FAILED")
+    check("an account limit is not retried: no RETRYING line, three FAILED lines naming it",
+          lines_opening(result, "RETRYING:") == [] and len(failed_lines) == 3
           and all("account-limit — resets 8:50pm (America/Los_Angeles)" in line
-                  for line in lines_opening(result, "RETRYING:") + lines_opening(result, "FAILED")),
+                  for line in failed_lines),
           repr(result.stdout))
+    check("the first FAILED line alone tells the user, naming the attempt's log",
+          [line for line in failed_lines if "Tell the user:" in line] == failed_lines[:1]
+          and failed_lines[0].endswith(".md.stderr.log).")
+          and ". Tell the user: claude account-limit — resets 8:50pm (America/Los_Angeles) (log: "
+          in failed_lines[0], repr(failed_lines))
     check("the closing text restates the down line without the prefix, once",
           result.stdout.count("- claude is down: account-limit — resets 8:50pm "
                               "(America/Los_Angeles); 3 reports absent") == 1
@@ -863,7 +877,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the closing text ends by telling the user the cause, with the log to check",
           result.stdout.rstrip().splitlines()[-1].startswith(
               "Tell the user: claude account-limit — resets 8:50pm (America/Los_Angeles) (log: ")
-          and result.stdout.rstrip().endswith("attempt-2.stderr.log)."),
+          and result.stdout.rstrip().endswith(".md.stderr.log)."),
           repr(result.stdout.rstrip().splitlines()[-1]))
     check("three land, the some-landed text, exit 1",
           result.returncode == 1 and len(lines_opening(result, "saved:")) == 3
@@ -922,26 +936,127 @@ with tempfile.TemporaryDirectory() as scratch:
               for line in result.stdout.splitlines())
           and any(line.startswith("- claude-hunt-second-strongest-model: model-limit — Fable (log:")
                   for line in result.stdout.splitlines()), repr(result.stdout))
-    check("the user is told, one cause per agent-binary and class",
-          result.stdout.count("Tell the user: claude model-limit — ") == 1, repr(result.stdout))
+    check("the user is told, one cause per agent-binary and class, on one FAILED line and at the end",
+          len([line for line in lines_opening(result, "FAILED")
+               if "Tell the user: claude model-limit — " in line]) == 1
+          and result.stdout.rstrip().splitlines()[-1].startswith("Tell the user: claude model-limit — ")
+          and result.stdout.count("Tell the user: claude model-limit — ") == 2,
+          repr(result.stdout))
 
-    # --- First attempts all account-limit; one retry fails otherwise ---------
+    # --- Two Claude cells hit the account limit; one fails otherwise twice ----
     repository = build_scratch_repository(scratch, "checkout-mixed-causes")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "claude-hunt-second-strongest-model.md", "attempts": 2,
-          "stdout_by_attempt": {"1": SESSION_LIMIT_LINE, "2": ""}},
+        [{"fragment": "claude-hunt-second-strongest-model.md", "attempts": 2},
          {"fragment": "claude-", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
     retrying_lines = lines_opening(result, "RETRYING:")
-    check("three RETRYING lines name account-limit",
-          len(retrying_lines) == 3 and all("account-limit" in line for line in retrying_lines),
+    check("only the exit-1 cell is retried",
+          len(retrying_lines) == 1
+          and retrying_lines[0].startswith("RETRYING: claude-hunt-second-strongest-model — exit-1 — "),
           repr(retrying_lines))
-    check("the retry that failed otherwise is FAILED as exit-1, the others as account-limit",
+    check("the retried cell is FAILED as exit-1, the others as account-limit",
           any(line.startswith("FAILED (exit 1): claude-hunt-second-strongest-model — exit-1 — ")
               for line in lines_opening(result, "FAILED"))
           and sum("account-limit" in line for line in lines_opening(result, "FAILED")) == 2,
           repr(lines_opening(result, "FAILED")))
     check("differing causes on one agent-binary are three facts, not one down line",
           "AGENT-BINARY DOWN:" not in result.stdout, repr(result.stdout))
+
+    # --- A logged-out cell is not retried, and the user is told at once -------
+    # The other five read for a few seconds, so a Tell the user line printed
+    # only when the run ends would come after their saved: lines.
+    LOGGED_OUT_LINE = "Not logged in · Please run /login"
+    repository = build_scratch_repository(scratch, "checkout-logged-out-not-retried")
+    result = run_grid(repository, stubs, {
+        "COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": "3",
+        "COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+            [{"fragment": "claude-hunt-deep.md", "attempts": 2, "stdout": LOGGED_OUT_LINE}])})
+    failed_lines = lines_opening(result, "FAILED")
+    check("a logged-out first attempt is not retried: FAILED at once, no RETRYING line",
+          lines_opening(result, "RETRYING:") == [] and len(failed_lines) == 1
+          and failed_lines[0].startswith(f"FAILED (exit 1): claude-hunt-deep — logged-out — {LOGGED_OUT_LINE} "),
+          repr(result.stdout))
+    launch_counts = [path.read_text().count("attempt") for path in
+                     (repository.parent / "stub-attempt-counts" / repository.name).glob("*/claude-hunt-deep.md")]
+    check("the logged-out cell's agent-binary was launched once",
+          launch_counts == [1], repr(launch_counts))
+    check("its FAILED line tells the user, before any other cell's report is saved",
+          f". Tell the user: claude logged-out — {LOGGED_OUT_LINE} (log: " in failed_lines[0]
+          and failed_lines[0].endswith("claude-hunt-deep.md.stderr.log).")
+          and "saved:" in result.stdout
+          and result.stdout.index("Tell the user:") < result.stdout.index("saved:"),
+          repr(result.stdout))
+    check("the closing text still ends by telling the user, and five land, exit 1",
+          result.stdout.rstrip().splitlines()[-1].startswith(
+              f"Tell the user: claude logged-out — {LOGGED_OUT_LINE} (log: ")
+          and result.returncode == 1 and len(lines_opening(result, "saved:")) == 5,
+          f"exit {result.returncode}; stdout={result.stdout!r}")
+    record_directory = record_directory_of(repository)
+    check("the one attempt's log is kept under the report's own name",
+          sorted(path.name for path in record_directory.glob("*.stderr.log"))
+          == ["claude-hunt-deep.md.stderr.log"],
+          sorted(path.name for path in record_directory.glob("*.stderr.log")))
+
+    # --- A retry that fails logged-out tells the user too ----------------------
+    repository = build_scratch_repository(scratch, "checkout-logged-out-on-retry")
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "claude-hunt-deep.md", "attempts": 2,
+          "stdout_by_attempt": {"1": "", "2": LOGGED_OUT_LINE}}])})
+    failed_lines = lines_opening(result, "FAILED")
+    check("an exit-1 first attempt is retried, and a logged-out retry tells the user on its FAILED line",
+          len(lines_opening(result, "RETRYING:")) == 1 and len(failed_lines) == 1
+          and f"logged-out — {LOGGED_OUT_LINE} " in failed_lines[0]
+          and ". Tell the user: claude logged-out — " in failed_lines[0]
+          and failed_lines[0].endswith("attempt-2.stderr.log)."),
+          repr(result.stdout))
+
+    # --- An attempt that runs past the time limit is stopped, not retried -----
+    # The limit is shortened to seconds; every stub reads for longer than that.
+    stub_reading_seconds = 8
+    repository = build_scratch_repository(scratch, "checkout-attempts-timed-out")
+    started = time.monotonic()
+    result = run_grid(repository, stubs, {
+        "COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": str(stub_reading_seconds),
+        "COLD_READ_GRID_CELL_ATTEMPT_TIMEOUT_SECONDS": "2"})
+    elapsed = time.monotonic() - started
+    failed_lines = lines_opening(result, "FAILED")
+    check("every attempt past the limit is FAILED as timed out, with no RETRYING line",
+          lines_opening(result, "RETRYING:") == [] and len(failed_lines) == 6
+          and all(" — timed-out — timed out after 4 hours (stderr kept: " in line
+                  for line in failed_lines),
+          repr(result.stdout))
+    check("the run ends before the stubs would have finished, none landed, exit 1",
+          elapsed < stub_reading_seconds and result.returncode == 1
+          and lines_opening(result, "saved:") == [] and "No report landed in" in result.stdout,
+          f"elapsed {elapsed:.1f}s, exit {result.returncode}; stdout={result.stdout!r}")
+    check("a timed-out cell says its write check did not run, and no Tell the user line",
+          len(lines_opening(result, "WRITE CHECK DID NOT RUN:")) == 6
+          and "Tell the user:" not in result.stdout, repr(result.stdout))
+    time.sleep(stub_reading_seconds + 1 - elapsed if elapsed < stub_reading_seconds else 0)
+    record_directory = record_directory_of(repository)
+    check("the stopped stubs never wrote their reports",
+          sorted(path.name for path in record_directory.glob("*.md")) == ["reference-check.md"],
+          sorted(path.name for path in record_directory.glob("*.md")))
+
+    # --- A cell that writes its report and then hangs is stopped, report deleted
+    hang_seconds = 30
+    repository = build_scratch_repository(scratch, "checkout-wrote-then-hung")
+    started = time.monotonic()
+    result = run_grid(repository, stubs, {
+        "COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS": str(hang_seconds),
+        "COLD_READ_GRID_CELL_ATTEMPT_TIMEOUT_SECONDS": "3"})
+    elapsed = time.monotonic() - started
+    failed_lines = lines_opening(result, "FAILED")
+    check("a timed-out cell that had written its report: FAILED says the unfinished report is deleted",
+          elapsed < hang_seconds and lines_opening(result, "saved:") == []
+          and len(failed_lines) == 6
+          and all(" — timed-out — timed out after 4 hours (stderr kept: " in line
+                  and line.endswith(".stderr.log); the unfinished report it had written is deleted")
+                  for line in failed_lines),
+          f"elapsed {elapsed:.1f}s; stdout={result.stdout!r}")
+    record_directory = record_directory_of(repository)
+    check("the hung cells' unfinished reports are not left in the record",
+          sorted(path.name for path in record_directory.glob("*.md")) == ["reference-check.md"],
+          sorted(path.name for path in record_directory.glob("*.md")))
 
     # --- Three Codex cells fail both attempts with exit-N ----------------------
     repository = build_scratch_repository(scratch, "checkout-codex-exits")
