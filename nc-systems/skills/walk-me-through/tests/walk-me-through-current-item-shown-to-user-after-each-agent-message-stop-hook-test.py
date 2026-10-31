@@ -337,7 +337,7 @@ def test_a_no_decision_line_linked_to_the_waiting_sub_steps_page_names_it():
     no_page.walk_files(minutes="#next_to_present item 4.1 of 9.")
     no_page.reply(no_decision_line("https://claude.ai/artifact/p41"))
     check_reminded("a no-decision line is sent back when the minutes record no page for the sub-step",
-                   no_page.run(), "record that line first")
+                   no_page.run(), "`#item_page item 4.1 of 9 <link>`", "add it at the end of")
     whole_item = Case()
     whole_item.walk_files(minutes="#item_page item 2 of 9 https://claude.ai/artifact/p2\n"
                                   "#next_to_present item 2 of 9.")

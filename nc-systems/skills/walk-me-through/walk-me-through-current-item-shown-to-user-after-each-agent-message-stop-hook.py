@@ -162,10 +162,12 @@ REPLY_LEAVES_OUT_INSTRUCTIONS = (
     "If he ended or abandoned the approval-walk, add the line `#next_to_present none, closed` "
     "at the end of {minutes} instead of naming the item, and end the turn.",
 )
-NO_DECISION_INSTRUCTION = (
+NO_DECISION_INSTRUCTIONS = (
     "If the waiting item is a sub-step that asks for no decision, you may end your reply instead with "
-    "`[No decision here; type N or next to continue.](<page link>)`, where <page link> is the link of the "
-    "sub-step's `#item_page` line in {minutes}; record that line first if the minutes have none.")
+    "`[No decision here; type N or next to continue.](<page link>)`, where <page link> is the link that "
+    "ends the sub-step's line in {minutes} of the form {page_line}.",
+    "If {minutes} has no such line, add it at the end of {minutes} first, with the link of the page "
+    "you published for the sub-step with the Artifact tool.")
 OLD_MARKER_INSTRUCTIONS = (
     "Add this line at the end of {minutes}, below every earlier marker line, and leave "
     "the old lines as they are: {new_line}",
@@ -333,10 +335,11 @@ def output_for(payload, environment):
                else f"Items {', '.join(numbers[:-1])} and {numbers[-1]} of {total}")
     instructions = REPLY_LEAVES_OUT_INSTRUCTIONS
     if any("." in number for number in left_out):
-        instructions += (NO_DECISION_INSTRUCTION,)
+        instructions += NO_DECISION_INSTRUCTIONS
+    sub_step = next((number for number in left_out if "." in number), "")
     return block(REPLY_LEAVES_OUT_OPENING_TEMPLATE, instructions,
                  named=" and ".join(f"`Item {number} of {total}`" for number in left_out),
-                 example=example)
+                 example=example, page_line=f"`#item_page item {sub_step} of {total} <link>`")
 
 
 def main():
