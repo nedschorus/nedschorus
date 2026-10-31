@@ -12,6 +12,13 @@ approved set, tells the agent to show the user the change and run this program w
 or --restore. The change stays in place while he is asked. A version with no copy is read
 back from git; a file outside every checkout, such as ~/.claude/CLAUDE.md, is always copied.
 
+A checkout's first run records the commit HEAD names, in the checkout's state, and counts every
+file that matches that commit, and that the store has no directory for, as approved without
+writing to the store; a file the store has a directory for is checked as any first run checks
+it, so a version a run saw and the user never approved is still asked about after the state is
+lost; a file that differs from the commit is stored and approved as it is. When such a file first changes, its version at the
+recorded commit is read from git, copied and approved, before the change is checked.
+
     python3 <this file> --approve <path> <hash> [<path> <hash> ...]
     python3 <this file> --restore <path> <hash> [<path> <hash> ...]
 
@@ -65,6 +72,8 @@ OWNER_VARIABLE = "GUARDED_FILE_VERSIONS_OWNER_KEY"
 MAC_STORE_DEADLINE_SECONDS = 15
 
 STATE_FILE_NAME = HOOK_NAME + "-state.json"
+# The checkout state's key for the commit HEAD named at the checkout's first run.
+BASE_COMMIT_KEY = "base_commit"
 APPROVED_FILE_NAME = "approved"
 LOG_FILE_NAME = "log"
 DELETED = "deleted"
@@ -463,6 +472,35 @@ def blobs_durable_refs_hold(checkout):
     output = git_text(checkout, "rev-list", "--objects", *DURABLE_REF_OPTIONS, timeout=600)
     # Commits and trees are listed too; only a blob's id can name a copy.
     return {line.split(" ", 1)[0] for line in output.splitlines()}
+
+
+def head_commit(checkout):
+    """The commit HEAD names, or None when the repository has no commit yet."""
+    # git rev-parse -q --verify exits 1, with nothing on stderr, when HEAD names no commit yet.
+    result = subprocess.run(["git", "-C", str(checkout), "rev-parse", "-q", "--verify",
+                             "HEAD^{commit}"], capture_output=True, timeout=60, check=False)
+    if result.returncode == 1:
+        return None
+    if result.returncode != 0:
+        raise RuntimeError(f"git rev-parse -q --verify HEAD^{{commit}} in {checkout} exited "
+                           f"{result.returncode}: {result.stderr.decode(errors='replace').strip()}")
+    return result.stdout.decode().strip()
+
+
+def blobs_at_commit(checkout, commit, paths):
+    """{absolute path: blob id} of those paths that the commit's tree holds as blobs."""
+    relative = {os.path.relpath(path, checkout): path for path in paths}
+    if not relative:
+        return {}
+    output = git_text(checkout, "--literal-pathspecs", "ls-tree", "-r", "-z", "--full-tree",
+                      commit, "--", *sorted(relative))
+    blobs = {}
+    for entry in output.split("\0"):
+        header, _, name = entry.partition("\t")
+        fields = header.split()
+        if len(fields) == 3 and fields[1] == "blob" and name in relative:
+            blobs[relative[name]] = fields[2]
+    return blobs
 
 
 def versions_head_holds(checkout, versions):
@@ -1030,7 +1068,8 @@ def run_hook(payload):
         checkout_path = git_directory / STATE_FILE_NAME
         checkout_state = read_state(checkout_path)
         checkout_stocking = checkout_state is None
-        checkout_state = checkout_state or {"files": {}, "reflog": None, "stopped": False}
+        checkout_state = checkout_state or {"files": {}, "reflog": None, "stopped": False,
+                                            BASE_COMMIT_KEY: head_commit(checkout)}
         decisions = checkout_state.setdefault("guarded", {})
         decisions_before = dict(decisions)
         groups.append(("checkout", checkout_path, checkout_state, checkout_files(checkout, decisions),
@@ -1049,11 +1088,29 @@ def run_hook(payload):
                          if repository else (lambda paths: {}))
         listed_before = set(state["files"])
         changed, unsettled = scan(files, state["files"], hash_function)
-        approvals, quiet, new_position, held = [], False, None, set()
+        approvals, quiet, new_position, held, base_versions = [], False, None, set(), {}
+        base_matched, checkout_root = {}, None
         if repository is not None:
             checkout, git_directory = repository
-            held = versions_head_holds(checkout, [(path, value[3])
-                                                  for path, value in changed.items()])
+            checkout_root = str(checkout)
+            base = state.get(BASE_COMMIT_KEY)
+            if base and changed and stocking:
+                # A file that matches the commit the worktree started from counts as approved,
+                # with nothing written to the store, when the store has no directory for it;
+                # its version reaches the store when it first changes.
+                for path, blob in blobs_at_commit(checkout, base, list(changed)).items():
+                    if changed[path][0] is not None and changed[path][3] == blob:
+                        base_matched[path] = changed.pop(path)
+                stocking = bool(changed)
+            elif base and changed:
+                recorded = [path for path in changed if path in state["files"]]
+                for path, blob in blobs_at_commit(checkout, base, recorded).items():
+                    # A file whose previous version is not the base one was seen changed
+                    # before, and its base version was stored then.
+                    if state["files"][path][4] == blob:
+                        base_versions[path] = (blob, version_from_git(path, blob))
+            held = versions_head_holds(checkout, [(path, value[3]) for path, value
+                                                  in {**changed, **base_matched}.items()])
             entries = reflog_entries(git_directory)
             new_position = entries[-1][:2] if entries else None
             window = [] if stocking else entries_after(entries, state.get("reflog"))
@@ -1066,11 +1123,12 @@ def run_hook(payload):
             elif window:
                 approvals = git_own_work(checkout, window, state, changed)
         plans.append([kind, state_path, state, files, changed, unsettled, approvals, quiet,
-                      new_position, stocking, set(state["files"]) != listed_before, held])
+                      new_position, stocking, set(state["files"]) != listed_before, held,
+                      base_versions, base_matched, checkout_root])
 
     stocking_machine = outside_stocking
     nothing_to_do = all(not plan[4] and not plan[5] and not plan[6] and not plan[9]
-                        for plan in plans)
+                        and not plan[13] for plan in plans)
     if nothing_to_do:
         for plan in plans:
             moved = plan[8] is not None and plan[2].get("reflog") != plan[8]
@@ -1093,7 +1151,16 @@ def run_hook(payload):
                     log_seen(store, path, session, owner(), key, key, HOW_STOCK)
         for plan in plans:
             (kind, state_path, state, files, changed, unsettled, approvals, quiet, _, stocking, _,
-             held) = plan
+             held, base_versions, base_matched, checkout_root) = plan
+            # The version at the commit the worktree started from, not at HEAD: an agent's
+            # commit of an unapproved edit moves HEAD, never that commit.
+            for path, (blob, data) in base_versions.items():
+                if data is None or blob in store.approved(path) \
+                        or seen_lines(store.log(path), blob):
+                    continue
+                store.copy(path, blob, data)
+                store.approve(path, blob)
+                log_seen(store, path, session, owner(), blob, blob, HOW_STOCK)
             checks = []
             for path, (now, data, key, copy_hash) in changed.items():
                 how = ""
@@ -1106,9 +1173,24 @@ def run_hook(payload):
                 previous = state["files"].get(path)
                 checks.append(Check(path, data, key, copy_hash, how, (path, copy_hash) in held,
                                     previous and previous[4]))
+            # A path the store has a directory for may have a version a run saw and the user
+            # never approved, as after a lost checkout state, so it is checked as stocking is.
+            base_quiet = []
+            root = store.path_directory(checkout_root, create=False) if base_matched else None
+            if root is not None:
+                os.close(root)
+            for path, (now, data, key, copy_hash) in base_matched.items():
+                directory = None if root is None else store.path_directory(path, create=False)
+                if directory is None:
+                    base_quiet.append(path)
+                    continue
+                os.close(directory)
+                how = "" if key not in store.approved(path) and seen_lines(store.log(path), key) \
+                    else HOW_STOCK
+                checks.append(Check(path, data, key, copy_hash, how, (path, copy_hash) in held))
             approvals = approvals + renames(store, changed, state["files"])
             results.append(store_phase(store, session, owner(), checks, unsettled, approvals,
-                                       quiet))
+                                       quiet) + (base_quiet,))
         return results
 
     try:
@@ -1119,8 +1201,9 @@ def run_hook(payload):
         return [STORE_FAILED.format(reason=str(error).rstrip("."), remedy=remedy)]
 
     asks, reminders = [], []
-    for plan, (plan_asks, plan_reminders, settled) in zip(plans, results):
-        state, changed = plan[2], plan[4]
+    for plan, (plan_asks, plan_reminders, settled, base_quiet) in zip(plans, results):
+        state, changed = plan[2], {**plan[4], **plan[13]}
+        settled.update(dict.fromkeys(base_quiet, True))
         for path, (now, _, key, copy_hash) in changed.items():
             if now is None:
                 state["files"][path] = [0, 0, 0, 0, DELETED, DELETED, settled.get(path, False)]

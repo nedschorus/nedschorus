@@ -9,6 +9,7 @@ Run: python3 .claude/hooks/guarded-file-unapproved-change-afterward-backup-and-a
 Prints one line per case and exits 1 if any case fails.
 """
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -178,12 +179,17 @@ def cases(scratch):
     # -- a shell command that edits CLAUDE.md is caught
     world = fresh(scratch, "shell-edit")
     claude = world.repo / "CLAUDE.md"
-    check("the first run stocks the checkout and asks nothing",
-          world.key(claude) in world.store_file(claude, "approved"),
-          world.store_file(claude, "approved"))
+    base = world.key(claude)
+    check("the first run in a checkout writes nothing to the store for the checkout's files",
+          world.versions(claude) == [], world.versions(claude))
     claude.write_text("project v2\n")
     key = world.key(claude)
     message = world.run()
+    check("the first change copies and approves the file's version at the commit the "
+          "checkout started from", base in world.versions(claude)
+          and base in world.store_file(claude, "approved")
+          and f"\t{base}\t{base}\tstock\t" in world.store_file(claude, "log"),
+          (world.versions(claude), world.store_file(claude, "log")))
     check("a shell edit of CLAUDE.md is reported, with the path and the version's hash",
           str(claude) in message and key in message and "has not approved" in message, message)
     check("the shell edit's version is copied into the store",
@@ -474,8 +480,6 @@ def cases(scratch):
     committed = world.key(claude)
     check("a version a commit holds is not copied",
           committed not in world.versions(claude), world.versions(claude))
-    check("and the log has its line with the version's git id",
-          world.seen_in_log(claude, committed), world.store_file(claude, "log"))
     home_claude = world.home / ".claude" / "CLAUDE.md"
     check("a guarded file outside every checkout is copied",
           world.key(home_claude) in world.versions(home_claude), world.versions(home_claude))
@@ -483,10 +487,19 @@ def cases(scratch):
     world.git("commit", "-qam", "v2")
     second = world.key(claude)
     message = world.run()
-    check("a version committed before a run sees it is asked about, with the diff read from git",
+    check("a version committed before a run sees it is asked about, with the diff against the "
+          "version at the commit the checkout started from",
           str(claude) in message and "-project v1" in message and "+project v2" in message,
           message)
-    check("and it is not copied", second not in world.versions(claude), world.versions(claude))
+    check("and it is not copied, though it is logged",
+          second not in world.versions(claude) and world.seen_in_log(claude, second),
+          (world.versions(claude), world.store_file(claude, "log")))
+    check("and the version at the commit the checkout started from is approved, not HEAD's",
+          world.store_file(claude, "approved").startswith(committed)
+          and second not in world.store_file(claude, "approved"),
+          world.store_file(claude, "approved"))
+    # The daily prune deletes a copy of a version a durable ref holds, as this one is.
+    (world.store / str(claude).lstrip("/") / committed).unlink()
     result = world.command("--restore", claude, second)
     check("--restore puts back an approved version that only git holds",
           result.returncode == 0 and claude.read_text() == "project v1\n",
@@ -593,6 +606,9 @@ def cases(scratch):
     world.failing_git(None)
     world.run()
     key = world.key(claude)
+    # As after the daily prune, the approved version is left only in git.
+    (world.store / str(claude).lstrip("/") / world.git(
+        "rev-parse", "HEAD:CLAUDE.md").stdout.strip()).unlink()
     world.failing_git("cat-file blob")
     result = world.command("--restore", claude, key)
     check("--restore whose git fails to read the approved version fails and changes nothing",
@@ -746,13 +762,134 @@ def cases(scratch):
     claude = world.repo / "CLAUDE.md"
     claude.write_text("project v2\n")
     directory = world.store / str(claude).lstrip("/")
-    (directory / "approved").chmod(0o000)
+    directory.mkdir(parents=True)
+    (directory / "approved").touch(mode=0o000)
     message = world.run()
     check("a run that cannot read the approved set reports the failure",
           "did not run" in message, message)
     (directory / "approved").chmod(0o600)
     message = world.run()
     check("the next run checks the file", str(claude) in message, message)
+
+    # -- a checkout's first run writes nothing to the store; the first change stores the base
+    world = fresh(scratch, "first-run-writes-nothing")
+    second = world.agents / "second"
+    world.git("worktree", "add", "-q", str(second))
+    before = store_listing(world.store)
+    message = world.run(cwd=second)
+    check("a new worktree's first run writes nothing to the store and asks nothing",
+          message == "" and store_listing(world.store) == before, (message, len(before)))
+    third = world.agents / "third"
+    world.git("worktree", "add", "-q", str(third))
+    hook = load_hook_in_this_process()
+    opened = []
+    store_class = hook.Store
+    hook.Store = lambda machine: opened.append(machine) or store_class(machine)
+    saved_environment, saved_directory = dict(os.environ), os.getcwd()
+    try:
+        os.environ.update(world.environment())
+        os.chdir(third)
+        texts = hook.run_hook({"session_id": "session-a", "hook_event_name": "PostToolUse",
+                               "tool_name": "Bash", "cwd": str(third),
+                               "tool_input": {"command": "x"}})
+    finally:
+        os.chdir(saved_directory)
+        os.environ.clear()
+        os.environ.update(saved_environment)
+    check("and opens the store only once, to find it has no directory for the checkout",
+          texts == [] and opened == ["ned-box"], (texts, opened))
+    second_claude = second / "CLAUDE.md"
+    base = world.key(second_claude)
+    second_claude.write_text("project v2, shell\n")
+    world.git("commit", "-qam", "commit the unapproved edit", cwd=second)
+    world.git("commit", "-q", "--allow-empty", "-m", "and move HEAD on", cwd=second)
+    message = world.run(cwd=second)
+    check("an unapproved edit committed before any run sees it is asked about, and the version "
+          "stored as approved is the one at the commit the worktree started from, not HEAD's",
+          str(second_claude) in message and "-project v1" in message
+          and world.store_file(second_claude, "approved").split("\t")[0] == base
+          and world.store_file(second_claude, "approved").count("\n") == 1,
+          (message, world.store_file(second_claude, "approved")))
+    world.run(cwd=second)
+    check("a later run does not store the base version again",
+          world.store_file(second_claude, "approved").count("\n") == 1,
+          world.store_file(second_claude, "approved"))
+
+    # -- a file that differs from the base commit at the first run is stored as it is
+    directory = Path(scratch) / "first-run-differs"
+    directory.mkdir()
+    world = World(directory)
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v1, uncommitted\n")
+    message = world.run()
+    check("a file that differs from HEAD at a checkout's first run is stored and approved as it "
+          "is, and nothing is asked", message == ""
+          and world.key(claude) in world.store_file(claude, "approved")
+          and world.key(claude) in world.versions(claude),
+          (message, world.store_file(claude, "approved")))
+    base = world.git("rev-parse", "HEAD:CLAUDE.md").stdout.strip()
+    claude.write_text("project v2\n")
+    world.run()
+    check("when that file changes again, its version at the commit the checkout started from, "
+          "which no run saw, is not approved", base not in world.store_file(claude, "approved"),
+          world.store_file(claude, "approved"))
+
+    # -- a lost checkout state does not silence an unanswered ask
+    world = fresh(scratch, "lost-state-keeps-asking")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2, unapproved\n")
+    message = world.run()
+    check("an unapproved edit is asked about", str(claude) in message, message)
+    world.git("commit", "-qam", "commit the unapproved edit")
+    world.run()
+    next((world.repo / ".git").glob("*-state.json")).write_text("{corrupt")
+    message = world.run()
+    check("after the checkout's state is lost, the committed version the user never approved "
+          "is still asked about", str(claude) in message, message)
+
+    # -- a store directory a timed-out run left part-written
+    world = fresh(scratch, "part-written-store-directory")
+    claude = world.repo / "CLAUDE.md"
+    base = world.key(claude)
+    directory = world.store / str(claude).lstrip("/")
+    directory.mkdir(parents=True)
+    # A run killed after its approval line and before its log line, as one Mac directory shows.
+    (directory / "approved").write_bytes(
+        f"{base}\t{hashlib.sha256(base.encode()).hexdigest()[:16]}\n".encode())
+    claude.write_text("project v2\n")
+    message = world.run()
+    check("a base version a cut-off run already approved is not approved again, and the change "
+          "is asked about against it",
+          world.store_file(claude, "approved").count(base) == 1
+          and "-project v1" in message and "+project v2" in message,
+          (world.store_file(claude, "approved"), message))
+    world = fresh(scratch, "base-version-seen-and-not-approved")
+    claude = world.repo / "CLAUDE.md"
+    base = world.key(claude)
+    directory = world.store / str(claude).lstrip("/")
+    directory.mkdir(parents=True)
+    # An earlier checkout at this path saw the base version and the user never approved it.
+    body = f"seen\t1\tsession-old\tended-old\t{base}\t{base}\t"
+    (directory / "log").write_bytes(
+        f"{body}\t{hashlib.sha256(body.encode()).hexdigest()[:16]}\n".encode())
+    claude.write_text("project v2\n")
+    message = world.run()
+    check("a base version a run saw and the user never approved is not approved by the first "
+          "change", base not in world.store_file(claude, "approved") and str(claude) in message,
+          (world.store_file(claude, "approved"), message))
+    world = fresh(scratch, "cut-off-approval-line")
+    claude = world.repo / "CLAUDE.md"
+    base = world.key(claude)
+    directory = world.store / str(claude).lstrip("/")
+    directory.mkdir(parents=True)
+    (directory / "approved").write_bytes(base.encode())  # cut off before its checksum
+    claude.write_text("project v2\n")
+    message = world.run()
+    check("a cut-off approval line of the base version is not read as one: the base version is "
+          "approved in full, and the change is asked about against it",
+          f"\n{base}\t" in world.store_file(claude, "approved")
+          and "-project v1" in message and "+project v2" in message,
+          (world.store_file(claude, "approved"), message))
 
     # -- unapproved commit, switch away and back
     world = fresh(scratch, "switch-back")
@@ -824,7 +961,10 @@ def cases(scratch):
     claude = world.repo / "CLAUDE.md"
     claude.write_text("project v2\n")
     directory = world.store / str(claude).lstrip("/")
+    directory.mkdir(parents=True)
     for target in (directory / "approved", directory / "log", directory):
+        if not target.exists():
+            target.touch()
         target.chmod(0o500 if target.is_dir() else 0o400)
     message = world.run()
     for target in (directory, directory / "approved", directory / "log"):
