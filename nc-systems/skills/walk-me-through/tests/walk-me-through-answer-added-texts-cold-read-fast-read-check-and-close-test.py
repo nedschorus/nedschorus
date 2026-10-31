@@ -1743,6 +1743,66 @@ def test_a_rename_is_refused_unless_a_glossary_lists_the_new_name_and_no_untouch
                                                                                       "the new name"))
 
 
+def not_asked_case_with_line(next_to_present, old_line, new_line, files=None):
+    case = not_asked_case(next_to_present, files)
+    (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").write_text(NOT_ASKED_DOCUMENT.replace(old_line, new_line))
+    return case
+
+
+def test_a_name_holding_a_digit_or_of_one_word_is_found_in_any_case_and_inside_a_longer_name():
+    for name, spelling in (("utf8_locale", "utf8_locale_name = 1"), ("utf8_locale", "UTF8_LOCALE = 1"),
+                           ("sha256_of", "sha256_of_file_or_empty()"), ("cold-read-v2", "COLD_READ_V2 = 1"),
+                           ("utf8_locale", "UTF_8_LOCALE = 1"), ("utf8_locale", "see utf-8-locale"),
+                           ("sha256_of", "sha_256_of(x)"),
+                           ("reader", "Reader()"), ("reader", "reader_path = 1")):
+        case = not_asked_case_with_line("item 3 of 7", "#not_asked_unused old_reader", f"#not_asked_unused {name}",
+                                        {"tools/other.py": f"{spelling}\n"})
+        check(f"kind 3 is refused when an untouched file holds the removed name {name} as {spelling}",
+              *refused(case, 3, f"`{name}`, named on its `#not_asked_unused` line, is still named in tools/other.py"))
+    case = not_asked_case_with_line("item 3 of 7", "#not_asked_unused old_reader", "#not_asked_unused utf8_locale")
+    result = case.run("check", "--not-asked", "3")
+    check("kind 3 settles a removed name holding a digit that no untouched file holds", result.returncode == 0,
+          described(result))
+
+
+def test_underscore_emphasis_around_a_marker_is_read():
+    case = not_asked_case_with_line("item 2 of 7", "#not_asked_test tools/counter-test.py\n\n#case_against weak:",
+                                    "__#not_asked_test__ tools/counter-test.py\n\n__#case_against__ weak:")
+    result = case.run("check", "--not-asked", "2")
+    check("`__#case_against__ weak:` and `__#not_asked_test__` are read as their markers",
+          result.returncode == 0 and "kind 2 #case_against_weak (" in case.minutes.read_text(), described(result))
+    case = not_asked_case_with_line("item 2 of 7", "#case_against weak:", "_#case_against_ weak:")
+    result = case.run("check", "--not-asked", "2")
+    check("`_#case_against_ weak:` is read as the marker", result.returncode == 0, described(result))
+    case = not_asked_case_with_line("item 2 of 7", "#case_against weak:", "#case_against_weak:")
+    result = case.run("check", "--not-asked", "2")
+    check("`#case_against_weak:`, a hashtag the minutes write, is not read as the marker",
+          result.returncode == 1 and "has no `#case_against` line" in result.stderr, described(result))
+
+
+def test_a_rename_to_a_name_with_spaces_or_to_a_glossary_term_with_an_alias_settles():
+    case = not_asked_case_with_line("item 4 of 7", "#not_asked_rename poem-list poem-index",
+                                    "#not_asked_rename `poem-list` `poem index page`",
+                                    {"docs/poems-glossary.md": "- **poem index page** — the page that lists poems.\n"})
+    result = case.run("check", "--not-asked", "4")
+    check("kind 4 settles a rename to a name of two or more words, each name in backquotes", result.returncode == 0,
+          described(result))
+    case = not_asked_case_with_line("item 4 of 7", "#not_asked_rename poem-list poem-index",
+                                    "#not_asked_rename `poem list` poem-index", {"docs/about.md": "See PoemList.\n"})
+    check("kind 4 is refused when an untouched file holds an old name of two words in another spelling",
+          *refused(case, 4, "`poem list`, named on its `#not_asked_rename` line, is still named in docs/about.md"))
+    case = not_asked_case("item 4 of 7", {"docs/poems-glossary.md": "- **poem-index (aka PI)** — the poems page.\n"})
+    result = case.run("check", "--not-asked", "4")
+    check("kind 4 settles when the new name's glossary entry gives an alias after it", result.returncode == 0,
+          described(result))
+    check("kind 4 is refused when the glossary's term only starts with the new name",
+          *refused(not_asked_case("item 4 of 7", {"docs/poems-glossary.md": "- **poem-index-two** — another.\n"}), 4,
+                   "the new name `poem-index` is the term of no entry"))
+    check("kind 4 is refused when the glossary's term gives the new name with a parenthetical that is not an alias",
+          *refused(not_asked_case("item 4 of 7", {"docs/poems-glossary.md": "- **poem-index (v2)** — another.\n"}), 4,
+                   "the new name `poem-index` is the term of no entry"))
+
+
 def test_a_git_grep_that_fails_is_reported_and_writes_nothing():
     case = not_asked_case("item 3 of 7")
     stub = case.root / "stub-bin"
