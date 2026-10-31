@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Tests for pull-request-follow-up-request-findings-open-pull-requests-or-record-leave-out-reasons-and-clean-up.py.
+"""Tests for pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py.
 
 Each case runs the program in a scratch clone of a scratch bare origin, with the follow-up request
 saved by the program's own save_follow_up_request_and_clear_answers_when_its_findings_changed(), as the hook saves it.
 next-step, start, open, record-finding-leave-out-reason and finish run in a second worktree of the clone, as the forked subagent
-runs them; remove-recorded-topic-branches-and-worktrees runs in the clone, as the author runs it. A fake gh first on PATH stands in for
+runs them; remove-topic-branches-and-worktrees runs in the clone, as the author runs it. A fake gh first on PATH stands in for
 GitHub; a pre-push hook in the clone injects a refused push.
 
-Run: python3 scripts/pull-request-follow-up-request-findings-open-pull-requests-or-record-leave-out-reasons-and-clean-up-test.py
+Run: python3 scripts/pull-request-follow-up-request-after-merge-finding-answers-and-next-step-test.py
 """
 
 import contextlib
@@ -30,7 +30,7 @@ _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 PROGRAM = Path(__file__).resolve().with_name(
-    "pull-request-follow-up-request-findings-open-pull-requests-or-record-leave-out-reasons-and-clean-up.py")
+    "pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py")
 _program_spec = importlib.util.spec_from_file_location("follow_up_program", PROGRAM)
 program = importlib.util.module_from_spec(_program_spec)
 _program_spec.loader.exec_module(program)
@@ -202,8 +202,8 @@ def test_help():
     check("--help exits 0 and names every subcommand",
           completed.returncode == 0 and all(name in completed.stdout for name in
                                             ("next-step", "start-topic-branch", "open-pull-request", "record-finding-leave-out-reason",
-                                             "record-finding-waiting-for-user-decision", "reopen-finding-after-user-decision",
-                                             "finish-follow-up-request-and-print-merge-lane-2-message", "remove-recorded-topic-branches-and-worktrees")),
+                                             "record-finding-as-waiting-for-user-ruling", "reopen-waiting-finding-with-user-ruling",
+                                             "finish-and-print-merge-lane-2-message", "remove-topic-branches-and-worktrees")),
           completed.stdout)
     for label, arguments, words in (
             ("no subcommand", (), "required: subcommand"),
@@ -211,10 +211,10 @@ def test_help():
              "required: --finding-numbers"),
             ("record-finding-leave-out-reason without --reason", ("record-finding-leave-out-reason", "1"),
              "required: --reason"),
-            ("record-finding-waiting-for-user-decision without --what-it-would-change",
-             ("record-finding-waiting-for-user-decision", "1"), "required: --what-it-would-change"),
-            ("reopen-finding-after-user-decision without --user-decision",
-             ("reopen-finding-after-user-decision", "1"), "required: --user-decision")):
+            ("record-finding-as-waiting-for-user-ruling without --what-it-would-change",
+             ("record-finding-as-waiting-for-user-ruling", "1"), "required: --what-it-would-change"),
+            ("reopen-waiting-finding-with-user-ruling without --user-ruling",
+             ("reopen-waiting-finding-with-user-ruling", "1"), "required: --user-ruling")):
         completed = subprocess.run([sys.executable, str(PROGRAM), str(NUMBER), *arguments],
                                    capture_output=True, text=True)
         check(f"{label} is refused by argparse with exit 2",
@@ -251,7 +251,7 @@ def test_brief_text():
     for line in (f'Each "Program:" below means: run {command} followed by the words after it.',
                  'Dispatch one subagent with the Agent tool: subagent_type "fork", isolation "worktree", '
                  'run_in_background true. Give it this whole text unchanged; it skips the lines under "For you, the author".',
-                 "When it has ended, ask the user its report's questions, then Program: remove-recorded-topic-branches-and-worktrees"):
+                 "When it has ended, ask the user its report's questions, then Program: remove-topic-branches-and-worktrees"):
         check(f"the brief holds: {line}", line in brief, brief)
     check("the brief ends with the subagent's one line, after a blank line, and what to do when a command refuses "
           "or fails",
@@ -266,7 +266,7 @@ def test_no_saved_block():
     case = Case()
     try:
         for arguments in (("next-step",), ("start-topic-branch", "topic", "--finding-numbers", "1"), ("open-pull-request", "--handled-finding-numbers", "1"),
-                          ("record-finding-leave-out-reason", "1", "--reason", "x"), ("finish-follow-up-request-and-print-merge-lane-2-message",)):
+                          ("record-finding-leave-out-reason", "1", "--reason", "x"), ("finish-and-print-merge-lane-2-message",)):
             code, out, err = case.run(case.repository, *arguments)
             check(f"{arguments[0]} with no saved block refuses with exit 1, handing the agent the sentence for the user",
                   code == 1 and out == "" and err.startswith(
@@ -276,8 +276,8 @@ def test_no_saved_block():
                                    "word for word: \"The follow-up request hook did not save merge-lane-2's findings "
                                    f"for {FOLLOWED_UP}." + SUBAGENT_END), err)
         check("start with no saved block records nothing", case.topic_branches() is None)
-        code, out, err = case.run(case.repository, "remove-recorded-topic-branches-and-worktrees")
-        check("remove-recorded-topic-branches-and-worktrees with nothing recorded removes nothing and exits 0",
+        code, out, err = case.run(case.repository, "remove-topic-branches-and-worktrees")
+        check("remove-topic-branches-and-worktrees with nothing recorded removes nothing and exits 0",
               code == 0 and "No topic branch is recorded" in out, out + err)
     finally:
         case.close()
@@ -448,7 +448,7 @@ def test_open_refusals():
               code == 1 and "Findings 1 and 2 of pull request 1964's follow-up request already have an answer" in err
               and "without those findings.\nIf that leaves no finding, do not open this branch's pull request: "
                   "other answers already cover what it handles. Go on with the next topic, and leave the branch: "
-                  "remove-recorded-topic-branches-and-worktrees shows its commits to the author, who decides "
+                  "remove-topic-branches-and-worktrees shows its commits to the author, who decides "
                   "whether to keep them.\n" in err, err)
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1,x")
         check("open refuses finding numbers that are not numbers", code == 2 and "such as 1,3" in err, err)
@@ -517,7 +517,7 @@ def test_open():
         check("open records the last link gh pr create prints",
               case.answers()["answers"]["2"]["link"] == LINK, str(case.answers()))
         check("open of the last finding says every finding has an answer",
-              code == 0 and f"Every finding has an answer: run python3 {program.PROGRAM} {NUMBER} finish-follow-up-request-and-print-merge-lane-2-message" in out, out + err)
+              code == 0 and f"Every finding has an answer: run python3 {program.PROGRAM} {NUMBER} finish-and-print-merge-lane-2-message" in out, out + err)
         check("open accepts the merge gate's old defect label, and pushes the checked-out topic branch",
               git(case.origin, "rev-parse", "topic-two") == git(worktree, "rev-parse", "topic-two")
               and "unrecorded" not in git(case.origin, "branch")
@@ -829,7 +829,7 @@ def test_leave_out_and_finish():
     case = Case()
     try:
         worktree = started(case)
-        code, out, err = case.run(worktree, "finish-follow-up-request-and-print-merge-lane-2-message")
+        code, out, err = case.run(worktree, "finish-and-print-merge-lane-2-message")
         check("finish refuses, naming each finding without an answer",
               code == 1 and err == "REFUSED: Findings 1 and 2 of pull request 1964's follow-up request have no answer "
                                    "yet, so the follow-up is not finished.\n"
@@ -852,12 +852,12 @@ def test_leave_out_and_finish():
               code == 1 and "already has an answer, so nothing was recorded" in err
               and err.endswith("\nEach finding takes one answer, so leave this one as it is and go on with the next.\n")
               and "without that finding" not in err, err)
-        code, out, err = case.run(worktree, "finish-follow-up-request-and-print-merge-lane-2-message")
+        code, out, err = case.run(worktree, "finish-and-print-merge-lane-2-message")
         check("finish names only the finding still without an answer",
               code == 1 and "Finding 2 of pull request 1964's follow-up request has no answer yet" in err
               and err.endswith(f"\nRun python3 {program.PROGRAM} {NUMBER} next-step and do what it prints.\n"), err)
         case.run(worktree, "record-finding-leave-out-reason", "2", "--reason", "a guard nothing calls for")
-        code, out, err = case.run(worktree, "finish-follow-up-request-and-print-merge-lane-2-message")
+        code, out, err = case.run(worktree, "finish-and-print-merge-lane-2-message")
         check("finish passes and prints the message for merge-lane-2",
               code == 0 and out == "Every finding of pull request 1964's follow-up request has an answer.\n"
                                    "Send merge-lane-2 this message with SendMessage:\n\n"
@@ -879,7 +879,7 @@ def test_three_findings():
     try:
         case.save(BLOCK + "3. a third finding\n")
         worktree = case.subagent_worktree()
-        command = "finish-follow-up-request-and-print-merge-lane-2-message"
+        command = "finish-and-print-merge-lane-2-message"
         code, out, err = case.run(worktree, "next-step")
         check("next-step judges every one of three findings, quoting the third",
               code == 0 and out.startswith("Next: judge findings 1, 2 and 3, which have no answer yet:\n")
@@ -910,38 +910,38 @@ def test_state_failures():
     try:
         outside = case.root / "not-a-repository"
         outside.mkdir()
-        code, out, err = case.run(outside, "finish-follow-up-request-and-print-merge-lane-2-message")
+        code, out, err = case.run(outside, "finish-and-print-merge-lane-2-message")
         check("outside a git checkout the program is FAILED with exit 2",
               code == 2 and out == "" and err.startswith("FAILED: git rev-parse")
               and f" in {outside} failed" in err
-              and "\n" + fails_line("finish-follow-up-request-and-print-merge-lane-2-message") + "git rev-parse" in err
+              and "\n" + fails_line("finish-and-print-merge-lane-2-message") + "git rev-parse" in err
               and "again once" not in err and err.endswith(SUBAGENT_END), err)
         saved = case.save()
         saved.write_text("not a block\n")
-        code, out, err = case.run(case.repository, "finish-follow-up-request-and-print-merge-lane-2-message")
+        code, out, err = case.run(case.repository, "finish-and-print-merge-lane-2-message")
         check("a saved file that holds no block is FAILED", code == 2 and "exactly one block" in err, err)
         for label, text in (("a later pull request", BLOCK.replace(str(NUMBER), str(NUMBER + 1))),
                             ("an earlier pull request", BLOCK.replace(str(NUMBER), str(NUMBER - 1))),
                             ("two blocks", BLOCK + "\n" + BLOCK.replace(str(NUMBER), str(NUMBER - 1)))):
             saved.write_text(text)
-            code, out, err = case.run(case.repository, "finish-follow-up-request-and-print-merge-lane-2-message")
+            code, out, err = case.run(case.repository, "finish-and-print-merge-lane-2-message")
             check(f"a saved file whose block is for {label} is FAILED",
                   code == 2 and "exactly one block, for this pull request" in err, err)
         saved.write_text(f"#follow_up_request pull request {NUMBER}\n2. x\n")
-        code, out, err = case.run(case.repository, "finish-follow-up-request-and-print-merge-lane-2-message")
+        code, out, err = case.run(case.repository, "finish-and-print-merge-lane-2-message")
         check("a saved block with bad numbering is FAILED", code == 2 and "numbered 1, 2, 3" in err, err)
         saved.unlink()
         saved.mkdir()
-        code, out, err = case.run(case.repository, "finish-follow-up-request-and-print-merge-lane-2-message")
+        code, out, err = case.run(case.repository, "finish-and-print-merge-lane-2-message")
         check("a saved file that cannot be read is FAILED", code == 2 and "could not read" in err, err)
         saved.rmdir()
         case.save()
         answers = case.states() / f"pull-request-{NUMBER}-follow-up-finding-answers.json"
         answers.write_text("{not json")
-        code, out, err = case.run(case.repository, "finish-follow-up-request-and-print-merge-lane-2-message")
+        code, out, err = case.run(case.repository, "finish-and-print-merge-lane-2-message")
         check("an answers file that is not JSON is FAILED, not to be run again",
               code == 2 and "is not the JSON this program writes" in err and "again once" not in err
-              and fails_line("finish-follow-up-request-and-print-merge-lane-2-message") in err
+              and fails_line("finish-and-print-merge-lane-2-message") in err
               and err.endswith(SUBAGENT_END), err)
         answers.unlink()
         answers.mkdir()
@@ -973,45 +973,45 @@ def test_clean_up():
         case.commit_change("unpushed.txt")
         git(worktree, "switch", "-q", "topic-one")
         git(case.repository, "worktree", "lock", "--reason", "claude agent agent-a1b2 (pid 4242)", str(worktree))
-        code, out, err = case.run(case.repository, "remove-recorded-topic-branches-and-worktrees")
-        check("remove-recorded-topic-branches-and-worktrees leaves a worktree the agent harness locks, and its branches, with exit 1",
+        code, out, err = case.run(case.repository, "remove-topic-branches-and-worktrees")
+        check("remove-topic-branches-and-worktrees leaves a worktree the agent harness locks, and its branches, with exit 1",
               code == 1 and f"Worktree {worktree} is locked by the agent harness (lock reason: claude agent "
-                            "agent-a1b2 (pid 4242)), so remove-recorded-topic-branches-and-worktrees left it" in out
+                            "agent-a1b2 (pid 4242)), so remove-topic-branches-and-worktrees left it" in out
               and "Wait until the subagent has ended.\nIf the worktree is still locked when you end your turn, pass "
                   "this sentence to the user word for word: \"The agent harness still locks worktree "
-                  f"{worktree} of the follow-up of {FOLLOWED_UP}, so remove-recorded-topic-branches-and-worktrees "
+                  f"{worktree} of the follow-up of {FOLLOWED_UP}, so remove-topic-branches-and-worktrees "
                   "could not remove it.\"\nIf you are a subagent, pass that sentence to the agent that dispatched "
                   "you instead.\n" in out
               and "left 1 worktree or branch in place;" in out
-              and out.endswith(f"\nWhen you have done what each says, run: python3 {program.PROGRAM} {NUMBER} remove-recorded-topic-branches-and-worktrees\n")
+              and out.endswith(f"\nWhen you have done what each says, run: python3 {program.PROGRAM} {NUMBER} remove-topic-branches-and-worktrees\n")
               and worktree.exists() and "topic-one" in git(case.repository, "branch"), out + err)
         git(case.repository, "worktree", "unlock", str(worktree))
         git(case.repository, "worktree", "lock", "--reason", "kept by the user", str(worktree))
-        code, out, err = case.run(case.repository, "remove-recorded-topic-branches-and-worktrees")
-        check("remove-recorded-topic-branches-and-worktrees leaves a worktree locked for another reason, saying what to do",
-              code == 1 and "is locked (lock reason: kept by the user), so remove-recorded-topic-branches-and-worktrees left it" in out
+        code, out, err = case.run(case.repository, "remove-topic-branches-and-worktrees")
+        check("remove-topic-branches-and-worktrees leaves a worktree locked for another reason, saying what to do",
+              code == 1 and "is locked (lock reason: kept by the user), so remove-topic-branches-and-worktrees left it" in out
               and "\nIf anyone may still be using the worktree, leave it, and pass this sentence to the user word "
                   f"for word: \"Worktree {worktree} of the follow-up of {FOLLOWED_UP} is locked (lock reason: kept by "
-                  "the user), so remove-recorded-topic-branches-and-worktrees left it.\"\nOtherwise list" in out
+                  "the user), so remove-topic-branches-and-worktrees left it.\"\nOtherwise list" in out
               and f"Then run: git worktree remove --force --force {worktree}" in out and worktree.exists(), out + err)
         git(case.repository, "worktree", "unlock", str(worktree))
         (worktree / "stray.txt").write_text("stray\n")
-        code, out, err = case.run(case.repository, "remove-recorded-topic-branches-and-worktrees")
-        check("remove-recorded-topic-branches-and-worktrees leaves a worktree with untracked files, listing them",
+        code, out, err = case.run(case.repository, "remove-topic-branches-and-worktrees")
+        check("remove-topic-branches-and-worktrees leaves a worktree with untracked files, listing them",
               code == 1 and f"Worktree {worktree} holds changed or untracked files" in out
               and "?? stray.txt" in out and f"Then run: git worktree remove --force {worktree}" in out
               and worktree.exists(), out + err)
         (worktree / "stray.txt").unlink()
-        code, out, err = case.run(case.repository, "remove-recorded-topic-branches-and-worktrees")
-        check("remove-recorded-topic-branches-and-worktrees removes the worktree and the pushed branch, and leaves the unpushed branch with exit 1",
+        code, out, err = case.run(case.repository, "remove-topic-branches-and-worktrees")
+        check("remove-topic-branches-and-worktrees removes the worktree and the pushed branch, and leaves the unpushed branch with exit 1",
               code == 1 and f"Removed worktree {worktree}." in out and "Deleted branch topic-one." in out
-              and "Branch topic-unpushed holds commits on no branch of origin, so remove-recorded-topic-branches-and-worktrees left it:" in out
+              and "Branch topic-unpushed holds commits on no branch of origin, so remove-topic-branches-and-worktrees left it:" in out
               and "Then run: git branch -D topic-unpushed" in out and not worktree.exists()
               and "topic-one" not in git(case.repository, "branch")
               and "topic-unpushed" in git(case.repository, "branch"), out + err)
         git(case.repository, "branch", "-D", "topic-unpushed")
-        code, out, err = case.run(case.repository, "remove-recorded-topic-branches-and-worktrees")
-        check("remove-recorded-topic-branches-and-worktrees run again, with everything gone, is done with exit 0",
+        code, out, err = case.run(case.repository, "remove-topic-branches-and-worktrees")
+        check("remove-topic-branches-and-worktrees run again, with everything gone, is done with exit 0",
               code == 0 and "is done: every recorded worktree and topic branch is removed." in out, out + err)
     finally:
         case.close()
@@ -1021,7 +1021,7 @@ def test_clean_up_goes_on_past_each_worktree_and_branch():
     case = Case()
     try:
         case.save()
-        command = "remove-recorded-topic-branches-and-worktrees"
+        command = "remove-topic-branches-and-worktrees"
         worktrees = {}
         for name in ("gone", "locked", "clean-one", "clean-two"):
             worktrees[name] = case.subagent_worktree(f"worktree-{name}")
@@ -1042,7 +1042,7 @@ def test_clean_up_goes_on_past_each_worktree_and_branch():
               and "Deleted branch branch-clean-two." in out and "branch-clean-two" not in branches
               and "Branch branch-clean-one holds commits on no branch of origin" in out
               and len(out.split("Branch branch-clean-one holds commits on no branch of origin, so "
-                                "remove-recorded-topic-branches-and-worktrees left it:\n")[1].split("\nRead them")[0]
+                                "remove-topic-branches-and-worktrees left it:\n")[1].split("\nRead them")[0]
                       .splitlines()) == 1
               and "Read them with git log -p branch-clean-one --not --remotes=origin, copy out" in out
               and "branch-locked" in branches and worktrees["locked"].exists()
@@ -1062,10 +1062,10 @@ def test_clean_up_failure():
     try:
         worktree = started(case)
         (case.repository / ".git" / "worktrees" / worktree.name / "index").write_text("not an index")
-        code, out, err = case.run(case.repository, "remove-recorded-topic-branches-and-worktrees")
-        check("a git command remove-recorded-topic-branches-and-worktrees cannot run is FAILED with exit 2",
+        code, out, err = case.run(case.repository, "remove-topic-branches-and-worktrees")
+        check("a git command remove-topic-branches-and-worktrees cannot run is FAILED with exit 2",
               code == 2 and err.startswith("FAILED: git status --short") and "again once" not in err
-              and fails_line("remove-recorded-topic-branches-and-worktrees") + "git status --short" in err
+              and fails_line("remove-topic-branches-and-worktrees") + "git status --short" in err
               and err.endswith(SUBAGENT_END),
               out + err)
     finally:
@@ -1086,7 +1086,7 @@ def judge_text(*findings, decisions=None):
             + f"If a finding no longer holds, run: python3 {program.PROGRAM} {NUMBER} record-finding-leave-out-reason "
             "<n> --reason \"<why>\"\n"
             f"If a finding would change a design or decision of the user's, run: python3 {program.PROGRAM} {NUMBER} "
-            "record-finding-waiting-for-user-decision <n> --what-it-would-change \"<what it would change>\"\n"
+            "record-finding-as-waiting-for-user-ruling <n> --what-it-would-change \"<what it would change>\"\n"
             "Otherwise group it with the findings of its topic, one pull request per topic, and for one topic run: "
             f"python3 {program.PROGRAM} {NUMBER} start-topic-branch <topic-branch> --finding-numbers <n>[,<n>...]\n")
 
@@ -1128,9 +1128,9 @@ def test_next_step():
         code, out, err = case.run(worktree, "next-step")
         check("next-step with every finding answered prints the finish step",
               code == 0 and out == "Next: every finding has an answer.\n"
-                                   f"Run: python3 {program.PROGRAM} {NUMBER} finish-follow-up-request-and-print-merge-lane-2-message\n"
+                                   f"Run: python3 {program.PROGRAM} {NUMBER} finish-and-print-merge-lane-2-message\n"
                                    "Send the message it prints to merge-lane-2 with SendMessage.\n", out + err)
-        code, out, err = case.run(worktree, "finish-follow-up-request-and-print-merge-lane-2-message")
+        code, out, err = case.run(worktree, "finish-and-print-merge-lane-2-message")
         check("finish records the follow-up finished", code == 0 and case.answers().get("finished") is True,
               str(case.answers()))
         code, out, err = case.run(worktree, "next-step")
@@ -1191,51 +1191,51 @@ def test_next_step_branch_choice():
         case.close()
 
 
-def test_waiting_for_user_decision():
+def test_waiting_for_user_ruling():
     case = Case()
     try:
         worktree = started(case)
-        waiting = "record-finding-waiting-for-user-decision"
-        reopen = "reopen-finding-after-user-decision"
+        waiting = "record-finding-as-waiting-for-user-ruling"
+        reopen = "reopen-waiting-finding-with-user-ruling"
         code, out, err = case.run(worktree, waiting, "3", "--what-it-would-change", "x")
-        check("record-finding-waiting-for-user-decision refuses a finding that does not exist",
+        check("record-finding-as-waiting-for-user-ruling refuses a finding that does not exist",
               code == 1 and "so there is no finding 3, and nothing was recorded." in err, err)
         code, out, err = case.run(worktree, waiting, "2", "--what-it-would-change", " ")
-        check("record-finding-waiting-for-user-decision refuses empty text, naming the command",
+        check("record-finding-as-waiting-for-user-ruling refuses empty text, naming the command",
               code == 1 and err == "REFUSED: --what-it-would-change is empty, so nothing was recorded for finding 2.\n"
                                    "Run it again with the design or decision of the user's the finding would change: "
                                    f"python3 {program.PROGRAM} {NUMBER} {waiting} 2 --what-it-would-change "
                                    "\"<what it would change>\"\n"
               and "answers" not in case.answers(), err)
         code, out, err = case.run(worktree, waiting, "2", "--what-it-would-change", "the hard-wrap\nrule")
-        check("record-finding-waiting-for-user-decision records the finding waiting, on one line, and the status line",
+        check("record-finding-as-waiting-for-user-ruling records the finding waiting, on one line, and the status line",
               code == 0 and out == "Recorded finding 2 of pull request 1964's follow-up request as waiting for the "
                                    "user's decision.\nFinding 1 has no answer yet.\n"
-              and case.answers()["answers"]["2"] == {"waiting_for_user_decision": "the hard-wrap rule"}, out + err)
+              and case.answers()["answers"]["2"] == {"waiting_for_user_ruling": "the hard-wrap rule"}, out + err)
         code, out, err = case.run(worktree, waiting, "2", "--what-it-would-change", "y")
-        check("record-finding-waiting-for-user-decision refuses a finding that already has an answer, showing it",
+        check("record-finding-as-waiting-for-user-ruling refuses a finding that already has an answer, showing it",
               code == 1 and "Finding 2 of pull request 1964's follow-up request already has an answer, so nothing "
                             "was recorded:\n2. Still open, waiting for the user's decision: it would change the "
                             "hard-wrap rule\n" in err, err)
-        code, out, err = case.run(worktree, reopen, "1", "--user-decision", "do it")
-        check("reopen-finding-after-user-decision refuses a finding with no answer, changing nothing",
+        code, out, err = case.run(worktree, reopen, "1", "--user-ruling", "do it")
+        check("reopen-waiting-finding-with-user-ruling refuses a finding with no answer, changing nothing",
               code == 1 and err == "REFUSED: Finding 1 of pull request 1964's follow-up request is not waiting for the "
                                    "user's decision, so nothing was reopened. Its answer: none yet\n"
                                    "Leave the finding as it is: only a finding recorded with "
-                                   "record-finding-waiting-for-user-decision is reopened.\n"
+                                   "record-finding-as-waiting-for-user-ruling is reopened.\n"
               and case.answers()["started"] == {"1": "topic-one"}, err)
         case.run(worktree, "record-finding-leave-out-reason", "1", "--reason", "fixed")
-        code, out, err = case.run(worktree, reopen, "1", "--user-decision", "do it")
-        check("reopen-finding-after-user-decision refuses a finding left out, showing its answer",
+        code, out, err = case.run(worktree, reopen, "1", "--user-ruling", "do it")
+        check("reopen-waiting-finding-with-user-ruling refuses a finding left out, showing its answer",
               code == 1 and "is not waiting for the user's decision, so nothing was reopened. Its answer: Left out: "
                             "fixed\n" in err and case.answers()["answers"]["1"] == {"reason": "fixed"}, err)
-        code, out, err = case.run(worktree, reopen, "3", "--user-decision", "do it")
-        check("reopen-finding-after-user-decision refuses a finding that does not exist",
+        code, out, err = case.run(worktree, reopen, "3", "--user-ruling", "do it")
+        check("reopen-waiting-finding-with-user-ruling refuses a finding that does not exist",
               code == 1 and "so there is no finding 3, and nothing was reopened." in err, err)
         code, out, err = case.run(worktree, "next-step")
         check("next-step with a waiting finding and every other answered prints the finish step",
               code == 0 and out.startswith("Next: every finding has an answer.\n"), out + err)
-        code, out, err = case.run(worktree, "finish-follow-up-request-and-print-merge-lane-2-message")
+        code, out, err = case.run(worktree, "finish-and-print-merge-lane-2-message")
         check("finish accepts a waiting finding and lists it as still open, saying merge-lane-2 will hear again",
               code == 0 and out.endswith("pull request 1964:\n1. Left out: fixed\n2. Still open, waiting for the "
                                          "user's decision: it would change the hard-wrap rule\n"
@@ -1252,23 +1252,23 @@ def test_waiting_for_user_decision():
                                    "mac-claude (inline at :713): send every R through repeat_line.\n"
                                    "It would change the hard-wrap rule.\n"
                                    "Ask the user whether he wants that change.\n"
-                                   f"If he does, run: python3 {program.PROGRAM} {NUMBER} {reopen} 2 --user-decision "
+                                   f"If he does, run: python3 {program.PROGRAM} {NUMBER} {reopen} 2 --user-ruling "
                                    "\"<his words>\"\n"
                                    f"If he does not, run: python3 {program.PROGRAM} {NUMBER} "
                                    "record-finding-leave-out-reason 2 --reason \"The user decided against it: <his "
                                    "words>\"\n", out + err)
-        code, out, err = case.run(case.repository, reopen, "2", "--user-decision", " ")
-        check("reopen-finding-after-user-decision refuses empty words, changing nothing",
-              code == 1 and err == "REFUSED: --user-decision is empty, so nothing was reopened for finding 2.\n"
+        code, out, err = case.run(case.repository, reopen, "2", "--user-ruling", " ")
+        check("reopen-waiting-finding-with-user-ruling refuses empty words, changing nothing",
+              code == 1 and err == "REFUSED: --user-ruling is empty, so nothing was reopened for finding 2.\n"
                                    "Run it again with the user's decision in his words: "
-                                   f"python3 {program.PROGRAM} {NUMBER} {reopen} 2 --user-decision \"<his words>\"\n"
+                                   f"python3 {program.PROGRAM} {NUMBER} {reopen} 2 --user-ruling \"<his words>\"\n"
               and "2" in case.answers()["answers"] and case.answers()["finished"] is True, err)
         answers = case.answers()
         answers["started"]["2"] = "topic-one"
         (case.states() / f"pull-request-{NUMBER}-follow-up-finding-answers.json").write_text(json.dumps(answers))
-        code, out, err = case.run(case.repository, reopen, "2", "--user-decision", "Yes,\ndo it")
+        code, out, err = case.run(case.repository, reopen, "2", "--user-ruling", "Yes,\ndo it")
         [request] = program.parse_follow_up_request_blocks_from_message_text(BLOCK)
-        check("reopen-finding-after-user-decision removes the answer, the started branch and the finished mark, "
+        check("reopen-waiting-finding-with-user-ruling removes the answer, the started branch and the finished mark, "
               "records the user's words, and prints the brief",
               code == 0 and out == "Reopened finding 2 of pull request 1964's follow-up request with the user's "
                                    "decision, and recorded the follow-up not finished.\n"
@@ -1276,7 +1276,7 @@ def test_waiting_for_user_decision():
                                    "reopened finding.\n\n"
                                    + program.build_follow_up_request_forked_subagent_brief(request) + "\n"
               and case.answers() == {"started": {"1": "topic-one"}, "answers": {"1": {"reason": "fixed"}},
-                                     "user_decisions": {"2": {"would_change": "the hard-wrap rule",
+                                     "user_rulings": {"2": {"would_change": "the hard-wrap rule",
                                                               "decision": "Yes, do it"}}}, out + err)
         code, out, err = case.run(worktree, "next-step")
         check("next-step after the reopen judges the finding, showing the user's decision",
@@ -1284,15 +1284,15 @@ def test_waiting_for_user_decision():
                   "2": "The user's decision on finding 2, which would change the hard-wrap rule: \"Yes, do it\""}),
               out + err)
         case.run(worktree, waiting, "2", "--what-it-would-change", "the hard-wrap rule")
-        case.run(worktree, "finish-follow-up-request-and-print-merge-lane-2-message")
+        case.run(worktree, "finish-and-print-merge-lane-2-message")
         code, out, err = case.run(case.repository, "record-finding-leave-out-reason", "2", "--reason",
                                   "The user decided against it: no")
         check("record-finding-leave-out-reason records a waiting finding left out, pointing to finish",
               code == 0 and out == "Recorded finding 2 of pull request 1964's follow-up request as left out.\n"
                                    f"Every finding has an answer: run python3 {program.PROGRAM} {NUMBER} "
-                                   "finish-follow-up-request-and-print-merge-lane-2-message\n"
+                                   "finish-and-print-merge-lane-2-message\n"
               and case.answers()["answers"]["2"] == {"reason": "The user decided against it: no"}, out + err)
-        code, out, err = case.run(case.repository, "finish-follow-up-request-and-print-merge-lane-2-message")
+        code, out, err = case.run(case.repository, "finish-and-print-merge-lane-2-message")
         check("finish with no waiting finding adds no still-open line",
               code == 0 and out.endswith("\n2. Left out: The user decided against it: no\n"), out + err)
     finally:
@@ -1304,7 +1304,7 @@ for test in (test_help, test_block_parsing, test_brief_text, test_no_saved_block
              test_open_failures, test_open_gh_pr_create_second_try_and_gh_pr_list,
              test_push_time_limit_is_the_pre_push_hooks_budgets_plus_120_seconds,
              test_open_title_and_description_file_removal_failure,
-             test_leave_out_and_finish, test_three_findings, test_waiting_for_user_decision,
+             test_leave_out_and_finish, test_three_findings, test_waiting_for_user_ruling,
              test_state_failures, test_clean_up, test_clean_up_goes_on_past_each_worktree_and_branch,
              test_clean_up_failure, test_next_step, test_next_step_branch_choice):
     test()

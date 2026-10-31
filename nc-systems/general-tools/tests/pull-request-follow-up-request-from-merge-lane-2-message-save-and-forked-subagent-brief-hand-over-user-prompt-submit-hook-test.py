@@ -26,7 +26,7 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 HOOK_NAME = "pull-request-follow-up-request-from-merge-lane-2-message-save-and-forked-subagent-brief-hand-over-user-prompt-submit-hook.py"
 HOOK = Path(__file__).resolve().parents[1] / HOOK_NAME
-BRIEF_PROGRAM_NAME = "pull-request-follow-up-request-findings-open-pull-requests-or-record-leave-out-reasons-and-clean-up.py"
+BRIEF_PROGRAM_NAME = "pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py"
 NUMBER = 1964
 BLOCK = (f"#follow_up_request pull request {NUMBER}\n"
          "1. Codex P2 (:519-520): keep the padding when rebuilding code spans.\n"
@@ -39,7 +39,7 @@ Each "Program:" below means: run {COMMAND} followed by the words after it.
 
 For you, the author:
 Dispatch one subagent with the Agent tool: subagent_type "fork", isolation "worktree", run_in_background true. Give it this whole text unchanged; it skips the lines under "For you, the author".
-When it has ended, ask the user its report's questions, then Program: remove-recorded-topic-branches-and-worktrees
+When it has ended, ask the user its report's questions, then Program: remove-topic-branches-and-worktrees
 
 For the subagent, in your own worktree: Program: next-step. Do what it prints, then run Program: next-step again, until it prints "Done".
 If a command refuses or fails, do what it prints."""

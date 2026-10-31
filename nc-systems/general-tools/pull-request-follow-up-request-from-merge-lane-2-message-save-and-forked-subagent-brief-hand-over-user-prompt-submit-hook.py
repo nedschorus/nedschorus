@@ -27,7 +27,7 @@ MERGE_LANE_2_MESSAGE_PATTERN = re.compile(
     r"<cross-session-message\b(?P<attributes>[^>]*)>(?P<body>.*?)</cross-session-message>", re.DOTALL)
 MERGE_LANE_2_SENDER_PATTERN = re.compile(r"\bfrom-name=\"merge-lane-2\"")
 FOLLOW_UP_PROGRAM_PATH = (Path(__file__).resolve().parents[2] / "scripts"
-                         / "pull-request-follow-up-request-findings-open-pull-requests-or-record-leave-out-reasons-and-clean-up.py")
+                         / "pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py")
 # Each text this hook hands an agent follows
 # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 UNREADABLE_BLOCK_LINES = (
@@ -49,7 +49,7 @@ NOT_SAVED_LINES = (
 
 def load_follow_up_program():
     specification = importlib.util.spec_from_file_location(
-        "pull_request_follow_up_request_findings_open_pull_requests_or_record_leave_out_reasons_and_clean_up",
+        "pull_request_follow_up_request_after_merge_finding_answers_and_next_step",
         FOLLOW_UP_PROGRAM_PATH)
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)

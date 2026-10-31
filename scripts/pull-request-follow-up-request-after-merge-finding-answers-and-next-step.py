@@ -6,10 +6,10 @@ Usage:
   PROGRAM <number> start-topic-branch <topic-branch> --finding-numbers <n>[,<n>...]
   PROGRAM <number> open-pull-request [--handled-finding-numbers <n>[,<n>...]]
   PROGRAM <number> record-finding-leave-out-reason <n> --reason "<why>"
-  PROGRAM <number> record-finding-waiting-for-user-decision <n> --what-it-would-change "<what>"
-  PROGRAM <number> reopen-finding-after-user-decision <n> --user-decision "<his words>"
-  PROGRAM <number> finish-follow-up-request-and-print-merge-lane-2-message
-  PROGRAM <number> remove-recorded-topic-branches-and-worktrees
+  PROGRAM <number> record-finding-as-waiting-for-user-ruling <n> --what-it-would-change "<what>"
+  PROGRAM <number> reopen-waiting-finding-with-user-ruling <n> --user-ruling "<his words>"
+  PROGRAM <number> finish-and-print-merge-lane-2-message
+  PROGRAM <number> remove-topic-branches-and-worktrees
 
 merge-lane-2 ends a merge message that asks for follow-ups with the line
 "#follow_up_request pull request <number>", then each non-blocking finding on a
@@ -20,23 +20,23 @@ PULL_REQUEST_FOLLOW_UP_REQUESTS_DIRECTORY_NAME under the git common directory,
 which every worktree of the checkout shares, and hands the author
 build_follow_up_request_forked_subagent_brief(): dispatch one forked subagent in a worktree of its own,
 which runs next-step and does what it prints until it prints "Done"; then run
-remove-recorded-topic-branches-and-worktrees.
+remove-topic-branches-and-worktrees.
 
 next-step, in the subagent's worktree: git fetch origin, then print the one step that comes next,
-decided from the records alone, first match wins: "Done" once finish-follow-up-request-and-print-merge-lane-2-message
+decided from the records alone, first match wins: "Done" once finish-and-print-merge-lane-2-message
 has recorded the follow-up finished; the topic branch of the lowest finding start-topic-branch took on that has no
 answer yet, to switch to it first when the worktree has another checked out, make the change, commit, write the title
 and description, and run open-pull-request; the findings with
-no answer, each with the user's decision when reopen-finding-after-user-decision recorded one, to judge each against
-origin/main and either run record-finding-leave-out-reason or record-finding-waiting-for-user-decision, or group it
-into a topic and run start-topic-branch; and, every finding answered, finish-follow-up-request-and-print-merge-lane-2-message and
+no answer, each with the user's decision when reopen-waiting-finding-with-user-ruling recorded one, to judge each against
+origin/main and either run record-finding-leave-out-reason or record-finding-as-waiting-for-user-ruling, or group it
+into a topic and run start-topic-branch; and, every finding answered, finish-and-print-merge-lane-2-message and
 the message to merge-lane-2. Done lists each finding waiting for the user's decision, with the commands the author
 runs once the user has answered. The judging and the change stay with the subagent.
 
 start-topic-branch, in the subagent's worktree: refuse a finding that does not exist or already has an answer, and a
 worktree with uncommitted changes to tracked files, which git switch could refuse to carry over; git
 fetch origin and git switch -c <topic-branch> origin/main; then record the branch and the worktree's path in
-TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT, so remove-recorded-topic-branches-and-worktrees can remove them, and
+TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT, so remove-topic-branches-and-worktrees can remove them, and
 record under "started" in FINDING_ANSWERS_FILE_NAME_FORMAT that the branch takes on the findings, so next-step and
 open-pull-request know them; a finding named again moves to the new branch. A branch git could not make is not
 recorded.
@@ -61,21 +61,21 @@ recorded. A push that fails is not tried again.
 record-finding-leave-out-reason: record the reason against the finding; refuse a finding that does
 not exist or already has an answer other than waiting for the user's decision, and an empty reason.
 
-record-finding-waiting-for-user-decision: record the finding as waiting for the user's decision, with what it would
+record-finding-as-waiting-for-user-ruling: record the finding as waiting for the user's decision, with what it would
 change, an answer finish accepts; refuse a finding that does not exist or already has an answer, and empty text.
 
-reopen-finding-after-user-decision, in the author's checkout, once the user has decided for a waiting finding: remove
+reopen-waiting-finding-with-user-ruling, in the author's checkout, once the user has decided for a waiting finding: remove
 its answer and the topic branch start-topic-branch recorded for it, record the user's words for next-step's judging
 step, remove the finished mark, and print the brief again, for a new subagent; refuse a finding that does not exist or
 is not waiting, and empty words. A finding the user decided against is recorded with record-finding-leave-out-reason
 instead.
 
-finish-follow-up-request-and-print-merge-lane-2-message: refuse, naming each finding without an answer, until every finding has
+finish-and-print-merge-lane-2-message: refuse, naming each finding without an answer, until every finding has
 one; then record the follow-up finished, for next-step, and print the message
 for merge-lane-2, which lists each waiting finding as still open, and which the subagent sends with SendMessage,
 since a program cannot.
 
-remove-recorded-topic-branches-and-worktrees, in the author's checkout once the subagent has ended: remove each
+remove-topic-branches-and-worktrees, in the author's checkout once the subagent has ended: remove each
 recorded worktree with git worktree remove, unless the agent harness still
 locks it (a lock reason starting HARNESS_LOCK_REASON_START), something else
 locks it, or it holds changed or untracked files; then delete each recorded
@@ -85,7 +85,7 @@ do, and the exit code is 1.
 
 A block that differs from the saved one is a new request: saving it removes
 the answers file, with its started findings and its finished mark, but keeps the topic branch records,
-which remove-recorded-topic-branches-and-worktrees still needs.
+which remove-topic-branches-and-worktrees still needs.
 
 Not handled: whether a pull request handles its findings, which merge-lane-2
 judges; two subagents following up one pull request at once, whose records
@@ -97,7 +97,7 @@ Each text that has the agent tell the user something hands it the finished sente
 followed up by its link, built from REPOSITORY, and by its title when gh pr view gives it within
 TITLE_TIMEOUT_SECONDS; otherwise by its link alone.
 
-Exit codes: 0 done; 1 refused, or remove-recorded-topic-branches-and-worktrees left something in place, said with
+Exit codes: 0 done; 1 refused, or remove-topic-branches-and-worktrees left something in place, said with
 what to do; 2 git, gh or a file failed, said on stderr, and what the subcommand
 did before the failure stays done, or the arguments are not ones the program
 takes, which argparse says on stderr, followed by what to do.
@@ -156,9 +156,9 @@ FETCH_TIMEOUT_SECONDS = 300
 PULL_REQUEST_ALREADY_OPEN_WORDS = "already exists"
 START_ARGUMENTS = "start-topic-branch <topic-branch> --finding-numbers <n>[,<n>...]"
 LEAVE_OUT_ARGUMENTS = 'record-finding-leave-out-reason <n> --reason "<why>"'
-WAITING_ARGUMENTS = 'record-finding-waiting-for-user-decision <n> --what-it-would-change "<what it would change>"'
-REOPEN_ARGUMENTS = 'reopen-finding-after-user-decision <n> --user-decision "<his words>"'
-WAITING_KEY = "waiting_for_user_decision"
+WAITING_ARGUMENTS = 'record-finding-as-waiting-for-user-ruling <n> --what-it-would-change "<what it would change>"'
+REOPEN_ARGUMENTS = 'reopen-waiting-finding-with-user-ruling <n> --user-ruling "<his words>"'
+WAITING_KEY = "waiting_for_user_ruling"
 TITLE_AND_DESCRIPTION_FORM = "the pull request's title on the first line, a blank line, then the description"
 DO_NOT_COMMIT_LINE = "Do not commit it: it is never part of the pull request."
 SUBAGENT_LINE = "If you are a subagent, pass that sentence to the agent that dispatched you instead."
@@ -230,7 +230,7 @@ def build_follow_up_request_forked_subagent_brief(request):
         "Dispatch one subagent with the Agent tool: subagent_type \"fork\", isolation \"worktree\", "
         "run_in_background true. Give it this whole text unchanged; it skips the lines under "
         "\"For you, the author\".",
-        "When it has ended, ask the user its report's questions, then Program: remove-recorded-topic-branches-and-worktrees",
+        "When it has ended, ask the user its report's questions, then Program: remove-topic-branches-and-worktrees",
         "",
         "For the subagent, in your own worktree: Program: next-step. Do what it prints, then run Program: next-step "
         "again, until it prints \"Done\".",
@@ -423,7 +423,7 @@ def finding_text(request, finding):
 def still_unanswered_text(number, request, answers):
     unanswered = [index for index in range(1, request.finding_count + 1) if str(index) not in answers]
     if not unanswered:
-        return f"Every finding has an answer: run {command(number, 'finish-follow-up-request-and-print-merge-lane-2-message')}"
+        return f"Every finding has an answer: run {command(number, 'finish-and-print-merge-lane-2-message')}"
     return (f"{findings_text(unanswered).capitalize()} "
             f"{'has' if len(unanswered) == 1 else 'have'} no answer yet.")
 
@@ -557,7 +557,7 @@ def open_pull_request(number, findings):
                           + ("" if len(answered) < len(findings) else
                              "\nIf that leaves no finding, do not open this branch's pull request: other "
                              "answers already cover what it handles. Go on with the next topic, and leave the "
-                             "branch: remove-recorded-topic-branches-and-worktrees shows its commits to the "
+                             "branch: remove-topic-branches-and-worktrees shows its commits to the "
                              "author, who decides whether to keep them.")))
     description_file = Path(worktree) / FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME
     title, description = read_title_and_description(description_file)
@@ -657,7 +657,7 @@ def record_finding_leave_out_reason(number, finding, reason):
     print(still_unanswered_text(number, request, answers))
 
 
-def record_finding_waiting_for_user_decision(number, finding, what_it_would_change):
+def record_finding_as_waiting_for_user_ruling(number, finding, what_it_would_change):
     states = state_directory()
     request = saved_follow_up_request(states, number)
     answers_file = state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, number)
@@ -677,7 +677,7 @@ def record_finding_waiting_for_user_decision(number, finding, what_it_would_chan
     print(still_unanswered_text(number, request, answers))
 
 
-def reopen_finding_after_user_decision(number, finding, user_decision):
+def reopen_waiting_finding_with_user_ruling(number, finding, user_ruling):
     states = state_directory()
     request = saved_follow_up_request(states, number)
     answers_file = state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, number)
@@ -689,15 +689,15 @@ def reopen_finding_after_user_decision(number, finding, user_decision):
         raise Refused(f"Finding {finding} of pull request {number}'s follow-up request is not waiting for the user's "
                       f"decision, so nothing was reopened. Its answer: {answer_text(answer) if answer else 'none yet'}\n"
                       "Leave the finding as it is: only a finding recorded with "
-                      "record-finding-waiting-for-user-decision is reopened.")
-    if not user_decision.strip():
-        raise Refused(f"--user-decision is empty, so nothing was reopened for finding {finding}.\n"
+                      "record-finding-as-waiting-for-user-ruling is reopened.")
+    if not user_ruling.strip():
+        raise Refused(f"--user-ruling is empty, so nothing was reopened for finding {finding}.\n"
                       "Run it again with the user's decision in his words: "
                       f"{command(number, REOPEN_ARGUMENTS.replace('<n>', str(finding)))}")
     del answers[str(finding)]
     record.get("started", {}).pop(str(finding), None)
-    record["user_decisions"] = {**record.get("user_decisions", {}), str(finding): {
-        "would_change": answer[WAITING_KEY], "decision": " ".join(user_decision.split())}}
+    record["user_rulings"] = {**record.get("user_rulings", {}), str(finding): {
+        "would_change": answer[WAITING_KEY], "decision": " ".join(user_ruling.split())}}
     record.pop("finished", None)
     write_json(answers_file, record)
     print("\n".join([
@@ -709,7 +709,7 @@ def reopen_finding_after_user_decision(number, finding, user_decision):
     ]))
 
 
-def finish_follow_up_request_and_print_merge_lane_2_message(number):
+def finish_and_print_merge_lane_2_message(number):
     states = state_directory()
     request = saved_follow_up_request(states, number)
     answers_file = state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, number)
@@ -778,7 +778,7 @@ def next_step(number):
               f"Then run: {command(number, 'open-pull-request')}")
         return
     unanswered = [index for index in range(1, request.finding_count + 1) if str(index) not in answers]
-    decisions = record.get("user_decisions", {})
+    decisions = record.get("user_rulings", {})
     if unanswered:
         print("\n".join([
             f"Next: judge {findings_text(unanswered)}, which {'has' if len(unanswered) == 1 else 'have'} no answer yet:",
@@ -797,18 +797,18 @@ def next_step(number):
         ]))
         return
     print("Next: every finding has an answer.\n"
-          f"Run: {command(number, 'finish-follow-up-request-and-print-merge-lane-2-message')}\n"
+          f"Run: {command(number, 'finish-and-print-merge-lane-2-message')}\n"
           "Send the message it prints to merge-lane-2 with SendMessage.")
 
 
-def remove_recorded_topic_branches_and_worktrees(number):
+def remove_topic_branches_and_worktrees(number):
     states = state_directory()
     records = read_json(state_file(states, TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT, number), [])
     if not records:
-        print(f"No topic branch is recorded for pull request {number}'s follow-up, so remove-recorded-topic-branches-and-worktrees removed "
+        print(f"No topic branch is recorded for pull request {number}'s follow-up, so remove-topic-branches-and-worktrees removed "
               "nothing.")
         return 0
-    again = command(number, "remove-recorded-topic-branches-and-worktrees")
+    again = command(number, "remove-topic-branches-and-worktrees")
     worktrees = {worktree.path.rstrip("/"): worktree for worktree in git_output.worktree_records(
         git(".", ["worktree", "list", "--porcelain", "-z"]))}
     left_paths, left = set(), []
@@ -819,20 +819,20 @@ def remove_recorded_topic_branches_and_worktrees(number):
         reason = worktree.locked_reason
         if reason is not None and reason.startswith(HARNESS_LOCK_REASON_START):
             left.append(f"Worktree {path} is locked by the agent harness (lock reason: {reason}), so "
-                        "remove-recorded-topic-branches-and-worktrees left it and the topic branches recorded with it: the subagent may still be running.\n"
+                        "remove-topic-branches-and-worktrees left it and the topic branches recorded with it: the subagent may still be running.\n"
                         "Wait until the subagent has ended.\n"
                         + pass_on_to_the_user(
                             f"The agent harness still locks worktree {path} of the follow-up of "
-                            f"{build_followed_up_pull_request_citation_with_title_and_link(number)}, so remove-recorded-topic-branches-and-worktrees "
+                            f"{build_followed_up_pull_request_citation_with_title_and_link(number)}, so remove-topic-branches-and-worktrees "
                             "could not remove it.", "If the worktree is still locked when you end your turn, pass")
                         + f"\n{SUBAGENT_LINE}")
         elif reason is not None:
             locked = f"locked (lock reason: {reason or 'none given'})"
-            left.append(f"Worktree {path} is {locked}, so remove-recorded-topic-branches-and-worktrees "
+            left.append(f"Worktree {path} is {locked}, so remove-topic-branches-and-worktrees "
                         "left it and the topic branches recorded with it.\n"
                         + pass_on_to_the_user(
                             f"Worktree {path} of the follow-up of {build_followed_up_pull_request_citation_with_title_and_link(number)} is {locked}, "
-                            "so remove-recorded-topic-branches-and-worktrees left it.",
+                            "so remove-topic-branches-and-worktrees left it.",
                             "If anyone may still be using the worktree, leave it, and pass") + "\n"
                         f"Otherwise list its changed or untracked files with git -C {path} status "
                         "--short, read them, copy out any that is work to keep, and tell merge-lane-2 "
@@ -843,7 +843,7 @@ def remove_recorded_topic_branches_and_worktrees(number):
         else:
             changed = git(path, ["status", "--short"]).rstrip("\n")
             if changed:
-                left.append(f"Worktree {path} holds changed or untracked files, so remove-recorded-topic-branches-and-worktrees left it and "
+                left.append(f"Worktree {path} holds changed or untracked files, so remove-topic-branches-and-worktrees left it and "
                             f"the topic branches recorded with it:\n{changed}\n"
                             "Read them, copy out of the worktree any file that is work to keep, such as a "
                             "change the subagent did not push, and tell merge-lane-2 about it with "
@@ -863,7 +863,7 @@ def remove_recorded_topic_branches_and_worktrees(number):
             continue
         if not git(".", ["for-each-ref", "--contains", "refs/heads/" + branch, "refs/remotes/origin/"]).strip():
             commits = git(".", ["log", "--oneline", "refs/heads/" + branch, "--not", "--remotes=origin"]).rstrip("\n")
-            left.append(f"Branch {branch} holds commits on no branch of origin, so remove-recorded-topic-branches-and-worktrees left it:\n"
+            left.append(f"Branch {branch} holds commits on no branch of origin, so remove-topic-branches-and-worktrees left it:\n"
                         f"{commits}\n"
                         f"Read them with git log -p {branch} --not --remotes=origin, copy out any that is work to keep, "
                         "and tell merge-lane-2 about it with SendMessage.\n"
@@ -923,20 +923,20 @@ def main(argv=None):
     leave_out_parser.add_argument("finding", type=int)
     leave_out_parser.add_argument("--reason", required=True)
     waiting_parser = subcommands.add_parser(
-        "record-finding-waiting-for-user-decision",
+        "record-finding-as-waiting-for-user-ruling",
         help="record that a finding waits for the user's decision, because it would change a design or decision of his")
     waiting_parser.add_argument("finding", type=int)
     waiting_parser.add_argument("--what-it-would-change", required=True,
                                 help="the design or decision of the user's the finding would change")
     reopen_parser = subcommands.add_parser(
-        "reopen-finding-after-user-decision",
+        "reopen-waiting-finding-with-user-ruling",
         help="in the author's checkout, once the user wants a waiting finding's change: record his decision and "
              "reopen the finding for a new subagent")
     reopen_parser.add_argument("finding", type=int)
-    reopen_parser.add_argument("--user-decision", required=True, help="the user's decision, in his words")
-    subcommands.add_parser("finish-follow-up-request-and-print-merge-lane-2-message", help="check every finding has an answer and print the message "
+    reopen_parser.add_argument("--user-ruling", required=True, help="the user's decision, in his words")
+    subcommands.add_parser("finish-and-print-merge-lane-2-message", help="check every finding has an answer and print the message "
                                           "for merge-lane-2")
-    subcommands.add_parser("remove-recorded-topic-branches-and-worktrees", help="in the author's checkout, once the subagent has ended: "
+    subcommands.add_parser("remove-topic-branches-and-worktrees", help="in the author's checkout, once the subagent has ended: "
                                             "remove each recorded worktree and topic branch")
     arguments = parser.parse_args(argv)
     try:
@@ -948,14 +948,14 @@ def main(argv=None):
             open_pull_request(arguments.number, arguments.handled_finding_numbers)
         elif arguments.subcommand == "record-finding-leave-out-reason":
             record_finding_leave_out_reason(arguments.number, arguments.finding, arguments.reason)
-        elif arguments.subcommand == "record-finding-waiting-for-user-decision":
-            record_finding_waiting_for_user_decision(arguments.number, arguments.finding, arguments.what_it_would_change)
-        elif arguments.subcommand == "reopen-finding-after-user-decision":
-            reopen_finding_after_user_decision(arguments.number, arguments.finding, arguments.user_decision)
-        elif arguments.subcommand == "finish-follow-up-request-and-print-merge-lane-2-message":
-            finish_follow_up_request_and_print_merge_lane_2_message(arguments.number)
+        elif arguments.subcommand == "record-finding-as-waiting-for-user-ruling":
+            record_finding_as_waiting_for_user_ruling(arguments.number, arguments.finding, arguments.what_it_would_change)
+        elif arguments.subcommand == "reopen-waiting-finding-with-user-ruling":
+            reopen_waiting_finding_with_user_ruling(arguments.number, arguments.finding, arguments.user_ruling)
+        elif arguments.subcommand == "finish-and-print-merge-lane-2-message":
+            finish_and_print_merge_lane_2_message(arguments.number)
         else:
-            return remove_recorded_topic_branches_and_worktrees(arguments.number)
+            return remove_topic_branches_and_worktrees(arguments.number)
     except Refused as refusal:
         print(f"REFUSED: {refusal}", file=sys.stderr)
         return 1
