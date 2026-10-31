@@ -377,8 +377,8 @@ def subagent_own_transcript_shows_work_in_flight(subagent_path: Path,
                 break
     except (OSError, UnicodeDecodeError) as problem:
         raise TranscriptCouldNotBeFullyRead(f"{subagent_path}: {problem}") from problem
-    return bool(work_in_flight(str(subagent_path), background_task_wait_seconds, now=now,
-                               should_read_subagent_own_transcripts=False).background_task_ids)
+    return bool(work_in_flight(str(subagent_path), background_task_wait_seconds,
+                               now=now).background_task_ids)
 
 
 def main(argv=None) -> int:

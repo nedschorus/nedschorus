@@ -140,6 +140,18 @@ def run_synthetic_cases(workspace):
     check("an interim subagent whose own transcript was written 4m59s ago is counted",
           counted(session) == [SUBAGENT_ID], str(counted(session)))
 
+    session = session_with_interim_subagent(case_directory("written-exactly-5m-ago"), [
+        {"type": "assistant", "timestamp": utc_iso(NOW - timedelta(minutes=5))}])
+    check("an interim subagent whose own transcript was written exactly 5 minutes ago is counted",
+          counted(session) == [SUBAGENT_ID], str(counted(session)))
+
+    # Timestamps are not always in line order; the newest line decides, not the latest time.
+    session = session_with_interim_subagent(case_directory("newest-line-older-than-an-earlier-one"), [
+        {"type": "attachment", "timestamp": utc_iso(NOW - timedelta(minutes=1))},
+        {"type": "assistant", "timestamp": utc_iso(NOW - timedelta(minutes=20))}])
+    check("the recent-write window reads only the newest timestamped line",
+          counted(session) == [], str(counted(session)))
+
     session = session_with_interim_subagent(case_directory("written-5m01s-ago"), [
         {"type": "assistant", "timestamp": utc_iso(NOW - timedelta(minutes=5, seconds=1))}])
     check("an interim subagent whose own transcript was last written 5m01s ago is not counted",
