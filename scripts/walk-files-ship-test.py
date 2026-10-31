@@ -972,7 +972,10 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-close-") as close_
           f"under ~/.claude/handoffs: {handoff_files}")
 
 # --- Failures after part of a shipment reached the store ---------------------
-with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-") as partial_scratch_name:
+# "ssh" in the prefix puts it in every path these FAILED lines carry, so a
+# check for "ssh" as a bare substring fails on every run, not on a rare
+# random name.
+with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-ssh-") as partial_scratch_name:
     partial_scratch = pathlib.Path(partial_scratch_name)
     PARTIAL_WALK = "partial-demo-walk-2026-10-24"
     partial_minutes = "# minutes\n\nItem 1 ruled.\n\n#next_to_present item 2 of 2\n"
@@ -1179,7 +1182,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-") as part
           failed_code == 1
           and failed_out.startswith(f"FAILED: {PARTIAL_WALK} — No space left on device "
                                     f"(injected) while putting the copied files in place")
-          and "ssh" not in failed_out,
+          and "ssh exit" not in failed_out,
           f"exit {failed_code}: {failed_out}{failed_err}")
 
     fresh_walk_and_store("listing")
@@ -1190,7 +1193,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-") as part
           failed_code == 1
           and failed_out.startswith(f"FAILED: {PARTIAL_WALK} — No space left on device "
                                     f"(injected); the walk's files stay on disk")
-          and "ssh" not in failed_out and not (partial_store / minutes_file_name).exists(),
+          and "ssh exit" not in failed_out and not (partial_store / minutes_file_name).exists(),
           f"exit {failed_code}: {failed_out}{failed_err}")
 
 # --- This run's staging directory cannot be removed ---------------------------
