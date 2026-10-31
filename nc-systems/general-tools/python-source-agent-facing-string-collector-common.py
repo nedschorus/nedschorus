@@ -14,7 +14,12 @@ AGENT_FACING_HOOK_OUTPUT_KEYS, the keys through which a Claude Code hook's JSON
 output reaches the agent, when that value is a string-building expression, as a local name's
 binding below may be, or a name assigned a string once at module level; and the module docstring of a file
 whose source holds the text __doc__ anywhere, comments and strings included,
-since argparse prints __doc__ for --help. A message built with + is one message,
+since argparse prints __doc__ for --help. A string written in a function's return statement is a message too when a
+call of that function, by its bare name, reaches one of the forms above the way a local name
+may, below, as print(stopped_line(...)) does; a string that function's returned call carries
+in turn follows the same way. The function is matched by its name alone, so every function of
+that name in the file is followed. A dict literal's keys and a subscript's index are not text,
+so in raise Answer(400, {"error": text}) only text is a message. A message built with + is one message,
 its literal pieces joined and each other operand shown as {source}; an f-string
 field in the chain keeps its conversion and format spec, {x!r} and {x:.1f}, as ast.unparse writes
 the field of a standalone f-string. Each entry also holds literal_text, the message's literal
@@ -26,8 +31,10 @@ and the name reaches one of the forms above, or a return statement that returns 
 a string built from it, directly or through another such local name; each binding is then
 an entry at its own lines, labelled with the name, and only the binding's string-building
 branches are read. A conditional expression's condition is not read, in a binding or at a
-form, so its strings and names are not text. The returned name is listed whatever its caller does with it, since the
-caller is not read.
+form, so its strings and names are not text. A local name that a return statement returns,
+directly or in a string built from it, has its bindings listed whatever the function's caller
+does with it, unlike a string written in the return statement itself, which is listed only
+when a call of the function reaches a form, as above.
 
 How a followed name may reach the form: directly, through a string literal's join, or as an
 argument of the exception a raise statement builds. A name that reaches the form through any
@@ -135,6 +142,11 @@ def string_nodes_without_f_string_parts(expression):
         # The condition's strings are compared, not shown.
         yield from string_nodes_without_f_string_parts(expression.body)
         yield from string_nodes_without_f_string_parts(expression.orelse)
+    elif isinstance(expression, ast.Dict):
+        for value in expression.values:
+            yield from string_nodes_without_f_string_parts(value)
+    elif isinstance(expression, ast.Subscript):
+        yield from string_nodes_without_f_string_parts(expression.value)
     else:
         for child in ast.iter_child_nodes(expression):
             yield from string_nodes_without_f_string_parts(child)
@@ -257,7 +269,7 @@ def helper_printers_in_tree(tree):
 class AgentFacingStringNodeCollector(ast.NodeVisitor):
     """Record string spans and their call, assignment or exception context."""
 
-    def __init__(self, module_string_values=None, helper_printers=None):
+    def __init__(self, module_string_values=None, helper_printers=None, text_returning_function_names=()):
         self.enclosing_names = []
         # The parameter names of each enclosing function, which hide a helper printer's name.
         self.enclosing_parameter_names = []
@@ -270,6 +282,9 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
         self.helper_printers = helper_printers or {}
         # For each enclosing function, its local name -> the string expressions bound to it.
         self.enclosing_local_string_bindings = []
+        # Functions whose returned strings are collected, and those this pass found called for text.
+        self.text_returning_function_names = set(text_returning_function_names)
+        self.function_names_called_for_text = set()
 
     def collect_expression_strings(self, expression, label, kind="message"):
         if expression is None:
@@ -350,6 +365,8 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
     def collect_sink_expression(self, expression, label):
         self.collect_expression_strings(expression, label)
         self.collect_local_strings_reaching(expression)
+        if expression is not None:
+            self.function_names_called_for_text.update(function_names_called_for_text(expression))
 
     def is_helper_printer_call(self, call_name):
         return call_name in self.helper_printers and not any(
@@ -368,6 +385,7 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
         if isinstance(node.exc, ast.Call):
             for argument in node.exc.args:
                 self.collect_local_strings_reaching(argument)
+                self.function_names_called_for_text.update(function_names_called_for_text(argument))
         self.generic_visit(node)
 
     def visit_assignment_value(self, node):
@@ -398,10 +416,14 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Return(self, node):
+        is_prompt = bool(self.enclosing_names) and "prompt" in self.enclosing_names[-1].lower()
+        if (node.value is not None and self.enclosing_names
+                and self.enclosing_names[-1] in self.text_returning_function_names):
+            self.collect_expression_strings(node.value, "return", "prompt" if is_prompt else "message")
+            self.function_names_called_for_text.update(function_names_called_for_text(node.value))
         # A local returned inside a list, a tuple or a call is data, such as a command's argument.
         if isinstance(node.value, ast.Name) or (node.value is not None and string_building_parts(node.value)):
-            self.collect_local_strings_reaching(
-                node.value, is_prompt=bool(self.enclosing_names) and "prompt" in self.enclosing_names[-1].lower())
+            self.collect_local_strings_reaching(node.value, is_prompt=is_prompt)
         self.generic_visit(node)
 
 
@@ -451,6 +473,23 @@ def names_carried_as_text(expression):
     elif not isinstance(expression, ast.Call):
         for child in ast.iter_child_nodes(expression):
             yield from names_carried_as_text(child)
+
+
+def function_names_called_for_text(expression):
+    """The bare names of the calls whose results the expression's value carries as text, found
+    where names_carried_as_text finds names."""
+    if isinstance(expression, ast.Call):
+        if isinstance(expression.func, ast.Name):
+            yield expression.func.id
+        elif is_join_on_string_literal(expression):
+            for argument in expression.args:
+                yield from function_names_called_for_text(argument)
+    elif isinstance(expression, ast.IfExp):
+        yield from function_names_called_for_text(expression.body)
+        yield from function_names_called_for_text(expression.orelse)
+    else:
+        for child in ast.iter_child_nodes(expression):
+            yield from function_names_called_for_text(child)
 
 
 def definition_time_expressions(definition):
@@ -550,11 +589,19 @@ def agent_facing_string_nodes_in_source(source):
         tree = ast.parse(source)
     except (SyntaxError, ValueError):
         return []
-    collector = AgentFacingStringNodeCollector(module_level_string_values(tree),
-                                               helper_printers_in_tree(tree))
-    if ("__doc__" in source and tree.body and isinstance(tree.body[0], ast.Expr)
-            and isinstance(tree.body[0].value, ast.Constant)
-            and isinstance(tree.body[0].value.value, str)):
-        collector.collect_expression_strings(tree.body[0].value, "module docstring (printed by --help)")
-    collector.visit(tree)
+    module_string_values = module_level_string_values(tree)
+    helper_printers = helper_printers_in_tree(tree)
+    # A pass can find a function called for text only after visiting its definition, and a
+    # followed function's return can name another, so passes repeat until none is new.
+    followed = set()
+    while True:
+        collector = AgentFacingStringNodeCollector(module_string_values, helper_printers, followed)
+        if ("__doc__" in source and tree.body and isinstance(tree.body[0], ast.Expr)
+                and isinstance(tree.body[0].value, ast.Constant)
+                and isinstance(tree.body[0].value.value, str)):
+            collector.collect_expression_strings(tree.body[0].value, "module docstring (printed by --help)")
+        collector.visit(tree)
+        if collector.function_names_called_for_text <= followed:
+            break
+        followed |= collector.function_names_called_for_text
     return sorted(collector.string_entries, key=lambda entry: (entry["line"], entry["label"]))

@@ -400,6 +400,50 @@ for line in ("Once the merge is committed, push again.",
     check(f"the pre-push conflict check's helper-printed line {line!r} is found", line in found,
           found)
 
+# Modelled on ship_one_file() in scripts/seat-shared-file-ship.py at pull request 2309's head, whose
+# FAILED lines are built in a nested function and only its what_failed arguments stood in print().
+STOPPED_LINE_SOURCE = """def ship_one_file(seat, stored_name, rerun):
+    def stopped_line(what_failed, why):
+        if not why:
+            return f"FAILED: {seat}/{stored_name} — {what_failed}. Rerun: {rerun}"
+        return (f"FAILED: {seat}/{stored_name} — {what_failed}. This run's staging "
+                f"directory could not be removed ({why}). Then rerun: {rerun}")
+    why = remove_staging_directory()
+    print(stopped_line(f"rsync exited {code} during the copy", why), flush=True)
+"""
+found = [(entry["line"], entry["label"], entry["literal_text"]) for entry in entries(STOPPED_LINE_SOURCE)]
+check("a string a nested function returns is a message when the function's call is printed",
+      (4, "return in ship_one_file.stopped_line()", "FAILED: / — . Rerun: ") in found
+      and (5, "return in ship_one_file.stopped_line()",
+           "FAILED: / — . This run's staging directory could not be removed (). Then rerun: ") in found
+      and (8, "print in ship_one_file()", "rsync exited  during the copy") in found, found)
+
+found = texts('def outer():\n    return f"outer {inner()}"\ndef inner():\n    return "inner text"\n'
+              'def data():\n    return "data text"\nname = data()\nraise SystemExit(outer())\n')
+check("a string returned by a function whose call another followed function returns is a message, "
+      "and one whose call is not text is not",
+      "f'outer {inner()}'" in found and "inner text" in found and "data text" not in found, found)
+
+found = texts('def line(x):\n    return f"line {x}"\nprint("\\n".join(line(x) for x in xs))\n')
+check("a string returned by a function whose calls a printed string literal's join carries is a message",
+      "f'line {x}'" in found, found)
+
+found = texts('def chosen():\n    return "chosen text"\ndef ready():\n    return "ready text"\n'
+              'print(chosen() if ready() else "fallback")\n')
+check("a string returned by a function called in a conditional expression's branch is a message, "
+      "and one called in its condition is not",
+      "chosen text" in found and "ready text" not in found, found)
+
+# Modelled on parse_event() in nc-systems/agent-seat-database/agent-seat-database-service.py at pull
+# request 2310's head, whose dict key "error" was listed as a second message on the same line.
+found = texts('def parse_event(event):\n'
+              '    raise Answer(400, {"error": "the event\'s event_id holds a lone surrogate, "\n'
+              '                                "so SQLite cannot store it"})\n')
+check("a dict literal's key in a raise is not a message, so the line holds one message",
+      found == ["the event's event_id holds a lone surrogate, so SQLite cannot store it"], found)
+found = texts('print(MESSAGES["refusal"])\n')
+check("a subscript's index in a print is not a message", found == [], found)
+
 check("source that does not parse yields no entries", texts('print("unclosed\n') == [])
 check("no source yields no entries", texts(None) == [])
 

@@ -38,8 +38,10 @@ decides which strings are agent-facing and which files are tests. Agent-facing
 strings are printed, written or raised strings; strings assigned to names
 ending in _ADVICE, _INSTRUCTION, _LINE, _MESSAGE, _NOTICE, _REASON, _REFUSAL
 or _TEMPLATE, or in one of those followed by S, such as _MESSAGES; string
-values of a hook's agent-facing JSON output keys in a dict literal; and a
-module docstring printed through __doc__. Test files are those ending in
+values of a hook's agent-facing JSON output keys in a dict literal; a module
+docstring printed through __doc__; and the strings a function returns when a
+call of that function stands where one of these strings would, as
+print(stopped_line(...)) does. Test files are those ending in
 -test.py or under a tests directory, and are excluded: a test's copy of an
 expected message is not handed to an agent. F-string
 placeholders survive in the listing. Beside each listed string is its
