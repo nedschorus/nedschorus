@@ -1528,6 +1528,11 @@ CLEANER_STOPPED_LINE_START = "clean-worktrees: stopped, because "
 # clean-worktrees.py prints this for each record that did not ship; the line ends with the shipper's own line.
 KEPT_FOR_RECORDS_MARKER = (": record shipment FAILED, worktree kept — removing it would delete "
                            "a record the log-store does not hold: ")
+# clean-worktrees.py prints these two lines after a log-of-removals FAILED line: the command that
+# writes the unwritten line, and what to do if it fails; without them the report loses that line.
+LOG_OF_REMOVALS_RECORD_BY_HAND_PHRASES = (
+    ": to record it, run this once: ",
+    ": if that printf command fails too, do not run scripts/clean-worktrees.py again; ")
 
 
 def summarize_worktree_cleanup_output(lines) -> str:
@@ -1575,7 +1580,9 @@ def summarize_worktree_cleanup_output(lines) -> str:
         report += (f"; {len(unconfirmed)} removal(s) started but not confirmed, so these "
                    f"files may be partly gone: " + "; ".join(unconfirmed))
     if failed:
-        report += f"; {len(failed)} failed: " + "; ".join(failed)
+        record_by_hand = [line for line in lines
+                          if any(phrase in line for phrase in LOG_OF_REMOVALS_RECORD_BY_HAND_PHRASES)]
+        report += f"; {len(failed)} failed: " + "; ".join(failed + record_by_hand)
     if kept_for_records:
         kept_worktrees = {line.partition(KEPT_FOR_RECORDS_MARKER)[0] for line in kept_for_records}
         report += (f"; {len(kept_worktrees)} worktree(s) kept because a record did not "

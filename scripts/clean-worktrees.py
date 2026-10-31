@@ -154,10 +154,13 @@ it; for a branch its name and the commit it pointed at; and for both the
 repository given with --repo, and the parent process that ran this one, its
 pid and command line, which tells the handoff-supervisor, cron and a shell
 apart. A commit git could not read is written as `unknown`. On ned-box the
-line is appended locally, on the Mac over ssh, with the helper the
-log-store's other writers share. When a line cannot be written, the run
-prints it with the cause on a line containing FAILED, carries on removing,
-and exits 1 at the end. The environment variable
+line is appended locally, on the Mac over ssh, with run_on_ned_box_or_here
+from nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py.
+When a line cannot be written, the run prints a line containing FAILED
+with the cause, then the command that writes the unwritten line once the
+cause is fixed, then what to do if that command fails; it carries on
+removing, and exits 1 at the end. The handoff-supervisor's report keeps
+all three lines. The environment variable
 CLEAN_WORKTREES_REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE names
 a local file to append to instead, which is how the tests keep out of the
 log-store.
@@ -227,6 +230,10 @@ REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_DIRECTORY = (
 REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE_VARIABLE = (
     "CLEAN_WORKTREES_REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE")
 REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_WRITE_TIMEOUT_SECONDS = 30
+# nc-systems/handoff/handoff-supervisor.py keeps the lines holding these in its handoff report.
+LOG_OF_REMOVALS_RECORD_BY_HAND_PHRASE = ": to record it, run this once: "
+LOG_OF_REMOVALS_RECORD_BY_HAND_FAILED_PHRASE = (
+    ": if that printf command fails too, do not run scripts/clean-worktrees.py again; ")
 # printf's own escape, so the command it starts stays on one line.
 PRINTF_EACH_ARGUMENT_ON_ITS_OWN_LINE = r"%s\n"
 
@@ -399,14 +406,15 @@ def append_removed_worktree_or_deleted_branch_log_lines(events, repo, name):
         place = f"{mark.NED_BOX_SSH_TARGET if ssh_target else machine}:{log_file}"
         writer = ([*mark.NED_BOX_SSH_COMMAND, ssh_target, command] if ssh_target
                   else ["/bin/sh", "-c", command])
+        # The handoff-supervisor keeps the two lines after a FAILED line by these phrases.
         print(f"{name}: log of removals line(s) FAILED to be written to {place} — {error}. "
               f"The removal or branch deletion named above stands, but no file outside this "
               f"run's output records it.\n"
-              f"{name}: to record it, run this once: "
+              f"{name}{LOG_OF_REMOVALS_RECORD_BY_HAND_PHRASE}"
               f"{shlex.join(['printf', PRINTF_EACH_ARGUMENT_ON_ITS_OWN_LINE, *text.splitlines()])} | "
               f"{shlex.join(writer)}\n"
-              f"{name}: if that printf command fails too, do not run scripts/clean-worktrees.py "
-              f"again; tell the user that scripts/clean-worktrees.py on {machine} could not write "
+              f"{name}{LOG_OF_REMOVALS_RECORD_BY_HAND_FAILED_PHRASE}"
+              f"tell the user that scripts/clean-worktrees.py on {machine} could not write "
               f"its log of removals at {place}, quoting both the error above and the one the printf "
               f"command printed; a subagent tells the agent that dispatched it instead.")
         return False

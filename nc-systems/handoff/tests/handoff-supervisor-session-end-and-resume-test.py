@@ -820,6 +820,38 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           not second_finished.exists() and "other-landed-branch" in other_branches,
           f"{report} {other_branches}")
 
+    # A log-of-removals line the cleaner cannot write: the report must keep the command that
+    # writes it, because the worktree and its branch are gone by then.
+    unlogged = home / ".claude" / "worktrees" / "unlogged-finished-worktree"
+    git_in(["worktree", "add", "--quiet", "-b", "unlogged-finished-branch", str(unlogged)], home)
+    os.utime(unlogged / ".git", (long_ago, long_ago))
+    not_a_directory = root / "removals-log-parent-is-a-file"
+    not_a_directory.write_text("", encoding="utf-8")
+    saved_log_file = os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE]
+    os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(not_a_directory / "ned-box.txt")
+    try:
+        unlogged_report = supervisor.remove_finished_worktrees_at_handoff(home)
+    finally:
+        os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = saved_log_file
+    record_by_hand = unlogged_report.partition(
+        "unlogged-finished-worktree: to record it, run this once: ")[2].partition(
+        "; unlogged-finished-worktree: if that printf command fails too")[0]
+    check("WORKTREE CLEANUP: when the log of removals cannot be written, the report keeps the "
+          "FAILED line, the command that writes the unwritten line and what to do if it fails",
+          not unlogged.exists() and "1 failed: unlogged-finished-worktree: log of removals "
+          "line(s) FAILED" in unlogged_report and record_by_hand
+          and "unlogged-finished-worktree: if that printf command fails too, do not run "
+          "scripts/clean-worktrees.py again; tell the user" in unlogged_report, unlogged_report)
+    if record_by_hand:
+        not_a_directory.unlink()
+        subprocess.run(["/bin/sh", "-c", record_by_hand], capture_output=True, check=False)
+        written = ((not_a_directory / "ned-box.txt").read_text(encoding="utf-8")
+                   if (not_a_directory / "ned-box.txt").is_file() else "")
+        check("WORKTREE CLEANUP: the command the report keeps writes the removal's line",
+              "\tremoved-worktree\t" in written
+              and f"/{unlogged.name}\tbranch=unlogged-finished-branch\t" in written,
+              record_by_hand + "\n" + written)
+
     not_a_checkout = root / "not-a-checkout"
     not_a_checkout.mkdir()
     report = supervisor.remove_finished_worktrees_at_handoff(not_a_checkout)
