@@ -732,7 +732,8 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           "record-holding-worktree: record shipment FAILED, worktree kept — removing it would "
           "delete a record the log-store does not hold: cold-read-records/foo-2026-10-19 "
           "(REFUSED:" in refused_report
-          and refused_report.count("record-holding-worktree") == 1
+          # The shipper's line names the record's path, which holds the worktree's name.
+          and refused_report.count("record-holding-worktree: ") == 1
           and "exited 1" not in refused_report and "failed:" not in refused_report,
           refused_report)
     git_in(["worktree", "remove", "--force", str(holding_record)], home)

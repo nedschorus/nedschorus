@@ -7,7 +7,8 @@ second-strongest-model is the agent-binary's second-strongest model) and the
 terminology pass in two (deep x {claude, codex}) -- every report saved
 into a cold-read-record named
 `cold-read-records/<file stem>-<YYYY-MM-DD>/`, or `SKILL-<skill name>-<YYYY-MM-DD>/` for a skill
-(a -2, -3 suffix for a second read of the document that day), progress and next-step
+(a -2, -3 suffix for a second read of the document that day, the first
+free both in this checkout and in the log-store), progress and next-step
 instructions printed for the reviewing agent as reviews land.
 
 Usage:
@@ -439,9 +440,13 @@ def earlier_full_runs_of(target: pathlib.Path) -> tuple:
 
 
 def make_record_dir(target: pathlib.Path, now: datetime.datetime) -> pathlib.Path:
-    """Create and return the first unused record directory for this document and day."""
-    record_dir = record_names.fresh_record_directory(
+    """Create and return the first record directory for this document and day
+    unused both here and in the log-store."""
+    record_dir, store_unlisted = record_shipper.first_record_directory_unused_in_checkout_and_log_store_and_log_store_listing_error(
         RECORDS_DIR / record_directory_name_for_target(target, now))
+    if store_unlisted is not None:
+        print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(
+            "cold-read-grid", record_dir, store_unlisted), file=sys.stderr)
     record_dir.mkdir(parents=True)
     return record_dir
 

@@ -468,12 +468,46 @@ with tempfile.TemporaryDirectory() as scratch:
           == "a-2026-09-16")
     # RECORDS_DIR is pointed at scratch so the result cannot pick up a -2 from
     # whatever this checkout's own cold-read-records/ happens to hold.
+    # The log-store is pointed at scratch too, for every in-process call below,
+    # so a name the real store holds cannot give a -2 either.
+    in_process_log_store = scratch / "in-process-log-store"
+    os.environ[RECORD_SHIP_DESTINATION_VARIABLE] = str(in_process_log_store)
     name_module.RECORDS_DIR = scratch / "in-process-records"
     skill_report = name_module.fast_read_report_path_for_target(skill_target, clock_at_1042)
     check("the fast read's report is bare fast-read.md inside the record",
           skill_report == scratch / "in-process-records" / "SKILL-cold-read-2026-09-16"
           / "fast-read.md",
           str(skill_report))
+    # Another checkout's read of the document that day is in the log-store
+    # alone: the name passes over it, as this checkout's own records are.
+    (in_process_log_store / "SKILL-cold-read-2026-09-16").mkdir(parents=True)
+    skill_report_beside_the_store = name_module.fast_read_report_path_for_target(
+        skill_target, clock_at_1042)
+    check("a record name the log-store holds is passed over, though this checkout lacks it",
+          skill_report_beside_the_store == scratch / "in-process-records"
+          / "SKILL-cold-read-2026-09-16-2" / "fast-read.md",
+          str(skill_report_beside_the_store))
+    if os.geteuid() != 0:
+        import contextlib
+        import io
+        in_process_log_store.chmod(0)
+        unlisted_stderr = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(unlisted_stderr):
+                skill_report_unlisted = name_module.fast_read_report_path_for_target(
+                    skill_target, clock_at_1042)
+        finally:
+            in_process_log_store.chmod(0o755)
+        check("when the log-store cannot be listed, the name free in this checkout is used",
+              skill_report_unlisted == scratch / "in-process-records"
+              / "SKILL-cold-read-2026-09-16" / "fast-read.md", str(skill_report_unlisted))
+        check("and the fast read says on stderr that the name was not checked against the "
+              "log-store",
+              unlisted_stderr.getvalue().startswith(
+                  "cold-read-fast-read: the record name SKILL-cold-read-2026-09-16 is free "
+                  "in this checkout")
+              and str(in_process_log_store) in unlisted_stderr.getvalue(),
+              unlisted_stderr.getvalue())
     walk_target = name_module.REPO_ROOT / "docs" / "walk" / "some-item-draft.md"
     check("the walk-draft route is untouched: docs/walk/<name>-suggestions.md, whatever the clock",
           name_module.fast_read_report_path_for_target(walk_target, clock_at_1042)
@@ -1432,7 +1466,10 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}; stderr={result.stderr[-400:]!r}")
 
     # A store already holding other bytes under the record's name refuses it:
-    # the record did not reach the store either.
+    # the record did not reach the store either. The read names its record
+    # against the store's names too, so the store root is made unlistable
+    # (write and search only): the read then falls back to a name free in the
+    # checkout, which the store already holds.
     repository = build_scratch_repository(scratch)
     records_report = (repository / "cold-read-records" / f"a-design-{record_stamp}"
                       / "fast-read.md")
@@ -1440,10 +1477,15 @@ with tempfile.TemporaryDirectory() as scratch:
                         / "fast-read.md")
     stored_elsewhere.parent.mkdir(parents=True)
     stored_elsewhere.write_text("ANOTHER READ'S REPORT\n", encoding="utf-8")
-    result = run_fast_read(
-        repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
-        records_report, other_relative, counter,
-    )
+    store_root = stored_elsewhere.parent.parent
+    store_root.chmod(0o333)
+    try:
+        result = run_fast_read(
+            repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
+            records_report, other_relative, counter,
+        )
+    finally:
+        store_root.chmod(0o755)
     check("a store that refuses the record is reported as record: REFUSED on stderr, the "
           "report's path is still the stdout line, and the read exits 1",
           result.returncode == 1 and result.stdout.strip() == str(records_report)

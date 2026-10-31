@@ -137,12 +137,16 @@ def record_directory_name_for_target(
     return f"{record_name_for_target(target)}-{now.strftime('%Y-%m-%d')}"
 
 
-def fresh_record_directory(base: pathlib.Path) -> pathlib.Path:
-    """Return an unused base or numbered suffix without creating the directory."""
+def fresh_record_directory(base: pathlib.Path, names_taken_in_log_store) -> pathlib.Path:
+    """Return the first of base, base-2, base-3 ... that is neither a path on
+    disk nor one of names_taken_in_log_store, the record directory names the
+    log-store holds, without creating the directory."""
     # Each read needs its own directory so a same-day rerun cannot overwrite earlier reports.
+    # A name free only on disk can be another checkout's record in the store,
+    # and shipping would then put two reads in one record.
     record_directory = base
     suffix = 2
-    while record_directory.exists():
+    while record_directory.exists() or record_directory.name in names_taken_in_log_store:
         record_directory = base.with_name(f"{base.name}-{suffix}")
         suffix += 1
     return record_directory

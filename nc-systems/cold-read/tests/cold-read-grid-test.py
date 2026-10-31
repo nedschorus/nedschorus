@@ -135,10 +135,12 @@ WHAT IS PINNED HERE.
 Run: python3 nc-systems/cold-read/tests/cold-read-grid-test.py
 """
 
+import contextlib
 import datetime
 import hashlib
 import importlib.util
 import inspect
+import io
 import json
 import os
 import shlex
@@ -1624,6 +1626,48 @@ with tempfile.TemporaryDirectory() as scratch:
           and grid_record_name("/r/docs/drafts/a.md", datetime.datetime(2026, 9, 16, 21, 5))
           == "a-2026-09-16")
 
+    # make_record_dir in process, with this checkout's records and the
+    # log-store both pointed at scratch: another checkout's read of the
+    # document that day, in the log-store alone, is passed over.
+    real_grid_records = grid_module.RECORDS_DIR
+    grid_module.RECORDS_DIR = scratch / "grid-in-process-records"
+    grid_in_process_log_store = scratch / "grid-in-process-log-store"
+    (grid_in_process_log_store / "a-2026-09-16").mkdir(parents=True)
+    real_grid_destination = os.environ.get(RECORD_SHIP_DESTINATION_VARIABLE)
+    os.environ[RECORD_SHIP_DESTINATION_VARIABLE] = str(grid_in_process_log_store)
+    try:
+        grid_record_beside_the_store = grid_module.make_record_dir(
+            Path("/r/docs/drafts/a.md"), clock_at_1042)
+        unlisted_grid_stderr = None
+        if os.geteuid() != 0:
+            grid_in_process_log_store.chmod(0)
+            unlisted_grid_stderr = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(unlisted_grid_stderr):
+                    grid_record_unlisted = grid_module.make_record_dir(
+                        Path("/r/docs/drafts/b.md"), clock_at_1042)
+            finally:
+                grid_in_process_log_store.chmod(0o755)
+    finally:
+        grid_module.RECORDS_DIR = real_grid_records
+        if real_grid_destination is None:
+            os.environ.pop(RECORD_SHIP_DESTINATION_VARIABLE, None)
+        else:
+            os.environ[RECORD_SHIP_DESTINATION_VARIABLE] = real_grid_destination
+    check("grid: a record name the log-store holds is passed over, though this checkout "
+          "lacks it, and the directory is made",
+          grid_record_beside_the_store == scratch / "grid-in-process-records" / "a-2026-09-16-2"
+          and grid_record_beside_the_store.is_dir(), str(grid_record_beside_the_store))
+    if unlisted_grid_stderr is not None:
+        check("grid: when the log-store cannot be listed, the name free in this checkout is "
+              "made, and stderr says it was not checked against the log-store",
+              grid_record_unlisted == scratch / "grid-in-process-records" / "b-2026-09-16"
+              and grid_record_unlisted.is_dir()
+              and unlisted_grid_stderr.getvalue().startswith(
+                  "cold-read-grid: the record name b-2026-09-16 is free in this checkout")
+              and str(grid_in_process_log_store) in unlisted_grid_stderr.getvalue(),
+              unlisted_grid_stderr.getvalue())
+
     # Through the real grid: a skill read twice in one day, then once the
     # next day. The first run takes the plain name, the second -2, and the
     # third its own later name with no suffix.
@@ -1763,10 +1807,18 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- A store that refuses the record: the run finishes, exits 1 ----------
     # The store already holds this record's name with other bytes, so the
     # add-only shipper refuses it, and the record did not reach the store.
+    # The grid names its record against the store's names too, so the store
+    # root is made unlistable (write and search only): the grid then falls
+    # back to a name free in the checkout, which the store already holds.
     unreachable_record_name = record_directory.name
     repository = build_scratch_repository(scratch, "checkout-store-refuses")
     seed_log_store_record(repository, unreachable_record_name, [])
-    result = run_grid(repository, stubs)
+    store_root = repository / SCRATCH_LOG_STORE_RELATIVE
+    store_root.chmod(0o333)
+    try:
+        result = run_grid(repository, stubs)
+    finally:
+        store_root.chmod(0o755)
     record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
     check("a store holding the record's name with other bytes prints record: REFUSED, "
           "the run finishes all six, and exits 1",

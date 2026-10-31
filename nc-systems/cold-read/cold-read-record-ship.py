@@ -31,9 +31,23 @@ with the design:
   2. REFUSE ON DIFFERENCE. An add-only file already in the store whose content
      differs from the local one is refused before anything is copied: the one
      line names every such file and prints the provenance comment each report
-     opens with, from both copies, and the person renames the local
-     directory with a -2 suffix and ships again. Two machines reviewing one document on one day
+     opens with, from both copies, and gives the `mv` and ship commands
+     described below. Two machines reviewing one document on one day
      produce exactly this, and rsync alone would overwrite the first silently.
+     A store record holding any file the local directory does not hold is
+     refused the same way, before anything is copied: a record directory only
+     gains files, so that store record is another read's, and adding this
+     directory's files to it would file two reads under one name. Its one
+     line gives the `mv` to the first name, counted from the record's date,
+     free in the checkout and in the store, and the command that ships the
+     renamed directory. This is
+     judged on the inventory taken before the copy, not again in the placing
+     step, for the reason NO LOCK gives below. The cold-read programs choose
+     a record name free both in their checkout and in the store
+     (first_record_directory_unused_in_checkout_and_log_store_and_log_store_listing_error), so this refusal is
+     met only when the store could not be listed when the name was chosen,
+     a directory was named by hand, or a file was removed from the local
+     directory after it shipped.
   3. FAIL LOUDLY. When ned-box cannot be reached the run prints a line
      opening FAILED and exits non-zero; the cold-read-record stays on disk,
      unshipped, for a later run. ssh runs in batch mode with a connect timeout,
@@ -167,6 +181,7 @@ import argparse
 import hashlib
 import inspect
 import json
+import re
 import shlex
 import os
 import importlib.util
@@ -347,6 +362,52 @@ def citation_host_for_this_machine():
     override = os.environ.get(DESTINATION_ENVIRONMENT_VARIABLE)
     host, _ = split_destination(override or LOG_STORE_RECORDS_DESTINATION)
     return host
+
+
+def cold_read_record_directory_names_listed_from_log_store(host, records_path: pathlib.PurePosixPath) -> tuple:
+    """(the names of the record directories the store holds, None), or
+    (None, why they could not be listed). A store not yet made holds none."""
+    if host is None:
+        directory = pathlib.Path(records_path)
+        if not directory.is_dir():
+            return set(), None
+        try:
+            return {entry.name for entry in directory.iterdir() if entry.is_dir()}, None
+        except OSError as error:
+            return None, f"listing {directory} failed: {error}"
+    # The store a remote host holds is on ned-box, whose find is GNU find.
+    script = (f"if [ -d {shlex.quote(str(records_path))} ]; then find "
+              f"{shlex.quote(str(records_path))} -mindepth 1 -maxdepth 1 -type d "
+              f"-printf '%f\\n'; fi")
+    listed = subprocess.run(SSH_COMMAND + [host, script],
+                            capture_output=True, text=True, check=False)
+    if listed.returncode != 0:
+        return None, (f"listing {host}:{records_path} exited {listed.returncode}: "
+                      f"{one_line(listed.stderr)}")
+    return set(listed.stdout.splitlines()), None
+
+
+def first_record_directory_unused_in_checkout_and_log_store_and_log_store_listing_error(base: pathlib.Path) -> tuple:
+    """(the first of base, base-2, base-3 ... that names no directory on disk
+    nor in the log-store this machine ships to, None), or, when the store
+    could not be listed, (the first free on disk, why the store could not be
+    listed) for the caller to print; shipping then refuses a name another
+    read holds in the store."""
+    names, unlisted = cold_read_record_directory_names_listed_from_log_store(*destination_for_this_machine())
+    return record_names.fresh_record_directory(
+        base, names_taken_in_log_store=names or set()), unlisted
+
+
+def log_store_listing_failed_record_name_may_collide_warning_line(program: str, record_dir: pathlib.Path, reason: str) -> str:
+    """The stderr line a program prints when it named record_dir without the store's names."""
+    return (f"{program}: the record name {record_dir.name} is free in this checkout, but "
+            f"it was checked against this checkout only: the log-store's names could not "
+            f"be read ({reason}), so a read from another checkout may already hold "
+            f"{record_dir.name} there.\n"
+            f"This run goes ahead: of all it does, only shipping the record needs the "
+            f"log-store.\n"
+            f"If shipping this record prints a line that opens REFUSED and names another "
+            f"read's files, run the `mv` command and the ship command that line gives.")
 
 
 def provenance_comment_of(first_line: str) -> str:
@@ -1081,6 +1142,22 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     triage_differs = TRIAGE_FILE_REPLACED_IN_THE_STORE in differing
     if triage_differs:
         differing.remove(TRIAGE_FILE_REPLACED_IN_THE_STORE)
+    def rename_and_ship_instruction():
+        names, unlisted = cold_read_record_directory_names_listed_from_log_store(
+            host, records_path)
+        # The -N is counted from the date, so a second rename does not stack suffixes.
+        base = record_dir.with_name(re.sub(
+            rf"({record_names.RECORD_DATE_PATTERN})-\d+$", r"\1", name))
+        free = record_names.fresh_record_directory(
+            base, names_taken_in_log_store=names or set())
+        free_where = ("in this checkout and in the store when this ran" if unlisted is None
+                      else f"in this checkout; the store's names could not be read "
+                           f"({unlisted}), so the store may hold it")
+        return (f"Rename this directory with "
+                f"`mv {shlex.quote(str(record_dir))} {shlex.quote(str(free))}`, a name "
+                f"free {free_where}, then ship the renamed directory with "
+                f"`{sys.argv[0]} {shlex.quote(str(free))}`.")
+
     def refuse(differing_files):
         # The loop only gathers; the one print comes after it, so a
         # cold-read-record with several differing files still gets
@@ -1096,8 +1173,7 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
                     local_first_line, pathlib.Path(store_dir) / relative)
             described.append(f"{relative} (store: {store_line}; local: {local_line})")
         print(f"REFUSED: {name} — already in the store with different content: "
-              f"{'; '.join(described)}. Rename the local directory with a -2 suffix "
-              f"and ship again.")
+              f"{'; '.join(described)}. {rename_and_ship_instruction()}")
         return EXIT_REFUSED
 
     def nothing_new():
@@ -1107,6 +1183,15 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
 
     if differing:
         return refuse(differing)
+    # A record directory only ever gains files, so a store copy holding a file
+    # this directory lacks is another read that took the same name.
+    held_only_in_store = sorted(set(in_store) - set(local))
+    if held_only_in_store:
+        print(f"REFUSED: {name} — nothing was copied: the store's record {citation} holds "
+              f"files this directory {record_dir} does not, so the store's record is "
+              f"another read's: {', '.join(held_only_in_store)}. "
+              f"{rename_and_ship_instruction()}")
+        return EXIT_REFUSED
     if not new_files and not triage_differs:
         return nothing_new()
 
