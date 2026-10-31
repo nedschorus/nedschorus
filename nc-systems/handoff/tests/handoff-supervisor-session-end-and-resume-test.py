@@ -55,6 +55,7 @@ SCRIPT_PATH = fixture.SCRIPT_PATH
 git_in = fixture.git_in
 StubLaunchedSession = fixture.StubLaunchedSession
 supervisor_names_replaced = fixture.supervisor_names_replaced
+REMOVALS_LOG_OVERRIDE_VARIABLE = "CLEAN_WORKTREES_REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE"
 
 
 def stub_process(poll_result):
@@ -563,9 +564,12 @@ def run_handoff_worktree_cleanup_cases(workspace: Path):
     redirecting = {name: os.environ.pop(name)
                    for name in _git_environment_fixture.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
                    if name in os.environ}
+    # The real cleaner's --remove would otherwise append to the real log-store's log of removals.
+    os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(workspace / "clean-worktrees-removals-log.txt")
     try:
         run_handoff_worktree_cleanup_cases_without_git_redirection(workspace)
     finally:
+        del os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE]
         os.environ.update(redirecting)
 
 

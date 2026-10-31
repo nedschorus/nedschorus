@@ -19,6 +19,7 @@ No case sends a signal.
 Run: python3 nc-systems/handoff/tests/uncommitted-work-snapshots-test.py
 """
 
+import atexit
 import importlib.util
 import io
 import json
@@ -49,6 +50,16 @@ GIT_OUTPUT_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
 NEXT_STEP_LINES_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+LOG_STORE_WRITER_MODULE_RELATIVE = Path(
+    "nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py")
+NED_BOX_HOME_CONSTANTS_MODULE_RELATIVE = Path(
+    "nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+
+# The cleaner's --remove run below would otherwise append to the real log-store's log of removals.
+_removals_log_directory = tempfile.mkdtemp(prefix="uncommitted-work-snapshots-test-removals-log-")
+atexit.register(shutil.rmtree, _removals_log_directory, ignore_errors=True)
+os.environ["CLEAN_WORKTREES_REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE"] = str(
+    Path(_removals_log_directory) / "log.txt")
 
 
 def load(path, name):
@@ -129,7 +140,8 @@ def new_clone():
     main = base / "main"
     git(SCRATCH, "clone", "-q", str(origin), str(main))
     for relative in (MODULE_RELATIVE, HOOK_RELATIVE, CLEANER_RELATIVE,
-                     GIT_OUTPUT_MODULE_RELATIVE, NEXT_STEP_LINES_MODULE_RELATIVE):
+                     GIT_OUTPUT_MODULE_RELATIVE, NEXT_STEP_LINES_MODULE_RELATIVE,
+                     LOG_STORE_WRITER_MODULE_RELATIVE, NED_BOX_HOME_CONSTANTS_MODULE_RELATIVE):
         (main / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPOSITORY_ROOT / relative, main / relative)
     (main / "tracked.txt").write_text("one\n")
