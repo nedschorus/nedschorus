@@ -184,6 +184,8 @@ KINDS = (
      ["prompt", "prompt"]),
     ("a local printed twice, which stays a message",
      'def main():\n    text = "Twice."\n    print(text)\n    print(text)\n', ["message"]),
+    ("a local returned through a string literal's join from a function whose name holds prompt",
+     'def build_prompt():\n    note = "Read the transcript."\n    return "\\n".join([note])\n', ["prompt"]),
     ("a string printed directly in a function whose name holds prompt",
      'def prompt_failure():\n    print("the prompt could not be built")\n', ["message"]),
 )
@@ -229,6 +231,42 @@ LOCAL_NAME_FORMS = (
     ("a local printed after a nested function's definition",
      'def outer():\n    text = "outer text"\n    def inner():\n        pass\n    print(text)\n',
      [("outer text", "text = in outer()")]),
+    ("a local returned through a string literal's join",
+     'def build_prompt():\n    note = "Read the transcript."\n    return "\\n".join([note])\n',
+     [("Read the transcript.", "note = in build_prompt()")]),
+    ("a local printed through a string literal's join",
+     'def main():\n    note = "Read the transcript."\n    print(" ".join([note]))\n',
+     [(" ", "print in main()"), ("Read the transcript.", "note = in main()")]),
+    ("a local in a + chain as a hook output value",
+     'def main():\n    note = "Read the transcript."\n    return {"additionalContext": "Instructions: " + note}\n',
+     [("Instructions: {note}", '"additionalContext" value in main()'), ("Read the transcript.", "note = in main()")]),
+    ("a printed conditional's branches, its condition left out",
+     'def main(mode):\n    state = "internal data"\n    print("Resume" if state == "known" else "Stop")\n',
+     [("Resume", "print in main()"), ("Stop", "print in main()")]),
+    ("a local of an enclosing function printed by a lambda nested in it",
+     'def main():\n    text = "outer text"\n    callback = lambda: print(text)\n',
+     [("outer text", "text = in main()")]),
+    ("a local of an enclosing function printed in the body of a class nested in it",
+     'def main():\n    text = "outer text"\n    class Holder:\n        print(text)\n',
+     [("outer text", "text = in main.Holder()")]),
+    ("a local printed in a lambda's default, which the enclosing function evaluates",
+     'def main():\n    text = "Visible message"\n    callback = lambda value=print(text): None\n',
+     [("Visible message", "text = in main()")]),
+    ("a local printed in a class decorator, which the enclosing function evaluates",
+     'def main():\n    text = "Decorated message"\n    @register(print(text))\n    class Holder:\n        pass\n',
+     [("Decorated message", "text = in main()")]),
+    ("a local printed in a class base, which the enclosing function evaluates",
+     'def main():\n    text = "Base message"\n    class Holder(make_base(print(text))):\n        pass\n',
+     [("Base message", "text = in main()")]),
+    ("a local printed in a nested function's default, which the enclosing function evaluates",
+     'def main():\n    text = "Default message"\n    def inner(value=print(text)):\n        pass\n',
+     [("Default message", "text = in main()")]),
+    ("a local printed in a lambda's default whose parameter has the local's name",
+     'def main():\n    text = "Shadowed default"\n    callback = lambda text=print(text): None\n',
+     [("Shadowed default", "text = in main()")]),
+    ("a local printed by a lambda in a class body that rebinds the name, since the lambda skips class scope",
+     'def main():\n    text = "outer lambda"\n    class Holder:\n        text = 3\n        f = lambda: print(text)\n',
+     [("outer lambda", "text = in main.Holder()")]),
 )
 for case_name, source, expected in LOCAL_NAME_FORMS:
     found = [(entry["text"], entry["label"]) for entry in entries(source)]
@@ -250,6 +288,14 @@ LOCAL_NAME_FORMS_NOT_RECOGNIZED = (
      'def outer():\n    text = "outer text"\n    def inner():\n        print(text)\n    inner()\n'),
     ("a local of a nested function, when the enclosing function prints its own name of that spelling",
      'def outer(text):\n    def inner():\n        text = "inner text"\n        store(text)\n    print(text)\n'),
+    ("a local of an enclosing function, when a lambda prints its own parameter of that spelling",
+     'def main():\n    prompt = "unused"\n    callback = lambda prompt: print(prompt)\n'),
+    ("a local of an enclosing function, when a class body nested in it binds that name itself",
+     'def main():\n    text = "outer text"\n    class Holder:\n        text = 3\n        print(text)\n'),
+    ("a string bound in a class body and printed there, as at module level",
+     'def main():\n    class Holder:\n        text = "class text"\n        print(text)\n'),
+    ("a local in a returned conditional's condition",
+     'def build_prompt():\n    state = "internal data"\n    return "Resume" if state else "Stop"\n'),
     ("an empty local string that is printed", 'def main():\n    text = ""\n    print(text)\n'),
     ("a local string returned in a tuple", 'def main():\n    text = "tuple text"\n    return text, 1\n'),
     ("a local string returned only when a condition holds, as a name",
@@ -284,6 +330,9 @@ HELPER_PRINTER_FORMS = (
      SAY + 'def refuse(stream, cause):\n    say(stream, cause + ", so refused")\n'
      'refuse(sys.stderr, "cause text")\n',
      [("{cause}, so refused", "say() in refuse()"), ("cause text", "refuse()")]),
+    ("a string passed to a helper whose lambda prints the helper's parameter",
+     'def sink(text):\n    run(lambda: print(text))\nsink("closure text")\n',
+     [("closure text", "sink()")]),
     ("a string passed to a helper that hands its parameter to a helper printer defined after it",
      'def refuse(stream, cause):\n    say(stream, cause + ", so refused")\n' + SAY
      + 'refuse(sys.stderr, "cause text")\n',
@@ -291,6 +340,13 @@ HELPER_PRINTER_FORMS = (
     ("a string built with % for a helper printer, inside a function",
      SAY + 'def main():\n    say(sys.stderr, "branch %s failed" % name)\n',
      [("branch %s failed", "say() in main()")]),
+    ("a string passed to a helper whose method prints the parameter its class body rebinds, since the method skips class scope",
+     'def sink(text):\n    class Holder:\n        text = 3\n        def show(self):\n            print(text)\n'
+     '    Holder().show()\nsink("method sees outer")\n',
+     [("method sees outer", "sink()")]),
+    ("a string passed to a helper whose lambda's default prints the parameter",
+     'def sink(text):\n    callback = lambda value=print(text): None\nsink("default helper")\n',
+     [("default helper", "sink()")]),
 )
 for case_name, source, expected in HELPER_PRINTER_FORMS:
     found = [(entry["text"], entry["label"]) for entry in entries(source)]
@@ -312,8 +368,20 @@ HELPER_PRINTER_FORMS_NOT_RECOGNIZED = (
     ("a string passed to a function whose parameter hides a helper printer's name",
      'def say(text):\n    print(text)\ndef route(say, payload):\n    say(payload)\n'
      'route(lambda p: None, {"key": "value"})\n'),
+    ("a string passed to a lambda's parameter that hides a helper printer's name",
+     SAY + 'route = lambda say: say(sys.stderr, "hidden text")\n'),
+    ("a string a helper prints only in a conditional's condition, handed through a join",
+     'def status(mode):\n    print("Resume" if mode else "Stop")\n'
+     'def main():\n    prompt = "condition text"\n    status("".join([prompt]))\n'),
+    ("a string a helper's lambda prints only through the lambda's own parameter of that spelling",
+     'def sink(text):\n    callback = lambda text: print(text)\n'
+     'def main():\n    prompt = "shadowed text"\n    sink("".join([prompt]))\n'),
     ("a print keyword that names where to print, not what",
      'def show(text, out):\n    print(text, file=out)\nshow(None, out="file text")\n'),
+    ("a string passed to a helper whose class body rebinds the parameter before printing it",
+     'def sink(text):\n    class Holder:\n        text = 3\n        print(text)\nsink("class rebound")\n'),
+    ("a string passed to a helper whose nested function rebinds the parameter before printing it",
+     'def sink(text):\n    def inner():\n        text = 3\n        print(text)\nsink("inner rebound")\n'),
 )
 for case_name, source in HELPER_PRINTER_FORMS_NOT_RECOGNIZED:
     found = [entry["text"] for entry in entries(source)
