@@ -83,10 +83,12 @@ keeps it:
                 If a time cannot be read, the worktree is kept.
   7. walks shipped - before --remove removes it, each walk in its
                 docs/walk/ (each <name>-minutes.md names one, handed to
-                the shipper as its walk text <name>.md) is shipped to
-                the log-store with scripts/walk-files-ship.py, as the
-                records are, and a walk that is refused or fails to ship
-                keeps the worktree, printed as a record that did not ship.
+                the shipper as its walk text <name>.md, or as its
+                minutes when it has no walk text, which the shipper
+                then refuses) is shipped to the log-store with
+                scripts/walk-files-ship.py, as the records are, and a
+                walk that is refused or fails to ship keeps the
+                worktree, printed as a record that did not ship.
 
 Every other worktree outside <repo>/.claude/worktrees/ — the agent-homes, the
 reference-checkout, a worktree deeper in ~/agents/, such as one under

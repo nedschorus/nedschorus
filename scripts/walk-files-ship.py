@@ -93,7 +93,7 @@ closes, not only a record kept as first written. The rules are PER FILE:
     copy only when n is written in digits with no leading zero, so
     <name>-revised-01.md and <name>-revised-a.md are not counted; the walk
     text of another walk named <name>-revised-<n>, n so written, is counted
-    as one. The store's copies are listed by a shell glob on the store,
+    as a revised copy of this walk. The store's copies are listed by a shell glob on the store,
     before the digests are read; a listing that fails is FAILED, exit 1,
     with nothing copied.
   REPLACED: the minutes and the dispositions, each on its own. A minutes
