@@ -6,7 +6,8 @@ logs its arguments and the folder it ran in and, by FAKE_GH_MODE, prints data,
 fails, or sleeps.
 
 The fake records its arguments and, by the FAKE_CODEX_MODE environment
-variable, writes a report, fails with or without a report, writes nothing,
+variable, writes a report, writes a report file of its own with or without a final
+message, fails with or without a report, writes nothing,
 sleeps past the deadline with a child that may ignore SIGTERM, or blocks
 reading stdin. Each case runs the real program as a process. The deadline and
 stdin cases run a second time with a fake `find` that sleeps 31 s first, so the
@@ -47,6 +48,12 @@ if mode == "report":
 elif mode == "fail":
     print("fake codex: model refused", file=sys.stderr)
     sys.exit(3)
+elif mode == "report-file-then-final-message":
+    # As Codex does when a brief names the -o path as the file to write its report to.
+    open(os.environ["FAKE_CODEX_REPORT_FILE"], "w").write("the full report Codex wrote\n")
+    open(report, "w").write("a short final message\n")
+elif mode == "report-file-only":
+    open(os.environ["FAKE_CODEX_REPORT_FILE"], "w").write("the full report Codex wrote\n")
 elif mode == "report-then-fail":
     open(report, "w").write("a partial report\n")
     sys.exit(3)
@@ -137,7 +144,7 @@ try:
     slow_find.chmod(0o755)
 
     def run(mode, *extra, stdin=None, timeout=60, path_first=None,
-            start_line_timeout=600, gh_mode="data"):
+            start_line_timeout=600, gh_mode="data", extra_environment=None):
         """Run the program; return (completed, report, seconds since it said it is running Codex).
 
         timeout counts from that stderr line, which the program prints after building
@@ -153,7 +160,8 @@ try:
                            FAKE_CODEX_ARGUMENTS_FILE=str(arguments_file),
                            FAKE_CODEX_CHILD_PID_FILE=str(child_pid_file),
                            FAKE_CODEX_PID_FILE=str(codex_pid_file),
-                           FAKE_GH_MODE=gh_mode, FAKE_GH_LOG=str(gh_log))
+                           FAKE_GH_MODE=gh_mode, FAKE_GH_LOG=str(gh_log),
+                           **(extra_environment or {}))
         report = scratch / f"report-{mode}.md"
         codex_pid_file.unlink(missing_ok=True)
         command = [sys.executable, str(PROGRAM), "-C", str(checkout), "--brief", str(brief),
@@ -205,8 +213,11 @@ try:
 
     completed, report, _ = run("report")
     arguments = json.loads(arguments_file.read_text())
-    check("success exits 0 and prints the report path",
-          completed.returncode == 0 and completed.stdout.strip() == f"report: {report}",
+    check("success exits 0, prints the report path, and leaves the final message only there",
+          completed.returncode == 0 and completed.stdout.strip() == f"report: {report}"
+          and report.read_text() == "the report\n"
+          and not report.with_name(report.name + ".last-message").exists()
+          and "is kept" not in completed.stderr,
           f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
     check("the brief's whole text is the prompt, after --",
           arguments[-1] == brief.read_text() and arguments[-2] == "--", repr(arguments[-2:]))
@@ -326,6 +337,26 @@ try:
     check("a brief that begins with - reaches Codex after --, so it is not read as an option",
           completed.returncode == 0 and arguments[-2:] == ["--", dash_brief.read_text()],
           f"exit {completed.returncode}, {arguments[-2:]!r}")
+
+    own_report = scratch / "report-report-file-then-final-message.md"
+    completed, report, _ = run("report-file-then-final-message",
+                               extra_environment={"FAKE_CODEX_REPORT_FILE": str(own_report)})
+    last_message = report.with_name(report.name + ".last-message")
+    check("a report Codex wrote at the -o path is kept, and its final message goes beside it",
+          completed.returncode == 0 and completed.stdout.strip() == f"report: {report}"
+          and report.read_text() == "the full report Codex wrote\n"
+          and last_message.exists()
+          and last_message.read_text() == "a short final message\n"
+          and str(last_message) in completed.stderr,
+          f"exit {completed.returncode}, report {report.read_text()!r}, stderr {completed.stderr!r}")
+
+    own_report_only = scratch / "report-report-file-only.md"
+    completed, report, _ = run("report-file-only",
+                               extra_environment={"FAKE_CODEX_REPORT_FILE": str(own_report_only)})
+    check("a report Codex wrote with no final message is kept, with no note of a final message",
+          completed.returncode == 0 and report.read_text() == "the full report Codex wrote\n"
+          and "is kept" not in completed.stderr,
+          f"exit {completed.returncode}, stderr {completed.stderr!r}")
 
     stale = scratch / "report-no-report.md"
     stale.write_text("left by an earlier run\n")

@@ -14,6 +14,9 @@ The program an agent uses to hand Codex a task. It always:
     prompt is an argument and, started from a script or a background shell,
     otherwise waits for input forever;
   - writes Codex's whole output to a run log, by default `<report>.run.log`;
+  - leaves at <report> Codex's final message, unless Codex itself wrote a
+    file there during the run, as a brief may tell it to: that file is kept,
+    and the final message goes to `<report>.last-message`;
   - stops Codex, and every process Codex started, when the deadline passes;
   - runs Codex under a permission profile that denies credential files,
     extending `:read-only`, or `:workspace` with `--sandbox workspace-write`,
@@ -123,7 +126,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--brief", required=True,
                         help="file holding the whole prompt")
     parser.add_argument("-o", dest="report", required=True,
-                        help="file Codex writes its final message to")
+                        help="file the report ends up in: Codex's final message, or a file Codex "
+                             "itself wrote at this path, which is then kept")
     parser.add_argument("--resume", metavar="SESSION_ID",
                         help="send the brief as a follow-up to this Codex session")
     parser.add_argument("--sandbox", choices=tuple(SANDBOX_TO_PROFILE_BASE),
@@ -246,7 +250,7 @@ def brief_with_prefetched_files(prompt: str, files) -> str:
             f"{listing}\n")
 
 
-def codex_command(checkout: pathlib.Path, report: pathlib.Path, sandbox: str,
+def codex_command(checkout: pathlib.Path, last_message: pathlib.Path, sandbox: str,
                   model, effort, prompt: str, network: bool = False,
                   writable_roots=(), outside_git_checkout: bool = False,
                   web_search: bool = False, resume=None) -> list:
@@ -258,7 +262,7 @@ def codex_command(checkout: pathlib.Path, report: pathlib.Path, sandbox: str,
         *common.codex_credential_denying_permission_profile_arguments(
             PERMISSION_PROFILE_NAME, SANDBOX_TO_PROFILE_BASE[sandbox], network=network),
         "--disable", "memories",
-        "-o", str(report),
+        "-o", str(last_message),
     ]
     for root in writable_roots:
         command += ["--add-dir", str(root)]
@@ -304,6 +308,16 @@ def stop_process_group(process: subprocess.Popen) -> None:
     # Codex exiting is not enough: a process it started may outlive SIGTERM in the same group.
     signal_process_group(process, signal.SIGKILL)
     process.wait()
+
+
+def place_final_message(report: pathlib.Path, last_message: pathlib.Path) -> None:
+    """Move Codex's final message to the report path, unless Codex wrote a file there itself.
+
+    `codex exec -o` writes the final message after the run, so giving it the report path
+    would overwrite a report a brief told Codex to write there.
+    """
+    if last_message.exists() and not report.exists():
+        last_message.replace(report)
 
 
 def fail(message: str) -> int:
@@ -354,6 +368,8 @@ def main(argv=None) -> int:
         return fail(f"the brief {brief} is empty.")
     # A report left by an earlier run must not pass for this run's.
     report.unlink(missing_ok=True)
+    last_message = report.with_name(report.name + ".last-message")
+    last_message.unlink(missing_ok=True)
     # The credential-file scan that builds Codex's command line counts against no deadline.
     seconds_left = args.deadline_minutes * 60
     if args.prefetch_github:
@@ -373,7 +389,7 @@ def main(argv=None) -> int:
                         f"together. If the run needs longer, run it again with a larger "
                         f"--deadline-minutes.")
     command = codex_command(
-        checkout, report, args.sandbox, args.model, args.effort, prompt,
+        checkout, last_message, args.sandbox, args.model, args.effort, prompt,
         network=args.network,
         writable_roots=[pathlib.Path(root).resolve() for root in args.writable_root],
         outside_git_checkout=args.outside_git_checkout, web_search=args.web_search,
@@ -391,6 +407,7 @@ def main(argv=None) -> int:
         exit_code = process.wait(timeout=seconds_left)
     except subprocess.TimeoutExpired:
         stop_process_group(process)
+        place_final_message(report, last_message)
         shared = ("The deadline covers every --prefetch-github command and Codex "
                   "together. " if args.prefetch_github else "")
         return fail(
@@ -398,11 +415,15 @@ def main(argv=None) -> int:
             f"deadline passed, and was stopped; its output so far is in {run_log}.\n"
             f"{shared}If the run needs longer, run it again with a larger "
             f"--deadline-minutes.")
+    place_final_message(report, last_message)
     if exit_code != 0:
         return fail(f"Codex exited {exit_code}; its output is in {run_log}.")
     if not report.is_file() or not report.read_text(encoding="utf-8").strip():
         return fail(f"Codex exited 0 but wrote no report at {report}; "
                     f"its output is in {run_log}.")
+    if last_message.exists():
+        print(f"{PROGRAM}: Codex wrote the report at {report} itself, so it is kept; "
+              f"Codex's final message is in {last_message}.", file=sys.stderr)
     print(f"report: {report}")
     return 0
 
