@@ -94,7 +94,7 @@ NOT_ALLOWED = (
     "drafts/plan-draft.md",
     "queue-draft.md",
     "docs/queue-notes/plan-draft.md",
-    "docs/issues/archived/seed-claude-md-draft.md",
+    "docs/issues/archived/notes-draft.md",
     "docs/issues/notes-report.md",
     "docs/issues/142-run-report.json",
     "scripts/docs/issues/142-run-report.md",
