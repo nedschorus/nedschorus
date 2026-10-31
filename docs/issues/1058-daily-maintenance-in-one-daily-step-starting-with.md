@@ -63,7 +63,7 @@ Each day a program lists the documents that are due. The documents it watches ar
 
 The old version to count words against cannot come from the cold-read-records. A cold-read-record keeps the text the reviewers read, before the rewrite their findings caused, and does not record the content that merged afterwards, as GHI [Monthly cold-read-full-run of every important markdown file that has changed since its last one or never had one](https://github.com/nedschorus/nedschorus/issues/1064) found. So the job keeps its own record: for each document, the commit on main whose content the job last read. A document with no entry is due once, and gets its entry when its fast read's changes have merged. That record is the one GHI 1064 calls for, holding one more kind of read, and the two cycles share it and the program that lists due documents.
 
-Open for this job: how many documents a day, given that one cold-read-fast-read takes about two minutes and a share of the day's model limit; what writes a document's entry when its pull request merges, and what happens to the entry when the pull request is closed instead; whether the first days, when most documents have no entry, are spread out; and whether this job and the wiki check of the second job read the same wiki page on the same day.
+The Pacing rule, in the section "How the maintenance jobs resume, pace their work and file their reports (decided)", sets its pace: no daily cap, at most three subagents at once. Open for this job: how its fast reads share the day's model limit with other agents; what writes a document's entry when its pull request merges, and what happens to the entry when the pull request is closed instead; whether the first days, when most documents have no entry, are spread out; and whether this job and the wiki check of the second job read the same wiki page on the same day.
 
 ## A sixth job: a missing library or tool that a ruled design requires
 
@@ -102,7 +102,7 @@ Each day:
 
 The smallest first version is the third pattern alone: the scan `^- [a-z]+( [a-z]+)?: ` over every agent-home's `docs/walk/*.md`. That scan would have flagged the lines `- account:`, `- network:`, `- access:` and `- permission:` of the walk-document `nedlern@ned-box:/home/nedlern/agents/cold-read-improvement/docs/walk/root-cause-kinds-problem-tree-2026-10-13.md` before its approval-walk. Over agent-seat cold-read-improvement's `docs/walk/` on 2026-10-15, the scan matched 43 lines in 5 of 57 files.
 
-Open for this job: where the job records its last run, perhaps in the record the fifth job keeps; and how many candidates a day the agent part judges, since each candidate takes a fresh subagent.
+The Pacing rule, in the section "How the maintenance jobs resume, pace their work and file their reports (decided)", sets its pace: no daily cap, at most three subagents at once. Open for this job: where the job records its last run, perhaps in the record the fifth job keeps.
 
 ### Found by the first survey (2026-10-15), and what the user ruled on 2026-10-18
 
