@@ -111,7 +111,12 @@ def session_with_interim_subagent(directory, own_records=None):
 
 
 def counted(session, now=NOW):
-    return hook.work_in_flight(str(session), WAIT_SECONDS, now=now).subagent_ids
+    """The subagent ids the hook counts, or, when the hook raises, the text "raised <exception>",
+    which equals no list: the check then prints a FAIL line naming the exception and the suite goes on."""
+    try:
+        return hook.work_in_flight(str(session), WAIT_SECONDS, now=now).subagent_ids
+    except Exception as problem:
+        return f"raised {type(problem).__name__}: {problem}"
 
 
 def raises_could_not_read(session):
