@@ -1752,6 +1752,8 @@ def not_asked_case_with_line(next_to_present, old_line, new_line, files=None):
 def test_a_name_holding_a_digit_or_of_one_word_is_found_in_any_case_and_inside_a_longer_name():
     for name, spelling in (("utf8_locale", "utf8_locale_name = 1"), ("utf8_locale", "UTF8_LOCALE = 1"),
                            ("sha256_of", "sha256_of_file_or_empty()"), ("cold-read-v2", "COLD_READ_V2 = 1"),
+                           ("utf8_locale", "UTF_8_LOCALE = 1"), ("utf8_locale", "see utf-8-locale"),
+                           ("sha256_of", "sha_256_of(x)"),
                            ("reader", "Reader()"), ("reader", "reader_path = 1")):
         case = not_asked_case_with_line("item 3 of 7", "#not_asked_unused old_reader", f"#not_asked_unused {name}",
                                         {"tools/other.py": f"{spelling}\n"})
@@ -1795,6 +1797,9 @@ def test_a_rename_to_a_name_with_spaces_or_to_a_glossary_term_with_an_alias_sett
           described(result))
     check("kind 4 is refused when the glossary's term only starts with the new name",
           *refused(not_asked_case("item 4 of 7", {"docs/poems-glossary.md": "- **poem-index-two** — another.\n"}), 4,
+                   "the new name `poem-index` is the term of no entry"))
+    check("kind 4 is refused when the glossary's term gives the new name with a parenthetical that is not an alias",
+          *refused(not_asked_case("item 4 of 7", {"docs/poems-glossary.md": "- **poem-index (v2)** — another.\n"}), 4,
                    "the new name `poem-index` is the term of no entry"))
 
 

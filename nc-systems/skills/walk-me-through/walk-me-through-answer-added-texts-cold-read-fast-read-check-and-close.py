@@ -57,7 +57,8 @@ and the old name in no file outside the touched ones and docs/walk/; kind 5,
 carrying out a ruling, needs a source; for kinds 1 to 4 every touched file but
 a kind 2 test must exist. An unused or old name is searched for as written and,
 when it has two or more words, with its words joined by hyphens, by underscores
-and by nothing, a run of digits staying with the letters before it; every
+and by nothing, a run of digits both kept with the letters before it and
+split off as a word of its own; every
 spelling ignores case and matches even inside a longer name, so `poem-list` is
 also found in `poem_list_path`, `POEM_LIST` and `PoemList`, `sha256_of` in
 `sha256_of_file`, and `reader` in `Reader` and `readers`. A
@@ -700,10 +701,14 @@ def files_matching(top, options, pattern, item, kind, pathspec=None):
 
 def spellings(name):
     """The name, lowercased, and, when it has two or more words, its words joined by hyphens, by underscores and
-    by nothing; a digit run stays with the letters before it, so `sha256_of` gives `sha256of`, not `sha_256_of`."""
-    parts = [part.lower() for part in re.findall(r"[A-Z]+[0-9]*(?![a-z])|[A-Z]?[a-z]+[0-9]*|[0-9]+", name)]
-    joined = {separator.join(parts) for separator in ("-", "_", "")} if len(parts) > 1 else set()
-    return sorted(joined | {name.lower()})
+    by nothing; a digit run is split both ways, kept with the letters before it and as a word of its own, so
+    `sha256_of` gives both `sha256-of` and `sha-256-of`."""
+    found = {name.lower()}
+    for pattern in (r"[A-Z]+[0-9]*(?![a-z])|[A-Z]?[a-z]+[0-9]*|[0-9]+", r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+"):
+        parts = [part.lower() for part in re.findall(pattern, name)]
+        if len(parts) > 1:
+            found |= {separator.join(parts) for separator in ("-", "_", "")}
+    return sorted(found)
 
 
 def files_naming(top, name, item, kind):
@@ -720,7 +725,7 @@ def glossary_entry_files(top, name, item, kind):
     `- **poem-index (aka PI)** — ...`; a name a glossary only mentions, such as an example of a bad name, is not one
     it lists."""
     escaped = re.sub(r"([.\[\]()*+?{}|^$\\])", r"\\\1", name)
-    return files_matching(top, ["-i", "-E"], rf"^- \*\*{escaped}( \([^)]*\))?\*\*", item, kind, GLOSSARY_FILES)
+    return files_matching(top, ["-i", "-E"], rf"^- \*\*{escaped}( \(aka [^)]*\))?\*\*", item, kind, GLOSSARY_FILES)
 
 
 def not_asked_problems(kind, rating, lines, top, item):
