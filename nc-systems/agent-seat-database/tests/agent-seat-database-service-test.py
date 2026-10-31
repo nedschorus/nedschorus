@@ -68,10 +68,10 @@ with tempfile.TemporaryDirectory() as scratch:
     db = sqlite3.connect(str(database), isolation_level=None)
     generation = db.execute("SELECT generation_id FROM database_generation").fetchone()[0]
 
-    def request(path, body=None, token=TOKEN, generation_id="current", raw=None):
+    def request(path, body=None, token=TOKEN, generation_id="current", raw=None, scheme="Bearer"):
         headers = {}
         if token is not None:
-            headers["Authorization"] = f"Bearer {token}"
+            headers["Authorization"] = f"{scheme} {token}"
         if generation_id is not None:
             headers[service.GENERATION_HEADER] = (
                 generation if generation_id == "current" else generation_id)
@@ -106,27 +106,14 @@ with tempfile.TemporaryDirectory() as scratch:
         status, answer = request("/agent-seats", token=token)
         check(f"401: {name} is refused", status == 401 and "accepted-tokens" in answer["error"],
               (status, answer))
-    call = urllib.request.Request(base + "/agent-seats",
-                                  headers={"Authorization": f"Basic {TOKEN}",
-                                           service.GENERATION_HEADER: generation})
-    try:
-        urllib.request.urlopen(call, timeout=10)
-        basic = None
-    except urllib.error.HTTPError as error:
-        basic = error.code
-    check("401: a token sent under another scheme than Bearer is refused", basic == 401, basic)
+    status, answer = request("/agent-seats", scheme="Basic")
+    check("401: a token sent under another scheme than Bearer is refused", status == 401,
+          (status, answer))
     status, _ = request("/agent-seats", token="ned-box-token")
     check("a token on a line with surrounding blanks is accepted", status == 200, status)
-    call = urllib.request.Request(base + "/agent-seats",
-                                  headers={"Authorization": f"Token {TOKEN}",
-                                           service.GENERATION_HEADER: generation})
-    try:
-        urllib.request.urlopen(call, timeout=10)
-        other_scheme = None
-    except urllib.error.HTTPError as error:
-        other_scheme = error.code
-    check("401: a token sent under the scheme Token is refused too", other_scheme == 401,
-          other_scheme)
+    status, answer = request("/agent-seats", scheme="Token")
+    check("401: a token sent under the scheme Token is refused too", status == 401,
+          (status, answer))
     tokens.rename(scratch / "moved")
     status, _ = request("/agent-seats")
     check("401: every request is refused while the accepted-tokens file cannot be read",
@@ -419,18 +406,30 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a request to a port no service listens on fails its own case, not the whole suite",
           status is None and "ConnectionRefusedError" in answer["error"], (status, answer))
 
-    def read_the_request_then_hang_up(listener):
+    def read_the_request_then_hang_up(listener, received):
         connection = listener.accept()[0]
-        connection.recv(65536)
+        received.append(connection.recv(65536))
         connection.close()
 
     hang_up = socket.create_server(("127.0.0.1", 0))
-    threading.Thread(target=read_the_request_then_hang_up, args=(hang_up,), daemon=True).start()
+    threading.Thread(target=read_the_request_then_hang_up, args=(hang_up, []), daemon=True).start()
     base = f"http://127.0.0.1:{hang_up.getsockname()[1]}"
     status, answer = request("/agent-seats")
     hang_up.close()
     check("a request the service hangs up on without an answer fails its own case too",
           status is None and "RemoteDisconnected" in answer["error"], (status, answer))
+    for scheme in ("Basic", "Token"):
+        received = []
+        hang_up = socket.create_server(("127.0.0.1", 0))
+        threading.Thread(target=read_the_request_then_hang_up, args=(hang_up, received),
+                         daemon=True).start()
+        base = f"http://127.0.0.1:{hang_up.getsockname()[1]}"
+        status, answer = request("/agent-seats", scheme=scheme)
+        hang_up.close()
+        check(f"a request under the scheme {scheme} that gets no answer fails its own case too",
+              status is None and "RemoteDisconnected" in answer["error"]
+              and f"Authorization: {scheme} {TOKEN}".encode() in b"".join(received),
+              (status, answer, received))
 
     try:
         service.main(["--port", "eighty"])
