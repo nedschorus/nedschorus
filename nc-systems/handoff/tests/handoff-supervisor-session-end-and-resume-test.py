@@ -1458,6 +1458,36 @@ def run_by_hand_resume_cases(workspace: Path):
           and launched[0][0] != "failed-successor",
           str(launched))
 
+    # 3a. A transcript folder that cannot be listed is not "nothing worth resuming": a fresh
+    # session's transcript would become the newest and bury the crashed one.
+    if os.geteuid() == 0:
+        print("SKIP  BY HAND: a transcript folder that cannot be listed stops startup: "
+              "root can list any folder")
+    else:
+        unreadable_projects = workspace / "by-hand-resume-projects-unreadable"
+        unreadable_projects.mkdir(parents=True, exist_ok=True)
+        (unreadable_projects / crashed.name).write_bytes(crashed.read_bytes())
+        settings = settings_for("transcript-folder-unreadable")
+        supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
+        launched, errors = [], io.StringIO()
+        unreadable_projects.chmod(0o000)
+        try:
+            with supervisor_names_replaced(
+                    launch_agent_session=launch_empty,
+                    project_directory_for_working_directory=lambda _: unreadable_projects,
+                    launch_time_git_sync=no_launch_time_git_sync), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+                exit_status = supervisor.supervise_sessions(settings)
+        finally:
+            unreadable_projects.chmod(0o755)
+        check("BY HAND: a transcript folder that cannot be listed stops startup with exit 5 "
+              "and launches nothing",
+              exit_status == 5 and not launched, (exit_status, launched))
+        check("BY HAND: and the stop is printed to stderr, naming the folder and the error",
+              "startup stopped" in errors.getvalue()
+              and str(unreadable_projects) in errors.getvalue()
+              and "Permission denied" in errors.getvalue(), errors.getvalue())
+
     # 4. An unconsumed handoff is the fresher truth and boot-ignition takes it,
     # exactly as before: the by-hand resume must not steal a waiting handoff.
     settings = settings_for("waiting-handoff")

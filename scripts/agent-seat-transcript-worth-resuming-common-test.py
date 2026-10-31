@@ -118,6 +118,28 @@ with tempfile.TemporaryDirectory() as scratch:
     result = resuming.newest_real_transcript(empty_directory)
     check("newest: a directory with no transcripts is reported",
           result[0] is None and "no transcripts under" in result[1], result)
+    not_a_directory = scratch / "a-file-where-the-project-should-be"
+    not_a_directory.write_text("", encoding="utf-8")
+    check("newest: a file where the project directory should be is reported as no directory",
+          "no harness project directory" in resuming.newest_real_transcript(not_a_directory)[1])
+    if os.geteuid() == 0:
+        print("SKIP  newest: an unreadable project directory raises: root can list any folder")
+    else:
+        unreadable = scratch / "unreadable-project"
+        unreadable.mkdir()
+        write_transcript(unreadable / "real.jsonl", [user("real work"), assistant("done")],
+                         modified_at=1_000)
+        unreadable.chmod(0o000)
+        try:
+            resuming.newest_real_transcript(unreadable)
+            raised = None
+        except PermissionError as error:
+            raised = error
+        finally:
+            unreadable.chmod(0o755)
+        check("newest: an unreadable project directory raises PermissionError naming it, "
+              "rather than reporting no transcripts",
+              raised is not None and raised.filename == str(unreadable), raised)
 
     project = scratch / "project"
     project.mkdir()

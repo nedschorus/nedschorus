@@ -25,8 +25,8 @@ letters of AO, O2 and O3 (`A-O`, `a - o`, `O-2`):
               then, also or plus (`a but ...`, `d and r`, `a, ...`); a word
               needs only a space (`repeat with context`). Text that opens with
               an item number, `item` before it or not, is never a rider.
-Every other prompt prints nothing and exits 0 without reading any file: Y, N
-and C are not answers.
+Every other prompt prints nothing and exits 0 without reading any file: Y and
+C are not answers, and N, like next, is a navigation word the agent reads.
 
 A, AO, Aa and D answer the item's recommendation: A, AO and Aa approve it,
 Aa only after an advisor check, which the agent makes as AA_SKILL_TEXT, the
@@ -154,7 +154,6 @@ WORD_RIDER = re.compile(rf"^(?P<answer>{WORD})\b[\s,;:.\-]+{NOT_AN_ITEM_NUMBER}(
 RECOMMENDATION = re.compile(r"Recommendation:(.*)$", re.I | re.M)
 PART_START = re.compile(r"^Part (\d+)\.(?=\s|$)")
 MOST_PARTS = 5
-ITEM_PAGE = re.compile(rf"^#item_page\s+item\s+({NUMBER})\s+of\s+\d+\s+(\S+)\s*$", re.I | re.M)
 HEADING_POINT = re.compile(r"^[#\s*]*items?\s[^:]*:\s*(.*?)[\s*]*$", re.I)
 # The walk-me-through skill's closing line after its link, word for word; the hook's test checks SKILL.md holds it.
 ANSWER_LETTERS_TEXT = ("A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · "
@@ -469,8 +468,7 @@ def read_walk(cwd):
     minutes, value, _ = walk
     name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
     # The newest line for an item wins, since a re-planned walk records its pages again.
-    pages = {number: link for number, link in ITEM_PAGE.findall(
-        "\n".join(walk_finder.prose_lines(minutes.read_text(encoding="utf-8"), parser)))}
+    pages = walk_finder.minutes_newest_item_page_link_by_item_number(minutes.read_text(encoding="utf-8"), parser)
     count = walk_finder.VALUE_COUNT.match(value)
     if not count:
         return WalkState(name, f"the item its minutes' `#next_to_present` line names, `{value}`,",

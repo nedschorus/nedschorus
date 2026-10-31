@@ -1074,6 +1074,11 @@ with tempfile.TemporaryDirectory() as workspace:
             subagent_spawn_record(INCIDENT_SUBAGENT_ID, "Fix-round for PR 2045"),
             *notification_records(INCIDENT_INTERIM_NOTIFICATION),
         ])
+        # An interim subagent holds the handoff only while its own transcript shows work.
+        interim_subagent_directory = Path(workspace) / "interim-below-ceiling" / "subagents"
+        interim_subagent_directory.mkdir(parents=True)
+        transcript_of(interim_subagent_directory, f"agent-{INCIDENT_SUBAGENT_ID}.jsonl", [
+            {"type": "assistant", "timestamp": utc_iso(datetime.now(timezone.utc))}])
         final_below_ceiling = transcript_of(workspace, "final-below-ceiling.jsonl", [
             usage_record(100_000, cache_read=450_000),  # 55%
             subagent_spawn_record(INCIDENT_SUBAGENT_ID, "Fix-round for PR 2045"),

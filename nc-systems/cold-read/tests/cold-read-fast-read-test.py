@@ -960,20 +960,25 @@ with tempfile.TemporaryDirectory() as scratch:
                  "COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS = 1\n"),
         encoding="utf-8")
     suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    deadline_read_started_at = time.monotonic()
     result = run_fast_read(
         repository, stubs, {"*": {"hang": True}},
         suggestions, walk_draft_relative, counter,
         claude_plan={"report": "STUB SONNET FAST READ: after Gemini timed out\n"},
     )
+    deadline_read_seconds = time.monotonic() - deadline_read_started_at
     backup_lines = (suggestions.read_text(encoding="utf-8").splitlines()
                     if suggestions.is_file() else [])
+    # The stub's hang ends by itself and then fails without a report, which also
+    # hands the read to the backup; only the time taken shows agy was killed.
     check("when the Gemini cell runs past its deadline twice, the Sonnet backup's "
-          "report is the read's",
-          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          "report is the read's, long before agy's hang would end by itself",
+          deadline_read_seconds < 120
+          and result.returncode == 0 and result.stdout.strip() == str(suggestions)
           and "STUB SONNET FAST READ: after Gemini timed out" in "\n".join(backup_lines)
           and launches_counted(counter) == 2
           and launches_counted(claude_counter_path(counter)) == 1,
-          f"exit {result.returncode}; stdout={result.stdout!r}; "
+          f"{deadline_read_seconds:.0f} s; exit {result.returncode}; stdout={result.stdout!r}; "
           f"launches={launches_counted(counter)}, "
           f"claude launches={launches_counted(claude_counter_path(counter))}; "
           f"stderr={result.stderr!r}")

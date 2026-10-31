@@ -21,8 +21,8 @@ The classification cases run against the machine's REAL lsof, and that is the
 one way this suite can fail for a reason that is not a defect. If lsof does not
 answer within clean-worktrees.py's VACANCY_CHECK_TIMEOUT_SECONDS, every done
 worktree is kept with "the vacancy check (lsof) could not be run" — the reaper
-failing safe, correctly — and the cases that expect "done-wt: done" fail with
-it. Seen once, 2026-09-17 ~00:44Z, in a 52-suite run concurrent with five
+failing safe, correctly — and the cases that expect "done-wt: done", or a
+topic-worktree such as seat-done to be done or removed, fail with it. Seen once, 2026-09-17 ~00:44Z, in a 52-suite run concurrent with five
 subagents and another suite set, against the 30 s timeout that has since become
 120. A run that fails with that phrase in its detail is a load symptom: re-run
 this suite alone before calling anything red. It is deliberately not skipped
@@ -46,6 +46,20 @@ sanity-check records, and keeps the worktree when a record fails to ship, is
 refused, or its shipper prints nothing. The shippers run for real, into a
 scratch store named by COLD_READ_RECORD_SHIP_DESTINATION; the failure to reach
 ned-box is a stub ssh and rsync that exit 255.
+
+A section stops a real rebase on a conflict in a worktree under
+.claude/worktrees/, with HEAD detached at origin/main, and --remove must keep
+it; so must a worktree whose git directory git cannot locate.
+
+A last section runs the reaper under a scratch HOME whose agents/ holds
+agent-homes and topic-worktrees: an agent-home, a worktree on a seat-branch,
+a worktree whose name begins with no agent-home's name or only with a
+detached directory's, a worktree one level deeper in agents/ and one outside
+it are kept; a landed,
+clean, quiet topic-worktree is removed with its branch; an uncommitted or
+untracked file, a detached HEAD, a recent write, unreadable file times and a
+failed git status each keep one; and a walk in its docs/walk/ is shipped first,
+its failure to ship or its refusal keeping the worktree.
 
 Run: python3 scripts/clean-worktrees-test.py
 """
@@ -481,7 +495,7 @@ with tempfile.TemporaryDirectory() as scratch:
         try:
             timed_out_reason = clean_module.worktree_vacancy_keep_reason(dirty_wt)
             timed_out_classification = clean_module.classify(
-                dirty_wt, "dirty-wt-branch", checkout)
+                dirty_wt, "dirty-wt-branch", checkout, False)
         finally:
             os.environ["PATH"] = saved_path
         check("an lsof that times out keeps the worktree",
@@ -1160,7 +1174,8 @@ with tempfile.TemporaryDirectory() as scratch:
           "refused-wt: for each record whose line starts REFUSED:, rename its directory as that "
           "line says; the next scripts/clean-worktrees.py --remove then ships it and removes "
           "the worktree" in refused.stdout
-          and "whose line does not start REFUSED:" not in refused.stdout,
+          and "whose line does not start REFUSED:" not in refused.stdout
+          and "for each walk whose line starts REFUSED:" not in refused.stdout,
           refused.stdout)
     remove_worktree_for_next_case(refused_wt)
 
@@ -1271,6 +1286,319 @@ with tempfile.TemporaryDirectory() as scratch:
           unreadable.stdout + unreadable.stderr)
     (unreadable_walk_wt / "docs" / "walk" / f"{walk_name}.md").chmod(0o644)
     remove_worktree_for_next_case(unreadable_walk_wt)
+
+# --- A worktree with a git operation stopped partway is kept ---
+# Mid-rebase, HEAD is detached at a commit already on origin/main, so the landed check passes, and a
+# subagent working there from its agent-home is invisible to the vacancy check.
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch).resolve()
+    checkout = scratch / "checkout"
+    origin = scratch / "origin.git"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
+    git(checkout, "remote", "add", "origin", str(origin))
+    git(checkout, "push", "-u", "origin", "main")
+    managed = checkout / ".claude" / "worktrees"
+    managed.mkdir(parents=True)
+
+    rebasing_wt = managed / "rebasing-wt"
+    git(checkout, "worktree", "add", "-b", "rebasing-wt-branch", str(rebasing_wt), "origin/main")
+    (rebasing_wt / "README.md").write_text("# the worktree's change\n", encoding="utf-8")
+    git(rebasing_wt, "commit", "-am", "the worktree's change")
+    (checkout / "README.md").write_text("# main's change\n", encoding="utf-8")
+    git(checkout, "commit", "-am", "main's change")
+    git(checkout, "push", "origin", "main")
+    stopped = subprocess.run(["git", "-C", str(rebasing_wt), "rebase", "origin/main"],
+                             capture_output=True, text=True, check=False)
+    (rebasing_wt / "work-in-progress.md").write_text("half done\n", encoding="utf-8")
+    check("the rebase stops on its conflict, with HEAD detached at origin/main",
+          stopped.returncode != 0
+          and git(rebasing_wt, "rev-parse", "HEAD") == git(checkout, "rev-parse", "origin/main"),
+          stopped.stdout + stopped.stderr)
+
+    unlocatable_wt = managed / "unlocatable-wt"
+    git(checkout, "worktree", "add", "-b", "unlocatable-wt-branch", str(unlocatable_wt),
+        "origin/main")
+    (unlocatable_wt / ".git").write_text(f"gitdir: {scratch / 'no-such-git-directory'}\n",
+                                         encoding="utf-8")
+
+    removal = run_clean(checkout, "--remove")
+    check("--remove keeps a worktree in which a rebase stopped partway, naming the rebase",
+          rebasing_wt.exists() and (rebasing_wt / "work-in-progress.md").is_file()
+          and "rebasing-wt: kept — a rebase is in progress in it (its git directory holds "
+              "rebase-merge)" in removal.stdout
+          and "rebasing-wt: removed" not in removal.stdout,
+          removal.stdout + removal.stderr)
+    check("--remove keeps a worktree whose git directory git cannot locate",
+          unlocatable_wt.exists()
+          and "unlocatable-wt: kept — git cannot locate the files that show a rebase or merge "
+              "in progress (" in removal.stdout,
+          removal.stdout + removal.stderr)
+
+# --- Topic-worktrees beside the agent-homes in ~/agents/ ---
+# HOME is a scratch directory, so ~/agents/ is the suite's own and never the machine's.
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch).resolve()
+    checkout = scratch / "checkout"
+    origin = scratch / "origin.git"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+    (checkout / ".gitignore").write_text("docs/walk/\nscratch-state/\nCLAUDE.local.md\n",
+                                         encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
+    git(checkout, "remote", "add", "origin", str(origin))
+    git(checkout, "push", "-u", "origin", "main")
+    home = scratch / "home"
+    agents = home / "agents"
+    agents.mkdir(parents=True)
+    walk_name = "some-walk-2026-10-30"
+    five_hours_ago = time.time() - 5 * 3600
+
+    def add_agents_worktree(name, branch=None):
+        path = agents / name
+        if branch is None:
+            git(checkout, "worktree", "add", "--detach", str(path), "origin/main")
+        else:
+            git(checkout, "worktree", "add", "-b", branch, str(path), "origin/main")
+        return path
+
+    def age_every_file_in(path):
+        for directory, subdirectories, files in os.walk(path, topdown=False):
+            for name in subdirectories + files:
+                os.utime(os.path.join(directory, name), (five_hours_ago, five_hours_ago),
+                         follow_symlinks=False)
+        os.utime(path, (five_hours_ago, five_hours_ago))
+
+    def add_walk(path):
+        walk_directory = path / "docs" / "walk"
+        walk_directory.mkdir(parents=True)
+        (walk_directory / f"{walk_name}.md").write_text("walk text\n", encoding="utf-8")
+        (walk_directory / f"{walk_name}-minutes.md").write_text("minutes\n", encoding="utf-8")
+
+    def run_clean_in_home(destination, path_prefix=None, *flags):
+        environment = dict(os.environ)
+        environment["HOME"] = str(home)
+        environment.pop("CLAUDE_CONFIG_DIR", None)
+        environment[SHIP_DESTINATION_VARIABLE] = destination
+        if path_prefix is not None:
+            environment["PATH"] = f"{path_prefix}{os.pathsep}{environment['PATH']}"
+        return subprocess.run(
+            [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), *flags],
+            capture_output=True, text=True, check=False, env=environment)
+
+    def line_for(output, name):
+        return next((line for line in output.splitlines() if line.startswith(f"{name}:")), "")
+
+    agent_home = add_agents_worktree("seat", "seat")
+    second_agent_home = add_agents_worktree("seat-two", "seat-two")
+    done_topic = add_agents_worktree("seat-done", "seat-done-topic-branch")
+    ignored_topic = add_agents_worktree("seat-ignored", "seat-ignored-topic-branch")
+    (ignored_topic / "scratch-state").mkdir()
+    (ignored_topic / "scratch-state" / "notes.md").write_text("n\n", encoding="utf-8")
+    untracked_topic = add_agents_worktree("seat-untracked", "seat-untracked-topic-branch")
+    (untracked_topic / "draft.md").write_text("work\n", encoding="utf-8")
+    modified_topic = add_agents_worktree("seat-modified", "seat-modified-topic-branch")
+    (modified_topic / "README.md").write_text("# changed\n", encoding="utf-8")
+    detached_topic = add_agents_worktree("seat-detached")
+    fresh_topic = add_agents_worktree("seat-fresh", "seat-fresh-topic-branch")
+    # Only an ignored file two directories down was written recently: the quiet check must look inside.
+    deep_write_topic = add_agents_worktree("seat-deep-write", "seat-deep-write-topic-branch")
+    (deep_write_topic / "scratch-state" / "deeper").mkdir(parents=True)
+    deep_file = deep_write_topic / "scratch-state" / "deeper" / "recent.md"
+    deep_file.write_text("recent\n", encoding="utf-8")
+    unreadable_topic = add_agents_worktree("seat-unreadable", "seat-unreadable-topic-branch")
+    (unreadable_topic / "locked-directory").mkdir()
+    status_failing_topic = add_agents_worktree("seat-status-failing",
+                                               "seat-status-failing-topic-branch")
+    Path(git(status_failing_topic, "rev-parse", "--path-format=absolute", "--git-path",
+             "index").strip()).write_bytes(b"not an index")
+    unprefixed_topic = add_agents_worktree("loose-topic", "loose-topic-topic-branch")
+    # A directory in ~/agents/ on a detached HEAD is no agent-home, so its name prefixes nothing.
+    detached_directory = add_agents_worktree("lab")
+    beside_detached_topic = add_agents_worktree("lab-topic", "lab-topic-topic-branch")
+    # Outside ~/agents/ altogether, under a name that begins with an agent-home's.
+    (scratch / "elsewhere").mkdir()
+    git(checkout, "worktree", "add", "-b", "seat-elsewhere-topic-branch",
+        str(scratch / "elsewhere" / "seat-elsewhere"), "origin/main")
+    elsewhere_topic = scratch / "elsewhere" / "seat-elsewhere"
+    # One level deeper in ~/agents/, as agent-instructions-editor keeps its topic-worktrees.
+    (agents / "seat-worktrees").mkdir()
+    nested_topic = add_agents_worktree("seat-worktrees/seat-nested", "seat-nested-topic-branch")
+    walk_topic = add_agents_worktree("seat-walk", "seat-walk-topic-branch")
+    add_walk(walk_topic)
+    # An agent-home checked out on a landed branch named unlike the directory, as ned-box-helper is.
+    briefed_agent_home = add_agents_worktree("seat-briefed", "some-landed-topic-branch")
+    (briefed_agent_home / "CLAUDE.local.md").write_text("seat-brief\n", encoding="utf-8")
+    for path in (agent_home, second_agent_home, briefed_agent_home, done_topic, ignored_topic, untracked_topic,
+                 modified_topic, detached_topic, unreadable_topic, status_failing_topic,
+                 unprefixed_topic, walk_topic, deep_write_topic, nested_topic,
+                 detached_directory, beside_detached_topic, elsewhere_topic):
+        age_every_file_in(path)
+    ninety_minutes_ago = time.time() - 90 * 60
+    os.utime(deep_file, (ninety_minutes_ago, ninety_minutes_ago))
+    (unreadable_topic / "locked-directory").chmod(0)
+    store = scratch / "store"
+    try:
+        report = run_clean_in_home(str(store / "cold-read-records"))
+        output = report.stdout
+        check("an agent-home in ~/agents/ is kept",
+              "outside the managed area" in line_for(output, "seat"), output)
+        check("a worktree in ~/agents/ on a seat-branch is kept, even when its name extends "
+              "another agent-home's",
+              "outside the managed area" in line_for(output, "seat-two"), output)
+        check("an agent-home holding a seat-brief is kept on any branch, even when its name "
+              "extends another agent-home's",
+              "outside the managed area" in line_for(output, "seat-briefed"), output)
+        check("a worktree in ~/agents/ whose name begins with no agent-home's name is kept",
+              "outside the managed area" in line_for(output, "loose-topic"), output)
+        check("a worktree in ~/agents/ whose name begins with a detached directory's name is kept",
+              "outside the managed area" in line_for(output, "lab-topic"), output)
+        check("a worktree outside ~/agents/ whose name begins with an agent-home's name is kept",
+              "outside the managed area" in line_for(output, "seat-elsewhere"), output)
+        check("a worktree deeper in ~/agents/ than its top level is kept",
+              "outside the managed area" in line_for(output, "seat-nested"), output)
+        check("the reference-checkout is not judged",
+              not line_for(output, "checkout") and report.returncode == 0,
+              output + report.stderr)
+        check("a landed, clean, quiet topic-worktree beside an agent-home is done",
+              line_for(output, "seat-done") == "seat-done: done — landed and vacant", output)
+        check("a topic-worktree holding only ignored files is done, and the report names them",
+              line_for(output, "seat-ignored").startswith("seat-ignored: done")
+              and "scratch-state/notes.md" in line_for(output, "seat-ignored"), output)
+        check("a topic-worktree with an untracked file is kept, naming the file",
+              "seat-untracked: kept — 1 uncommitted or untracked file(s), which only its owner "
+              "may discard: draft.md" == line_for(output, "seat-untracked"), output)
+        check("a topic-worktree with a modified file is kept, naming the file",
+              "seat-modified: kept — 1 uncommitted or untracked file(s), which only its owner "
+              "may discard: README.md" == line_for(output, "seat-modified"), output)
+        check("a topic-worktree whose HEAD is detached is kept",
+              "seat-detached: kept — its HEAD is detached" in output, output)
+        check("a topic-worktree written within the quiet period is kept",
+              line_for(output, "seat-fresh").startswith("seat-fresh: kept — a file in it was "
+                                                        "written 0 min ago")
+              and "(quiet for 4 h before removal)" in line_for(output, "seat-fresh"), output)
+        check("a topic-worktree with one file deep inside written within the quiet period is kept, "
+              "naming how long ago",
+              line_for(output, "seat-deep-write").startswith(
+                  "seat-deep-write: kept — a file in it was written 90 min ago"), output)
+        check("a topic-worktree whose file times cannot be read is kept",
+              "seat-unreadable: kept — when its files were last written could not be read "
+              "(Permission denied)" == line_for(output, "seat-unreadable")
+              or os.geteuid() == 0, output)
+        check("a topic-worktree whose changes git cannot list is kept",
+              line_for(output, "seat-status-failing").startswith(
+                  "seat-status-failing: kept — git cannot list its uncommitted changes ("), output)
+        check("the report names a topic-worktree's walk and says --remove ships it first",
+              line_for(output, "seat-walk").startswith("seat-walk: done")
+              and f"--remove first ships its 1 record(s)" in line_for(output, "seat-walk")
+              and f"docs/walk/{walk_name}-minutes.md" in line_for(output, "seat-walk"), output)
+        check("no keep reason of a topic-worktree reads as a failed vacancy check to the "
+              "handoff-supervisor",
+              "(lsof)" not in output and "lsof is not installed" not in output
+              and "FAILED" not in output, output)
+        check("the report ships no walk", not store.exists(), str(list(store.rglob("*"))))
+
+        # ned-box cannot be reached: the walk does not ship, so the worktree stays.
+        unreachable_stubs = scratch / "unreachable-stubs"
+        unreachable_stubs.mkdir()
+        for tool in ("ssh", "rsync"):
+            (unreachable_stubs / tool).write_text("#!/bin/sh\nexit 255\n", encoding="utf-8")
+            (unreachable_stubs / tool).chmod(0o755)
+        unreachable = run_clean_in_home(
+            "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records",
+            unreachable_stubs, "--remove")
+        walk_kept_line = line_for(unreachable.stdout, "seat-walk")
+        check("--remove keeps a topic-worktree whose walk fails to ship, as a record that did "
+              "not reach the log-store, and exits 1",
+              walk_topic.exists()
+              and walk_kept_line.startswith(
+                  "seat-walk: record shipment FAILED, worktree kept — removing it would delete "
+                  f"a record the log-store does not hold: docs/walk/{walk_name}-minutes.md (FAILED:")
+              and unreachable.returncode == 1
+              and "seat-walk: removed" not in unreachable.stdout,
+              unreachable.stdout + unreachable.stderr)
+        check("--remove tells a topic-worktree whose walk failed to ship that the next --remove "
+              "retries",
+              "seat-walk: for each record whose line does not start REFUSED:, do nothing now"
+              in unreachable.stdout and "whose line starts REFUSED:" not in unreachable.stdout,
+              unreachable.stdout)
+        check("--remove removes a done topic-worktree and deletes its branch",
+              not done_topic.exists()
+              and "seat-done: removed, branch seat-done-topic-branch deleted" in unreachable.stdout,
+              unreachable.stdout + unreachable.stderr)
+        check("--remove removes a topic-worktree holding only ignored files",
+              not ignored_topic.exists(), unreachable.stdout + unreachable.stderr)
+        check("--remove keeps every topic-worktree that a check keeps, and every agent-home",
+              all(path.exists() for path in (agent_home, second_agent_home, briefed_agent_home,
+                                             untracked_topic,
+                                             modified_topic, detached_topic, fresh_topic,
+                                             unreadable_topic, status_failing_topic,
+                                             unprefixed_topic, nested_topic,
+                                             beside_detached_topic, elsewhere_topic))
+              and (untracked_topic / "draft.md").is_file()
+              and (briefed_agent_home / "CLAUDE.local.md").is_file(),
+              unreachable.stdout + unreachable.stderr)
+
+        # The store holds the walk text with other bytes: an add-only file, so refused.
+        (store / "walk").mkdir(parents=True)
+        (store / "walk" / f"{walk_name}.md").write_text("another walk text\n", encoding="utf-8")
+        refused = run_clean_in_home(str(store / "cold-read-records"), None, "--remove")
+        check("--remove keeps a topic-worktree whose walk the log-store refuses, and exits 1",
+              walk_topic.exists()
+              and "seat-walk: record shipment FAILED, worktree kept — " in refused.stdout
+              and "(REFUSED:" in refused.stdout and refused.returncode == 1,
+              refused.stdout + refused.stderr)
+        check("--remove tells the owner of a refused walk to settle which copy is right, and "
+              "gives no rename step",
+              "seat-walk: for each walk whose line starts REFUSED:, the log-store holds another "
+              "copy of each file that line names" in refused.stdout
+              and "rename its directory" not in refused.stdout
+              and "whose line does not start REFUSED:" not in refused.stdout,
+              refused.stdout)
+
+        (store / "walk" / f"{walk_name}.md").unlink()
+        shipped = run_clean_in_home(str(store / "cold-read-records"), None, "--remove")
+        check("--remove ships a topic-worktree's walk to the log-store, then removes the worktree",
+              (store / "walk" / f"{walk_name}-minutes.md").read_text(encoding="utf-8")
+              == "minutes\n"
+              and (store / "walk" / f"{walk_name}.md").is_file()
+              and not walk_topic.exists()
+              and f"seat-walk: shipped: {walk_name}" in shipped.stdout,
+              shipped.stdout + shipped.stderr)
+
+        # An agent writes into a clean topic-worktree while the vacancy check, the slowest, runs.
+        dirtied_topic = add_agents_worktree("seat-dirtied", "seat-dirtied-topic-branch")
+        age_every_file_in(dirtied_topic)
+        writing_stubs = scratch / "lsof-writes-into-worktree-stubs"
+        writing_stubs.mkdir()
+        (writing_stubs / "lsof").write_text(
+            "#!/bin/sh\n"
+            f"echo work > {shlex.quote(str(dirtied_topic / 'late-draft.md'))}\n"
+            f'exec {shutil.which("lsof")} "$@"\n', encoding="utf-8")
+        (writing_stubs / "lsof").chmod(0o755)
+        dirtied = run_clean_in_home(str(store / "cold-read-records"), writing_stubs, "--remove")
+        check("--remove keeps a topic-worktree written into while its checks ran, naming the file, "
+              "and counts it no failure",
+              (dirtied_topic / "late-draft.md").is_file()
+              and line_for(dirtied.stdout, "seat-dirtied")
+              == "seat-dirtied: kept — 1 uncommitted or untracked file(s), which only its owner "
+                 "may discard: late-draft.md"
+              and dirtied.returncode == 0,
+              dirtied.stdout + dirtied.stderr)
+    finally:
+        if (unreadable_topic / "locked-directory").exists():
+            (unreadable_topic / "locked-directory").chmod(0o755)
 
 check("no run of the suite shipped into the store every run defaults to",
       not any(Path(_ship_store_for_every_run).iterdir()),
