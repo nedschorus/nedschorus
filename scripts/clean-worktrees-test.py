@@ -1286,14 +1286,14 @@ with tempfile.TemporaryDirectory() as scratch:
         "# walk\n\n## Item 1 of 1, before its revision\n", encoding="utf-8")
     revised_walk_wt = worktree_holding_a_walk("revised-walk-wt")
     revised = run_clean_shipping_to(str(revised_walk_store / "cold-read-records"), None, "--remove")
-    check("--remove keeps a .claude/worktrees/ worktree whose revised walk text the log-store "
-          "refuses, so the revised text is not deleted, and exits 1",
-          revised_walk_wt.exists()
-          and (revised_walk_wt / "docs" / "walk" / f"{walk_name}.md").read_text(encoding="utf-8")
+    check("--remove ships a .claude/worktrees/ worktree's revised walk text as <name>-revised-1.md, "
+          "keeping the store's first copy, before it removes the worktree",
+          (revised_walk_store / "walk" / f"{walk_name}-revised-1.md").read_text(encoding="utf-8")
           == "# walk\n\n## Item 1 of 1\n"
-          and "revised-walk-wt: record shipment FAILED, worktree kept — " in revised.stdout
-          and f"(REFUSED: {walk_name}" in revised.stdout
-          and "revised-walk-wt: removed" not in revised.stdout and revised.returncode == 1,
+          and (revised_walk_store / "walk" / f"{walk_name}.md").read_text(encoding="utf-8")
+          == "# walk\n\n## Item 1 of 1, before its revision\n"
+          and not revised_walk_wt.exists()
+          and "REFUSED" not in revised.stdout,
           revised.stdout + revised.stderr)
     remove_worktree_for_next_case(revised_walk_wt)
 
@@ -1573,9 +1573,11 @@ with tempfile.TemporaryDirectory() as scratch:
               and (briefed_agent_home / "CLAUDE.local.md").is_file(),
               unreachable.stdout + unreachable.stderr)
 
-        # The store holds the walk text with other bytes: an add-only file, so refused.
+        # The store holds the walk's draft with other bytes: an add-only file, so refused.
+        (walk_topic / "docs" / "walk" / f"{walk_name}-draft.md").write_text("draft\n", encoding="utf-8")
+        age_every_file_in(walk_topic)
         (store / "walk").mkdir(parents=True)
-        (store / "walk" / f"{walk_name}.md").write_text("another walk text\n", encoding="utf-8")
+        (store / "walk" / f"{walk_name}-draft.md").write_text("another draft\n", encoding="utf-8")
         refused = run_clean_in_home(str(store / "cold-read-records"), None, "--remove")
         check("--remove keeps a topic-worktree whose walk the log-store refuses, and exits 1",
               walk_topic.exists()
@@ -1590,7 +1592,7 @@ with tempfile.TemporaryDirectory() as scratch:
               and "whose line does not start REFUSED:" not in refused.stdout,
               refused.stdout)
 
-        (store / "walk" / f"{walk_name}.md").unlink()
+        (store / "walk" / f"{walk_name}-draft.md").unlink()
         shipped = run_clean_in_home(str(store / "cold-read-records"), None, "--remove")
         check("--remove ships a topic-worktree's walk to the log-store, then removes the worktree",
               (store / "walk" / f"{walk_name}-minutes.md").read_text(encoding="utf-8")
