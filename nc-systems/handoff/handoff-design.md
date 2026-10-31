@@ -1,6 +1,6 @@
 ---
 status: built
-rulings-as-of: 2026-10-28
+rulings-as-of: 2026-10-30
 ---
 
 # Agent-session reincarnation — the handoff-system
