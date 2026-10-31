@@ -150,7 +150,11 @@ every line close writes for an answer does: that answer was closed already, and
 no check has run since. When the `#next_to_present` line names other items than
 the answer line, a new item a finding raised is waiting: the answer is recorded
 as held until the user answers the new item, and the `#next_to_present` line is
-written again, unchanged, as the minutes' last line.
+written again, unchanged, as the minutes' last line. When CLOSE later records
+the new item approved, disapproved or already decided, it also writes the
+already-decided line, with the same outcome, for each item a held-answer line
+holds for it that no close line decides yet; after a deferral, a move on or
+answers to parts, the held item stays waiting, so the walk comes back to it.
 Either way it prints the lines the agent's next message must include, the
 status lines among them.
 
@@ -291,6 +295,7 @@ CLOSE_ALREADY_RECORDED = (
     "Run `python3 {program} check` first, with the flag for the user's answer as `--help` lists it, then close.\n"
     "If check failed, fix what it printed before running close.")
 CLOSE_HELD_MINUTES = "{item}: answer held: {new_item}, raised by a fast-read finding, waits for the user's answer. <open>"
+HELD_ANSWER_LINE = re.compile(r"^(items?\s[^:]*): answer held: (items?\s.+?), raised by a fast-read finding", re.I)
 CLOSE_TOOK_EFFECT_LINES = (
     "{item}'s answer is recorded in the minutes, and its change may now be made.",
     "Your next message must include these lines, as they are:",
@@ -334,10 +339,11 @@ DECIDING_LINES = tuple(after_the_items_pattern(template) for template in (
 DEFERRING_LINES = tuple(after_the_items_pattern(template)
                         for template in (CLOSE_DEFERRED_MINUTES, CLOSE_DEFERRED_AGAIN_MINUTES))
 SUMMARY_HEADING = re.compile(r"\bof\s+\d+\b[*_\s:.\-\u2013\u2014]*summary\b", re.I)
-CLOSE_HELD_NEXT = ("Then present {new_item}. Once its answer is closed, record that answer as {item}'s too, "
-                   "since a line you write records no answer: add the line `#next_to_present {item}` as the "
-                   "minutes' last line, run `python3 {program} check` with the flag for the user's answer to "
-                   "{new_item}, as `--help` lists it, then run close.")
+CLOSE_HELD_NEXT = ("Then present {new_item}. When the close step records the user's approval or disapproval of "
+                   "{new_item}, it records the same outcome for {item}; after a deferral, a move on or answers to "
+                   "parts, {item} stays waiting and the walk comes back to it.")
+CLOSE_HELD_DECIDED = "{held}, whose answer was held for {item}, is recorded with {item}'s outcome."
+HELD_RULING = "the user's answer to {new_item}, for which its answer was held"
 CASE_AGAINST_MISSING = (
     "nothing written: {item} in {document} has no `#case_against` line, and every answer records the item's "
     "case-against rating beside it in the minutes, so the ratings can later be compared with the user's answers.\n"
@@ -988,6 +994,28 @@ def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferr
     return [item for item in walk[start:] + walk[:start] if item not in recorded][:1]
 
 
+def held_items_decided_with(walk_finder, minutes, parser, answered_numbers, item, outcome):
+    """Return the close lines that give outcome to each item whose answer the minutes hold for the answered
+    items and that no close line decides yet."""
+    text = minutes.read_text(encoding="utf-8")
+    decided, _ = minutes_record(walk_finder, text, parser)
+    lines = []
+    for line in walk_finder.prose_lines(text, parser):
+        match = HELD_ANSWER_LINE.match(line)
+        if not match:
+            continue
+        try:
+            held_numbers, _ = walk_finder.parse_items(match[1])
+            new_numbers, _ = walk_finder.parse_items(match[2])
+        except walk_finder.UnusableRange:
+            continue
+        if set(new_numbers) <= set(answered_numbers) and not set(held_numbers) <= decided:
+            decided.update(held_numbers)
+            lines.append(CLOSE_ALREADY_DECIDED_MINUTES.format(
+                item=match[1], ruling=HELD_RULING.format(new_item=item), outcome=outcome))
+    return lines
+
+
 def close(arguments):
     walk_finder = load_walk_finder()
     _, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
@@ -1001,10 +1029,13 @@ def close(arguments):
         append_to_minutes(minutes, [CLOSE_HELD_MINUTES.format(item=item, new_item=waiting),
                                     NEXT_MARKER_LINE.format(value=value)])
         output = ([line.format(item=item, new_item=waiting) for line in CLOSE_HELD_LINES] + statuses
-                  + [CLOSE_HELD_NEXT.format(item=item, new_item=waiting, program=Path(__file__).resolve())])
+                  + [CLOSE_HELD_NEXT.format(item=item, new_item=waiting)])
         print("\n".join(output))
         return 0
     total, order, summary = walk_document_items(walk_finder, minutes, value, waiting_numbers, total, parser)
+    # Only a plain decision passes to the items held for this one; after a deferral, a move on or answers to parts
+    # they stay waiting, so the walk shows them to the user.
+    held_outcome = None
     if answered == DEFERRED:
         _, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
         again = any(deferrals[number] for number in answered_numbers)
@@ -1015,8 +1046,9 @@ def close(arguments):
         recorded = CLOSE_MOVED_ON_MINUTES.format(item=item, reason=answered[len(MOVED_ON_PREFIX):])
         output = [line.format(item=item) for line in CLOSE_NOT_SHOWN_LINES]
     elif answered.startswith(ALREADY_DECIDED_PREFIX):
+        held_outcome = OUTCOMES[APPROVED]
         recorded = CLOSE_ALREADY_DECIDED_MINUTES.format(item=item, ruling=answered[len(ALREADY_DECIDED_PREFIX):],
-                                                      outcome=OUTCOMES[APPROVED])
+                                                      outcome=held_outcome)
         output = ([line.format(item=item) for line in CLOSE_NOT_SHOWN_LINES] + [CLOSE_ALREADY_DECIDED_CHANGE]
                   + statuses + list(CLOSE_TOOK_EFFECT_NEXT))
     else:
@@ -1025,11 +1057,16 @@ def close(arguments):
             recorded = CLOSE_PARTS_TOOK_EFFECT_MINUTES.format(item=item, parts=", ".join(
                 f"part {number} {word} {OUTCOMES[word]}" for number, word in parts))
         else:
-            outcome = OUTCOMES[DISAPPROVED if answered == DISAPPROVED else APPROVED]
-            recorded = CLOSE_TOOK_EFFECT_MINUTES.format(item=item, answered=answered, outcome=outcome)
+            held_outcome = OUTCOMES[DISAPPROVED if answered == DISAPPROVED else APPROVED]
+            recorded = CLOSE_TOOK_EFFECT_MINUTES.format(item=item, answered=answered, outcome=held_outcome)
         output = ([line.format(item=item) for line in CLOSE_TOOK_EFFECT_LINES] + statuses
                   + list(CLOSE_TOOK_EFFECT_NEXT))
     append_to_minutes(minutes, [recorded])
+    if held_outcome:
+        held = held_items_decided_with(walk_finder, minutes, parser, answered_numbers, item, held_outcome)
+        if held:
+            append_to_minutes(minutes, held)
+        output += [CLOSE_HELD_DECIDED.format(item=item, held=line.split(": ")[0]) for line in held]
     decided, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
     numbers = next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals)
     named = f"item{'s' if numbers[1:] else ''} {' and '.join(numbers)} of {total}"

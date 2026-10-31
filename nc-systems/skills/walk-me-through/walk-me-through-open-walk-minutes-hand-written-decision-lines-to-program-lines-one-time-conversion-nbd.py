@@ -93,9 +93,6 @@ MOVED_ON_TAG = "moved on, no decision"
 # Appended after the converted lines: the appended deferral lines carry no citation, so without it a second run
 # would read each hand-written deferral as unconverted and defer its item again.
 CONVERTED_MARKER = "#walk_minutes_hand_written_lines_converted"
-# The close step's held-answer line: the old close told the agent to record the new item's answer as the held
-# item's by hand, in a form neither reading reads.
-HELD_ANSWER = re.compile(r"^(items?\s[^:]*): answer held: (items?\s.+?), raised by a fast-read finding", re.I)
 
 
 def load_walk_me_through_check_program_module():
@@ -245,7 +242,7 @@ def proposals(program, walk_finder, parser, text, skipped_lines, moved_on_lines=
             found.append((index, line, item, template.format(item=item_text(item))))
     proposed_items = {item for _, _, item, _ in found}
     for index, line in enumerate(walk_finder.prose_lines(text, parser)):
-        held = HELD_ANSWER.match(line)
+        held = program.HELD_ANSWER_LINE.match(line)
         if not held or index + 1 in skipped_lines:
             continue
         try:

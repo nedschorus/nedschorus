@@ -937,10 +937,9 @@ def test_close_holds_the_answer_for_a_waiting_new_item():
                            "raised, waits for the user's answer, and the minutes record item 3 of 9's answer as held "
                            "until he answers item 5 of 9.")
           and sum("fast read had to be run" in line for line in lines) == 2
-          and lines[-1] == ("Then present item 5 of 9. Once its answer is closed, record that answer as item 3 of 9's "
-                            "too, since a line you write records no answer: add the line `#next_to_present item 3 of "
-                            f"9` as the minutes' last line, run `python3 {PROGRAM} check` with the flag for the user's "
-                            "answer to item 5 of 9, as `--help` lists it, then run close.")
+          and lines[-1] == ("Then present item 5 of 9. When the close step records the user's approval or disapproval "
+                            "of item 5 of 9, it records the same outcome for item 3 of 9; after a deferral, a move on "
+                            "or answers to parts, item 3 of 9 stays waiting and the walk comes back to it.")
           and case.minutes.read_text().rstrip().endswith(
               "item 3 of 9: answer held: item 5 of 9, raised by a fast-read finding, waits for the user's answer. <open>\n"
               "#next_to_present item 5 of 9"),
@@ -1957,26 +1956,34 @@ def test_an_item_not_shown_needs_no_case_against_line():
               and "#case_against_" not in case.minutes.read_text(), described(checked))
 
 
-def test_a_held_answer_is_recorded_as_the_held_close_says():
-    case = Case()
-    case.run("check")
-    with open(case.minutes, "a") as minutes:
-        minutes.write("#next_to_present item 5 of 9\n")
-    held = case.run("close")
-    case.run("check")
-    case.run("close")
-    instruction = held.stdout.rstrip("\n").split("\n")[-1].split("`")
-    with open(case.minutes, "a") as minutes:
-        minutes.write(instruction[1] + "\n")
-    command = shlex.split(instruction[3])
-    checked = subprocess.run([*command, *case_paths(case)], capture_output=True, text=True)
-    closed = case.run("close")
-    check("the check and close a held answer's close prints record the new item's answer as the held item's, "
-          "so the walk goes on past it",
-          checked.returncode == 0 and closed.returncode == 0
-          and "item 3 of 9: approved; every text the change adds has had a fast read. <accepted>"
-              in case.minutes.read_text()
-          and marker(case) == "#next_to_present item 4 of 9", described(closed) + case.minutes.read_text())
+def test_closing_the_new_item_records_its_outcome_for_the_held_item():
+    for flags, outcome, expected_next in (((), "<accepted>", "item 4 of 9"), (("--disapproved",), "<rejected>",
+                                                                              "item 4 of 9"),
+                                          (("--deferred",), None, "item 3 of 9")):
+        case = Case()
+        with open(case.minutes, "a") as minutes:
+            minutes.write("item 4 of 9: answer held: item 7 of 9, raised by a fast-read finding, waits for the user's "
+                          "answer. <open>\n#next_to_present item 3 of 9\n")
+        case.run("check")
+        with open(case.minutes, "a") as minutes:
+            minutes.write("#next_to_present item 5 of 9\n")
+        case.run("close")
+        case.run("check", *flags)
+        closed = case.run("close")
+        held_line = ("item 3 of 9: already decided by the user's answer to item 5 of 9, for which its answer was "
+                     f"held; the walk does not come back to it. {outcome}")
+        if outcome:
+            check(f"closing the new item {outcome} records that outcome for the item held for it, not for one held for "
+                  "another item, says so, and the walk goes on past both",
+                  closed.returncode == 0 and held_line in case.minutes.read_text()
+                  and "item 4 of 9: already decided" not in case.minutes.read_text()
+                  and "item 3 of 9, whose answer was held for item 5 of 9, is recorded with item 5 of 9's outcome."
+                  in closed.stdout and marker(case) == f"#next_to_present {expected_next}",
+                  described(closed) + case.minutes.read_text())
+        else:
+            check("deferring the new item leaves the held item waiting, so the walk names it next",
+                  closed.returncode == 0 and "already decided by the user's answer" not in case.minutes.read_text()
+                  and marker(case) == f"#next_to_present {expected_next}", described(closed) + case.minutes.read_text())
 
 
 def test_the_check_rerun_a_failed_fast_read_names_repeats_the_already_decided_citation():
