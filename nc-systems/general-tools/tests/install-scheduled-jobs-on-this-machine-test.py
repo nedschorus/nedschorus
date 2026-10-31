@@ -134,6 +134,12 @@ NED_BOX_TEMP_FOLDERS_DELETE_LINE = (
     "30 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
     "claude-code-temp-folders-of-exited-agent-sessions-delete.py >> "
     "/home/nedlern/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log 2>&1")
+# The scheduled full mutation pass of merged pull requests, on ned-box alone.
+NED_BOX_SCHEDULED_FULL_MUTATION_PASS_LINE = (
+    "30 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py >> "
+    "/home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-"
+    "tasks-open.log 2>&1")
 MAC_GUARDED_FILE_PRUNE_PLIST = {
     "Label": "com.nedschorus.guarded-file-versions-and-approvals-store-removed-checkout-"
              "copies-prune",
@@ -259,8 +265,8 @@ check("the Mac's worktree cleanup is a launchd job at 06:30, so a run missed whi
 check("the table's jobs are the two typed by hand before this program, the worktree "
       "cleanup, ned-box's crash restart watcher, ned-box's Remote Control reconnect watcher, the "
       "weekly owner check of the work-snapshot hook, the session dialogs refresh and the "
-      "guarded-file store's prune, the deletion of exited agent-sessions' temp folders, and "
-      "no other",
+      "guarded-file store's prune, the deletion of exited agent-sessions' temp folders, the "
+      "scheduled full mutation pass, and no other",
       sorted(real_jobs) == ["claude-code-temp-folders-of-exited-agent-sessions-delete",
                             "clean-worktrees", "daily-full-test-run-of-main",
                             "guarded-file-versions-and-approvals-store-removed-checkout-"
@@ -268,7 +274,10 @@ check("the table's jobs are the two typed by hand before this program, the workt
                             "handoff-agent-seat-died-without-session-handoff-restart-watcher",
                             "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-"
                             "tmux-typing-watcher",
-                            "log-store-session-dialogs-refresh", "transcript-mirror-to-log-store",
+                            "log-store-session-dialogs-refresh",
+                            "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-"
+                            "tasks-open",
+                            "transcript-mirror-to-log-store",
                             "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"],
       sorted(real_jobs))
 watcher = real_jobs["handoff-agent-seat-died-without-session-handoff-restart-watcher"]
@@ -306,6 +315,16 @@ check("the temp-folder deletion runs on ned-box alone, at 07:30, and its program
       and f"    {NED_BOX_TEMP_FOLDERS_DELETE_LINE}\n"
       in (REPOSITORY_ROOT / temp_folders_delete["program"]).read_text(encoding="utf-8"),
       installer.cron_line(ned_box, temp_folders_delete, temp_folders_delete["on"]["ned-box"]))
+full_mutation_pass = real_jobs[
+    "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open"]
+check("the scheduled full mutation pass runs on ned-box alone, at 00:30, and its program "
+      "documents the table's line",
+      list(full_mutation_pass["on"]) == ["ned-box"]
+      and installer.cron_line(ned_box, full_mutation_pass, full_mutation_pass["on"]["ned-box"])
+      == NED_BOX_SCHEDULED_FULL_MUTATION_PASS_LINE
+      and f"    {NED_BOX_SCHEDULED_FULL_MUTATION_PASS_LINE}\n"
+      in (REPOSITORY_ROOT / full_mutation_pass["program"]).read_text(encoding="utf-8"),
+      installer.cron_line(ned_box, full_mutation_pass, full_mutation_pass["on"]["ned-box"]))
 weekly_live_check_documentation = (
     REPOSITORY_ROOT / real_jobs["weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"]
     ["program"]).read_text(encoding="utf-8")
@@ -328,13 +347,15 @@ printed, errors = io.StringIO(), io.StringIO()
 stub = MachineStub()
 with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="linux", home=Path("/home/nedlern"), run=stub)
-check("--print as ned-box prints ned-box's nine cron lines from the real table and runs nothing",
+check("--print as ned-box prints ned-box's ten cron lines from the real table and runs nothing",
       exit_code == 0 and stub.commands == []
       and printed.getvalue().splitlines() == [
           "machine: ned-box (linux, /home/nedlern)",
           "transcript-mirror-to-log-store — cron line:", NED_BOX_MIRROR_LINE,
           "log-store-session-dialogs-refresh — cron line:", NED_BOX_SESSION_DIALOGS_LINE,
           "daily-full-test-run-of-main — cron line:", NED_BOX_DAILY_LINE,
+          "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open — cron "
+          "line:", NED_BOX_SCHEDULED_FULL_MUTATION_PASS_LINE,
           "clean-worktrees — cron line:", NED_BOX_CLEAN_LINE,
           "handoff-agent-seat-died-without-session-handoff-restart-watcher — cron line:",
           NED_BOX_CRASH_RESTART_WATCHER_LINE,
