@@ -48,12 +48,14 @@ An answer that adds no marked text gets no fast read, and its status line is
 Every answer but O2, O3 and --moved-on-no-decision needs the item's
 `#case_against` line, the first line of the item, outside fenced code, whose
 first word after any list, quotation or emphasis marker is `#case_against`,
-followed by a rating: none, weak, medium, strong or very strong. CHECK writes
-the rating into the answer line as a hashtag right after the answer, as in
+followed by a rating: none, weak, medium, strong or very strong. When the item
+has that line, CHECK writes its rating into the answer line, whatever the
+answer, as a hashtag right after the answer, as in
 `approved #approved_obvious #case_against_weak`, so that one search finds every
-rating beside its answer. An item with no such line is refused, writing
-nothing, for every answer but those three, which record the rating when the
-line is there; a line that opens with no rating is refused for every answer.
+rating beside its answer. When the item has no such line, CHECK refuses every
+answer but O2, O3 and --moved-on-no-decision, writing nothing. A
+`#case_against` line that opens with no rating is refused for every answer, O2,
+O3 and --moved-on-no-decision included.
 
 `--not-asked KIND` settles the item without the user, as kind KIND, 1 to 5, of
 the walk-me-through skill's list of items that need no answer, after checking
