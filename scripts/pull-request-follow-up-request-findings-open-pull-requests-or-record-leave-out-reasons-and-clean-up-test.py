@@ -169,14 +169,14 @@ class Case:
         saved_directory, saved_environment = os.getcwd(), dict(os.environ)
         os.chdir(directory)
         os.environ.update({"PATH": self.environment["PATH"], "FAKE_GH_LOG": str(self.gh_log), **environment})
-        program.followed_up_pull_request_text.cache_clear()
+        program.build_followed_up_pull_request_citation_with_title_and_link.cache_clear()
         try:
             yield
         finally:
             os.chdir(saved_directory)
             os.environ.clear()
             os.environ.update(saved_environment)
-            program.followed_up_pull_request_text.cache_clear()
+            program.build_followed_up_pull_request_citation_with_title_and_link.cache_clear()
 
     def commit_change(self, name="change.txt"):
         (self.worktree / name).write_text("change\n")

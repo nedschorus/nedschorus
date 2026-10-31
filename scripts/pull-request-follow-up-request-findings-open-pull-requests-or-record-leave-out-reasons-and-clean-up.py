@@ -179,7 +179,7 @@ def command(number, subcommand):
 
 
 @functools.lru_cache(maxsize=None)
-def followed_up_pull_request_text(number):
+def build_followed_up_pull_request_citation_with_title_and_link(number):
     """"pull request [<title>](<link>)" for the pull request followed up, or "pull request <link>" when gh pr view
     gives no title. Fetched only when a sentence for the user is built, so no other step waits on GitHub."""
     link = f"https://github.com/{REPOSITORY}/pull/{number}"
@@ -197,7 +197,7 @@ def pass_on_to_the_user(sentence, start="Pass"):
 
 def fails_sentence(subcommand, number, error):
     # On one line, as git's error text can span several.
-    return (f"{subcommand} fails with this error, so the follow-up of {followed_up_pull_request_text(number)} is "
+    return (f"{subcommand} fails with this error, so the follow-up of {build_followed_up_pull_request_citation_with_title_and_link(number)} is "
             f"stopped until it is fixed: {' '.join(str(error).split())}")
 
 
@@ -368,7 +368,7 @@ def saved_follow_up_request(states, number):
                       "If the message has that line, the hook did not save the block: follow up the "
                       "message's findings by hand, as CLAUDE.md says, and "
                       + pass_on_to_the_user("The follow-up request hook did not save merge-lane-2's findings for "
-                                            f"{followed_up_pull_request_text(number)}.", "pass")
+                                            f"{build_followed_up_pull_request_citation_with_title_and_link(number)}.", "pass")
                       + f"\n{SUBAGENT_LINE}")
     try:
         requests = parse_follow_up_request_blocks_from_message_text(text)
@@ -538,7 +538,7 @@ def open_pull_request(number, findings):
             "If git's output shows the pre-push hook refusing the push, do what it "
             "says, commit the fix, and run the same open-pull-request command again.\n"
             + pass_on_to_the_user(f"git push of {branch} fails, so the follow-up of "
-                                  f"{followed_up_pull_request_text(number)} is stopped until it works.",
+                                  f"{build_followed_up_pull_request_citation_with_title_and_link(number)} is stopped until it works.",
                                   "Otherwise pass")
             + f"\n{SUBAGENT_LINE}") from None
     output, opened = gh_pr_create_tried_twice(
@@ -585,7 +585,7 @@ def link_gh_pr_list_finds(number, branch, create_output):
     """The link of the one open pull request gh pr list finds for branch, after gh pr create printed none."""
     lost = f"gh pr create exited 0 but printed no pull request link: {create_output.strip()!r}"
     instructions = (pass_on_to_the_user(f"open-pull-request could not record the pull request of branch {branch}, "
-                                        f"so the follow-up of {followed_up_pull_request_text(number)} is stopped "
+                                        f"so the follow-up of {build_followed_up_pull_request_citation_with_title_and_link(number)} is stopped "
                                         "until it is recorded.")
                     + f"\n{SUBAGENT_LINE}")
     try:
@@ -707,7 +707,7 @@ def remove_recorded_topic_branches_and_worktrees(number):
                         "Wait until the subagent has ended.\n"
                         + pass_on_to_the_user(
                             f"The agent harness still locks worktree {path} of the follow-up of "
-                            f"{followed_up_pull_request_text(number)}, so remove-recorded-topic-branches-and-worktrees "
+                            f"{build_followed_up_pull_request_citation_with_title_and_link(number)}, so remove-recorded-topic-branches-and-worktrees "
                             "could not remove it.", "If the worktree is still locked when you end your turn, pass")
                         + f"\n{SUBAGENT_LINE}")
         elif reason is not None:
@@ -715,7 +715,7 @@ def remove_recorded_topic_branches_and_worktrees(number):
             left.append(f"Worktree {path} is {locked}, so remove-recorded-topic-branches-and-worktrees "
                         "left it and the topic branches recorded with it.\n"
                         + pass_on_to_the_user(
-                            f"Worktree {path} of the follow-up of {followed_up_pull_request_text(number)} is {locked}, "
+                            f"Worktree {path} of the follow-up of {build_followed_up_pull_request_citation_with_title_and_link(number)} is {locked}, "
                             "so remove-recorded-topic-branches-and-worktrees left it.",
                             "If anyone may still be using the worktree, leave it, and pass") + "\n"
                         f"Otherwise list its changed or untracked files with git -C {path} status "
