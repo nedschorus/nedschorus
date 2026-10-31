@@ -4,14 +4,14 @@ while that subagent's own transcript shows work in flight.
 
 Two kinds of case. Synthetic cases pin each edge of the rule: the 5-minute recent-write window,
 the subagent's own background task and its wait, a missing own transcript, and an own transcript
-that cannot be read. Past-wait cases replay the session-handoff deferrals of 2026-10-28 to
-2026-10-31 from trimmed copies of their real transcripts, kept in
-handoff-context-threshold-hook-past-subagent-waits-test-fixtures/: each case is cut at each moment
+that cannot be read. Recorded cases replay past session-handoff deferrals from trimmed copies of their real
+transcripts, kept in
+handoff-context-threshold-hook-recorded-handoff-deferrals-replay-test-fixtures/: each case is cut at each moment
 cases.json names, as if the hook ran then, and the subagents and background tasks the hook counts
 must match the lists cases.json records. Those lists were checked, subagent by subagent, against
 what the subagent's full transcript shows it did after that moment.
 
-Run: python3 scripts/handoff-context-threshold-hook-past-subagent-waits-test.py
+Run: python3 scripts/handoff-context-threshold-hook-recorded-handoff-deferrals-replay-test.py
 """
 
 import importlib.util
@@ -28,7 +28,7 @@ SUITE_HOME = Path(tempfile.mkdtemp(prefix="handoff-threshold-hook-past-waits-tes
 os.environ["HOME"] = str(SUITE_HOME)
 
 HOOK_SCRIPT = Path(__file__).with_name("handoff-context-threshold-hook.py")
-FIXTURES = Path(__file__).with_name("handoff-context-threshold-hook-past-subagent-waits-test-fixtures")
+FIXTURES = Path(__file__).with_name("handoff-context-threshold-hook-recorded-handoff-deferrals-replay-test-fixtures")
 
 _hook_spec = importlib.util.spec_from_file_location("handoff_threshold_hook", HOOK_SCRIPT)
 hook = importlib.util.module_from_spec(_hook_spec)
@@ -64,7 +64,7 @@ NOW = datetime(2026, 10, 30, 21, 0, 0, tzinfo=timezone.utc)
 SUBAGENT_ID = "aecc60a4911a7ff7e"
 OWN_TASK_ID = "blrsaarzi"
 
-# The fork's interim notification from session 28da2061 (case 20 below), trimmed as the fixtures are.
+# The fork's interim notification from case 20's fixture below, trimmed as the fixtures are.
 INTERIM_NOTIFICATION = (
     "<task-notification>\n"
     f"<task-id>{SUBAGENT_ID}</task-id>\n"
@@ -181,9 +181,9 @@ def run_synthetic_cases(workspace):
     session = session_with_interim_subagent(case_directory("no-own-transcript"))
     check("an interim subagent with no own transcript is not counted",
           counted(session) == [], str(counted(session)))
-    check("read_subagent_transcripts=False counts the interim subagent from its notices alone",
+    check("should_read_subagent_own_transcripts=False counts the interim subagent from its notices alone",
           hook.work_in_flight(str(session), WAIT_SECONDS, now=NOW,
-                              read_subagent_transcripts=False).subagent_ids == [SUBAGENT_ID])
+                              should_read_subagent_own_transcripts=False).subagent_ids == [SUBAGENT_ID])
 
     no_notice = write_jsonl(case_directory("no-notice-yet") / "session.jsonl",
                             [spawn_record(SUBAGENT_ID, NOW - timedelta(hours=3))])
@@ -242,7 +242,7 @@ def run_past_wait_cases(workspace):
                                Path(workspace) / case["case"] / str(number), moment)
             by_own = hook.work_in_flight(str(session), WAIT_SECONDS, now=moment)
             by_notices = hook.work_in_flight(str(session), WAIT_SECONDS, now=moment,
-                                             read_subagent_transcripts=False)
+                                             should_read_subagent_own_transcripts=False)
             verdicts[(case["case"][:2], expected["moment"])] = by_own.subagent_ids
             check(f"case {case['case']} at {expected['moment']} ({expected['why_this_moment']})",
                   by_own.subagent_ids == expected["subagents_counted_by_own_transcripts"]

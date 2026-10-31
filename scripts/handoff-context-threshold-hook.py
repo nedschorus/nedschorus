@@ -273,15 +273,15 @@ def spawned_subagent_ids_in_flight(transcript_path: str) -> list:
     """Return Agent-tool ids the session transcript's notices leave running, excluding
     background Bash tasks."""
     return work_in_flight(transcript_path, background_task_wait_seconds=0,
-                          read_subagent_transcripts=False).subagent_ids
+                          should_read_subagent_own_transcripts=False).subagent_ids
 
 
 def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
-                   now=None, read_subagent_transcripts=True) -> WorkInFlight:
+                   now=None, should_read_subagent_own_transcripts=True) -> WorkInFlight:
     """Return running subagents and background tasks in launch order.
 
     A subagent whose last task-notification is interim counts only while its own transcript
-    shows work in flight; read_subagent_transcripts=False counts it from the notices alone.
+    shows work in flight; should_read_subagent_own_transcripts=False counts it from the notices alone.
     """
     # Scan the whole transcript: a running task may have launched hours before the tail.
     # Unreadable candidates raise; treating an incomplete scan as empty could kill running work.
@@ -340,7 +340,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
         if agent_id in finished_ids:
             return False
         # A subagent with no notice yet has not stopped once; only an interim last notice is doubted.
-        if agent_id not in last_notification_is_interim or not read_subagent_transcripts:
+        if agent_id not in last_notification_is_interim or not should_read_subagent_own_transcripts:
             return True
         return subagent_own_transcript_shows_work_in_flight(
             subagent_transcript_path(path, agent_id), background_task_wait_seconds, now)
@@ -378,7 +378,7 @@ def subagent_own_transcript_shows_work_in_flight(subagent_path: Path,
     except (OSError, UnicodeDecodeError) as problem:
         raise TranscriptCouldNotBeFullyRead(f"{subagent_path}: {problem}") from problem
     return bool(work_in_flight(str(subagent_path), background_task_wait_seconds, now=now,
-                               read_subagent_transcripts=False).background_task_ids)
+                               should_read_subagent_own_transcripts=False).background_task_ids)
 
 
 def main(argv=None) -> int:
