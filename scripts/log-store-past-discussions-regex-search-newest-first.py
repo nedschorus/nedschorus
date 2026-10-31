@@ -19,9 +19,25 @@ WHAT IT SEARCHES. Five kinds of record in the log-store,
                      agent-session-files-by-machine/<machine>/projects/<project-key>/*.jsonl
 
 The transcripts' subagents/ directories and agent-session-files-by-machine/recovered/ are not
-searched. A user's message is usually found twice, once in his session's
-dialog and once among user-messages; the user-messages hit carries the time
-he sent it, and the session-dialogs hit the turns around it.
+searched.
+
+Before it searches session-dialogs, it writes again each session dialog
+whose transcript changed since the dialog was written, as the dialogs
+refresher, scripts/log-store-session-dialogs-refresh-nbd.py, does every 10
+minutes, so a dialog is as current as the transcript the mirror last copied,
+about a minute behind the session. It writes them only with the dialog
+extractor, scripts/handoff-extract-conversation.py, and subagent tracker the
+refresher last wrote every dialog with, as the digest it records in
+session-dialogs/.dialogs-written-by-extractor-sha256 shows. When this
+checkout's differ, as on a branch that changes them or in a worktree behind
+main, or no digest is recorded, it says so on stderr and searches the dialogs
+as they are; the refresher rewrites them on its next pass. A dialog the
+subagent tracker fails on, or every dialog when the tracker cannot be read, is
+not written, and the search says what failed and exits 2.
+
+A user's message is usually found twice, once in his session's dialog and
+once among user-messages; the user-messages hit carries the time he sent it,
+and the session-dialogs hit the turns around it.
 
 PATTERN is a regular expression, matched case-insensitively; one opening
 with a dash goes after --, as in `-- -foo`. ripgrep matches
@@ -101,7 +117,11 @@ FAILURES. A record that could not be searched prints a line opening FAILED,
 naming what failed and what to do, after the hits found elsewhere: a missing
 log-store or kind directory, a file ripgrep could not read, a transcript the
 reader could not read, a session dialog the extractor could not build again
-whole, ripgrep missing, ned-box unreachable from the Mac.
+whole, a session dialog not written again from its changed transcript, a
+directory of transcripts not looked through for changed ones, ripgrep missing,
+and ned-box unreachable from the Mac. A dialog not written again, or one under
+a directory not looked through, is still searched, but may lack the
+session's latest turns.
 After the FAILED lines, one closing line says what the failures mean for the
 page: when hits were printed, that they are real matches but the page may lack
 hits from the failed records; when none were, that a match may be in those
@@ -135,6 +155,22 @@ import socket
 import subprocess
 import sys
 from pathlib import Path
+
+
+def load_sibling_module(module_name, file_name):
+    spec = importlib.util.spec_from_file_location(module_name, Path(__file__).resolve().parent / file_name)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_handoff_extractor():
+    return load_sibling_module("handoff_extract_conversation", "handoff-extract-conversation.py")
+
+
+refresh_common = load_sibling_module("log_store_session_dialogs_refresh_common",
+                                     "log-store-session-dialogs-refresh-common.py")
+SESSION_DIALOG_FILE_NAME_SUFFIX = refresh_common.SESSION_DIALOG_FILE_NAME_SUFFIX
 
 PROGRAM_FILE_NAME = "log-store-past-discussions-regex-search-newest-first.py"
 DEFAULT_LOG_STORE_ROOT = Path("/home/nedlern/nedschorus-logs")
@@ -190,12 +226,11 @@ WALK_HEADER_LINES = 10
 DATE_IN_NAME = re.compile(r"\d{4}-\d{2}-\d{2}")
 WALK_HEADER_SEAT = re.compile(r"\brun by ([A-Za-z0-9][A-Za-z0-9-]*) on\b")
 SEAT_IN_PROJECT_KEY = re.compile(r"-agents-(.+?)(?:--claude-worktrees-.*|-worktrees-.*)?$")
-DIALOG_FILE_SUFFIX = "-dialog-complete.md"
 MODIFICATION_TIME_MARGIN_SECONDS = 2
 TRANSCRIPT_TAIL_BYTES = 64 * 1024
 OWN_SESSION_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 LIVE_TRANSCRIPTS_DIRECTORY = Path.home() / ".claude" / "projects"
-AGENT_SESSION_FILES_FOLDER_IN_LOG_STORE = "agent-session-files-by-machine"
+AGENT_SESSION_FILES_FOLDER_IN_LOG_STORE = refresh_common.AGENT_SESSION_FILES_FOLDER_IN_LOG_STORE
 COMPACTION_SUBTYPE = "compact_boundary"
 # What the Mac's copy tells ned-box's copy, besides a compaction's timestamp.
 NEVER_COMPACTED = "never"
@@ -209,14 +244,6 @@ _claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.u
     Path(__file__).resolve().parent / "claude-code-session-transcript-lookup-and-text-search-common.py")
 claude_code_session_transcript_lookup_and_text_search_common = importlib.util.module_from_spec(_claude_code_session_transcript_lookup_and_text_search_common_spec)
 _claude_code_session_transcript_lookup_and_text_search_common_spec.loader.exec_module(claude_code_session_transcript_lookup_and_text_search_common)
-
-
-def load_handoff_extractor():
-    path = Path(__file__).resolve().parent / "handoff-extract-conversation.py"
-    spec = importlib.util.spec_from_file_location("handoff_extract_conversation", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def this_machine():
@@ -380,7 +407,7 @@ def file_facts(path, root, failures):
     facts = {"kind": kind, "machine": "", "seat": ""}
     if kind == SESSION_DIALOGS:
         # The refresher keeps its own state files beside the machines' directories.
-        if len(parts) != 4 or not parts[3].endswith(DIALOG_FILE_SUFFIX):
+        if len(parts) != 4 or not parts[3].endswith(SESSION_DIALOG_FILE_NAME_SUFFIX):
             return None
         facts["machine"], key = session_parts(path, root)
         facts["seat"] = seat_from_project_key(key)
@@ -453,7 +480,7 @@ def file_hits(root, kinds, pattern, context, failures):
 
 
 def session_transcript(root, hit):
-    session_id = Path(hit["path"]).name[:-len(DIALOG_FILE_SUFFIX)]
+    session_id = Path(hit["path"]).name[:-len(SESSION_DIALOG_FILE_NAME_SUFFIX)]
     return root / AGENT_SESSION_FILES_FOLDER_IN_LOG_STORE / hit["machine"] / "projects" / hit["project_key"] / f"{session_id}.jsonl"
 
 
@@ -559,12 +586,72 @@ def compacted_before(date, compacted_at):
 
 def session_id_of(path):
     name = Path(path).name
-    if name.endswith(DIALOG_FILE_SUFFIX):
-        return name[:-len(DIALOG_FILE_SUFFIX)]
+    if name.endswith(SESSION_DIALOG_FILE_NAME_SUFFIX):
+        return name[:-len(SESSION_DIALOG_FILE_NAME_SUFFIX)]
     return Path(path).stem
 
 
 _extractor_in_this_process = None
+
+
+def extractor_in_this_process():
+    global _extractor_in_this_process
+    if _extractor_in_this_process is None:
+        _extractor_in_this_process = load_handoff_extractor()
+    return _extractor_in_this_process
+
+
+def refresh_changed_session_dialogs(root, failures):
+    """Write again each session dialog whose transcript changed since it was written; add each failure to failures.
+
+    Writes nothing unless this checkout's extractor digest is the one the refresher recorded and its tracker loads.
+    """
+    extractor, extractor_sha256, tracker_failure = refresh_common.load_extractor()
+    if tracker_failure is not None:
+        path, error = tracker_failure
+        failures.append(f"could not read the subagent tracker's file {path}, so no session dialog was written again "
+                        f"before the search, and the dialogs searched may lack their sessions' latest turns: "
+                        f"{type(error).__name__}: {error}")
+        return
+    recorded_file = root / SESSION_DIALOGS / refresh_common.EXTRACTOR_SHA256_FILE_NAME
+    try:
+        recorded_sha256 = recorded_file.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        recorded_sha256 = None
+    except OSError as error:
+        failures.append(f"could not read {recorded_file}, so no session dialog was written again before the search, "
+                        f"and the dialogs searched may lack their sessions' latest turns: "
+                        f"{type(error).__name__}: {error}")
+        return
+    if recorded_sha256 != extractor_sha256:
+        # A dialog written with another extractor would be stamped current and kept until the next extractor change.
+        print(f"NOTE: {PROGRAM_FILE_NAME}'s dialog extractor or subagent tracker in {Path(__file__).resolve().parent} "
+              f"is not the one {recorded_file} records, so the session dialogs were searched as they are, without "
+              f"writing again those whose transcripts changed; the dialogs refresher, "
+              f"scripts/log-store-session-dialogs-refresh-nbd.py, brings them up to date within 10 minutes.",
+              file=sys.stderr)
+        return
+    unreadable = []
+    for machine, project_key, transcript in refresh_common.find_session_transcripts_mirrored_in_log_store(
+            root / AGENT_SESSION_FILES_FOLDER_IN_LOG_STORE, unreadable):
+        dialog = refresh_common.session_dialog_path_for_transcript(root / SESSION_DIALOGS, machine, project_key,
+                                                                   transcript)
+        try:
+            refresh_common.refresh_session_dialog_unless_current(extractor, True, transcript, dialog,
+                                                                 refuse_without_subagent_turns=True)
+        except refresh_common.SubagentTurnsLeftOut as error:
+            failures.append(f"the subagent tracker failed on the changed transcript {transcript}, so its session "
+                            f"dialog {dialog} was not written again, and the dialog searched may lack the session's "
+                            f"latest turns: {error}")
+        except Exception as error:
+            # One transcript that cannot be read must not keep the search from the rest.
+            failures.append(f"could not write the session dialog {dialog} again from its changed transcript "
+                            f"{transcript}, so the dialog searched may lack the session's latest turns: "
+                            f"{type(error).__name__}: {error}")
+    for path, error in unreadable:
+        failures.append(f"could not look through {path} for transcripts changed since their session dialogs were "
+                        f"written, so the dialogs of the sessions under it may lack their latest turns: "
+                        f"{type(error).__name__}: {error}")
 
 
 def left_out_sections(lines, extractor):
@@ -580,17 +667,14 @@ def dialog_line_turn_times(transcript_text, dialog_text, line_numbers):
 
     Runs in a worker process, so it takes and returns only plain values.
     """
-    global _extractor_in_this_process
-    if _extractor_in_this_process is None:
-        _extractor_in_this_process = load_handoff_extractor()
+    extractor = extractor_in_this_process()
     try:
         # ripgrep numbers lines at "\n" alone, so universal newlines would misnumber them.
         written = Path(dialog_text).read_bytes().decode("utf-8", "replace").split("\n")
     except OSError as error:
         return {}, f"could not read the session dialog {dialog_text} to date its hits by their turns: {error}"
     try:
-        built, left_out_notes = _extractor_in_this_process.complete_dialog_lines_with_turn_timestamps(
-            Path(transcript_text))
+        built, left_out_notes = extractor.complete_dialog_lines_with_turn_timestamps(Path(transcript_text))
     except OSError as error:
         return {}, (f"could not read the transcript {transcript_text} to date the session dialog's hits "
                     f"by their turns: {error}")
@@ -599,8 +683,7 @@ def dialog_line_turn_times(transcript_text, dialog_text, line_numbers):
                     f"dialog built again from {transcript_text} lacks its subagent turns: "
                     f"{' '.join(left_out_notes)}")
     # The dialog built again holds the section only where a turn quotes it, since its tracker did not fail.
-    if left_out_sections(written, _extractor_in_this_process) > left_out_sections(
-            [line for line, _ in built], _extractor_in_this_process):
+    if left_out_sections(written, extractor) > left_out_sections([line for line, _ in built], extractor):
         return {}, (f"could not date the hits in the session dialog {dialog_text} by their turns, since it "
                     f"was written while the subagent tracker failed and lacks the subagent turns the dialog "
                     f"built again from {transcript_text} holds; the dialogs refresher, "
@@ -781,11 +864,8 @@ def matching_user_messages(path_text, pattern, since, until):
 
     Runs in a worker process, so it takes and returns only plain values.
     """
-    global _extractor_in_this_process
-    if _extractor_in_this_process is None:
-        _extractor_in_this_process = load_handoff_extractor()
     try:
-        turns, _ = _extractor_in_this_process.read_dialog_turns(Path(path_text), drop_acknowledgements=False)
+        turns, _ = extractor_in_this_process().read_dialog_turns(Path(path_text), drop_acknowledgements=False)
     except OSError as error:
         return [], f"could not read the transcript {path_text}: {error}"
     regex = re.compile(pattern, re.IGNORECASE)
@@ -982,6 +1062,8 @@ def main(argv=None):
     # A session not known to be compacted is left out whole before its records are read; else after they are dated.
     left_out_whole = "" if compacted_at else own_session
     own_undated = []
+    if SESSION_DIALOGS in kinds:
+        refresh_changed_session_dialogs(root, file_failures)
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as threads:
             file_search = threads.submit(
