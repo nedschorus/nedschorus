@@ -299,8 +299,8 @@ REPEAT_UNPUBLISHED_LINES = (
     "\"{answer}\" asks to see {item} again, and the hook found no `#item_page` line for it in the walk-minutes"
     "{minutes}.",
     "If the walk-minutes hold none, publish the item as the walk-me-through skill says, and add to them the line "
-    "`#item_page {item} <page link>`, because the item's page is what shows the user the item in full.",
-    "If the publish fails, add the line `#item_page {item} publish failed: <what the Artifact tool said>` "
+    "`#item_page {item_count} <page link>`, because the item's page is what shows the user the item in full.",
+    "If the publish fails, add the line `#item_page {item_count} publish failed: <what the Artifact tool said>` "
     "instead, and leave the link out of the closing line, keeping only its link text and what follows the link.",
     "Then reply with only the item's closing line, with the page's link in place of `<page link>`, or without "
     "the link if the publish failed, and wait for his answer: {closing_line}")
@@ -550,7 +550,7 @@ def closing_line(number, walk, link=None):
     if link is None:
         return None
     point = walk.points.get(number)
-    label = "Item " + item_name(number, walk)[len("item "):] + (f", {point}" if point else "")
+    label = "Item " + item_count(number, walk)[len("item "):] + (f", {point}" if point else "")
     if link == load_walk_finder().ITEM_PAGE_PUBLISH_FAILED:
         return f"{label} · {ANSWER_LETTERS_TEXT}"
     return f"[{label}]({link}) · {ANSWER_LETTERS_TEXT}"
@@ -623,6 +623,12 @@ def recommendations_in(lines, openings, spans, total, walk_finder, starts):
 
 def item_name(number, walk):
     return f"item {number} of {walk.total}" if walk and walk.total else f"item {number}"
+
+
+def item_count(number, walk):
+    """The item's running count as a closing line or an `#item_page` line writes it, with `<M>` when the hook could
+    not read the walk's total, since a count without `of M` is one the walk hooks do not read."""
+    return f"item {number} of {walk.total or '<M>'}"
 
 
 def recommendation_unknown_lines(answer_letter, numbers, walk):
@@ -754,7 +760,8 @@ def repeat_line(answer, number, walk):
     line = closing_line(number, walk)
     if line is None:
         return "\n".join(REPEAT_UNPUBLISHED_LINES).format(
-            answer=answer, item=item_name(number, walk), minutes=f" {walk.minutes}" if walk.minutes else "",
+            answer=answer, item=item_name(number, walk), item_count=item_count(number, walk),
+            minutes=f" {walk.minutes}" if walk.minutes else "",
             closing_line=closing_line(number, walk, "<page link>"))
     return REPEAT_PAGE_LINE.format(answer=answer, item=item_name(number, walk), closing_line=line)
 

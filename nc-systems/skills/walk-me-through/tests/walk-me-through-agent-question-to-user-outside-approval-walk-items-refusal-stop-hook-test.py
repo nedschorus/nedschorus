@@ -801,6 +801,55 @@ def test_a_no_decision_sub_steps_line_is_skipped_only_while_a_sub_step_waits():
                   "approval-walk question check")
 
 
+PUBLISH_FAILED_LINE = "#item_page item {number} of {total} publish failed: the Artifact tool timed out"
+RECOMMENDED_ITEM_2_DOCUMENT = WALK_DOCUMENT.replace("## Item 2 of 10: where the poem page lives",
+                                                    "## Item 2 of 10: the poem page is recommended for the wiki")
+
+
+def test_the_closing_line_without_its_link_is_skipped_only_for_an_item_whose_publish_failed():
+    failed = Case(document=RECOMMENDED_ITEM_2_DOCUMENT,
+                  minutes=PUBLISH_FAILED_LINE.format(number=2, total=10) + "\n#next_to_present item 2 of 10")
+    line = hook.answer_hook.closing_line("2", hook.answer_hook.read_walk(failed.checkout))
+    check("the answer hook's closing line for an item whose publish failed has no link",
+          line == f"Item 2 of 10, the poem page is recommended for the wiki · {CLOSING_LINE_ANSWER_LETTERS}", line)
+    failed.reply("Recorded.\n\n" + str(line))
+    check_silent("the closing line without its link passes for an item whose newest publish failed",
+                 failed.run(model="yes"))
+    check("the closing line without its link of an item whose publish failed never reaches the model",
+          failed.model_calls() == [], failed.model_calls())
+    republished = Case(document=RECOMMENDED_ITEM_2_DOCUMENT,
+                       minutes=PUBLISH_FAILED_LINE.format(number=2, total=10)
+                       + "\n#item_page item 2 of 10 https://claude.ai/artifact/p2\n#next_to_present item 2 of 10")
+    republished.reply("Recorded.\n\n" + str(line))
+    check_blocked("the closing line without its link is checked once a later `#item_page` line gives the item a page",
+                  republished.run(model="yes"), "approval-walk question check")
+    two_waiting = Case(document=RECOMMENDED_ITEM_2_DOCUMENT,
+                       minutes=PUBLISH_FAILED_LINE.format(number=2, total=10) + "\n#next_to_present items 2 and 3 of 10")
+    two_waiting.reply("Recorded.\n\n" + str(line) + "\n\n"
+                      + f"Item 3 of 10, the hook is recommended · {CLOSING_LINE_ANSWER_LETTERS}")
+    check_blocked("the closing line without its link is checked for a waiting item whose publish did not fail",
+                  two_waiting.run(model="yes"), "approval-walk question check", "Item 3 of 10, the hook")
+
+
+def test_the_no_decision_line_without_its_link_is_skipped_only_for_a_sub_step_whose_publish_failed():
+    bare = "No decision here; type N or next to continue."
+    document = WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + INTERRUPTION_ITEM
+    failed = Case(document=document,
+                  minutes=PUBLISH_FAILED_LINE.format(number="2.1", total=11) + "\n#next_to_present item 2.1 of 11")
+    failed.reply("PR 1922 merged.\n\n" + bare)
+    check_silent("the no-decision line without its link passes for a sub-step whose newest publish failed",
+                 failed.run(model="yes"))
+    published = Case(document=document,
+                     minutes="#item_page item 2.1 of 11 https://claude.ai/artifact/p21\n#next_to_present item 2.1 of 11")
+    published.reply("PR 1922 merged.\n\n" + bare)
+    check_blocked("the no-decision line without its link is checked for a sub-step that has a page",
+                  published.run(model="yes"), "approval-walk question check")
+    whole_item = Case(minutes=PUBLISH_FAILED_LINE.format(number=2, total=10) + "\n#next_to_present item 2 of 10")
+    whole_item.reply("PR 1922 merged.\n\n" + bare)
+    check_blocked("the no-decision line without its link is checked while a whole item whose publish failed waits",
+                  whole_item.run(model="yes"), "approval-walk question check")
+
+
 def test_a_fault_exits_1_and_names_it():
     case = Case()
     result = case.run(stdin_text="not json")
