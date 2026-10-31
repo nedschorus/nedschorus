@@ -112,7 +112,8 @@ read, so a reviewer still reading is spending the rest of a 10-20 minute read
 on a review nobody will triage. The copy's fingerprint is therefore taken at
 every poll, not only at the end: the first poll that sees it differ while any
 cold-read-cell is still running stops every running cold-read-cell with its
-children, marks what the set holds, and exits 3. Every poll, which is every 5
+children, deletes any report a stopped one had written, as unfinished, marks
+what the set holds, and exits 3. Every poll, which is every 5
 seconds, because hashing a Markdown file costs microseconds: a slower cadence
 would buy nothing and add a timer. The end-of-run comparison stays, for a move
 after the last cold-read-cell has finished, which stops nothing. A
@@ -279,7 +280,7 @@ CELL_ATTEMPT_TIMEOUT_OVERRIDE_VARIABLE = "COLD_READ_GRID_CELL_ATTEMPT_TIMEOUT_SE
 CELL_ATTEMPT_TIMEOUT_DEFAULT_SECONDS = 4 * 60 * 60
 TIMED_OUT_CAUSE_CLASS = "timed-out"
 TIMED_OUT_CAUSE_DETAIL = "timed out after 4 hours"
-TIMED_OUT_CELL_PARTIAL_REPORT_DELETED_PHRASE ="; the unfinished report it had written is deleted"
+STOPPED_CELL_UNFINISHED_REPORT_DELETED_PHRASE = "; the unfinished report it had written is deleted"
 
 
 def record_clock_reading() -> datetime.datetime:
@@ -817,6 +818,18 @@ def announce_agent_binary_down(cells_by_runtime: dict, outcome: RunOutcome) -> N
               f"{len(absences)} reports absent", flush=True)
 
 
+def stop_attempt_and_delete_unfinished_report(attempt: CellAttempt,
+                                              report_path: pathlib.Path) -> bool:
+    """Stop a running attempt with its children, delete any report it wrote,
+    and return whether there was one to delete."""
+    if attempt.process is not None:
+        cell_common.stop_process_tree(attempt.process)
+    # A report written before the stop is unfinished; as a .md it would ship and count as a review.
+    report_deleted = report_path.is_file()
+    report_path.unlink(missing_ok=True)
+    return report_deleted
+
+
 def wait_for_cells(running: dict,
                    target_move: typing.Callable[[], typing.Optional[tuple]],
                    target_check_interval_seconds: float = 0.0,
@@ -840,13 +853,10 @@ def wait_for_cells(running: dict,
             code = None if attempt.process is None else attempt.process.poll()
             timed_out = (attempt.process is not None and code is None
                          and time.monotonic() - attempt.started_at >= cell_attempt_timeout_seconds)
-            partial_report_deleted = False
+            report_deleted = False
             if timed_out:
-                cell_common.stop_process_tree(attempt.process)
+                report_deleted = stop_attempt_and_delete_unfinished_report(attempt, report_path)
                 code = attempt.process.returncode
-                # A report written before the hang is unfinished; as a .md it would ship and count as a review.
-                partial_report_deleted = report_path.is_file()
-                report_path.unlink(missing_ok=True)
                 print(f"WRITE CHECK DID NOT RUN: {report_path.name} — "
                       f"{STOPPED_CELL_WRITE_CHECK_LINE.format(cell=cell_name_of(report_path))}",
                       flush=True)
@@ -889,7 +899,7 @@ def wait_for_cells(running: dict,
                         tell = f". Tell the user: {user_clearable_cause_text(report)}."
                     print(f"FAILED (exit {exit_text}): {name}{cell_common.CAUSE_SEPARATOR}"
                           f"{cause} (stderr kept: {attempt.stderr_path})"
-                          f"{TIMED_OUT_CELL_PARTIAL_REPORT_DELETED_PHRASE if partial_report_deleted else ''}{tell}",
+                          f"{STOPPED_CELL_UNFINISHED_REPORT_DELETED_PHRASE if report_deleted else ''}{tell}",
                           flush=True)
                     outcome.absent[name] = report
             announce_agent_binary_down(cells_by_runtime, outcome)
@@ -898,15 +908,15 @@ def wait_for_cells(running: dict,
             move = target_move()
             if move is not None:
                 for report_path, attempt in running.items():
-                    if attempt.process is not None:
-                        cell_common.stop_process_tree(attempt.process)
+                    report_deleted = stop_attempt_and_delete_unfinished_report(attempt, report_path)
                     outcome.stopped.append(cell_name_of(report_path))
                     # Stopped cells never reach the post-model stray-write check; absence of results is not a clean check.
                     log_lines = (attempt.stderr_path.read_text(encoding="utf-8").splitlines()
                                  if attempt.stderr_path.is_file() else [])
                     lift_cell_status_lines(report_path, log_lines)
                     print(f"WRITE CHECK DID NOT RUN: {report_path.name} — "
-                          f"{STOPPED_CELL_WRITE_CHECK_LINE.format(cell=cell_name_of(report_path))}",
+                          f"{STOPPED_CELL_WRITE_CHECK_LINE.format(cell=cell_name_of(report_path))}"
+                          f"{STOPPED_CELL_UNFINISHED_REPORT_DELETED_PHRASE if report_deleted else ''}",
                           flush=True)
                 return outcome._replace(moved_mid_run=move)
     return outcome
