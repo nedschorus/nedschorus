@@ -1261,7 +1261,8 @@ with tempfile.TemporaryDirectory() as scratch:
     git(checkout, "config", "user.email", "test@test.invalid")
     git(checkout, "config", "user.name", "clean-worktrees test")
     (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
-    (checkout / ".gitignore").write_text("docs/walk/\nscratch-state/\n", encoding="utf-8")
+    (checkout / ".gitignore").write_text("docs/walk/\nscratch-state/\nCLAUDE.local.md\n",
+                                         encoding="utf-8")
     git(checkout, "add", "-A")
     git(checkout, "commit", "-m", "seed")
     subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
@@ -1345,7 +1346,10 @@ with tempfile.TemporaryDirectory() as scratch:
     nested_topic = add_agents_worktree("seat-worktrees/seat-nested", "seat-nested-topic-branch")
     walk_topic = add_agents_worktree("seat-walk", "seat-walk-topic-branch")
     add_walk(walk_topic)
-    for path in (agent_home, second_agent_home, done_topic, ignored_topic, untracked_topic,
+    # An agent-home checked out on a landed branch named unlike the directory, as ned-box-helper is.
+    briefed_agent_home = add_agents_worktree("seat-briefed", "some-landed-topic-branch")
+    (briefed_agent_home / "CLAUDE.local.md").write_text("seat-brief\n", encoding="utf-8")
+    for path in (agent_home, second_agent_home, briefed_agent_home, done_topic, ignored_topic, untracked_topic,
                  modified_topic, detached_topic, unreadable_topic, status_failing_topic,
                  unprefixed_topic, walk_topic, deep_write_topic, nested_topic,
                  detached_directory, beside_detached_topic, elsewhere_topic):
@@ -1362,6 +1366,9 @@ with tempfile.TemporaryDirectory() as scratch:
         check("a worktree in ~/agents/ on a seat-branch is kept, even when its name extends "
               "another agent-home's",
               "outside the managed area" in line_for(output, "seat-two"), output)
+        check("an agent-home holding a seat-brief is kept on any branch, even when its name "
+              "extends another agent-home's",
+              "outside the managed area" in line_for(output, "seat-briefed"), output)
         check("a worktree in ~/agents/ whose name begins with no agent-home's name is kept",
               "outside the managed area" in line_for(output, "loose-topic"), output)
         check("a worktree in ~/agents/ whose name begins with a detached directory's name is kept",
@@ -1442,12 +1449,14 @@ with tempfile.TemporaryDirectory() as scratch:
         check("--remove removes a topic-worktree holding only ignored files",
               not ignored_topic.exists(), unreachable.stdout + unreachable.stderr)
         check("--remove keeps every topic-worktree that a check keeps, and every agent-home",
-              all(path.exists() for path in (agent_home, second_agent_home, untracked_topic,
+              all(path.exists() for path in (agent_home, second_agent_home, briefed_agent_home,
+                                             untracked_topic,
                                              modified_topic, detached_topic, fresh_topic,
                                              unreadable_topic, status_failing_topic,
                                              unprefixed_topic, nested_topic,
                                              beside_detached_topic, elsewhere_topic))
-              and (untracked_topic / "draft.md").is_file(),
+              and (untracked_topic / "draft.md").is_file()
+              and (briefed_agent_home / "CLAUDE.local.md").is_file(),
               unreachable.stdout + unreachable.stderr)
 
         # The store holds the walk text with other bytes: an add-only file, so refused.
@@ -1476,6 +1485,26 @@ with tempfile.TemporaryDirectory() as scratch:
               and not walk_topic.exists()
               and f"seat-walk: shipped: {walk_name}" in shipped.stdout,
               shipped.stdout + shipped.stderr)
+
+        # An agent writes into a clean topic-worktree while the vacancy check, the slowest, runs.
+        dirtied_topic = add_agents_worktree("seat-dirtied", "seat-dirtied-topic-branch")
+        age_every_file_in(dirtied_topic)
+        writing_stubs = scratch / "lsof-writes-into-worktree-stubs"
+        writing_stubs.mkdir()
+        (writing_stubs / "lsof").write_text(
+            "#!/bin/sh\n"
+            f"echo work > {shlex.quote(str(dirtied_topic / 'late-draft.md'))}\n"
+            f'exec {shutil.which("lsof")} "$@"\n', encoding="utf-8")
+        (writing_stubs / "lsof").chmod(0o755)
+        dirtied = run_clean_in_home(str(store / "cold-read-records"), writing_stubs, "--remove")
+        check("--remove keeps a topic-worktree written into while its checks ran, naming the file, "
+              "and counts it no failure",
+              (dirtied_topic / "late-draft.md").is_file()
+              and line_for(dirtied.stdout, "seat-dirtied")
+              == "seat-dirtied: kept — 1 uncommitted or untracked file(s), which only its owner "
+                 "may discard: late-draft.md"
+              and dirtied.returncode == 0,
+              dirtied.stdout + dirtied.stderr)
     finally:
         if (unreadable_topic / "locked-directory").exists():
             (unreadable_topic / "locked-directory").chmod(0o755)

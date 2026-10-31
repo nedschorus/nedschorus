@@ -58,13 +58,19 @@ TOPIC-WORKTREES BESIDE THE AGENT-HOMES. A worktree directly in ~/agents/ of
 the machine it runs on (the home directory's agents/, read from HOME) is
 judged too, when its directory name is an agent-home's name followed by a
 hyphen and more, such as cold-read-improvement-claude-md-batching-sentence,
-and its branch is not a seat-branch. An agent-home here is a worktree in
-~/agents/ whose branch is named like its directory. Such a topic-worktree
-passes the four checks above and four more, each of which keeps it:
+and it is no agent-home itself. An agent-home here is a worktree directly
+in ~/agents/ that is on a branch named like its directory or holds a
+seat-brief (CLAUDE.local.md); the seat-brief keeps an agent-home checked
+out on another branch from being judged. Such a
+topic-worktree passes the four checks above and four more, each of which
+keeps it:
 
   4. clean    - no uncommitted change and no untracked file (ignored files
                 do not count). Unlike a worktree under .claude/worktrees/,
                 such files keep it: an agent-seat may still want them.
+                --remove checks this again just before the removal, after
+                the slow checks and the shipments, so a file written while
+                they ran keeps the worktree.
   5. on a branch - its HEAD is not detached.
   6. quiet    - no file or directory in it was written in the last
                 TOPIC_WORKTREE_QUIET_SECONDS. An agent-seat working there
@@ -195,6 +201,9 @@ TOPIC_WORKTREE_QUIET_SECONDS = 4 * 3600
 # The reference clone's walk shipper, given the path of one walk's minutes, ships that walk.
 WALK_FILES_SHIPPER = REPO_ROOT / "scripts" / "walk-files-ship.py"
 WALK_MINUTES_SUFFIX = "-minutes.md"
+
+# Marks a directory in ~/agents/ as an agent-home whatever branch it is on.
+SEAT_BRIEF_FILE_NAME = "CLAUDE.local.md"
 
 # Gitignored directories whose records belong in the log-store, each with the program that ships one
 # record of that kind. The reference clone's shippers, not the worktree's possibly older copies.
@@ -378,14 +387,21 @@ def agent_worktree_quiet_keep_reason(worktree, now=None):
     return None
 
 
+def is_agent_home(path, branch):
+    # An agent-seat may check its agent-home out on another branch, as ned-box-helper does, so the
+    # branch alone cannot tell an agent-home from a topic-worktree.
+    return branch == path.name or (path / SEAT_BRIEF_FILE_NAME).exists()
+
+
 def topic_worktrees_beside_agent_homes(worktrees):
     """Return the resolved paths of the topic-worktrees directly in ~/agents/ that this script judges."""
     agents_directory = (Path.home() / "agents").resolve()
     in_agents_directory = [(path.resolve(), branch) for path, branch in worktrees
                            if path.resolve().parent == agents_directory]
-    agent_home_names = {path.name for path, branch in in_agents_directory if branch == path.name}
+    agent_home_names = {path.name for path, branch in in_agents_directory
+                        if is_agent_home(path, branch)}
     return {path for path, branch in in_agents_directory
-            if branch not in agent_home_names
+            if path.name not in agent_home_names and branch not in agent_home_names
             and any(path.name.startswith(f"{home}-") for home in agent_home_names)}
 
 
@@ -416,6 +432,12 @@ def topic_worktree_keep_reason(worktree, branch):
     """Return why a landed topic-worktree must be kept before the vacancy check, or None."""
     if branch is None:
         return "its HEAD is detached, so its owner may be partway through a rebase or a bisect"
+    return (topic_worktree_uncommitted_files_keep_reason(worktree)
+            or topic_worktree_quiet_keep_reason(worktree))
+
+
+def topic_worktree_uncommitted_files_keep_reason(worktree):
+    """Return why a topic-worktree holding uncommitted or untracked files must be kept, or None."""
     status = run_git(worktree, "status", "--porcelain", "-z", "--untracked-files=all")
     if status.returncode != 0:
         return f"git cannot list its uncommitted changes ({status.stderr.strip()[:80]})"
@@ -424,7 +446,7 @@ def topic_worktree_keep_reason(worktree, branch):
     if changed:
         return (f"{len(changed)} uncommitted or untracked file(s), which only its owner "
                 f"may discard: {discarded_files_text(changed)}")
-    return topic_worktree_quiet_keep_reason(worktree)
+    return None
 
 
 def is_disposable_junk(relative_path):
@@ -539,7 +561,8 @@ def classify(worktree, branch, main_checkout, topic_worktree):
 
 
 def remove_worktree(worktree, branch, repo, discarded, topic_worktree):
-    """Ship its log-store records, then remove a done worktree and its merged branch; return success."""
+    """Ship its log-store records, then remove a done worktree and its merged branch; return False
+    when something failed."""
     unshipped = ship_log_store_records(worktree, topic_worktree)
     if unshipped:
         # No next-step line may contain FAILED: the handoff-supervisor counts each such line as a failure.
@@ -561,6 +584,12 @@ def remove_worktree(worktree, branch, repo, discarded, topic_worktree):
                   f"ships the record again; "
                   f"if the record fails the same way there, fix the cause its line names")
         return False
+    # classify() judged it clean before the slow vacancy check and the shipments; an agent may have written since.
+    if topic_worktree:
+        keep_reason = topic_worktree_uncommitted_files_keep_reason(worktree)
+        if keep_reason is not None:
+            print(f"{worktree.name}: kept — {keep_reason}")
+            return True
     # Named before the removal too: a removal that fails or is killed partway may already have deleted some.
     if discarded:
         print(f"{worktree.name}: removing it will discard {len(discarded)} uncommitted, "
