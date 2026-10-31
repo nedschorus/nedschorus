@@ -499,36 +499,57 @@ print(x.render_companion(turns, x.complete_dialog_turns_and_report(transcript)[1
     curlew_dialog.unlink()
     curlew_transcript.unlink()
     curlew_analysis.unlink()
-    unreadable = subprocess.run([sys.executable, "-c", f"""
-import importlib.util, pathlib
-spec = importlib.util.spec_from_file_location("search", {str(PROGRAM)!r})
-search = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(search)
-root = pathlib.Path({str(root)!r})
-failures = []
-print(search.is_session_dialog_extractor_sha256_last_line(
-    root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-gone" / "s28-dialog-complete.md", 3,
-    {quoted_digest_line!r}, root, failures))
-print(failures)
-"""], capture_output=True, text=True)
-    check("a dialog that cannot be read again to find its last line keeps its hit, and the failure is listed",
-          unreadable.returncode == 0 and unreadable.stdout.startswith("False\n")
-          and "could not read" in unreadable.stdout and "is shown as a hit" in unreadable.stdout
-          and "the dialog's last non-blank line, which names" in unreadable.stdout,
-          unreadable.stdout + unreadable.stderr)
+
+    # ripgrep numbers lines at "\n" alone; a lone carriage return must not move the dialog's last line.
+    dunlin_key = "-home-nedlern-agents-dunlin"
+    dunlin_transcript = write(
+        root / "agent-session-files-by-machine" / "ned-box" / "projects" / dunlin_key / "s28.jsonl",
+        transcript_records(agent("the dunlin plan, as written again", "2026-09-06T08:00:00Z"),
+                           agent("Done.", "2026-09-22T08:00:00Z")))
+    dunlin_dialog = root / "session-dialogs" / "ned-box" / dunlin_key / "s28-dialog-complete.md"
+    dunlin_dialog.parent.mkdir(parents=True, exist_ok=True)
+    dunlin_dialog.write_bytes(b"## Agent\n\nthe dunlin\rplan\n\n"
+                              + refresh_common.session_dialog_extractor_sha256_last_line_build(EXTRACTOR_SHA256).encode()
+                              + b"\n")
+    finding = run(root, "dialog extractor whose sha256", "--kind", "session-dialogs")
+    check("a dialog holding a lone carriage return before its last line still has that line, which names its "
+          "extractor, dropped as a hit",
+          finding.returncode == 1 and not hit_headers(finding.stdout), finding.stdout + finding.stderr)
+    write(dunlin_dialog, "## Agent\n\nthe dunlin plan, as written again\n\n## Agent\n\nDone.\n")
+    mark_dialogs_current(root)
+    as_ripgrep_read = json.dumps({"type": "match", "data": {
+        "path": {"text": str(dunlin_dialog)}, "lines": {"text": "the dunlin plan, as ripgrep read it\n"},
+        "line_number": 3, "submatches": [{"start": 0}]}})
+    earlier_reader = stub(scratch, "rg-reads-dunlin-before-it-is-written-again",
+                          f"printf '%s\\n' '{as_ripgrep_read}'\n")
+    finding = run(root, "dunlin plan", "--kind", "session-dialogs",
+                  environment={PREFIX + "RIPGREP_PROGRAM_OVERRIDE": earlier_reader})
+    check("a hit whose line the dialog, written again after ripgrep searched it, no longer holds where ripgrep "
+          "found it is not dated by the turn of the line now there, and says why",
+          finding.returncode == 0 and "2026-09-06" not in finding.stdout
+          and "2026-09-22T08:00:00Z (session's last activity: the dialog was written again after ripgrep searched "
+              "it" in finding.stdout, finding.stdout + finding.stderr)
+    if os.geteuid() == 0:
+        print("SKIP  a session dialog that cannot be read after ripgrep searched it: root reads every file")
+    else:
+        dunlin_dialog.chmod(0)
+        finding = run(root, "dunlin plan", "--kind", "session-dialogs", dialogs_current=False,
+                      environment={PREFIX + "RIPGREP_PROGRAM_OVERRIDE": earlier_reader})
+        dunlin_dialog.chmod(0o644)
+        check("a session dialog that cannot be read after ripgrep searched it is a FAILED line, its hit is shown "
+              "dated by its session's last activity, and the search exits 2",
+              finding.returncode == 2
+              and f"FAILED: could not read the session dialog {dunlin_dialog} after ripgrep searched it" in finding.stderr
+              and "PermissionError" in finding.stderr
+              and "2026-09-22T08:00:00Z (session's last activity: the dialog could not be read" in finding.stdout,
+              finding.stdout + finding.stderr)
+    dunlin_dialog.unlink()
+    dunlin_transcript.unlink()
     plover_dialog.unlink()
     plover_transcript.unlink()
     sandpiper_dialog.unlink()
     sandpiper_transcript.unlink()
 
-    probe = subprocess.run([sys.executable, "-c", f"""
-import importlib.util
-spec = importlib.util.spec_from_file_location("search", {str(PROGRAM)!r})
-search = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(search)
-print(search.dialog_line_turn_times({str(root / "agent-session-files-by-machine" / "ned-box" / "projects" / "-home-nedlern-agents-prime-intellect" / "s1.jsonl")!r},
-                                    {str(Path(scratch) / "no-such-dialog.md")!r}, [3], ""))
-"""], capture_output=True, text=True)
     broken_tracker = subprocess.run([sys.executable, "-c", f"""
 import importlib.util, os, sys
 os.environ[{PREFIX + "LOG_STORE_ROOT_OVERRIDE"!r}] = {str(root)!r}
@@ -589,10 +610,6 @@ print(x.render_companion(*x.complete_dialog_turns_and_report(pathlib.Path({str(e
           and "2026-09-01T08:00:00Z  session-dialogs" in finding.stdout, finding.stdout + finding.stderr)
     egret_dialog.unlink()
     egret_transcript.unlink()
-
-    check("a session dialog that cannot be read again to date its hits is a failure",
-          "could not read the session dialog " in probe.stdout and "no-such-dialog.md" in probe.stdout,
-          probe.stdout + probe.stderr)
 
     own = run(root, "heron plan", environment={"CLAUDE_CODE_SESSION_ID": "s1"})
     check("the agent-session running the search is left out, its dialog and its messages both, and the "
@@ -700,6 +717,14 @@ print(x.render_companion(*x.complete_dialog_turns_and_report(pathlib.Path({str(e
           "said nowhere" not in own.stdout and "2026-09-28T09:00:00Z" in own.stdout
           and "except 1 hit(s) that could not be dated" in own.stdout, own.stdout)
     write(root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-prime-intellect" / "s1-dialog-complete.md",
+          "# Complete session dialog\n\n## Agent\n\nShall we start the heron plan?\n\n"
+          + refresh_common.session_dialog_extractor_sha256_last_line_build("0" * 64) + "\n")
+    own = run(root, "heron plan", "--kind", "session-dialogs", environment={"CLAUDE_CODE_SESSION_ID": "s1"})
+    check("after a compaction, a dialog hit of the running agent-session in a dialog another extractor wrote is "
+          "left out, since it cannot be placed before the compaction, and the closing line counts it",
+          "prime-intellect" not in own.stdout.split("Hits")[0].split("No hits")[0]
+          and "except 1 hit(s) that could not be dated" in own.stdout, own.stdout)
+    write(root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-prime-intellect" / "s1-dialog-complete.md",
           "# Complete session dialog\n\n## Agent\n\nShall we start the heron plan?\n")
     s1.write_text(s1_text)
     os.utime(s1, (epoch("2026-10-05"), epoch("2026-10-05")))
@@ -803,7 +828,7 @@ search.session_start = unreadable
 search.session_last_activity = lambda transcript: "2026-10-05T10:00:00Z"
 dialog = {str(root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-prime-intellect" / "s1-dialog-complete.md")!r}
 hit = {{"kind": "session-dialogs", "path": dialog, "machine": "ned-box",
-        "project_key": "-home-nedlern-agents-prime-intellect", "line": 1}}
+        "project_key": "-home-nedlern-agents-prime-intellect", "line": 1, "text": "# Complete session dialog"}}
 failures = []
 search.dated_file_hits([hit], Path({str(root)!r}), "", "", None, "2026-09-30", failures)
 print(failures)
