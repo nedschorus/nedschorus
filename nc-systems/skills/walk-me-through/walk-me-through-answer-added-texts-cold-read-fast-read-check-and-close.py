@@ -424,7 +424,10 @@ def the_open_walk(walk_finder, cwd):
     walk_directory = top / walk_finder.WALK_DIRECTORY
     walk = walk_finder.open_walk(walk_directory, parser) if walk_directory.is_dir() else None
     if walk is None:
-        raise Failure(f"no approval-walk is open in {walk_directory}.")
+        raise Failure(f"no approval-walk is open in {walk_directory}, or the open one is paused by a "
+                      f"`#approval_walk_paused` line in its minutes.\n"
+                      f"If the user has resumed a paused walk, add a `#next_to_present` line naming its waiting "
+                      f"item at the end of its minutes, then run this command again.")
     minutes, value, _ = walk
     return top, minutes, value, parser
 
