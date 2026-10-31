@@ -619,6 +619,17 @@ def run_agent_text_cases(fixture):
           [(entry["label"], entry["needs_user_approval"]) for entry in delta]
           == [("recovery_note = in IgnitionPlan.compose()", False)]
           and review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE not in text_plan, (delta, text_plan))
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file("nc-systems/handoff/added-prompt-program.py",
+                               'def compose(next_step):\n    prompt = f"added prompt: {next_step}"\n    return prompt\n\n\n'
+                               'def report(name):\n    line = f"added message: {name}"\n    print(line)\n')
+    head = fixture.commit_fixture_changes("added prompt program")
+    fixture.configure_github_answers(head, reviews=[[fixture_review(101, fixture.base_head)]])
+    entries = [entry for entry in fixture.read_review_plan()["agent_facing_text_whole_pull_request"]
+               if entry["path"] == "nc-systems/handoff/added-prompt-program.py"]
+    check("an added file's prompt built in a local name needs approval, and its printed message does not",
+          sorted((entry["label"], entry["needs_user_approval"]) for entry in entries)
+          == [("line = in report()", False), ("prompt = in compose()", True)], entries)
 
 
 def run_fast_read_command_cases(fixture):
