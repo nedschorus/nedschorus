@@ -55,11 +55,12 @@ dialog is written as a sibling file: the tail is the successor's working set,
 the companion is the conversation's history without the raw transcript's tool
 dumps.
 
-The session dialogs the log-store keeps for the past-discussion search are
-render_companion's text of complete_dialog_turns_and_report's turns, which
-scripts/log-store-session-dialogs-refresh-common.py writes. They are not the
-handoff's companion: in them, an agent paragraph identical to one the agent
-showed earlier in the session becomes one line, "(repeated: <its first eight
+The session dialogs the log-store keeps for the past-discussion search hold
+all of a session's turns, and scripts/log-store-session-dialogs-refresh-common.py
+writes them from the session's transcript with this file's renderer for the
+handoff's companion. They differ from the companion in one way: in them, an
+agent paragraph identical to one the agent showed earlier in the session
+becomes one line, "(repeated: <its first eight
 words> …)". A paragraph is text between blank lines. The first copy stays
 whole, and the user's and the subagent turns are never shortened. The
 handoff's own files keep every repeat, since a successor needs the current

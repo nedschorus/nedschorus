@@ -633,8 +633,8 @@ def refresh_changed_session_dialogs(root, failures):
         # A dialog written with another extractor would be stamped current and kept until the next extractor change.
         print(f"NOTE: {PROGRAM_FILE_NAME}'s dialog extractor or subagent tracker in {Path(__file__).resolve().parent} "
               f"is not the one {recorded_file} records, so the session dialogs were searched as they are, without "
-              f"writing again those whose transcripts changed, and their hits were dated by their sessions' last "
-              f"activity rather than by their turns; the dialogs refresher, "
+              f"writing again those whose transcripts changed, and every session-dialog hit was dated by its "
+              f"session's last activity rather than by its turn; the dialogs refresher, "
               f"scripts/log-store-session-dialogs-refresh-nbd.py, brings them up to date within 10 minutes.",
               file=sys.stderr)
         return False

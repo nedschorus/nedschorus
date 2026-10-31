@@ -308,6 +308,7 @@ with tempfile.TemporaryDirectory() as scratch:
         check(f"when {case}, the search writes no dialog, searches the dialogs as they are, and says so on stderr",
               finding.returncode == 0 and "as the refresher wrote it" in crane_dialog.read_text()
               and "so the session dialogs were searched as they are" in finding.stderr
+              and "every session-dialog hit was dated by its session's last activity" in finding.stderr
               and "as the refresher wrote it" in finding.stdout, finding.stdout + finding.stderr)
     record_extractor_digest(root)
 
