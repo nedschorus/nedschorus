@@ -38,9 +38,12 @@ with the design:
      refused the same way, before anything is copied: a record directory only
      gains files, so that store record is another read's, and adding this
      directory's files to it would file two reads under one name. Its one
-     line gives the `mv` to the first name, counted from the record's date,
-     free in the checkout and in the store, and the command that ships the
-     renamed directory. This is
+     line gives the `mv` to the first name free in the checkout and in the
+     store, and the command that ships the renamed directory. For a name
+     that ends in its date the -N is counted from the date, so a second
+     rename gives -3, not -2-2; any other name, such as a date-first
+     sanity-check record, keeps its whole name and gains the -N, because a
+     date-first name may end in digits of its own. This is
      judged on the inventory taken before the copy, not again in the placing
      step, for the reason NO LOCK gives below. The cold-read programs choose
      a record name free both in their checkout and in the store
@@ -1145,7 +1148,8 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     def rename_and_ship_instruction():
         names, unlisted = cold_read_record_directory_names_listed_from_log_store(
             host, records_path)
-        # The -N is counted from the date, so a second rename does not stack suffixes.
+        # Only a name that ends in its date loses its -N here: a date-first name
+        # such as 2026-10-25-item-19 may end in digits of its own.
         base = record_dir.with_name(re.sub(
             rf"({record_names.RECORD_DATE_PATTERN})-\d+$", r"\1", name))
         free = record_names.fresh_record_directory(
@@ -1156,7 +1160,7 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         return (f"Rename this directory with "
                 f"`mv {shlex.quote(str(record_dir))} {shlex.quote(str(free))}`, a name "
                 f"free {free_where}, then ship the renamed directory with "
-                f"`{sys.argv[0]} {shlex.quote(str(free))}`.")
+                f"`{shlex.join([sys.argv[0], str(free)])}`.")
 
     def refuse(differing_files):
         # The loop only gathers; the one print comes after it, so a

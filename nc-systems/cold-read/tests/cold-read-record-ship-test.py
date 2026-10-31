@@ -1692,6 +1692,32 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
     check("the rename of a directory not ending in a date is its whole name with -2",
           f"{names_records / '2026-10-26-dated-first-2'}`" in dated_first.stdout,
           dated_first.stdout)
+    # A date-first name may end in digits of its own, so its -2 is kept and
+    # the rename gains another -N.
+    (names_store / "2026-10-26-dated-first-2").mkdir()
+    (names_store / "2026-10-26-dated-first-2" / "other.md").write_text("x\n", encoding="utf-8")
+    dated_first_2_record = make_record(names_records, "2026-10-26-dated-first-2",
+                                       {"mine.md": "m\n"})
+    dated_first_2 = ship(str(names_store), str(dated_first_2_record))
+    check("the rename of a date-first directory ending in -2 is its whole name with -2",
+          f"`mv {dated_first_2_record} {names_records / '2026-10-26-dated-first-2-2'}`"
+          in dated_first_2.stdout, dated_first_2.stdout)
+
+    # The ship command the refusal gives runs from a path with a space in it.
+    spaced_program = "/home/someone/checkout with space/cold-read-record-ship.py"
+    real_program = sys.argv[0]
+    sys.argv[0] = spaced_program
+    spaced_stdout = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(spaced_stdout):
+            spaced_code = names_shipper.ship_one(None, names_store, plain_record)
+    finally:
+        sys.argv[0] = real_program
+    check("the refusal's ship command quotes a program path holding a space",
+          spaced_code == 2
+          and f"`'{spaced_program}' {names_records / 'plain-2026-10-26-2'}`."
+              in spaced_stdout.getvalue(),
+          spaced_stdout.getvalue())
 
     # A file in both copies with other bytes: the rename passes over the -2
     # the store already holds, as the refusal of another read's files does.
