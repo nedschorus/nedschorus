@@ -912,6 +912,23 @@ def rounds_on_one_head_cases(root, repository, base, frozen_head):
     check("2236: an earlier changes-requested review's stated count is checked against the later review "
           "that re-posts its Blocks", code == 0 and "Blocking findings (2)" in out, err + out)
 
+    commissioned = review(state="COMMENTED", review_id=20, commit_id=frozen_head, login="mac-claude",
+                          body="REQUEST_CHANGES")
+    grading = review(review_id=21, commit_id=frozen_head,
+                     body="merge-lane-2's graded review.\n\n**Blocking: 1**, the reviewer's inline Block.")
+    graded = {**routes_for(frozen_head, [commissioned, grading], comments=[BLOCKING_COMMENTS[0]],
+                           review_id=20), **comments_route(21, [])}
+    code, out, err = run(root, repository, graded)
+    check("a stated count in merge-lane-2's review with no marked comment of its own is checked against "
+          "the Blocks of the commissioned reviewer's review posted before it",
+          code == 0 and "Blocking findings (1)" in out and "hook.py swallows the error" in out, err + out)
+    overstated = dict(graded, **{REVIEWS: {"stdout": lines([commissioned, dict(
+        grading, body="merge-lane-2's graded review.\n\n**Blocking: 2**")])}})
+    code, out, err = run(root, repository, overstated)
+    check("a stated count that the round's other reviews' Blocks do not match is refused",
+          code == 1 and "says **Blocking: 2**" in err
+          and "1 of the inline comments of the round's other reviews" in err, err)
+
     first = review(review_id=21, commit_id=frozen_head, body="Round one.")
     second = review(review_id=22, commit_id=frozen_head, body="Round two: the finding still holds.")
     reviewer = review(state="COMMENTED", review_id=20, commit_id=frozen_head, login="mac-claude",
