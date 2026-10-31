@@ -35,7 +35,8 @@ main's unrelated files should not decide it.
 Rule 3: list changed agent-facing strings, with their context and old text.
 nc-systems/general-tools/python-source-agent-facing-string-collector-common.py
 decides which strings are agent-facing and which files are tests. Agent-facing
-strings are printed, written or raised strings; strings assigned to names
+strings are printed, written or raised strings, those a function returns
+when its call is printed or raised among them; strings assigned to names
 ending in _ADVICE, _INSTRUCTION, _LINE, _MESSAGE, _NOTICE, _REASON, _REFUSAL
 or _TEMPLATE, or in one of those followed by S, such as _MESSAGES; string
 values of a hook's agent-facing JSON output keys in a dict literal; and a
