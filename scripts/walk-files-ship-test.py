@@ -851,6 +851,8 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-") as part
     partial.shipper.link_staged_files_never_over_existing = placement_that_fails
     try:
         failed_code, failed_out, failed_err = ship_in_process()
+        staging_left_after_failed_placement = sorted(
+            path.name for path in partial_store.glob(".ship-staging-*"))
         partial.shipper.link_staged_files_never_over_existing = real_placement
         retry_code, retry_out, retry_err = ship_in_process()
     finally:
@@ -859,6 +861,11 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-") as part
           failed_code == 1 and failed_out.startswith("FAILED:")
           and (partial_store / f"{PARTIAL_WALK}-minutes.md").is_file(),
           f"exit {failed_code}: {failed_out}{failed_err}")
+    check("an add-only placement that fails removes this run's staging directory, "
+          "which would otherwise stop the next shipment",
+          not staging_left_after_failed_placement
+          and "a later run finishes it." in failed_out,
+          f"left in the store: {staging_left_after_failed_placement}; {failed_out}")
     check("the retry after that partial failure ships the rest",
           retry_code == 0 and retry_out.startswith("shipped:")
           and "already there unchanged" in retry_out,
@@ -1129,6 +1136,24 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
         left.shipper.replace_with_staged_files = real_left_renames
     check("renames that fail and a staging directory that cannot be removed is FAILED, "
           "exit 1, naming the directory and the command that deletes it",
+          code == 1 and "while putting the copied files in place." in out
+          and one_line(out) and names_the_directory_and_its_deletion(out, store)
+          and "a later run finishes it" not in out, f"exit {code}: {out}{err}")
+
+    # An add-only placement that fails, then a removal that fails.
+    walks, store, destination = left_walk_and_store("placement-failed")
+    real_left_placement = left.shipper.link_staged_files_never_over_existing
+
+    def placement_that_fails_left(copy_host, staging_dir, walk_path, names):
+        return subprocess.CompletedProcess([], 255, "", "injected: ssh exit 255\n"), None
+
+    left.shipper.link_staged_files_never_over_existing = placement_that_fails_left
+    try:
+        code, out, err = ship_left(walks, destination)
+    finally:
+        left.shipper.link_staged_files_never_over_existing = real_left_placement
+    check("an add-only placement that fails and a staging directory that cannot be "
+          "removed is FAILED, exit 1, naming the directory and the command that deletes it",
           code == 1 and "while putting the copied files in place." in out
           and one_line(out) and names_the_directory_and_its_deletion(out, store)
           and "a later run finishes it" not in out, f"exit {code}: {out}{err}")

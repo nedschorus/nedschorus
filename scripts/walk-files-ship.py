@@ -613,10 +613,17 @@ def ship_walk(destination: WalkStoreDestination, name: str,
                 destination.copy_host, staging_dir, destination.walk_path,
                 [source.name for source in to_place])
             if after is None:
+                why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
                 reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
                     destination.copy_host, placed)
-                print(f"FAILED: {name} — {reason} while putting the copied files "
-                      f"in place; a later run finishes it.")
+                if why:
+                    print(f"FAILED: {name} — {reason} while putting the copied files "
+                          f"in place. "
+                          f"{staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(destination.copy_host, staging_dir, why)} "
+                          f"Then a later run finishes the shipment.")
+                else:
+                    print(f"FAILED: {name} — {reason} while putting the copied files "
+                          f"in place; a later run finishes it.")
                 sys.stderr.write(placed.stderr)
                 return EXIT_FAILED
         else:
