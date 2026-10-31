@@ -95,6 +95,25 @@ def test_a_dry_run_proposes_each_line_the_old_reading_counted_and_changes_nothin
           and path.read_text() == MINUTES, described(result))
 
 
+def test_a_held_answer_whose_new_item_is_decided_takes_that_items_outcome():
+    for outcome in ("<accepted>", "<rejected>"):
+        word = "approved" if outcome == "<accepted>" else "disapproved"
+        text = ("# Minutes\n\nitem 6 of 29: answer held: item 6.1 of 30, raised by a fast-read finding, waits for the "
+                f"user's answer. <open>\nitem 6.1 of 30: {word}; every text the change adds has had a fast read. "
+                f"{outcome}\nitem 2 of 29: answer held: item 2.1 of 30, raised by a fast-read finding, waits for the "
+                "user's answer. <open>\n#next_to_present item 7 of 30\n")
+        path = minutes_file(f"held-{word}", text)
+        result = run("--minutes", str(path))
+        proposed = [line[len("  append: "):] for line in result.stdout.split("\n") if line.startswith("  append: ")]
+        check(f"a held item whose new item is {word} is proposed already decided, {outcome}, and one whose new item "
+              "is not decided gets nothing",
+              result.returncode == 0 and proposed == [
+                  "item 6 of 30: already decided by the user's answer to item 6.1 of 30, which the hand-written "
+                  "minutes line 3, \"item 6 of 29: answer held: item 6.1 of 30, raised by a fast-read finding, waits "
+                  "for the user's an...\" held its answer for; the walk does not come back to it. "
+                  f"{outcome}"], described(result))
+
+
 def test_a_skipped_line_proposes_nothing():
     path = minutes_file("skip")
     result = run("--minutes", str(path), "--skip", f"{path}:10", "--skip", f"{path}:8")

@@ -19,7 +19,12 @@ reading count it the same way:
   moved-on line instead;
 - a deferral becomes the close step's deferral line, or its second-deferral line
   when the item already has a deferral; a deferral of an item either reading
-  counts as decided is left alone, since the walk never names a decided item.
+  counts as decided is left alone, since the walk never names a decided item;
+- an item whose answer the close step held for a new item, which neither
+  reading counts as decided once that new item is decided, since the old close
+  left recording it to the agent, becomes the close step's already-decided line
+  citing the new item's answer, `<rejected>` when the close line deciding the
+  new item carries `<rejected>` and `<accepted>` otherwise.
 It also prints, as NOTE lines, each item the new reading counts as decided that
 the old one did not, since a hand-written `<revised, awaiting ruling>` line no
 longer undoes a decision; it proposes nothing for those.
@@ -88,6 +93,9 @@ MOVED_ON_TAG = "moved on, no decision"
 # Appended after the converted lines: the appended deferral lines carry no citation, so without it a second run
 # would read each hand-written deferral as unconverted and defer its item again.
 CONVERTED_MARKER = "#walk_minutes_hand_written_lines_converted"
+# The close step's held-answer line: the old close told the agent to record the new item's answer as the held
+# item's by hand, in a form neither reading reads.
+HELD_ANSWER = re.compile(r"^(items?\s[^:]*): answer held: (items?\s.+?), raised by a fast-read finding", re.I)
 
 
 def load_walk_me_through_check_program_module():
@@ -157,6 +165,22 @@ def proposed_line(program, item_text, index, line, moved_on=False):
         outcome=program.OUTCOMES[program.DISAPPROVED if rejected else program.APPROVED])
 
 
+def new_items_rejected(program, walk_finder, parser, text, new_items):
+    """Return whether the last line the close step wrote deciding any of new_items carries `<rejected>`."""
+    last = None
+    for line in walk_finder.prose_lines(text, parser):
+        match = program.PROGRAM_LINE_ITEMS.match(line)
+        if not match or not any(pattern.match(line[match.end():]) for pattern in program.DECIDING_LINES):
+            continue
+        try:
+            items, _ = walk_finder.parse_items(match[1])
+        except walk_finder.UnusableRange:
+            continue
+        if set(items) & set(new_items):
+            last = line
+    return last is not None and "<rejected>" in last
+
+
 def walk_total(walk_finder, text, parser):
     marker = walk_finder.next_to_present(text, parser)
     if marker is None:
@@ -219,6 +243,27 @@ def proposals(program, walk_finder, parser, text, skipped_lines, moved_on_lines=
             template = program.CLOSE_DEFERRED_AGAIN_MINUTES if recorded else program.CLOSE_DEFERRED_MINUTES
             recorded += 1
             found.append((index, line, item, template.format(item=item_text(item))))
+    proposed_items = {item for _, _, item, _ in found}
+    for index, line in enumerate(walk_finder.prose_lines(text, parser)):
+        held = HELD_ANSWER.match(line)
+        if not held or index + 1 in skipped_lines:
+            continue
+        try:
+            held_items, _ = walk_finder.parse_items(held[1])
+            new_items, _ = walk_finder.parse_items(held[2])
+        except walk_finder.UnusableRange:
+            continue
+        if not set(new_items) <= new_decided:
+            continue
+        outcome = program.OUTCOMES[program.DISAPPROVED if new_items_rejected(program, walk_finder, parser, text,
+                                                                              new_items) else program.APPROVED]
+        for item in held_items:
+            if item in new_decided or item in proposed_items or item in decided_by:
+                continue
+            proposed_items.add(item)
+            found.append((index, line, item, program.CLOSE_ALREADY_DECIDED_MINUTES.format(
+                item=item_text(item), outcome=outcome,
+                ruling=f"the user's answer to {held[2]}, which {citation(index, line)} held its answer for")))
     for item in sorted(new_decided - set(decided_by)):
         notes.append(f"NOTE: item {item} reads as decided now but not in the old reading, which a later "
                      f"`<revised, awaiting ruling>` line or an unread close line explains; nothing is proposed.")
