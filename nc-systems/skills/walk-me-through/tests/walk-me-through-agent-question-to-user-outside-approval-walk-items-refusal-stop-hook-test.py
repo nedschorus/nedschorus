@@ -781,6 +781,13 @@ def test_the_closing_line_and_the_item_ending_are_the_walk_skills():
     ending = "end it with the recommendation stated as an action"
     check("refusal step 1 ends the new item as SKILL.md's section \"Each item\" says",
           ending in skill and ending in hook.REFUSAL_INSTRUCTIONS[1], hook.REFUSAL_INSTRUCTIONS[1])
+    check("refusal step 1 and SKILL.md's section \"Each item\" both open the alternative with \"The alternative:\"",
+          "as in `The alternative: " in hook.REFUSAL_INSTRUCTIONS[1]
+          and "State the alternative just before the recommendation, as in \"The alternative: " in skill,
+          hook.REFUSAL_INSTRUCTIONS[1])
+    check("SKILL.md's Style paragraph puts the strongest case against just before the alternative, where \"Each item\" "
+          "puts the alternative", "Just before the alternative, state the strongest case against the recommendation"
+          in skill)
 
 
 SUB_STEP_2_1_NO_DECISION_CLOSING_LINE = "[No decision here; type N or next to continue.](https://claude.ai/artifact/p21)"
