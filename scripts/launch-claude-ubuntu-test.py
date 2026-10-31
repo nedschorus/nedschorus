@@ -280,6 +280,26 @@ class LaunchHarness:
             'case "${1:-}" in (*' + UPDATE_LOCK_HELPER_NAME + ')', 1),
             encoding="utf-8")
 
+    def github_token_check_runs_the_real_supervisor(self, token_file_accounts=()):
+        """Hand the supervisor's GitHub token check to the real interpreter and
+        the real supervisor, linked into the sandbox HOME's checkout path, so
+        the case measures the refusal the supervisor itself prints.
+        token_file_accounts names the accounts given a token file."""
+        (self.home / "Projects" / "nedschorus" / "nc-systems").symlink_to(
+            LAUNCHER.resolve().parent.parent / "nc-systems")
+        token_directory = self.home / ".config" / "nedschorus"
+        for account in token_file_accounts:
+            token_directory.mkdir(parents=True, exist_ok=True)
+            (token_directory / f"{account}.token").write_text(
+                "stand-in-token\n", encoding="utf-8")
+        python3 = self.stubs / "python3"
+        python3.write_text(python3.read_text(encoding="utf-8").replace(
+            'case "${1:-}" in (*' + UPDATE_LOCK_HELPER_NAME + ')',
+            'case " $* " in (*" --agent-seat-github-token-file-readable-check-only "*) '
+            f'exec "{sys.executable}" "$@";; esac\n'
+            'case "${1:-}" in (*' + UPDATE_LOCK_HELPER_NAME + ')', 1),
+            encoding="utf-8")
+
     def run(self, launcher_arguments, mac_environment_agents_root=None,
             extra_arguments=None, seat_github_account=None,
             term_program=None, stdout_on_terminal=False):
@@ -866,6 +886,31 @@ def main() -> int:
                result["launched"].stderr[:300]))
         check("account override: nothing was sent to the box",
               result["remote"] == "", result["remote"][:200])
+
+        # --- 14. a detached pane closes when the supervisor exits, so the
+        # launch itself must run the supervisor's GitHub token check before
+        # it creates the tmux session, and report its refusal and exit 5.
+        harness = LaunchHarness(root / "no-attach-missing-github-token-file")
+        harness.github_token_check_runs_the_real_supervisor()
+        result = harness.run(["seat-r5", "--no-attach"])
+        check("missing token file: a detached launch exits 5 with the supervisor's refusal",
+              result["replay"].returncode == 5
+              and "handoff-supervisor: the agent-seat seat-r5 was not started, because the token file"
+              in result["replay"].stderr
+              and "does not exist" in result["replay"].stderr,
+              (result["replay"].returncode, result["replay"].stderr[-600:]))
+        check("missing token file: no tmux session was created",
+              result["tmux_argv"] == "", result["tmux_argv"][:200])
+        harness = LaunchHarness(root / "no-attach-github-token-file-present")
+        # Both machine accounts, because the supervisor picks one by hostname.
+        harness.github_token_check_runs_the_real_supervisor(
+            token_file_accounts=("ubuntu-claude", "mac-claude"))
+        result = harness.run(["seat-r6", "--no-attach"])
+        check("token file present: the detached launch goes on to create the tmux session",
+              result["replay"].returncode == 0
+              and "new-session" in result["tmux_argv"]
+              and "was not started" not in result["replay"].stderr,
+              (result["replay"].returncode, result["replay"].stderr[-600:]))
 
         # --help alone prints the usage and exits 0 before any side effect.
         harness = LaunchHarness(root / "help-option-alone")
