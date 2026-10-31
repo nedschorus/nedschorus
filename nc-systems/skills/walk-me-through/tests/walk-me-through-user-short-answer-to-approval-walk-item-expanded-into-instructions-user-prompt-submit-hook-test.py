@@ -9,6 +9,7 @@ scratch checkout this suite made. The exit code is asserted on every case.
 
 import importlib.util
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -141,7 +142,35 @@ class Case:
                 or set(specific) != {"hookEventName", "additionalContext"}):
             return None
         context = specific["additionalContext"].replace(str(self.walk / f"{WALK_NAME}-minutes.md"), "<minutes>")
-        return OutputLines(context.split("\n"))
+        lines = context.split("\n")
+        # Most cases compare the answer's lines alone; the reply line every walk answer ends with is checked here.
+        if lines[-1].startswith(USER_REPLY_LINE_OPENING):
+            expected = USER_REPLY_LINE.format(reply=shlex.quote(" ".join(prompt.split())))
+            check(f"{prompt!r} ends with the line giving check its reply", lines[-1] == expected,
+                  f"{lines[-1]!r} != {expected!r}")
+            lines = lines[:-1]
+        return OutputLines(lines)
+
+
+USER_REPLY_LINE = (
+    "If you run the check step for this answer, give each run `--user-reply-as-typed {reply}`, the user's reply "
+    "as he typed it, which check writes into the minutes beside the answer it counts as.")
+USER_REPLY_LINE_OPENING = USER_REPLY_LINE.split("{")[0]
+
+
+def test_a_walk_answer_ends_with_the_reply_quoted_for_check_and_none_does_without_a_walk():
+    case = Case(next_to_present="item 4 of 9")
+    for prompt, quoted in (("a", "a"), ("A, but it's \"small\"\n now", "'A, but it'\"'\"'s \"small\" now'")):
+        result = case.run(prompt)
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"] if result.stdout else ""
+        check(f"{prompt!r} on an open approval-walk ends with the --user-reply-as-typed line, the reply squeezed "
+              "and quoted for the shell",
+              result.returncode == 0 and context.split("\n")[-1] == USER_REPLY_LINE.format(reply=quoted),
+              f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+    result = Case().run("a")
+    check("an answer with no approval-walk open gets no --user-reply-as-typed line",
+          result.returncode == 0 and result.stdout and "--user-reply-as-typed" not in result.stdout,
+          f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 
 def unknown_line(item, problem, letter):
@@ -1257,9 +1286,16 @@ def test_named_programs_exist():
                                 "<that file>`, and apply the findings that hold." in lines[2], f"lines {lines!r}")
 
 
+def reply_arguments(case, prompt):
+    """The --user-reply-as-typed flag and its value from the last line the hook gives for the prompt."""
+    context = json.loads(case.run(prompt).stdout)["hookSpecificOutput"]["additionalContext"]
+    return shlex.split(context.split("\n")[-1].split("`")[1])
+
+
 def test_each_check_command_the_hook_names_runs_on_the_real_program():
-    """The command is run as the hook prints it, plus --counts-log, so no test line reaches the log-store.
-    Item 3 has no `#new` line, so no fast read, and no model, is called."""
+    """The command is run as the hook prints it, with the reply flag its last line gives, plus --counts-log,
+    so no test line reaches the log-store. Item 3 has no `#new` line, so no fast read, and no model, is
+    called."""
     for prompt, word in (("a", "approved #case_against_none ("), ("ao", "approved #approved_obvious #case_against_none ("),
                          ("aa", "approved #approved_after_advisor #case_against_none ("),
                          ("o2", "approved option 2 #case_against_none ("), ("o3", "approved option 3 #case_against_none (")):
@@ -1269,17 +1305,20 @@ def test_each_check_command_the_hook_names_runs_on_the_real_program():
         if not commands:
             check(f"the hook names a check command for {prompt!r}", False, f"lines {lines!r}")
             continue
-        result = subprocess.run(commands[0].split() + ["--counts-log", str(case.checkout.parent / "counts.tsv")],
+        result = subprocess.run(commands[0].split() + reply_arguments(case, prompt)
+                                + ["--counts-log", str(case.checkout.parent / "counts.tsv")],
                                 capture_output=True, text=True, cwd=case.checkout)
         minutes = (case.walk / f"{WALK_NAME}-minutes.md").read_text()
-        check(f"the check command the hook names for {prompt!r} runs and records the answer",
+        check(f"the check command the hook names for {prompt!r} runs and records the answer and his reply",
               result.returncode == 0 and result.stdout.startswith("no proposed text marked")
-              and f"item 3 of 9: the user answered {word}" in minutes,
+              and f"item 3 of 9: the user answered {word}" in minutes
+              and f') in his words "{prompt}", which makes its change.' in minutes,
               f"command {commands[0]!r}, exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
     case = Case(next_to_present="item 3 of 9")
     lines = case.lines("d") or []
     commands = [line.split("`")[1] for line in lines if "`python3 " in line and " check" in line]
-    result = subprocess.run((commands or ["false"])[0].split() + ["--counts-log", str(case.checkout.parent / "c.tsv")],
+    result = subprocess.run((commands or ["false"])[0].split() + reply_arguments(case, "d")
+                            + ["--counts-log", str(case.checkout.parent / "c.tsv")],
                             capture_output=True, text=True, cwd=case.checkout)
     check("the check command the hook names for 'd' runs and records the answer as disapproved",
           result.returncode == 0 and "item 3 of 9: the user answered disapproved #case_against_none ("
@@ -1287,7 +1326,7 @@ def test_each_check_command_the_hook_names_runs_on_the_real_program():
     # Z's text names the check step and its flag, not the whole command.
     case = Case(next_to_present="item 3 of 9")
     lines = case.lines("z") or []
-    result = subprocess.run(CHECK.strip("`").split() + ["--deferred"],
+    result = subprocess.run(CHECK.strip("`").split() + ["--deferred"] + reply_arguments(case, "z"),
                             capture_output=True, text=True, cwd=case.checkout)
     check("Z's text names --deferred, and the check step run with it records the answer as deferred",
           any("--deferred" in line for line in lines) and result.returncode == 0
