@@ -27,10 +27,12 @@ The five paths are built from the name, never found by a glob of
 docs/walk/<name>*, because one walk's name can be a prefix of another's; a
 glob of <name>-*.md is used only for the stderr note below. A walk lacking its walk
 text or its minutes is not shippable (exit 64). A missing draft or suggestions
-file is noted on stderr and the rest ships. Dispositions ships when present.
-Other files that begin with the walk's name are noted on stderr and not
-shipped; they are either another walk's or a file none of the five roles
-covers.
+file is noted on stderr and the rest ships. Dispositions ships when present,
+and its absence is not noted.
+Every other file in the walk's directory whose name is the walk's name, a
+hyphen, anything, then .md -- what the glob <name>-*.md matches -- is noted on
+stderr and not shipped; it is either another walk's or a file none of the five
+roles covers.
 
 In the store, and only there, the walk text can also have revised copies,
 <name>-revised-<n>.md, which REVISED COPIES below describes.
@@ -47,7 +49,8 @@ closes, not only a record kept as first written. The rules are PER FILE:
     already there with DIFFERENT bytes is refused BY NAME -- the one stdout line
     opens REFUSED:, names each such file with the store's sha256 and the local
     one, and the exit is 2 -- while the other files still ship. The record
-    shipper refuses a whole record before copying anything. A walk differs
+    shipper, nc-systems/cold-read/cold-read-record-ship.py (see WHAT THIS
+    IS), refuses a whole record before copying anything. A walk differs
     because the walk-me-through skill runs this program again whenever a
     walk is reopened and closed, and a reopened walk that re-planned has a
     changed walk text; a whole-walk refusal would then never deliver the one
@@ -57,7 +60,7 @@ closes, not only a record kept as first written. The rules are PER FILE:
     draft and suggestions have none.
   APPENDED TO: the walk text, and it alone. A stored walk text whose bytes
     are an exact PREFIX of the local one -- the local file only had content
-    added after it -- is replaced instead of refused. A walk text grows as
+    added after the stored bytes -- is replaced instead of refused. A walk text grows as
     its items are presented, so a shipment before the close, which WHO CALLS
     IT allows, followed by the close's own is ordinary; refusing the grown
     file would leave the store holding only the items presented before the
@@ -146,29 +149,29 @@ walk exists, and the line is FAILED naming it (see NO LOCK; A CHECK INSTEAD
 in the record shipper's replace_with_staged_files).
 
 A LEFTOVER STAGING DIRECTORY. A shipment that is killed, or loses ned-box
-partway, can leave its staging directory behind; nothing removes it later.
+partway, can leave its staging directory behind; nothing removes it later. A
+shipment that cannot remove its own staging directory says so: its line is
+FAILED, exit 1, naming the directory and the command that deletes it.
 Only the replace step looks for another staging directory, and it runs
 whenever the minutes or the dispositions differ from the store's copy or
 are not in the store yet, or the walk text was only added to. So a leftover
 one stops nearly every later shipment of that walk, with the FAILED line
 above; a shipment whose minutes, dispositions and walk text the store
 already holds unchanged does not look, and is not stopped. The stderr line
-printed with it says what to do: when no other shipment of the walk is
-running, which `pgrep -af walk-files-ship` on both machines shows, delete
+printed with that FAILED line says what to do: when no other shipment of the walk is
+running, which `pgrep -lf walk-files-ship` on both machines shows, delete
 the directory the FAILED line names and run this program again. The
-directory is on ned-box, so from the Mac delete it with
+directory is on ned-box: there delete it with
+`rm -rf -- <the path the FAILED line names>`, and from the Mac with
 `ssh nedlern@ned-box 'rm -rf -- <the path the FAILED line names>'`.
 
-The minutes' citation at the end of the stdout line is the minutes' still,
-never the dispositions': the minutes are the record of the rulings and what a
-resumed walk reads.
-
 WHO CALLS IT. The agent running a walk, when the walk's closing sentence is
-delivered, and again if the walk is reopened and closed. It may also run
-it before the close, such as before a handoff, so that the store holds the
-walk so far; the close's run then ships the grown files. The stdout line
-ends with the minutes' citation in scp form, which is the link that closing
-sentence wants; OUTPUT says which FAILED lines carry no citation.
+delivered, and again if the walk is reopened and closed. The agent may also
+run this program before the close, such as before a handoff, so that the
+store holds the walk so far; the close's run then ships the grown files. The
+stdout line ends with the minutes' citation in scp form, which the closing
+sentence turns into its link to the walk-minutes; OUTPUT says which FAILED
+lines carry no citation.
 
 WHAT THIS IS: the THIRD CALLER of nc-systems/cold-read/cold-read-record-ship.py, imported by
 importlib the way scripts/seat-shared-file-ship.py and
@@ -184,18 +187,29 @@ OUTPUT. Exactly one line on stdout, opening `shipped:`, `REFUSED:` or
 citation whenever the shipment judged every file: `shipped:`, even when
 nothing was copied because every file was already there with the same
 bytes; `REFUSED:`; and the `FAILED:` line that names files not holding this
-shipment's bytes. A `FAILED:` line that stops the shipment before then says what stopped the shipment and carries no citation:
+shipment's bytes, or this run's staging directory left behind after the files
+were placed. A `FAILED:` line that stops the shipment before then says what stopped the shipment and carries no citation:
 a bad invocation, a store that could not be reached, prepared or listed, a
 copy or placing step that failed, another staging directory, or ssh or rsync
-that could not be started.
+that could not be started. A FAILED line for a copy or placing step that
+failed ends with the command that reruns the shipment. That line, and the one
+for another staging directory, also names this run's own staging directory
+when it could not be removed, with the command that deletes it, which loses
+nothing and is to be run before the rerun. A
+walk that cannot be shipped is a FAILED line naming the missing files.
+The citation is always the minutes', never the dispositions': the minutes
+are the record of the rulings and what a resumed walk reads.
 
 Exit 0 when every file shipped or was already there; 2 when an add-only file
 was refused, which for the walk text happens only when another shipment
-changed the store while this one ran; 1 when the store could not be reached or written, or a file does
-not hold this shipment's bytes after the copy; 64 for a bad invocation. When
+changed the store while this one ran; 1 when the store could not be reached or written, a file does
+not hold this shipment's bytes after the copy, another staging directory for
+the walk stopped the replace step, or this run's staging directory could not
+be removed; 64 for a bad invocation, which is a missing,
+extra or unknown argument as well as a walk that cannot be shipped. When
 both 1 and 2 apply, 1 wins and the line opens `FAILED:`. A `FAILED:` line
-that names files not holding this shipment's bytes lists the refused files
-after them; an earlier `FAILED:` line names no refused file.
+that carries the citation lists the refused files after what failed; an
+earlier `FAILED:` line names no refused file.
 
 THE DESTINATION is the record shipper's one constant with the kind swapped to
 `walk/`. Its environment override, COLD_READ_RECORD_SHIP_DESTINATION, moves this
@@ -539,6 +553,40 @@ APPENDED_TO_RULING = (
     "md-skills-seat-questions-and-concerns-2026-09-21).")
 
 
+def staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(copy_host, staging_dir, why: str) -> str:
+    """What a FAILED line says when remove_staging_directory could not remove
+    this run's staging directory: the replace step of every later shipment of
+    the walk stops on it until it is deleted."""
+    shown = f"{copy_host}:{staging_dir}" if copy_host else str(staging_dir)
+    command = f"rm -rf -- {shlex.quote(str(staging_dir))}"
+    if copy_host:
+        command = f"ssh {copy_host} {shlex.quote(command)}"
+    return (f"This run's staging directory {shown} is left behind: removing it "
+            f"failed ({why}). Until it is deleted it stops nearly every later "
+            f"shipment of this walk. Deleting it loses nothing, because every "
+            f"shipment copies the walk's files again into a new staging directory "
+            f"of its own; delete it with `{command}`.")
+
+
+def stopped_shipment_failed_line_with_rerun_command(copy_host, name: str,
+                                                    directory: pathlib.Path,
+                                                    staging_dir, what_failed: str,
+                                                    why: typing.Optional[str]) -> str:
+    """The FAILED line of a copy or placing step that failed: it ends with the
+    command that reruns this shipment, after the deletion of this run's
+    staging directory when that could not be removed, since the rerun's
+    replace step would stop on it."""
+    walk_argument = (name if directory == WALK_DIRECTORY
+                     else str(directory / walk_file_name(name, MINUTES_ROLE_SUFFIX)))
+    rerun = (f"{shlex.quote(str(REPO_ROOT / 'scripts' / 'walk-files-ship.py'))} "
+             f"{shlex.quote(walk_argument)}")
+    if why:
+        return (f"FAILED: {name} — {what_failed}. "
+                f"{staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(copy_host, staging_dir, why)} "
+                f"Then rerun: `{rerun}`")
+    return f"FAILED: {name} — {what_failed}. Rerun: `{rerun}`"
+
+
 def ship_walk(destination: WalkStoreDestination, name: str,
               directory: pathlib.Path) -> int:
     """One walk, one stdout line, one exit code. A new revised copy of the
@@ -666,6 +714,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
     # puts the walk text before the minutes and the minutes before the
     # dispositions. `lost` names a file whose copy is not what the store holds.
     added, replaced, lost = set(), [], []
+    staging_left_behind = None
     if to_place or to_replace:
         staging_dir = destination.walk_path / (
             f"{shipper.STAGING_DIRECTORY_PREFIX}{name}-{secrets.token_hex(6)}")
@@ -673,11 +722,13 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                              to_place + [planned.source for planned in to_replace],
                              staging_dir)
         if copied.returncode != 0:
-            shipper.remove_staging_directory(destination.copy_host, staging_dir)
+            why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
             reason = ("ned-box unreachable"
                       if copied.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED
                       else f"rsync exit {copied.returncode}")
-            print(f"FAILED: {name} — {reason} during the copy; a later run finishes it.")
+            print(stopped_shipment_failed_line_with_rerun_command(
+                destination.copy_host, name, directory, staging_dir,
+                f"{reason} during the copy", why))
             sys.stderr.write(copied.stderr)
             return EXIT_FAILED
         outcomes = {}
@@ -688,17 +739,21 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                   planned.must_be_absent_name)
                  for planned in to_replace])
             if isinstance(outcomes, shipper.OtherShipmentStaging):
-                shipper.remove_staging_directory(destination.copy_host, staging_dir)
+                why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
                 failed, instruction = shipper.other_shipment_failure_lines(name, outcomes)
+                if why:
+                    failed += " " + staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(
+                        destination.copy_host, staging_dir, why)
                 print(failed)
                 sys.stderr.write(instruction + "\n")
                 return EXIT_FAILED
             if outcomes is None:
-                shipper.remove_staging_directory(destination.copy_host, staging_dir)
+                why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
                 reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
                     destination.copy_host, renamed)
-                print(f"FAILED: {name} — {reason} while putting the copied files "
-                      f"in place; a later run finishes it.")
+                print(stopped_shipment_failed_line_with_rerun_command(
+                    destination.copy_host, name, directory, staging_dir,
+                    f"{reason} while putting the copied files in place", why))
                 sys.stderr.write(renamed.stderr)
                 return EXIT_FAILED
         for planned in to_replace:
@@ -733,14 +788,19 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                 destination.copy_host, staging_dir, destination.walk_path,
                 [source.name for source in to_place])
             if after is None:
+                why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
                 reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
                     destination.copy_host, placed)
-                print(f"FAILED: {name} — {reason} while putting the copied files "
-                      f"in place; a later run finishes it.")
+                print(stopped_shipment_failed_line_with_rerun_command(
+                    destination.copy_host, name, directory, staging_dir,
+                    f"{reason} while putting the copied files in place", why))
                 sys.stderr.write(placed.stderr)
                 return EXIT_FAILED
         else:
-            shipper.remove_staging_directory(destination.copy_host, staging_dir)
+            why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
+            if why:
+                staging_left_behind = staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(
+                    destination.copy_host, staging_dir, why)
         for source in to_place:
             in_store_now = after.get(source.name)
             if in_store_now == local_digests[source.name]:
@@ -781,11 +841,18 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
     if unchanged:
         parts.append(f"{len(unchanged)} already there unchanged")
     summary = "; ".join(parts) if parts else "nothing to copy"
-    if lost:
-        refused_too = (f" Refused, add-only: {'; '.join(refused)}." if refused else "")
-        print(f"FAILED: {name} — not in the store as this run copied them: "
-              f"{'; '.join(lost)}.{refused_too} Ship the walk again only from the "
-              f"checkout whose copy the store should keep. The rest: {summary}; "
+    if lost or staging_left_behind:
+        sentences = []
+        if lost:
+            sentences.append(f"not in the store as this run copied them: {'; '.join(lost)}.")
+        if staging_left_behind:
+            sentences.append(staging_left_behind)
+        if refused:
+            sentences.append(f"Refused, add-only: {'; '.join(refused)}.")
+        if lost:
+            sentences.append("Ship the walk again only from the checkout whose copy "
+                             "the store should keep.")
+        print(f"FAILED: {name} — {' '.join(sentences)} The rest: {summary}; "
               f"minutes at {citation}")
         return EXIT_FAILED
     if refused:
@@ -797,8 +864,17 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
     return EXIT_SHIPPED
 
 
+class FailedLineArgumentParser(argparse.ArgumentParser):
+    """argparse's own error() prints usage on stderr and exits 2; OUTPUT
+    promises one FAILED line on stdout and exit 64 for a bad invocation."""
+
+    def error(self, message):
+        print(f"FAILED: bad invocation — {message}; {self.format_usage().strip()}")
+        sys.exit(EXIT_BAD_INVOCATION)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(
+    parser = FailedLineArgumentParser(
         prog=PROGRAM, description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("walk", help="the walk's name (its files are under docs/walk/), "

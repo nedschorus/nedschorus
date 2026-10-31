@@ -13,6 +13,7 @@ import datetime
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -307,6 +308,7 @@ with tempfile.TemporaryDirectory() as scratch:
         check(f"when {case}, the search writes no dialog, searches the dialogs as they are, and says so on stderr",
               finding.returncode == 0 and "as the refresher wrote it" in crane_dialog.read_text()
               and "so the session dialogs were searched as they are" in finding.stderr
+              and "every session-dialog hit was dated by its session's last activity" in finding.stderr
               and "as the refresher wrote it" in finding.stdout, finding.stdout + finding.stderr)
     record_extractor_digest(root)
 
@@ -346,10 +348,11 @@ def load_extractor():
     return extractor, digest, (search.refresh_common.SUBAGENT_TRACKER_PATHS[0], PermissionError("denied"))
 """)
     check("when the subagent tracker's file cannot be read, no dialog is written, a FAILED line names the file, "
-          "and the search exits 2",
+          "the hits are dated by their sessions' last activity, and the search exits 2",
           unreadable_tracker.returncode == 2 and "as the refresher wrote it" in crane_dialog.read_text()
           and "FAILED: could not read the subagent tracker's file" in unreadable_tracker.stderr
-          and "PermissionError: denied" in unreadable_tracker.stderr,
+          and "PermissionError: denied" in unreadable_tracker.stderr
+          and "may not be the one that wrote the dialog" in unreadable_tracker.stdout,
           unreadable_tracker.stdout + unreadable_tracker.stderr)
     digest_file = root / "session-dialogs" / refresh_common.EXTRACTOR_SHA256_FILE_NAME
     if os.geteuid() == 0:
@@ -359,9 +362,11 @@ def load_extractor():
         finding = run(root, "crane plan", "--kind", "session-dialogs", dialogs_current=False,
                       extractor_digest_recorded=False)
         digest_file.chmod(0o644)
-        check("a recorded digest that cannot be read is a FAILED line, no dialog is written, and the search exits 2",
+        check("a recorded digest that cannot be read is a FAILED line, no dialog is written, the hits are dated "
+              "by their sessions' last activity, and the search exits 2",
               finding.returncode == 2 and f"FAILED: could not read {digest_file}" in finding.stderr
-              and "as the refresher wrote it" in crane_dialog.read_text(), finding.stdout + finding.stderr)
+              and "as the refresher wrote it" in crane_dialog.read_text()
+              and "may not be the one that wrote the dialog" in finding.stdout, finding.stdout + finding.stderr)
 
     crane_transcript.chmod(0)
     finding = run(root, "crane plan", "--kind", "session-dialogs", dialogs_current=False)
@@ -404,6 +409,37 @@ def load_extractor():
           and "last activity" not in finding.stdout, finding.stdout + finding.stderr)
     grebe_dialog.unlink()
     grebe_transcript.unlink()
+
+    # The dialog on disk was written by an extractor that kept every repeat, which this checkout's does not.
+    plover_paragraph = "The plover paragraph, shown again."
+    plover_key = "-home-nedlern-agents-plover"
+    plover_transcript = write(
+        root / "agent-session-files-by-machine" / "ned-box" / "projects" / plover_key / "s25.jsonl",
+        transcript_records(agent(plover_paragraph, "2026-09-01T08:00:00Z"),
+                           agent(plover_paragraph, "2026-09-02T08:00:00Z"),
+                           typed(plover_paragraph, "2026-09-03T08:00:00Z")))
+    plover_dialog = root / "session-dialogs" / "ned-box" / plover_key / "s25-dialog-complete.md"
+    write(plover_dialog, subprocess.run([sys.executable, "-c", f"""
+import importlib.util, pathlib
+spec = importlib.util.spec_from_file_location("x", {str(PROGRAM.with_name("handoff-extract-conversation.py"))!r})
+x = importlib.util.module_from_spec(spec); spec.loader.exec_module(x)
+transcript = pathlib.Path({str(plover_transcript)!r})
+turns, _ = x.read_dialog_turns(transcript, include_subagent_tasks_and_reports=True)
+print(x.render_companion(turns, x.complete_dialog_turns_and_report(transcript)[1]), end="")
+"""], capture_output=True, text=True, check=True).stdout)
+    check("the plover dialog stands for one an earlier extractor wrote, keeping every repeat",
+          plover_dialog.read_text().count(plover_paragraph) == 3, plover_dialog.read_text())
+    record_extractor_digest(root, "0" * 64)
+    finding = run(root, "plover paragraph", "--kind", "session-dialogs", extractor_digest_recorded=False)
+    check("when another extractor's digest is recorded, no session-dialog hit is dated by a turn this checkout's "
+          "extractor would place it in; each is dated by its session's last activity and says why",
+          finding.returncode == 0
+          and len(re.findall(r"^2026-09-03T08:00:00Z \(session's last activity: [^)]*may not be the one that wrote "
+                             r"the dialog[^)]*\)  session-dialogs  ned-box  plover$", finding.stdout, re.M)) == 3,
+          finding.stdout + finding.stderr)
+    record_extractor_digest(root)
+    plover_dialog.unlink()
+    plover_transcript.unlink()
 
     probe = subprocess.run([sys.executable, "-c", f"""
 import importlib.util
@@ -463,7 +499,7 @@ sys.exit(search.main(["start the heron plan", "--kind", "session-dialogs", "--jo
 import importlib.util, pathlib
 spec = importlib.util.spec_from_file_location("x", {str(PROGRAM.with_name("handoff-extract-conversation.py"))!r})
 x = importlib.util.module_from_spec(spec); spec.loader.exec_module(x)
-print(x.render_complete_dialog_of_transcript_as_markdown(pathlib.Path({str(egret_transcript)!r})), end="")
+print(x.render_companion(*x.complete_dialog_turns_and_report(pathlib.Path({str(egret_transcript)!r}))), end="")
 """], capture_output=True, text=True).stdout
     egret_dialog.write_text(quoted)
     finding = run(root, "stork plan", "--kind", "session-dialogs")

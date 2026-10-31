@@ -402,6 +402,15 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           result.returncode == 0 and result.stdout.startswith(f"shipped: {suffixed} "),
           result.stdout + result.stderr)
 
+    for label, arguments in (("no argument", ()),
+                             ("two arguments", (str(walk_text), str(walk_text))),
+                             ("an unknown option", ("--no-such-option", str(walk_text)))):
+        result = ship(local_destination, *arguments)
+        check(f"a bad invocation, {label}, is one FAILED line on stdout and exit 64, "
+              f"as OUTPUT promises, not argparse's exit 2",
+              result.returncode == 64 and result.stdout.startswith("FAILED: bad invocation")
+              and one_line(result.stdout), f"exit {result.returncode}: {result.stdout}{result.stderr}")
+
     # --- Missing files ------------------------------------------------------
     partial = "partial-walk"
     write_walk(walks, partial, {"": "# walk\n"})
@@ -981,7 +990,11 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-") as part
     real_placement = partial.shipper.link_staged_files_never_over_existing
 
     def placement_that_fails(copy_host, staging_dir, walk_path, names):
-        return subprocess.CompletedProcess([], 255, "", "injected: ssh exit 255\n"), None
+        return subprocess.CompletedProcess([], 255, "Disk quota exceeded (injected)", "injected: ssh exit 255\n"), None
+
+    def rerun_sentence(module, walks, walk):
+        return (f"`{module.REPO_ROOT}/scripts/walk-files-ship.py "
+                f"{walks}/{walk}-minutes.md`")
 
     def ship_in_process():
         # An injected OSError that escapes ship_walk fails the calling case by
@@ -999,6 +1012,8 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-") as part
     partial.shipper.link_staged_files_never_over_existing = placement_that_fails
     try:
         failed_code, failed_out, failed_err = ship_in_process()
+        staging_left_after_failed_placement = sorted(
+            path.name for path in partial_store.glob(".ship-staging-*"))
         partial.shipper.link_staged_files_never_over_existing = real_placement
         retry_code, retry_out, retry_err = ship_in_process()
     finally:
@@ -1007,6 +1022,13 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-") as part
           failed_code == 1 and failed_out.startswith("FAILED:")
           and (partial_store / f"{PARTIAL_WALK}-minutes.md").is_file(),
           f"exit {failed_code}: {failed_out}{failed_err}")
+    check("an add-only placement that fails removes this run's staging directory, "
+          "which would otherwise stop the next shipment",
+          not staging_left_after_failed_placement
+          and failed_out == (f"FAILED: {PARTIAL_WALK} — Disk quota exceeded (injected) "
+                             f"while putting the copied files in place. Rerun: "
+                             f"{rerun_sentence(partial, partial_walks, PARTIAL_WALK)}\n"),
+          f"left in the store: {staging_left_after_failed_placement}; {failed_out}")
     check("the retry after that partial failure ships the rest",
           retry_code == 0 and retry_out.startswith("shipped:")
           and "already there unchanged" in retry_out,
@@ -1026,7 +1048,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-") as part
     def renames_that_fail_after_the_minutes(copy_host, staging_dir, walk_path, files):
         os.replace(pathlib.Path(staging_dir) / minutes_file_name,
                    pathlib.Path(walk_path) / minutes_file_name)
-        return subprocess.CompletedProcess([], 255, "", "injected: ssh exit 255\n"), None
+        return subprocess.CompletedProcess([], 255, "Disk quota exceeded (injected)", "injected: ssh exit 255\n"), None
 
     partial.shipper.replace_with_staged_files = renames_that_fail_after_the_minutes
     try:
@@ -1059,7 +1081,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-") as part
             "# dispositions\n\nItem 1: approved.\n", encoding="utf-8")
 
         def renames_that_fail(copy_host, staging_dir, walk_path, files):
-            return subprocess.CompletedProcess([], 255, "", "injected: ssh exit 255\n"), None
+            return subprocess.CompletedProcess([], 255, "Disk quota exceeded (injected)", "injected: ssh exit 255\n"), None
 
         partial.shipper.replace_with_staged_files = renames_that_fail
         failed_code, failed_out, failed_err = ship_in_process()
@@ -1071,7 +1093,9 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-") as part
     check("a run whose minutes are already in the store unchanged, and whose renames "
           "of the replaced dispositions fail, is FAILED, exit 1",
           failed_code == 1 and failed_out.startswith("FAILED:")
-          and "while putting the copied files in place" in failed_out,
+          and failed_out == (f"FAILED: {PARTIAL_WALK} — Disk quota exceeded (injected) "
+                             f"while putting the copied files in place. Rerun: "
+                             f"{rerun_sentence(partial, partial_walks, PARTIAL_WALK)}\n"),
           f"exit {failed_code}: {failed_out}{failed_err}")
 
     # On the local path a rename that fails raises OSError, which must reach
@@ -1168,6 +1192,185 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-") as part
                                     f"(injected); the walk's files stay on disk")
           and "ssh" not in failed_out and not (partial_store / minutes_file_name).exists(),
           f"exit {failed_code}: {failed_out}{failed_err}")
+
+# --- This run's staging directory cannot be removed ---------------------------
+with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as left_scratch_name:
+    left_scratch = pathlib.Path(left_scratch_name)
+    LEFT_WALK = "left-behind-demo-walk-2026-10-29"
+    left_spec = importlib.util.spec_from_file_location("walk_files_ship_left_behind", SHIP)
+    left = importlib.util.module_from_spec(left_spec)
+    left_spec.loader.exec_module(left)
+    real_removal = left.shipper.remove_staging_directory
+    real_left_rsync = left.rsync_files
+    real_left_renames = left.shipper.replace_with_staged_files
+    staging_marker = f".ship-staging-{LEFT_WALK}-"
+
+    def removal_that_fails(copy_host, staging_dir):
+        return "Permission denied (injected)"
+
+    def left_walk_and_store(label):
+        walks = left_scratch / f"{label}-walks"
+        write_walk(walks, LEFT_WALK, FILES)
+        store = left_scratch / f"{label}-store" / "walk"
+        store.mkdir(parents=True)
+        return walks, store, left.WalkStoreDestination(None, None, pathlib.PurePosixPath(store))
+
+    def ship_left(walks, destination, removal=removal_that_fails):
+        out, err = io.StringIO(), io.StringIO()
+        left.shipper.remove_staging_directory = removal
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = left.ship_walk(destination, LEFT_WALK, walks)
+        finally:
+            left.shipper.remove_staging_directory = real_removal
+        return code, out.getvalue(), err.getvalue()
+
+    def names_the_directory_and_its_deletion(line, store):
+        return (f"{store}/{staging_marker}" in line and "Permission denied (injected)" in line
+                and f"`rm -rf -- {store}/{staging_marker}" in line)
+
+    def deletion_then_rerun(line, walks, store, what_failed):
+        return (line.startswith(f"FAILED: {LEFT_WALK} — {what_failed}. This run's "
+                                f"staging directory {store}/{staging_marker}")
+                and one_line(line) and names_the_directory_and_its_deletion(line, store)
+                and "Deleting it loses nothing" in line
+                and line.endswith(f"`. Then rerun: `{left.REPO_ROOT}/scripts/walk-files-ship.py "
+                                  f"{walks}/{LEFT_WALK}-minutes.md`\n"))
+
+    # A shipment whose files all land, then whose staging directory stays.
+    walks, store, destination = left_walk_and_store("after-placing")
+    first = ship_left(walks, destination, removal=real_removal)
+    (walks / f"{LEFT_WALK}-minutes.md").write_text("# minutes\n\nItem 2 ruled.\n",
+                                                    encoding="utf-8")
+    code, out, err = ship_left(walks, destination)
+    check("the first shipment of the walk whose staging directory later stays succeeds",
+          first[0] == 0, str(first))
+    check("a shipment whose minutes are replaced but whose staging directory cannot be "
+          "removed is FAILED, exit 1, one line naming the directory, why, the command "
+          "that deletes it, and the minutes' citation",
+          code == 1 and out.startswith(f"FAILED: {LEFT_WALK} — This run's staging directory")
+          and one_line(out) and names_the_directory_and_its_deletion(out, store)
+          and "minutes replaced" in out
+          and "Ship the walk again only from the checkout" not in out
+          and out.rstrip().endswith(f"minutes at {store}/{LEFT_WALK}-minutes.md")
+          and (store / f"{LEFT_WALK}-minutes.md").read_text(encoding="utf-8").endswith("Item 2 ruled.\n"),
+          f"exit {code}: {out}{err}")
+    (walks / f"{LEFT_WALK}-minutes.md").write_text("# minutes\n\nItem 3 ruled.\n",
+                                                    encoding="utf-8")
+    code, out, err = ship_left(walks, destination, removal=real_removal)
+    check("the directory it named stops the next shipment that replaces a file, which "
+          "is why it is FAILED and not shipped",
+          code == 1 and out.startswith(f"FAILED: {LEFT_WALK} — another shipment")
+          and f"{store}/{staging_marker}" in out, f"exit {code}: {out}{err}")
+
+    # The same, with an add-only file refused: 1 wins over 2.
+    walks, store, destination = left_walk_and_store("refused-too")
+    first = ship_left(walks, destination, removal=real_removal)
+    (walks / f"{LEFT_WALK}.md").write_text("# walk, rewritten\n", encoding="utf-8")
+    (walks / f"{LEFT_WALK}-minutes.md").write_text("# minutes\n\nItem 2 ruled.\n",
+                                                    encoding="utf-8")
+    code, out, err = ship_left(walks, destination)
+    check("a staging directory left behind on a run that also refuses an add-only file "
+          "is FAILED, exit 1, and lists the refused file after it",
+          first[0] == 0 and code == 1 and out.startswith(f"FAILED: {LEFT_WALK} — This run's")
+          and one_line(out) and names_the_directory_and_its_deletion(out, store)
+          and out.index("staging directory") < out.index(f"Refused, add-only: {LEFT_WALK}.md")
+          and out.rstrip().endswith(f"minutes at {store}/{LEFT_WALK}-minutes.md"),
+          f"exit {code}: {out}{err}")
+
+    # A copy that fails, then a removal that fails.
+    walks, store, destination = left_walk_and_store("copy-failed")
+
+    def copy_that_fails(copy_host, sources, walk_path):
+        return subprocess.CompletedProcess([], 23, "", "injected: rsync exit 23\n")
+
+    left.rsync_files = copy_that_fails
+    try:
+        code, out, err = ship_left(walks, destination)
+    finally:
+        left.rsync_files = real_left_rsync
+    check("a copy that fails and a staging directory that cannot be removed is FAILED, "
+          "exit 1, naming the directory and the command that deletes it, then the "
+          "command that reruns the shipment",
+          code == 1 and deletion_then_rerun(out, walks, store, "rsync exit 23 during the copy"),
+          f"exit {code}: {out}{err}")
+
+    # Renames that fail, then a removal that fails.
+    walks, store, destination = left_walk_and_store("renames-failed")
+
+    def renames_that_fail_left(copy_host, staging_dir, walk_path, files):
+        return subprocess.CompletedProcess([], 255, "Disk quota exceeded (injected)", "injected: ssh exit 255\n"), None
+
+    left.shipper.replace_with_staged_files = renames_that_fail_left
+    try:
+        code, out, err = ship_left(walks, destination)
+    finally:
+        left.shipper.replace_with_staged_files = real_left_renames
+    check("renames that fail and a staging directory that cannot be removed is FAILED, "
+          "exit 1, naming the directory and the command that deletes it",
+          code == 1 and deletion_then_rerun(
+              out, walks, store,
+              "Disk quota exceeded (injected) while putting the copied files in place"),
+          f"exit {code}: {out}{err}")
+
+    # An add-only placement that fails, then a removal that fails.
+    walks, store, destination = left_walk_and_store("placement-failed")
+    real_left_placement = left.shipper.link_staged_files_never_over_existing
+
+    def placement_that_fails_left(copy_host, staging_dir, walk_path, names):
+        return subprocess.CompletedProcess([], 255, "Disk quota exceeded (injected)", "injected: ssh exit 255\n"), None
+
+    left.shipper.link_staged_files_never_over_existing = placement_that_fails_left
+    try:
+        code, out, err = ship_left(walks, destination)
+    finally:
+        left.shipper.link_staged_files_never_over_existing = real_left_placement
+    check("an add-only placement that fails and a staging directory that cannot be "
+          "removed is FAILED, exit 1, naming the directory and the command that deletes it",
+          code == 1 and deletion_then_rerun(
+              out, walks, store,
+              "Disk quota exceeded (injected) while putting the copied files in place"),
+          f"exit {code}: {out}{err}")
+
+    # Another shipment's staging directory, then a removal that fails.
+    walks, store, destination = left_walk_and_store("other-staging")
+    other_staging = store / f"{staging_marker}0123456789ab"
+    other_staging.mkdir()
+    code, out, err = ship_left(walks, destination)
+    check("another staging directory and this run's own that cannot be removed is "
+          "FAILED, exit 1, naming both and the command that deletes this run's",
+          code == 1 and out.startswith(f"FAILED: {LEFT_WALK} — another shipment")
+          and str(other_staging) in out and one_line(out)
+          and out.count(staging_marker) == 3
+          and names_the_directory_and_its_deletion(out, store), f"exit {code}: {out}{err}")
+
+    remote_sentences = left.staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(
+        "nedlern@ned-box",
+        pathlib.PurePosixPath("/home/nedlern/nedschorus-logs/walk/.ship-staging-w-0123456789ab"),
+        "ssh exit 255")
+    check("from another machine the staging directory is named with its host, and the "
+          "command that deletes it runs over ssh, quoted for the remote shell",
+          "directory nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/.ship-staging-w-0123456789ab "
+          in remote_sentences
+          and "`ssh nedlern@ned-box 'rm -rf -- /home/nedlern/nedschorus-logs/walk/.ship-staging-w-0123456789ab'`"
+          in remote_sentences, remote_sentences)
+
+    def rerun_line_for(directory):
+        return left.stopped_shipment_failed_line_with_rerun_command(
+            None, "named-walk-2026-10-31", directory,
+            pathlib.PurePosixPath("/store/walk/.ship-staging-x"),
+            "rsync exit 23 during the copy", None)
+
+    named_line = rerun_line_for(pathlib.Path(str(left.WALK_DIRECTORY)))
+    check("a walk found under docs/walk/ by its name is rerun by its name",
+          named_line == (f"FAILED: named-walk-2026-10-31 — rsync exit 23 during the copy. "
+                         f"Rerun: `{left.REPO_ROOT}/scripts/walk-files-ship.py "
+                         f"named-walk-2026-10-31`"), named_line)
+    below_line = rerun_line_for(left.WALK_DIRECTORY / "older")
+    check("a walk in a directory below docs/walk/ is rerun by the path to its minutes",
+          below_line.endswith(f"walk-files-ship.py "
+                              f"{left.WALK_DIRECTORY}/older/named-walk-2026-10-31-minutes.md`"),
+          below_line)
 
 print()
 if failures:
