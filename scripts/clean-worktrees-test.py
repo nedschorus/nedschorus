@@ -139,6 +139,15 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
+def text_or_none(path):
+    """The file's text, or None when it is missing, so a check whose file was never written fails
+    its own case instead of ending the test file."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+
+
 def git(repo, *arguments):
     completed = subprocess.run(
         ["git", "-C", str(repo), *arguments],
@@ -1223,7 +1232,7 @@ with tempfile.TemporaryDirectory() as scratch:
     reported = run_clean_shipping_to(str(walk_store / "cold-read-records")).stdout
     check("the report names a done worktree's walk and says --remove ships it first",
           f"--remove first ships its 1 record(s) to the log-store and keeps it if one does not ship: "
-          f"docs/walk/{walk_name}-minutes.md" in reported, reported)
+          f"docs/walk/{walk_name}.md" in reported, reported)
     check("the report ships no walk", not (walk_store / "walk").exists())
     remove_worktree_for_next_case(reported_walk_wt)
 
@@ -1252,7 +1261,7 @@ with tempfile.TemporaryDirectory() as scratch:
           unreachable_walk_wt.exists()
           and (unreachable_walk_wt / "docs" / "walk" / f"{walk_name}-minutes.md").is_file()
           and f"unreachable-walk-wt: record shipment FAILED, worktree kept — removing it would delete "
-          f"a record the log-store does not hold: docs/walk/{walk_name}-minutes.md (FAILED:"
+          f"a record the log-store does not hold: docs/walk/{walk_name}.md (FAILED:"
           in unreachable.stdout
           and unreachable.returncode == 1
           and "unreachable-walk-wt: removed" not in unreachable.stdout,
@@ -1294,9 +1303,9 @@ with tempfile.TemporaryDirectory() as scratch:
     revised = run_clean_shipping_to(str(revised_walk_store / "cold-read-records"), None, "--remove")
     check("--remove ships a .claude/worktrees/ worktree's revised walk text as <name>-revised-1.md, "
           "keeping the store's first copy, before it removes the worktree",
-          (revised_walk_store / "walk" / f"{walk_name}-revised-1.md").read_text(encoding="utf-8")
+          text_or_none(revised_walk_store / "walk" / f"{walk_name}-revised-1.md")
           == "# walk\n\n## Item 1 of 1\n"
-          and (revised_walk_store / "walk" / f"{walk_name}.md").read_text(encoding="utf-8")
+          and text_or_none(revised_walk_store / "walk" / f"{walk_name}.md")
           == "# walk\n\n## Item 1 of 1, before its revision\n"
           and not revised_walk_wt.exists()
           and "REFUSED" not in revised.stdout,
@@ -1313,8 +1322,54 @@ with tempfile.TemporaryDirectory() as scratch:
           and "unreadable-walk-wt: record shipment FAILED, worktree kept — " in unreadable.stdout
           and "Permission denied" in unreadable.stdout and unreadable.returncode == 1,
           unreadable.stdout + unreadable.stderr)
-    (unreadable_walk_wt / "docs" / "walk" / f"{walk_name}.md").chmod(0o644)
+    # A case that wrongly removed the worktree has already failed; the next cases still run.
+    if (unreadable_walk_wt / "docs" / "walk" / f"{walk_name}.md").exists():
+        (unreadable_walk_wt / "docs" / "walk" / f"{walk_name}.md").chmod(0o644)
     remove_worktree_for_next_case(unreadable_walk_wt)
+
+    # foo-minutes.md is both walk foo's minutes and walk foo-minutes's walk text; a shipper given that
+    # path resolves it to the longer name, so each walk must be handed over by its own walk text.
+    overlapping_name = "overlap-walk-2026-10-31"
+    overlapping_walk_wt = managed / "overlapping-walk-wt"
+    git(checkout, "worktree", "add", "-b", "overlapping-walk-wt-branch", str(overlapping_walk_wt), "origin/main")
+    overlapping_directory = overlapping_walk_wt / "docs" / "walk"
+    overlapping_directory.mkdir(parents=True)
+    for file_name, text in ((f"{overlapping_name}.md", "# walk foo\n"),
+                            (f"{overlapping_name}-minutes.md", "# minutes of foo, walk text of foo-minutes\n"),
+                            (f"{overlapping_name}-minutes-minutes.md", "# minutes of foo-minutes\n")):
+        (overlapping_directory / file_name).write_text(text, encoding="utf-8")
+    overlapping_store = scratch / "overlapping-walk-store"
+    overlapping = run_clean_shipping_to(str(overlapping_store / "cold-read-records"), None, "--remove")
+    check("--remove ships both walks when one walk's name is another's name with -minutes added, "
+          "the shorter walk's walk text included",
+          all((overlapping_store / "walk" / file_name).is_file()
+              for file_name in (f"{overlapping_name}.md", f"{overlapping_name}-minutes.md",
+                                f"{overlapping_name}-minutes-minutes.md"))
+          and f"overlapping-walk-wt: shipped: {overlapping_name} " in overlapping.stdout
+          and f"overlapping-walk-wt: shipped: {overlapping_name}-minutes " in overlapping.stdout
+          and overlapping.returncode == 0,
+          overlapping.stdout + overlapping.stderr)
+    remove_worktree_for_next_case(overlapping_walk_wt)
+
+    # Walk foo-draft has minutes and no walk text, beside a whole walk foo: a shipper given foo-draft.md
+    # would resolve it to foo, ship foo, and the removal would delete foo-draft's minutes.
+    unpresented_walk_wt = managed / "unpresented-walk-wt"
+    git(checkout, "worktree", "add", "-b", "unpresented-walk-wt-branch", str(unpresented_walk_wt), "origin/main")
+    unpresented_directory = unpresented_walk_wt / "docs" / "walk"
+    unpresented_directory.mkdir(parents=True)
+    for file_name, text in ((f"{walk_name}.md", "# walk\n"), (f"{walk_name}-minutes.md", "# minutes\n"),
+                            (f"{walk_name}-draft-minutes.md", "# minutes of a walk with no walk text\n")):
+        (unpresented_directory / file_name).write_text(text, encoding="utf-8")
+    unpresented = run_clean_shipping_to(str(scratch / "unpresented-walk-store" / "cold-read-records"),
+                                        None, "--remove")
+    check("--remove keeps a worktree holding the minutes of a walk with no walk text, whose name is "
+          "another walk's name with a role suffix added",
+          unpresented_walk_wt.exists()
+          and f"unpresented-walk-wt: record shipment FAILED, worktree kept — removing it would delete "
+          f"a record the log-store does not hold: docs/walk/{walk_name}-draft-minutes.md (FAILED:"
+          in unpresented.stdout and unpresented.returncode == 1,
+          unpresented.stdout + unpresented.stderr)
+    remove_worktree_for_next_case(unpresented_walk_wt)
 
 # --- A worktree with a git operation stopped partway is kept ---
 # Mid-rebase, HEAD is detached at a commit already on origin/main, so the landed check passes, and a
@@ -1531,7 +1586,7 @@ with tempfile.TemporaryDirectory() as scratch:
         check("the report names a topic-worktree's walk and says --remove ships it first",
               line_for(output, "seat-walk").startswith("seat-walk: done")
               and f"--remove first ships its 1 record(s)" in line_for(output, "seat-walk")
-              and f"docs/walk/{walk_name}-minutes.md" in line_for(output, "seat-walk"), output)
+              and f"docs/walk/{walk_name}.md" in line_for(output, "seat-walk"), output)
         check("no keep reason of a topic-worktree reads as a failed vacancy check to the "
               "handoff-supervisor",
               "(lsof)" not in output and "lsof is not installed" not in output
@@ -1553,7 +1608,7 @@ with tempfile.TemporaryDirectory() as scratch:
               walk_topic.exists()
               and walk_kept_line.startswith(
                   "seat-walk: record shipment FAILED, worktree kept — removing it would delete "
-                  f"a record the log-store does not hold: docs/walk/{walk_name}-minutes.md (FAILED:")
+                  f"a record the log-store does not hold: docs/walk/{walk_name}.md (FAILED:")
               and unreachable.returncode == 1
               and "seat-walk: removed" not in unreachable.stdout,
               unreachable.stdout + unreachable.stderr)
