@@ -76,6 +76,11 @@ _transcript_mirror_spec = importlib.util.spec_from_file_location(
     Path(__file__).resolve().parents[2] / "scripts" / "transcript-mirror-to-log-store.py")
 _transcript_mirror = importlib.util.module_from_spec(_transcript_mirror_spec)
 _transcript_mirror_spec.loader.exec_module(_transcript_mirror)
+_claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_lookup_and_text_search_common",
+    Path(__file__).resolve().parents[2] / "scripts" / "claude-code-session-transcript-lookup-and-text-search-common.py")
+_claude_code_session_transcript_lookup_and_text_search_common = importlib.util.module_from_spec(_claude_code_session_transcript_lookup_and_text_search_common_spec)
+_claude_code_session_transcript_lookup_and_text_search_common_spec.loader.exec_module(_claude_code_session_transcript_lookup_and_text_search_common)
 _, _AGENT_SESSION_FILES = _transcript_mirror.split_destination(
     _transcript_mirror.LOG_STORE_AGENT_SESSION_FILES_DESTINATION)
 
@@ -267,10 +272,6 @@ def stop_deferred():
 
 # ---------------------------------------------------------------- step 1: the pairs
 
-def raise_walk_failed(error):
-    raise ReplayFailed(f"reading the transcripts failed: {error}")
-
-
 def recorded_command_pairs(transcript_directories):
     """Return (the distinct [command, working directory] pairs of the Bash tool calls in first-seen order,
     the number of transcript lines that are not JSON)."""
@@ -279,36 +280,37 @@ def recorded_command_pairs(transcript_directories):
     for directory in transcript_directories:
         if not os.path.isdir(directory):
             raise ReplayFailed(f"transcript directory {directory} does not exist")
-        for parent, _, names in os.walk(directory, onerror=raise_walk_failed):
-            for name in sorted(names):
-                if not name.endswith(".jsonl"):
+    # ripgrep leaves out the transcripts with no Bash call faster than Python reads them.
+    paths, problems = _claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcripts_matching_any_pattern_ignoring_case(
+        transcript_directories, ['"Bash"'], include_subagents=True)
+    if problems:
+        raise ReplayFailed("reading the transcripts failed: " + "; ".join(problems))
+    for path in paths:
+        try:
+            handle = open(path, "rb")
+        except FileNotFoundError:
+            continue  # Removed after the search listed it.
+        except OSError as error:
+            raise ReplayFailed(f"transcript {path} cannot be read: {error}") from error
+        with handle:
+            for line in handle:
+                if b'"Bash"' not in line:
                     continue
-                path = os.path.join(parent, name)
                 try:
-                    handle = open(path, "rb")
-                except FileNotFoundError:
-                    continue  # Removed after the walk listed it.
-                except OSError as error:
-                    raise ReplayFailed(f"transcript {path} cannot be read: {error}") from error
-                with handle:
-                    for line in handle:
-                        if b'"Bash"' not in line:
-                            continue
-                        try:
-                            record = json.loads(line)
-                        except ValueError:
-                            lines_not_json += 1  # Most often the last line of a transcript still being written.
-                            continue
-                        message = record.get("message")
-                        content = message.get("content") if isinstance(message, dict) else None
-                        if not isinstance(content, list):
-                            continue
-                        for item in content:
-                            if (isinstance(item, dict) and item.get("type") == "tool_use"
-                                    and item.get("name") == "Bash"):
-                                command = (item.get("input") or {}).get("command")
-                                if isinstance(command, str):
-                                    seen.setdefault((command, record.get("cwd") or "/"), None)
+                    record = json.loads(line)
+                except ValueError:
+                    lines_not_json += 1  # Most often the last line of a transcript still being written.
+                    continue
+                message = record.get("message")
+                content = message.get("content") if isinstance(message, dict) else None
+                if not isinstance(content, list):
+                    continue
+                for item in content:
+                    if (isinstance(item, dict) and item.get("type") == "tool_use"
+                            and item.get("name") == "Bash"):
+                        command = (item.get("input") or {}).get("command")
+                        if isinstance(command, str):
+                            seen.setdefault((command, record.get("cwd") or "/"), None)
     return [list(pair) for pair in seen], lines_not_json
 
 
