@@ -58,6 +58,9 @@ line and at the line's start, outside code and HTML comments; a publish-failed
 line with no reason is not read. The newest line for an item number counts,
 whatever its `of M`, because a re-planned walk keeps an item's page while its
 total changes.
+SUB_STEP_NO_DECISION_CLOSING_LINE matches the line a sub-step that asks for no decision ends
+with, `[No decision here; type N or next to continue.](<page link>)`, alone
+on its line, and captures its link.
 
 Agent-facing messages follow
 docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
@@ -99,6 +102,7 @@ ITEM_LABEL = re.compile(
     rf"^(?:(?P<bold>\*\*|__)item\s+(?P<bold_number>{WHOLE_NUMBER})(?:\s+of\s+(?P<total>\d+))?"
     rf"(?=\s*[:.,]|(?P=bold)\s*(?:[:.,\-–—]|$))"
     rf"|item\s+(?P<plain_number>{WHOLE_NUMBER})[:.](?=\s|$))", re.I)
+SUB_STEP_NO_DECISION_CLOSING_LINE = re.compile(r"^\s*\[No decision here; type N or next to continue\.\]\((\S+)\)\s*$", re.M)
 # Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
 REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
 NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)

@@ -103,6 +103,11 @@ the item with the walk's total, and its link is the item's page, or, for an
 item whose publish failed, it has no link. A count with another total, such
 as `Item 2 of 90` for item 2 of 9, names nothing.
 
+A WAITING SUB-STEP, an item with a dotted number such as `Item 4.1 of 9`, also
+passes when the reply holds a line that is `[No decision here; type N or next
+to continue.](<page link>)`, the line a sub-step that asks for no decision
+ends with, and its link is the sub-step's page.
+
 SILENT while the agent answers a Stop hook (stop_hook_active set), as the
 Stop-hook silence rule's module requires, when the agent-session is a
 headless `claude -p` child (its last words are its caller's answer), when the
@@ -211,6 +216,12 @@ REPLY_LACKS_CLOSING_LINE_INSTRUCTIONS = (
     "If he ended or abandoned the approval-walk, add the line `#next_to_present none, closed` "
     "at the end of {minutes} instead of writing a closing line, and end the turn.",
 )
+NO_DECISION_INSTRUCTIONS = (
+    "If the waiting item is a sub-step that asks for no decision, you may end your reply instead with "
+    "`[No decision here; type N or next to continue.](<page link>)`, where <page link> is the link that "
+    "ends the sub-step's line in {minutes} of the form {page_line}.",
+    "If {minutes} has no such line, add it at the end of {minutes} first, with the link of the page "
+    "you published for the sub-step with the Artifact tool.")
 OLD_MARKER_INSTRUCTIONS = (
     "Add this line at the end of {minutes}, below every earlier marker line, and leave "
     "the old lines as they are: {new_line}",
@@ -363,6 +374,15 @@ def closing_line_example(number, total, page, letters):
     return f"[{label}]({page}) · {letters}"
 
 
+def no_decision_instructions(numbers):
+    return NO_DECISION_INSTRUCTIONS if any("." in number for number in numbers) else ()
+
+
+def sub_step_page_line(numbers, total):
+    sub_step = next((number for number in numbers if "." in number), "")
+    return f"`#item_page item {sub_step} of {total} <link>`"
+
+
 def block_output(opening, instructions, **values):
     lines = [opening.format(**values)] + [line.format(**values) for line in instructions]
     return json.dumps({"decision": "block", "reason": "\n".join(lines)}, ensure_ascii=False)
@@ -424,8 +444,12 @@ def output_for(payload, environment):
         minutes.read_text(encoding="utf-8"), parser)
     unpublished = [number for number in numbers if number not in pages]
     if unpublished:
-        return block(UNPUBLISHED_OPENING_TEMPLATE, UNPUBLISHED_INSTRUCTIONS,
-                     named=" and ".join(f"`Item {number} of {total}`" for number in unpublished))
+        return block(UNPUBLISHED_OPENING_TEMPLATE, UNPUBLISHED_INSTRUCTIONS + no_decision_instructions(unpublished),
+                     named=" and ".join(f"`Item {number} of {total}`" for number in unpublished),
+                     page_line=sub_step_page_line(unpublished, total))
+    no_decision_links = set(walk_finder.SUB_STEP_NO_DECISION_CLOSING_LINE.findall(reply))
+    numbers_needing_closing_line = [number for number in numbers
+                                    if not ("." in number and pages[number] in no_decision_links)]
     letters = walk_finder.load_module(
         "walk_me_through_user_short_answer_to_approval_walk_item_expanded_into_instructions_user_prompt_submit_hook",
         ANSWER_HOOK_FILE).ANSWER_LETTERS_TEXT
@@ -433,11 +457,13 @@ def output_for(payload, environment):
     # markdown-it refuses a file: link by default and reads it as text, which would hide the wrong link
     # the block must name.
     link_parser.validateLink = lambda url: True
-    problems = closing_line_problems(numbers, total, ending_closing_lines(reply, link_parser, letters), pages,
-                                     link_parser)
+    problems = closing_line_problems(numbers_needing_closing_line, total,
+                                     ending_closing_lines(reply, link_parser, letters), pages, link_parser)
     if not problems:
         return None
-    return block(REPLY_LACKS_CLOSING_LINE_OPENING_TEMPLATE, REPLY_LACKS_CLOSING_LINE_INSTRUCTIONS,
+    return block(REPLY_LACKS_CLOSING_LINE_OPENING_TEMPLATE,
+                 REPLY_LACKS_CLOSING_LINE_INSTRUCTIONS + no_decision_instructions(numbers_needing_closing_line),
+                 page_line=sub_step_page_line(numbers_needing_closing_line, total),
                  named=" and ".join(f"`Item {number} of {total}`" for number in numbers),
                  problems="; ".join(problems),
                  closing_lines="\n".join(f"`{closing_line_example(number, total, pages[number], letters)}`"

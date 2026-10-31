@@ -25,8 +25,8 @@ letters of AO, O2 and O3 (`A-O`, `a - o`, `O-2`):
               then, also or plus (`a but ...`, `d and r`, `a, ...`); a word
               needs only a space (`repeat with context`). Text that opens with
               an item number, `item` before it or not, is never a rider.
-Every other prompt prints nothing and exits 0 without reading any file: Y, N
-and C are not answers.
+Every other prompt prints nothing and exits 0 without reading any file: Y and
+C are not answers, and N, like next, is a navigation word the agent reads.
 
 A, AO, Aa and D answer the item's recommendation: A, AO and Aa approve it,
 Aa only after an advisor check, which the agent makes as AA_SKILL_TEXT, the

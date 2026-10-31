@@ -359,6 +359,29 @@ if linux_only_cases_run_here("the report's sandbox lines"):
             "[ -n \"$status_fd\" ] && eval \"echo '{\\\"child-pid\\\": $$}' >&$status_fd\"\n"
             "exec \"$@\"\n")
         (fake_bin / "bwrap").chmod(0o755)
+
+        # The runner hands bwrap the status pipe at whatever descriptor number is free,
+        # which reaches 10 or more only on a busy run, so the case forces both widths.
+        for status_fd in (9, 12):
+            read_end, write_end = os.pipe()
+            os.dup2(write_end, status_fd)
+            os.close(write_end)
+            try:
+                started = subprocess.run(
+                    [str(fake_bin / "bwrap"), "--unshare-pid", "--json-status-fd", str(status_fd),
+                     "sh", "-c", "echo started"],
+                    pass_fds=(status_fd,), capture_output=True, text=True,
+                    stdin=subprocess.DEVNULL, timeout=60, check=False)
+            finally:
+                os.close(status_fd)
+            with os.fdopen(read_end) as status_reader:
+                status = status_reader.read()
+            check(f"the stand-in bwrap, given status descriptor {status_fd}, writes the "
+                  "child-pid line to it and starts the command",
+                  started.returncode == 0 and started.stdout == "started\n"
+                  and '"child-pid"' in status,
+                  (started.returncode, started.stdout, started.stderr, status))
+
         repository = scratch_checkout(scratch, ["a-test.py", OUTSIDE_SUITE])
         completed, report = run_runner(
             scratch, repository, f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")

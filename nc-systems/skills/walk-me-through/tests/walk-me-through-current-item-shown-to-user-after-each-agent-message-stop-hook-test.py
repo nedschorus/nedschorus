@@ -367,6 +367,44 @@ def test_item_added_by_re_planning_with_a_dotted_number():
         check_reminded(case_name, case.run(), "`Item 37.2 of 44`")
 
 
+def no_decision_line(link):
+    return f"[No decision here; type N or next to continue.]({link})"
+
+
+def test_a_no_decision_line_linked_to_the_waiting_sub_steps_page_names_it():
+    page = "#item_page item 4.1 of 9 https://claude.ai/artifact/p41\n"
+    case = Case()
+    case.walk_files(minutes=page + "#next_to_present item 4.1 of 9.")
+    case.reply("Recorded.\n\n" + no_decision_line("https://claude.ai/artifact/p41"))
+    check_silent("a no-decision line linked to the waiting sub-step's page passes", case.run())
+    for case_name, reply in (
+            ("a no-decision line linked to another page is sent back",
+             no_decision_line("https://claude.ai/artifact/p5")),
+            ("a no-decision line with other text on its line is sent back",
+             "Recorded. " + no_decision_line("https://claude.ai/artifact/p41"))):
+        case.reply(reply)
+        check_reminded(case_name, case.run(), "`Item 4.1 of 9`", "No decision here; type N or next to continue.")
+    no_page = Case()
+    no_page.walk_files(minutes="#next_to_present item 4.1 of 9.")
+    no_page.reply(no_decision_line("https://claude.ai/artifact/p41"))
+    check_reminded("a no-decision line is sent back when the minutes record no page for the sub-step",
+                   no_page.run(), "`#item_page item 4.1 of 9 <link>`", "add it at the end of")
+    whole_item = Case()
+    whole_item.walk_files(minutes="#item_page item 2 of 9 https://claude.ai/artifact/p2\n"
+                                  "#next_to_present item 2 of 9.")
+    whole_item.reply(no_decision_line("https://claude.ai/artifact/p2"))
+    result = whole_item.run()
+    check_reminded("a no-decision line linked to a whole item's page is sent back", result)
+    check("the reminder for a whole item does not offer the no-decision line",
+          "No decision here" not in (blocked_reason(result) or ""), blocked_reason(result))
+
+
+def test_the_no_decision_line_is_the_walk_skills():
+    skill = (Path(__file__).resolve().parents[4] / ".claude" / "skills" / "walk-me-through" / "SKILL.md").read_text()
+    check("SKILL.md ends a no-decision sub-step with the line the hook reads",
+          'ends with the line "No decision here; type N or next to continue."' in skill, "no such sentence")
+
+
 def test_item_holding_original_and_proposed_sections():
     case = Case()
     case.walk_files(minutes="#next_to_present item 9 of 9.")
