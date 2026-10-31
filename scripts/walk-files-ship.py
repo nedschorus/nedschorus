@@ -90,9 +90,10 @@ closes, not only a record kept as first written. The rules are PER FILE:
     the highest-numbered copy is always the walk text as last shipped. A
     revised copy is add-only like the walk text, placed by hard link; only
     the latest one is ever replaced, under APPENDED TO. A file is a revised
-    copy only when n is written in digits with no leading zero, so another
-    walk whose name begins with this one's name and "-revised-" is not
-    counted. The store's copies are listed by a shell glob on the store,
+    copy only when n is written in digits with no leading zero, so
+    <name>-revised-01.md and <name>-revised-a.md are not counted; the walk
+    text of another walk named <name>-revised-<n>, n so written, is counted
+    as one. The store's copies are listed by a shell glob on the store,
     before the digests are read; a listing that fails is FAILED, exit 1,
     with nothing copied.
   REPLACED: the minutes and the dispositions, each on its own. A minutes
@@ -275,10 +276,6 @@ NOTED_WHEN_ABSENT_ROLE_SUFFIXES = ("-draft", "-suggestions")
 # The files a walk replaces in the store (see REPLACED in the docstring); every
 # other role is add-only.
 REPLACED_ROLE_SUFFIXES = (MINUTES_ROLE_SUFFIX, "-dispositions")
-# The one add-only role a run replaces when the local file only grew (see
-# APPENDED TO in the docstring). Every other add-only role is refused on any
-# difference.
-ROLE_SUFFIX_REPLACED_WHEN_ONLY_APPENDED_TO = WALK_TEXT_ROLE_SUFFIX
 # A walk text the store holds that is not a byte prefix of the local one is
 # shipped beside it as <name>-revised-<n>.md, n counting up from 1, and never
 # refused (see REVISED COPIES in the docstring).
@@ -356,8 +353,9 @@ def revised_walk_text_file_name(name: str, number: int) -> str:
 
 def revised_walk_text_number(name: str, file_name: str) -> typing.Optional[int]:
     """n when file_name is <name>-revised-<n>.md with n a positive whole
-    number written without leading zeros, else None, so another walk whose
-    name begins with this one's is never read as this walk's copy."""
+    number written without leading zeros, else None. The walk text of
+    another walk named <name>-revised-<n> answers n too: nothing in the name
+    tells the two apart."""
     matched = re.fullmatch(re.escape(name + REVISED_WALK_TEXT_NAME_INFIX)
                            + r"([1-9][0-9]*)\.md", file_name)
     return int(matched.group(1)) if matched else None
