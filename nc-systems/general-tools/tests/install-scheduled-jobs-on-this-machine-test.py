@@ -86,8 +86,8 @@ NED_BOX_CLEAN_LINE = (
     "clean-worktrees.py --remove >> /home/nedlern/.claude/clean-worktrees.log 2>&1")
 NED_BOX_CRASH_RESTART_WATCHER_LINE = (
     "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
-    "handoff-agent-seat-died-without-session-handoff-restart-watcher.py >> "
-    "/home/nedlern/.claude/handoff-agent-seat-died-without-session-handoff-restart-watcher.log 2>&1")
+    "handoff-agent-crash-watcher.py >> "
+    "/home/nedlern/.claude/handoff-agent-crash-watcher.log 2>&1")
 NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE = (
     "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
     "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> "
@@ -265,13 +265,13 @@ check("the table's jobs are the two typed by hand before this program, the workt
                             "clean-worktrees", "daily-full-test-run-of-main",
                             "guarded-file-versions-and-approvals-store-removed-checkout-"
                             "copies-prune",
-                            "handoff-agent-seat-died-without-session-handoff-restart-watcher",
+                            "handoff-agent-crash-watcher",
                             "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-"
                             "tmux-typing-watcher",
                             "log-store-session-dialogs-refresh", "transcript-mirror-to-log-store",
                             "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"],
       sorted(real_jobs))
-watcher = real_jobs["handoff-agent-seat-died-without-session-handoff-restart-watcher"]
+watcher = real_jobs["handoff-agent-crash-watcher"]
 check("the crash restart watcher runs on ned-box only, every minute",
       watcher["on"] == {"ned-box": {"scheduler": "cron", "schedule": "* * * * *"}}, watcher["on"])
 session_dialogs = real_jobs["log-store-session-dialogs-refresh"]
@@ -336,7 +336,7 @@ check("--print as ned-box prints ned-box's nine cron lines from the real table a
           "log-store-session-dialogs-refresh — cron line:", NED_BOX_SESSION_DIALOGS_LINE,
           "daily-full-test-run-of-main — cron line:", NED_BOX_DAILY_LINE,
           "clean-worktrees — cron line:", NED_BOX_CLEAN_LINE,
-          "handoff-agent-seat-died-without-session-handoff-restart-watcher — cron line:",
+          "handoff-agent-crash-watcher — cron line:",
           NED_BOX_CRASH_RESTART_WATCHER_LINE,
           "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher — "
           "cron line:", NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE,
