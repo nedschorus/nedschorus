@@ -839,7 +839,7 @@ def wait_for_cells(running: dict,
             timed_out = (attempt.process is not None and code is None
                          and time.monotonic() - attempt.started_at >= cell_attempt_timeout_seconds)
             if timed_out:
-                stop_process_tree(attempt.process)
+                cell_common.stop_process_tree(attempt.process)
                 code = attempt.process.returncode
                 print(f"WRITE CHECK DID NOT RUN: {report_path.name} — "
                       f"{STOPPED_CELL_WRITE_CHECK_LINE.format(cell=cell_name_of(report_path))}",
