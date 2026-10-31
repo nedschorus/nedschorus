@@ -632,7 +632,8 @@ def run_reviewer_program_in_own_process_group_until_timeout(
     result whose returncode is None. The group is also killed when this
     process is interrupted or sent SIGTERM while waiting."""
     # The reviewer's own session puts it outside the group the grid stops, so
-    # SIGTERM must reach the finally below that stops the reviewer's group.
+    # SIGTERM must reach the except BaseException handler below that stops
+    # the reviewer's group.
     signal.signal(signal.SIGTERM, exit_on_sigterm)
     process = subprocess.Popen(
         command,
