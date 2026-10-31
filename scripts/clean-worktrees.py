@@ -38,9 +38,10 @@ mechanical checks all pass:
 Uncommitted, untracked and ignored files do NOT keep a done worktree: they
 are removed with it. The one exception is the records whose home is the
 log-store: before --remove removes a done worktree, it ships each walk in the
-worktree's docs/walk/, one for each <name>-minutes.md there, given by its walk
-text <name>.md, or by its minutes when it has no walk text, with
-scripts/walk-files-ship.py,
+worktree's docs/walk/, one for each <name>-minutes.md there, with
+scripts/walk-files-ship.py, given by its walk text <name>.md, or by its
+minutes when it has no walk text, which the shipper refuses, so the
+worktree is kept,
 and each non-empty record directory under its cold-read-records/ and
 sanity-check-records/ with the shipper of that kind
 (LOG_STORE_RECORD_SHIPPERS), and keeps the worktree when any walk or record
