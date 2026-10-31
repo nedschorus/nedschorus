@@ -112,8 +112,12 @@ with tempfile.TemporaryDirectory() as scratch:
     check("git failing to list the merge's changes (no ORIG_HEAD): exit 1, naming the command, "
           "and nothing restarted",
           code == 1 and calls == [] and "git diff --name-only ORIG_HEAD HEAD" in errors
-          and "Run `XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user restart "
-              "agent-seat-database-service.service` on ned-box." in errors
+          and f"Restart the service: `XDG_RUNTIME_DIR=/run/user/{os.getuid()} systemctl --user "
+              "restart agent-seat-database-service.service`." in errors
+          and f"`XDG_RUNTIME_DIR=/run/user/{os.getuid()} journalctl --user" in errors
+          and "$(id -u)" not in errors
+          and "If the restart succeeds, you are done; report nothing." in errors
+          and "Unit agent-seat-database-service.service not found." in errors
           and "If the merge changed" not in errors
           and "service was not restarted: fatal:" in errors,
           (code, errors))

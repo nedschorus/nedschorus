@@ -72,7 +72,9 @@ with tempfile.TemporaryDirectory() as scratch:
     check("ssh failing while listing: exit 1, naming the step and what ssh said",
           code == 1 and "listing nedlern@ned-box:/home/nedlern/backups/agent-seat-database failed"
           in errors and "No such file" in errors
-          and "quote this message from the FAILED line through the line that ends \"tries again.\"" in errors,
+          and "Quote this message, from its first line, the program's name included, through "
+              "the line that ends \"tries again.\"" in errors
+          and "Say that copying" not in errors,
           (code, errors))
 
     remote.mkdir()

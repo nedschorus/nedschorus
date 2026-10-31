@@ -60,6 +60,8 @@ def main(argv=None):
     if top.returncode != 0 or os.path.realpath(top.stdout.strip()) \
             != os.path.realpath(arguments.reference_checkout):
         return EXIT_DONE
+    # Spelled out, not $(id -u): run over ssh from the Mac, $(id -u) expands on the Mac.
+    runtime_directory = f"XDG_RUNTIME_DIR=/run/user/{os.getuid()}"
     changed = subprocess.run(["git", "diff", "--name-only", "ORIG_HEAD", "HEAD", "--",
                               *SERVICE_FILES], capture_output=True, text=True)
     if changed.returncode != 0:
@@ -67,15 +69,21 @@ def main(argv=None):
               f"{arguments.reference_checkout} exited {changed.returncode}, so this merge's "
               f"changes to the agent-seat database service are unknown and the service was not "
               f"restarted: {changed.stderr.strip()}\n"
-              f"Run `XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user restart {UNIT_NAME}` "
-              f"on ned-box. A restart is safe even if the merge did not change the service.\n"
-              f"If systemctl says the unit was not found, the unit's install step has not run "
-              f"on ned-box yet; that step is the user's, so do nothing.\n"
-              f"If systemctl fails for another reason, run `journalctl --user -u {UNIT_NAME} -n 50` "
-              f"on ned-box. Then, if you are a subagent, tell the agent that dispatched you; "
-              f"otherwise tell the user. Say that the agent-seat database service could not be "
-              f"restarted after a merge, and quote this message from the FAILED line up to, but "
-              f"not including, the line that starts \"Run\", what systemctl said and journalctl's last lines.",
+              f"Every command below runs on ned-box; from the Mac, run it as "
+              f"ssh nedlern@ned-box '<the command>'.\n"
+              f"Restart the service: `{runtime_directory} systemctl --user restart {UNIT_NAME}`. "
+              f"A restart is safe even if the merge did not change the service.\n"
+              f"If the restart succeeds, you are done; report nothing.\n"
+              f"If what systemctl prints, on either output, includes \"Unit {UNIT_NAME} not "
+              f"found.\", the unit's install step has "
+              f"not run on ned-box yet; that step is the user's, so you are done; report nothing.\n"
+              f"If systemctl fails for any other reason, run "
+              f"`{runtime_directory} journalctl --user -u {UNIT_NAME} -n 50`. Then, if you are a "
+              f"subagent, tell the agent that dispatched you; otherwise tell the user. Say that "
+              f"the agent-seat database service could not be restarted after a merge, and quote "
+              f"three things: the lines of this message above the line that starts "
+              f"\"Every command below\"; what your restart command printed; and what journalctl "
+              f"printed.",
               file=sys.stderr)
         return EXIT_FAILED
     if not changed.stdout.strip():
