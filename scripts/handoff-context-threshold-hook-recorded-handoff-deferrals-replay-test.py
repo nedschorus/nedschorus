@@ -210,6 +210,33 @@ def run_synthetic_cases(workspace):
     check("an own transcript holding bytes that are not UTF-8 raises TranscriptCouldNotBeFullyRead",
           raises_could_not_read(session))
 
+    session = session_with_interim_subagent(
+        case_directory("own-transcript-bad-bytes-before-stale-newest-record"), [])
+    own_path = hook.subagent_transcript_path(session, SUBAGENT_ID)
+    own_path.write_bytes(b'{"type":"assistant","note":"\xff\xfe"}\n'
+                         b'{"type":"assistant","timestamp":"2026-10-30T20:00:00.000Z"}\n')
+    check("bytes that are not UTF-8 before a stale newest record raise "
+          "TranscriptCouldNotBeFullyRead", raises_could_not_read(session))
+
+    session_bad_bytes = case_directory("session-transcript-bad-bytes-outside-records") / "session.jsonl"
+    session_bad_bytes.parent.mkdir(parents=True, exist_ok=True)
+    session_bad_bytes.write_bytes(
+        (json.dumps(spawn_record(SUBAGENT_ID, NOW - timedelta(hours=3))) + "\n").encode()
+        + b'{"type":"assistant","note":"\xff\xfe"}\n')
+    check("bytes that are not UTF-8 in a session transcript line the scan does not parse are "
+          "read past", counted(session_bad_bytes) == [SUBAGENT_ID], str(counted(session_bad_bytes)))
+
+    session = session_with_interim_subagent(case_directory("own-transcript-lookup-fails"), [
+        {"type": "assistant", "timestamp": utc_iso(NOW - timedelta(minutes=1))}])
+    subagents_directory = hook.subagent_transcript_path(session, SUBAGENT_ID).parent
+    # No search permission makes stat() on the transcript fail with EACCES, not ENOENT.
+    subagents_directory.chmod(0o600)
+    try:
+        check("an own transcript whose lookup fails for a reason other than absence raises "
+              "TranscriptCouldNotBeFullyRead", raises_could_not_read(session))
+    finally:
+        subagents_directory.chmod(0o700)
+
     session = session_with_interim_subagent(case_directory("own-transcript-unreadable"), [])
     real_reader = hook.transcript_records.records_newest_first
 

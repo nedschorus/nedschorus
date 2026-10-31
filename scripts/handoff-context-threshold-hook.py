@@ -277,11 +277,14 @@ def spawned_subagent_ids_in_flight(transcript_path: str) -> list:
 
 
 def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
-                   now=None, should_read_subagent_own_transcripts=True) -> WorkInFlight:
+                   now=None, should_read_subagent_own_transcripts=True,
+                   should_raise_on_undecodable_bytes=False) -> WorkInFlight:
     """Return running subagents and background tasks in launch order.
 
     A subagent whose last task-notification is interim counts only while its own transcript
     shows work in flight; should_read_subagent_own_transcripts=False counts it from the notices alone.
+    should_raise_on_undecodable_bytes=True raises TranscriptCouldNotBeFullyRead on bytes that are
+    not UTF-8 anywhere in the file, instead of reading past them.
     """
     # Scan the whole transcript: a running task may have launched hours before the tail.
     # Unreadable candidates raise; treating an incomplete scan as empty could kill running work.
@@ -297,7 +300,8 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
     # The last notification for a task-id decides: an interim one leaves its subagent running.
     last_notification_is_interim = {}
     try:
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
+        decoding_errors = "strict" if should_raise_on_undecodable_bytes else "replace"
+        with path.open("r", encoding="utf-8", errors=decoding_errors) as handle:
             for line in handle:
                 is_spawn_candidate = SPAWNED_SUBAGENT_STATUS in line
                 is_launch_candidate = BACKGROUND_TASK_LAUNCH_KEY in line
@@ -326,7 +330,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                         interim = interim_recognizer.task_notification_is_interim(notification)
                         for task_id in TASK_NOTIFICATION_TASK_ID_PATTERN.findall(notification):
                             last_notification_is_interim[task_id] = interim
-    except OSError as problem:
+    except (OSError, UnicodeDecodeError) as problem:
         raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
 
     finished_ids = {task_id for task_id, interim in last_notification_is_interim.items()
@@ -363,11 +367,17 @@ def subagent_own_transcript_shows_work_in_flight(subagent_path: Path,
     """Return True while the subagent's own transcript was written within the recent-write
     window, or shows a background task of its own still within its wait.
 
-    A missing transcript shows neither, so the subagent counts as finished. An unreadable one
-    raises TranscriptCouldNotBeFullyRead, as the session transcript's scan does.
+    A missing transcript shows neither, so the subagent counts as finished. One that cannot be
+    looked up or read, or holds bytes that are not UTF-8, raises TranscriptCouldNotBeFullyRead.
     """
-    if not subagent_path.is_file():
+    # Path.is_file() returns False on any failed stat, which would release a subagent whose
+    # transcript exists but cannot be reached.
+    try:
+        subagent_path.stat()
+    except FileNotFoundError:
         return False
+    except OSError as problem:
+        raise TranscriptCouldNotBeFullyRead(f"{subagent_path}: {problem}") from problem
     try:
         for record in transcript_records.records_newest_first(subagent_path):
             age = record_age_seconds(record, now)
@@ -377,8 +387,8 @@ def subagent_own_transcript_shows_work_in_flight(subagent_path: Path,
                 break
     except (OSError, UnicodeDecodeError) as problem:
         raise TranscriptCouldNotBeFullyRead(f"{subagent_path}: {problem}") from problem
-    return bool(work_in_flight(str(subagent_path), background_task_wait_seconds,
-                               now=now).background_task_ids)
+    return bool(work_in_flight(str(subagent_path), background_task_wait_seconds, now=now,
+                               should_raise_on_undecodable_bytes=True).background_task_ids)
 
 
 def main(argv=None) -> int:
