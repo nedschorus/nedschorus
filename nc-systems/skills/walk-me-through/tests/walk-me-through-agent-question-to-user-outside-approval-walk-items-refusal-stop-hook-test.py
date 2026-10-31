@@ -115,9 +115,10 @@ UNRELATED_ASK_CASE = ("item 1's reply with an unrelated ask added, which must bl
 REAL_ITEM_3_1_PROPOSED_LINE =next(line for line in REAL_ITEM_3_1_REPLY.split("\n") if line.startswith("**Proposed:**"))
 
 
-# The fake labels the prompt's numbered lines: `no` labels each ASKS_NOTHING, `yes:N` (N 1 by default) labels line N
-# ASKS_ELSE and the rest ASKS_NOTHING, `waiting` labels each WAITING_ITEM, and `labels:<json list>` or
-# `verdict:<json>` gives the labels or the whole structured output as written; main fills the label names in.
+# The fake answers for the prompt's numbered lines: `no` answers each as ASKS_NOTHING, `yes:N` (N 1 by default)
+# answers line N as ASKS_ELSE and the rest as ASKS_NOTHING, `waiting` answers each as WAITING_ITEM, `labels:<json
+# list>` answers each line as the label given, and `verdict:<json>` gives the whole structured output as written. A
+# label is turned into the two answers that make it; main fills the label and answer names in.
 FAKE_CLAUDE = """#!/usr/bin/env python3
 import json, os, re, sys, time
 prompt = sys.stdin.read()
@@ -136,7 +137,8 @@ else:
     labels = ["ASKS_NOTHING"] * count
     if mode.startswith("yes"):
         labels[int(mode.split(":")[1]) - 1 if ":" in mode else 0] = "ASKS_ELSE"
-verdict = {"labels": [{"line_number": number, "label": label} for number, label in enumerate(labels, 1)]}
+verdict = {"lines": [{"line_number": number, "CONCERNS_ANSWER": label == "WAITING_ITEM",
+                       "ASKS_ELSE_ANSWER": label == "ASKS_ELSE"} for number, label in enumerate(labels, 1)]}
 if mode == "sleep":
     time.sleep(30)
 if mode == "fail":
@@ -444,8 +446,8 @@ def test_a_failed_model_check_blocks():
              "claude exited 1 reporting an error"),
             ("a model call killed by a signal after printing a verdict blocks", "verdict-then-killed",
              "claude exited -9 reporting an error"),
-            ("a model verdict that labels no line blocks", 'verdict:{"labels": []}',
-             "claude's verdict does not give each of the 1 numbered lines exactly one of the labels")):
+            ("a model verdict that answers for no line blocks", 'verdict:{"lines": []}',
+             "claude's verdict does not give each of the 1 numbered lines exactly one entry with a true or false")):
         check_blocked(case_name, case.run(model=mode), "the hook's `claude -p` call that has the model judge this unclear text failed", phrase,
                       '"The fix has a second part, and I recommend building it next."')
     check("a block after a failed model check is logged as such",
@@ -469,38 +471,59 @@ def test_a_failed_model_check_blocks():
             line, failure = hook.model_judgement(["a", "b", "c"], ["a", "b", "c"], "10", "2", "## Item 2 of 10")
             check(f"the model's answer {mode} picks unclear line {expected}", (line, failure) == (expected, None),
                   (line, failure))
-        two_else = [{"line_number": 2, "label": hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE},
-                    {"line_number": 1, "label": hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE}]
-        os.environ["FAKE_CLAUDE_MODE"] = "verdict:" + json.dumps({"labels": two_else})
+        concerns, asks_else = hook.MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION, hook.MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE
+
+        def entry(number, concerns_answer, asks_else_answer):
+            return {"line_number": number, concerns: concerns_answer, asks_else: asks_else_answer}
+        os.environ["FAKE_CLAUDE_MODE"] = "verdict:" + json.dumps({"lines": [entry(2, False, True), entry(1, False, True)]})
         line, failure = hook.model_judgement(["a", "b"], ["a", "b"], "10", "2", "## Item 2 of 10")
-        check("labels given out of order are read by line number, and the first line asking something else is named",
+        check("answers given out of order are read by line number, and the first line asking something else is named",
               (line, failure) == ("a", None), (line, failure))
-        nothing, other = hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING, hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE
+        for case_name, answers, expected in (
+                ("a line that concerns the waiting item and also asks something else is named: asking else wins",
+                 [entry(1, False, False), entry(2, True, True)], "b"),
+                ("a line that only concerns the waiting item, or asks nothing, is not named",
+                 [entry(1, True, False), entry(2, False, False)], None)):
+            os.environ["FAKE_CLAUDE_MODE"] = "verdict:" + json.dumps({"lines": answers})
+            line, failure = hook.model_judgement(["a", "b"], ["a", "b"], "10", "2", "## Item 2 of 10")
+            check(case_name, (line, failure) == (expected, None), (line, failure))
+        check("code turns the two answers into the three labels",
+              hook.line_labels([entry(1, True, True), entry(2, True, False), entry(3, False, False)], 3)
+              == [hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE,
+                  hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION,
+                  hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING])
         for case_name, verdict in (
-                ("a verdict with no labels is a failure", {"asks_user": False}),
-                ("a verdict whose labels are not a list is a failure", {"labels": "asks_nothing"}),
-                ("a verdict whose labels are not objects is a failure", {"labels": [nothing, nothing]}),
-                ("a verdict with a label for too few lines is a failure",
-                 {"labels": [{"line_number": 1, "label": nothing}]}),
-                ("a verdict with a label for a line not given is a failure",
-                 {"labels": [{"line_number": 1, "label": nothing}, {"line_number": 2, "label": nothing},
-                             {"line_number": 3, "label": other}]}),
-                ("a verdict labelling one line twice is a failure",
-                 {"labels": [{"line_number": 1, "label": nothing}, {"line_number": 1, "label": nothing}]}),
-                ("a verdict labelling every line but one of them twice is a failure",
-                 {"labels": [{"line_number": 1, "label": nothing}, {"line_number": 2, "label": nothing},
-                             {"line_number": 2, "label": other}]}),
-                ("a verdict with an unknown label is a failure",
-                 {"labels": [{"line_number": 1, "label": nothing}, {"line_number": 2, "label": "asks_maybe"}]}),
-                ("a verdict with a missing label is a failure",
-                 {"labels": [{"line_number": 1, "label": nothing}, {"line_number": 2}]}),
+                ("a verdict with no lines is a failure", {"asks_user": False}),
+                ("a verdict whose lines are not a list is a failure", {"lines": "asks_nothing"}),
+                ("a verdict whose lines are not objects is a failure", {"lines": [False, False]}),
+                ("a verdict with an entry for too few lines is a failure", {"lines": [entry(1, False, False)]}),
+                ("a verdict with an entry for a line not given is a failure",
+                 {"lines": [entry(1, False, False), entry(2, False, False), entry(3, False, True)]}),
+                ("a verdict answering for one line twice is a failure",
+                 {"lines": [entry(1, False, False), entry(1, False, False)]}),
+                ("a verdict answering for every line but one of them twice is a failure",
+                 {"lines": [entry(1, False, False), entry(2, False, False), entry(2, False, True)]}),
+                ("a verdict with an answer that is not true or false is a failure",
+                 {"lines": [entry(1, False, False), entry(2, False, "maybe")]}),
+                ("a verdict whose concerns answer is not true or false is a failure",
+                 {"lines": [entry(1, False, False), entry(2, 1, False)]}),
+                ("a verdict with a missing answer is a failure",
+                 {"lines": [entry(1, False, False), {"line_number": 2, concerns: False}]}),
                 ("a verdict whose line number is not a whole number is a failure",
-                 {"labels": [{"line_number": 1, "label": nothing}, {"line_number": "2", "label": other}]})):
+                 {"lines": [entry(1, False, False), entry("2", False, True)]})):
             os.environ["FAKE_CLAUDE_MODE"] = "verdict:" + json.dumps(verdict)
             line, failure = hook.model_judgement(["a", "b"], ["a", "b"], "10", "2", "## Item 2 of 10")
-            expected = "without a verdict (KeyError('labels'))" if "labels" not in verdict else \
+            expected = "without a verdict (KeyError('lines'))" if "lines" not in verdict else \
                 "claude's verdict does not give each of the 2 numbered lines exactly one"
             check(case_name, line is None and expected in (failure or ""), (line, failure))
+        calls_before = len(case.model_calls())
+        os.environ["FAKE_CLAUDE_MODE"] = "no"
+        hook.model_judgement(["a"], ["a"], "10", "2", "## Item 2 of 10")
+        hook.model_judgement(["a"], ["a"], "10", "2 and 2.1", "## Item 2 of 10\n\n## Item 2.1 of 10")
+        one, two = (call["stdin"] for call in case.model_calls()[calls_before:])
+        check("the prompt names one waiting item as `item N waits` and two as `items N and P wait`",
+              "and item 2 waits for his answer" in one and "and items 2 and 2.1 wait for his answer" in two,
+              (one[:600], two[:600]))
     finally:
         os.environ["PATH"] = saved_path
         os.environ.pop("FAKE_CLAUDE_MODE", None)
@@ -969,12 +992,13 @@ def print_live_model_labels():
             for call in calls:
                 lines = dict(line.split(". ", 1) for line in numbered_lines(call).split("\n") if ". " in line)
                 try:
-                    entries = json.loads(call["stdout"])["structured_output"]["labels"]
+                    entries = json.loads(call["stdout"])["structured_output"]["lines"]
+                    labels = hook.line_labels(entries, len(entries)) or ["?"] * len(entries)
                 except (ValueError, TypeError, KeyError):
                     print(f"model: no labels; exit {call['returncode']}: {call['stdout'][:300]}{call['stderr'][:300]}")
                     continue
-                for entry in entries:
-                    print(f"model: {entry.get('label')} <- {lines.get(str(entry.get('line_number')), '?')[:160]}")
+                for number, label in enumerate(labels, 1):
+                    print(f"model: {label} <- {lines.get(str(number), '?')[:160]}")
     finally:
         shutil.rmtree(SUITE_ROOT, ignore_errors=True)
     return 0
@@ -988,7 +1012,9 @@ def main():
     fake.write_text(FAKE_CLAUDE.replace("#!/usr/bin/env python3", f"#!{sys.executable}", 1)
                     .replace('"WAITING_ITEM"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION))
                     .replace('"ASKS_ELSE"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE))
-                    .replace('"ASKS_NOTHING"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING)))
+                    .replace('"ASKS_NOTHING"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING))
+                    .replace('"CONCERNS_ANSWER"', json.dumps(hook.MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION))
+                    .replace('"ASKS_ELSE_ANSWER"', json.dumps(hook.MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE)))
     fake.chmod(0o755)
     try:
         for name, function in sorted(globals().items()):

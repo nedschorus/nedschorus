@@ -62,15 +62,19 @@ EACH LINE is one of three:
 - not question-like: everything else; it passes.
 When no line is a clear ask and some are unclear, the unclear lines go to
 the model MODEL in one headless `claude -p` call, which is shown the text of
-every waiting item, as its unit of the walk-document holds it, and gives each
-unclear line one of three labels: AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION, the line
-concerns only a waiting item's decision, as a reworded recommendation of that
-item does; AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE, it asks the user something else; or
-AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING. The hook blocks on the first line labelled
+every waiting item, as its unit of the walk-document holds it, and answers
+two yes-or-no questions for each unclear line: whether it concerns a waiting
+item's decision, as a reworded recommendation of that item does, and whether
+it asks the user something else. Code turns the two answers into one of three
+labels, and asking something else wins:
+AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE when the second answer is
+yes, else AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION when
+the first is, else AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING. The hook
+blocks on the first line labelled
 AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE. The child runs with every hook disabled, so this
 hook cannot run inside it, no session file, no tools, and a cwd outside any
 checkout. When the call fails, runs past MODEL_TIMEOUT_SECONDS, or answers
-without giving each numbered line exactly one of the three labels, the hook
+without giving each numbered line exactly one entry holding both answers, the hook
 blocks on the first unclear line, saying the model check failed: a missed
 question scrolls away, a false block costs one reworded line.
 
@@ -185,29 +189,32 @@ ANSWER_LINE_START = "answer a to approve"
 AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION = "concerns_only_a_waiting_item_decision"
 AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE = "asks_something_else"
 AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING = "asks_nothing"
-MODEL_LABELS = (AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION, AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE, AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING)
+MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION = "concerns_a_waiting_item_decision"
+MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE = "asks_something_else"
+MODEL_ANSWERS = (MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION, MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE)
 MODEL_SCHEMA = {"type": "object",
-                "properties": {"labels": {"type": "array", "items": {
+                "properties": {"lines": {"type": "array", "items": {
                     "type": "object",
                     "properties": {"line_number": {"type": "integer"},
-                                   "label": {"type": "string", "enum": list(MODEL_LABELS)}},
-                    "required": ["line_number", "label"], "additionalProperties": False}}},
-                "required": ["labels"], "additionalProperties": False}
+                                   **{answer: {"type": "boolean"} for answer in MODEL_ANSWERS}},
+                    "required": ["line_number", *MODEL_ANSWERS], "additionalProperties": False}}},
+                "required": ["lines"], "additionalProperties": False}
 MODEL_SYSTEM_PROMPT = "You classify text. Answer only through the structured output."
-MODEL_PROMPT_TEMPLATE = """An agent is taking the user through an approval-walk: numbered items, each of which he answers with a letter. While the walk is open, the agent must ask him nothing outside the item waiting for his answer, because his next letter could then answer either question. This walk's items are named `Item N of {total}`, or `item N` for short, and item {waiting} waits for his answer; an item numbered some other way, such as a "side item" or an item with another total, is not one of the walk's items.
+MODEL_PROMPT_TEMPLATE = """An agent is taking the user through an approval-walk: numbered items, each of which he answers with a letter. While the walk is open, the agent must ask him nothing outside the items waiting for his answer, because his next letter could then answer either question. This walk's items are named `Item N of {total}`, or `item N` for short, and {waiting_phrase} for his answer; an item numbered some other way, such as a "side item" or an item with another total, is not one of the walk's items.
 
-The waiting item's text, as the walk-document holds it:
+The text of each waiting item, as the walk-document holds it:
 <waiting_items>
 {waiting_items}
 </waiting_items>
 
-Below is one of the agent's messages, with any walk item it shows word for word removed, and then the lines of it that the agent's code could not judge, numbered. Use the message and the waiting item's text as context, and give each numbered line exactly one of these labels:
+Below is one of the agent's messages, with every walk item it shows word for word taken out, and then the lines of it that the agent's code could not judge, numbered from 1. Use the message and the waiting items' text as context, and answer two questions about each numbered line, true or false:
 
-- {waiting_item_label}: the line concerns only the decision the waiting item puts to him, in any words: it restates, explains or argues for that item's recommendation, alternative or question, recommends an answer to it, or reminds him that it waits for his answer.
-- {asks_else_label}: the line asks him to decide, approve, choose or answer something other than the waiting item's decision: a question to him; a recommendation on another matter that he is expected to approve or reject; a question from another agent passed on to him; a reminder that a question that is not one of the walk's items still waits for him; a request for him to report something back, such as what a command printed. A line that concerns the waiting item and also asks him something more gets this label.
-- {asks_nothing_label}: the line asks him nothing: a report, advice that needs no answer, a question the agent answers itself, a report of what someone asked someone else that is not passed to him, or a request only to run a command or open a file.
+- {concerns_answer}: does the line concern the decision a waiting item puts to him, in any words? True when the line restates, explains or argues for that item's recommendation, alternative or question, recommends an answer, reminds him that the item waits for his answer, or asks what he meant by his answer to the item, such as whether "dark" meant D. A line about a walk item that is not waiting, such as one still to come, concerns no waiting item.
+- {asks_else_answer}: does the line ask him to decide, approve, choose or answer anything other than a waiting item's decision? True for a question to him; a recommendation on another matter that he is expected to approve or reject; a question from another agent passed on to him; a reminder that a question that is not one of the walk's items still waits for him; a question about running the walk, such as whether to pause it or skip an item; a request for him to report something back, such as what a command printed. False when the line asks him nothing, such as a report, advice that needs no answer, a question the agent answers itself, a report of what someone asked someone else that is not passed to him, or a request to do something with nothing to report back, such as opening a file or a page.
 
-Give one entry per numbered line, with its line_number and its label.
+A line can be true for both, or false for both.
+
+Give one entry per numbered line, with its number in the list of numbered lines as line_number, and both answers.
 
 The message:
 <message>
@@ -441,9 +448,9 @@ def model_judgement(message_lines, unclear_lines, total, waiting, waiting_items_
     failed), for the walk whose items have total M, whose item waiting is numbered waiting, and whose waiting items
     read waiting_items_text."""
     prompt = MODEL_PROMPT_TEMPLATE.format(
-        total=total, waiting=waiting, waiting_items=waiting_items_text,
-        waiting_item_label=AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION, asks_else_label=AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE,
-        asks_nothing_label=AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING,
+        total=total, waiting_items=waiting_items_text,
+        waiting_phrase=f"items {waiting} wait" if " and " in waiting else f"item {waiting} waits",
+        concerns_answer=MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION, asks_else_answer=MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE,
         message="\n".join(message_lines),
         lines="\n".join(f"{number}. {line}" for number, line in enumerate(unclear_lines, 1)))
     command = ["claude", "-p", "--model", MODEL, "--output-format", "json",
@@ -461,7 +468,7 @@ def model_judgement(message_lines, unclear_lines, total, waiting, waiting_items_
     try:
         result = json.loads(completed.stdout)
         verdict = result["structured_output"]
-        entries = verdict["labels"]
+        entries = verdict["lines"]
     except (ValueError, TypeError, KeyError) as error:
         detail = (completed.stderr or completed.stdout or "no output").strip()[:300]
         return None, f"claude exited {completed.returncode} without a verdict ({error!r}): {detail}"
@@ -470,21 +477,25 @@ def model_judgement(message_lines, unclear_lines, total, waiting, waiting_items_
     labels = line_labels(entries, len(unclear_lines))
     if labels is None:
         return None, (f"claude's verdict does not give each of the {len(unclear_lines)} numbered lines exactly one "
-                      f"of the labels {', '.join(MODEL_LABELS)}: {json.dumps(verdict)[:300]}")
+                      f"entry with a true or false {' and '.join(MODEL_ANSWERS)}: {json.dumps(verdict)[:300]}")
     return next((line for line, label in zip(unclear_lines, labels) if label == AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE), None), None
 
 
 def line_labels(entries, count):
-    """The labels of lines 1 to count, in order, or None unless entries give each of those lines exactly one of
-    MODEL_LABELS and name no other line."""
+    """The labels of lines 1 to count, in order, or None unless entries give each of those lines exactly one entry
+    with a boolean for each of MODEL_ANSWERS and name no other line. Asking something else wins over concerning a
+    waiting item's decision."""
     if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
         return None
     labels = {}
     for entry in entries:
-        number, label = entry.get("line_number"), entry.get("label")
-        if type(number) is not int or label not in MODEL_LABELS or number in labels:
+        number = entry.get("line_number")
+        concerns, asks_else = (entry.get(answer) for answer in MODEL_ANSWERS)
+        if type(number) is not int or type(concerns) is not bool or type(asks_else) is not bool or number in labels:
             return None
-        labels[number] = label
+        labels[number] = (AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE if asks_else else
+                          AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION if concerns else
+                          AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING)
     if sorted(labels) != list(range(1, count + 1)):
         return None
     return [labels[number] for number in range(1, count + 1)]
