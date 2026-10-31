@@ -62,7 +62,7 @@ def commit_file(directory, relative_path, text):
 
 
 def scratch_repository(root, with_citation_programs=True):
-    """A repository on branch base, with origin/main at its first commit and two topic branches."""
+    """A repository on branch base, with origin/main at its first commit and two nc-topic-branches."""
     repository = root / "checkout"
     repository.mkdir()
     git(repository, "init", "-q", "-b", "base")
@@ -106,6 +106,10 @@ def run_main(command, cwd):
 
 NOT_CHECKED_OUT_WORDS = "is not what is checked out in"
 FAILURE_START = hook.HOOK_NAME + ": could not check whether this push changes a Markdown file"
+# Spelled out, not read from the hook, so that changing or dropping the line fails the test.
+REMINDER_LAST_LINE = ("\nIf either program reports a finding, do not push a correction on its own: put the fix in "
+                      "the pull request's next fix-round, or, if the pull request merges with no fix-round, "
+                      "in a new pull request.")
 
 
 def is_reminder(text, top, changed_file="docs/page.md"):
@@ -142,6 +146,8 @@ def main():
         check("the check-out line comes before the two commands it must precede",
               isinstance(text, str) and NOT_CHECKED_OUT_WORDS in text
               and text.index(NOT_CHECKED_OUT_WORDS) < text.index(f"cd {top} && python3"), repr(text))
+        check("a reminder ends with the line that sends a finding's fix to the next fix-round",
+              isinstance(text, str) and text.endswith(REMINDER_LAST_LINE), repr(text))
 
         text = run_main("git push origin +markdown-branch", repository)
         check("a forced +ref push of a branch that changes a .md file is reminded about that branch",

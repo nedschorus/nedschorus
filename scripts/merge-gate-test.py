@@ -423,14 +423,14 @@ TOKEN_LINES = (
 NEW_ACTIVITY_LINES = (
     "the inline comments, the issue comments and the reviews.\n",
     "\nIf any raises a finding, do not merge until the finding is fixed, or answered with a reason "
-    "that shows it does not hold; a fix moves the head commit, which then needs its own approving review.\n",
+    "that shows it does not hold; a fix moves the nc-head-commit, which then needs its own approving review.\n",
     "\nWhen nothing is left open, post a review as the merge account saying what you read, check that "
     "nothing was posted between your reading and that review; if something was, read it and repeat "
     "from the first line. Then run the gate again with the review's submitted_at as reviewed-since.\n")
 
 
 def full_hash_line(pr):
-    return (f"\nPass the head commit's full hash in lower case, as gh pr view {pr} --json headRefOid "
+    return (f"\nPass the nc-head-commit's full hash in lower case, as gh pr view {pr} --json headRefOid "
             "--jq .headRefOid prints it, then run the gate again.\n")
 
 
@@ -804,7 +804,7 @@ def case_d0_wrong_argument_count(gate):
                    arguments=[BASE_PR, BASE_HEAD])
     return could_not_run_before_gh(
         run, "GATE COULD NOT RUN: merge-gate.sh takes exactly three arguments and was given 2.\n",
-        "\nCall it as: scripts/merge-gate.sh <pull request number> <the head commit, all 40 "
+        "\nCall it as: scripts/merge-gate.sh <pull request number> <the nc-head-commit, all 40 "
         "characters> <reviewed-since: the submitted_at of your latest review as the merge account, "
         "or of the pin if that is later>\n"), run.summary()
 
@@ -831,11 +831,11 @@ def case_e1_no_approval(gate):
         run, "636",
         "GATE REFUSED (#636): no APPROVED review found; the gate prints a merge command only for a "
         "commit an approving review covers.\n",
-        "\nIf the head commit has not been reviewed yet, commission its review, and run the gate "
-        "again once the head commit is approved.\n",
-        "\nIf its review found a defect, do not merge until the defect is fixed and the new head "
-        "commit is approved.\n",
-        "\nIf its review found no defect, approve the head commit as an account other than the pull "
+        "\nIf the nc-head-commit has not been reviewed yet, commission its review, and run the gate "
+        "again once the nc-head-commit is approved.\n",
+        "\nIf its review found a defect, do not merge until the defect is fixed and the new "
+        "nc-head-commit is approved.\n",
+        "\nIf its review found no defect, approve the nc-head-commit as an account other than the pull "
         "request's author: the merge account, or mac-claude when the merge account opened the pull "
         "request. Then run the gate again.\n"), run.summary()
 
@@ -845,9 +845,9 @@ def case_e2_head_moved(gate):
     run = run_gate(gate, BASE_PR, other, BASE_APPROVAL["submitted_at"], base_routes())
     return refused_with(
         run, BASE_PR,
-        f"head moved: you passed {other}, and the head commit is now {BASE_HEAD}.\n",
+        f"head moved: you passed {other}, and the nc-head-commit is now {BASE_HEAD}.\n",
         f"\nIf an approving review covers {BASE_HEAD}, run the gate again with {BASE_HEAD} as the "
-        "expected head commit and a reviewed-since from after you read that review.\n",
+        "expected nc-head-commit and a reviewed-since from after you read that review.\n",
         f"\nOtherwise, have {BASE_HEAD} reviewed and approved, then run the gate again the same way.\n"
     ), run.summary()
 
@@ -862,7 +862,7 @@ def case_e3_approval_covers_another_commit(gate):
     head = captured_value("nedschorus-nedschorus-636-pr-view-state.json", "headRefOid")
     run = run_gate(gate, "636", head, pin["submitted_at"], routes)
     return refused_with(
-        run, "636", f"the approval covers {pin['commit_id']} but the head commit is now {head}.\n",
+        run, "636", f"the approval covers {pin['commit_id']} but the nc-head-commit is now {head}.\n",
         f"\nHave {head} reviewed, and approved by an account other than the pull request's author, "
         "then run the gate again.\n"), run.summary()
 
@@ -909,7 +909,7 @@ MERGE_STATE_LINES = {
                "closed. If the pull request is open, run the gate again in a minute; if it still "
                "reads UNKNOWN five minutes later, tell the user this message.",
     "DIRTY": "DIRTY: the branch conflicts with main. Tell the pull request's author; the author "
-             "clears the conflict as CLAUDE.md says, and the new head commit then needs its own "
+             "clears the conflict as CLAUDE.md says, and the new nc-head-commit then needs its own "
              "approving review.",
     "BLOCKED": "BLOCKED: a branch rule on main blocks the merge, such as a required check that "
                "failed or is still running. Read the pull request's checks on GitHub: if one is "

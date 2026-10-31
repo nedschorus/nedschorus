@@ -25,7 +25,7 @@ GHI [run-agent: one CLI to invoke a Claude or Codex agent headlessly from any ca
 
 ## What the skill says
 
-A `use-codex` skill (name provisional; collision-checked 2026-08-25: no skill or script under `.claude/skills/`, `~/.codex/skills/` (which has an unrelated `codex-primary-runtime`), or `scripts/` carries the name, and ghi-info found no issue proposing the skill) at `.claude/skills/use-codex/SKILL.md`, and its Codex-side twin under `~/.codex/skills/` if Codex agents also launch Codex:
+A `use-codex` skill (name provisional; collision-checked 2026-08-25: no skill or script under `.claude/skills/`, `~/.codex/skills/` (which has an unrelated `codex-primary-runtime`), or `scripts/` carries the name, and ghi-guide-agent found no issue proposing the skill) at `.claude/skills/use-codex/SKILL.md`, and its Codex-side twin under `~/.codex/skills/` if Codex agents also launch Codex:
 
 1. When to buy a Codex read: a second model family for a review or audit (the standing cross-runtime pattern, GHI [run-agent: one CLI to invoke a Claude or Codex agent headlessly from any caller (Python, shell, either runtime)](https://github.com/nedschorus/nedschorus/issues/41)'s problem statement), a read of OpenAI-side source or docs, or a task the user names Codex for.
 2. The pinned model and effort per tier, in one place the scripts and the skill both cite (today the constant is repeated in three files).

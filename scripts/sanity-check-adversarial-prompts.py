@@ -127,13 +127,17 @@ Running a sanity-check, and reading its output:
   `saved: <path>`, `FAILED: <audit>-adversarial-prompt-<runtime> — <cause class> — <detail>`, or
   `SKIPPED:` — plus `RETRYING: <audit>-adversarial-prompt-<runtime> — <cause class> — <detail>`
   when it launches an agent a second time, and the warning lines described
-  below. Exit 0 when every launched agent saved; 1 when any launched agent
-  failed (a skipped agent is not launched); 2 when the invocation itself is
+  below. Exit 0 when every launched agent saved and the record reached the
+  log-store; 1 when any launched agent failed (a skipped agent is not
+  launched), or when the `record:` line is anything but `shipped:`, a refusal
+  included, since the record then stays on disk alone: the run still finishes
+  and keeps every report; 2 when the invocation itself is
   unusable — a missing file, a broken prompt boundary, a bad flag — or when a
   git command the runner reads fails, even after an agent saved its report,
-  because the write check or the provenance line could not be made. A run that
+  because the write check or the provenance line could not be made, and 2
+  stands whether or not the record arrived. A run that
   SIGTERM, SIGINT or SIGHUP ends is ended by that signal, after the steps
-  under WHEN A RUN IS STOPPED. A run in which every launched agent failed
+  under WHEN A RUN IS STOPPED, whether or not its record arrived. A run in which every launched agent failed
   still ships its record, which then holds the run's log and no report, and
   prints the `record:` line and the record's path.
 - An agent that saves no report is launched once more by the runner, with the
@@ -223,9 +227,8 @@ Running a sanity-check, and reading its output:
   the printed instruction, and a timeout. The classification is read from the
   CLI's own output, matched only at the start of a line and only on a launch
   that failed; a launch whose text misleads it is told to the user, who can
-  see the line. The cold-read-grid relaunches whatever the cause and uses the
-  class for its report alone; here the class decides, because a relaunch of a
-  logged-out CLI is a wasted launch and its failure sends the audit to triage
+  see the line. The class decides whether the runner relaunches, because a
+  relaunch of a logged-out CLI is a wasted launch and its failure sends the audit to triage
   with one report. The instructions do not depend on which agent finished
   first, or on whether this run launched the other runtime: a rerun of one
   agent is a run that launched one runtime, and the other runtime's report is
@@ -295,6 +298,9 @@ RECORDS_ROOT = REPO_ROOT / RECORDS_DIRECTORY_NAME
 # The record reaches the log-store by program, not by an agent remembering to
 # run one, the way nc-systems/cold-read/cold-read-grid.py ships its own.
 RECORD_SHIPPER = REPO_ROOT / "scripts" / "sanity-check-record-ship.py"
+# The shipper's one line opens with this only when the record reached the
+# log-store; REFUSED and FAILED both leave it on disk alone.
+RECORD_SHIPPED_LINE_PREFIX = "shipped:"
 _common_spec = importlib.util.spec_from_file_location(
     "cold_read_cell_common", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-cell-common.py")
 common = importlib.util.module_from_spec(_common_spec)
@@ -1725,11 +1731,11 @@ def ship_record(record_dir: pathlib.Path) -> str:
     """Run the shipper on this run's record and return its one line, or a
     FAILED line of this program's own when the shipper could not run.
 
-    Never raises, and never changes the run's exit code: the shipper's outcome
-    is reported, not enforced (the same shape as
-    nc-systems/cold-read/cold-read-grid.py's ship_record). A sanity check that found
-    something and could not reach ned-box has still found it, and the record
-    stays on disk for a later run.
+    Never raises: the shipper's outcome is reported and the run goes on (the
+    same shape as nc-systems/cold-read/cold-read-grid.py's ship_record). A
+    sanity check that found something and could not reach ned-box has still
+    found it, and the record stays on disk for a later run; the run's exit
+    code says the record did not arrive.
     """
     try:
         completed = subprocess.run(
@@ -2038,7 +2044,7 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
     run_log.detach()
 
     if saved_count:
-        print_run_completion(out_dir)
+        ok = print_run_completion(out_dir) and ok
     else:
         print_completion_of_run_that_saved_no_report(out_dir)
     if GIT_CHECKS_FAILED_AFTER_A_CELL:
@@ -2046,9 +2052,10 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
     return 0 if ok and REVIEW_COPY_NOT_REMOVED is None else 1
 
 
-def print_completion_of_run_that_saved_no_report(out_dir: pathlib.Path, ship=None) -> None:
+def print_completion_of_run_that_saved_no_report(out_dir: pathlib.Path, ship=None):
     """Ship the record of a run whose every launched agent failed, and say
-    where its log is.
+    where its log is. Whether the record reached the log-store cannot change
+    the exit, which is 1 because the agents failed; the `record:` line says it.
 
     Such a run used to ship nothing and name its record nowhere, so the
     requesting agent could not find the log the run had just saved, the one
@@ -2058,15 +2065,17 @@ def print_completion_of_run_that_saved_no_report(out_dir: pathlib.Path, ship=Non
     that holds no report. `ship` is the shipper to call, for the test.
     """
     ship = ship or ship_record
-    print(f"record: {ship(out_dir)}", flush=True)
+    record_line = ship(out_dir)
+    print(f"record: {record_line}", flush=True)
     print("sanity-check wrote no reports: every agent above failed or was "
           "skipped; there is nothing to triage. Do what the lines under each "
           f"FAILED: line above say; this run's log, which keeps them, is in {out_dir}.",
           flush=True)
 
 
-def print_run_completion(out_dir: pathlib.Path, ship=None) -> None:
-    """Ship this run's record and say what the requesting agent does next.
+def print_run_completion(out_dir: pathlib.Path, ship=None) -> bool:
+    """Ship this run's record, say what the requesting agent does next, and
+    return whether the record reached the log-store.
 
     The shipping is the program's, not the agent's: the record
     is a log, and a log that reaches the store only when someone remembers to
@@ -2074,7 +2083,8 @@ def print_run_completion(out_dir: pathlib.Path, ship=None) -> None:
     the test; the default is this module's ship_record.
     """
     ship = ship or ship_record
-    print(f"record: {ship(out_dir)}", flush=True)
+    record_line = ship(out_dir)
+    print(f"record: {record_line}", flush=True)
     print(
             f"sanity-check complete: reports in {out_dir}. Triage each report "
             "(follow up the warnings above, settle hedged claims about code by "
@@ -2091,6 +2101,7 @@ def print_run_completion(out_dir: pathlib.Path, ship=None) -> None:
             "ship a dispositions file once it is finished.",
         flush=True,
     )
+    return record_line.startswith(RECORD_SHIPPED_LINE_PREFIX)
 
 
 if __name__ == "__main__":

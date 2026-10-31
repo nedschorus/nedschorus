@@ -23,7 +23,7 @@ Terms are the glossary's (`docs/nedschorus-wiki/nedschorus-glossary.md`), plus t
 ## 1. What the cold-read-grid did before this design was built
 
 Facts from origin/main at ad9bfca, which is what "today" means in this
-section. Line numbers are that commit's, and none of them holds today: the
+section. Line numbers are that commit's, where every file a bullet below names, tests included, was in `scripts/` rather than `nc-systems/cold-read/`, and none of them holds today: the
 code in every bullet below was replaced by the code this design specifies.
 The section is kept because it is why the change was made.
 
@@ -36,11 +36,11 @@ The section is kept because it is why the change was made.
 
 ## 2. The rule every part of this design keeps
 
-**A cause changes what the cold-read-grid reports, never what the cold-read-grid decides.** What it decides is whether a cold-read-cell is retried, whether it is absent, which variant of the closing text prints, and the exit code. Those depend only on whether a report landed, on which attempt it was, and on whether the frozen-copy of the cold-read-target changed during the run. What a cause changes is what gets reported: the `RETRYING:` and `FAILED` lines, whether a `AGENT-BINARY DOWN:` line prints, what the "Tell the user" sentence names, and what the marker on each report says.
+**Apart from the retry, a cause changes what the cold-read-grid reports, never what the cold-read-grid decides.** What it decides is whether a cold-read-cell is absent, which variant of the closing text prints, and the exit code. Those depend only on whether a report landed, on which attempt it was, and on whether the frozen-copy of the cold-read-target changed during the run. What a cause changes is what gets reported: the `RETRYING:` and `FAILED` lines, whether a `AGENT-BINARY DOWN:` line prints, what the "Tell the user" sentence names, and what the marker on each report says.
 
 The reason is that causes are read from text, and text can mislead. A cold-read-cell program's log holds the agent-binary's own messages beside the model's text. The Claude limit messages of section 4 arrive on the `claude` agent-binary's standard output, which on a failed attempt also carries whatever the model printed. The Codex agent-binary writes the model's text onto its standard error (recorded in `lift_cell_status_lines` in `nc-systems/cold-read/cold-read-grid.py` and in the classifier's comment in `nc-systems/cold-read/cold-read-cell-common.py`, issue [cold-read grid: FELL BACK and STRAY WRITE markers fire on text that is not the cell's — two false positives measured 2026-09-02](https://github.com/nedschorus/nedschorus/issues/244)). A model reviewing a document that quotes a limit message could print that message at the start of a line.
 
-If a misread cause could skip a retry or change the exit code, that would be a defect. Here it can do less, but not nothing: a misread cause can print a false `AGENT-BINARY DOWN:` line and put a false cause into the "Tell the user" sentence the agent passes to the user. Two things keep that rare and checkable. Each agent-binary's recognised texts are matched only in that agent-binary's own output (section 4). When this was written no Codex text was recognised at all, so Codex output could not be misread; since 2026-09-18 one is, its logged-out line, and it is matched after the leading timestamp the Codex tracing logger puts on every line (section 4). And every cause the user hears carries the path of the kept log it came from (section 6).
+If a misread cause could change the exit code, that would be a defect. Here it can do less, but not nothing: a misread cause the user can clear skips the retry (section 3), a misread cause can print a false `AGENT-BINARY DOWN:` line and put a false cause into the "Tell the user" sentence the agent passes to the user. Two things keep that rare and checkable. Each agent-binary's recognised texts are matched only in that agent-binary's own output (section 4). When this was written no Codex text was recognised at all, so Codex output could not be misread; since 2026-09-18 one is, its logged-out line, and it is matched after the leading timestamp the Codex tracing logger puts on every line (section 4). And every cause the user hears carries the path of the kept log it came from (section 6).
 
 ## 3. Retry once, in the cold-read-grid
 
@@ -58,7 +58,7 @@ When an attempt ends without a landed report, the cold-read-grid relaunches the 
 
 **The handoff's wait grows with the run.** The context-threshold hook, `scripts/handoff-context-threshold-hook.py`, holds a session-handoff while a background task runs, but only for 30 minutes by default (`DEFAULT_BACKGROUND_TASK_WAIT_MINUTES`), and it measured cold-read-grid runs at 8 to 27 minutes. A retry after a late failure makes a run longer, so the same pull request as the retry raises that default to 75 minutes and updates the test that pins it. Without that, a session hands off while its own cold-read-full-run is still going, and the cold-read-grid dies with it.
 
-A retry is not suppressed for a cause a retry cannot fix, such as a logged-out agent-binary. Point 1 retries every failed cold-read-cell, and suppressing a retry would make the cause decide what the cold-read-grid does, which section 2 forbids.
+A retry is suppressed for a cause the user can clear (`USER_CLEARABLE_CAUSE_CLASSES` in `nc-systems/cold-read/cold-read-cell-common.py`: logged-out, agent-binary-missing, account-limit, model-limit), because a retry only meets it again, and for an attempt stopped at the time limit (section 11). Such an attempt is `FAILED` at once, and the first such `FAILED` line for each agent-binary and cause ends with "Tell the user: ...", so the user hears of it while the other cold-read-cells run; the closing text's "Tell the user" sentence still names every such cause. This replaces point 1 for these causes, by the user's approval of 2026-10-28.
 
 ## 4. Naming the cause
 
@@ -111,7 +111,7 @@ The user-ruling of 2026-09-11, point 3: "One closing text for every run, replaci
 
 `OPUS_ABSENT_INSTRUCTIONS`, the Opus-absent and Fable-only wordings of the `NOTE:` line, and the "Wait for Opus to come back before that run." clause are all removed. The `NOTE:` line itself is replaced by the list of absent reports below.
 
-Every run that finishes closes with one closing text, in one of four variants. A run whose cold-read-grid process dies, or whose cold-read-cell hangs, never closes (sections 10 and 11).
+Every run that finishes closes with one closing text, in one of four variants. A run whose cold-read-grid process dies never closes (section 10); a cold-read-cell that hangs holds it back for at most 4 hours of time the machine was awake (section 11).
 
 - **The frozen-copy of the cold-read-target changed:** today's `TARGET_CHANGED_INSTRUCTIONS`, whatever else happened, because a set read against a document that changed during the run is not valid. When no report landed as well, neither none-landed sentence prints, 'No report landed in …' nor 'Start a new cold-read-full-run …', because TARGET_CHANGED_INSTRUCTIONS already orders a new run. After it come the absent reports, the agent-binary-down lines and the "Tell the user now" sentence, when there are any.
 - **All six landed:** today's `COMPLETION_INSTRUCTIONS`, whose first sentence becomes "All six reports landed in {record_dir}, one file per reviewer."
@@ -153,7 +153,9 @@ The stub agent-binary the tests use (`STUB_MODEL_RUNTIME` in `nc-systems/cold-re
 - A cold-read-cell fails both attempts. Expect `RETRYING:`, then `FAILED` with the cause, the some-landed variant, the marker in all six `.md` files of the cold-read-record, and exit 1.
 - All three Claude cold-read-cells fail both attempts with `account-limit`. Expect one `AGENT-BINARY DOWN:` line with the reset text, its restatement in the closing text without that prefix, and the reset text in the "Tell the user" sentence.
 - All three Claude cold-read-cells fail both attempts with `model-limit`. Expect no `AGENT-BINARY DOWN:` line, and three absent reports listed.
-- All three Claude cold-read-cells fail their first attempt with `account-limit`. Two fail their retry the same way, and one fails its retry with `exit-1`. Expect `RETRYING:` naming `account-limit` three times, the third `FAILED` naming `exit-1`, and no `AGENT-BINARY DOWN:` line.
+- Two Claude cold-read-cells fail with `account-limit`, and one fails both attempts with `exit-1`. Expect one `RETRYING:`, naming `exit-1`, the `FAILED` lines naming `account-limit` twice and `exit-1` once, and no `AGENT-BINARY DOWN:` line.
+- A Claude cold-read-cell fails logged-out while the others are still reading. Expect no `RETRYING:`, a `FAILED` line ending with "Tell the user: ..." before any other report is saved, and the closing text's "Tell the user" sentence.
+- Every attempt runs past a time limit shortened to seconds. Expect six `FAILED` lines naming `timed-out`, no `RETRYING:`, and no report written after the stop.
 - Three Codex cold-read-cells fail both attempts with `exit-N`. Expect no `AGENT-BINARY DOWN:` line, three absent reports listed, and no "Tell the user" sentence.
 - All six fail both attempts. Expect the none-landed variant and exit 1.
 - One copied cold-read-cell program has its execute permission removed, so the cold-read-grid cannot start it. Expect `RETRYING:` and then `FAILED` naming `program-unstartable`, the other five cold-read-cells unaffected, the some-landed variant and exit 1, rather than the run ending.
@@ -180,9 +182,9 @@ This is skill text, so before it is merged it takes the skill's own route: a col
 - **The cold-read-grid process dying** with the agent-session that launched it (`nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-14-nedschorus-file-naming-and-location-standards-2/`). No code in the cold-read-grid can survive its own death. What this design does about it is in section 3.
 - **Cross-model fallback.** Ruled out: point 1 retries with the same model.
 
-## 11. No timeout per cold-read-cell
+## 11. A 4-hour timeout per attempt
 
-None exists. A cold-read-cell that hangs holds the closing text back indefinitely, and it is never retried, because it never exits. No hang has been seen: the failures on record all ended with an exit, and the one run that never closed died with its agent-session rather than hanging. The user ruled on 2026-09-17 that this design adds no timeout, and that one is added if a hang is ever seen. For scale, the slowest cold-read-cell of this design's own cold-read-full-run took 1,864 seconds, 31 minutes.
+An attempt still running 4 hours after it started, counted in time the machine was awake (`time.monotonic()`, which leaves out sleep on Linux and on macOS), is stopped with its child processes, is not retried, and is `FAILED` with the cause `timed-out — timed out after 4 hours`. Its `FAILED` line is preceded by a `WRITE CHECK DID NOT RUN:` line, since the stopped cold-read-cell never ran its stray-write check. The user approved this on 2026-10-28; no recorded cold-read-cell has needed more than 72 minutes awake.
 
 ## 12. Order of work
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A test suite run directly, with a variable that redirects git set, leaves
+"""An nc-test-suite run directly, with a variable that redirects git set, leaves
 the repository that variable names alone.
 
 WHAT WENT WRONG. A suite that needs a git repository builds one with

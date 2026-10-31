@@ -49,6 +49,31 @@ are empty, or the parser's own tokens, as item starts are, so a line in code or
 in a comment is never an item's start, a marker, a recommendation or a recorded
 answer.
 
+ITEM PAGES. The walk-me-through skill publishes each item as a page before
+any message shows it, and records the page's link in the walk-minutes as a
+line `#item_page item N of M <link>`, or, when the publish failed, as
+`#item_page item N of M publish failed: <reason>`.
+newest_item_page_link_per_item_from_walk_minutes reads both forms, each on one
+line and at the line's start, outside code and HTML comments; a publish-failed
+line with no reason is not read. The newest line for an item number counts,
+whatever its `of M`, because a re-planned walk keeps an item's page while its
+total changes.
+
+CLOSING LINES. approval_walk_closing_line_read is the one reader of the line
+the walk-me-through skill ends every message of an open walk with, so the
+Stop hooks agree on what is one. The line, without its outer spaces and as the
+Markdown parser reads it, is one link that opens the line, to any target,
+whose text is a running count in plain text, `Item 4 of 9` or `Items 10 and
+11 of 12`, then nothing or `, ` and a point, followed by ` · ` and the answer
+letters and nothing more; or, for an item whose publish failed, the same line
+with only the link's text, `Item 4 of 9, <the point> · A approve · ...`. A
+count in emphasis or a code span, or one that names no item, such as a range
+that runs backwards, makes no closing line.
+approval_walk_sub_step_no_decision_closing_line_page_link_or_none reads the
+line a sub-step that asks for no decision ends with, `[No decision here; type
+N or next to continue.](<page link>)`, alone on its line, or, for a sub-step
+whose publish failed, the same line without its link.
+
 Agent-facing messages follow
 docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 """
@@ -89,10 +114,19 @@ ITEM_LABEL = re.compile(
     rf"^(?:(?P<bold>\*\*|__)item\s+(?P<bold_number>{WHOLE_NUMBER})(?:\s+of\s+(?P<total>\d+))?"
     rf"(?=\s*[:.,]|(?P=bold)\s*(?:[:.,\-–—]|$))"
     rf"|item\s+(?P<plain_number>{WHOLE_NUMBER})[:.](?=\s|$))", re.I)
-REPLY_COUNT = re.compile(rf"\bitems?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
+SUB_STEP_NO_DECISION_CLOSING_LINE = re.compile(
+    r"^\s*(?:\[No decision here; type N or next to continue\.\]\((\S+)\)|No decision here; type N or next to continue\.)\s*$")
+CLOSING_LINE_LABEL = re.compile(rf"Items?\s+({NUMBER_LIST})\s+of\s+(\d+)(?:,\s.*)?", re.S)
 # Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
 REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
 NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
+# A link is one run of non-space characters, so `publish failed: <reason>` can never be read as a link. Spaces
+# only, never a newline, so a line that ends short is not completed by the line below it.
+ITEM_PAGE_LINE_PATTERN = re.compile(
+    rf"^#item_page[ \t]+item[ \t]+({NUMBER})[ \t]+of[ \t]+\d+[ \t]+(?:(publish failed:[ \t]*\S.*?)|(\S+))[ \t]*$",
+    re.I | re.M)
+# A link has no space in it, so no link can equal this value.
+ITEM_PAGE_PUBLISH_FAILED = "publish failed"
 NOT_A_FORM_PROBLEM = (
     "does not open with an item in one of the forms `item N of M`, `item N.K of M`, "
     "`items N and P of M` or `items N to P of M`")
@@ -188,6 +222,55 @@ def next_to_present(minutes_text, parser):
         return None
     hashtag, value = markers[-1]
     return value, not hashtag
+
+
+def newest_item_page_link_per_item_from_walk_minutes(minutes_text, parser):
+    """Return {item number: the link of its newest `#item_page` line, or ITEM_PAGE_PUBLISH_FAILED when that line
+    records a failed publish}."""
+    return {number: ITEM_PAGE_PUBLISH_FAILED if failed else link
+            for number, failed, link in ITEM_PAGE_LINE_PATTERN.findall("\n".join(prose_lines(minutes_text, parser)))}
+
+
+def approval_walk_closing_line_read(line, parser, answer_letters):
+    """Return (item numbers, M, link or None) when line is a closing line, with or without its link, as the module
+    docstring's CLOSING LINES says, answer_letters being the answer hook's ANSWER_LETTERS_TEXT; otherwise None.
+    parser must accept every link target, since walks link items to `file:` pages, which markdown-it refuses by
+    default and reads as text."""
+    line = line.strip()
+    tokens = parser.parseInline(line)[0].children
+    after_label = f" · {answer_letters}"
+    link = None
+    if tokens and tokens[0].type == "link_open":
+        close = next((index for index, token in enumerate(tokens) if token.type == "link_close"), None)
+        if close is None or [token.type for token in tokens[close + 1:]] != ["text"] \
+                or tokens[close + 1].content != after_label:
+            return None
+        label = "".join(token.content for token in tokens[1:close])
+        link = tokens[0].attrs.get("href")
+    elif any(token.type == "link_open" for token in tokens) or not line.endswith(after_label):
+        return None
+    else:
+        label = line[:-len(after_label)]
+    count = CLOSING_LINE_LABEL.fullmatch(label)
+    if not count:
+        return None
+    # Emphasis or a code span in the count is a token of its own, so the first token holds the whole count only
+    # when the count is plain text.
+    if link is not None and not (tokens[1].type == "text" and tokens[1].content.startswith(label[:count.end(2)])):
+        return None
+    try:
+        return expand_numbers(count[1]), count[2], link
+    except UnusableRange:
+        return None
+
+
+def approval_walk_sub_step_no_decision_closing_line_page_link_or_none(line):
+    """Return the link of line when it is a sub-step's no-decision line, as the module docstring's CLOSING LINES
+    says, ITEM_PAGE_PUBLISH_FAILED when it is that line without its link, or None when it is neither."""
+    match = SUB_STEP_NO_DECISION_CLOSING_LINE.match(line)
+    if match is None:
+        return None
+    return match[1] or ITEM_PAGE_PUBLISH_FAILED
 
 
 def is_closed(value):

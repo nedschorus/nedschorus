@@ -1,5 +1,6 @@
 ---
 issue: "[Topic-branch base enforcement: a branch-creation script and a gh pr create check that refuses an undeclared carry of another PR's commits](https://github.com/nedschorus/nedschorus/issues/238)"
+kind: design
 ---
 
 # Design: the topic-branch creation script
@@ -32,7 +33,7 @@ The check belongs beside pieces 1 and 2, and not at merge time, for one reason: 
 
 `git checkout -b <name>`, with no start point given, creates the branch at whatever commit the working copy stands on, and moves the copy onto it. So the command that creates topic one leaves the copy standing on topic one, and the same command typed for topic two bases topic two on topic one. The second pull request then contains both topics while its description names one, and if topic one is rejected its code rides into main inside topic two.
 
-A seat cannot avoid this by standing on main between topics: git allows one branch in one working copy, and main is held by the machine's main checkout at `~/Projects/nedschorus`. That is the only reason each seat has a branch named after it (the docstring of `sync_working_branch_with_main` in `nc-systems/handoff/handoff-supervisor.py`: "An agent's home sits on its own branch only because git refuses one branch in two worktrees"). So a seat has nowhere safe to stand, and correctness rests on naming `origin/main` by hand every time.
+A seat cannot avoid this by standing on main between topics: git allows one branch in one working copy, and main is held by the machine's main checkout at `~/Projects/nedschorus`. That is the only reason each seat has a branch named after it (the docstring of the function in `nc-systems/handoff/handoff-supervisor.py` now named `launch_time_git_sync`, then named `sync_working_branch_with_main`, said so until commit 063ee8ef9 removed the sentence: "An agent's home sits on its own branch only because git refuses one branch in two worktrees"). So a seat has nowhere safe to stand, and correctness rests on naming `origin/main` by hand every time.
 
 Nothing detects that automatically. The extra commits are visible from the moment the branch exists — `git log origin/main..HEAD` shows them locally, and the pull request's commit list shows them once filed — and main's protection requires an approving review, so the mistake is catchable. But catching it depends on a person looking, and the branch's description will say one topic while its commits say two.
 

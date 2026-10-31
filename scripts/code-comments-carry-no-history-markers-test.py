@@ -111,8 +111,8 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/find-deleted-path-across-backups-test.py": 37,
     "scripts/find-deleted-path-across-backups.py": 33,
     "scripts/force-push-with-open-pull-request-guard-hook-test.py": 2,
-    "scripts/ghi-info-ask-test.py": 18,
-    "scripts/ghi-info-ask.py": 38,
+    "scripts/ghi-guide-agent-ask-test.py": 18,
+    "scripts/ghi-guide-agent-ask.py": 38,
     "scripts/ghi-issue-write-test.py": 38,
     "scripts/ghi-issue-write.py": 76,
     "scripts/ghi-mirror-refresh-test.py": 4,
@@ -161,7 +161,7 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/transcript-mirror-to-log-store.py": 9,
     "scripts/walk-file-endings-match-the-skill-test.py": 3,
     "scripts/walk-files-ship-test.py": 12,
-    "scripts/walk-files-ship.py": 12,
+    "scripts/walk-files-ship.py": 1,
 }
 
 # Lines whose marker is data the code needs, not history: (path, text): reason.
@@ -169,8 +169,6 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
 # edit above the line does not move it; it must be found in exactly one comment
 # or docstring line of the file that holds a marker.
 ALLOWED_DATA_LINES = {
-    ("scripts/agent-seat-due-task-raise-hook.py", 'such as "2026-10-03T09:00:00Z"'):
-        "an example of the timestamp form the due_utc field takes",
     ("scripts/transcript-mirror-to-log-store.py", "like `2026-10-03T23:40:12Z`, to MIRROR_PASS_STAMP_FILE_NAME"):
         "an example of the timestamp form the pass stamp file holds",
     ("scripts/locate-user-approval-by-question-subject-test.py", "# 2026-10-01T02:00:00Z"):

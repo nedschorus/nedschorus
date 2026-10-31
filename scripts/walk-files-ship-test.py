@@ -22,12 +22,10 @@ import contextlib
 import hashlib
 import importlib.util
 import io
-import atexit
 import json
 import os
 import pathlib
 import shutil
-import site
 import subprocess
 import sys
 import tempfile
@@ -93,17 +91,6 @@ if any("sha256sum" in a for a in sys.argv):
         print(size_line)
 """
 
-# Every run gets this HOME, so a walk-closed marker can land only here, and no
-# session id unless a case gives one. PYTHONUSERBASE keeps the packages the
-# launching HOME's user site provides, such as markdown-it-py on a Mac.
-LAUNCH_USER_BASE = site.getuserbase()
-SUITE_HOME = pathlib.Path(tempfile.mkdtemp(prefix="walk-files-ship-test-home-"))
-atexit.register(lambda: shutil.rmtree(SUITE_HOME, ignore_errors=True))
-SESSION_ID_VARIABLE = "CLAUDE_CODE_SESSION_ID"
-PROBE_SESSION_ID = "walk-files-ship-test-session"
-WALK_CLOSED_MARKER = (SUITE_HOME / ".claude" / "handoffs" / (
-    f"{PROBE_SESSION_ID}-handoff-due-at-lower-context-threshold-after-approval-walk-closed"))
-
 failures = []
 
 
@@ -124,9 +111,6 @@ def write_walk(directory: pathlib.Path, name: str, files: dict) -> pathlib.Path:
 
 def ship(destination, *args, extra_env=None):
     env = dict(os.environ)
-    env.pop(SESSION_ID_VARIABLE, None)
-    env["HOME"] = str(SUITE_HOME)
-    env["PYTHONUSERBASE"] = LAUNCH_USER_BASE
     env[DESTINATION_VARIABLE] = destination
     if args and args[0].endswith(".md"):
         env["WALK_SHIP_TEST_WALK_DIRECTORY"] = str(pathlib.Path(args[0]).parent)
@@ -798,133 +782,42 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-race-test-") as race_sc
                             "minutes-after-copy", "minutes-after-rename")),
           str(names))
 
-# --- The walk-closed marker ---------------------------------------------------
+# --- A walk's close writes no handoff marker ----------------------------------
 with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-close-") as close_scratch_name:
     close_scratch = pathlib.Path(close_scratch_name)
-    close_destination = str(close_scratch / "store" / "cold-read-records")
-    close_walks = close_scratch / "walks"
-    CLOSE_WALK = "close-demo-walk-2026-10-24"
-    open_minutes = "# minutes\n\nItem 1 ruled.\n\n#next_to_present item 2 of 2\n"
-    closed_minutes = open_minutes + "Item 2 ruled.\n\n#next_to_present none, closed\n"
-    close_walk_text = write_walk(close_walks, CLOSE_WALK,
-                                 {**FILES, "-minutes": open_minutes})
-    with_session = {SESSION_ID_VARIABLE: PROBE_SESSION_ID}
-
-    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
-    check("a mid-walk ship writes no walk-closed marker",
-          result.returncode == 0 and not WALK_CLOSED_MARKER.exists(),
-          f"exit {result.returncode}: {result.stdout}{result.stderr}")
-
-    (close_walks / f"{CLOSE_WALK}-minutes.md").write_text(closed_minutes, encoding="utf-8")
-    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
-    check("the ship that puts closed minutes in the store writes the session's "
-          "walk-closed marker, exit 0, one line opening shipped:",
+    close_home = close_scratch / "home"
+    close_home.mkdir()
+    CLOSE_WALK = "close-demo-walk-2026-10-27"
+    closed_minutes = ("# minutes\n\nItem 1 ruled.\n\n#next_to_present item 2 of 2\n"
+                      "Item 2 ruled.\n\n#next_to_present none, closed\n")
+    close_walk_text = write_walk(close_scratch / "walks", CLOSE_WALK,
+                                 {**FILES, "-minutes": closed_minutes})
+    result = ship(str(close_scratch / "store" / "cold-read-records"), str(close_walk_text),
+                  extra_env={"HOME": str(close_home),
+                             "CLAUDE_CODE_SESSION_ID": "walk-files-ship-test-session"})
+    handoffs_directory = close_home / ".claude" / "handoffs"
+    handoff_files = (sorted(str(path) for path in handoffs_directory.rglob("*"))
+                     if handoffs_directory.exists() else [])
+    check("shipping closed minutes with a session id set exits 0 and writes "
+          "nothing under ~/.claude/handoffs",
           result.returncode == 0 and result.stdout.startswith("shipped:")
-          and one_line(result.stdout) and WALK_CLOSED_MARKER.is_file(),
-          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+          and not handoff_files,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}; "
+          f"under ~/.claude/handoffs: {handoff_files}")
 
-    WALK_CLOSED_MARKER.unlink()
-    (close_walks / f"{CLOSE_WALK}-dispositions.md").write_text("# dispositions\n",
-                                                               encoding="utf-8")
-    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
-    check("a later ship of the closed walk whose minutes are already in the store, "
-          "such as a dispositions update, writes no marker",
-          result.returncode == 0 and "already there unchanged" in result.stdout
-          and not WALK_CLOSED_MARKER.exists(),
-          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+# --- Failures after part of a shipment reached the store ---------------------
+with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-") as partial_scratch_name:
+    partial_scratch = pathlib.Path(partial_scratch_name)
+    PARTIAL_WALK = "partial-demo-walk-2026-10-24"
+    partial_minutes = "# minutes\n\nItem 1 ruled.\n\n#next_to_present item 2 of 2\n"
 
-    (close_walks / f"{CLOSE_WALK}-dispositions.md").write_text(
-        "# dispositions\n\nFinding 1 fixed.\n", encoding="utf-8")
-    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
-    check("a later ship that replaces the closed walk's dispositions writes no marker",
-          result.returncode == 0 and "dispositions replaced" in result.stdout
-          and not WALK_CLOSED_MARKER.exists(),
-          f"exit {result.returncode}: {result.stdout}{result.stderr}")
-
-    close_walk_text.write_text(close_walk_text.read_text(encoding="utf-8") + "\nAdded.\n",
-                               encoding="utf-8")
-    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
-    check("a later ship that replaces the closed walk's walk text, only added to, "
-          "writes no marker",
-          result.returncode == 0 and "walk text replaced" in result.stdout
-          and not WALK_CLOSED_MARKER.exists(),
-          f"exit {result.returncode}: {result.stdout}{result.stderr}")
-
-    reopened_minutes = closed_minutes + "\nReopened.\n\n#next_to_present item 3 of 3\n"
-    (close_walks / f"{CLOSE_WALK}-minutes.md").write_text(reopened_minutes, encoding="utf-8")
-    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
-    check("a ship of reopened minutes, whose last #next_to_present line names an item, "
-          "writes no marker though an earlier line says closed",
-          result.returncode == 0 and "minutes replaced" in result.stdout
-          and not WALK_CLOSED_MARKER.exists(),
-          f"exit {result.returncode}: {result.stdout}{result.stderr}")
-
-    reclosed_minutes = reopened_minutes + "Item 3 ruled.\n\n#next_to_present none, closed\n"
-    (close_walks / f"{CLOSE_WALK}-minutes.md").write_text(reclosed_minutes, encoding="utf-8")
-    result = ship(close_destination, str(close_walk_text))
-    check("closing with no session id set writes no marker, says so on stderr, "
-          "and still exits 0 with one shipped: line",
-          result.returncode == 0 and result.stdout.startswith("shipped:")
-          and one_line(result.stdout) and not WALK_CLOSED_MARKER.exists()
-          and SESSION_ID_VARIABLE in result.stderr and "/handoff" in result.stderr,
-          f"exit {result.returncode}: {result.stdout}{result.stderr}")
-
-    (close_walks / f"{CLOSE_WALK}-minutes.md").write_text(
-        reclosed_minutes + "Closing note.\n", encoding="utf-8")
-    handoffs_directory = WALK_CLOSED_MARKER.parent
-    shutil.rmtree(handoffs_directory, ignore_errors=True)
-    handoffs_directory.parent.mkdir(parents=True, exist_ok=True)
-    handoffs_directory.write_text("a file where the directory should be\n", encoding="utf-8")
-    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
-    check("a walk-closed marker that cannot be written exits 1, keeps the one "
-          "shipped: line, and names the marker and /handoff on stderr",
-          result.returncode == 1 and result.stdout.startswith("shipped:")
-          and one_line(result.stdout) and "FAILED to write the walk-closed marker" in result.stderr
-          and str(WALK_CLOSED_MARKER) in result.stderr and "/handoff" in result.stderr,
-          f"exit {result.returncode}: {result.stdout}{result.stderr}")
-    handoffs_directory.unlink()
-
-    # A refused add-only file does not stop the closed minutes landing, so the close counts.
-    (close_walks / f"{CLOSE_WALK}-draft.md").write_text("# draft, rewritten\n", encoding="utf-8")
-    (close_walks / f"{CLOSE_WALK}-minutes.md").write_text(
-        reclosed_minutes + "Closing note, revised.\n", encoding="utf-8")
-    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
-    check("a REFUSED run that still put closed minutes in the store writes the marker",
-          result.returncode == 2 and result.stdout.startswith("REFUSED:")
-          and WALK_CLOSED_MARKER.is_file(),
-          f"exit {result.returncode}: {result.stdout}{result.stderr}")
-
-    WALK_CLOSED_MARKER.unlink()
-    (close_walks / f"{CLOSE_WALK}-minutes.md").write_text(
-        reclosed_minutes + "Closing note, revised again.\n", encoding="utf-8")
-    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
-    check("a close writes the marker when ~/.claude/handoffs already exists",
-          WALK_CLOSED_MARKER.is_file() and "FAILED to write" not in result.stderr,
-          f"exit {result.returncode}: {result.stdout}{result.stderr}")
-
-    # A marker failure on a REFUSED run still exits 1, as the docstring says.
-    WALK_CLOSED_MARKER.unlink()
-    shutil.rmtree(handoffs_directory, ignore_errors=True)
-    handoffs_directory.write_text("a file where the directory should be\n", encoding="utf-8")
-    (close_walks / f"{CLOSE_WALK}-minutes.md").write_text(
-        reclosed_minutes + "Closing note, revised a third time.\n", encoding="utf-8")
-    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
-    check("a REFUSED run whose walk-closed marker cannot be written exits 1, keeps "
-          "its one REFUSED: line, and names the marker on stderr",
-          result.returncode == 1 and result.stdout.startswith("REFUSED:")
-          and one_line(result.stdout) and "FAILED to write the walk-closed marker" in result.stderr,
-          f"exit {result.returncode}: {result.stdout}{result.stderr}")
-    handoffs_directory.unlink()
-
-    # The closed minutes land, then the add-only placement fails; the retry
-    # finds the minutes unchanged, so only the failed run can record the close.
+    # The minutes land, then the add-only placement fails.
     partial_spec = importlib.util.spec_from_file_location("walk_files_ship_partial", SHIP)
     partial = importlib.util.module_from_spec(partial_spec)
     partial_spec.loader.exec_module(partial)
-    partial.threshold_hook.HANDOFF_DIRECTORY = WALK_CLOSED_MARKER.parent
-    partial_walks = close_scratch / "partial-walks"
-    write_walk(partial_walks, CLOSE_WALK, {**FILES, "-minutes": closed_minutes})
-    partial_store = close_scratch / "partial-store" / "walk"
+    partial_walks = partial_scratch / "partial-walks"
+    write_walk(partial_walks, PARTIAL_WALK, {**FILES, "-minutes": partial_minutes})
+    partial_store = partial_scratch / "partial-store" / "walk"
     partial_store.mkdir(parents=True)
     partial_destination = partial.WalkStoreDestination(
         None, None, pathlib.PurePosixPath(partial_store))
@@ -939,93 +832,73 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-close-") as close_
         out, err = io.StringIO(), io.StringIO()
         try:
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                code = partial.ship_walk(partial_destination, CLOSE_WALK, partial_walks)
+                code = partial.ship_walk(partial_destination, PARTIAL_WALK, partial_walks)
         except OSError:
             check("ship_walk returns rather than raising OSError", False,
                   traceback.format_exc())
             return None, out.getvalue(), err.getvalue()
         return code, out.getvalue(), err.getvalue()
 
-    saved_session = os.environ.get(SESSION_ID_VARIABLE)
-    os.environ[SESSION_ID_VARIABLE] = PROBE_SESSION_ID
     partial.shipper.link_staged_files_never_over_existing = placement_that_fails
     try:
         failed_code, failed_out, failed_err = ship_in_process()
         partial.shipper.link_staged_files_never_over_existing = real_placement
-        marker_after_failed_run = WALK_CLOSED_MARKER.is_file()
         retry_code, retry_out, retry_err = ship_in_process()
     finally:
         partial.shipper.link_staged_files_never_over_existing = real_placement
-        if saved_session is None:
-            os.environ.pop(SESSION_ID_VARIABLE, None)
-        else:
-            os.environ[SESSION_ID_VARIABLE] = saved_session
-    check("a run whose closed minutes land but whose add-only placement fails is "
-          "FAILED, exit 1, and still writes the walk-closed marker",
+    check("a run whose minutes land but whose add-only placement fails is FAILED, exit 1",
           failed_code == 1 and failed_out.startswith("FAILED:")
-          and (partial_store / f"{CLOSE_WALK}-minutes.md").is_file()
-          and marker_after_failed_run,
+          and (partial_store / f"{PARTIAL_WALK}-minutes.md").is_file(),
           f"exit {failed_code}: {failed_out}{failed_err}")
-    check("the retry after that partial failure ships the rest, and the marker is there",
+    check("the retry after that partial failure ships the rest",
           retry_code == 0 and retry_out.startswith("shipped:")
-          and "already there unchanged" in retry_out and WALK_CLOSED_MARKER.is_file(),
+          and "already there unchanged" in retry_out,
           f"exit {retry_code}: {retry_out}{retry_err}")
 
     # The renames of the replaced files put the minutes in place, then fail
     # without saying which were done.
-    WALK_CLOSED_MARKER.unlink(missing_ok=True)
-    partial_walks = close_scratch / "partial-walks-renames"
-    write_walk(partial_walks, CLOSE_WALK, {**FILES, "-minutes": closed_minutes})
-    partial_store = close_scratch / "partial-store-renames" / "walk"
+    partial_walks = partial_scratch / "partial-walks-renames"
+    write_walk(partial_walks, PARTIAL_WALK, {**FILES, "-minutes": partial_minutes})
+    partial_store = partial_scratch / "partial-store-renames" / "walk"
     partial_store.mkdir(parents=True)
     partial_destination = partial.WalkStoreDestination(
         None, None, pathlib.PurePosixPath(partial_store))
     real_renames = partial.shipper.replace_with_staged_files
-    minutes_file_name = f"{CLOSE_WALK}-minutes.md"
+    minutes_file_name = f"{PARTIAL_WALK}-minutes.md"
 
     def renames_that_fail_after_the_minutes(copy_host, staging_dir, walk_path, files):
         os.replace(pathlib.Path(staging_dir) / minutes_file_name,
                    pathlib.Path(walk_path) / minutes_file_name)
         return subprocess.CompletedProcess([], 255, "", "injected: ssh exit 255\n"), None
 
-    os.environ[SESSION_ID_VARIABLE] = PROBE_SESSION_ID
     partial.shipper.replace_with_staged_files = renames_that_fail_after_the_minutes
     try:
         failed_code, failed_out, failed_err = ship_in_process()
         partial.shipper.replace_with_staged_files = real_renames
-        marker_after_failed_run = WALK_CLOSED_MARKER.is_file()
         retry_code, retry_out, retry_err = ship_in_process()
     finally:
         partial.shipper.replace_with_staged_files = real_renames
-        if saved_session is None:
-            os.environ.pop(SESSION_ID_VARIABLE, None)
-        else:
-            os.environ[SESSION_ID_VARIABLE] = saved_session
-    check("a run whose renames put the closed minutes in place, then fail without "
-          "saying which were done, is FAILED, exit 1, and writes the walk-closed marker",
+    check("a run whose renames put the minutes in place, then fail without "
+          "saying which were done, is FAILED, exit 1",
           failed_code == 1 and failed_out.startswith("FAILED:")
-          and (partial_store / minutes_file_name).is_file() and marker_after_failed_run,
+          and (partial_store / minutes_file_name).is_file(),
           f"exit {failed_code}: {failed_out}{failed_err}")
-    check("the retry after those failed renames ships the rest, and the marker is there",
+    check("the retry after those failed renames ships the rest",
           retry_code == 0 and retry_out.startswith("shipped:")
-          and "already there unchanged" in retry_out and WALK_CLOSED_MARKER.is_file(),
+          and "already there unchanged" in retry_out,
           f"exit {retry_code}: {retry_out}{retry_err}")
 
-    # The minutes are in the store unchanged and only the dispositions are
-    # replaced, so renames that fail cannot have landed the minutes.
-    WALK_CLOSED_MARKER.unlink(missing_ok=True)
-    partial_walks = close_scratch / "partial-walks-dispositions"
-    write_walk(partial_walks, CLOSE_WALK,
-               {**FILES, "-minutes": closed_minutes, "-dispositions": "# dispositions\n"})
-    partial_store = close_scratch / "partial-store-dispositions" / "walk"
+    # The minutes are in the store unchanged and only the dispositions are replaced.
+    partial_walks = partial_scratch / "partial-walks-dispositions"
+    write_walk(partial_walks, PARTIAL_WALK,
+               {**FILES, "-minutes": partial_minutes, "-dispositions": "# dispositions\n"})
+    partial_store = partial_scratch / "partial-store-dispositions" / "walk"
     partial_store.mkdir(parents=True)
     partial_destination = partial.WalkStoreDestination(
         None, None, pathlib.PurePosixPath(partial_store))
-    os.environ[SESSION_ID_VARIABLE] = PROBE_SESSION_ID
     try:
         first_code, first_out, first_err = ship_in_process()
-        WALK_CLOSED_MARKER.unlink(missing_ok=True)
-        (partial_walks / f"{CLOSE_WALK}-dispositions.md").write_text(
+        (partial_walks / f"{PARTIAL_WALK}-dispositions.md").write_text(
             "# dispositions\n\nItem 1: approved.\n", encoding="utf-8")
 
         def renames_that_fail(copy_host, staging_dir, walk_path, files):
@@ -1035,65 +908,49 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-close-") as close_
         failed_code, failed_out, failed_err = ship_in_process()
     finally:
         partial.shipper.replace_with_staged_files = real_renames
-        if saved_session is None:
-            os.environ.pop(SESSION_ID_VARIABLE, None)
-        else:
-            os.environ[SESSION_ID_VARIABLE] = saved_session
     check("the first shipment of the walk with dispositions succeeds",
           first_code == 0 and first_out.startswith("shipped:"),
           f"exit {first_code}: {first_out}{first_err}")
     check("a run whose minutes are already in the store unchanged, and whose renames "
-          "of the replaced dispositions fail, is FAILED, exit 1, and writes no "
-          "walk-closed marker",
+          "of the replaced dispositions fail, is FAILED, exit 1",
           failed_code == 1 and failed_out.startswith("FAILED:")
-          and "while putting the copied files in place" in failed_out
-          and not WALK_CLOSED_MARKER.is_file(),
+          and "while putting the copied files in place" in failed_out,
           f"exit {failed_code}: {failed_out}{failed_err}")
 
     # On the local path a rename that fails raises OSError, which must reach
-    # ship_walk as a failed result, or the marker decision is skipped.
+    # ship_walk as a failed result.
     saved_os_replace = os.replace
     for failing_suffix, minutes_land in (("-dispositions", True), ("-minutes", False)):
-        WALK_CLOSED_MARKER.unlink(missing_ok=True)
-        partial_walks = close_scratch / f"local-rename{failing_suffix}-walks"
-        write_walk(partial_walks, CLOSE_WALK,
-                   {**FILES, "-minutes": closed_minutes, "-dispositions": "# dispositions\n"})
-        partial_store = close_scratch / f"local-rename{failing_suffix}-store" / "walk"
+        partial_walks = partial_scratch / f"local-rename{failing_suffix}-walks"
+        write_walk(partial_walks, PARTIAL_WALK,
+                   {**FILES, "-minutes": partial_minutes, "-dispositions": "# dispositions\n"})
+        partial_store = partial_scratch / f"local-rename{failing_suffix}-store" / "walk"
         partial_store.mkdir(parents=True)
         partial_destination = partial.WalkStoreDestination(
             None, None, pathlib.PurePosixPath(partial_store))
-        failing_name = f"{CLOSE_WALK}{failing_suffix}.md"
+        failing_name = f"{PARTIAL_WALK}{failing_suffix}.md"
 
         def replace_that_fails_on(source, destination, *args, **kwargs):
             if pathlib.Path(destination) == partial_store / failing_name:
                 raise OSError(28, "No space left on device (injected)")
             saved_os_replace(source, destination, *args, **kwargs)
 
-        os.environ[SESSION_ID_VARIABLE] = PROBE_SESSION_ID
         os.replace = replace_that_fails_on
         try:
             failed_code, failed_out, failed_err = ship_in_process()
             os.replace = saved_os_replace
-            marker_after_failed_run = WALK_CLOSED_MARKER.is_file()
             minutes_after_failed_run = (partial_store / minutes_file_name).is_file()
             retry_code, retry_out, retry_err = ship_in_process()
         finally:
             os.replace = saved_os_replace
-            if saved_session is None:
-                os.environ.pop(SESSION_ID_VARIABLE, None)
-            else:
-                os.environ[SESSION_ID_VARIABLE] = saved_session
-        # The failed result does not say which renames were done, so the
-        # marker is written whenever the minutes were among them.
         check(f"a local run whose rename of {failing_name} raises OSError is FAILED, "
-              f"exit 1, names the OS's reason, and writes the walk-closed marker",
+              f"exit 1, and names the OS's reason",
               failed_code == 1 and failed_out.startswith("FAILED:")
               and one_line(failed_out) and "No space left on device" in failed_out
-              and minutes_after_failed_run == minutes_land and marker_after_failed_run,
+              and minutes_after_failed_run == minutes_land,
               f"exit {failed_code}: {failed_out}{failed_err}")
         check(f"the retry after the local rename of {failing_name} failed ships the rest",
-              retry_code == 0 and retry_out.startswith("shipped:")
-              and WALK_CLOSED_MARKER.is_file(),
+              retry_code == 0 and retry_out.startswith("shipped:"),
               f"exit {retry_code}: {retry_out}{retry_err}")
 
     # A local read of one file in the store that fails. The store starts
@@ -1108,23 +965,17 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-close-") as close_
                 raise OSError(28, "No space left on device (injected)")
             return saved_read_bytes(path)
 
-        os.environ[SESSION_ID_VARIABLE] = PROBE_SESSION_ID
         pathlib.Path.read_bytes = read_bytes_that_fails
         try:
             return ship_in_process()
         finally:
             pathlib.Path.read_bytes = saved_read_bytes
-            if saved_session is None:
-                os.environ.pop(SESSION_ID_VARIABLE, None)
-            else:
-                os.environ[SESSION_ID_VARIABLE] = saved_session
 
     def fresh_walk_and_store(label):
         global partial_walks, partial_store, partial_destination
-        WALK_CLOSED_MARKER.unlink(missing_ok=True)
-        partial_walks = close_scratch / f"local-read-{label}-walks"
-        write_walk(partial_walks, CLOSE_WALK, {**FILES, "-minutes": closed_minutes})
-        partial_store = close_scratch / f"local-read-{label}-store" / "walk"
+        partial_walks = partial_scratch / f"local-read-{label}-walks"
+        write_walk(partial_walks, PARTIAL_WALK, {**FILES, "-minutes": partial_minutes})
+        partial_store = partial_scratch / f"local-read-{label}-store" / "walk"
         partial_store.mkdir(parents=True)
         partial_destination = partial.WalkStoreDestination(
             None, None, pathlib.PurePosixPath(partial_store))
@@ -1132,37 +983,33 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-close-") as close_
     fresh_walk_and_store("after-rename")
     failed_code, failed_out, failed_err = ship_with_read_failing_for(minutes_file_name)
     check("a local run whose read-back of the stored digests after the renames raises "
-          "OSError is FAILED, exit 1, names the OS's reason, and writes the "
-          "walk-closed marker, the closed minutes being in the store",
+          "OSError is FAILED, exit 1, and names the OS's reason, the minutes being "
+          "in the store",
           failed_code == 1 and failed_out.startswith("FAILED:")
           and one_line(failed_out) and "No space left on device" in failed_out
-          and (partial_store / minutes_file_name).is_file()
-          and WALK_CLOSED_MARKER.is_file(),
+          and (partial_store / minutes_file_name).is_file(),
           f"exit {failed_code}: {failed_out}{failed_err}")
 
     fresh_walk_and_store("after-link")
-    draft_name = f"{CLOSE_WALK}-draft.md"
+    draft_name = f"{PARTIAL_WALK}-draft.md"
     failed_code, failed_out, failed_err = ship_with_read_failing_for(draft_name)
     check("a local run whose read-back after the add-only links raises OSError is "
-          "FAILED, exit 1, names the OS's reason and not an ssh exit, and writes the "
-          "walk-closed marker",
+          "FAILED, exit 1, and names the OS's reason and not an ssh exit",
           failed_code == 1
-          and failed_out.startswith(f"FAILED: {CLOSE_WALK} — No space left on device "
+          and failed_out.startswith(f"FAILED: {PARTIAL_WALK} — No space left on device "
                                     f"(injected) while putting the copied files in place")
-          and "ssh" not in failed_out and WALK_CLOSED_MARKER.is_file(),
+          and "ssh" not in failed_out,
           f"exit {failed_code}: {failed_out}{failed_err}")
 
     fresh_walk_and_store("listing")
     (partial_store / draft_name).write_text(FILES["-draft"], encoding="utf-8")
     failed_code, failed_out, failed_err = ship_with_read_failing_for(draft_name)
     check("a local run whose listing of the store raises OSError is FAILED, exit 1, "
-          "names the OS's reason and not an ssh exit, copies nothing and writes no "
-          "walk-closed marker",
+          "names the OS's reason and not an ssh exit, and copies nothing",
           failed_code == 1
-          and failed_out.startswith(f"FAILED: {CLOSE_WALK} — No space left on device "
+          and failed_out.startswith(f"FAILED: {PARTIAL_WALK} — No space left on device "
                                     f"(injected); the walk's files stay on disk")
-          and "ssh" not in failed_out and not (partial_store / minutes_file_name).exists()
-          and not WALK_CLOSED_MARKER.is_file(),
+          and "ssh" not in failed_out and not (partial_store / minutes_file_name).exists(),
           f"exit {failed_code}: {failed_out}{failed_err}")
 
 print()

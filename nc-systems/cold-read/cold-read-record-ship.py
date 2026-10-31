@@ -145,8 +145,9 @@ skill owns each kind.
 WHO CALLS IT. nc-systems/cold-read/cold-read-grid.py at the end of every run, whatever the
 outcome; the agent after writing triage.md (the cold-read skill's step
 7); nc-systems/cold-read/cold-read-fast-read.py when it writes into cold-read-records/.
-A shipping failure never fails the cold read: the caller prints this
-program's one line and goes on. `--all` ships every directory under
+Whenever this program's line is not `shipped:`, a calling program prints the
+line, finishes its run and keeps its reports, and then exits 1, or the nonzero
+code its run has for another reason. `--all` ships every directory under
 cold-read-records/ in this checkout, continuing past a refused or failed one
 and listing them at the end; being add-only it is safe over directories
 already in the store, which is how a seat catches up after the box was down,
@@ -289,7 +290,7 @@ in the nedschorus repository, which this machine also clones:
 - `seats/` -- a seat's shared files, shipped by
   `scripts/seat-shared-file-ship.py`
 - `analysis/` -- analyses, placed by hand
-- `daily-full-test-runs/` -- each machine's daily run of every test suite on
+- `daily-full-test-runs/` -- each machine's daily run of every nc-test-suite on
   main, written by `scripts/daily-full-test-run-of-main.py`
 - `pull-request-head-test-runs/` -- each machine's test log of a pull request's
   head, one per commit, written by `scripts/pull-request-head-test-run.py`
@@ -297,12 +298,12 @@ in the nedschorus repository, which this machine also clones:
   marks, written by `nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py`
 - `handoff-agent-seat-died-without-session-handoff-restart-watcher/` -- each decision of ned-box's
   crash watcher and the notices it showed the user, written by
-  `nc-systems/handoff/handoff-agent-seat-died-without-session-handoff-restart-watcher.py`
+  `nc-systems/handoff/handoff-agent-crash-watcher.py`
 - `uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-checks/` -- each
   machine's weekly check that the work-snapshot hook finds a real claude
   session, written by
   `nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py`
-- `ghi-info-proposed-improvements-or-changes/` -- ghi-info's ruling questions
+- `ghi-guide-agent-proposed-improvements-or-changes/` -- ghi-guide-agent's ruling questions
   about GHI-MDs, each a proposed-improvements-or-changes-file settled in
   place, written by `scripts/ghi-issue-write.py`
 - `guarded-file-versions-and-approvals/` -- each machine's log of every
@@ -310,6 +311,10 @@ in the nedschorus repository, which this machine also clones:
   copy of each version its checkout's branch HEAD did not hold, and the record
   of which versions the user approved, written by
   `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`
+- `bash-guards-replay-changed-verdict-or-failed-run-log-directories/` -- the
+  Bash guards replay's step logs and differences files, one directory per
+  replay that exited 1 or 2, written by
+  `nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py`
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file

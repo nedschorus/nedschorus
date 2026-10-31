@@ -25,6 +25,16 @@ The user's rulings on 2026-08-25, in his words: "My intent with readme is that i
 
 The page `docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md` settles what an overview contains and leaves out, where it lives (`docs/nedschorus-wiki/nedschorus-<system>-architecture-overview.md`, one per system under `nc-systems/`), how long it runs, how a refresh keeps it true, and how it is checked against the code: by the overview checks of `scripts/md-drift-lint.py`, which the page specifies and which are not built yet, and by a fresh-agent that checks every assertion the overview makes about the code. "Architecture overview" is listed in `docs/nedschorus-wiki/nedschorus-sdlc-terms.md`. What the page leaves to this issue is the examples-first test, and the skill text if a skill is still needed.
 
+## What is decided
+
+The user ruled on 2026-10-30 that the skill is needed, approving this proposal at item 3 of the walk merge-lane-2-open-rulings-2026-10-30 (walk-document `nedlern@ned-box:/home/nedlern/agents/merge-lane-2/docs/walk/merge-lane-2-open-rulings-2026-10-30.md`, and its minutes `nedlern@ned-box:/home/nedlern/agents/merge-lane-2/docs/walk/merge-lane-2-open-rulings-2026-10-30-minutes.md`): "build the overview-write skill, whose program runs the claim check: a fresh-agent checks each claim about what the code does against the code, citing file and line, and the program writes a report. The review plan, `scripts/pull-request-review-plan.py`, refuses a pull request that changes an overview until a report for its head commit shows every claim confirmed or fixed, so the check does not depend on an agent remembering the skill."
+
+None of this is built yet: there is no overview-write skill under `.claude/skills/`, and `scripts/pull-request-review-plan.py` does not yet mention overviews or claim reports.
+
+The evidence: on 2026-10-30 two pull requests each fixed a claim in `docs/nedschorus-wiki/nedschorus-handoff-architecture-overview.md` that stated wrongly how its code behaves, which the page's claim check, written only in English, had not caught: PR [Handoff overview: a handoff-supervisor with no terminal leaves the agent-session running at a session-handoff](https://github.com/nedschorus/nedschorus/pull/2215) and PR [Handoff overview: a dont-restart session-handoff asks the user only when the supervisor has a terminal](https://github.com/nedschorus/nedschorus/pull/2218).
+
+The constraint: the check stays cheap. It runs one fresh-agent per overview a pull request changes, and runs only on pull requests that change an overview. The user said, approving it: "I'm getting a little nervous that we're going to slow down the system with all these checks, but it seems like the alternative is worse".
+
 ## Next action
 
 Run the examples-first test on the page, without waiting for the `scripts/md-drift-lint.py` checks: two fresh-agents each write the handoff-system's architecture overview from the page alone, and the user picks the better one, which replaces `docs/nedschorus-wiki/nedschorus-handoff-system-overview.md` as `docs/nedschorus-wiki/nedschorus-handoff-architecture-overview.md`. Then the user decides whether an overview-write skill is still needed or the page is enough; if the page is enough, this issue closes.

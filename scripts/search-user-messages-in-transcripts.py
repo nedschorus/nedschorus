@@ -8,11 +8,19 @@ attachment whose origin is human."""
 
 import argparse
 import glob
+import importlib.util
 import json
 import os
 import re
 import sys
 import time
+from pathlib import Path
+
+_claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_lookup_and_text_search_common",
+    Path(__file__).resolve().parent / "claude-code-session-transcript-lookup-and-text-search-common.py")
+claude_code_session_transcript_lookup_and_text_search_common = importlib.util.module_from_spec(_claude_code_session_transcript_lookup_and_text_search_common_spec)
+_claude_code_session_transcript_lookup_and_text_search_common_spec.loader.exec_module(claude_code_session_transcript_lookup_and_text_search_common)
 
 DEFAULT_PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 WRAPPED_BLOCK = re.compile(r"\A\s*<[a-z-]+>.*</[a-z-]+>\s*\Z", re.DOTALL)
@@ -142,6 +150,30 @@ def transcripts(projects_dir, seats, since_hours):
     return paths
 
 
+def claude_code_session_transcript_paths_prefilter_on_raw_json(projects_dir, paths, patterns, all_terms):
+    """Return (the paths whose raw JSON holds a pattern's text, a note on what was not prefiltered, or "").
+
+    Every path is kept when a pattern is not plain text, or the search fails, so a prefilter
+    never drops a transcript that holds a match."""
+    prefilters = [claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcript_raw_json_ripgrep_prefilter_pattern_from_search_text_or_none_when_not_plain_text(pattern)
+                  for pattern in patterns]
+    if not paths:
+        return paths, ""
+    if None in prefilters:
+        return paths, (f"every transcript was read, because ripgrep might not find the pattern "
+                       f"{patterns[prefilters.index(None)]!r} wherever Python would")
+    groups = [[prefilter] for prefilter in prefilters] if all_terms else [prefilters]
+    kept = {os.path.normpath(path) for path in paths}
+    for group in groups:
+        found, problems = claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcripts_matching_any_pattern_ignoring_case(
+            [projects_dir], group, include_subagents=False)
+        if problems:
+            return paths, (f"every transcript was read, because the search that picks the transcripts to read "
+                           f"failed: {problems[0]}")
+        kept &= {os.path.normpath(path) for path in found}
+    return [path for path in paths if os.path.normpath(path) in kept], ""
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Search only the user's own typed messages in Claude Code transcripts.",
@@ -183,8 +215,11 @@ def main():
 
     total_user_messages = 0
     total_hits = 0
+    read, note = claude_code_session_transcript_paths_prefilter_on_raw_json(args.projects_dir, paths, args.patterns, args.all_terms)
+    if note:
+        print(note, file=sys.stderr)
 
-    for path in paths:
+    for path in read:
         turns = read_turns(path)
         user_turns = [t for t in turns if t[1] == "user"]
         total_user_messages += len(user_turns)
@@ -206,9 +241,12 @@ def main():
                     print(f"  [{near[1]}] {near[2][:400]}")
 
     print("=" * 72)
+    skipped = len(paths) - len(read)
     print(
-        f"{total_hits} matching user message(s) in {len(paths)} transcript(s); "
-        f"{total_user_messages} user message(s) scanned."
+        f"{total_hits} matching user message(s) found among {len(paths)} transcript(s)"
+        + (f"; ripgrep found none of the search pattern(s) in {skipped} of them, so only the other "
+           f"{len(read)} {'was' if len(read) == 1 else 'were'} opened" if skipped else "")
+        + f"; {total_user_messages} user message(s) read in the transcript(s) opened."
     )
     return 0 if total_hits else 1
 

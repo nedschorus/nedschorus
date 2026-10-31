@@ -905,6 +905,61 @@ def run_spawned_subagent_roster_cases(workspace: Path):
           writer.still_working_subagent_entries(list(multi.values())) == [],
           str(multi))
 
+    # An interim notification arrives with <status>completed</status> while the
+    # subagent's own background work still runs; the last notification decides.
+    # Both bodies are trimmed from real transcripts.
+    incident_agent = "a68d25248370ee861"
+    interim_body = (
+        "<task-notification>\n"
+        f"<task-id>{incident_agent}</task-id>\n"
+        "<tool-use-id>toolu_01ND98sByPRjfgSm7HcRmtiJ</tool-use-id>\n"
+        "<status>completed</status>\n"
+        '<summary>Agent "Fix-round for PR 2045" is waiting on its own background work</summary>\n'
+        "<note>This agent stopped with background work of its own still running. It may "
+        "resume on its own when that work completes or reports, and the same task-id "
+        "notifies again if it does; the result below may be interim.</note>\n"
+        "<result>Waiting on the test run.</result>\n"
+        "</task-notification>")
+    final_body = (
+        "<task-notification>\n"
+        f"<task-id>{incident_agent}</task-id>\n"
+        "<status>completed</status>\n"
+        '<summary>Agent "Fable check of decisions 4 and 5" finished</summary>\n'
+        "<note>A task-notification fires each time this agent stops with no live background "
+        "children of its own. The user can send it another message and resume it, so the "
+        "same task-id may notify more than once.</note>\n"
+        f'<result>This agent\'s report was delivered to you as a message from "{incident_agent}" '
+        "(its SubagentHandback call). Read it there; it is not repeated here.\n</result>\n"
+        "</task-notification>")
+
+    def delivered(body, stamp):
+        return [{"type": "queue-operation", "operation": "enqueue", "timestamp": stamp,
+                 "sessionId": FIXTURE_SESSION_ID, "content": body},
+                {"type": "user", "timestamp": stamp, "message": {"role": "user", "content": body},
+                 "sessionId": FIXTURE_SESSION_ID}]
+
+    incident_spawn = spawn_record(incident_agent, "Fix-round for PR 2045", "2026-10-27T21:18:21.032Z")
+    interim_last_path = workspace / "roster-interim-notification-last.jsonl"
+    interim_last_path.write_text("\n".join(json.dumps(record) for record in [
+        incident_spawn, *delivered(interim_body, "2026-10-27T21:31:58.572Z"),
+    ]) + "\n", encoding="utf-8")
+    interim_roster = writer.spawned_subagent_roster(interim_last_path)
+    check("a subagent whose last notification is interim counts as still working",
+          [entry["agent_id"] for entry in writer.still_working_subagent_entries(interim_roster)]
+          == [incident_agent],
+          str(interim_roster))
+    final_last_path = workspace / "roster-final-notification-after-interim.jsonl"
+    final_last_path.write_text("\n".join(json.dumps(record) for record in [
+        incident_spawn, *delivered(interim_body, "2026-10-27T21:31:58.572Z"),
+        *delivered(final_body, "2026-10-27T21:45:00.000Z"),
+    ]) + "\n", encoding="utf-8")
+    final_roster = writer.spawned_subagent_roster(final_last_path)
+    check("a final notification after an interim one ends the subagent",
+          writer.still_working_subagent_entries(final_roster) == []
+          and final_roster[0]["last_event"] == "completed"
+          and final_roster[0]["last_event_at"] == "2026-10-27T21:45:00Z",
+          str(final_roster))
+
     # An empty transcript is not an error: a session may spawn nothing.
     empty_path = workspace / "roster-empty.jsonl"
     empty_path.write_text("", encoding="utf-8")
@@ -993,6 +1048,22 @@ def run_roster_never_blocks_a_handoff_cases(workspace: Path):
           "spawned-subagent-" not in missing_body, missing_body)
     check("a missing transcript tells the agent to name its subagents by hand",
           "not derived" in missing.stdout and "by hand" in missing.stdout, missing.stdout)
+
+    # The session's transcript in two project folders, neither keyed: no one of them is the session's.
+    two_folders_session_id = "00000000-0000-4000-8000-0000000002f0"
+    for folder in ("-fixture-project", "-another-fixture-project"):
+        write_fixture_transcript(home / ".claude" / "projects" / folder / f"{two_folders_session_id}.jsonl")
+    two_folders = run_writer(
+        handoffs, "carry on\n", "--agent", "rostertwofolderscase",
+        environment_overrides={"HOME": str(home), "CLAUDE_CODE_SESSION_ID": two_folders_session_id},
+    )
+    two_folders_body = handoff_text(handoffs, "rostertwofolderscase")
+    check("a transcript in two project folders still writes the handoff, with no roster field",
+          "next-step: carry on" in two_folders_body and "spawned-subagent-" not in two_folders_body,
+          two_folders_body)
+    check("a transcript in two project folders tells the agent no single transcript was found",
+          "no single transcript found" in two_folders.stdout and "by hand" in two_folders.stdout,
+          two_folders.stdout)
 
     # No session id at all — the case every existing test already runs under.
     unidentified = run_writer(handoffs, "carry on\n", "--agent", "rosterunidentifiedcase")
@@ -1127,7 +1198,7 @@ def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Pat
     # (d) The reviewer's route, reproduced at 08398ce. A supervised parent seat
     # has handed off once, and its supervisor has consumed that handoff. A
     # child `claude -p` the parent started in another seat's directory -- as
-    # scripts/ghi-info-ask.py starts one in ghi-info -- inherits the parent's
+    # scripts/ghi-guide-agent-ask.py starts one in ghi-guide-agent -- inherits the parent's
     # three variables but has its own CLAUDE_CODE_SESSION_ID. Its handoff must
     # land under its own directory's name and leave the parent's untouched:
     # taken under the parent's name, it passes the foreign-claim check, raises
@@ -1559,21 +1630,23 @@ def run_completed_task_prune_remote_store_cases(workspace: Path):
           writer.log_store_task_list_copy_location_in_scp_form(None, Path("/home/nedlern/x")))
 
 
-with tempfile.TemporaryDirectory() as temporary_directory:
+with tempfile.TemporaryDirectory() as temporary_directory_name:
+    # Resolved, as the cwd the program reports is, where TMPDIR is reached through a link.
+    temporary_directory = Path(temporary_directory_name).resolve()
     run_collapse_cases()
-    run_written_by_session_field_cases(Path(temporary_directory))
-    run_multi_line_next_step_cases(Path(temporary_directory))
-    run_counter_cases(Path(temporary_directory))
-    run_invocation_cases(Path(temporary_directory))
-    run_liveness_report_cases(Path(temporary_directory))
-    run_console_identity_case(Path(temporary_directory))
-    run_agent_name_and_claim_cases(Path(temporary_directory))
-    run_seat_name_the_supervisor_does_not_answer_to_cases(Path(temporary_directory))
-    run_spawned_subagent_roster_cases(Path(temporary_directory))
-    run_roster_never_blocks_a_handoff_cases(Path(temporary_directory))
-    run_seat_name_and_directory_from_the_handoff_supervisor_cases(Path(temporary_directory))
-    run_completed_task_prune_cases(Path(temporary_directory))
-    run_completed_task_prune_remote_store_cases(Path(temporary_directory))
+    run_written_by_session_field_cases(temporary_directory)
+    run_multi_line_next_step_cases(temporary_directory)
+    run_counter_cases(temporary_directory)
+    run_invocation_cases(temporary_directory)
+    run_liveness_report_cases(temporary_directory)
+    run_console_identity_case(temporary_directory)
+    run_agent_name_and_claim_cases(temporary_directory)
+    run_seat_name_the_supervisor_does_not_answer_to_cases(temporary_directory)
+    run_spawned_subagent_roster_cases(temporary_directory)
+    run_roster_never_blocks_a_handoff_cases(temporary_directory)
+    run_seat_name_and_directory_from_the_handoff_supervisor_cases(temporary_directory)
+    run_completed_task_prune_cases(temporary_directory)
+    run_completed_task_prune_remote_store_cases(temporary_directory)
 
 print()
 if failures:

@@ -155,7 +155,7 @@ def main():
         result = run_program(scratch, review("APPROVE", comments=[comment]),
                              FAKE_GH_AUTHOR="ned-review-merge")
         check("an approval on a pull request ned-review-merge opened is posted with event "
-              "APPROVE, on the head commit, with the verdict as the body's first line and the "
+              "APPROVE, on the nc-head-commit, with the verdict as the body's first line and the "
               "inline comments", result.code == 0 and result.posted == {
                   "commit_id": HEAD, "event": "APPROVE",
                   "body": "APPROVE\n\nThe review body.", "comments": [comment]}, result.detail)
@@ -169,6 +169,8 @@ def main():
               "review 42 posted on pull request 7 as APPROVE" in result.stdout
               and HEAD in result.stdout and TOKEN not in result.stdout + result.stderr,
               result.detail)
+        check("when no comment moved into the body, the success line says nothing of moving",
+              "moved" not in result.stdout, result.detail)
 
         result = run_program(scratch, review("REQUEST_CHANGES"))
         check("a request for changes on a pull request another account opened is posted with "
@@ -195,12 +197,12 @@ def main():
               result.detail)
 
         result = run_program(scratch, review("APPROVE"), FAKE_GH_READ_BACK_COMMIT="f" * 40)
-        check("a read-back commit other than the head commit exits 2 and names the commit",
+        check("a read-back commit other than the nc-head-commit exits 2 and names the commit",
               result.code == 2 and f"commit_id is '{'f' * 40}', not '{HEAD}'" in result.stderr,
               result.detail)
 
         result = run_program(scratch, review("APPROVE"), FAKE_GH_READ_BACK_COMMIT="0" * 40)
-        check("a read-back commit that sorts before the head commit exits 2 and names the commit",
+        check("a read-back commit that sorts before the nc-head-commit exits 2 and names the commit",
               result.code == 2 and f"commit_id is '{'0' * 40}', not '{HEAD}'" in result.stderr,
               result.detail)
 
@@ -279,6 +281,9 @@ def main():
                   "- `scripts/thing.py:9`: Below the hunk.\n"
                   "- `scripts/other.py:1`: In a file the diff lacks.\n"
                   "- `image.png:1`: On a binary file."), result.detail)
+        check("the success line says how many comments moved into the body",
+              result.stdout.rstrip("\n").endswith("; 3 comment(s) moved into the body"),
+              result.detail)
         removed = {"path": "scripts/thing.py", "line": 2, "body": "On the old side only."}
         result = run_program(
             scratch, review("APPROVE", comments=[removed]),
@@ -307,7 +312,7 @@ def main():
 
         result = run_program(scratch, review("APPROVE"), FAKE_GH_FAILS="post")
         check("a failed post exits 2, says the review may be posted, names gh's error, and "
-              "gives the command that lists mac-claude's reviews on the head commit",
+              "gives the command that lists mac-claude's reviews on the nc-head-commit",
               result.code == 2
               and "review may or may not be posted: posting the review failed: gh exited 1: "
               "gh: HTTP 502" in result.stderr

@@ -86,8 +86,8 @@ NED_BOX_CLEAN_LINE = (
     "clean-worktrees.py --remove >> /home/nedlern/.claude/clean-worktrees.log 2>&1")
 NED_BOX_CRASH_RESTART_WATCHER_LINE = (
     "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
-    "handoff-agent-seat-died-without-session-handoff-restart-watcher.py >> "
-    "/home/nedlern/.claude/handoff-agent-seat-died-without-session-handoff-restart-watcher.log 2>&1")
+    "handoff-agent-crash-watcher.py >> "
+    "/home/nedlern/.claude/handoff-agent-crash-watcher.log 2>&1")
 NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE = (
     "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
     "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> "
@@ -129,6 +129,11 @@ NED_BOX_GUARDED_FILE_PRUNE_LINE = (
     "guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py >> "
     "/home/nedlern/.claude/guarded-file-versions-and-approvals-store-removed-checkout-"
     "copies-prune.log 2>&1")
+# The deletion of exited agent-sessions' Claude Code temp folders, on ned-box alone.
+NED_BOX_TEMP_FOLDERS_DELETE_LINE = (
+    "30 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
+    "claude-code-temp-folders-of-exited-agent-sessions-delete.py >> "
+    "/home/nedlern/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log 2>&1")
 MAC_GUARDED_FILE_PRUNE_PLIST = {
     "Label": "com.nedschorus.guarded-file-versions-and-approvals-store-removed-checkout-"
              "copies-prune",
@@ -143,6 +148,23 @@ MAC_GUARDED_FILE_PRUNE_PLIST = {
                        "removed-checkout-copies-prune.log",
     "StandardErrorPath": "/Users/el/.claude/guarded-file-versions-and-approvals-store-"
                          "removed-checkout-copies-prune.log",
+}
+# The agent-seat database's nightly backup on ned-box and its copy to the Mac.
+NED_BOX_AGENT_SEAT_DATABASE_BACKUP_LINE = (
+    "15 2 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/agent-seat-database/"
+    "agent-seat-database-nightly-backup-with-integrity-check.py >> "
+    "/home/nedlern/.claude/agent-seat-database-nightly-backup-with-integrity-check.log 2>&1")
+MAC_AGENT_SEAT_DATABASE_BACKUP_COPY_PLIST = {
+    "Label": "com.nedschorus.agent-seat-database-newest-backup-copy-to-mac",
+    "ProgramArguments": ["/opt/homebrew/bin/python3",
+                         "/Users/el/Projects/nedschorus/nc-systems/agent-seat-database/"
+                         "agent-seat-database-newest-backup-copy-to-mac.py"],
+    "EnvironmentVariables": {
+        "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
+                "/usr/sbin:/sbin"},
+    "StartCalendarInterval": {"Hour": 4, "Minute": 15},
+    "StandardOutPath": "/Users/el/.claude/agent-seat-database-newest-backup-copy-to-mac.log",
+    "StandardErrorPath": "/Users/el/.claude/agent-seat-database-newest-backup-copy-to-mac.log",
 }
 DOMAIN = f"gui/{os.getuid()}"
 
@@ -253,18 +275,22 @@ check("the Mac's worktree cleanup is a launchd job at 06:30, so a run missed whi
       and list(mac_clean_plist) == list(MAC_CLEAN_PLIST), mac_clean_plist)
 check("the table's jobs are the two typed by hand before this program, the worktree "
       "cleanup, ned-box's crash restart watcher, ned-box's Remote Control reconnect watcher, the "
-      "weekly owner check of the work-snapshot hook, the session dialogs refresh and the "
-      "guarded-file store's prune, and no other",
-      sorted(real_jobs) == ["clean-worktrees", "daily-full-test-run-of-main",
+      "weekly owner check of the work-snapshot hook, the session dialogs refresh, the "
+      "guarded-file store's prune, the agent-seat database's backup and its copy to the "
+      "Mac, the deletion of exited agent-sessions' temp folders, and no other",
+      sorted(real_jobs) == ["agent-seat-database-newest-backup-copy-to-mac",
+                            "agent-seat-database-nightly-backup-with-integrity-check",
+                            "claude-code-temp-folders-of-exited-agent-sessions-delete",
+                            "clean-worktrees", "daily-full-test-run-of-main",
                             "guarded-file-versions-and-approvals-store-removed-checkout-"
                             "copies-prune",
-                            "handoff-agent-seat-died-without-session-handoff-restart-watcher",
+                            "handoff-agent-crash-watcher",
                             "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-"
                             "tmux-typing-watcher",
                             "log-store-session-dialogs-refresh", "transcript-mirror-to-log-store",
                             "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"],
       sorted(real_jobs))
-watcher = real_jobs["handoff-agent-seat-died-without-session-handoff-restart-watcher"]
+watcher = real_jobs["handoff-agent-crash-watcher"]
 check("the crash restart watcher runs on ned-box only, every minute",
       watcher["on"] == {"ned-box": {"scheduler": "cron", "schedule": "* * * * *"}}, watcher["on"])
 session_dialogs = real_jobs["log-store-session-dialogs-refresh"]
@@ -290,8 +316,23 @@ remote_control_watcher_documentation = (
 guarded_file_prune_documentation = (
     REPOSITORY_ROOT / real_jobs["guarded-file-versions-and-approvals-store-removed-"
                                 "checkout-copies-prune"]["program"]).read_text(encoding="utf-8")
+temp_folders_delete = real_jobs["claude-code-temp-folders-of-exited-agent-sessions-delete"]
+check("the temp-folder deletion runs on ned-box alone, at 07:30, and its program documents the "
+      "table's line",
+      list(temp_folders_delete["on"]) == ["ned-box"]
+      and installer.cron_line(ned_box, temp_folders_delete, temp_folders_delete["on"]["ned-box"])
+      == NED_BOX_TEMP_FOLDERS_DELETE_LINE
+      and f"    {NED_BOX_TEMP_FOLDERS_DELETE_LINE}\n"
+      in (REPOSITORY_ROOT / temp_folders_delete["program"]).read_text(encoding="utf-8"),
+      installer.cron_line(ned_box, temp_folders_delete, temp_folders_delete["on"]["ned-box"]))
 weekly_live_check_documentation = (
     REPOSITORY_ROOT / real_jobs["weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"]
+    ["program"]).read_text(encoding="utf-8")
+agent_seat_database_backup_documentation = (
+    REPOSITORY_ROOT / real_jobs["agent-seat-database-nightly-backup-with-integrity-check"]
+    ["program"]).read_text(encoding="utf-8")
+agent_seat_database_backup_copy_documentation = (
+    REPOSITORY_ROOT / real_jobs["agent-seat-database-newest-backup-copy-to-mac"]
     ["program"]).read_text(encoding="utf-8")
 check("the lines each program documents are the table's lines, and each names this installer",
       f"  Mac:     {MAC_MIRROR_LINE}\n" in mirror_documentation
@@ -302,8 +343,11 @@ check("the lines each program documents are the table's lines, and each names th
       and f"    {NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE}\n" in remote_control_watcher_documentation
       and f"    {NED_BOX_WEEKLY_LIVE_CHECK_LINE}\n" in weekly_live_check_documentation
       and f"    {NED_BOX_GUARDED_FILE_PRUNE_LINE}\n" in guarded_file_prune_documentation
+      and f"    {NED_BOX_AGENT_SEAT_DATABASE_BACKUP_LINE}\n" in agent_seat_database_backup_documentation
       and all("nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py" in text
-              for text in (mirror_documentation, daily_documentation, clean_documentation,
+              for text in (agent_seat_database_backup_documentation,
+                           agent_seat_database_backup_copy_documentation,
+                           mirror_documentation, daily_documentation, clean_documentation,
                            watcher_documentation, remote_control_watcher_documentation,
                            weekly_live_check_documentation,
                            guarded_file_prune_documentation)))
@@ -312,7 +356,7 @@ printed, errors = io.StringIO(), io.StringIO()
 stub = MachineStub()
 with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="linux", home=Path("/home/nedlern"), run=stub)
-check("--print as ned-box prints ned-box's eight cron lines from the real table and runs nothing",
+check("--print as ned-box prints ned-box's nine cron lines from the real table and runs nothing",
       exit_code == 0 and stub.commands == []
       and printed.getvalue().splitlines() == [
           "machine: ned-box (linux, /home/nedlern)",
@@ -320,14 +364,18 @@ check("--print as ned-box prints ned-box's eight cron lines from the real table 
           "log-store-session-dialogs-refresh — cron line:", NED_BOX_SESSION_DIALOGS_LINE,
           "daily-full-test-run-of-main — cron line:", NED_BOX_DAILY_LINE,
           "clean-worktrees — cron line:", NED_BOX_CLEAN_LINE,
-          "handoff-agent-seat-died-without-session-handoff-restart-watcher — cron line:",
+          "handoff-agent-crash-watcher — cron line:",
           NED_BOX_CRASH_RESTART_WATCHER_LINE,
           "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher — "
           "cron line:", NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE,
           "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — cron line:",
           NED_BOX_WEEKLY_LIVE_CHECK_LINE,
           "guarded-file-versions-and-approvals-store-removed-checkout-copies-prune — cron "
-          "line:", NED_BOX_GUARDED_FILE_PRUNE_LINE],
+          "line:", NED_BOX_GUARDED_FILE_PRUNE_LINE,
+          "agent-seat-database-nightly-backup-with-integrity-check — cron line:",
+          NED_BOX_AGENT_SEAT_DATABASE_BACKUP_LINE,
+          "claude-code-temp-folders-of-exited-agent-sessions-delete — cron line:",
+          NED_BOX_TEMP_FOLDERS_DELETE_LINE],
       (exit_code, printed.getvalue(), errors.getvalue()))
 printed, errors = io.StringIO(), io.StringIO()
 with redirect_stdout(printed), redirect_stderr(errors):
@@ -343,10 +391,14 @@ clean_part, _, weekly_and_prune_part = clean_and_weekly_part.partition(weekly_he
 prune_heading = ("guarded-file-versions-and-approvals-store-removed-checkout-copies-prune — "
                  "launchd job, /Users/el/Library/LaunchAgents/com.nedschorus.guarded-file-"
                  "versions-and-approvals-store-removed-checkout-copies-prune.plist:\n")
-weekly_part, _, prune_part = weekly_and_prune_part.partition(prune_heading)
+weekly_part, _, prune_and_backup_copy_part = weekly_and_prune_part.partition(prune_heading)
+backup_copy_heading = ("agent-seat-database-newest-backup-copy-to-mac — launchd job, "
+                       "/Users/el/Library/LaunchAgents/com.nedschorus.agent-seat-database-"
+                       "newest-backup-copy-to-mac.plist:\n")
+prune_part, _, backup_copy_part = prune_and_backup_copy_part.partition(backup_copy_heading)
 check("--print as the Mac prints the mirror's cron line, the full test run's and the worktree "
-      "cleanup's plists and the weekly owner check's and the guarded-file prune's plists, and "
-      "runs nothing",
+      "cleanup's plists, the weekly owner check's and the guarded-file prune's plists, and the "
+      "agent-seat database backup copy's plist, and runs nothing",
       exit_code == 0 and stub.commands == [] and clean_part.startswith("<?xml")
       and daily_part.startswith(
           "machine: mac (darwin, /Users/el)\ntranscript-mirror-to-log-store — cron line:\n"
@@ -358,7 +410,10 @@ check("--print as the Mac prints the mirror's cron line, the full test run's and
       and weekly_part.startswith("<?xml")
       and plistlib.loads(weekly_part.encode("utf-8")) == MAC_WEEKLY_LIVE_CHECK_PLIST
       and prune_part.startswith("<?xml")
-      and plistlib.loads(prune_part.encode("utf-8")) == MAC_GUARDED_FILE_PRUNE_PLIST,
+      and plistlib.loads(prune_part.encode("utf-8")) == MAC_GUARDED_FILE_PRUNE_PLIST
+      and backup_copy_part.startswith("<?xml")
+      and plistlib.loads(backup_copy_part.encode("utf-8"))
+      == MAC_AGENT_SEAT_DATABASE_BACKUP_COPY_PLIST,
       (exit_code, mac_printed, errors.getvalue()))
 
 
@@ -1528,7 +1583,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("in an agent-session no user attends, the install-failed refusal tells a subagent to "
           "report, does not ask to tell the user, and still says how to install by hand",
           "do not tell the user" in unattended_errors
-          and "If you are a subagent, tell the agent that dispatched you" in unattended_errors
+          and shell_reader.report_to_user_or_dispatching_agent_instruction_build("", environment={"CLAUDE_CODE_SESSION_ATTENDED": "0"}) in unattended_errors
           and "Tell the user" not in unattended_errors and "pip install" in unattended_errors
           and "pip exited 1: no network" in unattended_errors
           and "Leave this run of install-scheduled-jobs-on-this-machine undone; run it again, with "
@@ -1607,7 +1662,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("in an agent-session no user attends, that refusal tells a subagent to report, does not "
           "ask to tell the user, and gives a top-level agent its next step",
           unattended_exit == 2 and "do not tell the user" in unattended_errors
-          and "If you are a subagent, tell the agent that dispatched you" in unattended_errors
+          and shell_reader.report_to_user_or_dispatching_agent_instruction_build("", environment={"CLAUDE_CODE_SESSION_ATTENDED": "0"}) in unattended_errors
           and "go on with your task" in unattended_errors
           and "Leave this run of install-scheduled-jobs-on-this-machine undone" in unattended_errors
           and "Tell the user" not in unattended_errors, unattended_errors)
