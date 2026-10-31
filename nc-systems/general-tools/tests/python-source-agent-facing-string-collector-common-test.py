@@ -424,6 +424,16 @@ check("a string returned by a function whose call another followed function retu
       "and one whose call is not text is not",
       "f'outer {inner()}'" in found and "inner text" in found and "data text" not in found, found)
 
+found = texts('def line(x):\n    return f"line {x}"\nprint("\\n".join(line(x) for x in xs))\n')
+check("a string returned by a function whose calls a printed string literal's join carries is a message",
+      "f'line {x}'" in found, found)
+
+found = texts('def chosen():\n    return "chosen text"\ndef ready():\n    return "ready text"\n'
+              'print(chosen() if ready() else "fallback")\n')
+check("a string returned by a function called in a conditional expression's branch is a message, "
+      "and one called in its condition is not",
+      "chosen text" in found and "ready text" not in found, found)
+
 # Modelled on parse_event() in nc-systems/agent-seat-database/agent-seat-database-service.py at pull
 # request 2310's head, whose dict key "error" was listed as a second message on the same line.
 found = texts('def parse_event(event):\n'

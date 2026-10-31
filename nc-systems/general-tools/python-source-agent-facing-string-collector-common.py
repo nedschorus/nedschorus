@@ -14,7 +14,7 @@ AGENT_FACING_HOOK_OUTPUT_KEYS, the keys through which a Claude Code hook's JSON
 output reaches the agent, when that value is a string-building expression, as a local name's
 binding below may be, or a name assigned a string once at module level; and the module docstring of a file
 whose source holds the text __doc__ anywhere, comments and strings included,
-since argparse prints __doc__ for --help. A string a function returns is a message too when a
+since argparse prints __doc__ for --help. A string written in a function's return statement is a message too when a
 call of that function, by its bare name, reaches one of the forms above the way a local name
 may, below, as print(stopped_line(...)) does; a string that function's returned call carries
 in turn follows the same way. The function is matched by its name alone, so every function of
@@ -31,8 +31,10 @@ and the name reaches one of the forms above, or a return statement that returns 
 a string built from it, directly or through another such local name; each binding is then
 an entry at its own lines, labelled with the name, and only the binding's string-building
 branches are read. A conditional expression's condition is not read, in a binding or at a
-form, so its strings and names are not text. The returned name is listed whatever its caller does with it, since the
-caller is not read.
+form, so its strings and names are not text. A local name that a return statement returns,
+directly or in a string built from it, has its bindings listed whatever the function's caller
+does with it, unlike a string written in the return statement itself, which is listed only
+when a call of the function reaches a form, as above.
 
 How a followed name may reach the form: directly, through a string literal's join, or as an
 argument of the exception a raise statement builds. A name that reaches the form through any
