@@ -61,7 +61,7 @@ if "# cold-read-record-ship: replace with staged files" in script:
     words = set_line_words()
     digest, _, path = os.environ.get("WALK_SHIP_TEST_STORED_DIGEST_LINE", "").partition("  ")
     stored = {os.path.basename(path): digest} if path else {}
-    for staged, target in zip(words[0::3], words[1::3]):
+    for staged, target in zip(words[0::4], words[1::4]):
         with open(os.path.join(os.environ["WALK_SHIP_TEST_WALK_DIRECTORY"], staged), "rb") as f:
             local = hashlib.sha256(f.read()).hexdigest()
         print("replaced " + stored.get(target, "-") + " " + target)
@@ -117,6 +117,10 @@ def ship(destination, *args, extra_env=None):
     env.update(extra_env or {})
     return subprocess.run([sys.executable, str(SHIP), *args],
                           capture_output=True, text=True, check=False, env=env)
+
+
+def digest_of_file(path: pathlib.Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def one_line(text: str) -> bool:
@@ -256,100 +260,124 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           result.stdout.rstrip().endswith(f"minutes at {store_walk}/{WALK}-minutes.md"),
           result.stdout)
 
-    # --- An add-only file that differs is refused by name; the rest ships -----
-    (walks / f"{WALK}.md").write_text("# walk\n\n## Item 1 of 3\n", encoding="utf-8")
+    # --- A walk text the store holds that the local one does not merely add to
+    # ships beside it as <walk>-revised-<n>.md, and is never refused; the
+    # highest-numbered copy is the one the rules then apply to (see REVISED
+    # COPIES in the shipper's docstring). Two store files that only look like
+    # revised copies, a zero-padded number and a longer infix, must not count.
+    def revised(number):
+        return store_walk / f"{WALK}-revised-{number}.md"
+
+    def store_names():
+        return sorted(p.name for p in store_walk.iterdir())
+
+    (store_walk / f"{WALK}-revised-01.md").write_text("not a revised copy\n", encoding="utf-8")
+    (store_walk / f"{WALK}-revisedish-7.md").write_text("not a revised copy\n", encoding="utf-8")
+    re_planned = "# walk\n\n## Item 1 of 3\n"
+    (walks / f"{WALK}.md").write_text(re_planned, encoding="utf-8")
     (walks / f"{WALK}-minutes.md").write_text("# minutes\n\nre-planned to 3 items\n",
                                              encoding="utf-8")
     result = ship(local_destination, str(walk_text))
-    check("a changed walk text is REFUSED with exit 2 and one line",
-          result.returncode == 2 and result.stdout.startswith("REFUSED:")
-          and one_line(result.stdout), result.stdout)
-    check("the refusal names the file with both digests and says add-only",
-          f"{WALK}.md (store sha256" in result.stdout and "local sha256" in result.stdout
-          and "add-only" in result.stdout, result.stdout)
-    check("the store's walk text was not replaced",
-          stored_walk_text.read_text(encoding="utf-8") == FILES[""])
-    check("the minutes were still replaced on the refused run (per-file rules)",
+    check("a changed walk text is not REFUSED: it ships as revised copy 1, exit 0, one line",
+          result.returncode == 0 and result.stdout.startswith("shipped:")
+          and f"{WALK}-revised-1.md" in result.stdout and "REFUSED" not in result.stdout
+          and one_line(result.stdout), result.stdout + result.stderr)
+    check("revised copy 1 holds the changed walk text, and the original is kept as it was",
+          revised(1).read_text(encoding="utf-8") == re_planned
+          and stored_walk_text.read_text(encoding="utf-8") == FILES[""],
+          str(store_names()))
+    check("the zero-padded and longer-infix look-alikes were not counted as copies",
+          not revised(2).exists() and f"{WALK}-revised-01.md" in store_names(),
+          str(store_names()))
+    check("stderr says why the walk text shipped as a revised copy, naming both files",
+          any(f"{WALK}.md differs from {WALK}.md" in line and f"{WALK}-revised-1.md" in line
+              for line in result.stderr.splitlines()), result.stderr)
+    check("the minutes were still replaced on the same run (per-file rules)",
           "minutes replaced" in result.stdout
           and stored_minutes.read_text(encoding="utf-8").endswith("re-planned to 3 items\n"),
           result.stdout)
-    check("the refused line still ends with the minutes' citation",
+    check("the line still ends with the minutes' citation",
           result.stdout.rstrip().endswith(f"{WALK}-minutes.md"), result.stdout)
-    (walks / f"{WALK}.md").write_text(FILES[""], encoding="utf-8")
 
-    # --- A walk text the walk only added to is replaced; every other
-    # difference is still refused (user-ruled 2026-09-21, item 3 of the walk
-    # md-skills-seat-questions-and-concerns-2026-09-21). The store holds
-    # FILES[""] as the walk text here and the local minutes match the store,
-    # so each case below is about the walk text alone. The five cases are the
-    # append, the identical file, the shorter file, the same-length edit, and
-    # the edit that also appends -- the last being the one a "local is longer"
-    # check would wrongly accept. -------------------------------------------
-    displaced_walk_text_digest = subprocess.run(
-        ["shasum", "-a", "256", str(stored_walk_text)],
-        capture_output=True, text=True).stdout.split()[0]
-    appended_walk_text = FILES[""] + "\n## Item 2 of 2\n"
-    (walks / f"{WALK}.md").write_text(appended_walk_text, encoding="utf-8")
     result = ship(local_destination, str(walk_text))
-    check("appended walk text: a stored copy that is an exact prefix of the local "
-          "one is replaced, exit 0, one line saying so",
+    check("the same walk text again is already there as revised copy 1: no copy 2",
+          result.returncode == 0 and "already there unchanged" in result.stdout
+          and not revised(2).exists() and "added" not in result.stdout,
+          result.stdout + str(store_names()))
+
+    displaced_revised_digest = digest_of_file(revised(1))
+    appended_re_planned = re_planned + "\n## Item 2 of 3\n"
+    (walks / f"{WALK}.md").write_text(appended_re_planned, encoding="utf-8")
+    result = ship(local_destination, str(walk_text))
+    check("appended walk text: the latest revised copy, an exact prefix of the local "
+          "one, is replaced in place, exit 0, no new copy",
           result.returncode == 0 and "walk text replaced" in result.stdout
-          and "REFUSED" not in result.stdout and one_line(result.stdout),
+          and revised(1).read_text(encoding="utf-8") == appended_re_planned
+          and not revised(2).exists() and one_line(result.stdout),
           result.stdout + result.stderr)
-    check("appended walk text: the store now holds the longer walk text whole",
-          stored_walk_text.read_text(encoding="utf-8") == appended_walk_text,
-          stored_walk_text.read_text(encoding="utf-8"))
-    check("appended walk text: the trace names the file, the displaced sha256 and "
-          "the prefix that allowed the replacement, on stderr and not on stdout",
-          any("REPLACED" in line and f"{WALK}.md" in line
-              and displaced_walk_text_digest in line and "exact byte prefix" in line
-              and str(len(FILES[""].encode("utf-8"))) in line
+    check("appended walk text: the trace names the revised copy, the displaced "
+          "sha256 and the prefix, on stderr only",
+          any("REPLACED" in line and f"{WALK}-revised-1.md" in line
+              and displaced_revised_digest in line and "exact byte prefix" in line
               for line in result.stderr.splitlines())
           and "REPLACED" not in result.stdout, result.stderr)
+    check("appended walk text: the original is still untouched",
+          stored_walk_text.read_text(encoding="utf-8") == FILES[""])
 
-    before = {p.name: p.stat().st_mtime_ns for p in store_walk.iterdir()}
+    for label, text, number in (
+            ("shorter walk text (content removed)", re_planned, 2),
+            ("same-length walk text (a byte changed)",
+             appended_re_planned.replace("Item 1", "Item X"), 3),
+            ("changed early and appended, longer than the latest copy",
+             appended_re_planned.replace("Item 1", "Item Y") + "\n## Item 3 of 3\n", 4),
+            ("the original's bytes again, while revised copies exist", FILES[""], 5)):
+        before_copies = {name: (store_walk / name).read_bytes() for name in store_names()}
+        (walks / f"{WALK}.md").write_text(text, encoding="utf-8")
+        result = ship(local_destination, str(walk_text))
+        check(f"{label}: ships as revised copy {number}, exit 0, never REFUSED",
+              result.returncode == 0 and f"{WALK}-revised-{number}.md" in result.stdout
+              and "REFUSED" not in result.stdout
+              and revised(number).read_text(encoding="utf-8") == text,
+              result.stdout + result.stderr)
+        check(f"{label}: every file the store held before is unchanged",
+              all((store_walk / name).read_bytes() == content
+                  for name, content in before_copies.items()
+                  if not name.endswith("-minutes.md")), str(store_names()))
+
+    appended_to_latest = FILES[""] + "\n## Item 2 of 2, added to the latest copy\n"
+    (walks / f"{WALK}.md").write_text(appended_to_latest, encoding="utf-8")
     result = ship(local_destination, str(walk_text))
-    check("identical walk text: the already-there path, never the append exception",
-          result.returncode == 0 and "already there unchanged" in result.stdout
-          and "replaced" not in result.stdout and "REPLACED" not in result.stderr,
+    check("with five revised copies, a walk text that only adds to the highest-numbered "
+          "one replaces that copy, never an older one, and makes no new copy",
+          result.returncode == 0 and "walk text replaced" in result.stdout
+          and revised(5).read_text(encoding="utf-8") == appended_to_latest
+          and revised(1).read_text(encoding="utf-8") == appended_re_planned
+          and not revised(6).exists(), result.stdout + result.stderr)
+
+    blocked_store = store_root / "walk"
+    blocked_store.chmod(0o300)
+    try:
+        (walks / f"{WALK}.md").write_text(re_planned + "never shipped\n", encoding="utf-8")
+        result = ship(local_destination, str(walk_text))
+    finally:
+        blocked_store.chmod(0o755)
+    check("a store whose revised copies cannot be listed is FAILED, exit 1, one line, "
+          "and no copy is made",
+          result.returncode == 1 and result.stdout.startswith("FAILED:")
+          and one_line(result.stdout) and not revised(6).exists(),
           result.stdout + result.stderr)
-    check("identical walk text: nothing in the store was touched",
-          before == {p.name: p.stat().st_mtime_ns for p in store_walk.iterdir()})
+    # A new revised copy is listed in the roles' order, in the walk text's place.
+    order_walk = "order-walk-2026-10-31"
+    order_walk_text = write_walk(walks, order_walk, FILES)
+    (store_walk / f"{order_walk}.md").write_text("# an older walk text\n", encoding="utf-8")
+    result = ship(local_destination, str(order_walk_text))
+    check("files added with a new revised copy are listed draft, suggestions, revised copy, minutes",
+          f"4 file(s) added ({order_walk}-draft.md, {order_walk}-suggestions.md, "
+          f"{order_walk}-revised-1.md, {order_walk}-minutes.md)" in result.stdout,
+          result.stdout + result.stderr)
 
-    (walks / f"{WALK}.md").write_text(FILES[""], encoding="utf-8")
-    result = ship(local_destination, str(walk_text))
-    check("shorter walk text: a local file the stored copy begins with is content "
-          "removed and is still REFUSED, exit 2, one line",
-          len(FILES[""].encode("utf-8")) < len(appended_walk_text.encode("utf-8"))
-          and result.returncode == 2 and result.stdout.startswith("REFUSED:")
-          and f"{WALK}.md (store sha256" in result.stdout and one_line(result.stdout),
-          result.stdout)
-    check("shorter walk text: the store's copy is untouched",
-          stored_walk_text.read_text(encoding="utf-8") == appended_walk_text)
-
-    same_length_edit = appended_walk_text.replace("Item 1", "Item X")
-    (walks / f"{WALK}.md").write_text(same_length_edit, encoding="utf-8")
-    result = ship(local_destination, str(walk_text))
-    check("same-length walk text: one byte changed in the middle is content changed "
-          "and is still REFUSED, exit 2",
-          len(same_length_edit.encode("utf-8")) == len(appended_walk_text.encode("utf-8"))
-          and result.returncode == 2 and result.stdout.startswith("REFUSED:")
-          and f"{WALK}.md (store sha256" in result.stdout, result.stdout)
-    check("same-length walk text: the store's copy is untouched",
-          stored_walk_text.read_text(encoding="utf-8") == appended_walk_text)
-
-    changed_early_and_appended = same_length_edit + "\n## Item 3 of 3\n"
-    (walks / f"{WALK}.md").write_text(changed_early_and_appended, encoding="utf-8")
-    result = ship(local_destination, str(walk_text))
-    check("changed early and appended: a LONGER walk text whose stored copy is not "
-          "its prefix is still REFUSED — the case a length test would accept",
-          len(changed_early_and_appended.encode("utf-8"))
-          > len(appended_walk_text.encode("utf-8"))
-          and result.returncode == 2 and result.stdout.startswith("REFUSED:")
-          and f"{WALK}.md (store sha256" in result.stdout, result.stdout)
-    check("changed early and appended: the store's copy is untouched",
-          stored_walk_text.read_text(encoding="utf-8") == appended_walk_text)
-    (walks / f"{WALK}.md").write_text(appended_walk_text, encoding="utf-8")
+    # The remote-mode cases below need a walk text that only adds to FILES[""].
+    (walks / f"{WALK}.md").write_text(FILES[""] + "\n## Item 2 of 2\n", encoding="utf-8")
 
     # --- Argument forms -------------------------------------------------------
     result = ship(local_destination, str(walks / f"{WALK}-suggestions.md"))
@@ -592,6 +620,110 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           and (listing_store / "walk" / f"{WALK}.md").read_text(encoding="utf-8")
           == stored_walk_text_it_cannot_hash, str(calls))
 
+    # Remote mode lists the walk's revised copies with the shell glob the
+    # program builds, run under sh against a scratch store: it must find
+    # revised copy 1, skip a zero-padded look-alike, and add copy 2.
+    revised_store = scratch / "revised-store"
+    (revised_store / "walk").mkdir(parents=True)
+    for file_name, text in ((f"{WALK}.md", "# walk, as first shipped\n"),
+                            (f"{WALK}-revised-1.md", "# walk, revised once\n"),
+                            (f"{WALK}-revised-01.md", "a look-alike\n")):
+        (revised_store / "walk" / file_name).write_text(text, encoding="utf-8")
+    # Every remote step runs for real here, under sh, with the system's own
+    # sha256sum, so the store ends as a real shipment would leave it.
+    stubs_running_every_step = scratch / "stub-bin-running-every-step"
+    stubs_running_every_step.mkdir()
+    for binary, text in (
+            ("ssh", "#!/usr/bin/env python3\nimport os, signal, subprocess, sys\n"
+                    "failure = os.environ.get('WALK_SHIP_TEST_REVISED_LISTING_FAILS')\n"
+                    "if failure and '-revised-' in sys.argv[-1]:\n"
+                    "    if failure == 'signal':\n"
+                    "        os.kill(os.getpid(), signal.SIGTERM)\n"
+                    "    sys.exit(255)\n"
+                    "landing = os.environ.get('WALK_SHIP_TEST_LANDS_BEFORE_REPLACE')\n"
+                    "if landing and '# cold-read-record-ship: replace with staged files' in sys.argv[-1]:\n"
+                    "    with open(landing, 'w') as landed:\n"
+                    "        landed.write('# walk, the other checkout\\'s revision\\n')\n"
+                    "sys.exit(subprocess.run(['sh', '-c', sys.argv[-1]]).returncode)\n"),
+            ("rsync", "#!/usr/bin/env python3\nimport os, shutil, sys\n"
+                      "directory = sys.argv[-1].partition(':')[2]\n"
+                      "os.makedirs(directory, exist_ok=True)\n"
+                      "for source in [a for a in sys.argv[1:-1] if os.path.isfile(a)]:\n"
+                      "    shutil.copyfile(source, os.path.join(directory, os.path.basename(source)))\n")):
+        stub = stubs_running_every_step / binary
+        stub.write_text(text, encoding="utf-8")
+        stub.chmod(0o755)
+    result = ship(f"stand-in-store-host:{revised_store}/cold-read-records", str(walk_text),
+                  extra_env={
+                      "PATH": f"{stubs_running_every_step}{os.pathsep}{os.environ.get('PATH', '')}"})
+    check("remote mode lists the revised copies under sh and adds copy 2 beside copy 1",
+          result.returncode == 0 and f"{WALK}-revised-2.md" in result.stdout
+          and (revised_store / "walk" / f"{WALK}-revised-2.md").read_bytes()
+          == walk_text.read_bytes()
+          and (revised_store / "walk" / f"{WALK}-revised-1.md").read_text(encoding="utf-8")
+          == "# walk, revised once\n", result.stdout + result.stderr)
+    # A listing of the revised copies that fails, by an exit or by a signal, is
+    # FAILED with one line and copies nothing, never read as "no copies".
+    for failure in ("exit", "signal"):
+        before_copies = sorted(p.name for p in (revised_store / "walk").iterdir())
+        result = ship(f"stand-in-store-host:{revised_store}/cold-read-records", str(walk_text),
+                      extra_env={
+                          "PATH": f"{stubs_running_every_step}{os.pathsep}{os.environ.get('PATH', '')}",
+                          "WALK_SHIP_TEST_REVISED_LISTING_FAILS": failure})
+        check(f"remote mode: a revised-copy listing that fails by {failure} is FAILED, exit 1, "
+              f"one line, and nothing is copied",
+              result.returncode == 1 and result.stdout.startswith("FAILED:")
+              and one_line(result.stdout) and "unshipped" in result.stdout
+              and sorted(p.name for p in (revised_store / "walk").iterdir()) == before_copies,
+              result.stdout + result.stderr)
+    # Remote mode, under sh: the other shipment adds revised copy 1 just
+    # before this one's replace step, so the walk text this one only added
+    # to is no longer the store's latest copy: REFUSED, the original not
+    # appended to.
+    overtaken_store = scratch / "overtaken-store"
+    (overtaken_store / "walk").mkdir(parents=True)
+    (overtaken_store / "walk" / f"{WALK}.md").write_text(FILES[""], encoding="utf-8")
+    grown_walk_text = write_walk(scratch / "overtaken-walks", WALK,
+                                 {**FILES, "": FILES[""] + "\n## Item 2 of 2\n"})
+    landing_path = overtaken_store / "walk" / f"{WALK}-revised-1.md"
+    result = ship(f"stand-in-store-host:{overtaken_store}/cold-read-records",
+                  str(grown_walk_text), extra_env={
+                      "PATH": f"{stubs_running_every_step}{os.pathsep}{os.environ.get('PATH', '')}",
+                      "WALK_SHIP_TEST_LANDS_BEFORE_REPLACE": str(landing_path)})
+    check("remote mode: a walk text only added to, overtaken by another shipment's "
+          "revised copy 1 before the replace step, is REFUSED, exit 2, naming it, "
+          "and the original is not appended to",
+          result.returncode == 2 and result.stdout.startswith("REFUSED:")
+          and f"{WALK}-revised-1.md" in result.stdout and one_line(result.stdout)
+          and (overtaken_store / "walk" / f"{WALK}.md").read_text(encoding="utf-8")
+          == FILES[""] and landing_path.is_file(),
+          result.stdout + result.stderr)
+    # A store walk/ that cannot be read (0300: cd works, the glob matches
+    # nothing) or cannot be entered (0600: cd fails) is FAILED with one line
+    # and copies nothing, never read as "no revised copies"; locally and
+    # under sh. Without it, the walk text would ship as revised copy 1 while
+    # copy 1 exists.
+    for mode in (0o300, 0o600):
+        for where in ("remote", "local"):
+            before_copies = sorted(p.name for p in (revised_store / "walk").iterdir())
+            (revised_store / "walk").chmod(mode)
+            try:
+                if where == "remote":
+                    result = ship(f"stand-in-store-host:{revised_store}/cold-read-records",
+                                  str(walk_text), extra_env={
+                                      "PATH": f"{stubs_running_every_step}{os.pathsep}"
+                                              f"{os.environ.get('PATH', '')}"})
+                else:
+                    result = ship(f"{revised_store}/cold-read-records", str(walk_text))
+            finally:
+                (revised_store / "walk").chmod(0o700)
+            check(f"{where} mode: a store walk/ of mode {mode:o}, whose revised copies "
+                  f"cannot be listed, is FAILED, exit 1, one line, and nothing is copied",
+                  result.returncode == 1 and result.stdout.startswith("FAILED:")
+                  and one_line(result.stdout) and "unshipped" in result.stdout
+                  and sorted(p.name for p in (revised_store / "walk").iterdir()) == before_copies,
+                  result.stdout + result.stderr)
+
     # --- On ned-box the copy is local and the citation still names the host --
     spec = importlib.util.spec_from_file_location("walk_files_ship", SHIP)
     module = importlib.util.module_from_spec(spec)
@@ -749,6 +881,30 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-race-test-") as race_sc
     check("that refusal leaves the other shipment's walk text in the store",
           kept.get("") == grown_there, repr(kept.get("")))
 
+    # The other shipment adds the next revised copy between this one's listing
+    # and its replace step, leaving the copy this one tested unchanged: the
+    # copy is no longer the store's latest, so this one is REFUSED and appends
+    # nothing, at revised copy 1 (no copy before) and at copy 2 (one before).
+    other_revised = "# walk, the other checkout's revision\n"
+    for label, stored, latest_suffix, landing in (
+            ("walk-text-overtaken-by-revised-1", {"": stored_prefix}, "", "-revised-1"),
+            ("walk-text-overtaken-by-revised-2", {"": "# walk, as first shipped\n",
+                                                  "-revised-1": stored_prefix},
+             "-revised-1", "-revised-2")):
+        code, out, err, kept, names = ship_while_the_other_lands(
+            label, grown_here, stored, landing, other_revised, "after-listing")
+        walk_store = race_scratch / f"store-{label}" / "walk"
+        check(f"{label}: a walk text this one only added to, overtaken by the other "
+              f"shipment's {WALK}{landing}.md, is REFUSED, exit 2, one line naming it",
+              code == 2 and out.startswith("REFUSED:") and f"{WALK}{landing}.md" in out
+              and one_line(out), f"exit {code}: {out}{err}")
+        check(f"{label}: the copy it tested is not appended to, and the other's "
+              f"revised copy is kept",
+              (walk_store / f"{WALK}{latest_suffix}.md").read_text(encoding="utf-8")
+              == stored_prefix
+              and (walk_store / f"{WALK}{landing}.md").read_text(encoding="utf-8")
+              == other_revised, str(names))
+
     other_minutes = "# minutes, the other checkout's\n"
     code, out, err, kept, names = ship_while_the_other_lands(
         "minutes-landed", FILES, {}, "-minutes", other_minutes, "after-listing")
@@ -787,7 +943,8 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-race-test-") as race_sc
               all(not name.startswith(".") for name in
                   (p.name for p in (race_scratch / f"store-{label}" / "walk").iterdir()))
               for label in ("draft-taken", "draft-taken-after-copy", "draft-same-bytes",
-                            "walk-text-grown-there", "minutes-landed",
+                            "walk-text-grown-there", "walk-text-overtaken-by-revised-1",
+                            "walk-text-overtaken-by-revised-2", "minutes-landed",
                             "minutes-after-copy", "minutes-after-rename")),
           str(names))
 
@@ -1109,7 +1266,9 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
     # The same, with an add-only file refused: 1 wins over 2.
     walks, store, destination = left_walk_and_store("refused-too")
     first = ship_left(walks, destination, removal=real_removal)
-    (walks / f"{LEFT_WALK}.md").write_text("# walk, rewritten\n", encoding="utf-8")
+    # The draft, not the walk text: a rewritten walk text ships as a revised
+    # copy, and placing that copy removes the staging directory itself.
+    (walks / f"{LEFT_WALK}-draft.md").write_text("# draft, rewritten\n", encoding="utf-8")
     (walks / f"{LEFT_WALK}-minutes.md").write_text("# minutes\n\nItem 2 ruled.\n",
                                                     encoding="utf-8")
     code, out, err = ship_left(walks, destination)
@@ -1117,7 +1276,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
           "is FAILED, exit 1, and lists the refused file after it",
           first[0] == 0 and code == 1 and out.startswith(f"FAILED: {LEFT_WALK} — This run's")
           and one_line(out) and names_the_directory_and_its_deletion(out, store)
-          and out.index("staging directory") < out.index(f"Refused, add-only: {LEFT_WALK}.md")
+          and out.index("staging directory") < out.index(f"Refused, add-only: {LEFT_WALK}-draft.md")
           and out.rstrip().endswith(f"minutes at {store}/{LEFT_WALK}-minutes.md"),
           f"exit {code}: {out}{err}")
 

@@ -54,7 +54,7 @@ if "# cold-read-record-ship: replace with staged files" in script:
     import hashlib, shlex
     words = shlex.split(next(line for line in script.splitlines()
                              if line.startswith("set -- "))[len("set -- "):])
-    for staged, target in zip(words[0::3], words[1::3]):
+    for staged, target in zip(words[0::4], words[1::4]):
         with open(os.path.join(os.environ["SEAT_SHIP_TEST_LOCAL_DIRECTORY"], staged), "rb") as f:
             local = hashlib.sha256(f.read()).hexdigest()
         print("replaced - " + target)
@@ -463,7 +463,7 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
     check("then one ssh call renames the staged file over the seat's file, and "
           "one removes the staging directory",
           len(replacing_calls) == 1 and "mv -f -- " in replacing_calls[0][-1]
-          and "set -- good.md good.md -" in replacing_calls[0][-1]
+          and "set -- good.md good.md - -" in replacing_calls[0][-1]
           and any(c[-1] == f"rm -rf -- {staging_used}" for c in ssh_calls),
           str(ssh_calls))
     check("rsync is never asked to delete or to write in place",
