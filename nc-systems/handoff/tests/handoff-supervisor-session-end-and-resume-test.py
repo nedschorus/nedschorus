@@ -840,6 +840,8 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           "FAILED line, the command that writes the unwritten line and what to do if it fails",
           not unlogged.exists() and "1 failed: unlogged-finished-worktree: log of removals "
           "line(s) FAILED" in unlogged_report and record_by_hand
+          and "; to record by hand what the log of removals is missing: "
+          "unlogged-finished-worktree: to record it, run this once: " in unlogged_report
           and "unlogged-finished-worktree: if that printf command fails too, do not run "
           "scripts/clean-worktrees.py again; tell the user" in unlogged_report, unlogged_report)
     if record_by_hand:

@@ -1582,7 +1582,9 @@ def summarize_worktree_cleanup_output(lines) -> str:
     if failed:
         record_by_hand = [line for line in lines
                           if any(phrase in line for phrase in LOG_OF_REMOVALS_RECORD_BY_HAND_PHRASES)]
-        report += f"; {len(failed)} failed: " + "; ".join(failed + record_by_hand)
+        report += f"; {len(failed)} failed: " + "; ".join(failed)
+        if record_by_hand:
+            report += "; to record by hand what the log of removals is missing: " + "; ".join(record_by_hand)
     if kept_for_records:
         kept_worktrees = {line.partition(KEPT_FOR_RECORDS_MARKER)[0] for line in kept_for_records}
         report += (f"; {len(kept_worktrees)} worktree(s) kept because a record did not "

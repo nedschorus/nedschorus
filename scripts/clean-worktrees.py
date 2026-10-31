@@ -159,8 +159,8 @@ from nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py.
 When a line cannot be written, the run prints a line containing FAILED
 with the cause, then the command that writes the unwritten line once the
 cause is fixed, then what to do if that command fails; it carries on
-removing, and exits 1 at the end. The handoff-supervisor's report keeps
-all three lines. The environment variable
+removing, and exits 1 at the end. When the handoff-supervisor runs --remove
+at a session-handoff, its report keeps all three lines. The environment variable
 CLEAN_WORKTREES_REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE names
 a local file to append to instead, which is how the tests keep out of the
 log-store.
