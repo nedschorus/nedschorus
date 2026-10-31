@@ -24,6 +24,7 @@ EXTRACTOR_PATH = Path(__file__).with_name("handoff-extract-conversation.py")
 SUBAGENT_TRACKER_PATH = Path(__file__).with_name("handoff-extract-conversation-subagent-tracker-nbd.py")
 INTERIM_RECOGNIZER_PATH = Path(__file__).with_name(
     "claude-code-subagent-task-notification-interim-recognizer-common.py")
+REFRESH_COMMON_PATH = Path(__file__).with_name("log-store-session-dialogs-refresh-common.py")
 # The transcripts' times are set after the extractor's, so a dialog's time is its transcript's.
 LATER_THAN_THE_EXTRACTOR = int(max(time.time(), EXTRACTOR_PATH.stat().st_mtime)) + 1000
 STORE_ROOT_VARIABLE = "LOG_STORE_SESSION_DIALOGS_REFRESH_LOG_STORE_ROOT_OVERRIDE"
@@ -312,6 +313,7 @@ with tempfile.TemporaryDirectory() as workspace:
     shutil.copy2(EXTRACTOR_PATH, programs / EXTRACTOR_PATH.name)
     shutil.copy2(SUBAGENT_TRACKER_PATH, programs / SUBAGENT_TRACKER_PATH.name)
     shutil.copy2(INTERIM_RECOGNIZER_PATH, programs / INTERIM_RECOGNIZER_PATH.name)
+    shutil.copy2(REFRESH_COMMON_PATH, programs / REFRESH_COMMON_PATH.name)
     settled = run(store, "--failures-only", script_path=script_copy)
     touched = run(store, script_path=script_copy)
     with (programs / EXTRACTOR_PATH.name).open("a", encoding="utf-8") as handle:

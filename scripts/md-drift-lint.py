@@ -21,11 +21,13 @@ Checks, per file type:
         - YYYY-MM-DD tokens are real calendar dates
         - a backtick command naming an existing project script also names
           only flags that appear in that script's source
-        - a backtick span that is only a number, on a line naming exactly
-          one existing project code file (.py/.sh), appears in that file's
-          source, digit-group separators ignored. Prose numbers — counts,
-          issue numbers, cardinalities — are never checked: backticks are
-          what opt a number into the check.
+        - a backtick span that is only a number, in a sentence naming
+          exactly one existing project code file (.py/.sh), appears in that
+          file's source, digit-group separators ignored. A sentence ends at
+          ".", "!", "?" or ";" followed by whitespace; a number in another
+          sentence of the same line is not paired with the file. Prose
+          numbers — counts, issue numbers, cardinalities — are never
+          checked: backticks are what opt a number into the check.
   .json - no duplicate keys at any nesting depth (a duplicate key is legal
           JSON that parsers resolve silently: the second value wins and an
           edit to the first does nothing)
@@ -124,8 +126,11 @@ HISTORY_MARKERS = ("git history", "git show")
 FOREIGN_ROOT_MARKERS = ("~/Projects/nedlern", "nedlern/docs", "legacy system",
                         "~/Projects/nedsmessenger")
 
-# These citations are frozen measurements; changing them invalidates published scores.
-FROZEN_MEASURED_DATA_DIRECTORIES = ("cold-read-reviewer-test-cases",)
+# Paths relative to the repository root. Their citations record what was true when the data
+# was measured or captured: changing them invalidates published scores, or makes a captured
+# GitHub response one that GitHub never sent.
+FROZEN_MEASURED_DATA_DIRECTORIES = ("cold-read-reviewer-test-cases",
+                                    "scripts/merge-gate-test-captured-github-responses")
 
 _basename_index_cache = {}
 _git_ignore_cache = {}
@@ -306,16 +311,38 @@ def referenced_files(line: str, md_path: Path, repo_root: Path):
     return list(distinct.values())
 
 
+SENTENCE_END = re.compile(r"(?<=[.!?;])\s+")
+
+
+def sentences(line: str):
+    """Split a line at sentence ends outside backtick spans; a command span such
+    as `a; b` stays whole, so its backticks still pair."""
+    spans = [match.span() for match in BACKTICK_TOKEN.finditer(line)]
+    pieces, start = [], 0
+    for end in SENTENCE_END.finditer(line):
+        if not any(left < end.start() < right for left, right in spans):
+            pieces.append(line[start:end.start()])
+            start = end.end()
+    return pieces + [line[start:]]
+
+
 def check_code_numbers(line: str, md_path: Path, repo_root: Path):
-    """Yield findings for backticked numbers absent from the line's sole referenced code file."""
+    # A Markdown paragraph is written as one line, so the sentence, not the
+    # line, is the unit in which a number and a file are one claim.
+    for sentence in sentences(line):
+        yield from check_code_numbers_in_sentence(sentence, md_path, repo_root)
+
+
+def check_code_numbers_in_sentence(sentence: str, md_path: Path, repo_root: Path):
+    """Yield findings for backticked numbers absent from the sentence's sole referenced code file."""
     number_spans = [
-        match.group(1).strip() for match in BACKTICK_TOKEN.finditer(line)
+        match.group(1).strip() for match in BACKTICK_TOKEN.finditer(sentence)
         if NUMBER_ONLY.fullmatch(match.group(1).strip())
     ]
     if not number_spans:
         return
     sources = [
-        source for source in referenced_files(line, md_path, repo_root)
+        source for source in referenced_files(sentence, md_path, repo_root)
         if source.suffix in CODE_SOURCE_EXTENSIONS
     ]
     if len(sources) != 1:
@@ -572,7 +599,8 @@ def in_frozen_measured_data(path: Path, repo_root: Path) -> bool:
         parts = path.resolve().relative_to(repo_root.resolve()).parts
     except ValueError:
         return False
-    return bool(parts) and parts[0] in FROZEN_MEASURED_DATA_DIRECTORIES
+    return any(parts[:len(frozen.parts)] == frozen.parts
+               for frozen in map(Path, FROZEN_MEASURED_DATA_DIRECTORIES))
 
 
 def lint_markdown(path: Path, repo_root: Path, architecture_overview_checks=False):
