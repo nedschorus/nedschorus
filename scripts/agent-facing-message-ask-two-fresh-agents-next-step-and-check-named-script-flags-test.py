@@ -24,7 +24,7 @@ _spec = importlib.util.spec_from_file_location("ask_two_fresh_agents", SCRIPT_PA
 ask_two_fresh_agents = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ask_two_fresh_agents)
 
-FAKE_LAUNCHER = """import json, os, pathlib, sys
+FAKE_LAUNCHER = """import json, os, pathlib, sys, time
 arguments = sys.argv[1:]
 value = lambda flag: arguments[arguments.index(flag) + 1]
 tier = value("--tier")
@@ -32,6 +32,15 @@ with open(os.environ["FAKE_LAUNCHER_LOG"], "a") as log:
     log.write(json.dumps({"arguments": arguments,
                           "target": pathlib.Path(value("--target")).read_text(),
                           "prompt": pathlib.Path(value("--prompt-file")).read_text()}) + "\\n")
+if os.environ.get("FAKE_RENDEZVOUS_DIRECTORY"):
+    rendezvous = pathlib.Path(os.environ["FAKE_RENDEZVOUS_DIRECTORY"])
+    (rendezvous / f"{tier}.started").touch()
+    deadline = time.monotonic() + float(os.environ["FAKE_RENDEZVOUS_SECONDS"])
+    while len(list(rendezvous.glob("*.started"))) < int(os.environ["FAKE_RENDEZVOUS_TIER_COUNT"]):
+        if time.monotonic() > deadline:
+            print("cold-read-claude-cell: cause: rendezvous: the other launcher never started", file=sys.stderr)
+            sys.exit(1)
+        time.sleep(0.05)
 if tier in os.environ.get("FAKE_SIGNALLED_TIERS", "").split():
     os.kill(os.getpid(), 9)
 if tier in os.environ.get("FAKE_FAILING_TIERS", "").split():
@@ -54,7 +63,7 @@ def check(case_name, condition, detail=""):
 
 
 def run_main(scratch: pathlib.Path, message: str, failing_tiers: str = "", situation_file=None,
-             signalled_tiers: str = "", stray_write_tiers: str = ""):
+             signalled_tiers: str = "", stray_write_tiers: str = "", rendezvous_directory=None):
     """Run main() with a fake launcher; return (exit code, stdout, stderr, launcher calls)."""
     launcher = scratch / "fake-launcher.py"
     launcher.write_text(FAKE_LAUNCHER)
@@ -70,6 +79,9 @@ def run_main(scratch: pathlib.Path, message: str, failing_tiers: str = "", situa
     os.environ["FAKE_SIGNALLED_TIERS"] = signalled_tiers
     os.environ["FAKE_STRAY_WRITE_TIERS"] = stray_write_tiers
     os.environ["FAKE_STRAY_WRITE_PHRASE"] = ask_two_fresh_agents.cell_common.STRAY_WRITE_PHRASE
+    os.environ["FAKE_RENDEZVOUS_DIRECTORY"] = str(rendezvous_directory or "")
+    os.environ["FAKE_RENDEZVOUS_SECONDS"] = "10"
+    os.environ["FAKE_RENDEZVOUS_TIER_COUNT"] = str(len(ask_two_fresh_agents.FOLLOWER_TIERS))
     ask_two_fresh_agents.CLAUDE_CELL_LAUNCHER = launcher
     sys.argv = [str(SCRIPT_PATH), "--message-file", str(message_file),
                 "--situation-file", str(situation_file)]
@@ -98,6 +110,15 @@ def test_both_followers_answer(scratch):
     check("both followers answer: the cell label is the follower label",
           call["arguments"][call["arguments"].index("--cell") + 1] == ask_two_fresh_agents.FOLLOWER_ANSWER_FILE_LABEL_FOR_CELL_FLAG,
           call["arguments"])
+
+
+def test_followers_run_at_the_same_time(scratch):
+    rendezvous = scratch / "rendezvous"
+    rendezvous.mkdir()
+    exit_code, stdout, _, _ = run_main(scratch, "The push was refused on purpose.",
+                                       rendezvous_directory=rendezvous)
+    check("followers run at the same time: each launcher sees the other start, exit 0",
+          exit_code == 0 and "rendezvous" not in stdout, stdout)
 
 
 def test_one_follower_fails(scratch):
@@ -175,11 +196,14 @@ def test_named_scripts(scratch):
     signalled.write_text("import os\nos.kill(os.getpid(), 9)\n")
     hanging = scratch / "hanging.py"
     hanging.write_text("import time\ntime.sleep(30)\n")
+    longer_flag_only = scratch / "longer-flag-only.py"
+    longer_flag_only.write_text("print('usage: longer-flag-only.py [--head-commit COMMIT]')\n")
     message = (
         f"Rerun `python3 {helped} --head HEAD --base-branch main` then `{shell} --pull-request 5`.\n"
         f"Or run {broken} --dry-run; {hanging} --wait\n"
         f"Never run {scratch}/missing.py --force.\n"
-        f"Last, {signalled} --once.\n")
+        f"Last, {signalled} --once.\n"
+        f"Then {longer_flag_only} --head.\n")
     ask_two_fresh_agents.HELP_TIMEOUT_SECONDS = 2
     try:
         exit_code, stdout, _, _ = run_main(scratch, message)
@@ -189,6 +213,8 @@ def test_named_scripts(scratch):
     check("named scripts: a flag in --help is reported in it", "`--head`: in the --help output" in stdout, stdout)
     check("named scripts: a flag only a prefix of which is in --help is reported missing",
           "`--base-branch`: NOT IN the --help output" in stdout, stdout)
+    check("named scripts: a flag that is only a prefix of the one in --help is reported missing",
+          f"`{longer_flag_only}`: exists; --help exited 0\n  - `--head`: NOT IN the --help output" in stdout, stdout)
     check("named scripts: a flag after a backquote belongs to the next script",
           stdout.count("`--pull-request`") == 1 and "`--pull-request`: in the --help output" in stdout, stdout)
     check("named scripts: a .sh script runs under bash", f"`{shell}`: exists; --help exited 0" in stdout, stdout)
@@ -207,11 +233,12 @@ def test_named_scripts_parsing():
         "Run scripts/a.py --x --y scripts/b.sh --z | grep --count\n"
         "Or c.py --c1 d.py --d1 e.py --e1\n"
         "Then scripts/a.py --x --w.\n"
-        "Read nc-systems/cold-read/cold-read-claude-cell.py first.")
+        "Read nc-systems/cold-read/cold-read-claude-cell.py first.\n"
+        "Ignore /tmp/results/scripts__example-test.py.log --old, g.py-backup and h.pyc, and run f.py.")
     check("parsing: flags stop at the next path and at a pipe, and repeat mentions merge",
           scripts == {"scripts/a.py": ["--x", "--y", "--w"], "scripts/b.sh": ["--z"],
                       "c.py": ["--c1"], "d.py": ["--d1"], "e.py": ["--e1"],
-                      "nc-systems/cold-read/cold-read-claude-cell.py": []}, scripts)
+                      "nc-systems/cold-read/cold-read-claude-cell.py": [], "f.py": []}, scripts)
     check("parsing: a relative path is resolved from the checkout's top directory",
           ask_two_fresh_agents.named_script_existence_and_flags_in_help_check_report_lines("scripts/no-such-script-anywhere.py", [])
           == [f"- `scripts/no-such-script-anywhere.py`: NOT FOUND at "
@@ -224,7 +251,7 @@ def test_no_named_scripts(scratch):
 
 
 def main() -> int:
-    for test in (test_both_followers_answer, test_one_follower_fails, test_follower_killed_by_signal,
+    for test in (test_both_followers_answer, test_followers_run_at_the_same_time, test_one_follower_fails, test_follower_killed_by_signal,
                  test_follower_writes_outside_its_report, test_missing_flag_refused, test_help_runs_as_a_program, test_unreadable_input_file,
                  test_named_scripts, test_no_named_scripts):
         with tempfile.TemporaryDirectory() as scratch:
