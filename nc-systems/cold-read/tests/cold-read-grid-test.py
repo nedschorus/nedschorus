@@ -92,8 +92,9 @@ WHAT IS PINNED HERE.
 
     A move seen while reviewers are still reading stops the run there
     (user-ruled 2026-09-23: "n, and yes abort early"): the reviewers still
-    running are stopped with their children, the closing text names them, the
-    reports the set holds are marked, and the run exits 3 long before the
+    running are stopped with their children, a report a stopped one had
+    written is deleted as unfinished and its line says so, the closing text
+    names them, the reports the set holds are marked, and the run exits 3 long before the
     readers would have finished. A move seen only after the last reviewer
     finished stops nothing and is reported by the end-of-run comparison as
     before, and a target nobody edits survives several polls untouched.
@@ -252,6 +253,7 @@ TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 # ones read is how a case moves the target mid-run.
 # COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS, when set, is how long the
 # stub hangs after writing its report: a reviewer that wrote and never exited.
+# The fast cell does not hang either, so it can still edit the target.
 STUB_MODEL_RUNTIME = r'''#!/usr/bin/env python3
 import json, os, pathlib, re, sys, time
 
@@ -332,7 +334,8 @@ if near_miss_character:
     given.parent.mkdir(parents=True, exist_ok=True)
 with open(given, "w", encoding="utf-8") as handle:
     handle.write("STUB REVIEW: one restatement\n")
-time.sleep(float(os.environ.get("COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS") or 0))
+if not (fast_fragment and fast_fragment in given.name):
+    time.sleep(float(os.environ.get("COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS") or 0))
 edited_path = os.environ.get("COLD_READ_GRID_TEST_STUB_EDIT_PATH")
 if edited_path:
     with open(edited_path, "a", encoding="utf-8") as handle:
@@ -702,6 +705,40 @@ with tempfile.TemporaryDirectory() as scratch:
           unchecked_lines != []
           and all(cell_common.STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE in line for line in unchecked_lines),
           repr(unchecked_lines))
+
+    # --- A frozen copy that moves while reviewers have written but not exited
+    # Five cells write their reports and hang; the sixth edits the copy and
+    # exits, so the five are stopped mid-report.
+    repository = build_scratch_repository(scratch, "checkout-target-moves-mid-report")
+    hung_stubs = scratch / "stub-bin-target-moves-mid-report"
+    hang_seconds = 120
+    started = time.monotonic()
+    result = run_grid(repository, hung_stubs, {
+        "COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS": str(hang_seconds),
+        "COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT": "codex-hunt-second-strongest-model",
+        "COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET": "1"})
+    elapsed = time.monotonic() - started
+    hung_cells = ("claude-hunt-deep", "claude-hunt-second-strongest-model",
+                  "claude-terminology-deep", "codex-hunt-deep", "codex-terminology-deep")
+    check("a frozen copy moved mid-report stops the run before the hung cells exit, exit 3",
+          elapsed < 60 and result.returncode == 3,
+          f"{elapsed:.0f} s, exit {result.returncode}; stdout={result.stdout!r}")
+    record_directory = record_directory_of(repository)
+    check("the stopped cells' unfinished reports are not left in the record",
+          record_directory is not None
+          and not any((record_directory / f"{name}.md").exists() for name in hung_cells),
+          sorted(path.name for path in record_directory.glob("*.md")) if record_directory else None)
+    unchecked_lines = [line for line in result.stdout.splitlines()
+                       if line.startswith("WRITE CHECK DID NOT RUN:")]
+    check("each stopped cell's not-checked line says its unfinished report is deleted",
+          all(any(line.startswith(f"WRITE CHECK DID NOT RUN: {name}.md — ")
+                  and line.endswith("; the unfinished report it had written is deleted")
+                  for line in unchecked_lines)
+              for name in hung_cells),
+          repr(unchecked_lines))
+    check("no cell stopped mid-report or its launcher is left running",
+          processes_mentioning(str(hung_stubs), str(repository)) == [],
+          processes_mentioning(str(hung_stubs), str(repository)))
 
     # --- An original that moves while reviewers are still reading ------------
     # The other side of the same rule: one cell edits the original at once

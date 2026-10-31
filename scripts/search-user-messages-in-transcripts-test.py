@@ -159,13 +159,13 @@ with tempfile.TemporaryDirectory() as directory:
     write_transcript(directory, [typed("alpha then beta"), agent("ok")], name="two.jsonl")
     write_transcript(directory, [typed("nothing here"), agent("ok")], name="three.jsonl")
     run = search(directory, "BETA")
-    check("the prefilter reads only the transcripts that hold a pattern's text, and still finds the hit",
+    check("the prefilter reads only the transcripts that hold a pattern's text, still finds the hit, and says \"was opened\" for one transcript",
           run.returncode == 0 and "USER: alpha then beta" in run.stdout
-          and "among 3 transcript(s); ripgrep found none of the search pattern(s) in 2 of them, so only the other 1 were opened" in run.stdout,
+          and "among 3 transcript(s); ripgrep found none of the search pattern(s) in 2 of them, so only the other 1 was opened" in run.stdout,
           f"exit {run.returncode}: {run.stdout}{run.stderr}")
     run = search(directory, "alpha", "beta", "--all-terms")
     check("with --all-terms, a transcript is read only when it holds every pattern's text",
-          "1 matching user message(s)" in run.stdout and "in 2 of them, so only the other 1 were opened" in run.stdout,
+          "1 matching user message(s)" in run.stdout and "in 2 of them, so only the other 1 was opened" in run.stdout,
           f"exit {run.returncode}: {run.stdout}{run.stderr}")
     run = search(directory, "alpha", "beta")
     check("without --all-terms, a transcript holding any pattern's text is read",

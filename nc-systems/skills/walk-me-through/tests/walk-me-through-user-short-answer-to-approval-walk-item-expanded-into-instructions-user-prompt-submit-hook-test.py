@@ -453,14 +453,16 @@ def r_meaning_lines(word, item):
             "skill says."]
 
 
-def r_lines(word, item, point=None, minutes=" <minutes>"):
-    """The lines R gives for an item the walk-minutes record no page for: publish it first, then the closing line."""
-    label = "Item " + item[len("item "):] + (f", {point}" if point else "")
+def r_lines(word, item, point=None, minutes=" <minutes>", count=None):
+    """The lines R gives for an item the walk-minutes record no page for: publish it first, then the closing line;
+    count is the item's running count in its `#item_page` and closing lines, item by default."""
+    count = count or item
+    label = "Item " + count[len("item "):] + (f", {point}" if point else "")
     return [f"\"{word}\" asks to see {item} again, and the hook found no `#item_page` line for it in the "
             f"walk-minutes{minutes}.",
             "If the walk-minutes hold none, publish the item as the walk-me-through skill says, and add to them the "
-            f"line `#item_page {item} <page link>`, because the item's page is what shows the user the item in full.",
-            f"If the publish fails, add the line `#item_page {item} publish failed: <what the Artifact tool said>` "
+            f"line `#item_page {count} <page link>`, because the item's page is what shows the user the item in full.",
+            f"If the publish fails, add the line `#item_page {count} publish failed: <what the Artifact tool said>` "
             "instead, and leave the link out of the closing line, keeping only its link text and what follows the "
             "link.",
             "Then reply with only the item's closing line, with the page's link in place of `<page link>`, or "
@@ -468,8 +470,8 @@ def r_lines(word, item, point=None, minutes=" <minutes>"):
             f"{LETTERS_AFTER_LINK}"]
 
 
-def numbered_r_lines(number, item, point=None, minutes=" <minutes>"):
-    return r_lines(f"{number} R", item, point, minutes)
+def numbered_r_lines(number, item, point=None, minutes=" <minutes>", count=None):
+    return r_lines(f"{number} R", item, point, minutes, count)
 
 
 def holds_in_order(lines, expected):
@@ -1140,6 +1142,17 @@ def test_numbered_r_whose_walk_document_or_marker_cannot_be_read_still_goes_to_t
               f"lines {lines!r}")
 
 
+def test_r_with_no_walk_total_gives_counts_with_an_m_placeholder():
+    lines = Case(next_to_present="item 4", document=None).lines("r") or []
+    check("R on an item whose walk total the hook cannot read gives the `#item_page` line with `of <M>`",
+          any("`#item_page item 4 of <M> <page link>`" in line for line in lines)
+          and any("`#item_page item 4 of <M> publish failed: <what the Artifact tool said>`" in line for line in lines),
+          f"lines {lines!r}")
+    check("R on an item whose walk total the hook cannot read gives the closing line with `of <M>`",
+          any(line.endswith(f"[Item 4 of <M>](<page link>) · {LETTERS_AFTER_LINK}") for line in lines),
+          f"lines {lines!r}")
+
+
 def test_numbered_r_reads_the_walk_in_the_payloads_cwd_not_the_hooks_own():
     case = Case(next_to_present="item 4 of 9", document=NUMBERED_R_DOCUMENT)
     payload = {"hook_event_name": "UserPromptSubmit", "session_id": "test-session",
@@ -1161,7 +1174,7 @@ def test_numbered_r_on_unreadable_minutes_expands_and_says_so():
     check("'6 r' on minutes that cannot be read names the failure and still says to show item 6",
           lines is not None
           and "reading the approval-walk state failed: UnicodeDecodeError" in lines[0]
-          and holds_in_order(lines, numbered_r_lines("6", "item 6", minutes=""))
+          and holds_in_order(lines, numbered_r_lines("6", "item 6", minutes="", count="item 6 of <M>"))
           and not any("check step" in line for line in lines), f"lines {lines!r}")
 
 
@@ -1274,7 +1287,8 @@ def test_each_check_command_the_hook_names_runs_on_the_real_program():
     # Z's text names the check step and its flag, not the whole command.
     case = Case(next_to_present="item 3 of 9")
     lines = case.lines("z") or []
-    result = subprocess.run(CHECK.strip("`").split() + ["--deferred"], capture_output=True, text=True, cwd=case.checkout)
+    result = subprocess.run(CHECK.strip("`").split() + ["--deferred", "--counts-log", str(case.checkout.parent / "z.tsv")],
+                            capture_output=True, text=True, cwd=case.checkout)
     check("Z's text names --deferred, and the check step run with it records the answer as deferred",
           any("--deferred" in line for line in lines) and result.returncode == 0
           and "item 3 of 9: the user answered deferred #case_against_none (" in (case.walk / f"{WALK_NAME}-minutes.md").read_text(),
