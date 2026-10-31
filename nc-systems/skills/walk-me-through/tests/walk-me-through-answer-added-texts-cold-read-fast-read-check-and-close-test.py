@@ -153,7 +153,7 @@ Item 7 of 9 drops a sentence.
 """
 
 
-# Every answer but O2 and O3 needs the item's `#case_against` line. Cases about something else use documents
+# Every answer but O2, O3 and --moved-on-no-decision needs the item's `#case_against` line. Cases about something else use documents
 # written without one; rated() gives each item opening in such a document a `#case_against none.` line.
 ITEM_OPENING = re.compile(r"^(?:#+\s*)?\**Items? [\d.]+(?: (?:and|to) [\d.]+)* of \d+\b.*$", re.M)
 
@@ -1920,6 +1920,37 @@ def test_a_check_without_the_users_reply_is_refused_writing_nothing():
               result.returncode == 1 and case.minutes.read_text() == before
               and "check was given no --user-reply-as-typed" in result.stderr
               and "check --obvious --user-reply-as-typed <his reply>`" in result.stderr, described(result))
+
+
+# Each answer flag that takes a reply, with the values it is given. --not-asked takes no reply, so no refusal
+# that asks for one repeats it.
+ANSWER_FLAGS_TAKING_A_REPLY = {"--obvious": (), "--after-advisor": (), "--disapproved": (), "--deferred": (),
+                               "--moved-on-no-decision": (), "--option": ("2",), "--part-answer": ("1=A",)}
+
+
+def test_every_answer_flag_is_covered_by_the_rerun_command_cases():
+    usage = subprocess.run([sys.executable, str(PROGRAM), "--help"], capture_output=True, text=True)
+    group = re.search(r"\[(--obvious[^\]]*)\]", " ".join(usage.stdout.split()))
+    flags = set(re.findall(r"--[\w-]+", group[1])) if group else set()
+    check("the rerun command cases cover every answer flag of check's --help",
+          usage.returncode == 0 and flags == {*ANSWER_FLAGS_TAKING_A_REPLY, "--not-asked"},
+          f"--help answer flags {sorted(flags)}, {described(usage)}")
+
+
+def test_the_rerun_command_a_refusal_prints_keeps_the_answer_flag():
+    unrated = WALK_DOCUMENT.replace("#case_against weak:", "#case_against fairly weak:")
+    for flag, values in ANSWER_FLAGS_TAKING_A_REPLY.items():
+        flags = " ".join((flag, *values))
+        case = Case()
+        result = case.run("check", flag, *values, reply=None)
+        check(f"check {flags} with no reply is refused with a rerun command that keeps {flag}",
+              result.returncode == 1 and f"check {flags} --user-reply-as-typed <his reply>`" in result.stderr,
+              described(result))
+        case = Case(document=unrated)
+        result = case.run("check", flag, *values)
+        check(f"check {flags} on a `#case_against` line with no rating is refused with a rerun command that keeps "
+              f"{flag}", result.returncode == 1 and f"check {flags} --user-reply-as-typed a` again." in result.stderr,
+              described(result))
 
 
 def test_a_reply_given_with_not_asked_is_refused_writing_nothing():

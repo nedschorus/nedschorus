@@ -9,7 +9,7 @@ Usage, from the agent-session's checkout:
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check
       [--obvious | --after-advisor | --disapproved | --deferred | --option N
        | --part-answer N=ANSWER ... | --moved-on-no-decision | --not-asked KIND]
-      [--user-reply-as-typed REPLY]
+      --user-reply-as-typed REPLY    (every answer but --not-asked, which takes none)
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py close
 
 The answer is an approval, A, unless a flag says otherwise: --obvious for AO,
@@ -20,8 +20,8 @@ them. --part-answer, given once for each part of an item that holds parts, as
 in `--part-answer 1=A --part-answer 2=D`, gives that part its own answer, A, AO
 or D. Z is not taken for a part, and a part number given twice is refused,
 writing nothing. --moved-on-no-decision records that the user moved on from an
-item that asks for no decision, such as a summary item: it needs no case
-against, runs no fast read, and close records the item as `<moved on, no
+item that asks for no decision, such as a summary item: it needs no
+`#case_against` line, runs no fast read, and close records the item as `<moved on, no
 decision>`.
 
 Every answer but --not-asked needs --user-reply-as-typed, the user's reply
@@ -45,14 +45,15 @@ texts when any part is A or AO, and the `#new_if_d` texts when any part is D.
 An answer that adds no marked text gets no fast read, and its status line is
 "no proposed text marked".
 
-Every answer but O2 and O3 needs the item's `#case_against` line, the first
-line of the item, outside fenced code, whose first word after any list,
-quotation or emphasis marker is `#case_against`, followed by a rating: none,
-weak, medium, strong or very strong. CHECK writes the rating into the answer
-line as a hashtag right after the answer, as in `approved #approved_obvious
-#case_against_weak`, so that one search finds every rating beside its answer.
-An item with no such line, or one whose line opens with no rating, is refused,
-writing nothing; O2 and O3 record the rating when the line is there.
+Every answer but O2, O3 and --moved-on-no-decision needs the item's
+`#case_against` line, the first line of the item, outside fenced code, whose
+first word after any list, quotation or emphasis marker is `#case_against`,
+followed by a rating: none, weak, medium, strong or very strong. CHECK writes
+the rating into the answer line as a hashtag right after the answer, as in
+`approved #approved_obvious #case_against_weak`, so that one search finds every
+rating beside its answer. An item with no such line is refused, writing
+nothing, for every answer but those three, which record the rating when the
+line is there; a line that opens with no rating is refused for every answer.
 
 `--not-asked KIND` settles the item without the user, as kind KIND, 1 to 5, of
 the walk-me-through skill's list of items that need no answer, after checking
@@ -697,7 +698,7 @@ def check_flags(arguments):
 
 def case_against_rating(lines, item, document, arguments):
     """Return the rating on the item's first `#case_against` line, as in `very strong`, or None when the item
-    has none and the answer, O2 or O3, does not need one; raise Failure when an answer that needs one finds
+    has none and the answer, O2, O3 or --moved-on-no-decision, does not need one; raise Failure when an answer that needs one finds
     none, or a line that opens with no rating."""
     for line in lines:
         match = CASE_AGAINST_LINE.match(line)
