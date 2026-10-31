@@ -90,9 +90,10 @@ closes, not only a record kept as first written. The rules are PER FILE:
     the highest-numbered copy is always the walk text as last shipped. A
     revised copy is add-only like the walk text, placed by hard link; only
     the latest one is ever replaced, under APPENDED TO. A file is a revised
-    copy only when n is written in digits with no leading zero, so another
-    walk whose name begins with this one's name and "-revised-" is not
-    counted. The store's copies are listed by a shell glob on the store,
+    copy only when n is written in digits with no leading zero, so
+    <name>-revised-01.md and <name>-revised-a.md are not counted; the walk
+    text of another walk named <name>-revised-<n>, n so written, is counted
+    as a revised copy of this walk. The store's copies are listed by a shell glob on the store,
     before the digests are read; a listing that fails is FAILED, exit 1,
     with nothing copied.
   REPLACED: the minutes and the dispositions, each on its own. A minutes
@@ -275,10 +276,6 @@ NOTED_WHEN_ABSENT_ROLE_SUFFIXES = ("-draft", "-suggestions")
 # The files a walk replaces in the store (see REPLACED in the docstring); every
 # other role is add-only.
 REPLACED_ROLE_SUFFIXES = (MINUTES_ROLE_SUFFIX, "-dispositions")
-# The one add-only role a run replaces when the local file only grew (see
-# APPENDED TO in the docstring). Every other add-only role is refused on any
-# difference.
-ROLE_SUFFIX_REPLACED_WHEN_ONLY_APPENDED_TO = WALK_TEXT_ROLE_SUFFIX
 # A walk text the store holds that is not a byte prefix of the local one is
 # shipped beside it as <name>-revised-<n>.md, n counting up from 1, and never
 # refused (see REVISED COPIES in the docstring).
@@ -356,8 +353,9 @@ def revised_walk_text_file_name(name: str, number: int) -> str:
 
 def revised_walk_text_number(name: str, file_name: str) -> typing.Optional[int]:
     """n when file_name is <name>-revised-<n>.md with n a positive whole
-    number written without leading zeros, else None, so another walk whose
-    name begins with this one's is never read as this walk's copy."""
+    number written without leading zeros, else None. The walk text of
+    another walk named <name>-revised-<n> answers n too: nothing in the name
+    tells the two apart."""
     matched = re.fullmatch(re.escape(name + REVISED_WALK_TEXT_NAME_INFIX)
                            + r"([1-9][0-9]*)\.md", file_name)
     return int(matched.group(1)) if matched else None
@@ -568,10 +566,8 @@ def staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_
     """What a FAILED line says when remove_staging_directory could not remove
     this run's staging directory: the replace step of every later shipment of
     the walk stops on it until it is deleted."""
-    shown = f"{copy_host}:{staging_dir}" if copy_host else str(staging_dir)
-    command = f"rm -rf -- {shlex.quote(str(staging_dir))}"
-    if copy_host:
-        command = f"ssh {copy_host} {shlex.quote(command)}"
+    shown, command = shipper.staging_directory_host_colon_path_and_local_or_ssh_rm_command(
+        copy_host, staging_dir)
     return (f"This run's staging directory {shown} is left behind: removing it "
             f"failed ({why}). Until it is deleted it stops nearly every later "
             f"shipment of this walk. Deleting it loses nothing, because every "
@@ -579,15 +575,16 @@ def staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_
             f"of its own; delete it with `{command}`.")
 
 
-def stopped_shipment_failed_line_with_rerun_command(copy_host, name: str,
-                                                    directory: pathlib.Path,
-                                                    staging_dir, what_failed: str,
-                                                    why: typing.Optional[str]) -> str:
+def walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
+        copy_host, name: str, directory: pathlib.Path, staging_dir,
+        what_failed: str, why: typing.Optional[str]) -> str:
     """The FAILED line of a copy or placing step that failed: it ends with the
     command that reruns this shipment, after the deletion of this run's
     staging directory when that could not be removed, since the rerun's
     replace step would stop on it."""
-    walk_argument = (name if directory == WALK_DIRECTORY
+    # A name that begins with a dash would be read by argparse as an option,
+    # so such a walk is rerun by its minutes' path, as a walk elsewhere is.
+    walk_argument = (name if directory == WALK_DIRECTORY and not name.startswith("-")
                      else str(directory / walk_file_name(name, MINUTES_ROLE_SUFFIX)))
     rerun = (f"{shlex.quote(str(REPO_ROOT / 'scripts' / 'walk-files-ship.py'))} "
              f"{shlex.quote(walk_argument)}")
@@ -737,7 +734,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
             reason = ("ned-box unreachable"
                       if copied.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED
                       else f"rsync exit {copied.returncode}")
-            print(stopped_shipment_failed_line_with_rerun_command(
+            print(walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
                 destination.copy_host, name, directory, staging_dir,
                 f"{reason} during the copy", why))
             sys.stderr.write(copied.stderr)
@@ -762,7 +759,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                 why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
                 reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
                     destination.copy_host, renamed)
-                print(stopped_shipment_failed_line_with_rerun_command(
+                print(walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
                     destination.copy_host, name, directory, staging_dir,
                     f"{reason} while putting the copied files in place", why))
                 sys.stderr.write(renamed.stderr)
@@ -802,7 +799,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                 why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
                 reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
                     destination.copy_host, placed)
-                print(stopped_shipment_failed_line_with_rerun_command(
+                print(walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
                     destination.copy_host, name, directory, staging_dir,
                     f"{reason} while putting the copied files in place", why))
                 sys.stderr.write(placed.stderr)

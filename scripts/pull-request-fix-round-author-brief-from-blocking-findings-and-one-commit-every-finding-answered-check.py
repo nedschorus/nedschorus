@@ -20,8 +20,8 @@ reviews, taking as one those of the same commit that no round record tells apart
 findings are the round's reviews' inline comments whose body starts with a match of
 BLOCKING_MARKER_PATTERN; the bodies' free text is never parsed for findings. A blocker re-posted
 with the same path, line and body counts once. A review's stated **Blocking: N** is checked against
-its own marked comments, or, when it has none, against those of the round's reviews posted after
-it, which then re-post its blockers.
+its own marked comments, or, when it has none, against those of the round's other reviews, such as
+the commissioned reviewer's Blocks it grades or a later review that re-posts its blockers.
 
 Without --check, run in the author's checkout: refuse when the pull request's head has moved past
 the frozen-head, else print the brief: the frozen-head, ADVISOR_FIX_ROUND_INSTRUCTION when the
@@ -298,11 +298,10 @@ def blocking_findings(number, anchor, reviews):
         if not stated:
             continue
         own = without_reposts(marked_by_review[index])
-        counted = own or without_reposts([comment for found in marked_by_review[index + 1:]
-                                          for comment in found])
+        counted = own or findings
         if int(stated.group(1)) != len(counted):
             where = ("its own inline comments" if own or len(reviews) == 1
-                     else "the inline comments of the reviews after it")
+                     else "the inline comments of the round's other reviews")
             raise Refused(f"The review {review.get('html_url')} says **Blocking: {stated.group(1)}**, "
                           f"but {len(counted)} of {where} start with {BLOCKING_MARKER_DESCRIPTION}"
                           + (f" ({named})" if len(reviews) > 1 else "") + ".\n"

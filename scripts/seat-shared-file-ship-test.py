@@ -25,6 +25,7 @@ import io
 import json
 import os
 import pathlib
+import shlex
 import socket
 import subprocess
 import sys
@@ -737,6 +738,190 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-local-failure-tes
           and "No space left on device (injected)" in err
           and stored.read_text(encoding="utf-8") == "# survey, older\n",
           f"exit {code}: {out}{err}")
+
+# --- A copy or rename that fails ends with the command that reruns it -------
+# In process, so the copy, the rename and the removal of the staging
+# directory can each be made to fail.
+with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-stopped-test-") as stopped_name:
+    stopped_scratch = pathlib.Path(stopped_name)
+    stopped = load_ship_module("seat_shared_file_ship_stopped")
+    source = stopped_scratch / "local" / "draft.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("# draft\n", encoding="utf-8")
+    seats = stopped_scratch / "store" / "seats"
+    staging_marker = f"{seats}/cold-read-research/.ship-staging-"
+    program = SHIP
+
+    source_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+
+    def ship_stopped(stored_name, copy_fails, removal_why, replace_outcome=None):
+        """`replace_outcome` is what the replace step returns for the file: None
+        is a replace step that fails."""
+        saved = (stopped.rsync_one_file, stopped.shipper.replace_with_staged_files,
+                 stopped.shipper.remove_staging_directory)
+        if copy_fails:
+            stopped.rsync_one_file = lambda copy_host, src, target: subprocess.CompletedProcess(
+                [], 23, "", "injected: rsync exit 23\n")
+        else:
+            stopped.rsync_one_file = lambda copy_host, src, target: subprocess.CompletedProcess(
+                [], 0, "", "")
+        if replace_outcome is None:
+            stopped.shipper.replace_with_staged_files = lambda *arguments: (
+                subprocess.CompletedProcess([], 255, "", "injected: ssh exit 255\n"), None)
+        else:
+            stopped.shipper.replace_with_staged_files = lambda *arguments: (
+                subprocess.CompletedProcess([], 0, "", ""),
+                replace_outcome if isinstance(replace_outcome, stopped.shipper.OtherShipmentStaging)
+                else {stored_name: replace_outcome})
+        stopped.shipper.remove_staging_directory = lambda copy_host, staging_dir: removal_why
+        destination = stopped.SeatsStoreDestination(
+            copy_host=None, citation_host=None, seats_path=seats)
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = stopped.ship_one_file(destination, "cold-read-research",
+                                             source, stored_name)
+        finally:
+            (stopped.rsync_one_file, stopped.shipper.replace_with_staged_files,
+             stopped.shipper.remove_staging_directory) = saved
+        return code, out.getvalue(), err.getvalue()
+
+    code, out, err = ship_stopped("draft.md", copy_fails=True, removal_why=None)
+    check("a copy that fails is FAILED, exit 1, one line ending with the command "
+          "that reruns it, --seat included",
+          code == 1 and out == (f"FAILED: cold-read-research/draft.md — rsync exited 23 "
+                                f"during the copy. Rerun: `{program} --seat="
+                                f"cold-read-research {source}`\n"),
+          f"exit {code}: {out}{err}")
+
+    code, out, err = ship_stopped("survey.md", copy_fails=False, removal_why=None)
+    check("a rename that fails is FAILED, exit 1, one line ending with the command "
+          "that reruns it, --as included when the stored name differs",
+          code == 1 and out == (f"FAILED: cold-read-research/survey.md — the store could "
+                                f"not be written. Rerun: `{program} --seat="
+                                f"cold-read-research --as=survey.md {source}`\n"),
+          f"exit {code}: {out}{err}")
+
+    # The pinned lines above never run the command they print, so a script
+    # that cannot be run as printed (no executable bit) would pass them.
+    rerun_words = shlex.split(out.rsplit("Rerun: `", 1)[-1].rstrip("`\n"))
+    try:
+        rerun_help = subprocess.run(rerun_words[:1] + ["--help"], capture_output=True,
+                                    text=True, check=False)
+        rerun_help_outcome = (rerun_help.returncode == 0,
+                              f"exit {rerun_help.returncode}: {rerun_help.stderr}")
+    except OSError as error:
+        rerun_help_outcome = (False, repr(error))
+    check("the printed rerun command's program runs as printed (exit 0 on --help)",
+          rerun_help_outcome[0], f"{rerun_words[:1]} --help: {rerun_help_outcome[1]}")
+
+    def left_behind_then_rerun(out, what_failed):
+        if not out.startswith(f"FAILED: cold-read-research/draft.md — {what_failed}. "
+                              f"This run's staging directory {staging_marker}"):
+            return False
+        staging = out.split("This run's staging directory ", 1)[1].split(", ", 1)[0]
+        return out == (f"FAILED: cold-read-research/draft.md — {what_failed}. This run's "
+                       f"staging directory {staging}, if it is there, could not be removed "
+                       f"(Permission denied (injected)). Until it is deleted, a later "
+                       f"shipment of this file stops on it. Deleting it loses nothing, "
+                       f"because the file stays at {source} and every shipment copies it "
+                       f"again into a new staging directory of its own; delete it with "
+                       f"`rm -rf -- {staging}`. Then rerun: `{program} --seat="
+                       f"cold-read-research {source}`\n")
+
+    code, out, err = ship_stopped("draft.md", copy_fails=True,
+                                  removal_why="Permission denied (injected)")
+    check("a copy that fails and a staging directory that cannot be removed is FAILED, "
+          "exit 1, naming the directory, why, that deleting it is safe, the command "
+          "that deletes it, then the rerun",
+          code == 1 and left_behind_then_rerun(out, "rsync exited 23 during the copy"),
+          f"exit {code}: {out}{err}")
+
+    code, out, err = ship_stopped("draft.md", copy_fails=False,
+                                  removal_why="Permission denied (injected)")
+    check("a rename that fails and a staging directory that cannot be removed is "
+          "FAILED, exit 1, naming the directory and the command that deletes it before "
+          "the rerun",
+          code == 1 and left_behind_then_rerun(out, "the store could not be written"),
+          f"exit {code}: {out}{err}")
+
+    def left_behind_sentences_in(out):
+        """The staging directory the line names as this run's, and whether the
+        line ends with the sentences that name it, its reason and its deletion."""
+        if f"This run's staging directory {staging_marker}" not in out:
+            return None, False
+        staging = out.split("This run's staging directory ", 1)[1].split(", ", 1)[0]
+        return staging, out.endswith(
+            f" This run's staging directory {staging}, if it is there, could not be "
+            f"removed (Permission denied (injected)). Until it is deleted, a later "
+            f"shipment of this file stops on it. Deleting it loses nothing, because "
+            f"the file stays at {source} and every shipment copies it again into a "
+            f"new staging directory of its own; delete it with `rm -rf -- {staging}`.\n")
+
+    other = f"{seats}/cold-read-research/.ship-staging-draft.md-0123456789ab"
+    code, out, err = ship_stopped(
+        "draft.md", copy_fails=False, removal_why="Permission denied (injected)",
+        replace_outcome=stopped.shipper.OtherShipmentStaging(paths=(other,)))
+    staging, named = left_behind_sentences_in(out)
+    check("another shipment's staging directory and this run's own that cannot be "
+          "removed is FAILED, exit 1, one line naming both and the command that "
+          "deletes this run's",
+          code == 1 and out.startswith(
+              f"FAILED: cold-read-research/draft.md — another shipment of it is running, "
+              f"or one left its staging directory behind: {other}; nothing was replaced. ")
+          and named and staging != other and out.count("\n") == 1,
+          f"exit {code}: {out}{err}")
+
+    code, out, err = ship_stopped(
+        "draft.md", copy_fails=False, removal_why="Permission denied (injected)",
+        replace_outcome=stopped.shipper.StagedReplacement(
+            replaced=True, displaced_sha256=None, stored_sha256="f" * 64))
+    staging, named = left_behind_sentences_in(out)
+    check("a file another shipment replaced while this one ran, and this run's staging "
+          "directory that cannot be removed, is FAILED, exit 1, naming the directory "
+          "and the command that deletes it",
+          code == 1 and out.startswith(
+              f"FAILED: cold-read-research/draft.md — the store holds sha256 {'f' * 64}")
+          and named and out.count("\n") == 1, f"exit {code}: {out}{err}")
+
+    code, out, err = ship_stopped(
+        "draft.md", copy_fails=False, removal_why="Permission denied (injected)",
+        replace_outcome=stopped.shipper.StagedReplacement(
+            replaced=True, displaced_sha256="e" * 64, stored_sha256=source_digest))
+    staging, named = left_behind_sentences_in(out)
+    check("a file stored whose staging directory cannot be removed is FAILED, exit 1, "
+          "one line with the citation, the directory, why and the command that "
+          "deletes it, since the next shipment of the file stops on it",
+          code == 1 and out.startswith(
+              f"FAILED: cold-read-research/draft.md — stored at "
+              f"{seats}/cold-read-research/draft.md. This run's staging directory ")
+          and named and out.count("\n") == 1, f"exit {code}: {out}{err}")
+    check("that file's replacement is still announced on stderr",
+          f"REPLACED cold-read-research/draft.md in the store — the content it held "
+          f"was sha256 {'e' * 64}" in err, err)
+
+    code, out, err = ship_stopped(
+        "draft.md", copy_fails=False, removal_why=None,
+        replace_outcome=stopped.shipper.StagedReplacement(
+            replaced=True, displaced_sha256=None, stored_sha256=source_digest))
+    check("a file stored whose staging directory is removed prints the citation alone, "
+          "exit 0",
+          code == 0 and out == f"{seats}/cold-read-research/draft.md\n",
+          f"exit {code}: {out}{err}")
+
+    # The pinned lines never run the command with a value that begins with a dash.
+    code, out, err = ship_stopped("-report.md", copy_fails=True, removal_why=None)
+    rerun_store = stopped_scratch / "rerun-store"
+    rerun_words = shlex.split(out.rsplit("Rerun: `", 1)[-1].rstrip("`\n"))
+    rerun = subprocess.run(
+        rerun_words, capture_output=True, text=True, check=False,
+        env={**os.environ, DESTINATION_VARIABLE: str(rerun_store / "cold-read-records")})
+    check("the printed rerun command of a file stored under a name that begins with a "
+          "dash runs as printed and ships the file under that name",
+          code == 1 and rerun.returncode == 0
+          and (rerun_store / "seats" / "cold-read-research" / "-report.md").read_bytes()
+          == source.read_bytes(),
+          f"printed: {out}rerun exit {rerun.returncode}: {rerun.stdout}{rerun.stderr}")
 
 print()
 if failures:

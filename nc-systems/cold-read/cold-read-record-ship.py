@@ -53,7 +53,8 @@ with the design:
      directory after it shipped.
   3. FAIL LOUDLY. When ned-box cannot be reached the run prints a line
      opening FAILED and exits non-zero; the cold-read-record stays on disk,
-     unshipped, for a later run. ssh runs in batch mode with a connect timeout,
+     unshipped, for a later run; a shipment that stops after its copy has
+     begun ends that line with the command that reruns it. ssh runs in batch mode with a connect timeout,
      so an automated caller never waits on a prompt.
   4. triage.md IS REPLACED, AND EACH DISPLACED COPY'S sha256 IS ANNOUNCED
      (user-ruled 2026-09-20, item 4 of the walk
@@ -130,8 +131,11 @@ reads the store's digests back, and removes the staging directory.
   it prevents.
 
 A staging directory outlives its shipment only when the copy into it fails
-and ned-box cannot be reached to remove it, or the shipment is killed before
-the step; nothing reads it.
+and ned-box cannot be reached to remove it, when the placing step's ssh call
+fails before the step runs, or when the shipment is killed before the step.
+A record's placing step links files from its own staging directory and never
+looks for another, so a leftover one never stops a later shipment of a
+record; the replace step below does look, and stops.
 
 NO LOCK IN THE REPLACE STEP EITHER. replace_with_staged_files, the path a
 walk's minutes, dispositions and appended walk text and a seat's files take,
@@ -1106,9 +1110,23 @@ def remove_staging_directory(host, staging_dir: pathlib.PurePosixPath) -> typing
     return None
 
 
-def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path) -> int:
-    """One directory, one stdout line, one exit code."""
+def staging_directory_host_colon_path_and_local_or_ssh_rm_command(host, staging_dir) -> tuple:
+    """(the staging directory as a FAILED line names it, the command that
+    deletes it), the command run over ssh when the store is on another host."""
+    shown = f"{host}:{staging_dir}" if host else str(staging_dir)
+    command = f"rm -rf -- {shlex.quote(str(staging_dir))}"
+    if host:
+        command = f"ssh {host} {shlex.quote(command)}"
+    return shown, command
+
+
+def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path,
+             rerun_program: pathlib.Path = pathlib.Path(__file__).resolve()) -> int:
+    """One directory, one stdout line, one exit code. `rerun_program` is the
+    program a FAILED line tells the reader to run again on `record_dir`:
+    scripts/sanity-check-record-ship.py ships its records through here too."""
     name = record_dir.name
+    rerun = f"Rerun: `{shlex.quote(str(rerun_program))} {shlex.quote(str(record_dir))}`"
     store_dir = records_path / name
     citation_host = citation_host_for_this_machine()
     citation = f"{citation_host}:{store_dir}" if citation_host else str(store_dir)
@@ -1203,6 +1221,14 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     # step: see ONE STEP, JUDGED BY WHAT THE STORE HOLDS in the docstring.
     staging_dir = records_path / (f"{STAGING_DIRECTORY_PREFIX}{name}-"
                                   f"{secrets.token_hex(6)}")
+    shown_staging, delete_staging = staging_directory_host_colon_path_and_local_or_ssh_rm_command(host, staging_dir)
+    # The placing step never looks for another staging directory, so one left
+    # behind is safe to delete and does not stop the rerun.
+    deletion = (f"This run's staging directory {shown_staging} may still be there. "
+                f"A rerun does not need it gone; deleting it is optional and loses "
+                f"nothing, because the record stays in {record_dir} and every shipment "
+                f"copies it again into a new staging directory of its own: "
+                f"`{delete_staging}`.")
     transferred = subprocess.run(
         rsync_command(host, record_dir, staging_dir),
         capture_output=True, text=True, check=False)
@@ -1210,22 +1236,17 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         left_behind = remove_staging_directory(host, staging_dir)
         reason = ("ned-box unreachable" if transferred.returncode == RSYNC_EXIT_CONNECTION_FAILED
                   else f"rsync exit {transferred.returncode}")
-        staging_note = (f"; the staging directory {host + ':' if host else ''}{staging_dir}, "
-                        f"if the copy made it, could not be removed ({left_behind})"
-                        if left_behind else "")
-        print(f"FAILED: {name} — {reason} during the copy{staging_note}; "
-              f"a later run finishes it.")
+        staging_note = (f"; removing the staging directory then failed "
+                        f"({left_behind}). {deletion}" if left_behind else ".")
+        print(f"FAILED: {name} — {reason} during the copy{staging_note} {rerun}")
         sys.stderr.write(transferred.stderr)
-        if left_behind:
-            sys.stderr.write(
-                f"{PROGRAM}: if {staging_dir} is there, delete it: nothing else removes it.\n")
         return EXIT_FAILED
     placed, outcome = place_staged_files(host, staging_dir, store_dir, local)
     if outcome is None:
         reason = failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
             host, placed)
-        print(f"FAILED: {name} — {reason} while placing the copied files; "
-              f"a later run finishes it.")
+        print(f"FAILED: {name} — {reason} while placing the copied files. "
+              f"{deletion} {rerun}")
         sys.stderr.write(placed.stderr)
         return EXIT_FAILED
     if outcome["differing"]:
@@ -1267,7 +1288,7 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     missing = sorted(relative for relative in judged if relative not in stored)
     if missing:
         print(f"FAILED: {name} — not in the store after the copy: "
-              f"{', '.join(missing)}; a later run finishes it.")
+              f"{', '.join(missing)}. {rerun}")
         sys.stderr.write(placed.stderr)
         return EXIT_FAILED
     if not added and displaced_triage_digest is None:
@@ -1282,7 +1303,7 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
 
 
 def ship_from_command_line(description: str, records_dir: pathlib.Path,
-                           destination, argv=None) -> int:
+                           destination, rerun_program: pathlib.Path, argv=None) -> int:
     """The `<record directory> | --all` command line, for this program and for
     the other kinds that ship record directories the same way.
 
@@ -1300,7 +1321,8 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
 
     `records_dir` is where --all looks in this checkout; `destination` is the
     (host, path) pair the caller got from destination_for_this_machine, with
-    its kind already chosen.
+    its kind already chosen; `rerun_program` is the caller's own path, which
+    its FAILED lines name in the command that ships a record again.
     """
     parser = argparse.ArgumentParser(
         description=description, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1316,7 +1338,8 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
     host, records_path = destination
 
     if not args.all:
-        return ship_one(host, records_path, pathlib.Path(args.record_directory).resolve())
+        return ship_one(host, records_path, pathlib.Path(args.record_directory).resolve(),
+                        rerun_program)
 
     directories = sorted(p for p in records_dir.glob("*") if p.is_dir()) \
         if records_dir.is_dir() else []
@@ -1330,7 +1353,7 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
             print(f"skipped: {record_dir.name} — empty directory")
             skipped.append(record_dir.name)
             continue
-        code = ship_one(host, records_path, record_dir)
+        code = ship_one(host, records_path, record_dir, rerun_program)
         {EXIT_SHIPPED: shipped, EXIT_REFUSED: refused}.get(code, failed).append(record_dir.name)
     print(f"--all: {len(shipped)} shipped, {len(refused)} refused"
           f"{' (' + ', '.join(refused) + ')' if refused else ''}, {len(failed)} failed"
@@ -1342,7 +1365,8 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
 
 
 def main() -> int:
-    return ship_from_command_line(__doc__, RECORDS_DIR, destination_for_this_machine())
+    return ship_from_command_line(__doc__, RECORDS_DIR, destination_for_this_machine(),
+                                  pathlib.Path(__file__).resolve())
 
 
 if __name__ == "__main__":

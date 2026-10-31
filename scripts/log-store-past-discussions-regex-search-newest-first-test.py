@@ -92,9 +92,11 @@ def build_store(root):
 
 
 def mark_dialogs_current(root):
-    """Give each session dialog that has a transcript the transcript's change time, as the refresher leaves it.
+    """Give each session dialog that has a transcript the transcript's change time, as the refresher leaves it, and
+    end each that names no extractor with a line naming this checkout's.
 
-    A dialog written by hand then stands for one an earlier extractor wrote, which the search does not write again.
+    A dialog written by hand then stands for one this checkout's extractor wrote from an earlier transcript, which
+    the search does not write again but dates by turn.
     """
     for dialog in Path(root).glob("session-dialogs/*/*/*-dialog-complete.md"):
         machine, key = dialog.parts[-3], dialog.parts[-2]
@@ -105,6 +107,10 @@ def mark_dialogs_current(root):
         except OSError:
             # No transcript, or one a case has locked away: nothing to stand for.
             continue
+        text = dialog.read_text()
+        if not refresh_common.session_dialog_extractor_sha256_read_from_last_line(text.split("\n")):
+            dialog.write_text(
+                text + "\n" + refresh_common.session_dialog_extractor_sha256_last_line_build(EXTRACTOR_SHA256) + "\n")
         os.utime(dialog, ns=(changed, changed))
 
 
@@ -307,9 +313,19 @@ with tempfile.TemporaryDirectory() as scratch:
                       extractor_digest_recorded=False)
         check(f"when {case}, the search writes no dialog, searches the dialogs as they are, and says so on stderr",
               finding.returncode == 0 and "as the refresher wrote it" in crane_dialog.read_text()
-              and "so the session dialogs were searched as they are" in finding.stderr
-              and "every session-dialog hit was dated by its session's last activity" in finding.stderr
+              and "NOTE: the session dialogs were searched as they are" in finding.stderr
+              and "the recorded digest never matches them" in finding.stderr
               and "as the refresher wrote it" in finding.stdout, finding.stdout + finding.stderr)
+    # The refresher records another digest while it rewrites every dialog, and the dialog it has not reached yet
+    # may be this checkout's.
+    record_extractor_digest(root, "0" * 64)
+    write(crane_dialog, "## Agent\n\nthe crane plan, said first\n\n"
+          + refresh_common.session_dialog_extractor_sha256_last_line_build(EXTRACTOR_SHA256) + "\n")
+    finding = run(root, "crane plan", "--kind", "session-dialogs", dialogs_current=False,
+                  extractor_digest_recorded=False)
+    check("when another extractor's digest is recorded, a hit in a dialog whose last line names this checkout's "
+          "is still dated by its turn",
+          "2026-09-06T08:00:00Z  session-dialogs  ned-box  crane" in finding.stdout, finding.stdout + finding.stderr)
     record_extractor_digest(root)
 
     def search_with_extractor_loaded_as(replacement):
@@ -362,11 +378,22 @@ def load_extractor():
         finding = run(root, "crane plan", "--kind", "session-dialogs", dialogs_current=False,
                       extractor_digest_recorded=False)
         digest_file.chmod(0o644)
-        check("a recorded digest that cannot be read is a FAILED line, no dialog is written, the hits are dated "
-              "by their sessions' last activity, and the search exits 2",
+        check("a recorded digest that cannot be read is a FAILED line, no dialog is written, a hit in a dialog "
+              "whose last line names no extractor is dated by its session's last activity, and the search exits 2",
               finding.returncode == 2 and f"FAILED: could not read {digest_file}" in finding.stderr
               and "as the refresher wrote it" in crane_dialog.read_text()
               and "may not be the one that wrote the dialog" in finding.stdout, finding.stdout + finding.stderr)
+        write(crane_dialog, "## Agent\n\nthe crane plan, said first\n\n"
+              + refresh_common.session_dialog_extractor_sha256_last_line_build(EXTRACTOR_SHA256) + "\n")
+        digest_file.chmod(0)
+        dated = run(root, "crane plan", "--kind", "session-dialogs", dialogs_current=False,
+                    extractor_digest_recorded=False)
+        digest_file.chmod(0o644)
+        check("when the recorded digest cannot be read, a hit in a dialog whose last line names this checkout's "
+              "is still dated by its turn",
+              "2026-09-06T08:00:00Z  session-dialogs  ned-box  crane" in dated.stdout, dated.stdout + dated.stderr)
+        # A time no transcript change shares, since the next case changes the transcript within one clock tick.
+        write(crane_dialog, "## Agent\n\nthe crane plan, as the refresher wrote it\n", mtime=epoch("2026-09-01"))
 
     crane_transcript.chmod(0)
     finding = run(root, "crane plan", "--kind", "session-dialogs", dialogs_current=False)
@@ -410,7 +437,8 @@ def load_extractor():
     grebe_dialog.unlink()
     grebe_transcript.unlink()
 
-    # The dialog on disk was written by an extractor that kept every repeat, which this checkout's does not.
+    # The plover dialog was written by an extractor that kept every repeat, which this checkout's does not; the
+    # sandpiper dialog by this checkout's, under one recorded digest, as a refresh that failed partway leaves them.
     plover_paragraph = "The plover paragraph, shown again."
     plover_key = "-home-nedlern-agents-plover"
     plover_transcript = write(
@@ -426,29 +454,102 @@ x = importlib.util.module_from_spec(spec); spec.loader.exec_module(x)
 transcript = pathlib.Path({str(plover_transcript)!r})
 turns, _ = x.read_dialog_turns(transcript, include_subagent_tasks_and_reports=True)
 print(x.render_companion(turns, x.complete_dialog_turns_and_report(transcript)[1]), end="")
-"""], capture_output=True, text=True, check=True).stdout)
+"""], capture_output=True, text=True, check=True).stdout
+        + "\n\n" + refresh_common.session_dialog_extractor_sha256_last_line_build("0" * 64) + "\n")
     check("the plover dialog stands for one an earlier extractor wrote, keeping every repeat",
           plover_dialog.read_text().count(plover_paragraph) == 3, plover_dialog.read_text())
-    record_extractor_digest(root, "0" * 64)
-    finding = run(root, "plover paragraph", "--kind", "session-dialogs", extractor_digest_recorded=False)
-    check("when another extractor's digest is recorded, no session-dialog hit is dated by a turn this checkout's "
-          "extractor would place it in; each is dated by its session's last activity and says why",
+    sandpiper_key = "-home-nedlern-agents-sandpiper"
+    sandpiper_transcript = write(
+        root / "agent-session-files-by-machine" / "ned-box" / "projects" / sandpiper_key / "s26.jsonl",
+        transcript_records(agent("The plover paragraph, in a current dialog.", "2026-09-04T08:00:00Z"),
+                           agent("Done.", "2026-09-20T08:00:00Z")))
+    sandpiper_dialog = write(root / "session-dialogs" / "ned-box" / sandpiper_key / "s26-dialog-complete.md",
+                             "## Agent\n\nThe plover paragraph, in a current dialog.\n\n## Agent\n\nDone.\n")
+    finding = run(root, "plover paragraph", "--kind", "session-dialogs")
+    check("under this checkout's recorded digest, a hit in a dialog whose last line names it is dated by its turn, "
+          "and no hit in a dialog whose last line names another extractor's digest is dated by a turn this "
+          "checkout's extractor would place it in; each is dated by its session's last activity and says why",
           finding.returncode == 0
+          and "2026-09-04T08:00:00Z  session-dialogs  ned-box  sandpiper" in finding.stdout
           and len(re.findall(r"^2026-09-03T08:00:00Z \(session's last activity: [^)]*may not be the one that wrote "
-                             r"the dialog[^)]*\)  session-dialogs  ned-box  plover$", finding.stdout, re.M)) == 3,
+                             r"the dialog[^)]*\)  session-dialogs  ned-box  plover$", finding.stdout, re.M)) == 3
+          and "2026-09-01" not in finding.stdout and "2026-09-02" not in finding.stdout,
           finding.stdout + finding.stderr)
-    record_extractor_digest(root)
+    finding = run(root, "dialog extractor whose sha256", "--kind", "session-dialogs")
+    check("a dialog's line naming its extractor's digest is never a hit",
+          finding.returncode == 1 and not hit_headers(finding.stdout), finding.stdout + finding.stderr)
+    quoted_digest_line = refresh_common.session_dialog_extractor_sha256_last_line_build("1" * 64)
+    curlew_key = "-home-nedlern-agents-curlew"
+    curlew_transcript = write(
+        root / "agent-session-files-by-machine" / "ned-box" / "projects" / curlew_key / "s27.jsonl",
+        transcript_records(agent("Each dialog now ends with this line:", "2026-09-05T08:00:00Z"),
+                           agent("Done.", "2026-09-21T08:00:00Z")))
+    curlew_dialog = write(root / "session-dialogs" / "ned-box" / curlew_key / "s27-dialog-complete.md",
+                          "## Agent\n\nEach dialog now ends with this line:\n" + quoted_digest_line
+                          + "\n\n## Agent\n\nDone.\n")
+    curlew_analysis = write(root / "analysis" / "curlew-digest-line-2026-09-05.md",
+                            "The refresher writes:\n" + quoted_digest_line + "\n")
+    finding = run(root, "dialog extractor whose sha256", "--kind", "session-dialogs", "--kind", "analysis")
+    check("a turn and an analysis that quote the line naming an extractor's digest at the start of a line are "
+          "still hits, and no dialog's own last line is",
+          finding.returncode == 0 and len(hit_headers(finding.stdout)) == 2
+          and any("session-dialogs  ned-box  curlew" in line for line in hit_headers(finding.stdout))
+          and any("analysis" in line for line in hit_headers(finding.stdout)),
+          finding.stdout + finding.stderr)
+    curlew_dialog.unlink()
+    curlew_transcript.unlink()
+    curlew_analysis.unlink()
+
+    # ripgrep numbers lines at "\n" alone; a lone carriage return must not move the dialog's last line.
+    dunlin_key = "-home-nedlern-agents-dunlin"
+    dunlin_transcript = write(
+        root / "agent-session-files-by-machine" / "ned-box" / "projects" / dunlin_key / "s28.jsonl",
+        transcript_records(agent("the dunlin plan, as written again", "2026-09-06T08:00:00Z"),
+                           agent("Done.", "2026-09-22T08:00:00Z")))
+    dunlin_dialog = root / "session-dialogs" / "ned-box" / dunlin_key / "s28-dialog-complete.md"
+    dunlin_dialog.parent.mkdir(parents=True, exist_ok=True)
+    dunlin_dialog.write_bytes(b"## Agent\n\nthe dunlin\rplan\n\n"
+                              + refresh_common.session_dialog_extractor_sha256_last_line_build(EXTRACTOR_SHA256).encode()
+                              + b"\n")
+    finding = run(root, "dialog extractor whose sha256", "--kind", "session-dialogs")
+    check("a dialog holding a lone carriage return before its last line still has that line, which names its "
+          "extractor, dropped as a hit",
+          finding.returncode == 1 and not hit_headers(finding.stdout), finding.stdout + finding.stderr)
+    write(dunlin_dialog, "## Agent\n\nthe dunlin plan, as written again\n\n## Agent\n\nDone.\n")
+    mark_dialogs_current(root)
+    as_ripgrep_read = json.dumps({"type": "match", "data": {
+        "path": {"text": str(dunlin_dialog)}, "lines": {"text": "the dunlin plan, as ripgrep read it\n"},
+        "line_number": 3, "submatches": [{"start": 0}]}})
+    earlier_reader = stub(scratch, "rg-reads-dunlin-before-it-is-written-again",
+                          f"printf '%s\\n' '{as_ripgrep_read}'\n")
+    finding = run(root, "dunlin plan", "--kind", "session-dialogs",
+                  environment={PREFIX + "RIPGREP_PROGRAM_OVERRIDE": earlier_reader})
+    check("a hit whose line the dialog, written again after ripgrep searched it, no longer holds where ripgrep "
+          "found it is not dated by the turn of the line now there, and says why",
+          finding.returncode == 0 and "2026-09-06" not in finding.stdout
+          and "2026-09-22T08:00:00Z (session's last activity: the dialog was written again after ripgrep searched "
+              "it" in finding.stdout, finding.stdout + finding.stderr)
+    if os.geteuid() == 0:
+        print("SKIP  a session dialog that cannot be read after ripgrep searched it: root reads every file")
+    else:
+        dunlin_dialog.chmod(0)
+        finding = run(root, "dunlin plan", "--kind", "session-dialogs", dialogs_current=False,
+                      environment={PREFIX + "RIPGREP_PROGRAM_OVERRIDE": earlier_reader})
+        dunlin_dialog.chmod(0o644)
+        check("a session dialog that cannot be read after ripgrep searched it is a FAILED line, its hit is shown "
+              "dated by its session's last activity, and the search exits 2",
+              finding.returncode == 2
+              and f"FAILED: could not read the session dialog {dunlin_dialog} after ripgrep searched it" in finding.stderr
+              and "PermissionError" in finding.stderr
+              and "2026-09-22T08:00:00Z (session's last activity: the dialog could not be read" in finding.stdout,
+              finding.stdout + finding.stderr)
+    dunlin_dialog.unlink()
+    dunlin_transcript.unlink()
     plover_dialog.unlink()
     plover_transcript.unlink()
+    sandpiper_dialog.unlink()
+    sandpiper_transcript.unlink()
 
-    probe = subprocess.run([sys.executable, "-c", f"""
-import importlib.util
-spec = importlib.util.spec_from_file_location("search", {str(PROGRAM)!r})
-search = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(search)
-print(search.dialog_line_turn_times({str(root / "agent-session-files-by-machine" / "ned-box" / "projects" / "-home-nedlern-agents-prime-intellect" / "s1.jsonl")!r},
-                                    {str(Path(scratch) / "no-such-dialog.md")!r}, [3]))
-"""], capture_output=True, text=True)
     broken_tracker = subprocess.run([sys.executable, "-c", f"""
 import importlib.util, os, sys
 os.environ[{PREFIX + "LOG_STORE_ROOT_OVERRIDE"!r}] = {str(root)!r}
@@ -509,10 +610,6 @@ print(x.render_companion(*x.complete_dialog_turns_and_report(pathlib.Path({str(e
           and "2026-09-01T08:00:00Z  session-dialogs" in finding.stdout, finding.stdout + finding.stderr)
     egret_dialog.unlink()
     egret_transcript.unlink()
-
-    check("a session dialog that cannot be read again to date its hits is a failure",
-          "could not read the session dialog " in probe.stdout and "no-such-dialog.md" in probe.stdout,
-          probe.stdout + probe.stderr)
 
     own = run(root, "heron plan", environment={"CLAUDE_CODE_SESSION_ID": "s1"})
     check("the agent-session running the search is left out, its dialog and its messages both, and the "
@@ -620,6 +717,14 @@ print(x.render_companion(*x.complete_dialog_turns_and_report(pathlib.Path({str(e
           "said nowhere" not in own.stdout and "2026-09-28T09:00:00Z" in own.stdout
           and "except 1 hit(s) that could not be dated" in own.stdout, own.stdout)
     write(root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-prime-intellect" / "s1-dialog-complete.md",
+          "# Complete session dialog\n\n## Agent\n\nShall we start the heron plan?\n\n"
+          + refresh_common.session_dialog_extractor_sha256_last_line_build("0" * 64) + "\n")
+    own = run(root, "heron plan", "--kind", "session-dialogs", environment={"CLAUDE_CODE_SESSION_ID": "s1"})
+    check("after a compaction, a dialog hit of the running agent-session in a dialog another extractor wrote is "
+          "left out, since it cannot be placed before the compaction, and the closing line counts it",
+          "prime-intellect" not in own.stdout.split("Hits")[0].split("No hits")[0]
+          and "except 1 hit(s) that could not be dated" in own.stdout, own.stdout)
+    write(root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-prime-intellect" / "s1-dialog-complete.md",
           "# Complete session dialog\n\n## Agent\n\nShall we start the heron plan?\n")
     s1.write_text(s1_text)
     os.utime(s1, (epoch("2026-10-05"), epoch("2026-10-05")))
@@ -723,7 +828,7 @@ search.session_start = unreadable
 search.session_last_activity = lambda transcript: "2026-10-05T10:00:00Z"
 dialog = {str(root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-prime-intellect" / "s1-dialog-complete.md")!r}
 hit = {{"kind": "session-dialogs", "path": dialog, "machine": "ned-box",
-        "project_key": "-home-nedlern-agents-prime-intellect", "line": 1}}
+        "project_key": "-home-nedlern-agents-prime-intellect", "line": 1, "text": "# Complete session dialog"}}
 failures = []
 search.dated_file_hits([hit], Path({str(root)!r}), "", "", None, "2026-09-30", failures)
 print(failures)

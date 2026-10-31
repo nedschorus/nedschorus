@@ -1159,6 +1159,49 @@ def test_the_closing_line_is_read_token_by_token():
                    f"links to {other}, but")
 
 
+def test_a_paused_walk_is_not_checked_until_a_later_marker_resumes_it():
+    paused_minutes = ("#next_to_present item 2 of 9\n\n"
+                      "Walk paused 2026-10-28 by the user's stop order before item 2 was shown to him.\n\n"
+                      "#approval_walk_paused the user's stop order forbids showing walk items.")
+    case = Case()
+    case.walk_files(minutes=paused_minutes)
+    case.reply("Stopped as you ordered; nothing else runs until you say so.")
+    check_silent("a walk whose minutes end with a pause line lets a reply that names no item through",
+                 case.run())
+    case = Case()
+    case.walk_files(minutes=paused_minutes + "\n\n#next_to_present item 2 of 9")
+    case.reply("Stopped as you ordered; nothing else runs until you say so.")
+    check_reminded("a `#next_to_present` line after the pause line resumes the walk", case.run(),
+                   "`Item 2 of 9`")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9 #approval_walk_paused stop order")
+    case.reply("Stopped.")
+    check_silent("a pause line after the marker on the same line pauses the walk", case.run())
+    case = Case()
+    case.walk_files(minutes="#approval_walk_paused reason #next_to_present item 2 of 9")
+    case.reply("Stopped.")
+    check_reminded("a marker after the pause line on the same line resumes the walk", case.run(), "`Item 2 of 9`")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9\n\nA quoted `#approval_walk_paused reason` line.")
+    case.reply("Stopped.")
+    check_reminded("a pause line inside a code span is a quotation and pauses nothing", case.run(),
+                   "`Item 2 of 9`")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9\n\n```\n#approval_walk_paused reason\n```")
+    case.reply("Stopped.")
+    check_reminded("a pause line inside fenced code pauses nothing", case.run(), "`Item 2 of 9`")
+    case = Case()
+    case.walk_files(name="older-walk", minutes="#next_to_present item 5 of 9.", modified=1_000)
+    case.walk_files(name="newer-walk", minutes="#next_to_present item 2 of 9.\n\n#approval_walk_paused stop order",
+                    modified=2_000)
+    case.reply("Stopped.")
+    check_silent("a paused newest walk is not passed over for an older open walk", case.run())
+    case = Case()
+    case.walk_files(minutes="#approval_walk_paused before the walk began\n\n#next_to_present item 2 of 9")
+    case.reply("Stopped.")
+    check_reminded("a pause line before the last marker pauses nothing", case.run(), "`Item 2 of 9`")
+
+
 def test_minutes_without_a_marker_are_not_parsed():
     specification = importlib.util.spec_from_file_location("walk_stop_hook_under_test", HOOK_SCRIPT)
     hook = importlib.util.module_from_spec(specification)
@@ -1174,7 +1217,7 @@ def test_minutes_without_a_marker_are_not_parsed():
         outcome = "parsed"
     check("minutes holding no marker are not parsed", outcome is None, f"got {outcome!r}")
     outcome = hook.walk_finder.next_to_present("# Minutes\n\n#next_to_present item 3 of 9.\n", hook.walk_finder.markdown_parser())
-    check("minutes holding a marker still give its value", outcome == ("item 3 of 9.", False), f"got {outcome!r}")
+    check("minutes holding a marker still give its value", outcome == ("item 3 of 9.", False, False), f"got {outcome!r}")
 
 
 def test_silent_cases():

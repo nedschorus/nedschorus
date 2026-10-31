@@ -61,7 +61,9 @@ anything after the count, such as `(awaiting answer), then item 24`, is
 ignored. Among the minutes files in docs/walk/ at the top of the checkout
 named by the payload's cwd, the open approval-walk is the most recently
 modified one whose value is not closed. Minutes with no such line, as every
-walk before the line existed, are not open walks.
+walk before the line existed, are not open walks. A walk whose minutes hold a
+`#approval_walk_paused` line after their last marker is paused, as when the
+user paused it or a stop order forbids showing its items, and is not checked.
 
 ITEMS IN THE WALK-DOCUMENT. An item starts at its running count, `Item N of
 M`, `Items 5 and 6 of M`, `Items 10 to 12 of M` or `Items 12 to 12.3 of M`
@@ -109,8 +111,8 @@ SILENT while the agent answers a Stop hook (stop_hook_active set), as the
 Stop-hook silence rule's module requires, when the agent-session is a
 headless `claude -p` child (its last words are its caller's answer), when the
 transcript is missing, when the turn wrote no text to the user, when the cwd is
-not in a git checkout, when no approval-walk is open, and when the reply
-passes.
+not in a git checkout, when no approval-walk is open or the open one is paused,
+and when the reply passes.
 
 OUTPUT: {"decision": "block", "reason": <message>}, which keeps the agent
 going with the message as its next instruction: when the walk-minutes hold no

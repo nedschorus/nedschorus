@@ -195,6 +195,29 @@ class MacLaunchSandbox:
                    ' } '
                    f'> "{self.captures}/after-exit-environment.txt"\n')
 
+    def github_token_check_runs_the_real_supervisor(self, token_file_accounts=()):
+        """Hand the supervisor's GitHub token check to the real interpreter, so
+        the case measures the refusal the real supervisor prints for the
+        sandbox HOME. token_file_accounts names the accounts given a token file."""
+        token_directory = self.home / ".config" / "nedschorus"
+        for account in token_file_accounts:
+            token_directory.mkdir(parents=True, exist_ok=True)
+            (token_directory / f"{account}.token").write_text(
+                "stand-in-token\n", encoding="utf-8")
+        python3 = self.stubs / "python3"
+        python3.write_text(python3.read_text(encoding="utf-8").replace(
+            'case "${1:-}" in (*' + UPDATE_LOCK_HELPER_NAME + ')',
+            'case " $* " in (*" --agent-seat-github-token-file-readable-check-only "*) '
+            f'exec "{sys.executable}" "$@";; esac\n'
+            'case "${1:-}" in (*' + UPDATE_LOCK_HELPER_NAME + ')', 1),
+            encoding="utf-8")
+
+    def seat_already_running(self):
+        """Make the tmux stub answer has-session with "exists"."""
+        tmux = self.stubs / "tmux"
+        tmux.write_text(tmux.read_text(encoding="utf-8").replace(
+            '(has-session) exit 1;;', '(has-session) exit 0;;', 1), encoding="utf-8")
+
     def boot_programs_fail(self):
         """Make the python3 stub fail clean-worktrees.py and
         checkout-freshness-catch-up.py the way a broken run does: a line on
@@ -826,6 +849,38 @@ def main() -> int:
               sandbox.supervisor_environment().get("GH_TOKEN") == "<unset>"
               and sandbox.after_exit_environment().get("GH_TOKEN") == "<unset>",
               (sandbox.supervisor_environment(), sandbox.after_exit_environment()))
+
+        # --- a detached pane closes when the supervisor exits, so the launch
+        # itself must run the supervisor's GitHub token check before it
+        # creates the tmux session, and report its refusal and exit 5.
+        sandbox = MacLaunchSandbox(root / "no-attach-missing-github-token-file")
+        sandbox.github_token_check_runs_the_real_supervisor()
+        result = sandbox.run("~/agents", seat_name="seat-t5")
+        check("missing token file: a detached launch exits 5 with the supervisor's refusal",
+              result.returncode == 5
+              and "handoff-supervisor: the agent-seat seat-t5 was not started, because the token file"
+              in result.stderr
+              and "does not exist" in result.stderr,
+              (result.returncode, result.stderr[-600:]))
+        check("missing token file: no tmux session was created",
+              "new-session" not in sandbox.tmux_argv(), sandbox.tmux_argv()[:10])
+        sandbox = MacLaunchSandbox(root / "no-attach-github-token-file-present")
+        # Both machine accounts, because the supervisor picks one by hostname.
+        sandbox.github_token_check_runs_the_real_supervisor(
+            token_file_accounts=("ubuntu-claude", "mac-claude"))
+        result = sandbox.run("~/agents", seat_name="seat-t6")
+        check("token file present: the detached launch goes on to create the tmux session",
+              result.returncode == 0 and "new-session" in sandbox.tmux_argv()
+              and "was not started" not in result.stderr,
+              (result.returncode, result.stderr[-600:]))
+        # A running seat's launch is not a start, so it must not be refused as one.
+        sandbox = MacLaunchSandbox(root / "no-attach-running-seat-missing-github-token-file")
+        sandbox.github_token_check_runs_the_real_supervisor()
+        sandbox.seat_already_running()
+        result = sandbox.run("~/agents", seat_name="seat-t7")
+        check("missing token file, seat already running: the launch is not refused as a start",
+              result.returncode == 0 and "was not started" not in result.stderr,
+              (result.returncode, result.stderr[-600:]))
 
         # --- the account override is refused, not ignored: the launcher does
         # not choose an account, so a value there could only mislead the
