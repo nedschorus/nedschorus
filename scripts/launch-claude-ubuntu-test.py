@@ -19,17 +19,12 @@ must arrive tilde-EXPANDED (the box shell resolves it at P1), while the
 supervisor's --cd arrives as the literal ~ path (handoff-supervisor.py
 expanduser()s it live, handoff-supervisor.py:855).
 
-Run: python3 scripts/launch-claude-ubuntu-test.py
-
-The suite is self-contained (this file plus launch-claude-ubuntu and
-agent-binary-update-under-lock.py beside it; every other participant is
-stubbed, and the helper is copied into the sandbox HOME's checkout path,
-where the box-side command looks for it) and runs unmodified ON THE BOX,
-where P1 is parsed by the real /bin/sh (dash) instead of macOS sh standing
-in — the one caveat the PR #137/#139 reviews carried (user-directed
-2026-08-22):
-  scp scripts/launch-claude-ubuntu scripts/launch-claude-ubuntu-test.py scripts/agent-binary-update-under-lock.py ned:/tmp/x/
-  ssh ned 'cd /tmp/x && chmod +x launch-claude-ubuntu && python3 launch-claude-ubuntu-test.py'
+Run it from a checkout, on ned-box, where P1 is parsed by the real /bin/sh
+(dash) rather than by macOS sh standing in for it:
+  python3 scripts/launch-claude-ubuntu-test.py
+The GitHub token cases run the real handoff-supervisor from the checkout's
+nc-systems/, and it loads modules from the checkout's scripts/, so the suite
+does not run from a copy of a few files.
 """
 
 import errno
