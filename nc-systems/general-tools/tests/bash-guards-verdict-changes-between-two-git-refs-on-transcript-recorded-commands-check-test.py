@@ -479,6 +479,18 @@ try:
           == (3 + 9) * (len(replay.GUARDS) + 1) * 7 + replay.STEP_DEADLINE_MARGIN_SECONDS,
           replay.step_deadline_seconds(9, 3, 7))
 
+    class GhiMdGuardNaming:
+        def __init__(self, replaced):
+            self.replaced = replaced
+
+        def ghi_md_replaced_by_command(self, command, working_directory):
+            return self.replaced
+
+    for replaced, expected in (("/c/docs/issues/46-a.md", ("refused", "replaces /c/docs/issues/46-a.md")),
+                               (None, ("passed", None))):
+        reading = replay.read_ghi_md_whole_file_replacement(GhiMdGuardNaming(replaced), "cp a b", "/c", None)
+        check(f"the GHI-MD soft-block's reading when its guard names {replaced}", reading == expected, reading)
+
     def add_bash_hook(worktree):
         path = worktree / ".claude" / "settings.json"
         settings = json.loads(path.read_text())
