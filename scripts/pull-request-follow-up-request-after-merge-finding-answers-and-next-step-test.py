@@ -1271,8 +1271,8 @@ def test_waiting_for_user_ruling():
         check("reopen-waiting-finding-with-user-ruling removes the answer, the started branch and the finished mark, "
               "records the user's words, and prints the brief",
               code == 0 and out == "Reopened finding 2 of pull request 1964's follow-up request with the user's "
-                                   "decision, and recorded the follow-up not finished.\n"
-                                   "Do what the text below says for you, the author: its subagent follows up the "
+                                   "decision, and marked the follow-up as not finished.\n"
+                                   "Do what the text below says for you, the author: the subagent it starts follows up the "
                                    "reopened finding.\n\n"
                                    + program.build_follow_up_request_forked_subagent_brief(request) + "\n"
               and case.answers() == {"started": {"1": "topic-one"}, "answers": {"1": {"reason": "fixed"}},

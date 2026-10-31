@@ -702,8 +702,8 @@ def reopen_waiting_finding_with_user_ruling(number, finding, user_ruling):
     write_json(answers_file, record)
     print("\n".join([
         f"Reopened finding {finding} of pull request {number}'s follow-up request with the user's decision, and "
-        "recorded the follow-up not finished.",
-        "Do what the text below says for you, the author: its subagent follows up the reopened finding.",
+        "marked the follow-up as not finished.",
+        "Do what the text below says for you, the author: the subagent it starts follows up the reopened finding.",
         "",
         build_follow_up_request_forked_subagent_brief(request),
     ]))
@@ -927,7 +927,7 @@ def main(argv=None):
         help="record that a finding waits for the user's decision, because it would change a design or decision of his")
     waiting_parser.add_argument("finding", type=int)
     waiting_parser.add_argument("--what-it-would-change", required=True,
-                                help="the design or decision of the user's the finding would change")
+                                help="which of the user's designs or decisions the finding would change")
     reopen_parser = subcommands.add_parser(
         "reopen-waiting-finding-with-user-ruling",
         help="in the author's checkout, once the user wants a waiting finding's change: record his decision and "
