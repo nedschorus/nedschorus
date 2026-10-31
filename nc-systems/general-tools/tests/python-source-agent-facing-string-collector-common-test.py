@@ -264,9 +264,6 @@ LOCAL_NAME_FORMS = (
     ("a local printed in a lambda's default whose parameter has the local's name",
      'def main():\n    text = "Shadowed default"\n    callback = lambda text=print(text): None\n',
      [("Shadowed default", "text = in main()")]),
-    ("a local printed by a lambda in a class body that rebinds the name, since the lambda skips class scope",
-     'def main():\n    text = "outer lambda"\n    class Holder:\n        text = 3\n        f = lambda: print(text)\n',
-     [("outer lambda", "text = in main.Holder()")]),
 )
 for case_name, source, expected in LOCAL_NAME_FORMS:
     found = [(entry["text"], entry["label"]) for entry in entries(source)]
@@ -307,6 +304,8 @@ LOCAL_NAME_FORMS_NOT_RECOGNIZED = (
      'def main():\n    text = " padded ".strip()\n    print(text)\n'),
     ("an attribute assigned a string, which is not a local name",
      'def main(self):\n    self.note = "attribute text"\n    print(self.note)\n'),
+    ("a local printed by a lambda in a class body that rebinds the name, which the class hides",
+     'def main():\n    text = "outer lambda"\n    class Holder:\n        text = 3\n        f = lambda: print(text)\n'),
 )
 for case_name, source in LOCAL_NAME_FORMS_NOT_RECOGNIZED:
     found = texts(source)
@@ -340,10 +339,6 @@ HELPER_PRINTER_FORMS = (
     ("a string built with % for a helper printer, inside a function",
      SAY + 'def main():\n    say(sys.stderr, "branch %s failed" % name)\n',
      [("branch %s failed", "say() in main()")]),
-    ("a string passed to a helper whose method prints the parameter its class body rebinds, since the method skips class scope",
-     'def sink(text):\n    class Holder:\n        text = 3\n        def show(self):\n            print(text)\n'
-     '    Holder().show()\nsink("method sees outer")\n',
-     [("method sees outer", "sink()")]),
     ("a string passed to a helper whose lambda's default prints the parameter",
      'def sink(text):\n    callback = lambda value=print(text): None\nsink("default helper")\n',
      [("default helper", "sink()")]),
@@ -382,6 +377,14 @@ HELPER_PRINTER_FORMS_NOT_RECOGNIZED = (
      'def sink(text):\n    class Holder:\n        text = 3\n        print(text)\nsink("class rebound")\n'),
     ("a string passed to a helper whose nested function rebinds the parameter before printing it",
      'def sink(text):\n    def inner():\n        text = 3\n        print(text)\nsink("inner rebound")\n'),
+    ("a string passed to a helper whose method prints the parameter its class body rebinds, which the class hides",
+     'def sink(text):\n    class Holder:\n        text = 3\n        def show(self):\n            print(text)\n'
+     '    Holder().show()\nsink("method sees outer")\n'),
+    ("a string passed to a helper whose class body rebinds the parameter and a lambda there prints it",
+     'def sink(text):\n    class Holder:\n        text = 3\n        f = lambda: print(text)\nsink("lambda in class")\n'),
+    ("a string passed to a helper whose class rebinds the parameter and a method's default lambda prints it",
+     'def sink(text):\n    class Holder:\n        text = 3\n        def show(self, v=(lambda: print(text))):\n            pass\n'
+     'sink("lambda in default")\n'),
 )
 for case_name, source in HELPER_PRINTER_FORMS_NOT_RECOGNIZED:
     found = [entry["text"] for entry in entries(source)
