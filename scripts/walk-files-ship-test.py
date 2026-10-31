@@ -1199,7 +1199,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
           in remote_sentences, remote_sentences)
 
     def rerun_line_for(directory):
-        return left.stopped_shipment_failed_line_with_rerun_command(
+        return left.walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
             None, "named-walk-2026-10-31", directory,
             pathlib.PurePosixPath("/store/walk/.ship-staging-x"),
             "rsync exit 23 during the copy", None)

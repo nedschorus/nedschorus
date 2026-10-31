@@ -30,7 +30,8 @@ says only where to look and how to list what exists.
 THE STORE'S RULES HOLD HERE, WITH ONE DIFFERENCE INSIDE `seats/`. FAIL
 LOUDLY is the record shipper's (nc-systems/cold-read/cold-read-record-ship.py) and is
 kept: an unreachable ned-box prints a line opening FAILED and exits non-zero
-with the file still on disk for a later run. ADD-ONLY and REFUSE ON
+with the file still on disk for a later run; a shipment that stops after its
+copy has begun ends that line with the command that reruns it. ADD-ONLY and REFUSE ON
 DIFFERENCE remain the rules of the records kind, which that program still
 enforces unchanged; here a file of the same name whose content differs is
 REPLACED, and the replacement is announced.
@@ -329,17 +330,38 @@ def ship_one_file(destination: SeatsStoreDestination, seat: str,
     seat_directory = destination.seats_path / seat
     staging_dir = seat_directory / (f"{shipper.STAGING_DIRECTORY_PREFIX}"
                                     f"{stored_name}-{secrets.token_hex(6)}")
+    rerun_arguments = [str(REPO_ROOT / "scripts" / "seat-shared-file-ship.py"), "--seat", seat]
+    if stored_name != source.name:
+        rerun_arguments += ["--as", stored_name]
+    rerun = f"`{shlex.join(rerun_arguments + [str(source.absolute())])}`"
+
+    def stopped_line(what_failed, why):
+        """`why` is remove_staging_directory's answer. A staging directory left
+        behind stops every later shipment of the file in
+        replace_with_staged_files, so it is named before the rerun."""
+        if not why:
+            return f"FAILED: {seat}/{stored_name} — {what_failed}. Rerun: {rerun}"
+        shown, command = shipper.staging_directory_host_colon_path_and_local_or_ssh_rm_command(
+            destination.copy_host, staging_dir)
+        return (f"FAILED: {seat}/{stored_name} — {what_failed}. This run's staging "
+                f"directory {shown}, if it is there, could not be removed ({why}). "
+                f"Until it is deleted, a later shipment of this file stops on it. "
+                f"Deleting it loses nothing, because the file stays at "
+                f"{source.absolute()} and every shipment copies it again into a new "
+                f"staging directory of its own; delete it with `{command}`. "
+                f"Then rerun: {rerun}")
+
     copied = rsync_one_file(destination.copy_host, source, f"{staging_dir}/")
     if copied.returncode != 0:
-        shipper.remove_staging_directory(destination.copy_host, staging_dir)
-        print(f"FAILED: {seat}/{stored_name} — rsync exited "
-              f"{copied.returncode}", flush=True)
+        why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
+        print(stopped_line(f"rsync exited {copied.returncode} during the copy", why),
+              flush=True)
         print(copied.stderr.strip(), file=sys.stderr)
         return EXIT_FAILED
     renamed, outcomes = shipper.replace_with_staged_files(
         destination.copy_host, staging_dir, seat_directory,
         [(source.name, stored_name, None)])
-    shipper.remove_staging_directory(destination.copy_host, staging_dir)
+    why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
     if isinstance(outcomes, shipper.OtherShipmentStaging):
         failed, instruction = shipper.other_shipment_failure_lines(
             f"{seat}/{stored_name}", outcomes)
@@ -347,8 +369,7 @@ def ship_one_file(destination: SeatsStoreDestination, seat: str,
         print(instruction, file=sys.stderr)
         return EXIT_FAILED
     if outcomes is None or stored_name not in outcomes:
-        print(f"FAILED: {seat}/{stored_name} — the store could not be written; "
-              f"a later run finishes it", flush=True)
+        print(stopped_line("the store could not be written", why), flush=True)
         print(renamed.stderr.strip(), file=sys.stderr)
         return EXIT_FAILED
     outcome = outcomes[stored_name]

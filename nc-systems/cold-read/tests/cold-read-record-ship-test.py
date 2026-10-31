@@ -833,15 +833,21 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     removal_calls = [json.loads(line) for line in left_log.read_text().splitlines()
                      if '"rm -rf ' in line]
     staging_named = (shlex.split(removal_calls[0][-1])[-1] if removal_calls else "")
-    check("a failed copy whose staging directory ssh could not remove names that "
-          "directory and why on the FAILED line",
-          result.returncode == 1 and result.stdout.startswith("FAILED:")
-          and "rsync exit 23 during the copy" in result.stdout
+    check("a failed copy whose staging directory ssh could not remove is one FAILED "
+          "line: why the removal failed, that deleting the directory is safe and a "
+          "rerun does not need it gone, the ssh command that deletes it, and the "
+          "command that reruns the shipment",
+          result.returncode == 1
           and ".ship-staging-2026-09-21-staging-left-" in staging_named
-          and f"the staging directory nedlern@ned-box:{staging_named}, if the copy made it, "
-              f"could not be removed (ssh exit 255: Connection closed by remote host)"
-          in result.stdout
-          and f"if {staging_named} is there, delete it" in result.stderr,
+          and result.stdout == (
+              f"FAILED: 2026-09-21-staging-left — rsync exit 23 during the copy; "
+              f"removing the staging directory then failed (ssh exit 255: "
+              f"Connection closed by remote host). This run's staging directory "
+              f"nedlern@ned-box:{staging_named} may still be there. A rerun does not "
+              f"need it gone; deleting it is optional and loses nothing, because the "
+              f"record stays in {left_record.resolve()} and every shipment copies it "
+              f"again into a new staging directory of its own: `ssh nedlern@ned-box "
+              f"'rm -rf -- {staging_named}'`. Rerun: `{SHIP} {left_record.resolve()}`\n"),
           f"exit {result.returncode}: {result.stdout}{result.stderr}; removals={removal_calls}")
 
     # The local legs, in process: a first line that cannot be read, and a
@@ -1270,10 +1276,11 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
         code, out, err = ship_in_process(unplaced_store, unplaced_record)
     finally:
         os.link = saved_link
-    check("a new file the placing could not link is FAILED, exit 1, naming it, "
-          "and never shipped:",
-          code == 1 and out.startswith("FAILED:")
-          and "not in the store after the copy: b.md" in out, f"exit {code}: {out}{err}")
+    check("a new file the placing could not link is FAILED, exit 1, naming it and "
+          "the command that reruns the shipment, and never shipped:",
+          code == 1 and out == (f"FAILED: unplaced-2026-10-01 — not in the store after "
+                                f"the copy: b.md. Rerun: `{SHIP} {unplaced_record}`\n"),
+          f"exit {code}: {out}{err}")
 
     # --- A copy into staging that fails leaves no staging directory ----------
     failing_store = scratch / "failing-copy-store" / "cold-read-records"
@@ -1291,9 +1298,10 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
         code, out, err = ship_in_process(failing_store, failing_record)
     finally:
         subprocess.run = saved_subprocess_run
-    check("a copy into staging that exits 23 is FAILED, and the staging directory "
-          "it filled is removed",
-          code == 1 and out.startswith("FAILED:") and "rsync exit 23" in out
+    check("a copy into staging that exits 23 is FAILED with the command that reruns "
+          "the shipment, and the staging directory it filled is removed",
+          code == 1 and out == (f"FAILED: failing-copy-2026-10-01 — rsync exit 23 during "
+                                f"the copy. Rerun: `{SHIP} {failing_record}`\n")
           and sorted(p.name for p in failing_store.iterdir()) == [],
           f"exit {code}: {out}; left: {sorted(p.name for p in failing_store.iterdir())}")
 
@@ -1311,11 +1319,20 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
         code, out, err = ship_in_process(denied_store, denied_record)
     finally:
         racing.place_staged_files_and_read_them_back = saved_place
+    staging_pattern = re.escape(f"{denied_store}/.ship-staging-denied-2026-10-01-") + "[0-9a-f]{12}"
     check("a local placing step that hits an OS error prints that error as the "
-          "reason, not an ssh exit",
-          code == 1 and out.startswith("FAILED: denied-2026-10-01 — Permission denied "
-                                       "while placing the copied files; a later run finishes it.")
-          and "ssh" not in out,
+          "reason, not an ssh exit, says deleting the staging directory is safe "
+          "with the command, and ends with the command that reruns the shipment",
+          code == 1 and re.fullmatch(
+              re.escape("FAILED: denied-2026-10-01 — Permission denied while placing the "
+                        "copied files. This run's staging directory ")
+              + f"(?P<shown>{staging_pattern})"
+              + re.escape(f" may still be there. A rerun does not need it gone; deleting "
+                          f"it is optional and loses nothing, because the record stays in "
+                          f"{denied_record} and every shipment copies it again into a new "
+                          f"staging directory of its own: `rm -rf -- ")
+              + "(?P=shown)"
+              + re.escape(f"`. Rerun: `{SHIP} {denied_record}`\n"), out) is not None,
           f"exit {code}: {out}")
 
 # --- The replace step renames nothing beside another shipment's staging ----

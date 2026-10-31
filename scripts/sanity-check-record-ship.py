@@ -76,7 +76,8 @@ def destination_for_this_machine() -> tuple:
 
 def main() -> int:
     return shipper.ship_from_command_line(
-        __doc__, RECORDS_DIR, destination_for_this_machine())
+        __doc__, RECORDS_DIR, destination_for_this_machine(),
+        pathlib.Path(__file__).resolve())
 
 
 if __name__ == "__main__":
