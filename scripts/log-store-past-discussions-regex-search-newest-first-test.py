@@ -478,6 +478,43 @@ print(x.render_companion(turns, x.complete_dialog_turns_and_report(transcript)[1
     finding = run(root, "dialog extractor whose sha256", "--kind", "session-dialogs")
     check("a dialog's line naming its extractor's digest is never a hit",
           finding.returncode == 1 and not hit_headers(finding.stdout), finding.stdout + finding.stderr)
+    quoted_digest_line = refresh_common.session_dialog_extractor_sha256_last_line_build("1" * 64)
+    curlew_key = "-home-nedlern-agents-curlew"
+    curlew_transcript = write(
+        root / "agent-session-files-by-machine" / "ned-box" / "projects" / curlew_key / "s27.jsonl",
+        transcript_records(agent("Each dialog now ends with this line:", "2026-09-05T08:00:00Z"),
+                           agent("Done.", "2026-09-21T08:00:00Z")))
+    curlew_dialog = write(root / "session-dialogs" / "ned-box" / curlew_key / "s27-dialog-complete.md",
+                          "## Agent\n\nEach dialog now ends with this line:\n" + quoted_digest_line
+                          + "\n\n## Agent\n\nDone.\n")
+    curlew_analysis = write(root / "analysis" / "curlew-digest-line-2026-09-05.md",
+                            "The refresher writes:\n" + quoted_digest_line + "\n")
+    finding = run(root, "dialog extractor whose sha256", "--kind", "session-dialogs", "--kind", "analysis")
+    check("a turn and an analysis that quote the line naming an extractor's digest at the start of a line are "
+          "still hits, and no dialog's own last line is",
+          finding.returncode == 0 and len(hit_headers(finding.stdout)) == 2
+          and any("session-dialogs  ned-box  curlew" in line for line in hit_headers(finding.stdout))
+          and any("analysis" in line for line in hit_headers(finding.stdout)),
+          finding.stdout + finding.stderr)
+    curlew_dialog.unlink()
+    curlew_transcript.unlink()
+    curlew_analysis.unlink()
+    unreadable = subprocess.run([sys.executable, "-c", f"""
+import importlib.util, pathlib
+spec = importlib.util.spec_from_file_location("search", {str(PROGRAM)!r})
+search = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(search)
+root = pathlib.Path({str(root)!r})
+failures = []
+print(search.is_session_dialog_extractor_sha256_last_line(
+    root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-gone" / "s28-dialog-complete.md", 3,
+    {quoted_digest_line!r}, root, failures))
+print(failures)
+"""], capture_output=True, text=True)
+    check("a dialog that cannot be read again to find its last line keeps its hit, and the failure is listed",
+          unreadable.returncode == 0 and unreadable.stdout.startswith("False\n")
+          and "could not read" in unreadable.stdout and "is shown as a hit" in unreadable.stdout,
+          unreadable.stdout + unreadable.stderr)
     plover_dialog.unlink()
     plover_transcript.unlink()
     sandpiper_dialog.unlink()

@@ -439,6 +439,31 @@ def file_facts(path, root, failures):
     return facts
 
 
+def is_session_dialog_extractor_sha256_last_line(path, number, text, root, failures):
+    """Whether line `number` of `path`, reading `text`, is the line naming the extractor that ends a session dialog.
+
+    A turn, an analysis or a walk-minutes file that quotes that line keeps its hit: only a session dialog's last
+    non-blank line is the extractor's. When the dialog cannot be read again to find its last line, the hit is kept
+    and the failure is listed.
+    """
+    opening = refresh_common.SESSION_DIALOG_EXTRACTOR_SHA256_LAST_LINE_OPENING
+    closing = refresh_common.SESSION_DIALOG_EXTRACTOR_SHA256_LAST_LINE_CLOSING
+    if not (text.startswith(opening) and text.endswith(closing)):
+        return False
+    if path.relative_to(root).parts[0] != SESSION_DIALOGS:
+        return False
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").split("\n")
+    except OSError as error:
+        failures.append(f"could not read {path} again ({error}) to tell whether its line {number} is the dialog's "
+                        f"last line, which names the extractor that wrote the dialog and is never a hit, or a turn "
+                        f"quoting that line, so line {number} is shown as a hit; when the dialog can be read and its "
+                        f"last non-blank line is line {number}, ignore that hit")
+        return False
+    last = max((index for index, line in enumerate(lines, 1) if line.strip()), default=0)
+    return number == last
+
+
 def file_hits(root, kinds, pattern, context, failures):
     """Hits from ripgrep over the file kinds and session-dialogs, each a dict."""
     directories = []
@@ -474,8 +499,8 @@ def file_hits(root, kinds, pattern, context, failures):
             continue
         text = text.rstrip("\n")
         lines_by_file.setdefault(path, {})[number] = text
-        digest_line = text.startswith(refresh_common.SESSION_DIALOG_EXTRACTOR_SHA256_LAST_LINE_OPENING)
-        if message["type"] == "match" and not digest_line:
+        if message["type"] == "match" and not is_session_dialog_extractor_sha256_last_line(
+                Path(path), number, text, root, failures):
             submatches = data.get("submatches") or []
             start_byte = submatches[0]["start"] if submatches else 0
             # ripgrep counts bytes; the excerpt counts characters.
