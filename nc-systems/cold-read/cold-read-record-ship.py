@@ -59,10 +59,10 @@ with the design:
   4. THE TRIAGE FILE IS REPLACED, AND EACH DISPLACED COPY'S sha256 IS ANNOUNCED
      (user-ruled 2026-09-20, item 4 of the walk
      md-skills-seat-open-decisions-2026-09-20). The triage file is
-     cold-read-triage.md; a record written before that name, and a
-     sanity-check record, holds it as triage.md, and the shipper replaces
-     whichever of the two names the record holds, the first when it holds
-     both. It is the one file in a
+     cold-read-triage.md; an older record, and a sanity-check record, names
+     it triage.md. The shipper replaces whichever of the two the record
+     holds; when it holds both, it replaces cold-read-triage.md and leaves
+     triage.md as it is. It is the one file in a
      cold-read-record written twice on purpose: the agent triages the
      reviewers' findings into it, and it is written again with the user's
      rulings once the approval-walk closes. Rules 1 and 2 refused that second
