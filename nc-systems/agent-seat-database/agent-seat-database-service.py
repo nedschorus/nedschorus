@@ -33,13 +33,16 @@ A generation ID that differs from the database's, or none, is answered 412 with
 POST /events answers:
   200  {"sequence": N, ...}: stored now, or, for an event ID already held, the
        sequence number it was stored under
-  400  the body is not a JSON object, or has no event ID
-  422  an unknown machine; an occurred_at or seat_id that is not a string or
-       null, or a field that is not a string, a number SQLite can store, true,
-       false or null, where NaN and infinity, which the body may hold as NaN,
-       Infinity or a number too large for a float, are numbers SQLite cannot
-       store; a seat ID with no agent-seat row; or an agent-seat name another
-       agent-seat not retired holds
+  400  the body is not a JSON object, or has no event ID, or an event ID that
+       is not a string SQLite can store
+  422  an unknown machine; an occurred_at or seat_id that is not a string
+       SQLite can store or null, or a field that is not a string SQLite can
+       store, a number SQLite can store, true, false or null, where NaN and
+       infinity, which the body may hold as NaN, Infinity or a number too large
+       for a float, are numbers SQLite cannot store, and a string holding a
+       lone surrogate, which the body may hold as \\udc80, is a string SQLite
+       cannot store; a seat ID with no agent-seat row; or an agent-seat name
+       another agent-seat not retired holds
   409  an unknown operation, or keys or fields other than the operation's; the
        caller leaves the event queued until the service knows the operation
   500  any other error, as {"error": "<its type>: <its message>"}; nothing is
@@ -238,6 +241,10 @@ def parse_event(raw_body):
         raise Answer(400, {"error": "the body is not a JSON object"})
     if not isinstance(event.get("event_id"), str) or not event["event_id"]:
         raise Answer(400, {"error": "the event has no event_id"})
+    if not sqlite_can_store(event["event_id"]):
+        raise Answer(400, {"error": "the event's event_id holds a lone surrogate, such as "
+                                    "\\udc80, which does not encode to UTF-8, so SQLite "
+                                    "cannot store it"})
     return event
 
 
@@ -246,7 +253,14 @@ def sqlite_can_store(value):
         return -2 ** 63 <= value < 2 ** 63
     if isinstance(value, float):
         return math.isfinite(value)
-    return value is None or isinstance(value, (str, bool))
+    if isinstance(value, str):
+        # sqlite3 binds a str by encoding it to UTF-8, which fails on a lone surrogate.
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            return False
+        return True
+    return value is None or isinstance(value, bool)
 
 
 def check_event_fits_its_operation(connection, event):
@@ -262,7 +276,8 @@ def check_event_fits_its_operation(connection, event):
                                     f"{sorted(EVENT_KEYS)}, fields "
                                     f"{sorted(OPERATION_FIELDS[operation])}"})
     wrong = [key for key in ("occurred_at", "seat_id")
-             if not (event[key] is None or isinstance(event[key], str))]
+             if not (event[key] is None
+                     or isinstance(event[key], str) and sqlite_can_store(event[key]))]
     wrong += [f"fields.{name}" for name, value in sorted(fields.items())
               if not sqlite_can_store(value)]
     if wrong:
@@ -275,7 +290,9 @@ def check_event_fits_its_operation(connection, event):
                                     f"string or null, and each value in the fields object is a "
                                     f"string, an integer from -2**63 to 2**63-1, a finite number "
                                     f"with a decimal point, true, false or null, never NaN, "
-                                    f"Infinity, a list or an object. Only "
+                                    f"Infinity, a list or an object; no string holds a lone "
+                                    f"surrogate, such as \\udc80, which does not encode to "
+                                    f"UTF-8. Only "
                                     f"{', '.join(sorted(OPERATIONS_THAT_NAME_NO_AGENT_SEAT))} "
                                     f"takes a null seat_id; every other operation takes a string. "
                                     f"agent-seat-database-local-events-file-sender.py "

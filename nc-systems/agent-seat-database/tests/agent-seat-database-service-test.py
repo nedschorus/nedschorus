@@ -5,8 +5,9 @@ Each case starts the service on a loopback port with a database and an
 accepted-tokens file under a temporary directory, sends real HTTP requests,
 and reads the database back: tokens and 401, the generation ID and 412, the
 400, 422 and 409 answers, values of the wrong type, an event sent twice, the
-state each operation leaves, the newest backup's mark in every answer, and the
-500 answer to an error no check foresaw.
+state each operation leaves, the newest backup's mark in every answer, the
+500 answer to an error no check foresaw, and that a request which gets no
+answer fails only its own case.
 
 Run: python3 nc-systems/agent-seat-database/tests/agent-seat-database-service-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -14,6 +15,7 @@ Prints one line per case and exits non-zero if any case fails.
 
 import importlib.util
 import json
+import socket
 import sqlite3
 import tempfile
 import threading
@@ -82,6 +84,8 @@ with tempfile.TemporaryDirectory() as scratch:
                 return response.status, json.loads(response.read())
         except urllib.error.HTTPError as error:
             return error.code, json.loads(error.read())
+        except OSError as error:
+            return None, {"error": f"no answer: {error!r}"}
 
     def events_stored():
         return db.execute("SELECT count(*) FROM event").fetchone()[0]
@@ -143,6 +147,8 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # 400
     for name, raw in (("a body that is not JSON", b"{not json"),
+                      ("an event_id that is a string holding a lone surrogate", json.dumps(
+                          event("agent-seat-paused", {}, event_id="\udc80")).encode()),
                       ("a body that is a JSON list", b"[1]"),
                       ("an event with no event_id", json.dumps(
                           {k: v for k, v in event("agent-seat-paused", {}).items()
@@ -179,7 +185,14 @@ with tempfile.TemporaryDirectory() as scratch:
             ("a seat ID that is an object", event("agent-seat-paused", {}, seat_id={"a": 1}),
              "seat_id"),
             ("an occurred_at that is a list", event("agent-seat-paused", {}, at=[1]),
-             "occurred_at")):
+             "occurred_at"),
+            ("a field that is a string holding a lone surrogate",
+             event("agent-seat-created", dict(SEAT_FIELDS, seat_name="\udc80")),
+             "fields.seat_name"),
+            ("a seat ID that is a string holding a lone surrogate",
+             event("agent-seat-paused", {}, seat_id="\udc80"), "seat_id"),
+            ("an occurred_at that is a string holding a lone surrogate",
+             event("agent-seat-paused", {}, at="\udc80"), "occurred_at")):
         status, answer = request("/events", body)
         check(f"422: {name} names the value and stores nothing", status == 422
               and f"holds a value it cannot store: {named}." in answer["error"]
@@ -192,6 +205,15 @@ with tempfile.TemporaryDirectory() as scratch:
                                               dict(SEAT_FIELDS, task_list_name=2 ** 63 - 1)))
     check("the largest number SQLite stores is accepted as a field",
           status == 200 and events_stored() == before + 1, (status, answer))
+    with_float = event("agent-seat-created",
+                       dict(SEAT_FIELDS, seat_name="float-seat", task_list_name=1.5),
+                       seat_id=str(uuid.uuid4()))
+    status, answer = request("/events", with_float)
+    stored = db.execute("SELECT body FROM event WHERE event_id = ?",
+                        (with_float["event_id"],)).fetchone()
+    check("a finite number with a decimal point is accepted as a field and stored",
+          status == 200 and stored is not None
+          and json.loads(stored[0])["fields"]["task_list_name"] == 1.5, (status, answer))
     db.execute("DELETE FROM agent_seat")
     db.execute("DELETE FROM event")
     db.execute("DELETE FROM sqlite_sequence")
@@ -373,7 +395,7 @@ with tempfile.TemporaryDirectory() as scratch:
           == {"generation_id": "gen-of-backup", "highest_sequence": 12}, (status, answer))
     status, answer = request("/agent-seats")
     check("a list answer gives the newest backup too",
-          answer["newest_backup"]["highest_sequence"] == 12, answer)
+          status == 200 and answer["newest_backup"]["highest_sequence"] == 12, answer)
 
     sequences = [row[0] for row in db.execute("SELECT sequence FROM event ORDER BY sequence")]
     check("sequence numbers rise by one per stored event, in the order stored",
@@ -392,6 +414,23 @@ with tempfile.TemporaryDirectory() as scratch:
                                                 "updated"} and events_stored() == before,
           (status, answer))
     server.shutdown()
+    server.server_close()
+    status, answer = request("/agent-seats")
+    check("a request to a port no service listens on fails its own case, not the whole suite",
+          status is None and "ConnectionRefusedError" in answer["error"], (status, answer))
+
+    def read_the_request_then_hang_up(listener):
+        connection = listener.accept()[0]
+        connection.recv(65536)
+        connection.close()
+
+    hang_up = socket.create_server(("127.0.0.1", 0))
+    threading.Thread(target=read_the_request_then_hang_up, args=(hang_up,), daemon=True).start()
+    base = f"http://127.0.0.1:{hang_up.getsockname()[1]}"
+    status, answer = request("/agent-seats")
+    hang_up.close()
+    check("a request the service hangs up on without an answer fails its own case too",
+          status is None and "RemoteDisconnected" in answer["error"], (status, answer))
 
     try:
         service.main(["--port", "eighty"])
