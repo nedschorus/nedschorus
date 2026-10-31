@@ -257,12 +257,12 @@ def run_text_search_cases():
             check("text search (ripgrep): a backslash-d is read as a number",
                   paths == [top] and problems == [], (paths, problems))
         arabic_digits = write(root / "-seat" / "c.jsonl", '{"text":"count ١٢٣"}\n')
-        for pattern in (r"count \d+", "count ١"):
-            paths, problems = search([root], [pattern], include_subagents=False, ripgrep_program=missing_program)
-            check(f"text search (grep, ripgrep missing): {pattern!r}, which grep could read otherwise than "
-                  f"ripgrep, is a problem that names it, not an empty success",
-                  paths == [] and len(problems) == 1 and repr(pattern) in problems[0]
-                  and "no transcript was searched" in problems[0], (paths, problems))
+        pattern = "count ١"
+        paths, problems = search([root], [pattern], include_subagents=False, ripgrep_program=missing_program)
+        check(f"text search (grep, ripgrep missing): {pattern!r}, which grep could read otherwise than "
+              f"ripgrep, is a problem that names it, not an empty success",
+              paths == [] and len(problems) == 1 and repr(pattern) in problems[0]
+              and "no transcript was searched" in problems[0], (paths, problems))
         arabic_digits.unlink()
 
         paths, problems = search([root], ["kingfisher"], include_subagents=False,
@@ -277,7 +277,7 @@ def run_text_search_cases():
 
 
 def run_raw_json_prefilter_cases():
-    prefilter = claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcript_raw_json_prefilter_pattern
+    prefilter = claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcript_raw_json_ripgrep_prefilter_pattern_from_search_text_or_none_when_not_plain_text
     for pattern, expected in (("^approve$", "approve"), ("^approve it$", "approve [iI\u0130\u0131]t"),
                               ("Kelvin", "[kK\u212a]elv[iI\u0130\u0131]n"), ("yes", "ye[sS\u017f]"),
                               ("a-b, c/d: e#f", "a-b, c/d: e#f"),

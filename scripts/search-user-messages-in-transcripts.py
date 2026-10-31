@@ -155,7 +155,7 @@ def claude_code_session_transcript_paths_prefilter_on_raw_json(projects_dir, pat
 
     Every path is kept when a pattern is not plain text, or the search fails, so a prefilter
     never drops a transcript that holds a match."""
-    prefilters = [claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcript_raw_json_prefilter_pattern(pattern)
+    prefilters = [claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcript_raw_json_ripgrep_prefilter_pattern_from_search_text_or_none_when_not_plain_text(pattern)
                   for pattern in patterns]
     if not paths:
         return paths, ""
@@ -245,7 +245,7 @@ def main():
     print(
         f"{total_hits} matching user message(s) found among {len(paths)} transcript(s)"
         + (f"; ripgrep found none of the search pattern(s) in {skipped} of them, so only the other "
-           f"{len(read)} were opened" if skipped else "")
+           f"{len(read)} {'was' if len(read) == 1 else 'were'} opened" if skipped else "")
         + f"; {total_user_messages} user message(s) read in the transcript(s) opened."
     )
     return 0 if total_hits else 1
