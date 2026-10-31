@@ -166,8 +166,10 @@ were placed. A `FAILED:` line that stops the shipment before then says what stop
 a bad invocation, a store that could not be reached, prepared or listed, a
 copy or placing step that failed, another staging directory, or ssh or rsync
 that could not be started. A FAILED line for a copy or placing step that
-failed, or for another staging directory, also names this run's own staging
-directory when it could not be removed, with the command that deletes it. A
+failed ends with the command that reruns the shipment. That line, and the one
+for another staging directory, also names this run's own staging directory
+when it could not be removed, with the command that deletes it, which loses
+nothing and is to be run before the rerun. A
 walk that cannot be shipped is a FAILED line naming the missing files.
 The citation is always the minutes', never the dispositions': the minutes
 are the record of the rulings and what a resumed walk reads.
@@ -454,9 +456,30 @@ def staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_
     command = f"rm -rf -- {shlex.quote(str(staging_dir))}"
     if copy_host:
         command = f"ssh {copy_host} {shlex.quote(command)}"
-    return (f"This run's staging directory {shown} may be left behind: removing it "
+    return (f"This run's staging directory {shown} is left behind: removing it "
             f"failed ({why}). Until it is deleted it stops nearly every later "
-            f"shipment of this walk; delete it with `{command}`.")
+            f"shipment of this walk. Deleting it loses nothing, because every "
+            f"shipment copies the walk's files again into a new staging directory "
+            f"of its own; delete it with `{command}`.")
+
+
+def stopped_shipment_failed_line_with_rerun_command(copy_host, name: str,
+                                                    directory: pathlib.Path,
+                                                    staging_dir, what_failed: str,
+                                                    why: typing.Optional[str]) -> str:
+    """The FAILED line of a copy or placing step that failed: it ends with the
+    command that reruns this shipment, after the deletion of this run's
+    staging directory when that could not be removed, since the rerun's
+    replace step would stop on it."""
+    walk_argument = (name if directory == WALK_DIRECTORY
+                     else str(directory / walk_file_name(name, MINUTES_ROLE_SUFFIX)))
+    rerun = (f"{shlex.quote(str(REPO_ROOT / 'scripts' / 'walk-files-ship.py'))} "
+             f"{shlex.quote(walk_argument)}")
+    if why:
+        return (f"FAILED: {name} — {what_failed}. "
+                f"{staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(copy_host, staging_dir, why)} "
+                f"Then rerun: `{rerun}`")
+    return f"FAILED: {name} — {what_failed}. Rerun: `{rerun}`"
 
 
 def ship_walk(destination: WalkStoreDestination, name: str,
@@ -548,12 +571,9 @@ def ship_walk(destination: WalkStoreDestination, name: str,
             reason = ("ned-box unreachable"
                       if copied.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED
                       else f"rsync exit {copied.returncode}")
-            if why:
-                print(f"FAILED: {name} — {reason} during the copy. "
-                      f"{staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(destination.copy_host, staging_dir, why)} "
-                      f"Then a later run finishes the shipment.")
-            else:
-                print(f"FAILED: {name} — {reason} during the copy; a later run finishes it.")
+            print(stopped_shipment_failed_line_with_rerun_command(
+                destination.copy_host, name, directory, staging_dir,
+                f"{reason} during the copy", why))
             sys.stderr.write(copied.stderr)
             return EXIT_FAILED
         outcomes = {}
@@ -575,14 +595,9 @@ def ship_walk(destination: WalkStoreDestination, name: str,
                 why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
                 reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
                     destination.copy_host, renamed)
-                if why:
-                    print(f"FAILED: {name} — {reason} while putting the copied files "
-                          f"in place. "
-                          f"{staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(destination.copy_host, staging_dir, why)} "
-                          f"Then a later run finishes the shipment.")
-                else:
-                    print(f"FAILED: {name} — {reason} while putting the copied files "
-                          f"in place; a later run finishes it.")
+                print(stopped_shipment_failed_line_with_rerun_command(
+                    destination.copy_host, name, directory, staging_dir,
+                    f"{reason} while putting the copied files in place", why))
                 sys.stderr.write(renamed.stderr)
                 return EXIT_FAILED
         for planned in to_replace:
@@ -616,14 +631,9 @@ def ship_walk(destination: WalkStoreDestination, name: str,
                 why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
                 reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
                     destination.copy_host, placed)
-                if why:
-                    print(f"FAILED: {name} — {reason} while putting the copied files "
-                          f"in place. "
-                          f"{staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(destination.copy_host, staging_dir, why)} "
-                          f"Then a later run finishes the shipment.")
-                else:
-                    print(f"FAILED: {name} — {reason} while putting the copied files "
-                          f"in place; a later run finishes it.")
+                print(stopped_shipment_failed_line_with_rerun_command(
+                    destination.copy_host, name, directory, staging_dir,
+                    f"{reason} while putting the copied files in place", why))
                 sys.stderr.write(placed.stderr)
                 return EXIT_FAILED
         else:
