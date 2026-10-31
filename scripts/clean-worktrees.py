@@ -37,19 +37,16 @@ mechanical checks all pass:
 
 Uncommitted, untracked and ignored files do NOT keep a done worktree: they
 are removed with it. The one exception is the records whose home is the
-log-store: before --remove removes a done worktree, it ships each non-empty
-record directory under the worktree's cold-read-records/ and
-sanity-check-records/ to the log-store, with the shipper of that kind
-(LOG_STORE_RECORD_SHIPPERS), and keeps the worktree when any record is
-refused or fails to ship, printing the shipper's line. The shippers are
-add-only, so a record already in the store ships as "nothing new". It then
-ships each walk in the worktree's docs/walk/ with scripts/walk-files-ship.py,
-and keeps the worktree when a walk's shipment FAILED; a REFUSED walk still
-shipped its minutes and walk text, so its refused draft or suggestions file
-goes with the worktree. Files in docs/walk/ that no walk ships, a walk never
-presented, which has no walk text or no minutes, or a file of no walk role,
-are named on a line of their own and go with the worktree. The report modes
-name the records and walks and ship nothing. The files are listed after the other checks, each file
+log-store: before --remove removes a done worktree, it ships each walk in the
+worktree's docs/walk/, given by its minutes, with scripts/walk-files-ship.py,
+and each non-empty record directory under its cold-read-records/ and
+sanity-check-records/ with the shipper of that kind
+(LOG_STORE_RECORD_SHIPPERS), and keeps the worktree when any walk or record
+is refused or fails to ship, printing the shipper's line. The shippers are
+add-only, so a record already in the store ships as "nothing new". Files in
+docs/walk/ that no walk ships, a walk never presented, which has no minutes,
+or a file of no walk role, are named on a line of their own and go with the
+worktree. The report modes name the walks and records and ship nothing. The files are listed after the other checks, each file
 inside an untracked or ignored directory named on its own; the report names
 them, and --remove names them twice: before each removal, as files it will
 discard, and after a removal succeeds, as files discarded with it. A removal
@@ -195,9 +192,10 @@ _next_step_lines_spec = importlib.util.spec_from_file_location(
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
-# The reference clone's walk shipper, run on a worktree's walk files and loaded, by
-# walk_files_ship_module, only so that which files make a walk is decided by the shipper's own rules.
+# The reference clone's walk shipper, given the path of one walk's minutes, ships that walk; loaded
+# as a module by walk_files_ship_module only so that which files make a walk is decided by its own rules.
 WALK_FILES_SHIPPER = REPO_ROOT / "scripts" / "walk-files-ship.py"
+WALK_MINUTES_SUFFIX = "-minutes.md"
 _walk_files_ship = None
 
 
@@ -219,10 +217,6 @@ DISCARDED_FILES_NAMED_AT_MOST = 10
 # A topic-worktree's agent-seat runs from its agent-home, out of lsof's sight; a few hours without a
 # write is the evidence it has finished there.
 TOPIC_WORKTREE_QUIET_SECONDS = 4 * 3600
-
-# The reference clone's walk shipper, given the path of one walk's minutes, ships that walk.
-WALK_FILES_SHIPPER = REPO_ROOT / "scripts" / "walk-files-ship.py"
-WALK_MINUTES_SUFFIX = "-minutes.md"
 
 # Marks a directory in ~/agents/ as an agent-home whatever branch it is on.
 SEAT_BRIEF_FILE_NAME = "CLAUDE.local.md"
@@ -493,13 +487,11 @@ def discarded_files_text(paths):
     return named + (f" and {more} more" if more > 0 else "")
 
 
-def log_store_records_in(worktree, topic_worktree):
-    """Return (shipper, path to ship) for each non-empty record directory the worktree holds and,
-    in a topic-worktree, for the minutes file of each walk in its docs/walk/."""
-    records = []
-    if topic_worktree:
-        records.extend((WALK_FILES_SHIPPER, minutes)
-                       for minutes in sorted((worktree / "docs" / "walk").glob(f"*{WALK_MINUTES_SUFFIX}")))
+def log_store_records_in(worktree):
+    """Return (shipper, path to ship) for the minutes file of each walk in the worktree's docs/walk/
+    and for each non-empty record directory it holds."""
+    records = [(WALK_FILES_SHIPPER, minutes)
+               for minutes in sorted((worktree / "docs" / "walk").glob(f"*{WALK_MINUTES_SUFFIX}"))]
     for directory_name, shipper in LOG_STORE_RECORD_SHIPPERS:
         records_directory = worktree / directory_name
         if not records_directory.is_dir():
@@ -542,36 +534,21 @@ def walks_and_unshippable_walk_files_in(worktree):
     return walks, unshippable
 
 
-def ship_walks(worktree):
-    """Ship every walk the worktree's docs/walk/ holds, printing a line for each; return the
-    shipper lines of those that FAILED. A REFUSED walk is not among them: the shipper still ships its
-    minutes and walk text, and refuses only a draft or suggestions file the store holds with other
-    bytes, which the removal then discards with the worktree's other ignored files."""
-    unshipped = []
-    walks, unshippable = walks_and_unshippable_walk_files_in(worktree)
-    for name, walk_text in sorted(walks.items()):
-        shipment = subprocess.run([sys.executable, str(WALK_FILES_SHIPPER), str(walk_text)],
-                                  capture_output=True, text=True, check=False)
-        sys.stderr.write(shipment.stderr)
-        line = shipper_line(shipment)
-        if shipment.returncode and not line.startswith("REFUSED:"):
-            print(f"{worktree.name}: walk shipment FAILED, worktree kept — removing it would delete "
-                  f"walk files the log-store does not hold: docs/walk/{name} ({line})")
-            unshipped.append(line)
-        else:
-            print(f"{worktree.name}: {line}")
+def report_unshippable_walk_files(worktree):
+    """Print a line naming the files in the worktree's docs/walk/ that no walk ships, which the
+    removal discards with its other ignored files."""
+    _, unshippable = walks_and_unshippable_walk_files_in(worktree)
     if unshippable:
         print(f"{worktree.name}: {len(unshippable)} file(s) in docs/walk/ no walk ships, a walk never "
               f"presented or a file of no walk role, are discarded with the worktree: "
               f"{discarded_files_text(unshippable)}")
-    return unshipped
 
 
-def ship_log_store_records(worktree, topic_worktree):
+def ship_log_store_records(worktree):
     """Ship every record the worktree holds, printing a line for each; return (shipper, line) for
     each that did not ship."""
     unshipped = []
-    for shipper, record in log_store_records_in(worktree, topic_worktree):
+    for shipper, record in log_store_records_in(worktree):
         shipment = subprocess.run([sys.executable, str(shipper), str(record)],
                                   capture_output=True, text=True, check=False)
         sys.stderr.write(shipment.stderr)
@@ -623,15 +600,11 @@ def classify(worktree, branch, main_checkout, topic_worktree):
     discarded, listing_error = files_a_removal_discards(worktree)
     if discarded is None:
         return False, f"git cannot list its files ({listing_error})", []
-    records = log_store_records_in(worktree, topic_worktree)
+    records = log_store_records_in(worktree)
     shipped_first = (f"; --remove first ships its {len(records)} record(s) to the log-store "
                      f"and keeps it if one does not ship: "
                      + ", ".join(str(record.relative_to(worktree)) for _, record in records)
                      if records else "")
-    walks, _ = walks_and_unshippable_walk_files_in(worktree)
-    if walks:
-        shipped_first += (f"; --remove first ships its {len(walks)} walk(s) to the log-store "
-                          f"and keeps it if one fails to ship: " + ", ".join(sorted(walks)))
     if discarded:
         return True, (f"landed and vacant; removing it discards {len(discarded)} "
                       f"uncommitted, untracked or ignored file(s): "
@@ -642,14 +615,7 @@ def classify(worktree, branch, main_checkout, topic_worktree):
 def remove_worktree(worktree, branch, repo, discarded, topic_worktree):
     """Ship its log-store records, then remove a done worktree and its merged branch; return False
     when something failed."""
-    unshipped = ship_log_store_records(worktree, topic_worktree)
-    # A topic-worktree's walks ship with its records, through log_store_records_in().
-    unshipped_walks = [] if topic_worktree else ship_walks(worktree)
-    if unshipped_walks:
-        # No next-step line may contain FAILED: the handoff-supervisor counts each such line as a failure.
-        print(f"{worktree.name}: for each walk whose shipment did not go through, do nothing now: the "
-              f"next scripts/clean-worktrees.py --remove, daily or at a handoff, ships the walk "
-              f"again; if the walk fails the same way there, fix the cause its line names")
+    unshipped = ship_log_store_records(worktree)
     if unshipped:
         # No next-step line may contain FAILED: the handoff-supervisor counts each such line as a failure.
         if any(line.startswith("REFUSED:") and shipper != WALK_FILES_SHIPPER
@@ -670,8 +636,7 @@ def remove_worktree(worktree, branch, repo, discarded, topic_worktree):
                   f"ships the record again; "
                   f"if the record fails the same way there, fix the cause its line names")
         return False
-    if unshipped_walks:
-        return False
+    report_unshippable_walk_files(worktree)
     # classify() judged it clean before the slow vacancy check and the shipments; an agent may have written since.
     if topic_worktree:
         keep_reason = topic_worktree_uncommitted_files_keep_reason(worktree)
