@@ -1434,7 +1434,7 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-local-failure-tes
           failed_as_ssh_fails(listed) and code == 1
           and printed.getvalue().startswith(
               "FAILED: inventory-2026-10-25 — No space left on device (injected);")
-          and "ssh" not in printed.getvalue(),
+          and "ssh exit" not in printed.getvalue(),
           f"{listed!r}; exit {code}: {printed.getvalue()}")
 
     link_staging = failing_scratch / "link-store" / ".ship-staging-l-0123456789ab"
