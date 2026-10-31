@@ -106,6 +106,8 @@ Prints one line per case and exits non-zero if any case fails.
 import ast
 import importlib.util
 import sys
+import pathlib
+import tempfile
 from pathlib import Path
 
 # This suite sits in nc-systems/cold-read/tests/, three directories below the root.
@@ -142,7 +144,11 @@ OWNED_NAMES = frozenset({
     "frozen_target_path", "RECORDS_DIRECTORY_NAME", "RECORD_DATE_PATTERN",
     "COMPLETED_REPORT_NAME_PATTERN", "record_directory_name_pattern_for_target",
     "frozen_target_candidate_paths", "record_holds_completed_report",
-    "SENTENCE_ID_MARKED_COPY_SUFFIX", "GENERATED_INPUT_COPY_SUFFIXES"})
+    "SENTENCE_ID_MARKED_COPY_SUFFIX", "GENERATED_INPUT_COPY_SUFFIXES",
+    "COLD_READ_FAST_READ_REPORT_FILE_NAME", "COLD_READ_TRIAGE_FILE_NAME",
+    "COLD_READ_REFERENCE_CHECK_FILE_NAME", "FILE_NAME_BEFORE_COLD_READ_PREFIX",
+    "cold_read_record_file_name_prefixed_name_else_name_before_prefix",
+    "cold_read_record_file_path_prefixed_name_else_name_before_prefix"})
 # The constant whose join says a path is being built inside the frozen copy's
 # directory. Matched as an identifier, exactly: a program reaches it as
 # `FROZEN_TARGET_DIRECTORY_NAME` or as `<module>.FROZEN_TARGET_DIRECTORY_NAME`,
@@ -479,6 +485,41 @@ check("the entry-point failure says what was found, why the module stays import-
           'If "__main__" appears only in a comment or a docstring, reword that text.',
           RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
       COMMAND_LINE_ENTRY_POINT_FAILURE_DETAIL)
+
+# A record written before the cold-read- prefix still holds its files under
+# their old names, and every reader finds them through the one lookup.
+_names_spec = importlib.util.spec_from_file_location("cold_read_record_names", NAMES_MODULE)
+names = importlib.util.module_from_spec(_names_spec)
+_names_spec.loader.exec_module(names)
+with tempfile.TemporaryDirectory() as scratch:
+    record = pathlib.Path(scratch)
+    for name, old_name in names.FILE_NAME_BEFORE_COLD_READ_PREFIX.items():
+        check(f"a record holding neither name of {name} is given {name}",
+              names.cold_read_record_file_path_prefixed_name_else_name_before_prefix(record, name)
+              == record / name)
+        (record / old_name).write_text("old\n", encoding="utf-8")
+        check(f"a record holding only {old_name} is given {old_name}",
+              names.cold_read_record_file_name_prefixed_name_else_name_before_prefix(record, name)
+              == old_name)
+        (record / name).write_text("new\n", encoding="utf-8")
+        check(f"a record holding both {name} and {old_name} is given {name}",
+              names.cold_read_record_file_name_prefixed_name_else_name_before_prefix(record, name)
+              == name)
+        (record / old_name).unlink()
+        check(f"a record holding only {name} is given {name}",
+              names.cold_read_record_file_name_prefixed_name_else_name_before_prefix(record, name)
+              == name)
+    (record / "fast-read.md").mkdir()
+    check("a directory under the old name is not taken for the file",
+          names.cold_read_record_file_name_prefixed_name_else_name_before_prefix(
+              record / "fast-read.md", names.COLD_READ_FAST_READ_REPORT_FILE_NAME)
+          == names.COLD_READ_FAST_READ_REPORT_FILE_NAME
+          and names.cold_read_record_file_name_prefixed_name_else_name_before_prefix(
+              record, names.COLD_READ_FAST_READ_REPORT_FILE_NAME)
+          == names.COLD_READ_FAST_READ_REPORT_FILE_NAME)
+check("a fast read's report under its new name counts as a finished read",
+      names.COMPLETED_REPORT_NAME_PATTERN.match(names.COLD_READ_FAST_READ_REPORT_FILE_NAME)
+      is not None)
 
 print()
 if failures:

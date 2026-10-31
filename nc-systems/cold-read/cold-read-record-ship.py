@@ -23,7 +23,7 @@ name by rsync -- over ssh from the Mac, as a local copy on ned-box, the store
 itself being the only difference -- under four rules, the first three ruled
 with the design:
 
-  1. ADD-ONLY, EVERY FILE BUT triage.md. Files are added and never deleted or
+  1. ADD-ONLY, EVERY FILE BUT THE TRIAGE FILE. Files are added and never deleted or
      replaced, so a report, written once, is what the store keeps for good.
      rsync writes each file whole or not at all (its default
      temporary-file-and-rename; --inplace is never passed), so a copy
@@ -56,9 +56,13 @@ with the design:
      unshipped, for a later run; a shipment that stops after its copy has
      begun ends that line with the command that reruns it. ssh runs in batch mode with a connect timeout,
      so an automated caller never waits on a prompt.
-  4. triage.md IS REPLACED, AND EACH DISPLACED COPY'S sha256 IS ANNOUNCED
+  4. THE TRIAGE FILE IS REPLACED, AND EACH DISPLACED COPY'S sha256 IS ANNOUNCED
      (user-ruled 2026-09-20, item 4 of the walk
-     md-skills-seat-open-decisions-2026-09-20). triage.md is the one file in a
+     md-skills-seat-open-decisions-2026-09-20). The triage file is
+     cold-read-triage.md; a record written before that name, and a
+     sanity-check record, holds it as triage.md, and the shipper replaces
+     whichever of the two names the record holds, the first when it holds
+     both. It is the one file in a
      cold-read-record written twice on purpose: the agent triages the
      reviewers' findings into it, and it is written again with the user's
      rulings once the approval-walk closes. Rules 1 and 2 refused that second
@@ -80,7 +84,7 @@ with the design:
      the walk's close" (https://github.com/nedschorus/nedschorus/pull/501). The
      point of the 2026-09-20 ruling is that the two shippers stop differing.
 
-     ONLY triage.md, AND ONLY THE RECORD'S OWN. The name is matched as the
+     ONLY THE TRIAGE FILE, AND ONLY THE RECORD'S OWN. The name is matched as the
      record directory's own top-level file, never by basename anywhere under
      it: `target/<repository path>/triage.md` is the frozen cold-read-target's
      bytes -- the reviewed document itself, which happens to be a triage file
@@ -106,14 +110,14 @@ whose name is this shipment's alone. Everything that reads or writes the
 record's directory then runs as ONE step, one ssh call to ned-box running
 place_staged_files_and_read_them_back in python3, or the same function in
 this process when the store is local: it takes the store's inventory again,
-judges it under rules 2 and 4, places the new files, replaces triage.md,
+judges it under rules 2 and 4, places the new files, replaces the triage file,
 reads the store's digests back, and removes the staging directory.
 
   PLACING BY HARD LINK. The new files are placed into the record's directory
   by hard link, one at a time, in a fixed order. A hard link is never made
   over an existing file -- the link call fails when the name exists, in one
   step -- so a file already in the store is never replaced, and placing stops
-  at the first name holding other bytes; triage.md is then left as the store
+  at the first name holding other bytes; the triage file is then left as the store
   holds it. The store's digests of the new files are read back: a file
   holding other bytes is REFUSED under rule 2, a file the store does not hold
   is FAILED, and `shipped:` is printed only when every new file holds this
@@ -150,7 +154,7 @@ it says what the store is, how to cite a file in it, and which program or
 skill owns each kind.
 
 WHO CALLS IT. nc-systems/cold-read/cold-read-grid.py at the end of every run, whatever the
-outcome; the agent after writing triage.md (the cold-read skill's step
+outcome; the agent after writing the triage file (the cold-read skill's step
 7); nc-systems/cold-read/cold-read-fast-read.py when it writes into cold-read-records/.
 Whenever this program's line is not `shipped:`, a calling program prints the
 line, finishes its run and keeps its reports, and then exits 1, or the nonzero
@@ -220,14 +224,10 @@ LOG_STORE_HOSTNAME = "ned-box"
 DESTINATION_ENVIRONMENT_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 
 # The one file in a cold-read-record a later shipment REPLACES in the store,
-# rule 4 above. Held here because this program is the one that compares a
-# record's files by name; it is matched as the record directory's own
-# top-level file, so the frozen cold-read-target's own copy of a file by this
-# name is add-only like the rest of that directory. nc-systems/cold-read/cold-read-grid.py
-# names the same file in the prose it hands the agent, which is prose naming a
-# file rather than a second definition of a path a program builds -- the
-# distinction nc-systems/cold-read/tests/cold-read-record-names-common-test.py draws.
-TRIAGE_FILE_REPLACED_IN_THE_STORE = "triage.md"
+# rule 4 above, matched as the record directory's own top-level file, so the
+# frozen cold-read-target's own copy of a file by this name is add-only like
+# the rest of that directory.
+TRIAGE_FILE_REPLACED_IN_THE_STORE = record_names.COLD_READ_TRIAGE_FILE_NAME
 
 SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 # Seconds rsync waits on a silent connection before giving up.
@@ -681,7 +681,8 @@ def store_inventory(host, store_dir: pathlib.PurePosixPath):
 
 
 def place_staged_files(host, staging_dir: pathlib.PurePosixPath,
-                       store_dir: pathlib.PurePosixPath, local_digests: dict):
+                       store_dir: pathlib.PurePosixPath, local_digests: dict,
+                       triage_name: str):
     """Run place_staged_files_and_read_them_back for this shipment and return
     the process and the step's outcome. One ssh round trip remotely, the
     function sent as a python3 program with its request as JSON on stdin, so
@@ -691,7 +692,7 @@ def place_staged_files(host, staging_dir: pathlib.PurePosixPath,
     docstring."""
     request = {"store_dir": str(store_dir), "staging_dir": str(staging_dir),
                "local_digests": local_digests,
-               "replaceable": TRIAGE_FILE_REPLACED_IN_THE_STORE}
+               "replaceable": triage_name}
     if host is None:
         return local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
             lambda: place_staged_files_and_read_them_back(request))
@@ -721,22 +722,22 @@ def place_staged_files_program() -> str:
 
 def place_staged_files_and_read_them_back(request: dict) -> dict:
     """The one step that reads and writes the record's directory in the store:
-    inventory, rules 2 and 4, placing by hard link, the triage.md replacement
+    inventory, rules 2 and 4, placing by hard link, the triage file's replacement
     and the read-back. It removes the staging directory however it ends. It
     runs on ned-box as its own python3 program, sent by its source, so it
     imports what it uses and calls nothing else in this file.
 
     `request` holds store_dir, staging_dir, local_digests ({relative path:
-    sha256} of the whole record) and replaceable (triage.md). The outcome:
+    sha256} of the whole record) and replaceable (the triage file's name). The outcome:
       differing -- add-only files the store holds with other bytes; when any
         is named, nothing was placed (rule 2).
       added -- the files the store did not hold, which this step tried to
         place.
-      displaced -- the store's digest of the triage.md this step replaced,
-        or None (rule 4). triage.md is replaced only after every new file
+      displaced -- the store's digest of the triage file this step replaced,
+        or None (rule 4). The triage file is replaced only after every new file
         was placed.
       stored -- the store's digest of each added file and of a replaced
-        triage.md, read after placing; a name absent here is not in the store.
+        triage file, read after placing; a name absent here is not in the store.
     """
     import hashlib
     import os
@@ -777,7 +778,7 @@ def place_staged_files_and_read_them_back(request: dict) -> dict:
                 break
         else:
             # Reached only when placing did not stop, so a shipment that
-            # ends REFUSED or FAILED leaves the store's triage.md as it was.
+            # ends REFUSED or FAILED leaves the store's triage file as it was.
             triage = store / replaceable
             if replaceable in local and triage.is_file():
                 held = digest_of(triage)
@@ -1154,15 +1155,17 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         sys.stderr.write(listed.stderr)
         return EXIT_FAILED
     local = local_inventory(record_dir)
+    triage_name = record_names.cold_read_record_file_name_prefixed_name_else_name_before_prefix(
+        record_dir, TRIAGE_FILE_REPLACED_IN_THE_STORE)
     differing = sorted(relative for relative, digest in local.items()
                        if relative in in_store and in_store[relative] != digest)
     new_files = sorted(relative for relative in local if relative not in in_store)
-    # Rule 4: the record's own triage.md is replaced rather than refused, so it
+    # Rule 4: the record's own triage file is replaced rather than refused, so it
     # leaves `differing` here and the refusal below is about the add-only files
     # alone.
-    triage_differs = TRIAGE_FILE_REPLACED_IN_THE_STORE in differing
+    triage_differs = triage_name in differing
     if triage_differs:
-        differing.remove(TRIAGE_FILE_REPLACED_IN_THE_STORE)
+        differing.remove(triage_name)
     def rename_and_ship_instruction():
         names, unlisted = log_store_listed_record_directory_names_or_listing_failure_reason(
             host, records_path)
@@ -1241,7 +1244,7 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         print(f"FAILED: {name} — {reason} during the copy{staging_note} {rerun}")
         sys.stderr.write(transferred.stderr)
         return EXIT_FAILED
-    placed, outcome = place_staged_files(host, staging_dir, store_dir, local)
+    placed, outcome = place_staged_files(host, staging_dir, store_dir, local, triage_name)
     if outcome is None:
         reason = failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
             host, placed)
@@ -1253,10 +1256,10 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         return refuse(outcome["differing"])
     added, stored = outcome["added"], outcome["stored"]
     displaced_triage_digest = outcome["displaced"]
-    if displaced_triage_digest is not None and TRIAGE_FILE_REPLACED_IN_THE_STORE in added:
-        added.remove(TRIAGE_FILE_REPLACED_IN_THE_STORE)
+    if displaced_triage_digest is not None and triage_name in added:
+        added.remove(triage_name)
     if displaced_triage_digest is not None:
-        triage_relative = TRIAGE_FILE_REPLACED_IN_THE_STORE
+        triage_relative = triage_name
         # The triage's path in the store on ned-box, which the snapshots copy:
         # the store's root from this module's constant, since the destination
         # may be a local override and the snapshots never are, and the kind
@@ -1276,10 +1279,10 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
               f"snapshots: on ned-box, run `sha256sum "
               f"/mnt/backup/timeshift/snapshots/*/localhost{stored_triage}` and "
               f"take a snapshot whose line shows that digest.", file=sys.stderr)
-    # The replaced triage.md is read back and judged like an added file: an
+    # The replaced triage file is read back and judged like an added file: an
     # overlapping shipment's replacement can land after this one's, and then
     # the store holds the other shipment's triage, not this one's.
-    judged = added + ([TRIAGE_FILE_REPLACED_IN_THE_STORE]
+    judged = added + ([triage_name]
                       if displaced_triage_digest is not None else [])
     taken = sorted(relative for relative in judged
                    if relative in stored and stored[relative] != local[relative])
@@ -1297,7 +1300,7 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     if added:
         summary.append(f"{len(added)} file(s) added")
     if displaced_triage_digest is not None:
-        summary.append(f"{TRIAGE_FILE_REPLACED_IN_THE_STORE} replaced")
+        summary.append(f"{triage_name} replaced")
     print(f"shipped: {name} — {'; '.join(summary)}; record at {citation}")
     return EXIT_SHIPPED
 
