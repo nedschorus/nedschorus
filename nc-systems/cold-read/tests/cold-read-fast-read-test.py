@@ -1466,7 +1466,10 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}; stderr={result.stderr[-400:]!r}")
 
     # A store already holding other bytes under the record's name refuses it:
-    # the record did not reach the store either.
+    # the record did not reach the store either. The read names its record
+    # against the store's names too, so the store root is made unlistable
+    # (write and search only): the read then falls back to a name free in the
+    # checkout, which the store already holds.
     repository = build_scratch_repository(scratch)
     records_report = (repository / "cold-read-records" / f"a-design-{record_stamp}"
                       / "fast-read.md")
@@ -1474,10 +1477,15 @@ with tempfile.TemporaryDirectory() as scratch:
                         / "fast-read.md")
     stored_elsewhere.parent.mkdir(parents=True)
     stored_elsewhere.write_text("ANOTHER READ'S REPORT\n", encoding="utf-8")
-    result = run_fast_read(
-        repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
-        records_report, other_relative, counter,
-    )
+    store_root = stored_elsewhere.parent.parent
+    store_root.chmod(0o333)
+    try:
+        result = run_fast_read(
+            repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
+            records_report, other_relative, counter,
+        )
+    finally:
+        store_root.chmod(0o755)
     check("a store that refuses the record is reported as record: REFUSED on stderr, the "
           "report's path is still the stdout line, and the read exits 1",
           result.returncode == 1 and result.stdout.strip() == str(records_report)

@@ -128,7 +128,8 @@ REPORT_A = "<!-- provenance: runtime=claude model=opus -->\n# A\n\nfinding one\n
 REPORT_B = "<!-- provenance: runtime=codex model=gpt -->\n# B\n\nfinding two\n"
 
 with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratch_name:
-    scratch = pathlib.Path(scratch_name)
+    # Resolved: the shipper resolves the record path, and the suite runner's TMPDIR is a symlink.
+    scratch = pathlib.Path(scratch_name).resolve()
     store_root = scratch / "store"
     local_destination = str(store_root / "cold-read-records")
     records = scratch / "records"
@@ -1513,7 +1514,8 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-relative-test-") 
 # another seat's read held in the store, and shipping refused it only because
 # both had a fast-read.md.
 with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-") as names_name:
-    names_scratch = pathlib.Path(names_name)
+    # Resolved: the shipper resolves the record path, and the suite runner's TMPDIR is a symlink.
+    names_scratch = pathlib.Path(names_name).resolve()
     _names_shipper_spec = importlib.util.spec_from_file_location(
         "cold_read_record_ship_store_names", SHIP)
     names_shipper = importlib.util.module_from_spec(_names_shipper_spec)

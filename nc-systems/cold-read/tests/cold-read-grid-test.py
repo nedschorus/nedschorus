@@ -1807,10 +1807,18 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- A store that refuses the record: the run finishes, exits 1 ----------
     # The store already holds this record's name with other bytes, so the
     # add-only shipper refuses it, and the record did not reach the store.
+    # The grid names its record against the store's names too, so the store
+    # root is made unlistable (write and search only): the grid then falls
+    # back to a name free in the checkout, which the store already holds.
     unreachable_record_name = record_directory.name
     repository = build_scratch_repository(scratch, "checkout-store-refuses")
     seed_log_store_record(repository, unreachable_record_name, [])
-    result = run_grid(repository, stubs)
+    store_root = repository / SCRATCH_LOG_STORE_RELATIVE
+    store_root.chmod(0o333)
+    try:
+        result = run_grid(repository, stubs)
+    finally:
+        store_root.chmod(0o755)
     record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
     check("a store holding the record's name with other bytes prints record: REFUSED, "
           "the run finishes all six, and exits 1",
