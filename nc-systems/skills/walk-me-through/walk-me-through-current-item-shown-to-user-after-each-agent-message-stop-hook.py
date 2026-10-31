@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Stop hook: while an approval-walk is open, block the agent's stop when its
-reply to the user does not name the item waiting for his answer.
+reply to the user does not end with the closing line of the item waiting for
+his answer, linking to the item's page as the walk-minutes record it.
 
-Wired as a Stop hook in .claude/settings.json. The agent shows each item in
-full in its own message; a hook notice showing the item again was printed by
-the Claude Mac app as one "Stop says:" line per line of text, which the user
-took for a broken hook. A reply that names the waiting item by its running
-count, `Item N of M`, anywhere in its text passes: the item shown in full
-opens with its count, and every reply ends with the item's closing line,
-whose link text opens with the count, as in "[Item 4 of 9, <the point>](<page
-link>) · A approve · ...". A turn that wrote nothing to the
-user, such as a silent turn after a background-task notice, is not checked.
+Wired as a Stop hook in .claude/settings.json. The walk-me-through skill ends
+every message of an open walk with the waiting item's closing line, as in
+"[Item 4 of 9, <the point>](<page link>) · A approve · ...", whose link opens
+the item's page, a page the skill publishes before any message shows the item
+and records in the walk-minutes. The block never shows the item itself: a hook
+notice showing the item was printed by the Claude Mac app as one "Stop says:"
+line per line of text, which the user took for a broken hook. A turn that
+wrote nothing to the user, such as a silent turn after a background-task
+notice, is not checked.
 
 ONLY A TURN THAT ANSWERS THE USER is checked or blocks: a turn started by
 his own prompt, typed, queued or a slash command. A turn started by another
@@ -36,12 +37,12 @@ reminder. Claude Code marks another agent-seat's message isMeta too, so the
 origin decides first.
 
 THE REPLY is the text of every assistant message after the turn's start, or
-after the last prompt the user typed into the turn, if that comes later: a
-turn may show the item, make tool calls, and end with a short line such as
-"Recorded.", and it still names the item. The reply also holds the payload's
-`last_assistant_message`, the turn's final message, because Claude Code can
-start the Stop hook before it has written that message to the transcript. It
-is checked only when it holds text.
+after the last prompt the user typed into the turn, if that comes later, then
+the payload's `last_assistant_message`, the turn's final message, because
+Claude Code can start the Stop hook before it has written that message to the
+transcript. It is checked only when it holds text, and only its end is
+checked, so a turn that shows the item, makes tool calls, and ends with a
+short line such as "Recorded." is sent back.
 
 THE OPEN APPROVAL-WALK. The walk-me-through skill keeps a `#next_to_present`
 line in each walk's docs/walk/<name>-minutes.md; agents write it at a line's
@@ -79,27 +80,47 @@ two headings carry when neither is a revision, the hook blocks naming the
 heading. When the minutes' value has no `of M`, the walk-document's own total
 is used, if its headings carry only one.
 
-THE REPLY NAMES AN ITEM when it holds a running count with the walk's
-total that covers it, in any of the forms above: `Item 11 of 12`, or
-`Items 10 and 11 of 12` for both. A count with another total, such as `item
-2 of 90` for item 2 of 9, names nothing. A waiting sub-step, an item with a
-dotted number such as `Item 4.1 of 9`, is also named by a line that is
-`[No decision here; type N or next to continue.](<page link>)`, the line a
-sub-step that asks for no decision ends with, when its link is the one the
-minutes' newest `#item_page` line for that sub-step records; with no such
-line in the minutes, it names nothing.
+THE ITEM'S PAGE is the link of the newest `#item_page item N of M <link>`
+line for the item's number in the walk-minutes, read by WALK_FINDER_FILE as
+its docstring says; when that newest line is `#item_page item N of M publish
+failed: <reason>`, the item has no page and its closing line no link.
+
+THE CLOSING LINES are the lines at the end of the reply, blank lines aside,
+each of which is a closing line, the last line of the reply included. A
+closing line, as the Markdown parser reads the line without its outer
+spaces, is one link that opens the line, to any target, a file: link
+included, whose text is a running count with an optional point, `Item 4 of 9`
+or `Item 4 of 9, <the point>`, also `Items 10 and 11 of 12`, then ` · ` and
+the answer hook's ANSWER_LETTERS_TEXT and nothing more. A closing line
+without its link is the same line with only the link's text: `Item 4 of 9,
+<the point> · A approve · ...`. The point is not compared with the
+walk-document, so a point written with or without escapes passes. A count
+that names no item, such as a range that runs backwards, makes no closing
+line.
+
+THE REPLY PASSES when, for every item the minutes name, a closing line names
+the item with the walk's total, and its link is the item's page, or, for an
+item whose publish failed, it has no link. A count with another total, such
+as `Item 2 of 90` for item 2 of 9, names nothing.
+
+A WAITING SUB-STEP, an item with a dotted number such as `Item 4.1 of 9`, also
+passes when the reply holds a line that is `[No decision here; type N or next
+to continue.](<page link>)`, the line a sub-step that asks for no decision
+ends with, and its link is the sub-step's page.
 
 SILENT while the agent answers a Stop hook (stop_hook_active set), as the
 Stop-hook silence rule's module requires, when the agent-session is a
 headless `claude -p` child (its last words are its caller's answer), when the
 transcript is missing, when the turn wrote no text to the user, when the cwd is
 not in a git checkout, when no approval-walk is open, and when the reply
-names every item the minutes name.
+passes.
 
 OUTPUT: {"decision": "block", "reason": <message>}, which keeps the agent
-going with the message as its next instruction: when the reply leaves out a
-waiting item, or when the open walk's minutes line or walk-document cannot be
-used, so the waiting item is unknown. ON A
+going with the message as its next instruction: when the walk-minutes hold no
+`#item_page` line for a waiting item, so it was never published; when the
+reply does not end with a waiting item's closing line, or that line's link is
+not the item's page; or when the open walk's minutes line or walk-document
+cannot be used, so the waiting item is unknown. ON A
 FAULT, such as input that is not JSON or a file it cannot read, the hook
 prints one line naming it on stderr and exits 1: Claude Code records a Stop
 hook's exit 1 as a non-blocking error and still ends the turn.
@@ -107,6 +128,7 @@ hook's exit 1 as a non-blocking error and still ends the turn.
 import importlib.util
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -121,6 +143,10 @@ STOP_HOOKS_STAY_SILENT_RULE_FILE = (
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
 TRANSCRIPT_READER_FILE = (walk_finder.REPOSITORY_TOP / "scripts"
                           / "claude-code-session-transcript-records-read-backward-common.py")
+# The answer hook holds the closing line's answer letters, which its test checks against the walk-me-through skill.
+ANSWER_HOOK_FILE = (Path(__file__).resolve().parent / "walk-me-through-user-short-answer-to-approval-walk-item-"
+                    "expanded-into-instructions-user-prompt-submit-hook.py")
+CLOSING_LINE_LABEL = re.compile(rf"Items?\s+({walk_finder.NUMBER_LIST})\s+of\s+(\d+)(?:,\s.*)?", re.S)
 # A record from one of these starts a turn even when Claude Code marks it isMeta.
 TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator", "task-notification")
 USER_TURN_ORIGIN = "human"
@@ -143,24 +169,52 @@ UNUSABLE_INSTRUCTIONS = (
 OLD_MARKER_PROBLEM = (
     "the newest marker line in its minutes {minutes} is the old form `Next to present:`, "
     "and the hook reads the current item only from a `#next_to_present` line.")
-REPLY_LEAVES_OUT_OPENING_TEMPLATE = (
-    "approval-walk current-item check: your reply to the user does not name {named}, which "
-    "the open approval-walk {walk} has waiting for his answer, so he cannot tell which item "
-    "his next answer goes to.")
-REPLY_LEAVES_OUT_INSTRUCTIONS = (
-    "If he has not yet seen the item, or asked to see it again, show it in full, word for word "
-    "as the walk-document {document} has it, starting with its running count, as in "
-    "`Item 4 of 9: <the point>`.",
-    "Otherwise, end your reply with its closing line, as the walk-me-through skill writes it: "
-    "`[{example}, <the point>](<page link>) · A approve · ...`.",
+UNPUBLISHED_OPENING_TEMPLATE = (
+    "approval-walk current-item check: the walk-minutes {minutes} hold no `#item_page` line for {named}, which "
+    "the open approval-walk {walk} has waiting for his answer, so the item's closing line has no page to link to. "
+    "The walk-me-through skill publishes every item before any message shows the item or its closing line, "
+    "because the page is where the user sees the item in full on every screen he reads.")
+UNPUBLISHED_INSTRUCTIONS = (
+    "Publish each such item with the Artifact tool as a private page holding the item as the walk-document "
+    "{document} has it, titled `Item N of M: {walk}`, and add the line `#item_page item N of M <page link>` at "
+    "the end of {minutes}.",
+    "If a publish fails, add the line `#item_page item N of M publish failed: <what the Artifact tool said>` "
+    "for that item instead.",
+    "Then end your reply with each waiting item's closing line, on a line of its own, with nothing after it, as "
+    "the walk-me-through skill writes it: `[Item N of M, <the point>](<page link>) · A approve · ...`; for an "
+    "item whose publish failed, leave out the link, keeping only its text and what follows it: `Item N of M, "
+    "<the point> · A approve · ...`.",
+)
+REPLY_LACKS_CLOSING_LINE_OPENING_TEMPLATE = (
+    "approval-walk current-item check: your reply to the user does not end with the right closing line for "
+    "{named}, which the open approval-walk {walk} has waiting for his answer: {problems}. The user often reads "
+    "only the bottom of a message, and the closing line's link opens the item's page, so without the right "
+    "closing line he cannot tell which item his next answer goes to or open it.")
+NO_CLOSING_LINE_PROBLEM = "no closing line for `Item {number} of {total}` ends the reply"
+WRONG_LINK_PROBLEM = (
+    "the closing line for `Item {number} of {total}` links to {written}, but the newest `#item_page` line for "
+    "it in the walk-minutes gives {page}")
+LINK_AFTER_FAILED_PUBLISH_PROBLEM = (
+    "the closing line for `Item {number} of {total}` has a link, but the newest `#item_page` line for it in the "
+    "walk-minutes records that its publish failed")
+NO_LINK_PROBLEM = (
+    "the closing line for `Item {number} of {total}` has no link, but the walk-minutes record its page as {page}")
+REPLY_LACKS_CLOSING_LINE_INSTRUCTIONS = (
+    "If he has not yet seen the item, show it in full, word for word as the walk-document {document} has it, "
+    "starting with its running count, as in `Item 4 of 9: <the point>`, before the closing line.",
+    "End your reply with each waiting item's closing line, on a line of its own, with nothing after it, as the "
+    "walk-me-through skill writes it, with <the point> as its walk-document heading states it:\n{closing_lines}",
+    "If the link you wrote is the item's current page, published with the Artifact tool, and the walk-minutes "
+    "are out of date, keep the link and add the line `#item_page item N of M <that link>` at the end of "
+    "{minutes}, since the newest such line for an item is the one this hook reads.",
     "If his answer moved the approval-walk on, first run `python3 nc-systems/skills/walk-me-through/"
     "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check`, adding the "
     "flag --help lists for his answer, if it lists one; when check passes, run the close command "
     "it prints. Together they set the `#next_to_present` line in {minutes} to the item now "
-    "waiting, so do not set that line by hand; then name the item now waiting. When check fails, "
-    "do what it printed instead.",
+    "waiting, so do not set that line by hand; then end your reply with the closing line of the item now "
+    "waiting instead. When check fails, do what it printed instead.",
     "If he ended or abandoned the approval-walk, add the line `#next_to_present none, closed` "
-    "at the end of {minutes} instead of naming the item, and end the turn.",
+    "at the end of {minutes} instead of writing a closing line, and end the turn.",
 )
 NO_DECISION_INSTRUCTIONS = (
     "If the waiting item is a sub-step that asks for no decision, you may end your reply instead with "
@@ -252,17 +306,81 @@ def turn_reply_text(records):
     return "\n".join(texts)
 
 
-def items_named_in(reply, total):
-    """Return the item numbers the reply's running counts with total M name."""
-    named = set()
-    for match in walk_finder.REPLY_COUNT.finditer(reply):
-        if match[2] != total:
+def closing_line_read(line, parser, letters):
+    """Return (item numbers, total, link or None) when line is a closing line, with or without its link, as the
+    module docstring says; otherwise None."""
+    line = line.strip()
+    tokens = parser.parseInline(line)[0].children
+    link = None
+    if tokens and tokens[0].type == "link_open":
+        close = next(index for index, token in enumerate(tokens) if token.type == "link_close")
+        tail = tokens[close + 1:]
+        if not (len(tail) == 1 and tail[0].type == "text" and tail[0].content == f" · {letters}"):
+            return None
+        label = "".join(token.content for token in tokens[1:close])
+        link = tokens[0].attrs.get("href")
+    elif any(token.type == "link_open" for token in tokens) or not line.endswith(f" · {letters}"):
+        return None
+    else:
+        label = line[:-len(f" · {letters}")]
+    count = CLOSING_LINE_LABEL.fullmatch(label)
+    if not count:
+        return None
+    try:
+        return walk_finder.expand_numbers(count[1]), count[2], link
+    except walk_finder.UnusableRange:
+        return None
+
+
+def ending_closing_lines(reply, parser, letters):
+    """The closing lines that end the reply, blank lines aside, as the module docstring says."""
+    found = []
+    for line in reversed(reply.rstrip().split("\n")):
+        if not line.strip():
             continue
-        try:
-            named.update(walk_finder.expand_numbers(match[1]))
-        except walk_finder.UnusableRange:
+        closing = closing_line_read(line, parser, letters)
+        if closing is None:
+            break
+        found.append(closing)
+    return found
+
+
+def closing_line_problems(numbers, total, closing_lines, pages, parser):
+    """For each waiting item, why the reply's closing lines do not end it right, if they do not."""
+    problems = []
+    for number in numbers:
+        page = pages[number]
+        expected = None if page == walk_finder.ITEM_PAGE_PUBLISH_FAILED else parser.normalizeLink(page)
+        written = [link for line_numbers, line_total, link in closing_lines
+                   if number in line_numbers and line_total == total]
+        values = {"number": number, "total": total, "page": page}
+        if expected in written:
             continue
-    return named
+        if not written:
+            problems.append(NO_CLOSING_LINE_PROBLEM.format(**values))
+        elif expected is None:
+            problems.append(LINK_AFTER_FAILED_PUBLISH_PROBLEM.format(**values))
+        elif written[0] is None:
+            problems.append(NO_LINK_PROBLEM.format(**values))
+        else:
+            problems.append(WRONG_LINK_PROBLEM.format(written=written[0], **values))
+    return problems
+
+
+def closing_line_example(number, total, page, letters):
+    label = f"Item {number} of {total}, <the point>"
+    if page == walk_finder.ITEM_PAGE_PUBLISH_FAILED:
+        return f"{label} · {letters}"
+    return f"[{label}]({page}) · {letters}"
+
+
+def no_decision_instructions(numbers):
+    return NO_DECISION_INSTRUCTIONS if any("." in number for number in numbers) else ()
+
+
+def sub_step_page_line(numbers, total):
+    sub_step = next((number for number in numbers if "." in number), "")
+    return f"`#item_page item {sub_step} of {total} <link>`"
 
 
 def block_output(opening, instructions, **values):
@@ -322,24 +440,34 @@ def output_for(payload, environment):
         total, _ = walk_finder.waiting_item_units(document, value, numbers, total, parser)
     except walk_finder.UnusableRange as problem:
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=str(problem))
-    named_in_reply = items_named_in(reply, total)
+    pages = walk_finder.newest_item_page_link_per_item_from_walk_minutes(
+        minutes.read_text(encoding="utf-8"), parser)
+    unpublished = [number for number in numbers if number not in pages]
+    if unpublished:
+        return block(UNPUBLISHED_OPENING_TEMPLATE, UNPUBLISHED_INSTRUCTIONS + no_decision_instructions(unpublished),
+                     named=" and ".join(f"`Item {number} of {total}`" for number in unpublished),
+                     page_line=sub_step_page_line(unpublished, total))
     no_decision_links = set(walk_finder.SUB_STEP_NO_DECISION_CLOSING_LINE.findall(reply))
-    if no_decision_links:
-        pages = walk_finder.minutes_newest_item_page_link_by_item_number(minutes.read_text(encoding="utf-8"), parser)
-        named_in_reply.update(number for number in numbers
-                              if "." in number and pages.get(number) in no_decision_links)
-    left_out = [number for number in numbers if number not in named_in_reply]
-    if not left_out:
+    numbers_needing_closing_line = [number for number in numbers
+                                    if not ("." in number and pages[number] in no_decision_links)]
+    letters = walk_finder.load_module(
+        "walk_me_through_user_short_answer_to_approval_walk_item_expanded_into_instructions_user_prompt_submit_hook",
+        ANSWER_HOOK_FILE).ANSWER_LETTERS_TEXT
+    link_parser = walk_finder.markdown_parser()
+    # markdown-it refuses a file: link by default and reads it as text, which would hide the wrong link
+    # the block must name.
+    link_parser.validateLink = lambda url: True
+    problems = closing_line_problems(numbers_needing_closing_line, total,
+                                     ending_closing_lines(reply, link_parser, letters), pages, link_parser)
+    if not problems:
         return None
-    example = (f"Item {numbers[0]} of {total}" if len(numbers) == 1
-               else f"Items {', '.join(numbers[:-1])} and {numbers[-1]} of {total}")
-    instructions = REPLY_LEAVES_OUT_INSTRUCTIONS
-    if any("." in number for number in left_out):
-        instructions += NO_DECISION_INSTRUCTIONS
-    sub_step = next((number for number in left_out if "." in number), "")
-    return block(REPLY_LEAVES_OUT_OPENING_TEMPLATE, instructions,
-                 named=" and ".join(f"`Item {number} of {total}`" for number in left_out),
-                 example=example, page_line=f"`#item_page item {sub_step} of {total} <link>`")
+    return block(REPLY_LACKS_CLOSING_LINE_OPENING_TEMPLATE,
+                 REPLY_LACKS_CLOSING_LINE_INSTRUCTIONS + no_decision_instructions(numbers_needing_closing_line),
+                 page_line=sub_step_page_line(numbers_needing_closing_line, total),
+                 named=" and ".join(f"`Item {number} of {total}`" for number in numbers),
+                 problems="; ".join(problems),
+                 closing_lines="\n".join(f"`{closing_line_example(number, total, pages[number], letters)}`"
+                                         for number in numbers))
 
 
 def main():
@@ -347,8 +475,8 @@ def main():
         output = run(sys.stdin.read(), os.environ)
     except Exception as error:
         print(f"walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook: "
-              f"the hook failed, so it did not check that the reply names the approval-walk's "
-              f"waiting item; the agent need not act: {error!r}", file=sys.stderr)
+              f"the hook failed, so it did not check that the reply ends with the approval-walk's "
+              f"waiting item's closing line; the agent need not act: {error!r}", file=sys.stderr)
         return 1
     if output is not None:
         print(output)

@@ -489,9 +489,9 @@ def next_free_item(waiting, held):
 
 def closing_lines(minutes, name, document_text, units, parser, numbers, total, new_total):
     """(each waiting item's closing line, in code marks, once the walk's count M is new_total, built by the answer
-    hook's closing_line with the link of the item's `#item_page` line, or NO_PAGE_LINK when the minutes record no
+    hook's closing_line with the link of the item's newest `#item_page` line, or NO_PAGE_LINK when the minutes record no
     page for it; the numbers of the items the minutes record no page for)."""
-    pages = walk_finder.minutes_newest_item_page_link_by_item_number(minutes.read_text(encoding="utf-8"), parser)
+    pages = walk_finder.newest_item_page_link_per_item_from_walk_minutes(minutes.read_text(encoding="utf-8"), parser)
     without_page = [number for number in numbers if number not in pages]
     pages.update(dict.fromkeys(without_page, NO_PAGE_LINK))
     points = answer_hook.heading_points(document_text.split("\n"), units, total, parser)

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Cases for the Stop hook that, during an open approval-walk, blocks the
-agent's stop when its reply to the user does not name the waiting item.
+agent's stop when its reply to the user does not end with the waiting item's
+closing line, linking to the item's page as the walk-minutes record it.
 
 Each case but one runs the hook as a subprocess, its real stdin-to-stdout path, in a
 scratch checkout this suite made, with a transcript this suite wrote. The exit
@@ -11,6 +12,7 @@ it names on stderr with exit 1.
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -93,6 +95,36 @@ The poem page goes in the wiki, next to the glossary and the style guide, so tha
 
 **The strongest case for N:** a page in the wiki is one more document agents must be told to read. **Recommendation: Y.**"""
 
+# The closing line's answer letters; the answer hook's suite checks that the walk-me-through skill writes the same.
+LETTERS = ("A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · "
+           "E explain · O other options")
+COUNT_IN_DOCUMENT = re.compile(r"Items?\s+(\d+(?:\.\d+)*(?:\s*(?:,|and|to|-)\s*\d+(?:\.\d+)*)*)\s+of\s+(\d+)")
+
+
+def page(number):
+    return f"https://claude.ai/artifact/PageOfItem{number}"
+
+
+def closing(number, total=9, link="page", point="where the poem page lives"):
+    """The walk-me-through skill's closing line for the item: with its page's link by default, or link, or none."""
+    label = f"Item {number} of {total}" + (f", {point}" if point else "")
+    if link is None:
+        return f"{label} · {LETTERS}"
+    return f"[{label}]({page(number) if link == 'page' else link}) · {LETTERS}"
+
+
+def page_lines_for_every_item(document):
+    """An `#item_page` line for each item number a running count in the document names."""
+    numbers = []
+    for count in COUNT_IN_DOCUMENT.finditer(document or ""):
+        for number in re.findall(r"\d+(?:\.\d+)*", count[1]):
+            numbers.append(number)
+        if " to " in count[1] or "-" in count[1]:
+            first, last = re.findall(r"\d+(?:\.\d+)*", count[1])[:2]
+            if "." not in first + last and int(first) < int(last):
+                numbers += [str(number) for number in range(int(first), int(last) + 1)]
+    return "".join(f"#item_page item {number} of 99 {page(number)}\n" for number in dict.fromkeys(numbers))
+
 
 def check(case_name, condition, detail=""):
     if condition:
@@ -120,11 +152,14 @@ class Case:
         self.transcript = self.root / "transcript.jsonl"
 
     def walk_files(self, name="poem-page-2026-10-12", minutes="", document=WALK_DOCUMENT,
-                   modified=1_000_000):
+                   modified=1_000_000, pages=None):
+        """Write the walk files; the minutes record a page for every item the document names, unless pages gives
+        the `#item_page` lines to write instead."""
         if document is not None:
             (self.walk / f"{name}.md").write_text(document)
         minutes_path = self.walk / f"{name}-minutes.md"
-        minutes_path.write_text(f"# Minutes\n\n{minutes}\n")
+        pages = page_lines_for_every_item(document) if pages is None else pages
+        minutes_path.write_text(f"# Minutes\n\n{pages}\n{minutes}\n")
         os.utime(minutes_path, (modified, modified))
         return minutes_path
 
@@ -166,8 +201,8 @@ def check_silent(case_name, result):
 
 
 def check_reminded(case_name, result, *phrases):
-    """The hook sends the agent back to name the waiting item its reply left out."""
-    check_blocked(case_name, result, "does not name", "waiting for his answer", *phrases)
+    """The hook sends the agent back to end its reply with the waiting item's closing line."""
+    check_blocked(case_name, result, "does not end with the right closing line", "waiting for his answer", *phrases)
 
 
 def check_blocked(case_name, result, *phrases):
@@ -176,31 +211,45 @@ def check_blocked(case_name, result, *phrases):
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 
-def test_a_reply_naming_the_waiting_item_passes_and_one_leaving_it_out_is_sent_back():
+ITEM_2_SHOWN = ITEM_2_REPLY + "\n\n" + closing(2)
+
+
+def test_a_reply_ending_with_the_closing_line_passes_and_one_without_it_is_sent_back():
     case = Case()
     case.walk_files(minutes="#next_to_present item 2 of 9.")
     for case_name, reply in (
-            ("a reply showing the item in full passes", ITEM_2_REPLY),
-            ("a reply ending with a line naming the item passes",
-             "The background job finished.\n\nItem 2 of 9 is waiting for your answer."),
-            ("a reply naming the item in lower case mid-sentence passes",
-             "Recorded. Waiting on item 2 of 9; Recommendation: Y."),
-            ("a reply naming the item in a heading passes", "## Item 2 of 9: where the poem page lives\n\nText."),
-            ("a reply naming the item in a range passes", "Items 1 to 3 of 9 are waiting.")):
+            ("a reply showing the item in full, then its closing line, passes", ITEM_2_SHOWN),
+            ("a reply of a short note and the closing line passes", "The background job finished.\n\n" + closing(2)),
+            ("a reply of the closing line alone passes", closing(2)),
+            ("a closing line followed by blank lines passes", closing(2) + "\n\n  \n"),
+            ("a closing line whose point holds escaped brackets passes",
+             "Recorded.\n\n" + closing(2, point="the \\[advisor\\] check")),
+            ("a closing line without a point passes", "Recorded.\n\n" + closing(2, point=None))):
         case.reply(reply)
         check_silent(case_name, case.run())
     for case_name, reply in (
             ("a reply that never mentions the item is sent back",
              "The background job finished and its report is in the log-store."),
-            ("a reply naming the item without its total is sent back", "Answer item 2: Y or N."),
-            ("a reply naming the item with another total is sent back", "Item 2 of 90 is waiting."),
-            ("a reply naming another item is sent back", "Item 5 of 9 is waiting for your answer."),
-            ("a reply naming the item's part is sent back", "Item 2.1 of 9 is waiting."),
-            ("a word ending in `item` is not a running count", "Lineitem 2 of 9 is fixed."),
-            ("a reply naming the item in a backwards range is sent back", "Items 3 to 1 of 9 are waiting.")):
+            ("a reply showing the item in full without its closing line is sent back", ITEM_2_REPLY),
+            ("a reply ending with a sentence naming the item is sent back",
+             "The background job finished.\n\nItem 2 of 9 is waiting for your answer."),
+            ("a closing line with text after it is sent back", closing(2) + "\n\nRecorded."),
+            ("a closing line with another total is sent back", "Recorded.\n\n" + closing(2, 90)),
+            ("a closing line for another item is sent back", "Recorded.\n\n" + closing(5)),
+            ("a closing line for the item's part is sent back", "Recorded.\n\n" + closing("2.1")),
+            ("a closing line in bold is sent back", f"**{closing(2)}**"),
+            ("a closing line as a list item is sent back", f"- {closing(2)}"),
+            ("a closing line whose letters are cut short is sent back",
+             closing(2).replace(" · O other options", "")),
+            ("a closing line whose label opens in lower case is sent back", closing(2).replace("[Item", "[item")),
+            ("a closing line with a question after its letters is sent back", closing(2) + " Merge now?"),
+            ("a closing line whose count is a backwards range naming the item is sent back",
+             closing("3 to 1").replace("[Item 3 to 1", "[Items 3 to 1")),
+            ("a closing line naming the item in a backwards range without its link is sent back",
+             closing("3 to 1", link=None).replace("Item 3 to 1", "Items 3 to 1"))):
         case.reply(reply)
-        check_reminded(case_name, case.run(), "`Item 2 of 9`",
-                       "`[Item 2 of 9, <the point>](<page link>) · A approve · ...`")
+        check_reminded(case_name, case.run(), "`Item 2 of 9`", "no closing line for `Item 2 of 9` ends the reply",
+                       f"`[Item 2 of 9, <the point>]({page(2)}) · {LETTERS}`")
     case.reply("Nothing here.")
     reason = blocked_reason(case.run()) or ""
     check("the reminder names the walk, its walk-document and its minutes",
@@ -208,23 +257,21 @@ def test_a_reply_naming_the_waiting_item_passes_and_one_leaving_it_out_is_sent_b
           and str(case.walk / "poem-page-2026-10-12-minutes.md") in reason, reason)
 
 
-def test_every_text_of_the_turn_counts():
+def test_the_turn_last_text_must_end_with_the_closing_line():
     case = Case()
     case.walk_files(minutes="#next_to_present item 2 of 9.")
-    case.reply(ITEM_2_REPLY, None, "Recorded.")
-    check_silent("a turn that shows the item, makes a tool call and ends with a short line passes", case.run())
-    case.reply("Recorded.", None, "Item 2 of 9 is waiting for your answer.")
-    check_silent("a turn naming the item in its last text passes", case.run())
-    shown_before_answer = [USER_PROMPT, {"type": "assistant", "message": {"id": "m1", "content": [
-        {"type": "text", "text": ITEM_2_REPLY}]}}, TOOL_CALL, USER_ANSWER_WHILE_WORKING, TOOL_RESULT,
-        {"type": "assistant", "message": {"id": "m4", "content": [{"type": "text", "text": "Recorded."}]}}]
-    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in shown_before_answer))
-    check_reminded("an item named before the user typed into the turn does not count after it", case.run())
-    shown_in_earlier_turn = [USER_PROMPT, {"type": "assistant", "message": {"id": "m1", "content": [
-        {"type": "text", "text": ITEM_2_REPLY}]}}, USER_PROMPT,
-        {"type": "assistant", "message": {"id": "m2", "content": [{"type": "text", "text": "Recorded."}]}}]
-    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in shown_in_earlier_turn))
-    check_reminded("an item named in an earlier turn does not count in the next one", case.run())
+    case.reply(ITEM_2_REPLY, None, "Recorded.\n\n" + closing(2))
+    check_silent("a turn that shows the item, makes a tool call and ends with the closing line passes", case.run())
+    case.reply(ITEM_2_SHOWN, None, "Recorded.")
+    check_reminded("a turn whose closing line is followed by a later text is sent back", case.run())
+    unanswered_before_answer = [USER_PROMPT, {"type": "assistant", "message": {"id": "m1", "content": [
+        {"type": "text", "text": "Recorded."}]}}, TOOL_CALL, USER_ANSWER_WHILE_WORKING, TOOL_RESULT, TOOL_CALL]
+    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in unanswered_before_answer))
+    check_silent("text written before the user typed into the turn is not checked after it", case.run())
+    unanswered_in_earlier_turn = [USER_PROMPT, {"type": "assistant", "message": {"id": "m1", "content": [
+        {"type": "text", "text": "Recorded."}]}}, USER_PROMPT, TOOL_CALL]
+    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in unanswered_in_earlier_turn))
+    check_silent("text of an earlier turn is not checked in the next one", case.run())
 
 
 # The two records Claude Code writes when it compacts a conversation, in the shape of a real
@@ -242,15 +289,13 @@ COMPACT_SUMMARY = {"type": "user", "isCompactSummary": True, "isVisibleInTranscr
 def test_a_compaction_does_not_start_a_turn():
     case = Case()
     case.walk_files(minutes="#next_to_present item 2 of 9.")
-    recorded = {"type": "assistant", "message": {"id": "m4", "content": [{"type": "text", "text": "Recorded."}]}}
-    shown = {"type": "assistant", "message": {"id": "m1", "content": [{"type": "text", "text": ITEM_2_REPLY}]}}
-    compacted_mid_turn = [USER_PROMPT, shown, TOOL_CALL, TOOL_RESULT, COMPACT_BOUNDARY, COMPACT_SUMMARY, recorded]
+    recorded = {"type": "assistant", "message": {"id": "m1", "content": [{"type": "text", "text": "Recorded."}]}}
+    compacted_mid_turn = [USER_PROMPT, recorded, TOOL_CALL, TOOL_RESULT, COMPACT_BOUNDARY, COMPACT_SUMMARY, TOOL_CALL]
     case.transcript.write_text("".join(json.dumps(record) + "\n" for record in compacted_mid_turn))
-    check_silent("an item shown before a compaction in the same turn still counts", case.run())
-    compacted_between_turns = [USER_PROMPT, shown, COMPACT_BOUNDARY, COMPACT_SUMMARY, USER_PROMPT, recorded]
+    check_reminded("text written before a compaction in the same turn is still checked", case.run())
+    compacted_between_turns = [USER_PROMPT, recorded, COMPACT_BOUNDARY, COMPACT_SUMMARY, USER_PROMPT, TOOL_CALL]
     case.transcript.write_text("".join(json.dumps(record) + "\n" for record in compacted_between_turns))
-    check_reminded("an item shown in the turn before a compaction does not count in the turn after it",
-                   case.run())
+    check_silent("text written in the turn before a compaction is not checked in the turn after it", case.run())
 
 
 def test_an_ended_walk_is_closed_by_the_line_the_reminder_gives():
@@ -270,16 +315,26 @@ def test_items_waiting_together():
     case = Case()
     case.walk_files(minutes="#next_to_present items 5 and 6 of 9.")
     case.reply("Recorded.")
-    check_reminded("a reply naming neither of two waiting items is sent back with both", case.run(),
-                   "`Item 5 of 9` and `Item 6 of 9`", "`[Items 5 and 6 of 9, <the point>](<page link>) · A approve · ...`")
-    case.reply("Item 5 of 9: the hook. Text.")
-    check_reminded("a reply naming one of two waiting items is sent back with the other", case.run(),
-                   "does not name `Item 6 of 9`,")
-    for case_name, reply in (
-            ("a reply naming both waiting items together passes", "Items 5 and 6 of 9 are waiting."),
-            ("a reply naming both waiting items apart passes", "Item 5 of 9: one.\n\nItem 6 of 9: two.")):
-        case.reply(reply)
-        check_silent(case_name, case.run())
+    check_reminded("a reply ending with neither of two waiting items' closing lines is sent back with both",
+                   case.run(), "`Item 5 of 9` and `Item 6 of 9`", "no closing line for `Item 5 of 9` ends the reply; "
+                   "no closing line for `Item 6 of 9` ends the reply",
+                   f"`[Item 5 of 9, <the point>]({page(5)}) · {LETTERS}`\n`[Item 6 of 9, <the point>]({page(6)}) · {LETTERS}`")
+    case.reply("Recorded.\n\n" + closing(5))
+    result = case.run()
+    check_reminded("a reply ending with one of two waiting items' closing lines is sent back with the other",
+                   result, "no closing line for `Item 6 of 9` ends the reply")
+    check("the block does not fault the closing line that is right",
+          "for `Item 5 of 9` ends" not in (blocked_reason(result) or ""), result.stdout)
+    case.reply(f"Recorded.\n\n{closing(5)}\n\n{closing(6)}")
+    check_silent("a reply ending with both waiting items' closing lines passes", case.run())
+    case.reply(f"{closing(5)}\n\nRecorded.\n\n{closing(6)}")
+    check_reminded("a closing line above a line that is not one does not end the reply", case.run(),
+                   "no closing line for `Item 5 of 9` ends the reply")
+    shared = Case()
+    shared.walk_files(minutes="#next_to_present items 5 and 6 of 9.",
+                      pages=f"#item_page item 5 of 9 {page(5)}\n#item_page item 6 of 9 {page(5)}\n")
+    shared.reply("Recorded.\n\n" + closing("5 and 6", link=page(5)).replace("[Item 5 and 6", "[Items 5 and 6"))
+    check_silent("one closing line naming two items that share a page passes", shared.run())
 
 
 def test_items_under_one_heading():
@@ -302,16 +357,12 @@ def test_item_added_by_re_planning_with_a_dotted_number():
                 "## Item 38 of 44: the next rule\n\nRecommendation: keep it.\n")
     case = Case()
     case.walk_files(minutes="#next_to_present item 37.2 of 44.", document=document)
+    case.reply("**Item 37.2 of 44: a case item 37 missed**\n\nRecommendation: add the filter.\n\n"
+               + closing("37.2", 44))
+    check_silent("a reply ending with a dotted item's closing line passes", case.run())
     for case_name, reply in (
-            ("a reply ending with a line naming a dotted item passes",
-             "Recorded.\n\nItem 37.2 of 44 is waiting for your answer."),
-            ("a reply showing a dotted item in full passes",
-             "**Item 37.2 of 44: a case item 37 missed**\n\nRecommendation: add the filter.")):
-        case.reply(reply)
-        check_silent(case_name, case.run())
-    for case_name, reply in (
-            ("a reply naming only the item a dotted item follows is sent back", "Item 37 of 44 is waiting."),
-            ("a reply naming the dotted number with another total is sent back", "Item 37.2 of 4 is waiting.")):
+            ("a reply ending with the closing line of the item a dotted item follows is sent back", closing(37, 44)),
+            ("a dotted item's closing line with another total is sent back", closing("37.2", 4))):
         case.reply(reply)
         check_reminded(case_name, case.run(), "`Item 37.2 of 44`")
 
@@ -508,13 +559,13 @@ def test_the_final_message_counts_before_the_transcript_holds_it():
     written_so_far = [USER_PROMPT, TOOL_CALL, TOOL_RESULT, USER_ANSWER_WHILE_WORKING, TOOL_CALL, TOOL_RESULT,
                       progress_line, TOOL_CALL, TOOL_RESULT]
     case.transcript.write_text("".join(json.dumps(record) + "\n" for record in written_so_far))
-    check_silent("an item shown in a final message the transcript does not yet hold passes",
-                 case.run(last_assistant_message=ITEM_2_REPLY))
+    check_silent("a closing line ending a final message the transcript does not yet hold passes",
+                 case.run(last_assistant_message=ITEM_2_SHOWN))
     with case.transcript.open("a") as transcript:
         transcript.write(json.dumps({"type": "assistant", "message": {"id": "m6", "content": [
-            {"type": "text", "text": ITEM_2_REPLY}]}})[:40])
-    check_silent("an item shown in a final message the transcript holds only part of passes",
-                 case.run(last_assistant_message=ITEM_2_REPLY))
+            {"type": "text", "text": ITEM_2_SHOWN}]}})[:40])
+    check_silent("a closing line ending a final message the transcript holds only part of passes",
+                 case.run(last_assistant_message=ITEM_2_SHOWN))
     check_reminded("a final message that leaves out the item is sent back",
                    case.run(last_assistant_message="Recorded."))
 
@@ -603,7 +654,8 @@ def test_range_headings_and_values():
             ("minutes naming the item alone find the heading that groups it with its parts",
              "#next_to_present item 12 of 54.")):
         case = Case()
-        case.walk_files(minutes=minutes, document=item_and_parts)
+        case.walk_files(minutes=minutes, document=item_and_parts, pages=page_lines_for_every_item(item_and_parts)
+                        + f"#item_page item 12.1 of 54 {page('12.1')}\n")
         case.reply("Recorded.")
         check_reminded(case_name, case.run())
     case = Case()
@@ -946,9 +998,124 @@ def test_newest_open_walk_is_checked():
     older = case.walk_files(name="older-walk", minutes="#next_to_present item 5 of 9.", modified=1_000)
     older.write_bytes(b"#next_to_present \xff\xfe item 5 of 9.\n")
     os.utime(older, (1_000, 1_000))
-    case.reply(ITEM_2_REPLY)
+    case.reply(ITEM_2_SHOWN)
     check_silent("a newer closed walk is passed over, and minutes older than the newest open walk are not read",
                  case.run())
+
+
+def test_an_item_with_no_page_in_the_walk_minutes_is_sent_back_to_be_published():
+    case = Case()
+    minutes = case.walk_files(minutes="#next_to_present item 2 of 9.", pages=f"#item_page item 5 of 9 {page(5)}\n")
+    for case_name, reply in (
+            ("a closing line for an item the walk-minutes hold no page for is sent back", ITEM_2_SHOWN),
+            ("a closing line with a file link for an unpublished item is sent back",
+             ITEM_2_REPLY + "\n\n" + closing(2, link="file:///Volumes/nedhome/docs/walk/poem-page-2026-10-12.md")),
+            ("a reply without a closing line for an unpublished item is told to publish it first", "Recorded.")):
+        case.reply(reply)
+        check_blocked(case_name, case.run(),
+                      f"the walk-minutes {minutes} hold no `#item_page` line for `Item 2 of 9`",
+                      "titled `Item N of M: poem-page-2026-10-12`",
+                      f"add the line `#item_page item N of M <page link>` at the end of {minutes}",
+                      "`#item_page item N of M publish failed: <what the Artifact tool said>`",
+                      "`Item N of M, <the point> · A approve · ...`")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.\n\n`#item_page item 2 of 9 " + page(2) + "`\n\n```\n"
+                    f"#item_page item 2 of 9 {page(2)}\n```\n\n<!--\n#item_page item 2 of 9 {page(2)}\n-->", pages="")
+    case.reply(ITEM_2_SHOWN)
+    check_blocked("an `#item_page` line in a code span, a fence or an HTML comment is not the item's page", case.run(),
+                  "hold no `#item_page` line for `Item 2 of 9`")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.", pages=f"#item_page item 2 of 9\n{page(2)}\n")
+    case.reply(ITEM_2_SHOWN)
+    check_blocked("an `#item_page` line whose link is on the next line is not read", case.run(),
+                  "hold no `#item_page` line for `Item 2 of 9`")
+
+
+def test_the_closing_line_link_must_be_the_item_page_the_walk_minutes_record():
+    case = Case()
+    old_page = "https://claude.ai/artifact/OlderPageOfItem2"
+    case.walk_files(minutes="#next_to_present item 2 of 9.",
+                    pages=f"#item_page item 2 of 9 {old_page}\n#item_page item 2 of 8 {page(2)}\n")
+    case.reply(ITEM_2_SHOWN)
+    check_silent("the newest `#item_page` line counts, whatever its total", case.run())
+    case.reply(ITEM_2_REPLY + "\n\n" + closing(2, link=old_page))
+    check_reminded("a closing line linking to an older page of the item is sent back", case.run(),
+                   f"the closing line for `Item 2 of 9` links to {old_page}, but the newest `#item_page` line for it "
+                   f"in the walk-minutes gives {page(2)}", f"`[Item 2 of 9, <the point>]({page(2)}) · {LETTERS}`")
+    case.reply(ITEM_2_REPLY + "\n\n" + closing(2, link="file:///Volumes/nedhome/docs/walk/poem-page.md"))
+    check_reminded("a closing line linking to a file instead of the item's page is sent back", case.run(),
+                   "links to file:///Volumes/nedhome/docs/walk/poem-page.md")
+    case.reply(ITEM_2_REPLY + "\n\n" + closing(2, link=None))
+    check_reminded("a closing line without its link, for an item that has a page, is sent back", case.run(),
+                   f"the closing line for `Item 2 of 9` has no link, but the walk-minutes record its page as {page(2)}")
+
+
+def test_an_item_whose_publish_failed_ends_with_the_closing_line_without_its_link():
+    case = Case()
+    minutes = case.walk_files(minutes="#next_to_present item 2 of 9.",
+                              pages=f"#item_page item 2 of 9 {page(2)}\n"
+                                    "#item_page item 2 of 9 publish failed: the Artifact tool timed out\n")
+    case.reply(ITEM_2_REPLY + "\n\n" + closing(2, link=None))
+    check_silent("the closing line without its link passes for an item whose newest publish failed", case.run())
+    case.reply(ITEM_2_SHOWN)
+    check_reminded("a closing line with a link, for an item whose newest publish failed, is sent back", case.run(),
+                   "the closing line for `Item 2 of 9` has a link, but the newest `#item_page` line for it in the "
+                   "walk-minutes records that its publish failed", f"`Item 2 of 9, <the point> · {LETTERS}`")
+    minutes.write_text(minutes.read_text() + f"\n#item_page item 2 of 9 {page(2)}\n")
+    check_silent("a page recorded after a failed publish is the item's page again", case.run())
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.", pages="#item_page item 2 of 9 publish failed:\n")
+    case.reply(ITEM_2_REPLY + "\n\n" + closing(2, link=None))
+    check_blocked("a publish-failed line with no reason records nothing", case.run(),
+                  "hold no `#item_page` line for `Item 2 of 9`")
+
+
+def test_the_closing_line_is_read_token_by_token():
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    for case_name, reply in (
+            ("a closing line whose point ends in a code span passes", closing(2, point="the page for `docs/`")),
+            ("a closing line whose point holds a code span and more text passes",
+             closing(2, point="the `docs/` page lives here"))):
+        case.reply("Recorded.\n\n" + reply)
+        check_silent(case_name, case.run())
+    for case_name, reply in (
+            ("the closing line's link alone, without its letters, is sent back",
+             f"[Item 2 of 9, where the poem page lives]({page(2)})"),
+            ("a closing line with a code span after its letters is sent back", closing(2) + "`x`"),
+            ("a closing line whose letters are a code span is sent back",
+             f"[Item 2 of 9, x]({page(2)})` · {LETTERS}`"),
+            ("a label in a code span with no link is sent back", f"`Item 2 of 9` · {LETTERS}")):
+        case.reply("Recorded.\n\n" + reply)
+        check_reminded(case_name, case.run(), "no closing line for `Item 2 of 9` ends the reply")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 9 of 9.")
+    case.reply("Recorded.\n\n" + closing(2, link=page(9)))
+    check_reminded("a closing line for another item is not read as naming the walk's total", case.run(),
+                   "no closing line for `Item 9 of 9` ends the reply")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.",
+                    pages="#item_page item 2 of 9 publish failed: the Artifact tool timed out\n")
+    case.reply("Recorded.\n\n" + closing(2, link=None, point="the page for `docs/`"))
+    check_silent("a closing line without its link whose point holds a code span passes", case.run())
+    case.reply("Recorded.\n\n" + closing(2, link=None, point=None))
+    check_silent("a closing line without its link or a point passes", case.run())
+    case.reply("Recorded.\n\nItem 2 of 9, " + "the poem page lives in the wiki beside the glossary " * 3)
+    check_reminded("a line naming the item without the answer letters is sent back", case.run(),
+                   "no closing line for `Item 2 of 9` ends the reply")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.", pages="#item_page item 2 of 9 wiki/item-2-page\n")
+    case.reply("Recorded.\n\n" + closing(2, link="wiki/item-2-page"))
+    check_silent("a page link that sorts after the words `publish failed` is still a link", case.run())
+    case.reply("Recorded.\n\n" + closing(2, link=None))
+    check_reminded("a closing line without its link for such a page is sent back, given the line with the link",
+                   case.run(), "has no link", f"`[Item 2 of 9, <the point>](wiki/item-2-page) · {LETTERS}`")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    other = "https://claude.ai/artifact/SomeOtherPage"
+    case.reply(f"Recorded.\n\n{closing(2, link=None)}\n{closing(2, link=other)}")
+    check_reminded("of two wrong closing lines for the item, the block names the last one's link", case.run(),
+                   f"links to {other}, but")
 
 
 def test_minutes_without_a_marker_are_not_parsed():

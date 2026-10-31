@@ -140,7 +140,8 @@ class Case:
         if (set(output) != {"hookSpecificOutput"} or specific.get("hookEventName") != "UserPromptSubmit"
                 or set(specific) != {"hookEventName", "additionalContext"}):
             return None
-        return OutputLines(specific["additionalContext"].split("\n"))
+        context = specific["additionalContext"].replace(str(self.walk / f"{WALK_NAME}-minutes.md"), "<minutes>")
+        return OutputLines(context.split("\n"))
 
 
 def unknown_line(item, problem, letter):
@@ -442,13 +443,39 @@ def not_blocked(result):
             and "decision" not in json.loads(result.stdout) and result.stderr == "")
 
 
-def r_line(word, item):
-    return (f"\"{word}\" asks to see {item} again: show it in full, heading included, word for word as the "
-            "walk-document has it, and wait for his answer.")
+def r_meaning_lines(word, item):
+    """The lines R gives when the hook could not tell which item is waiting."""
+    return [f"\"{word}\" asks to see {item} again: reply with only its closing line, as the walk-me-through skill "
+            "writes it, with the link from the minutes' newest `#item_page` line for it, and wait for his answer.",
+            "If that line records a failed publish, leave the link out of the closing line, keeping only its link "
+            "text and what follows the link.",
+            "If the minutes have no `#item_page` line for it, first publish the item and record the line, as the "
+            "skill says."]
 
 
-def numbered_r_line(number, item):
-    return r_line(f"{number} R", item)
+def r_lines(word, item, point=None, minutes=" <minutes>"):
+    """The lines R gives for an item the walk-minutes record no page for: publish it first, then the closing line."""
+    label = "Item " + item[len("item "):] + (f", {point}" if point else "")
+    return [f"\"{word}\" asks to see {item} again, and the hook found no `#item_page` line for it in the "
+            f"walk-minutes{minutes}.",
+            "If the walk-minutes hold none, publish the item as the walk-me-through skill says, and add to them the "
+            f"line `#item_page {item} <page link>`, because the item's page is what shows the user the item in full.",
+            f"If the publish fails, add the line `#item_page {item} publish failed: <what the Artifact tool said>` "
+            "instead, and leave the link out of the closing line, keeping only its link text and what follows the "
+            "link.",
+            "Then reply with only the item's closing line, with the page's link in place of `<page link>`, or "
+            f"without the link if the publish failed, and wait for his answer: [{label}](<page link>) · "
+            f"{LETTERS_AFTER_LINK}"]
+
+
+def numbered_r_lines(number, item, point=None, minutes=" <minutes>"):
+    return r_lines(f"{number} R", item, point, minutes)
+
+
+def holds_in_order(lines, expected):
+    """Whether lines hold expected as a run of consecutive lines."""
+    return lines is not None and any(list(lines[index:index + len(expected)]) == expected
+                                     for index in range(len(lines)))
 
 
 def test_r_on_an_open_walk_goes_to_the_agent_and_does_not_block():
@@ -460,13 +487,14 @@ def test_r_on_an_open_walk_goes_to_the_agent_and_does_not_block():
         check(f"{prompt!r} gives the agent additionalContext telling it to show the waiting item, and no decision",
               not_blocked(result) and lines is not None
               and lines[0] == f"The user answered \"{prompt.rstrip('.')}\" to item 4 of 9 of approval-walk {WALK_NAME}."
-              and lines[1:] == [r_line(word, "item 4 of 9")]
+              and lines[1:] == r_lines(word, "item 4 of 9", "a filter")
               and not any("leave the filter out" in line or "old rows" in line for line in lines),
               f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
     check("R records nothing in the minutes", (case.walk / f"{WALK_NAME}-minutes.md").read_text() == before)
     lines = Case(next_to_present="items 5 and 6 of 9").lines("r")
-    check("R on items shown together and with no page tells the agent to show each in full, in the one wording",
-          lines is not None and lines[1:] == [r_line("R", "item 5 of 9"), r_line("R", "item 6 of 9")],
+    check("R on items shown together and with no page tells the agent to publish each, in the one wording",
+          lines is not None and lines[1:] == (r_lines("R", "item 5 of 9", "two small corrections")
+                                              + r_lines("R", "item 6 of 9", "two small corrections")),
           f"lines {lines!r}")
     case = Case(next_to_present="item 3 of 9")
     case.minutes("#next_to_present item 3 of 9\n\n#next_to_present none, closed")
@@ -511,25 +539,49 @@ def test_r_hands_the_agent_the_closing_line_of_the_items_newest_page():
                                           f"{LETTERS_AFTER_LINK}") in lines, f"lines {lines!r}")
 
 
-def test_r_on_an_item_with_no_page_tells_the_agent_to_show_it_in_full():
+def test_r_on_an_item_with_no_page_tells_the_agent_to_publish_it_then_give_its_closing_line():
     case = Case(next_to_present="item 4 of 9")
     case.minutes(f"#item_page item 3 of 9 {PAGE_1}\n\n#next_to_present item 4 of 9")
     lines = case.lines("r")
-    check("R on an item the minutes record no page for tells the agent to show the item in full",
-          lines is not None and lines[1] == r_line("R", "item 4 of 9"), f"lines {lines!r}")
+    check("R on an item the minutes record no page for tells the agent to publish it, then give its closing line",
+          lines is not None and lines[1:] == r_lines("R", "item 4 of 9", "a filter"), f"lines {lines!r}")
+    check("R on an item with no page never tells the agent to show the item in full instead",
+          lines is not None and not any("show it in full" in line for line in lines), f"lines {lines!r}")
     lines = case.lines("4 r")
-    check("a numbered R on an item with no page tells the agent to show it in full",
-          lines is not None and numbered_r_line(4, "item 4 of 9") in lines, f"lines {lines!r}")
+    check("a numbered R on an item with no page tells the agent to publish it, then give its closing line",
+          holds_in_order(lines, numbered_r_lines(4, "item 4 of 9", "a filter")), f"lines {lines!r}")
 
 
-def test_r_on_two_waiting_items_with_a_page_for_one_hands_its_closing_line_and_shows_the_other_in_full():
+def test_r_on_an_item_whose_publish_failed_hands_the_closing_line_without_its_link():
+    case = Case(next_to_present="item 4 of 9")
+    case.minutes(f"#item_page item 4 of 9 {PAGE_1}\n\n#item_page item 4 of 9 publish failed: the Artifact tool "
+                 "timed out\n\n#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    check("R on an item whose newest `#item_page` line records a failed publish hands the closing line without a link",
+          lines is not None
+          and lines[1:] == [page_line("R", "item 4 of 9", f"Item 4 of 9, a filter · {LETTERS_AFTER_LINK}")],
+          f"lines {lines!r}")
+    case.minutes("#item_page item 4 of 9 publish failed: the Artifact tool timed out\n\n"
+                 f"#item_page item 4 of 9 {PAGE_2}\n\n#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    check("a page recorded after a failed publish gives the closing line its link again",
+          lines is not None and lines[1:] == [
+              page_line("R", "item 4 of 9", f"[Item 4 of 9, a filter]({PAGE_2}) · {LETTERS_AFTER_LINK}")],
+          f"lines {lines!r}")
+    case.minutes("#item_page item 4 of 9 publish failed:\n\n#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    check("a publish-failed line with no reason is not read, so the agent is told to publish the item",
+          lines is not None and lines[1:] == r_lines("R", "item 4 of 9", "a filter"), f"lines {lines!r}")
+
+
+def test_r_on_two_waiting_items_with_a_page_for_one_hands_its_closing_line_and_has_the_other_published():
     case = Case(next_to_present="items 5 and 6 of 9")
     case.minutes(f"#item_page item 5 of 9 {PAGE_1}\n\n#next_to_present items 5 and 6 of 9")
     lines = case.lines("r")
     closing = f"[Item 5 of 9, two small corrections]({PAGE_1}) · {LETTERS_AFTER_LINK}"
-    check("R on items 5 and 6 with a page for item 5 alone hands item 5's closing line and has item 6 shown in full",
-          lines is not None and lines[1:] == [page_line("R", "item 5 of 9", closing),
-                                              r_line("R", "item 6 of 9")], f"lines {lines!r}")
+    check("R on items 5 and 6 with a page for item 5 alone hands item 5's closing line and has item 6 published",
+          lines is not None and lines[1:] == [page_line("R", "item 5 of 9", closing)]
+          + r_lines("R", "item 6 of 9", "two small corrections"), f"lines {lines!r}")
 
 
 def test_r_ignores_an_item_page_line_in_code_or_a_comment_of_the_minutes():
@@ -619,7 +671,7 @@ def test_the_closing_line_letters_are_the_walk_skills():
 def test_r_on_a_next_to_present_line_that_names_no_item_tells_the_agent_to_show_what_it_names():
     lines = Case(next_to_present="the filter").lines("r")
     check("R when the `#next_to_present` line names no item still tells the agent, in the one wording, to show it",
-          lines is not None and lines[1] == r_line(
+          lines is not None and lines[1:] == r_meaning_lines(
               "R", "the item its minutes' `#next_to_present` line names, `the filter`,"), f"lines {lines!r}")
 
 
@@ -628,8 +680,8 @@ def test_r_whose_item_cannot_be_read_still_goes_to_the_agent():
                        (Case(next_to_present="item 4 of 9", document=None), "item 4 of 9")):
         result = case.run("r")
         lines = case.lines("r")
-        check(f"R on {item}, whose walk-document holds no such item or does not exist, tells the agent to show it",
-              not_blocked(result) and lines is not None and lines[1] == r_line("R", item), f"lines {lines!r}")
+        check(f"R on {item}, whose walk-document holds no such item or does not exist, tells the agent to publish it",
+              not_blocked(result) and lines is not None and lines[1:] == r_lines("R", item), f"lines {lines!r}")
 
 
 def test_numbered_answers():
@@ -685,13 +737,14 @@ def test_numbered_r_alone_tells_the_agent_to_show_the_items_it_names_and_records
         lines = case.lines(prompt)
         check(f"{prompt!r} tells the agent to show item 37.4, then name the waiting item, and nothing else",
               not_blocked(result) and lines is not None
-              and lines[1:] == [numbered_r_line("37.4", "item 37.4 of 9"),
-                                "Then end your message naming the item waiting for his answer, item 4 of 9."],
+              and lines[1:] == numbered_r_lines("37.4", "item 37.4 of 9", "R with a number")
+              + ["Then end your message naming the item waiting for his answer, item 4 of 9."],
               f"lines {lines!r}")
     lines = case.lines("38 r, 37.4 r")
     check("'38 r, 37.4 r' tells the agent to show both items, and gives no line for recording an answer",
           lines is not None
-          and lines[1:3] == [numbered_r_line("38", "item 38 of 9"), numbered_r_line("37.4", "item 37.4 of 9")]
+          and lines[1:9] == (numbered_r_lines("38", "item 38 of 9", "a second numbered item")
+                             + numbered_r_lines("37.4", "item 37.4 of 9", "R with a number"))
           and not any("check step" in line or "`#next_to_present`" in line for line in lines), f"lines {lines!r}")
     check("numbered R records nothing in the minutes", (case.walk / f"{WALK_NAME}-minutes.md").read_text() == before)
 
@@ -704,10 +757,13 @@ Recommendation: show it."""
 def test_repeat_and_an_item_number_is_read_as_that_number_and_r():
     case = Case(next_to_present="item 4 of 9",
                 document=NUMBERED_R_DOCUMENT + "\n" + ITEM_37_53_SECTION + "\n")
-    for prompt, number in (("repeat 37.4", "37.4"), ("Repeat 37.53.", "37.53"), ("REPEAT item 37.4", "37.4")):
+    for prompt, number, point in (("repeat 37.4", "37.4", "R with a number"),
+                                  ("Repeat 37.53.", "37.53", "an item numbered 37.53"),
+                                  ("REPEAT item 37.4", "37.4", "R with a number")):
         lines = case.lines(prompt)
         check(f"{prompt!r} tells the agent to show that item, not the waiting item",
-              lines is not None and lines[1] == numbered_r_line(number, f"item {number} of 9"), f"lines {lines!r}")
+              lines is not None and lines[1:5] == numbered_r_lines(number, f"item {number} of 9", point),
+              f"lines {lines!r}")
     result = case.run("repeat 99")
     check("'repeat 99' with no item 99 prints nothing",
           result.returncode == 0 and result.stdout == "" and result.stderr == "",
@@ -736,7 +792,8 @@ def test_an_answer_word_and_a_list_of_item_numbers_answers_each_when_each_names_
               and not any(line.startswith("The user added to the answer") for line in lines), f"lines {lines!r}")
     lines = case.lines("repeat 5 6")
     check("'repeat 5 6' tells the agent to show items 5 and 6",
-          lines is not None and lines[1:3] == [numbered_r_line("5", "item 5 of 9"), numbered_r_line("6", "item 6 of 9")],
+          lines is not None and lines[1:9] == (numbered_r_lines("5", "item 5 of 9", "two small corrections")
+                                               + numbered_r_lines("6", "item 6 of 9", "two small corrections")),
           f"lines {lines!r}")
     for prompt in ("approve 5 and 99", "repeat 5 99", "approve 5 and 6 then more", "a, 5", "approve item 5 too",
                    "defer, 5 and 6"):
@@ -776,7 +833,7 @@ def test_numbered_r_beside_other_numbered_answers():
           lines is not None
           and lines[1] == "The answer gives each item it names its own letter: item 5 of 9: A, item 6 of 9: R."
           and "R shows the item again" in lines[2]
-          and numbered_r_line("6", "item 6 of 9") in lines
+          and holds_in_order(lines, numbered_r_lines("6", "item 6 of 9", "two small corrections"))
           and not any("item 5 of 9 again" in line for line in lines)
           and "Then end your message naming the item waiting for his answer, item 6 of 9." in lines,
           f"lines {lines!r}")
@@ -926,8 +983,8 @@ def test_a_numbered_answer_within_the_waiting_items_parts_answers_the_parts():
     check("R on a part beside different letters for every part shows the item again and still gives the command",
           lines is not None and lines[1:] == [
               parts_read_line("part 1: A, part 2: D, part 3: A, part 2: R"),
-              "R on a part asks to see item 4 of 9 again: show it in full, heading included, word for word as the "
-              "walk-document has it."] + parts_different_letters_lines("--part-answer 1=A --part-answer 2=D --part-answer 3=A"),
+              *numbered_r_lines("2", "item 4 of 9", "three wording fixes in one file")]
+          + parts_different_letters_lines("--part-answer 1=A --part-answer 2=D --part-answer 3=A"),
           f"lines {lines!r}")
     lines = case.lines("1 a 2 a")
     check("'1 a 2 a' leaves part 3 unanswered, so the item stays open and nothing is recorded",
@@ -966,11 +1023,10 @@ def test_a_numbered_answer_within_the_waiting_items_parts_answers_the_parts():
               "letter, as in `1 a 2 d`."],
           f"lines {lines!r}")
     lines = case.lines("2 r")
-    check("R on a part shows the waiting item again and records nothing",
+    check("R on a part has the waiting item published and its closing line given, and records nothing",
           lines is not None and lines[1:] == [
-              parts_read_line("part 2: R"),
-              "R on a part asks to see item 4 of 9 again: show it in full, heading included, word for word as the "
-              "walk-document has it."], f"lines {lines!r}")
+              parts_read_line("part 2: R"), *numbered_r_lines("2", "item 4 of 9", "three wording fixes in one file")],
+          f"lines {lines!r}")
     lines = Case(next_to_present="item 7 of 9", document=PARTS_DOCUMENT).lines("1 a 2 d")
     check("a `Part 2.` line after a hard break, with nothing after its period, is read as a part",
           lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: D", "item 7 of 9", "2")]
@@ -1093,7 +1149,8 @@ def test_numbered_r_reads_the_walk_in_the_payloads_cwd_not_the_hooks_own():
     context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"] if not_blocked(result) else ""
     check("'37.4 r' run from outside the checkout still finds item 37.4 in the payload's cwd",
           context.startswith(f"The user answered \"37.4 r\" to item 4 of 9 of approval-walk {WALK_NAME}.\n"
-                             + numbered_r_line("37.4", "item 37.4 of 9")),
+                             + "\n".join(numbered_r_lines("37.4", "item 37.4 of 9", "R with a number",
+                                                           f" {case.walk / (WALK_NAME + '-minutes.md')}"))),
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 
@@ -1104,7 +1161,7 @@ def test_numbered_r_on_unreadable_minutes_expands_and_says_so():
     check("'6 r' on minutes that cannot be read names the failure and still says to show item 6",
           lines is not None
           and "reading the approval-walk state failed: UnicodeDecodeError" in lines[0]
-          and numbered_r_line("6", "item 6") in lines
+          and holds_in_order(lines, numbered_r_lines("6", "item 6", minutes=""))
           and not any("check step" in line for line in lines), f"lines {lines!r}")
 
 
