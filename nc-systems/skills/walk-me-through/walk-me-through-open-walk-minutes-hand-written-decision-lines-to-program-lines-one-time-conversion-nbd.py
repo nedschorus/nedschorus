@@ -90,7 +90,7 @@ MOVED_ON_TAG = "moved on, no decision"
 CONVERTED_MARKER = "#walk_minutes_hand_written_lines_converted"
 
 
-def load_check_program():
+def load_walk_me_through_check_program_module():
     spec = importlib.util.spec_from_file_location("walk_check_program", CHECK_PROGRAM_FILE)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -226,7 +226,7 @@ def proposals(program, walk_finder, parser, text, skipped_lines, moved_on_lines=
     return found, notes
 
 
-def open_walk_minutes(walk_finder, parser, pattern):
+def walk_minutes_files_of_open_approval_walks(walk_finder, parser, pattern):
     paths = []
     for path in sorted(glob.glob(pattern)):
         marker = walk_finder.next_to_present(Path(path).read_text(encoding="utf-8"), parser)
@@ -252,7 +252,7 @@ def main(argv=None):
                         help="propose a moved-on line, not an already-decided one, for line LINE of PATH; repeatable")
     parser.add_argument("--write", action="store_true", help="append the proposed lines; without it, a dry run")
     arguments = parser.parse_args(argv)
-    program = load_check_program()
+    program = load_walk_me_through_check_program_module()
     walk_finder = program.load_walk_finder()
     markdown = walk_finder.markdown_parser()
     skips, moved_on = collections.defaultdict(set), collections.defaultdict(set)
@@ -261,7 +261,7 @@ def main(argv=None):
     for path, line in arguments.as_moved_on:
         moved_on[path].add(line)
     try:
-        paths = arguments.minutes or open_walk_minutes(walk_finder, markdown, DEFAULT_MINUTES)
+        paths = arguments.minutes or walk_minutes_files_of_open_approval_walks(walk_finder, markdown, DEFAULT_MINUTES)
     except OSError as error:
         print(f"FAILED: the walk-minutes under {DEFAULT_MINUTES} could not be read: {error}")
         return 1

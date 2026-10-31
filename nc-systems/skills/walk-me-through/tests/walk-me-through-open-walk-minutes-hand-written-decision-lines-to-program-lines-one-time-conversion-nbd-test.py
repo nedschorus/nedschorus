@@ -138,7 +138,7 @@ def test_a_write_the_check_program_does_not_then_read_is_reported_as_failed():
     script = load(SCRIPT, "conversion")
     check_program = load(CHECK_PROGRAM, "check_program_blind")
     check_program.minutes_record = lambda *_: (set(), collections.Counter())
-    script.load_check_program = lambda: check_program
+    script.load_walk_me_through_check_program_module = lambda: check_program
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
         status = script.main(["--minutes", str(path), "--write"])
@@ -152,9 +152,9 @@ def test_only_open_walks_are_read_by_default():
     minutes_file("seats/closed", "# M\n\n#next_to_present item 2 of 3\n#next_to_present none, closed\n")
     minutes_file("seats/unmarked", "# M\n\nItem 1 of 3: approved.\n")
     script = load(SCRIPT, "conversion_glob")
-    check_program = script.load_check_program()
+    check_program = script.load_walk_me_through_check_program_module()
     finder = check_program.load_walk_finder()
-    found = script.open_walk_minutes(finder, finder.markdown_parser(), str(ROOT / "seats" / "*" / "docs" / "walk" / "*-minutes.md"))
+    found = script.walk_minutes_files_of_open_approval_walks(finder, finder.markdown_parser(), str(ROOT / "seats" / "*" / "docs" / "walk" / "*-minutes.md"))
     check("the default reads a walk whose last marker names an item, not a closed walk or one with no marker",
           found == [open_walk], repr(found))
 
@@ -169,7 +169,7 @@ def test_an_unreadable_minutes_file_fails_and_others_still_run():
 
     def unreadable(*_):
         raise PermissionError("permission denied")
-    script.open_walk_minutes = unreadable
+    script.walk_minutes_files_of_open_approval_walks = unreadable
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
         status = script.main([])
