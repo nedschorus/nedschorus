@@ -492,6 +492,14 @@ if [ "$ATTACH" = yes ]; then
         set-option -g set-titles on \; set-option -g set-titles-string "$SEAT_WINDOW_TITLE_FORMAT" \; \
         set-option -g mouse on \; set-option -s copy-command pbcopy
 fi
+# A detached pane closes when the supervisor exits, so a refusal it prints
+# there is never seen and the launch would still exit 0. The supervisor's own
+# GitHub token check runs first, outside the pane, so a missing or unreadable
+# token file stops this launch with the supervisor's refusal and its exit 5.
+# A seat already running is left to the "already exists" line below.
+if ! tmux -L "$SEAT_TMUX_SOCKET" has-session -t "=$AGENT_NAME" 2>/dev/null; then
+    python3 "$SUPERVISOR" --agent "$AGENT_NAME" --agent-seat-github-token-file-readable-check-only
+fi
 # The trailing `exit $?` stops the pane's shell from exec'ing into the
 # supervisor: with tmux as its direct parent, tmux wakes it at once after a
 # `kill -STOP`. The pane still closes with the supervisor's exit status.
