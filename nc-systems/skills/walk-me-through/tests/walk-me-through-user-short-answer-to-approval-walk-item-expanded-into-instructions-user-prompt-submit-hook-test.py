@@ -44,6 +44,8 @@ WALK_DOCUMENT = """# A walk
 
 The opening sentence changes.
 
+#case_against none.
+
 ## Item 4 of 9: a filter
 
 A filter would hide old rows. The strongest case against: old rows confuse readers.
@@ -1245,9 +1247,9 @@ def test_named_programs_exist():
 def test_each_check_command_the_hook_names_runs_on_the_real_program():
     """The command is run as the hook prints it, plus --counts-log, so no test line reaches the log-store.
     Item 3 has no `#new` line, so no fast read, and no model, is called."""
-    for prompt, word in (("a", "approved ("), ("ao", "approved #approved_obvious ("),
-                         ("aa", "approved #approved_after_advisor ("),
-                         ("o2", "approved option 2 ("), ("o3", "approved option 3 (")):
+    for prompt, word in (("a", "approved #case_against_none ("), ("ao", "approved #approved_obvious #case_against_none ("),
+                         ("aa", "approved #approved_after_advisor #case_against_none ("),
+                         ("o2", "approved option 2 #case_against_none ("), ("o3", "approved option 3 #case_against_none (")):
         case = Case(next_to_present="item 3 of 9")
         lines = case.lines(prompt) or []
         commands = [line.split("`")[1] for line in lines if "`python3 " in line and " check" in line]
@@ -1267,7 +1269,7 @@ def test_each_check_command_the_hook_names_runs_on_the_real_program():
     result = subprocess.run((commands or ["false"])[0].split() + ["--counts-log", str(case.checkout.parent / "c.tsv")],
                             capture_output=True, text=True, cwd=case.checkout)
     check("the check command the hook names for 'd' runs and records the answer as disapproved",
-          result.returncode == 0 and "item 3 of 9: the user answered disapproved ("
+          result.returncode == 0 and "item 3 of 9: the user answered disapproved #case_against_none ("
           in (case.walk / f"{WALK_NAME}-minutes.md").read_text(), f"lines {lines!r}, stdout {result.stdout!r}")
     # Z's text names the check step and its flag, not the whole command.
     case = Case(next_to_present="item 3 of 9")
@@ -1275,7 +1277,7 @@ def test_each_check_command_the_hook_names_runs_on_the_real_program():
     result = subprocess.run(CHECK.strip("`").split() + ["--deferred"], capture_output=True, text=True, cwd=case.checkout)
     check("Z's text names --deferred, and the check step run with it records the answer as deferred",
           any("--deferred" in line for line in lines) and result.returncode == 0
-          and "item 3 of 9: the user answered deferred (" in (case.walk / f"{WALK_NAME}-minutes.md").read_text(),
+          and "item 3 of 9: the user answered deferred #case_against_none (" in (case.walk / f"{WALK_NAME}-minutes.md").read_text(),
           f"lines {lines!r}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 

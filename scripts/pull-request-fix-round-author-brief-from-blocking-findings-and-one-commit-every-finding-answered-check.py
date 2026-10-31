@@ -5,16 +5,20 @@ Usage:
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number>
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --check [--answers FILE] [--commit REV] [--after-conflict-merge]
 
-The round is set by merge-lane-2's latest review that requests changes, together with every later
-review of merge-lane-2's that comments on the same commit, where merge-lane-2 can add or re-post
-blockers. That commit is the frozen-head. The blocking findings are those reviews' inline comments
-whose body starts BLOCKING_MARKER; the bodies' free text is never parsed for findings. A blocker
+The round is set by merge-lane-2's latest review that requests changes, as long as every later
+review of merge-lane-2's comments on the same commit, where merge-lane-2 can add or re-post
+blockers. That commit is the frozen-head. The round's reviews are that review, then every other
+review of the frozen-head posted after merge-lane-2's review before it, whoever posted it and
+whatever its state, apart from PENDING and DISMISSED: the commissioned reviewer posts its review as
+a comment, before merge-lane-2's. The blocking findings are the round's reviews' inline comments
+whose body starts with a match of BLOCKING_MARKER_PATTERN; the bodies' free text is never parsed for findings. A blocker
 re-posted with the same path, line and body counts once. A review's stated **Blocking: N** is
-checked against its own marked comments, or, when it has none, against those of the later reviews,
-which then re-post its blockers.
+checked against its own marked comments, or, when it has none, against those of the reviews after
+it in that order, which then re-post its blockers.
 
 Without --check, run in the author's checkout: refuse when the pull request's head has moved past
-the frozen-head, else print the brief: the frozen-head, each blocking finding word for word, how to
+the frozen-head, else print the brief: the frozen-head, ADVISOR_FIX_ROUND_INSTRUCTION when the
+round is merge-lane-2's third changes-requested review and on no other, each blocking finding word for word, how to
 dispatch the fix-round subagent in a git worktree of its own and push from it, the round's rules,
 and the --check command to finish with, which the subagent runs in its own worktree.
 
@@ -49,7 +53,9 @@ git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 MERGE_LANE_2_REVIEWER_LOGIN = "ned-review-merge"
-BLOCKING_MARKER = "**Blocks.**"
+# Reviewers spell the mark several ways, such as "**Blocks.**", "**Blocks:**", "**Blocks**" or "**Blocks** (...)"; no instruction fixes one.
+BLOCKING_MARKER_PATTERN = re.compile(r"\*\*Blocks\b[^*\n]*\*\*")
+BLOCKING_MARKER_DESCRIPTION = "the bold word **Blocks**"
 BLOCKING_COUNT_PATTERN = re.compile(r"\*\*Blocking:\s*(\d+)\*\*")
 ANSWER_START_PATTERN = re.compile(r"^(\d+)\.\s+(\S.*)$")
 GH_TIMEOUT_SECONDS = 60
@@ -91,6 +97,10 @@ WORKTREE_REMOVAL_INSTRUCTION = (
     "locked worktree).\n"
     "   2. Once the worktree is removed, run: git branch -D {local_branch}")
 PULL_REQUEST_FIELDS = ("url", "headRefOid", "headRefName")
+ADVISOR_FIX_ROUND_NUMBER = 3
+ADVISOR_FIX_ROUND_INSTRUCTION = (
+    "This is the pull request's third fix-round, its last before merge-lane-2 brings it to the user: "
+    "before you change anything, call the advisor with the blocking findings and the fix you plan.")
 
 
 class Refused(Exception):
@@ -167,23 +177,33 @@ def pull_request(number):
 
 
 def round_reviews(number, reviewer_login):
-    """merge-lane-2's latest changes-requested review, then its later reviews of the same commit."""
+    """merge-lane-2's latest changes-requested review, then every other review of the same commit
+    posted after merge-lane-2's review before it; and the round's number, which counts
+    merge-lane-2's changes-requested reviews."""
     reviews = gh_json_lines(["api", "--paginate", f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews",
                              "--jq", ".[]"])
-    own = [review for review in reviews
+    own = [(position, review) for position, review in enumerate(reviews)
            if (review.get("user") or {}).get("login") == reviewer_login
            and review.get("state") != "PENDING"]
     if not own:
         raise Refused(f"Pull request {number} has no review by {reviewer_login}, merge-lane-2's "
                       "account, so there is no fix-round to brief.\n"
                       "Wait for merge-lane-2's review; run this again when it requests changes.")
-    requested = [index for index, review in enumerate(own) if review.get("state") == "CHANGES_REQUESTED"]
+    requested = [index for index, (_, review) in enumerate(own) if review.get("state") == "CHANGES_REQUESTED"]
     if requested:
-        round_set = own[requested[-1]:]
-        if all(review.get("state") == "COMMENTED"
-               and review.get("commit_id") == round_set[0].get("commit_id") for review in round_set[1:]):
-            return round_set
-    latest = own[-1]
+        anchor_position, anchor = own[requested[-1]]
+        frozen_head = anchor.get("commit_id")
+        if all(review.get("state") == "COMMENTED" and review.get("commit_id") == frozen_head
+               for _, review in own[requested[-1] + 1:]):
+            # The commissioned reviewer posts before merge-lane-2's changes-requested review, so
+            # the round starts after merge-lane-2's previous review, which closed the round before.
+            start = own[requested[-1] - 1][0] + 1 if requested[-1] else 0
+            others = [review for position, review in enumerate(reviews)
+                      if position >= start and position != anchor_position
+                      and review.get("commit_id") == frozen_head
+                      and review.get("state") not in ("PENDING", "DISMISSED")]
+            return [anchor, *others], len(requested)
+    latest = own[-1][1]
     on_commit = f" on commit {latest.get('commit_id')}" if latest.get("state") == "COMMENTED" else ""
     raise Refused(f"merge-lane-2's latest review of pull request {number} ({latest.get('html_url')}) "
                   f"is {latest.get('state')}{on_commit}, not CHANGES_REQUESTED, so there is no fix-round to brief.\n"
@@ -202,7 +222,7 @@ def finding_identity(comment):
 
 def marked(comments):
     return [comment for comment in comments
-            if (comment.get("body") or "").lstrip().startswith(BLOCKING_MARKER)]
+            if BLOCKING_MARKER_PATTERN.match((comment.get("body") or "").lstrip())]
 
 
 def without_reposts(comments):
@@ -221,15 +241,15 @@ def blocking_findings(number, reviews):
     marked_by_review = [marked(comments) for comments in comments_by_review]
     findings = without_reposts([comment for found in marked_by_review for comment in found])
     named = review_links(reviews)
-    whose = "its" if len(reviews) == 1 else "their"
     asked_about = reviews[0].get("html_url")
+    whose = "its" if len(reviews) == 1 else f"the reviews {named}'"
     ask = ("Until merge-lane-2 answers, change nothing and push nothing.\n"
            f"Ask merge-lane-2 with SendMessage which findings block, naming its changes-requested review, "
            f"{asked_about}")
     if not findings:
         total = sum(len(comments) for comments in comments_by_review)
-        raise Refused(f"merge-lane-2's review {named} requests changes, but none of {whose} "
-                      f"{total} inline comments starts with {BLOCKING_MARKER}, the mark this "
+        raise Refused(f"merge-lane-2's review {asked_about} requests changes, but none of {whose} "
+                      f"{total} inline comments starts with {BLOCKING_MARKER_DESCRIPTION}, the mark this "
                       "program reads blocking findings by.\n"
                       + ask + "; do not guess them from the reviews' text.")
     for index, review in enumerate(reviews):
@@ -242,8 +262,8 @@ def blocking_findings(number, reviews):
         if int(stated.group(1)) != len(counted):
             where = ("its own inline comments" if own or len(reviews) == 1
                      else "the inline comments of the reviews after it")
-            raise Refused(f"merge-lane-2's review {review.get('html_url')} says **Blocking: {stated.group(1)}**, "
-                          f"but {len(counted)} of {where} start with {BLOCKING_MARKER}"
+            raise Refused(f"The review {review.get('html_url')} says **Blocking: {stated.group(1)}**, "
+                          f"but {len(counted)} of {where} start with {BLOCKING_MARKER_DESCRIPTION}"
                           + (f" ({named})" if len(reviews) > 1 else "") + ".\n"
                           + ask + ", and both counts.")
     return findings
@@ -256,17 +276,18 @@ def finding_place(comment):
 
 def round_facts(number, reviewer_login):
     url, head, branch = pull_request(number)
-    reviews = round_reviews(number, reviewer_login)
+    reviews, fix_round_number = round_reviews(number, reviewer_login)
     review = reviews[0]
     frozen_head = review.get("commit_id")
     if not frozen_head:
         raise StepFailed(f"merge-lane-2's review {review.get('html_url')} carries no commit_id")
     return (url, head, branch, review_links(reviews), review.get("id"), frozen_head,
-            blocking_findings(number, reviews))
+            blocking_findings(number, reviews), fix_round_number)
 
 
 def print_brief(number, reviewer_login):
-    url, head, branch, review_link, review_id, frozen_head, findings = round_facts(number, reviewer_login)
+    (url, head, branch, review_link, review_id, frozen_head, findings,
+     fix_round_number) = round_facts(number, reviewer_login)
     if head != frozen_head:
         raise Refused(f"Pull request {url} has head {head}, but merge-lane-2 reviewed {frozen_head}; "
                       "a commit was pushed after the review, so this fix-round has already pushed.\n"
@@ -275,7 +296,11 @@ def print_brief(number, reviewer_login):
     lines = [
         f"Fix-round brief for pull request {url}",
         f"Frozen-head: {frozen_head}",
-        f"merge-lane-2's review: {review_link}",
+        f"The round's reviews: {review_link}",
+    ]
+    if fix_round_number == ADVISOR_FIX_ROUND_NUMBER:
+        lines += ["", ADVISOR_FIX_ROUND_INSTRUCTION]
+    lines += [
         "",
         f"Blocking findings ({len(findings)}), word for word:",
     ]
@@ -306,7 +331,7 @@ def print_brief(number, reviewer_login):
         "entry after it: what you fixed, or why the finding does not hold. Never commit it: "
         "the branch's .gitignore may not leave it out, and the check in step 7 refuses a commit "
         "that holds it.",
-        f"6. Run the affected test suites: {PRE_PUSH_TEST_COMMAND}",
+        f"6. Run the affected nc-test-suites: {PRE_PUSH_TEST_COMMAND}",
         "   If a suite fails because of this round's change, fix it in the same commit; if it "
         "fails for another cause, tell merge-lane-2 with SendMessage before pushing.",
         f"7. Run the check: {check_command}",
@@ -442,7 +467,8 @@ def unnamed_files(base, fix_commit, findings):
 
 
 def check_round(number, reviewer_login, answers_path, commit_name, after_conflict_merge):
-    url, head, _branch, review_link, _review_id, frozen_head, findings = round_facts(number, reviewer_login)
+    (url, head, _branch, review_link, _review_id, frozen_head, findings,
+     _fix_round_number) = round_facts(number, reviewer_login)
     answers = read_answers(answers_path or default_answers_path(number), len(findings))
     commit = git(["rev-parse", "--verify", f"{commit_name}^{{commit}}"]).strip()
     git(["cat-file", "-e", f"{frozen_head}^{{commit}}"])
@@ -467,7 +493,7 @@ def check_round(number, reviewer_login, answers_path, commit_name, after_conflic
     pushed = (f"New head {commit}, one fix-round on top of the frozen-head {frozen_head}."
               if commit != frozen_head else
               f"Nothing pushed; the head stays the frozen-head {frozen_head}.")
-    message = [f"Fix-round on pull request {url}, answering merge-lane-2's review "
+    message = [f"Fix-round on pull request {url}, answering the round's reviews "
                f"{review_link}. {pushed}"]
     message += [f"{index}. {finding_place(findings[index - 1])}: {answers[index]}"
                 for index in answers]

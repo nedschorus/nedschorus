@@ -105,19 +105,27 @@ class TranscriptProblem(Exception):
 
 def project_directory_for_working_directory(working_directory: Path) -> Path:
     """Return the harness project directory holding the worktree's sessions."""
-    # Same rule as claude-code-session-transcript-project-directory-for-agent-seat-common.py,
+    # Same rule as claude-code-session-transcript-lookup-and-text-search-common.py,
     # copied because this script runs copied beside hooks that lack that module; that
     # module's test fails if the two disagree.
     return PROJECTS_ROOT / re.sub(r"[^a-zA-Z0-9]", "-", str(Path(working_directory).resolve()))
 
 
+def transcript_paths_for_session(session_id: str, working_directory: Path) -> list:
+    """Return the keyed transcript when it exists, else every project directory's copy, sorted."""
+    # Same rule as the common module's
+    # claude_code_session_transcript_paths_for_session_id_in_working_directory_project_directory_if_present_else_in_every_project_directory,
+    # copied for the same reason as the folder rule above; that module's test fails if the two disagree.
+    keyed_path = project_directory_for_working_directory(working_directory) / f"{session_id}.jsonl"
+    if keyed_path.is_file():
+        return [keyed_path]
+    return sorted(PROJECTS_ROOT.glob(f"*/{session_id}.jsonl"))
+
+
 def find_transcript_path(session_id: str, working_directory: Path) -> Path:
     """Find a session transcript by keyed lookup, then by search."""
     keyed_path = project_directory_for_working_directory(working_directory) / f"{session_id}.jsonl"
-    if keyed_path.is_file():
-        return keyed_path
-
-    matches = sorted(PROJECTS_ROOT.glob(f"*/{session_id}.jsonl"))
+    matches = transcript_paths_for_session(session_id, working_directory)
     if len(matches) == 1:
         return matches[0]
     if not matches:

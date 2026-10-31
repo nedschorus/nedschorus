@@ -76,6 +76,11 @@ _transcript_mirror_spec = importlib.util.spec_from_file_location(
     Path(__file__).resolve().parents[2] / "scripts" / "transcript-mirror-to-log-store.py")
 _transcript_mirror = importlib.util.module_from_spec(_transcript_mirror_spec)
 _transcript_mirror_spec.loader.exec_module(_transcript_mirror)
+_claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_lookup_and_text_search_common",
+    Path(__file__).resolve().parents[2] / "scripts" / "claude-code-session-transcript-lookup-and-text-search-common.py")
+_claude_code_session_transcript_lookup_and_text_search_common = importlib.util.module_from_spec(_claude_code_session_transcript_lookup_and_text_search_common_spec)
+_claude_code_session_transcript_lookup_and_text_search_common_spec.loader.exec_module(_claude_code_session_transcript_lookup_and_text_search_common)
 _, _AGENT_SESSION_FILES = _transcript_mirror.split_destination(
     _transcript_mirror.LOG_STORE_AGENT_SESSION_FILES_DESTINATION)
 
@@ -123,9 +128,9 @@ VERDICT_CHANGED_MESSAGE = (
     "Where the head's verdict is not the one meant, the answer is a finding instead, and the author fixes the "
     "guard. When some differences are meant and others are not, each still gets its own answer: its line, or "
     "a finding.\n"
-    "The answers go in the review of the head commit being merged; after a fix-round, that is the review of "
+    "The answers go in the review of the nc-head-commit being merged; after a fix-round, that is the review of "
     "the fix-round's head; answers in a review of an earlier head do not count, so the review of the fix-round's head repeats them.\n"
-    "merge-lane-2 holds the merge until every difference that this check, run on the head commit being merged, "
+    "merge-lane-2 holds the merge until every difference that this check, run on the nc-head-commit being merged, "
     "finds has its \"verdict change intended\" line. When no NEW GUARD REFUSES block follows, merge-lane-2 then "
     "merges despite the exit 1; when one follows, its refused commands need their \"refusal right\" lines too, "
     "as that block says. A difference answered with a finding holds the merge until the author's fix makes this "
@@ -147,10 +152,10 @@ NEW_GUARD_REFUSES_MESSAGE = (
     "example, with a made-up guard path: refusal right: scripts/example-guard-hook.py | /tmp | 'tmux kill-server'.\n"
     "Where the refusal is wrong, the answer is a finding instead, and the author then narrows the guard so that "
     "it lets that command through. The other refused commands still each get their \"refusal right\" line.\n"
-    "The answers go in the review of the head commit being merged; after a fix-round, that is the review of "
+    "The answers go in the review of the nc-head-commit being merged; after a fix-round, that is the review of "
     "the fix-round's head; answers in a review of an earlier head do not count, so the review of the fix-round's head repeats them.\n")
 NEW_GUARD_REFUSES_ONLY_ENDING = (
-    "merge-lane-2 holds the merge until every refused command that this check, run on the head commit being "
+    "merge-lane-2 holds the merge until every refused command that this check, run on the nc-head-commit being "
     "merged, lists has its \"refusal right\" line, and then merges despite the exit 1. A refusal answered with a "
     "finding holds the merge until the author's narrowed guard no longer refuses that command, so the check "
     "no longer lists it.")
@@ -267,10 +272,6 @@ def stop_deferred():
 
 # ---------------------------------------------------------------- step 1: the pairs
 
-def raise_walk_failed(error):
-    raise ReplayFailed(f"reading the transcripts failed: {error}")
-
-
 def recorded_command_pairs(transcript_directories):
     """Return (the distinct [command, working directory] pairs of the Bash tool calls in first-seen order,
     the number of transcript lines that are not JSON)."""
@@ -279,36 +280,37 @@ def recorded_command_pairs(transcript_directories):
     for directory in transcript_directories:
         if not os.path.isdir(directory):
             raise ReplayFailed(f"transcript directory {directory} does not exist")
-        for parent, _, names in os.walk(directory, onerror=raise_walk_failed):
-            for name in sorted(names):
-                if not name.endswith(".jsonl"):
+    # ripgrep leaves out the transcripts with no Bash call faster than Python reads them.
+    paths, problems = _claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcripts_matching_any_pattern_ignoring_case(
+        transcript_directories, ['"Bash"'], include_subagents=True)
+    if problems:
+        raise ReplayFailed("reading the transcripts failed: " + "; ".join(problems))
+    for path in paths:
+        try:
+            handle = open(path, "rb")
+        except FileNotFoundError:
+            continue  # Removed after the search listed it.
+        except OSError as error:
+            raise ReplayFailed(f"transcript {path} cannot be read: {error}") from error
+        with handle:
+            for line in handle:
+                if b'"Bash"' not in line:
                     continue
-                path = os.path.join(parent, name)
                 try:
-                    handle = open(path, "rb")
-                except FileNotFoundError:
-                    continue  # Removed after the walk listed it.
-                except OSError as error:
-                    raise ReplayFailed(f"transcript {path} cannot be read: {error}") from error
-                with handle:
-                    for line in handle:
-                        if b'"Bash"' not in line:
-                            continue
-                        try:
-                            record = json.loads(line)
-                        except ValueError:
-                            lines_not_json += 1  # Most often the last line of a transcript still being written.
-                            continue
-                        message = record.get("message")
-                        content = message.get("content") if isinstance(message, dict) else None
-                        if not isinstance(content, list):
-                            continue
-                        for item in content:
-                            if (isinstance(item, dict) and item.get("type") == "tool_use"
-                                    and item.get("name") == "Bash"):
-                                command = (item.get("input") or {}).get("command")
-                                if isinstance(command, str):
-                                    seen.setdefault((command, record.get("cwd") or "/"), None)
+                    record = json.loads(line)
+                except ValueError:
+                    lines_not_json += 1  # Most often the last line of a transcript still being written.
+                    continue
+                message = record.get("message")
+                content = message.get("content") if isinstance(message, dict) else None
+                if not isinstance(content, list):
+                    continue
+                for item in content:
+                    if (isinstance(item, dict) and item.get("type") == "tool_use"
+                            and item.get("name") == "Bash"):
+                        command = (item.get("input") or {}).get("command")
+                        if isinstance(command, str):
+                            seen.setdefault((command, record.get("cwd") or "/"), None)
     return [list(pair) for pair in seen], lines_not_json
 
 
@@ -506,6 +508,12 @@ def read_codex_exec(guard, command, working_directory, search_file_directory):
     return "refused" if reason else "passed", reason
 
 
+def read_ghi_md_whole_file_replacement(guard, command, working_directory, search_file_directory):
+    # The marker file is never read here: replaying a command must not consume an agent's reason.
+    replaced = guard.ghi_md_replaced_by_command(command, working_directory)
+    return ("refused", f"replaces {replaced}") if replaced else ("passed", None)
+
+
 class MarkdownChangingCheckoutProbeRunner(StubbedProbeRunner):
     """Answers the Markdown push reminder's git as a checkout whose every ref changes one Markdown file.
 
@@ -554,6 +562,7 @@ GUARDS = {
     "scripts/hand-typed-codex-exec-command-refusal-hook.py": read_codex_exec,
     "nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py":
         read_markdown_push_reminder,
+    ".claude/hooks/ghi-md-whole-file-replacement-soft-block.py": read_ghi_md_whole_file_replacement,
 }
 SEARCH_FILE_GUARD = "scripts/search-file-argument-read-as-option-guard-hook.py"
 

@@ -23,7 +23,7 @@ Terms are the glossary's (`docs/nedschorus-wiki/nedschorus-glossary.md`), plus t
 ## 1. What the cold-read-grid did before this design was built
 
 Facts from origin/main at ad9bfca, which is what "today" means in this
-section. Line numbers are that commit's, and none of them holds today: the
+section. Line numbers are that commit's, where every file a bullet below names, tests included, was in `scripts/` rather than `nc-systems/cold-read/`, and none of them holds today: the
 code in every bullet below was replaced by the code this design specifies.
 The section is kept because it is why the change was made.
 

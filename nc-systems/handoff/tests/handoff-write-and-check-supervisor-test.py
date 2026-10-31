@@ -1049,6 +1049,22 @@ def run_roster_never_blocks_a_handoff_cases(workspace: Path):
     check("a missing transcript tells the agent to name its subagents by hand",
           "not derived" in missing.stdout and "by hand" in missing.stdout, missing.stdout)
 
+    # The session's transcript in two project folders, neither keyed: no one of them is the session's.
+    two_folders_session_id = "00000000-0000-4000-8000-0000000002f0"
+    for folder in ("-fixture-project", "-another-fixture-project"):
+        write_fixture_transcript(home / ".claude" / "projects" / folder / f"{two_folders_session_id}.jsonl")
+    two_folders = run_writer(
+        handoffs, "carry on\n", "--agent", "rostertwofolderscase",
+        environment_overrides={"HOME": str(home), "CLAUDE_CODE_SESSION_ID": two_folders_session_id},
+    )
+    two_folders_body = handoff_text(handoffs, "rostertwofolderscase")
+    check("a transcript in two project folders still writes the handoff, with no roster field",
+          "next-step: carry on" in two_folders_body and "spawned-subagent-" not in two_folders_body,
+          two_folders_body)
+    check("a transcript in two project folders tells the agent no single transcript was found",
+          "no single transcript found" in two_folders.stdout and "by hand" in two_folders.stdout,
+          two_folders.stdout)
+
     # No session id at all — the case every existing test already runs under.
     unidentified = run_writer(handoffs, "carry on\n", "--agent", "rosterunidentifiedcase")
     check("a session with no id still writes the handoff",
@@ -1182,7 +1198,7 @@ def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Pat
     # (d) The reviewer's route, reproduced at 08398ce. A supervised parent seat
     # has handed off once, and its supervisor has consumed that handoff. A
     # child `claude -p` the parent started in another seat's directory -- as
-    # scripts/ghi-info-ask.py starts one in ghi-info -- inherits the parent's
+    # scripts/ghi-guide-agent-ask.py starts one in ghi-guide-agent -- inherits the parent's
     # three variables but has its own CLAUDE_CODE_SESSION_ID. Its handoff must
     # land under its own directory's name and leave the parent's untouched:
     # taken under the parent's name, it passes the foreign-claim check, raises
@@ -1614,21 +1630,23 @@ def run_completed_task_prune_remote_store_cases(workspace: Path):
           writer.log_store_task_list_copy_location_in_scp_form(None, Path("/home/nedlern/x")))
 
 
-with tempfile.TemporaryDirectory() as temporary_directory:
+with tempfile.TemporaryDirectory() as temporary_directory_name:
+    # Resolved, as the cwd the program reports is, where TMPDIR is reached through a link.
+    temporary_directory = Path(temporary_directory_name).resolve()
     run_collapse_cases()
-    run_written_by_session_field_cases(Path(temporary_directory))
-    run_multi_line_next_step_cases(Path(temporary_directory))
-    run_counter_cases(Path(temporary_directory))
-    run_invocation_cases(Path(temporary_directory))
-    run_liveness_report_cases(Path(temporary_directory))
-    run_console_identity_case(Path(temporary_directory))
-    run_agent_name_and_claim_cases(Path(temporary_directory))
-    run_seat_name_the_supervisor_does_not_answer_to_cases(Path(temporary_directory))
-    run_spawned_subagent_roster_cases(Path(temporary_directory))
-    run_roster_never_blocks_a_handoff_cases(Path(temporary_directory))
-    run_seat_name_and_directory_from_the_handoff_supervisor_cases(Path(temporary_directory))
-    run_completed_task_prune_cases(Path(temporary_directory))
-    run_completed_task_prune_remote_store_cases(Path(temporary_directory))
+    run_written_by_session_field_cases(temporary_directory)
+    run_multi_line_next_step_cases(temporary_directory)
+    run_counter_cases(temporary_directory)
+    run_invocation_cases(temporary_directory)
+    run_liveness_report_cases(temporary_directory)
+    run_console_identity_case(temporary_directory)
+    run_agent_name_and_claim_cases(temporary_directory)
+    run_seat_name_the_supervisor_does_not_answer_to_cases(temporary_directory)
+    run_spawned_subagent_roster_cases(temporary_directory)
+    run_roster_never_blocks_a_handoff_cases(temporary_directory)
+    run_seat_name_and_directory_from_the_handoff_supervisor_cases(temporary_directory)
+    run_completed_task_prune_cases(temporary_directory)
+    run_completed_task_prune_remote_store_cases(temporary_directory)
 
 print()
 if failures:

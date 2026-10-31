@@ -10,6 +10,7 @@ import os
 import pathlib
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -593,12 +594,74 @@ def stamp_provenance(
     report.write_text(stamp + report.read_text(encoding="utf-8"), encoding="utf-8")
 
 
+TIMED_OUT_CAUSE_CLASS = "timed-out"
+# The grid sends SIGKILL to a launcher 5 seconds after SIGTERM; the reviewer's
+# process group must be killed before that, or it outlives the launcher.
+REVIEWER_PROCESS_GROUP_STOP_GRACE_SECONDS = 1.0
+
+
+def stop_process_tree(process: subprocess.Popen, grace_seconds: float = 5.0) -> None:
+    """Stop the process group led by `process`, started with
+    start_new_session=True, and reap `process`."""
+    # macOS answers EPERM, not ESRCH, for a group whose members have all exited.
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        process.wait(timeout=grace_seconds)
+    except subprocess.TimeoutExpired:
+        pass
+    # Children may remain in the group after the leader exits.
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    process.wait()
+
+
+def exit_on_sigterm(signal_number, _frame):
+    raise SystemExit(128 + signal_number)
+
+
+def run_reviewer_program_in_own_process_group_until_timeout(
+    command: list, stdin_text, child_environment, timeout_seconds: float,
+) -> subprocess.CompletedProcess:
+    """Run `command` in a session of its own and return its result; when it
+    runs past `timeout_seconds`, kill its whole process group and return a
+    result whose returncode is None. The group is also killed when this
+    process is interrupted or sent SIGTERM while waiting."""
+    # The reviewer's own session puts it outside the group the grid stops, so
+    # SIGTERM must reach the except BaseException handler below that stops
+    # the reviewer's group.
+    signal.signal(signal.SIGTERM, exit_on_sigterm)
+    process = subprocess.Popen(
+        command,
+        # communicate closes stdin after writing stdin_text, or at once when it is None.
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        cwd=REPO_ROOT, env=child_environment, text=True, start_new_session=True)
+    try:
+        try:
+            stdout, stderr = process.communicate(stdin_text, timeout=timeout_seconds)
+            return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        except subprocess.TimeoutExpired:
+            stop_process_tree(process, REVIEWER_PROCESS_GROUP_STOP_GRACE_SECONDS)
+            stdout, stderr = process.communicate()
+            return subprocess.CompletedProcess(command, None, stdout, stderr)
+    except BaseException:
+        # Not gated on the leader running: it may have exited while a
+        # descendant still holds its pipes, which keeps communicate waiting.
+        stop_process_tree(process, REVIEWER_PROCESS_GROUP_STOP_GRACE_SECONDS)
+        raise
+
+
 def run_model_chain(
     *, program: str, runtime: str, chain, effort: str, build_invocation,
     prompt: str, report: pathlib.Path, cell: str, tier: str, target_argument: str,
     baseline, cell_started_at: float, prompt_file_argument: str = "",
     recover_report_from_stdout=None, model_to_effort=None,
     recognised_failure_texts_for_model=None, child_environment=None,
+    per_model_run_timeout_seconds=None,
 ) -> int:
     """Try models until one produces a report, then stamp the report."""
     # build_invocation must apply the same per-model effort mapping used by the stamp.
@@ -618,16 +681,20 @@ def run_model_chain(
         )
         # Both streams carry failure diagnostics; stderr also carries the runtime's token total.
         try:
-            completed = subprocess.run(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=REPO_ROOT,
-                env=child_environment,
-                text=True,
-                check=False,
-                **stdin_arguments,
-            )
+            if per_model_run_timeout_seconds is None:
+                completed = subprocess.run(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=REPO_ROOT,
+                    env=child_environment,
+                    text=True,
+                    check=False,
+                    **stdin_arguments,
+                )
+            else:
+                completed = run_reviewer_program_in_own_process_group_until_timeout(
+                    command, stdin_text, child_environment, per_model_run_timeout_seconds)
         except OSError as error:
             failed_attempts.append(f"{model}({type(error).__name__})")
             print(f"{program}: {model} could not be run: {error}", file=sys.stderr)
@@ -639,6 +706,17 @@ def run_model_chain(
                             if recognised_failure_texts_for_model else ())
         if completed.stderr:
             print(completed.stderr, file=sys.stderr, end="")
+        if completed.returncode is None:
+            failed_attempts.append(f"{model}(timed-out)")
+            if completed.stdout:
+                print(completed.stdout, file=sys.stderr)
+            print(f"{program}: {model} did not finish within "
+                  f"{per_model_run_timeout_seconds:g} seconds, so the cell stopped it "
+                  "and every process it started.", file=sys.stderr)
+            print(cause_line(program, TIMED_OUT_CAUSE_CLASS,
+                             f"no result within {per_model_run_timeout_seconds:g} seconds"),
+                  file=sys.stderr)
+            continue
         if completed.returncode != 0:
             failed_attempts.append(f"{model}(exit{completed.returncode})")
             if completed.stdout:
@@ -715,6 +793,7 @@ def run_cell(
     tier_to_model_chain: dict, tier_to_effort: dict, invocation_builder,
     recover_report_from_stdout=None, recognised_failure_texts_for_model=None,
     stage_report_outside_checkout: bool = False, child_environment=None,
+    per_model_run_timeout_seconds=None,
 ) -> int:
     # Include failed attempts in the cell's total cost.
     cell_started_at = time.time()
@@ -778,6 +857,7 @@ def run_cell(
             recover_report_from_stdout=recover_report_from_stdout,
             recognised_failure_texts_for_model=recognised_failure_texts_for_model,
             child_environment=child_environment,
+            per_model_run_timeout_seconds=per_model_run_timeout_seconds,
         )
         if exit_code == 0 and staging_directory is not None:
             exit_code = move_staged_report(program, reviewer_report, report)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for handoff-agent-seat-died-without-session-handoff-restart-watcher.py.
+"""Tests for handoff-agent-crash-watcher.py.
 
-Run: python3 nc-systems/handoff/tests/handoff-agent-seat-died-without-session-handoff-restart-watcher-test.py
+Run: python3 nc-systems/handoff/tests/handoff-agent-crash-watcher-test.py
 
 No case restarts an agent-seat or opens a window on the Mac. The decision cases
 drive the program's Watcher with a scripted assessment and recorded stand-ins
@@ -24,10 +24,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
-SCRIPT_PATH = SYSTEM_DIRECTORY / "handoff-agent-seat-died-without-session-handoff-restart-watcher.py"
+SCRIPT_PATH = SYSTEM_DIRECTORY / "handoff-agent-crash-watcher.py"
 REPOSITORY = SYSTEM_DIRECTORY.parent.parent
 
-_spec = importlib.util.spec_from_file_location("handoff_agent_seat_died_without_session_handoff_restart_watcher",
+_spec = importlib.util.spec_from_file_location("handoff_agent_crash_watcher",
                                                SCRIPT_PATH)
 watcher_module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(watcher_module)
@@ -225,9 +225,9 @@ def run_decision_cases(root: Path):
           repr(harness.decisions()))
 
     harness = Harness(root / "never-seen")
-    harness.verdicts["ghi-info"] = ("resume", ("session-id", "found"))
-    harness.run(SEEN_RUNNING, seats=("ghi-info",))
-    harness.run(SEEN_RUNNING + timedelta(minutes=2), seats=("ghi-info",))
+    harness.verdicts["ghi-guide-agent"] = ("resume", ("session-id", "found"))
+    harness.run(SEEN_RUNNING, seats=("ghi-guide-agent",))
+    harness.run(SEEN_RUNNING + timedelta(minutes=2), seats=("ghi-guide-agent",))
     check("a seat this watcher never saw running is not restarted",
           harness.recoveries == [], repr(harness.recoveries))
 
@@ -899,7 +899,7 @@ def run_window_words_cases(root: Path):
               / "20261012T031600Z-merge-lane-2-recovery-failed.txt")
     notice_words = ["/usr/bin/python3",
                     "/home/nedlern/Projects/nedschorus/nc-systems/handoff/"
-                    "handoff-agent-seat-died-without-session-handoff-restart-watcher.py",
+                    "handoff-agent-crash-watcher.py",
                     "--show-notice", str(notice)]
     built_words = watcher_module.show_notice_words_for_window(str(notice))
     check("the notice window's words are the interpreter, this program, --show-notice and the notice",

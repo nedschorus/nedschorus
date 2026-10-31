@@ -499,11 +499,11 @@ def main():
     case.document("docs/plan-of-record.md", text="on main, edited\n")
     expect("a document on main with an uncommitted edit is reported",
            case.run("See docs/plan-of-record.md."), [document])
-    git(case.checkout, "commit", "-q", "-am", "edit on the topic branch")
-    expect("a document changed by a commit on the topic branch is reported",
+    git(case.checkout, "commit", "-q", "-am", "edit on the nc-topic-branch")
+    expect("a document changed by a commit on the nc-topic-branch is reported",
            case.run("See docs/plan-of-record.md."), [document])
     case.document("docs/plan-of-record.md", text="on main\n", modified=9_000_000)
-    expect("a document whose topic-branch commit is undone in the working tree is silent",
+    expect("a document whose nc-topic-branch commit is undone in the working tree is silent",
            case.run("See docs/plan-of-record.md."), None)
 
     case = Case()
@@ -577,8 +577,8 @@ def main():
     git(case.checkout, "checkout", "-q", "-")
     expect("a document only main changed since the checkout's branch was cut is silent",
            case.run("See docs/plan-of-record.md."), None)
-    case.document("docs/plan-of-record.md", text="changed on the topic branch too\n")
-    git(case.checkout, "commit", "-q", "-am", "edit on the topic branch")
+    case.document("docs/plan-of-record.md", text="changed on the nc-topic-branch too\n")
+    git(case.checkout, "commit", "-q", "-am", "edit on the nc-topic-branch")
     expect("a document a branch behind main also changed is reported",
            case.run("See docs/plan-of-record.md."), [document])
 

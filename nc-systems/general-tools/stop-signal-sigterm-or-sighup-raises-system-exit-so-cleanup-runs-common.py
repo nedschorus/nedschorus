@@ -4,7 +4,9 @@ A Bash tool timeout or TaskStop stops a program with SIGTERM, and a closing term
 default either ends the process at once, so a finally that removes a temporary directory or a git
 worktree never runs. Inside stop_signals_raise_system_exit_so_cleanup_runs(), either signal raises
 SystemExit(128 + the signal number), the code a shell gives a process the signal killed; the context
-manager puts the previous handlers back when the block ends.
+manager puts the previous handlers back when the block ends. A signal the program was started with
+ignored, as under nohup, is left ignored, so it does not stop the block; scripts/run-all-test-suites.py
+keeps such a signal without effect too.
 
 What it does not handle: SIGKILL, which no handler can catch; a block run outside the main thread,
 where signal.signal raises ValueError; and children of the program, which get the signal only when it is
@@ -29,7 +31,7 @@ def raise_system_exit_for_stop_signal(signal_number, _frame):
 @contextlib.contextmanager
 def stop_signals_raise_system_exit_so_cleanup_runs():
     previous_handlers = {number: signal.signal(number, raise_system_exit_for_stop_signal)
-                         for number in STOP_SIGNALS}
+                         for number in STOP_SIGNALS if signal.getsignal(number) != signal.SIG_IGN}
     try:
         yield
     finally:

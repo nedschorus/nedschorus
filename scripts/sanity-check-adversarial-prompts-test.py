@@ -146,11 +146,26 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
+def ship_into_a_fresh_scratch_store():
+    """Point the shipper at a new store under the suite's scratch store: two
+    cases' records of one name would otherwise meet in one store, and the
+    second would be refused."""
+    os.environ[RECORD_SHIP_DESTINATION_VARIABLE] = str(
+        pathlib.Path(tempfile.mkdtemp(dir=SUITE_SCRATCH_LOG_STORE_PATH)) / "cold-read-records")
+
+
 def load_runner():
+    """A fresh copy of the runner, whose runs ship into a store of their own."""
+    ship_into_a_fresh_scratch_store()
     spec = importlib.util.spec_from_file_location("sanity_check_adversarial_prompts", RUNNER_SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def scratch_store_sanity_check_records():
+    """Where the runner last loaded ships its records."""
+    return pathlib.Path(os.environ[RECORD_SHIP_DESTINATION_VARIABLE]).parent / "sanity-check-records"
 
 
 def agent_binary_launch_a_case_replaces(runner):
@@ -673,6 +688,7 @@ def main():
             0, text, "a-test-model", "")
         runner_exit.run_codex = lambda prompt, checkout=None: (
             0, cut_report, "a-test-model", "")
+        ship_into_a_fresh_scratch_store()
         with tempfile.TemporaryDirectory() as scratch:
             runner_exit.RECORDS_ROOT = pathlib.Path(scratch) / "sanity-check-records"
             sys.argv = [str(RUNNER_SCRIPT), "--adversarial-prompt", "cut", "--target",
@@ -1589,6 +1605,61 @@ def main():
         check("a skill's record is named for its directory, not SKILL alone",
               len(records) == 1 and records[0].endswith("-widget-SKILL"),
               f"records {records}")
+
+    # A record that does not reach the log-store: the run finishes, keeps its
+    # report and exits 1; a run that already exits 2 keeps 2.
+    store_unreachable = "nobody@no-such-host.invalid:/tmp/no-store"
+    try:
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            repo = scratch_repository_with_design(base)
+            driven = runner_over(repo, base)
+            os.environ[RECORD_SHIP_DESTINATION_VARIABLE] = store_unreachable
+            driven.run_codex = lambda prompt, checkout=None: (
+                0, any_adversarial_prompt_report, "a-test-model", "")
+            code, out, err = drive_main(driven, [
+                "--target", "docs/design.md", "--adversarial-prompt", "cut", "--runtime", "codex"])
+            record_lines = [line for line in out.splitlines() if line.startswith("record: ")]
+            reports = sorted(driven.RECORDS_ROOT.glob("*/cut-adversarial-prompt-codex*"))
+            check("a store that cannot be reached is reported as record: FAILED, the report "
+                  "is kept, and the run exits 1",
+                  code == 1 and len(record_lines) == 1
+                  and record_lines[0].startswith("record: FAILED:") and len(reports) == 1
+                  and "sanity-check complete" in out,
+                  f"exit {code}, record lines {record_lines}, reports {reports}, stderr {err!r}")
+
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            repo = scratch_repository_with_design(base)
+            driven = runner_over(repo, base)
+            os.environ[RECORD_SHIP_DESTINATION_VARIABLE] = store_unreachable
+
+            def codex_cell_whose_git_check_failed(prompt, checkout=None):
+                driven.GIT_CHECKS_FAILED_AFTER_A_CELL.append("cut-adversarial-prompt-codex")
+                return 0, any_adversarial_prompt_report, "a-test-model", ""
+
+            driven.run_codex = codex_cell_whose_git_check_failed
+            code, out, err = drive_main(driven, [
+                "--target", "docs/design.md", "--adversarial-prompt", "cut", "--runtime", "codex"])
+            check("a run whose git check failed exits 2 though its record did not arrive either",
+                  code == 2 and "record: FAILED:" in out,
+                  f"exit {code}, stdout {out!r}, stderr {err!r}")
+    finally:
+        ship_into_a_fresh_scratch_store()
+
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch)
+        repo = scratch_repository_with_design(base)
+        driven = runner_over(repo, base)
+        driven.run_codex = lambda prompt, checkout=None: (
+            0, any_adversarial_prompt_report, "a-test-model", "")
+        driven.ship_record = lambda record_dir: (
+            f"REFUSED: {record_dir.name} — already in the store with different content")
+        code, out, err = drive_main(driven, [
+            "--target", "docs/design.md", "--adversarial-prompt", "cut", "--runtime", "codex"])
+        check("a record the store refuses is reported as record: REFUSED and the run exits 1",
+              code == 1 and "record: REFUSED:" in out,
+              f"exit {code}, stdout {out!r}, stderr {err!r}")
 
     # Case 61: fresh-eyes without --problem-statement launches no cell and
     # prints one SKIPPED line per runtime, naming the cell in full, while the
@@ -2545,7 +2616,7 @@ sys.exit(module.main())
                       and str(record) in stopped_lines[0]
                       and stopped_lines[0] in log_text,
                       f"stdout {out!r}, log {log_text!r}")
-                shipped_log = (SUITE_SCRATCH_LOG_STORE_PATH / "sanity-check-records"
+                shipped_log = (scratch_store_sanity_check_records()
                                / record.name / "sanity-check-run.log") if record else None
                 check(f"and the record of the run {signal_name} stopped is shipped, "
                       f"its log whole",
@@ -2715,7 +2786,7 @@ sys.exit(module.main())
             "--runtime", "codex"])
         records = sorted(driven.RECORDS_ROOT.glob("*"))
         record = records[0] if len(records) == 1 else None
-        shipped_log = (SUITE_SCRATCH_LOG_STORE_PATH / "sanity-check-records"
+        shipped_log = (scratch_store_sanity_check_records()
                        / record.name / "sanity-check-run.log") if record else None
         check("a run whose every cell failed prints the shipper's line as `record:` "
               "and names its record directory",

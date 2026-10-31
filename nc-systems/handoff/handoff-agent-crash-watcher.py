@@ -2,9 +2,9 @@
 """Restart a ned-box agent-seat whose agent-session died without writing a handoff.
 
 Usage, on ned-box:
-  nc-systems/handoff/handoff-agent-seat-died-without-session-handoff-restart-watcher.py
+  nc-systems/handoff/handoff-agent-crash-watcher.py
       one run: assess every agent-seat and act. Cron runs this once a minute.
-  nc-systems/handoff/handoff-agent-seat-died-without-session-handoff-restart-watcher.py --show-notice FILE
+  nc-systems/handoff/handoff-agent-crash-watcher.py --show-notice FILE
       what a notice window on the user's Mac runs: print FILE, then wait for
       Enter and close.
 
@@ -71,15 +71,15 @@ Off ned-box the program refuses: the agents root it reads is ned-box's.
 SCHEDULED. The job is declared in
 nc-systems/general-tools/scheduled-jobs-on-each-machine.json and installed
 with nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py
---install --job handoff-agent-seat-died-without-session-handoff-restart-watcher,
+--install --job handoff-agent-crash-watcher,
 on ned-box only, as the cron line
-    * * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/handoff-agent-seat-died-without-session-handoff-restart-watcher.py >> /home/nedlern/.claude/handoff-agent-seat-died-without-session-handoff-restart-watcher.log 2>&1
+    * * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/handoff-agent-crash-watcher.py >> /home/nedlern/.claude/handoff-agent-crash-watcher.log 2>&1
 Cron starts it with cron's own short environment, so no agent-session's
 variables reach a seat it restarts.
 
 NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_STATE_DIRECTORY and
 NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_LOG_DIRECTORY override where the
-state and the log go: the seams the test suite uses.
+state and the log go: the seams the nc-test-suite uses.
 """
 
 import argparse

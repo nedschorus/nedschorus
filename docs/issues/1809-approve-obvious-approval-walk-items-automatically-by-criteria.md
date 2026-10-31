@@ -12,6 +12,8 @@ On 2026-10-21 he set the condition for doing so, in cold-read-improvement's agen
 
 The advisor is a Claude Code tool with no inputs: when an agent calls it, the whole transcript so far goes to a stronger reviewer model, which sends back advice.
 
+On 2026-10-28 he set how often a pattern must match his answers before it may settle items without him, in cold-read-improvement's agent-session on ned-box at 2026-10-28T20:58:55Z: "I think I'm going to have to accept a 5% mistake rate. So if like 95% of the time I would approve something that had a weak objection, that's good enough. It doesn't have to be 99% of the time." In the same message he kept cost as an allowed case against, because forbidding it would make cases against harder to judge and to approve automatically: "if we make it impossible for agents to report their objection of these types, they will come up with other objections, which in fact might be weaker or harder to follow"; "I don't know if banning what I consider weak excuses is a improvement. I think it's actually going to make it harder to evaluate and make it harder to auto approve things." He also put a limit on cost: "It's not, obviously, if something goes from a millisecond to a week, that's bad. And so it's not an unlimited pass." He was answering D, disapproved, to item 4.2, "cost is no reason to decline a finding", of the approval-walk cold-read-skill-rebuild-so-programs-do-the-mechanical-steps-2026-10-23-remaining-items; its walk-minutes are `/home/nedlern/agents/cold-read-improvement-cold-read-code-prompt-code-rebuild/docs/walk/cold-read-skill-rebuild-so-programs-do-the-mechanical-steps-2026-10-23-remaining-items-minutes.md` on ned-box, on the item 4.2 line.
+
 ## What exists
 
 - The answer AO, approve as obvious, is on main: the walk check program writes it as "approved #approved_obvious" in the walk-minutes.
@@ -25,7 +27,7 @@ The advisor is a Claude Code tool with no inputs: when an agent calls it, the wh
 
 What is left is the second half of the user's aim: finding which additions, such as a new rule, check or instruction sentence, and which weak cases against, can also settle without him. On 2026-10-27 he said: "My hope is after the survey, even additions, we can start to find some additions which we can auto approve or skip."
 
-1. From the survey of the weakest cases against, propose to the user, in an approval-walk, each pattern of weak case against he approved 99 to 100% of the time, with the test an agent or the walk check program would apply and every past item it would have settled wrongly. Item 5.1 does this for changes; the survey found no such pattern for additions.
+1. From the survey of the weakest cases against, propose to the user, in an approval-walk, each pattern of weak case against he approved at least 95% of the time, with the test an agent or the walk check program would apply and every past item it would have settled wrongly. Item 5.1 does this for changes; the survey found no such pattern for additions.
 2. Once about 50 answers carry a `#case_against` rating, compare the ratings with his answers, and compare the additions he answered AO with those he disapproved; propose to him any class of addition with no disapproval among its items.
 3. Build what he approves into the walk-me-through skill's list of kinds and the walk check program's `--not-asked` step, keeping the advisor check before each item is settled.
 

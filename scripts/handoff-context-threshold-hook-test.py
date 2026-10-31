@@ -68,6 +68,16 @@ HANDOFF_INSTRUCTION_PATTERN = re.compile(
     r"reincarnation threshold\. Run the /handoff skill now\.")
 
 
+DO_NOT_RUN_HANDOFF_SKILL_YET_INSTRUCTION = (
+    "Do not run the /handoff skill now; carry on with your work, and a later "
+    "system message will tell you when to run it.")
+
+
+def opens_a_line_with_do_not_run_handoff_skill_yet(stderr):
+    return any(line.startswith(DO_NOT_RUN_HANDOFF_SKILL_YET_INSTRUCTION)
+               for line in stderr.splitlines())
+
+
 def is_handoff_instruction(stderr):
     """The hook's whole message is the handoff instruction, the share filled in."""
     return HANDOFF_INSTRUCTION_PATTERN.fullmatch(stderr.strip()) is not None
@@ -927,13 +937,13 @@ with tempfile.TemporaryDirectory() as workspace:
         compacted_deferred_marker_file.unlink(missing_ok=True)
 
         # --- A session its caller reincarnates is left alone ---------------
-        # 2026-09-16: ghi-info, run by scripts/ghi-info-ask.py as `claude -p`
+        # 2026-09-16: ghi-guide-agent, run by scripts/ghi-guide-agent-ask.py as `claude -p`
         # turns, crossed the threshold mid-answer, and the handoff notice came
         # back to the caller in place of the reading list.
         result = run_hook(
             {"session_id": CALLER_OWNED_PROBE_SESSION_ID, "transcript_path": str(loud)},
             extra_environment={hook.REINCARNATION_OWNED_BY_CALLER_VARIABLE:
-                               "scripts/ghi-info-ask.py"})
+                               "scripts/ghi-guide-agent-ask.py"})
         check("hook stays silent past the threshold when the caller reincarnates the session",
               result.returncode == 0 and not result.stderr.strip()
               and not caller_owned_marker_file.exists(),
@@ -979,6 +989,16 @@ with tempfile.TemporaryDirectory() as workspace:
               "Context at 55%" in result.stderr, result.stderr[:200])
         check("the deferral tells the agent to spawn no more subagents",
               "Spawn no new subagents" in result.stderr, result.stderr[:200])
+        # Agents read "handoff" in the notice and ran the skill anyway.
+        check("the deferral tells the agent, on a line of its own, not to run the skill yet",
+              opens_a_line_with_do_not_run_handoff_skill_yet(result.stderr),
+              result.stderr[:400])
+        check("the deferral gives the ceiling as a number",
+              "65% ceiling" in result.stderr, result.stderr[:500])
+        # A reader could not tell whether the time limit bounds subagents too.
+        check("the deferral says the time limit bounds background tasks, not subagents",
+              "once every subagent has finished, and every background task has "
+              "either finished or run for" in result.stderr, result.stderr[:600])
         # The notice used to promise the handoff waits until the subagents
         # finish, full stop. The ceiling overrides that, and an agent reading
         # a guarantee its work is safe should be told the one thing that cuts
@@ -1107,6 +1127,12 @@ with tempfile.TemporaryDirectory() as workspace:
               result.stderr[:250])
         check("a truncated spawn record does not tell the agent to hand off",
               "Run the /handoff skill now." not in result.stderr, result.stderr[:200])
+        check("the unknown-count deferral tells the agent, on a line of its own, "
+              "not to run the skill yet",
+              opens_a_line_with_do_not_run_handoff_skill_yet(result.stderr),
+              result.stderr[:400])
+        check("the unknown-count deferral gives the ceiling as a number",
+              "65% ceiling" in result.stderr, result.stderr[:500])
         check("an unknown-count deferral writes the deferral marker, not the fired one",
               unknown_deferred_marker_file.exists() and not unknown_marker_file.exists(),
               f"deferred={unknown_deferred_marker_file.exists()} "

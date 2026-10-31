@@ -87,4 +87,4 @@ A new test case in `scripts/run-all-test-suites-signal-sandbox-test.py` runs the
 
 GHI [#1112](https://github.com/nedschorus/nedschorus/issues/1112) collects test cases that fail on a busy machine because a deadline runs out. This failure is a different matter: no deadline is involved, and #1112's fix of longer deadlines or waiting for events would not change it.
 
-Search receipt: on 2026-10-13 UTC, `scripts/ghi-info-ask.py --include-closed` found no issue, open or closed, naming this test file, this case, "PID namespace", "a-test.py", "bwrap" or "signal-sandbox" for a failure; and `gh issue list --state all --search` on "signal-sandbox", "PID namespace", "flaky test", "intermittent" and "bwrap" returned no issue about this failure.
+Search receipt: on 2026-10-13 UTC, `scripts/ghi-guide-agent-ask.py --include-closed` found no issue, open or closed, naming this test file, this case, "PID namespace", "a-test.py", "bwrap" or "signal-sandbox" for a failure; and `gh issue list --state all --search` on "signal-sandbox", "PID namespace", "flaky test", "intermittent" and "bwrap" returned no issue about this failure.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for ghi-info-ask.py (nedschorus#46).
+"""Tests for ghi-guide-agent-ask.py (nedschorus#46).
 
 Nothing real runs: mirror_refresh.refresh and run_claude are both
 monkeypatched with queue-based fakes, so no gh call, no ssh, and no claude
@@ -8,7 +8,7 @@ cache file to disk (mirroring what the real one does) so read_cache — used,
 un-mocked, by the post-check — is genuinely exercised. Every case runs
 against a throwaway seat directory under a TemporaryDirectory.
 
-Run: python3 scripts/ghi-info-ask-test.py
+Run: python3 scripts/ghi-guide-agent-ask-test.py
 """
 
 import contextlib
@@ -17,6 +17,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shlex
 import sys
 import tempfile
@@ -33,9 +34,9 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
-SCRIPT_PATH = Path(__file__).with_name("ghi-info-ask.py")
+SCRIPT_PATH = Path(__file__).with_name("ghi-guide-agent-ask.py")
 
-_spec = importlib.util.spec_from_file_location("ghi_info_ask", SCRIPT_PATH)
+_spec = importlib.util.spec_from_file_location("ghi_guide_agent_ask", SCRIPT_PATH)
 ghi_ask = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ghi_ask)
 # The real run_claude, captured before any case installs a fake over it.
@@ -135,7 +136,7 @@ with tempfile.TemporaryDirectory() as temporary:
           len(refresh_calls) == 1 and refresh_calls[0]["full"] is True, refresh_calls)
     state = json.loads((seat / ghi_ask.STATE_FILE_NAME).read_text(encoding="utf-8"))
     check("state persists the new session id after a cold start",
-          state[ghi_ask.GHI_INFO_SESSION_ID_STATE_KEY] == "sess-A", state)
+          state[ghi_ask.GHI_GUIDE_AGENT_SESSION_ID_STATE_KEY] == "sess-A", state)
     check("state resets counters on a cold start",
           state["closes_since_birth"] == 0 and state["recent_matches"] == [False], state)
 
@@ -143,7 +144,7 @@ with tempfile.TemporaryDirectory() as temporary:
     seat2 = root / "seat2"
     seat2.mkdir()
     ghi_ask.save_state(seat2 / ghi_ask.STATE_FILE_NAME,
-                       {ghi_ask.GHI_INFO_SESSION_ID_STATE_KEY: "sess-B", "closes_since_birth": 0, "recent_matches": []})
+                       {ghi_ask.GHI_GUIDE_AGENT_SESSION_ID_STATE_KEY: "sess-B", "closes_since_birth": 0, "recent_matches": []})
     refresh_calls = fake_refresh_queue([([7], {"7": issue(7)}, None)])
     claude_calls = fake_claude_queue([({"session_id": "sess-B", "result": "read #7"}, None)])
     answer, error = ghi_ask.ask("about #7?", False, seat2, "x/y")
@@ -156,7 +157,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("only a delta refresh runs on an ordinary resume (no full refresh)",
           len(refresh_calls) == 1 and refresh_calls[0]["full"] is False, refresh_calls)
 
-    # --- every question ghi-info is sent carries the plan-reuse sentence ----
+    # --- every question ghi-guide-agent is sent carries the plan-reuse sentence ----
     reuse = ghi_ask.ASK_PROMPT_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE_REQUEST_SENTENCE
     check("the plan-reuse sentence is the one the user approved",
           reuse == ("If the question describes a plan, also name any issue whose "
@@ -177,7 +178,7 @@ with tempfile.TemporaryDirectory() as temporary:
     seat3 = root / "seat3"
     seat3.mkdir()
     ghi_ask.save_state(seat3 / ghi_ask.STATE_FILE_NAME, {
-        ghi_ask.GHI_INFO_SESSION_ID_STATE_KEY: "sess-OLD",
+        ghi_ask.GHI_GUIDE_AGENT_SESSION_ID_STATE_KEY: "sess-OLD",
         "closes_since_birth": ghi_ask.CLOSES_SINCE_BIRTH_THRESHOLD,
         "recent_matches": [],
     })
@@ -194,11 +195,11 @@ with tempfile.TemporaryDirectory() as temporary:
           answer == "read #3", (answer, error))
     state3 = json.loads((seat3 / ghi_ask.STATE_FILE_NAME).read_text(encoding="utf-8"))
     check("reincarnation replaces the old session id with the new one",
-          state3[ghi_ask.GHI_INFO_SESSION_ID_STATE_KEY] == "sess-NEW", state3)
+          state3[ghi_ask.GHI_GUIDE_AGENT_SESSION_ID_STATE_KEY] == "sess-NEW", state3)
 
     # --- a state file written before the 2026-09-22 rename still resumes ---
-    # The key moved from `session_id` to `ghi_info_session_id`; a seat whose
-    # `.ghi-info-state.json` predates the rename must resume its ghi-info
+    # The key moved from `session_id` to `ghi_guide_agent_session_id`; a seat whose
+    # `.ghi-guide-agent-state.json` predates the rename must resume its ghi-guide-agent
     # session rather than silently cold-start, which would rebuild the whole
     # mirror and lose the session's accumulated reading.
     seat_legacy = root / "seat-legacy"
@@ -215,14 +216,14 @@ with tempfile.TemporaryDirectory() as temporary:
     state_legacy = json.loads(
         (seat_legacy / ghi_ask.STATE_FILE_NAME).read_text(encoding="utf-8"))
     check("the first write after a migrated read uses the new key alone",
-          state_legacy.get(ghi_ask.GHI_INFO_SESSION_ID_STATE_KEY) == "sess-LEGACY"
+          state_legacy.get(ghi_ask.GHI_GUIDE_AGENT_SESSION_ID_STATE_KEY) == "sess-LEGACY"
           and "session_id" not in state_legacy, state_legacy)
 
     # --- lock contention: throwaway session, nothing persisted -------------
     seat4 = root / "seat4"
     seat4.mkdir()
     ghi_ask.save_state(seat4 / ghi_ask.STATE_FILE_NAME,
-                       {ghi_ask.GHI_INFO_SESSION_ID_STATE_KEY: "sess-HELD", "closes_since_birth": 0, "recent_matches": []})
+                       {ghi_ask.GHI_GUIDE_AGENT_SESSION_ID_STATE_KEY: "sess-HELD", "closes_since_birth": 0, "recent_matches": []})
     before_state_text = (seat4 / ghi_ask.STATE_FILE_NAME).read_text(encoding="utf-8")
     refresh_calls = fake_refresh_queue([([], {}, None)])
     claude_calls = fake_claude_queue([
@@ -310,7 +311,7 @@ with tempfile.TemporaryDirectory() as temporary:
         ({"session_id": "sess-E", "result": "ask-user-about-ruling: does the 2026-08-01 ruling on #13 still bind?"}, None),
     ])
     answer, error = ghi_ask.ask("q", False, seat7, "x/y")
-    check("ask() hands main() an ask-user-about-ruling: reply as ghi-info wrote it, even mentioning #13",
+    check("ask() hands main() an ask-user-about-ruling: reply as ghi-guide-agent wrote it, even mentioning #13",
           answer.startswith("ask-user-about-ruling:"), answer)
     check("a passthrough reply triggers no drift recheck",
           len(claude_calls) == 2, claude_calls)
@@ -341,7 +342,7 @@ with tempfile.TemporaryDirectory() as temporary:
     ghi_ask.save_state(seat10 / ghi_ask.STATE_FILE_NAME,
                        {"session_id": "sess-BIG", "closes_since_birth": 0, "recent_matches": []})
     projects_root = root / "projects"
-    project_directory = ghi_ask.project_directory_module.project_directory_for_seat(seat10, projects_root)
+    project_directory = ghi_ask.claude_code_session_transcript_lookup_and_text_search_common.project_directory_for_seat(seat10, projects_root)
     project_directory.mkdir(parents=True)
     (project_directory / "sess-BIG.jsonl").write_bytes(
         b"x" * (ghi_ask.TRANSCRIPT_SIZE_THRESHOLD_BYTES + 1))
@@ -355,12 +356,12 @@ with tempfile.TemporaryDirectory() as temporary:
           claude_calls[0][1] is None and answer == "read #1", (claude_calls, answer))
 
     # --- context-share reincarnation trigger ---------------------------------
-    # 2026-09-16: ghi-info's session stood at 521,343 tokens of claude-sonnet-5's
+    # 2026-09-16: ghi-guide-agent's session stood at 521,343 tokens of claude-sonnet-5's
     # 1M window with a 3.7 MB transcript, under the size trigger, and the handoff
     # hook's notice came back in place of the answer. That hook is silent in
     # these sessions now, so this trigger is what bounds them.
     def transcript_at_context_tokens(seat, session_id, tokens):
-        project_directory = ghi_ask.project_directory_module.project_directory_for_seat(seat, projects_root)
+        project_directory = ghi_ask.claude_code_session_transcript_lookup_and_text_search_common.project_directory_for_seat(seat, projects_root)
         project_directory.mkdir(parents=True, exist_ok=True)
         record = {"type": "assistant", "message": {
             "model": "claude-sonnet-5",
@@ -478,7 +479,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
 # --- build_remote_command --------------------------------------------------
 # The first live Mac->box run failed here: the command spliced in THIS
-# machine's expanded seat path (/Users/el/agents/ghi-info), which does not
+# machine's expanded seat path (/Users/el/agents/ghi-guide-agent), which does not
 # exist on the box. The seat must be resolved by the box's own shell.
 DANGEROUS = 'what about $(rm -rf /) and "quotes" and \'apostrophes\'?'
 command = ghi_ask.build_remote_command(DANGEROUS, False, "x/y")
@@ -488,11 +489,11 @@ check("the remote command carries NO path from this machine",
       and str(Path.home()) not in command,
       command)
 check("the seat is resolved box-side at the launcher's fixed box root, $HOME/agents",
-      'seat="$HOME/agents/ghi-info"' in command, command)
+      'seat="$HOME/agents/ghi-guide-agent"' in command, command)
 check("the seat path reads no agents-root variable (launch-claude-ubuntu reads none)",
       "NEDSCHORUS_AGENTS_ROOT" not in command, command)
-check("the box-side run is pinned to --seat-dir \"$PWD\", so it can never "
-      "re-delegate to itself (an infinite ssh loop)",
+check("the box-side run is pinned to --seat-dir \"$PWD\", so it runs in the "
+      "seat the shell entered",
       '--seat-dir "$PWD"' in command, command)
 check("--repo rides the remote command (it was silently dropped before)",
       "--repo x/y" in command, command)
@@ -514,10 +515,10 @@ with tempfile.TemporaryDirectory() as temporary:
         '#!/bin/sh\nfor a in "$@"; do printf "ARG:[%s]\\n" "$a"; done\n',
         encoding="utf-8")
     recorder.chmod(0o755)
-    seat_home = probe_root / "agents" / "ghi-info"
+    seat_home = probe_root / "agents" / "ghi-guide-agent"
     seat_home.mkdir(parents=True)
     replayed = ghi_ask.build_remote_command(DANGEROUS, True, "o/n").replace(
-        "python3 scripts/ghi-info-ask.py", str(recorder))
+        "python3 scripts/ghi-guide-agent-ask.py", str(recorder))
     import subprocess as real_subprocess
     result = real_subprocess.run(
         ["/bin/sh", "-c", replayed], capture_output=True, text=True,
@@ -539,8 +540,8 @@ with tempfile.TemporaryDirectory() as temporary:
         env={"HOME": str(empty_home), "PATH": "/usr/bin:/bin"})
     check("a box with no seat exits 1, names the path, and runs no ask",
           missing_result.returncode == 1
-          and "could not enter the ghi-info seat at" in missing_result.stderr
-          and str(empty_home / "agents" / "ghi-info") in missing_result.stderr
+          and "could not enter the ghi-guide-agent seat at" in missing_result.stderr
+          and str(empty_home / "agents" / "ghi-guide-agent") in missing_result.stderr
           and "ARG:[" not in missing_result.stdout,
           (missing_result.returncode, missing_result.stderr, missing_result.stdout))
 
@@ -569,7 +570,7 @@ try:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
             exit_code = ghi_ask.main(["q", "--seat-dir", str(missing)])
         check("main() with a missing explicit --seat-dir errors cleanly, no traceback",
-              exit_code == 1 and "bootstrap" in err.getvalue()
+              exit_code == 1 and "does not exist on ned-box" in err.getvalue()
               and str(missing) in err.getvalue(),
               err.getvalue())
 finally:
@@ -586,28 +587,28 @@ finally:
 # The expected text is typed out here rather than read from the module, so a
 # change to the approved wording fails this file.
 APPROVED_NOT_ABOUT_ISSUES_MESSAGE = (
-    "Not a question about GitHub issues: ghi-info reports which issues relate to a subject.\n"
-    'Ask again as: scripts/ghi-info-ask.py "Which issues cover <your subject>?"\n'
+    "Not a question about GitHub issues: ghi-guide-agent reports which issues relate to a subject.\n"
+    'Ask again as: scripts/ghi-guide-agent-ask.py "Which issues cover <your subject>?"\n'
     'If that is refused too, search yourself: gh issue list --repo nedschorus/nedschorus '
     '--state all --search "<terms>"\n')
 ESCALATE_SENTENCE = ("the 2026-09-19 body ruling in #46 may not hold after "
                      "the 2026-09-29 ruling in #783")
 APPROVED_RULING_QUESTION_MESSAGE = (
-    "ghi-info found a ruling of the user's that it cannot tell still applies: "
+    "ghi-guide-agent found a ruling of the user's that it cannot tell still applies: "
     + ESCALATE_SENTENCE + "\n"
-    "If you file or edit the GHI, scripts/ghi-issue-write.py records this question in the log-store on ned-box, and the run of scripts/ghi-issue-write.py tells you to dispatch a subagent to settle the question.\n"
-    "Otherwise, ask the user whether that ruling still applies, and put the question on your task list.\n")
+    "If you are filing or editing a GHI, go on with scripts/ghi-issue-write.py as planned: it records this question in the log-store on ned-box and tells you to dispatch a subagent to settle it.\n"
+    "If you are not filing or editing a GHI, ask the user whether that ruling still applies, and put the question on your task list.\n")
 
 # Typed out rather than read from the module, like the two messages above, so
 # a change to the hint's text fails this file.
 EXPECTED_OPEN_ISSUES_ONLY_HINT = (
-    "ghi-info-ask: this answer covers open issues only.\n"
+    "ghi-guide-agent-ask: this answer covers open issues only.\n"
     "To search closed issues as well, such as for precedent or before saying no issue "
     "covers a subject, rerun the same command with --include-closed added.\n")
 
 
 def main_with_reply(seat, reply_text, extra_arguments=()):
-    """main() against an explicit seat whose ghi-info cold-starts and then
+    """main() against an explicit seat whose ghi-guide-agent cold-starts and then
     answers reply_text. Returns (exit code, stdout, stderr)."""
     fake_refresh_queue([([1], {"1": issue(1)}, None)])
     fake_claude_queue([
@@ -647,12 +648,12 @@ try:
                 seat_ruling, prefix + " " + ESCALATE_SENTENCE + "  ")
             check(f"a {prefix} reply exits 3",
                   exit_code == ghi_ask.EXIT_RULING_QUESTION == 3, exit_code)
-            check(f"a {prefix} reply prints the approved message on stderr, carrying ghi-info's sentence",
+            check(f"a {prefix} reply prints the approved message on stderr, carrying ghi-guide-agent's sentence",
                   err.endswith(APPROVED_RULING_QUESTION_MESSAGE)
                   and prefix not in err, err)
             check(f"a {prefix} reply prints nothing on stdout", out == "", out)
 
-        # ghi-info opens every ruling question with the issue holding the
+        # ghi-guide-agent opens every ruling question with the issue holding the
         # ruling. The number reaches the caller after the sentence, and,
         # the reply being a ruling question, it is not checked against the
         # mirror: the issue it names is not open there, and no drift turn is asked
@@ -664,10 +665,10 @@ try:
         exit_code, out, err = main_with_reply(
             seat_numbered, "ask-user-about-ruling: " + numbered)
         check("a ruling question opening with its issue number reaches the "
-              "caller with the number moved to the end, and asks ghi-info "
+              "caller with the number moved to the end, and asks ghi-guide-agent "
               "nothing more",
               exit_code == 3 and out == ""
-              and ("ghi-info found a ruling of the user's that it cannot tell "
+              and ("ghi-guide-agent found a ruling of the user's that it cannot tell "
                    "still applies: the ruling that a closed issue is frozen "
                    "may not cover a reopened issue (held in GHI 783)\n")
               in err,
@@ -701,12 +702,23 @@ try:
           and ghi_ask.caller_message_for_passthrough_reply("Ask-User-About-Ruling: x")[1] == 3
           and ghi_ask.caller_message_for_passthrough_reply("OUT-OF-SCOPE")[1] == 2
           and ghi_ask.caller_message_for_passthrough_reply("Escalate: x")[1] == 3)
-    check("the cold-start prompt teaches ghi-info the new reply words, not the old ones",
+    check("the cold-start prompt teaches ghi-guide-agent the new reply words, not the old ones",
           "reply exactly: not-about-issues." in ghi_ask.COLD_START_PROMPT_TEMPLATE
           and "Reply: ask-user-about-ruling: #<issue> <" in ghi_ask.COLD_START_PROMPT_TEMPLATE
           and "out-of-scope" not in ghi_ask.COLD_START_PROMPT_TEMPLATE
           and "escalate:" not in ghi_ask.COLD_START_PROMPT_TEMPLATE,
           ghi_ask.COLD_START_PROMPT_TEMPLATE[-600:])
+    check("the start-up prompt allows gh only for a link repair's issue edit, takes the issue's text from the mirror, and "
+          "sends document changes through ghi-issue-write.py's pull request, never a push to main",
+          "The one time you run gh is to make the issue edit a link repair (form 4) needs; "
+          "take the issue's current text from the mirror." in ghi_ask.COLD_START_PROMPT_TEMPLATE
+          and "Issue edits go through gh as normal; document-side changes"
+          in ghi_ask.COLD_START_PROMPT_TEMPLATE
+          and ghi_ask.COLD_START_PROMPT_TEMPLATE.count("text from the mirror") == 1
+          and "whose pull request merge-lane-2 reviews and merges; never push to main yourself."
+          in ghi_ask.COLD_START_PROMPT_TEMPLATE
+          and "landed on main immediately" not in ghi_ask.COLD_START_PROMPT_TEMPLATE,
+          ghi_ask.COLD_START_PROMPT_TEMPLATE[:1500])
     check("the cold-start prompt has every ruling question start with the "
           "issue holding the ruling",
           "Every ruling question starts with that issue number."
@@ -812,7 +824,7 @@ finally:
 # --- the seat checkout is fast-forwarded before each ask -------------------
 # Ruled 2026-09-15 (nedschorus#324/#334). The freshness hook's merge used to
 # be the only thing keeping this checkout current, and that merge is gone; it
-# is this caller's job now. ghi-info reads the pair documents and wiki pages
+# is this caller's job now. ghi-guide-agent reads the pair documents and wiki pages
 # from this disk, so a stale checkout is stale ANSWERS about the designs the
 # issues point at. Real git repositories here: the whole value is in what git
 # actually refuses.
@@ -833,7 +845,7 @@ def _commit(repository, name, content, message):
 
 def _make_origin_and_seat(root, seat_name):
     """An origin repository and a seat checkout of it on its own branch —
-    the box's layout: ghi-info sits on a branch named `ghi-info`, never main."""
+    the box's layout: ghi-guide-agent sits on a branch named `ghi-guide-agent`, never main."""
     origin = root / f"{seat_name}-origin"
     origin.mkdir()
     _git(["init", "-q", "-b", "main"], origin)
@@ -844,7 +856,7 @@ def _make_origin_and_seat(root, seat_name):
     _git(["clone", "-q", str(origin), str(seat)], root)
     _git(["config", "user.email", "test@example.invalid"], seat)
     _git(["config", "user.name", "ghi test"], seat)
-    _git(["checkout", "-q", "-b", "ghi-info"], seat)
+    _git(["checkout", "-q", "-b", "ghi-guide-agent"], seat)
     return origin, seat
 
 
@@ -859,7 +871,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("and it says how far it moved",
           "refreshed the seat checkout 1 commit(s)" in line, line)
     check("on its own branch, not main — the reference-checkout rule does not apply here",
-          _git(["rev-parse", "--abbrev-ref", "HEAD"], seat).stdout.strip() == "ghi-info")
+          _git(["rev-parse", "--abbrev-ref", "HEAD"], seat).stdout.strip() == "ghi-guide-agent")
 
     check("a checkout already level with main says nothing",
           ghi_ask.fast_forward_seat_checkout(seat) == "",
@@ -885,10 +897,10 @@ with tempfile.TemporaryDirectory() as temporary:
           "has 1 uncommitted tracked change(s)" in line
           and not (seat / "design.md").exists(), line)
 
-    # ghi-info commits its own document-side link repairs, so a checkout
+    # ghi-guide-agent commits its own document-side link repairs, so a checkout
     # carrying a commit main does not have is a real state, not debris.
     origin, seat = _make_origin_and_seat(root, "ff-diverged")
-    _commit(seat, "repair.md", "a link repair\n", "ghi-info repairs a link")
+    _commit(seat, "repair.md", "a link repair\n", "ghi-guide-agent repairs a link")
     _commit(origin, "design.md", "new design\n", "a design lands on main")
     head_before = _git(["rev-parse", "HEAD"], seat).stdout.strip()
     line = ghi_ask.fast_forward_seat_checkout(seat)
@@ -953,7 +965,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
 
     # --- the run's last message is not always the answer -----------------
-    # Measured 2026-09-17: ghi-info answered the question at 20:16:59Z and
+    # Measured 2026-09-17: ghi-guide-agent answered the question at 20:16:59Z and
     # then answered the checkout-freshness Stop hook 13 seconds later, and
     # this script returns the run's last message. The hooks are gone from the
     # run now; this check is what catches whatever else says something last.
@@ -970,7 +982,7 @@ with tempfile.TemporaryDirectory() as temporary:
               "scripts or tests; I only read the GHI mirror to answer requests."))
 
     # A draft-body request's "nothing covers this" names no issue; its verdict
-    # line is what makes it an answer. Both replies below are ghi-info's own.
+    # line is what makes it an answer. Both replies below are ghi-guide-agent's own.
     unrelated_with_reasons = (
         "No open or closed issue in the mirror mentions "
         "`scripts/pull-request-review-plan.py`, a `--repository`/subdirectory-"
@@ -1125,15 +1137,16 @@ with tempfile.TemporaryDirectory() as temporary:
             return FakeCompletedProcess(0, "verdict: unrelated\n")
 
         patch_module_function(ghi_ask.subprocess, "run", ssh_recording_run)
-        seat_orig = ghi_ask.DEFAULT_SEAT_DIR
-        patch("DEFAULT_SEAT_DIR", root / "no-seat-on-this-machine")
+        running_on_ned_box_orig = ghi_ask.running_on_ned_box
+        patch("running_on_ned_box", lambda: False)
         try:
             with contextlib.redirect_stdout(io.StringIO()):
                 exit_code = ghi_ask.main(["--question-file", str(question_path)])
                 from_file = dict(remote)
                 plain_exit_code = ghi_ask.main(["a short question"])
         finally:
-            patch("DEFAULT_SEAT_DIR", seat_orig)
+            patch("running_on_ned_box", running_on_ned_box_orig)
+            ghi_ask.subprocess.run = subprocess_run_orig
         check("off the box, a question given as an argument still rides the "
               "remote command, with nothing on stdin",
               plain_exit_code == 0 and remote.get("input") is None
@@ -1166,7 +1179,7 @@ with tempfile.TemporaryDirectory() as temporary:
                                         box_error.getvalue())
 
         patch_module_function(ghi_ask.subprocess, "run", box_running_ssh)
-        patch("DEFAULT_SEAT_DIR", root / "no-seat-on-this-machine")
+        patch("running_on_ned_box", lambda: False)
         try:
             for name, arguments in (
                     ("--question-file", ["--question-file", str(question_path)]),
@@ -1185,9 +1198,192 @@ with tempfile.TemporaryDirectory() as temporary:
                       and str(question_path) not in hint,
                       (exit_code, hint[-500:]))
         finally:
-            patch("DEFAULT_SEAT_DIR", seat_orig)
+            patch("running_on_ned_box", running_on_ned_box_orig)
+            ghi_ask.subprocess.run = subprocess_run_orig
+
+        # Off the box, an ssh call that times out or cannot start is reported
+        # as the ssh call failing, naming the machine, never as the machine
+        # having died: an agent told ned-box is down stops every ned-box step.
+        def ssh_timing_out(command, **keywords):
+            raise ghi_ask.subprocess.TimeoutExpired(command, ghi_ask.SSH_TIMEOUT_SECONDS)
+
+        def ssh_not_starting(command, **keywords):
+            raise FileNotFoundError("ssh")
+
+        patch("running_on_ned_box", lambda: False)
+        try:
+            for name, fake, expected in (
+                    ("times out", ssh_timing_out,
+                     f"ghi-guide-agent-ask: the ssh call to {ghi_ask.AGENT_BOX} did not "
+                     f"finish within {ghi_ask.SSH_TIMEOUT_SECONDS}s, so this script "
+                     f"stopped it; that alone does not show {ghi_ask.AGENT_BOX} is down.\n"),
+                    ("cannot start", ssh_not_starting,
+                     f"ghi-guide-agent-ask: could not start ssh to {ghi_ask.AGENT_BOX}: "
+                     "ssh\n")):
+                patch_module_function(ghi_ask.subprocess, "run", fake)
+                caller_error = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(caller_error):
+                    exit_code = ghi_ask.main([argument_question])
+                check(f"off the box, an ssh call that {name} exits 1 saying the "
+                      "ssh call failed, naming the machine",
+                      exit_code == 1 and caller_error.getvalue() == expected,
+                      (exit_code, caller_error.getvalue()))
+        finally:
+            patch("running_on_ned_box", running_on_ned_box_orig)
+            ghi_ask.subprocess.run = subprocess_run_orig
+
+        # Which machine this is comes from the hostname, never from whether
+        # the seat directory exists. On ned-box with the seat missing, the ask
+        # once ran `ssh ned`, a name only the Mac resolves, and failed with
+        # ssh's "Could not resolve hostname" instead of naming the seat.
+        ssh_calls = []
+
+        def ssh_call_recording_run(command, **keywords):
+            ssh_calls.append(command)
+            return FakeCompletedProcess(0, "verdict: unrelated\n")
+
+        def asks_with_hostname(hostname, seat_directory):
+            ssh_calls.clear()
+            asked.clear()
+            caller_error = io.StringIO()
+            gethostname_orig = ghi_ask.socket.gethostname
+            seat_directory_orig = ghi_ask.DEFAULT_SEAT_DIR
+            patch_module_function(ghi_ask.socket, "gethostname", lambda: hostname)
+            patch("DEFAULT_SEAT_DIR", seat_directory)
+            patch_module_function(ghi_ask.subprocess, "run", ssh_call_recording_run)
+            try:
+                with contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(caller_error):
+                    exit_code = ghi_ask.main(["a short question"])
+            finally:
+                patch_module_function(ghi_ask.socket, "gethostname", gethostname_orig)
+                patch("DEFAULT_SEAT_DIR", seat_directory_orig)
+            return exit_code, caller_error.getvalue()
+
+        missing_seat = root / "agents" / "ghi-guide-agent"
+        for hostname in ("ned-box", "ned-box.local"):
+            exit_code, said = asks_with_hostname(hostname, missing_seat)
+            check(f"on ned-box (hostname {hostname}) with the seat directory "
+                  "missing, the ask runs no ssh and asks nothing",
+                  not ssh_calls and not asked, (ssh_calls, asked))
+            check(f"on ned-box (hostname {hostname}) with the seat directory "
+                  "missing, the ask exits 1 with one stderr line naming the "
+                  "directory and the command that creates it",
+                  exit_code == 1 and said.count("\n") == 1
+                  and f"agent-home {missing_seat} does not exist on ned-box" in said
+                  and f"worktree add {missing_seat} ghi-guide-agent'`" in said
+                  and f"worktree add -b ghi-guide-agent {missing_seat} origin/main'`" in said
+                  and "fallback ladder in .claude/skills/ghi-write/SKILL.md" in said
+                  and (SCRIPT_PATH.resolve().parent.parent / ".claude" / "skills"
+                       / "ghi-write" / "SKILL.md").is_file(),
+                  (exit_code, said))
+
+        # One hostname sorts before "ned-box" and one after, so only an exact
+        # match counts as ned-box.
+        for hostname in ("Els-MacBook-Pro.local", "ned-box-two", "zed-mac"):
+            exit_code, said = asks_with_hostname(hostname, seat_flag)
+            check(f"off ned-box (hostname {hostname}), a seat directory that "
+                  "happens to exist locally does not keep the ask from going to "
+                  "the box over ssh",
+                  exit_code == 0 and len(ssh_calls) == 1
+                  and ssh_calls[0][:2] == ["ssh", ghi_ask.AGENT_BOX] and not asked,
+                  (exit_code, ssh_calls, said))
+
+        # The two commands the missing-seat message gives create the seat:
+        # the first when the seat's branch exists, the second when it does not.
+        exit_code, said = asks_with_hostname("ned-box", missing_seat)
+        # Each is given as `ssh nedlern@ned-box '<git command>'`, so it runs on
+        # ned-box from either machine; the git command inside is what runs here.
+        given_commands = re.findall(
+            r"`ssh nedlern@ned-box '(git -C ~/Projects/nedschorus [^'`]+)'`", said)
+        import subprocess as real_subprocess
+        patch_module_function(real_subprocess, "run", subprocess_run_orig)
+        git_environment = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+
+        def run_git(*arguments):
+            return real_subprocess.run(["git", *arguments], capture_output=True,
+                                       text=True, env=git_environment, check=False)
+
+        for case, branch_exists in (("first", True), ("second", False)):
+            projects_repository = root / f"projects-nedschorus-{case}"
+            run_git("init", "-q", "-b", "main", str(projects_repository))
+            run_git("-C", str(projects_repository), "commit", "-q",
+                    "--allow-empty", "-m", "initial")
+            run_git("-C", str(projects_repository), "update-ref",
+                    "refs/remotes/origin/main", "HEAD")
+            if branch_exists:
+                run_git("-C", str(projects_repository), "branch", "ghi-guide-agent")
+            command = given_commands[0 if branch_exists else 1] if len(given_commands) == 2 else ""
+            created = real_subprocess.run(
+                shlex.split(command.replace("~/Projects/nedschorus",
+                                            str(projects_repository))) or ["false"],
+                capture_output=True, text=True, env=git_environment, check=False)
+            check(f"the missing-seat message's {case} command creates the seat "
+                  f"directory when the ghi-guide-agent branch "
+                  f"{'exists' if branch_exists else 'does not exist'}",
+                  created.returncode == 0 and (missing_seat / ".git").exists(),
+                  (given_commands, created.returncode, created.stderr))
+            run_git("-C", str(projects_repository), "worktree", "remove",
+                    "--force", str(missing_seat))
     finally:
         patch("ask", ask_orig)
+
+
+# --- the seat directory, state file and state key, unpatched ----------------
+# Every case above patches DEFAULT_SEAT_DIR or reads STATE_FILE_NAME and the
+# state key back from the module, so a changed value would pass them all.
+# These cases hold each value to what lies outside this program: the seat the
+# box-side shell enters, the .gitignore entries, and state files already on disk.
+import subprocess as real_subprocess
+
+with tempfile.TemporaryDirectory() as home:
+    environment = {key: value for key, value in os.environ.items()
+                   if key != "NEDSCHORUS_AGENTS_ROOT"}
+    environment["HOME"] = home
+    import_and_print_default_seat_dir = (
+        "import importlib.util, sys\n"
+        "spec = importlib.util.spec_from_file_location('ask', sys.argv[1])\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(module)\n"
+        "print(module.DEFAULT_SEAT_DIR)\n")
+    local = real_subprocess.run(
+        [sys.executable, "-c", import_and_print_default_seat_dir, str(SCRIPT_PATH)],
+        capture_output=True, text=True, env=environment, check=False, timeout=60)
+    seat_line = ghi_ask.build_remote_command("q", False, "x/y").splitlines()[0]
+    box_side = real_subprocess.run(
+        ["/bin/sh", "-c", seat_line + '\nprintf %s "$seat"'],
+        capture_output=True, text=True, env=environment, check=False, timeout=60)
+    check("with no agents-root variable, the default seat directory is the one "
+          "the box-side shell enters, so an ask on ned-box runs in the seat "
+          "an ask over ssh would reach",
+          local.returncode == 0 and box_side.returncode == 0
+          and local.stdout.strip() == box_side.stdout
+          and box_side.stdout.startswith(home + "/"),
+          (local, box_side))
+
+repository_root = SCRIPT_PATH.resolve().parent.parent
+for file_name in (ghi_ask.STATE_FILE_NAME, ghi_ask.LOCK_FILE_NAME,
+                  ghi_ask.STATE_FILE_NAME + ".tmp"):
+    ignored = real_subprocess.run(
+        ["git", "-C", str(repository_root), "check-ignore", "-q", file_name],
+        capture_output=True, text=True, check=False, timeout=60)
+    check(f".gitignore ignores {file_name}, so it never shows as an untracked "
+          "file in the seat's checkout",
+          ignored.returncode == 0, (ignored.returncode, ignored.stderr))
+
+with tempfile.TemporaryDirectory() as directory:
+    seat = Path(directory)
+    (seat / ".ghi-guide-agent-state.json").write_text(
+        json.dumps({"ghi_guide_agent_session_id": "sess-ON-DISK",
+                    "closes_since_birth": 2, "recent_matches": []}) + "\n",
+        encoding="utf-8")
+    on_disk = ghi_ask.load_state(seat / ghi_ask.STATE_FILE_NAME)
+    check("a state file the deployed ask script wrote is found and keeps its "
+          "session, so the seat resumes rather than cold-starting",
+          on_disk[ghi_ask.GHI_GUIDE_AGENT_SESSION_ID_STATE_KEY] == "sess-ON-DISK"
+          and on_disk["closes_since_birth"] == 2, on_disk)
 
 
 print()

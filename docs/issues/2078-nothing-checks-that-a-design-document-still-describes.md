@@ -23,7 +23,7 @@ When a pull request changes what a program does, a design document or an archite
 - `scripts/dangling-path-citation-check.py` reports new citations and citations of removed paths. The pull request removed no path line 20 names.
 - `docs/agents/pr-reviewer-instructions.md`, in its Review scope section, already lets a code finding name "a markdown file the change breaks". The reviewer who found line 20 raised a finding of that kind. The sentence permits such a finding and does not ask the reviewer to look for one, and merge-lane-2 recorded this finding as non-blocking.
 
-A search for an existing GHI came up empty: `scripts/ghi-info-ask.py --include-closed` on 2026-10-28, asking for a GHI, open or closed, about checking that design prose still matches the code it describes, and `gh issue list --repo nedschorus/nedschorus --state all --search '"design prose" OR "stale design" OR "design drift" OR "design still describes"'`, which returned nothing.
+A search for an existing GHI came up empty: `scripts/ghi-guide-agent-ask.py --include-closed` (then named `ghi-info-ask.py`) on 2026-10-28, asking for a GHI, open or closed, about checking that design prose still matches the code it describes, and `gh issue list --repo nedschorus/nedschorus --state all --search '"design prose" OR "stale design" OR "design drift" OR "design still describes"'`, which returned nothing.
 
 ## What a listing of lines would have shown
 

@@ -22,7 +22,7 @@ it creates anything, the grid lists the cold-read-records in the log-store and
 in this checkout, counts those that froze this document, under its present
 path or an earlier one `git log --follow` shows, and hold a grid report written
 after the commit on origin/main's first-parent line that last changed the
-document -- for a merged topic branch, the merge, not the topic's own commit --
+document -- for a merged nc-topic-branch, the merge, not the topic's own commit --
 prints
 "cold-read-full-run N of 3", and refuses a fourth. A flag saying the user
 decided to run again or to change the design makes the run number 1, and the
@@ -57,8 +57,10 @@ copy's sha256 (`target_sha256=`), so the bytes a report reviewed are named in
 the report itself. At the
 end of the run the cold-read-record is shipped to the log-store on ned-box by
 nc-systems/cold-read/cold-read-record-ship.py, whatever the run's outcome, and the shipper's
-one line is printed as `record:`; a shipping failure is reported, never fatal
-(user-ruled 2026-09-07). The one run that ships nothing is the one that could
+one line is printed as `record:` (user-ruled 2026-09-07). When the shipper's
+line is anything but `shipped:`, a refusal included, the run still finishes
+and keeps its reports, and then it exits 1, because the record did not reach
+the log-store. The one run that ships nothing is the one that could
 not freeze the target: it exits 2 before any cold-read-cell launches, so its
 record holds the reference check alone and no report to keep.
 
@@ -116,12 +118,15 @@ since the count last started ends the attempt: its closing text says to tell
 the user instead of starting a new run, and a run launched after it is refused
 until the user rules.
 
-Exit codes: 0 all cold-read-cells ran, 1 one or more reports are absent, 2 no
-cold-read-cell was launched (a bad invocation, a cold-read-target this
-instrument refuses to review, or a cold-read-target that could not be frozen
-into the cold-read-record), 3 the frozen copy changed while the
+Exit codes: 0 all cold-read-cells ran and the record reached the log-store,
+1 one or more reports are absent or the record did not reach the log-store, or
+both, 2 no cold-read-cell was launched (a bad invocation, a cold-read-target
+this instrument refuses to review, or a cold-read-target that could not be
+frozen into the cold-read-record), 3 the frozen copy changed while the
 cold-read-cells were running, so no report in the set can say which text it
-reviewed. An edit to the original alone changes no exit code.
+reviewed. A run that exits 2 ships nothing, and 3 stands whether or not the
+record arrived; the `record:` line says which. An edit to the original alone
+changes no exit code.
 """
 
 import argparse
@@ -133,7 +138,6 @@ import os
 import pathlib
 import re
 import shlex
-import signal
 import subprocess
 import sys
 import time
@@ -152,6 +156,9 @@ CELL_LAUNCHERS = {
     "codex": pathlib.Path(__file__).with_name("cold-read-codex-cell.py"),
 }
 RECORD_SHIPPER = pathlib.Path(__file__).with_name("cold-read-record-ship.py")
+# The shipper's one line opens with this only when the record reached the
+# log-store; REFUSED and FAILED both leave it on disk alone.
+RECORD_SHIPPED_LINE_PREFIX = "shipped:"
 _record_shipper_spec = importlib.util.spec_from_file_location(
     "cold_read_record_ship", RECORD_SHIPPER)
 record_shipper = importlib.util.module_from_spec(_record_shipper_spec)
@@ -788,25 +795,6 @@ def announce_agent_binary_down(cells_by_runtime: dict, outcome: RunOutcome) -> N
               f"{len(absences)} reports absent", flush=True)
 
 
-def stop_process_tree(process: subprocess.Popen, grace_seconds: float = 5.0) -> None:
-    """Stop a cell's process group and reap its launcher."""
-    # macOS answers EPERM, not ESRCH, for a group whose members have all exited.
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
-        pass
-    try:
-        process.wait(timeout=grace_seconds)
-    except subprocess.TimeoutExpired:
-        pass
-    # Children may remain in the group after the launcher exits.
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
-    process.wait()
-
-
 def wait_for_cells(running: dict,
                    target_move: typing.Callable[[], typing.Optional[tuple]],
                    target_check_interval_seconds: float = 0.0,
@@ -862,7 +850,7 @@ def wait_for_cells(running: dict,
             if move is not None:
                 for report_path, attempt in running.items():
                     if attempt.process is not None:
-                        stop_process_tree(attempt.process)
+                        cell_common.stop_process_tree(attempt.process)
                     outcome.stopped.append(cell_name_of(report_path))
                     # Stopped cells never reach the post-model stray-write check; absence of results is not a clean check.
                     log_lines = (attempt.stderr_path.read_text(encoding="utf-8").splitlines()
@@ -1063,7 +1051,8 @@ def main() -> int:
         # Keep target-changed first, and add all markers before shipping: the store refuses changed bytes.
         mark_every_report(record_dir, incomplete_set_marker(outcome.absent, launched))
 
-    print(f"record: {ship_record(record_dir)}", flush=True)
+    record_line = ship_record(record_dir)
+    print(f"record: {record_line}", flush=True)
 
     print()
     tell = tell_the_user_sentence(outcome.absent)
@@ -1099,7 +1088,7 @@ def main() -> int:
     # A changed target invalidates the review; missing reports only make the review incomplete.
     if target_changed:
         return 3
-    return 1 if outcome.absent else 0
+    return 1 if outcome.absent or not record_line.startswith(RECORD_SHIPPED_LINE_PREFIX) else 0
 
 if __name__ == "__main__":
     sys.exit(main())

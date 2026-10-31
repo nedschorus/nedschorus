@@ -230,7 +230,7 @@ for protocol in ("verdict: related #216", "verdict: related #216,#217",
                  "read #13, #24, #31", "read #13.",
                  "read #13, #31 (closed 2026-08-08)",
                  "read #31 (closed 2026-08-08), #13"):
-    check(f"a ghi-info reply line is skipped: {protocol}", found(protocol) == [], found(protocol))
+    check(f"a ghi-guide-agent reply line is skipped: {protocol}", found(protocol) == [], found(protocol))
 check("read followed by a number mid-sentence is still read",
       found("We read #13 later.") == ["#13"], found("We read #13 later."))
 for sentence, expected in (("Read #931 before making changes; PR 932 contains the fix.",
@@ -239,7 +239,7 @@ for sentence, expected in (("Read #931 before making changes; PR 932 contains th
                            ("verdict: unrelated, see PR 5", ["PR 5"]),
                            ("Read #31 (closed 2026-08-08) before changing PR 5.", ["#31", "PR 5"]),
                            ("read #31 (merged 2026-08-08)", ["#31"])):
-    check(f"a sentence shaped like the start of a ghi-info reply is still read: {sentence}",
+    check(f"a sentence shaped like the start of a ghi-guide-agent reply is still read: {sentence}",
           found(sentence) == expected, found(sentence))
 unclosed_quoted_fence = "> ~~~\n> code PR 1\n\nSee PR 931."
 check("a fence opened inside a block quote closes where the block quote ends",

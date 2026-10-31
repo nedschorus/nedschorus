@@ -1221,28 +1221,28 @@ with tempfile.TemporaryDirectory() as scratch:
               and os.getsid(attempt.process.pid) == attempt.process.pid)
     finally:
         if attempt.process is not None:
-            grid_module.stop_process_tree(attempt.process, grace_seconds=0.1)
+            grid_module.cell_common.stop_process_tree(attempt.process, grace_seconds=0.1)
     check("stopping a cell reaps its launcher", attempt.process.returncode is not None)
 
     for result in (0, subprocess.TimeoutExpired("cell", 5.0)):
-        with mock.patch.object(grid_module.os, "killpg") as killed:
+        with mock.patch.object(grid_module.cell_common.os, "killpg") as killed:
             process = mock.Mock(pid=12345)
             process.wait.side_effect = [result, 0]
-            grid_module.stop_process_tree(process)
+            grid_module.cell_common.stop_process_tree(process)
             check("group termination escalates even when the launcher exits",
                   killed.call_args_list == [
-                      mock.call(process.pid, grid_module.signal.SIGTERM),
-                      mock.call(process.pid, grid_module.signal.SIGKILL)]
+                      mock.call(process.pid, grid_module.cell_common.signal.SIGTERM),
+                      mock.call(process.pid, grid_module.cell_common.signal.SIGKILL)]
                   and process.wait.call_args_list == [mock.call(timeout=5.0), mock.call()])
     process.wait.side_effect = None
     process.wait.reset_mock()
-    with mock.patch.object(grid_module.os, "killpg", side_effect=ProcessLookupError):
-        grid_module.stop_process_tree(process)
+    with mock.patch.object(grid_module.cell_common.os, "killpg", side_effect=ProcessLookupError):
+        grid_module.cell_common.stop_process_tree(process)
         check("an already absent group still reaps its launcher", process.wait.called)
     process.wait.reset_mock()
     # macOS answers a group whose members have all exited with EPERM.
-    with mock.patch.object(grid_module.os, "killpg", side_effect=PermissionError):
-        grid_module.stop_process_tree(process)
+    with mock.patch.object(grid_module.cell_common.os, "killpg", side_effect=PermissionError):
+        grid_module.cell_common.stop_process_tree(process)
         check("a group with no live member left still reaps its launcher", process.wait.called)
 
     # --- The reference pre-pass: a web link is not a path, a bare name is looked up --
@@ -1581,19 +1581,33 @@ with tempfile.TemporaryDirectory() as scratch:
           and (store_copy / "triage.md").is_file(),
           f"exit {third_ship.returncode}; stdout={third_ship.stdout!r}")
 
-    # --- A store that cannot be reached does not fail the read ----------------
+    # --- A store that cannot be reached: the run finishes, exits 1 ------------
     repository = build_scratch_repository(scratch, "checkout-store-unreachable")
     result = run_grid(repository, stubs, {
         RECORD_SHIP_DESTINATION_VARIABLE: "nobody@no-such-host.invalid:/tmp/no-store"})
     record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
-    check("an unreachable store prints record: FAILED and the run exits 0 all the same",
+    check("an unreachable store prints record: FAILED, the run finishes all six, and exits 1",
           len(record_lines) == 1 and record_lines[0].startswith("record: FAILED:")
-          and result.returncode == 0,
+          and result.returncode == 1 and "All six reports landed" in result.stdout,
           f"exit {result.returncode}; {record_lines!r}")
     record_directory = record_directory_of(repository)
     check("the record, frozen target included, stays on disk for a later ship",
           record_directory is not None
           and frozen_target_path_in_scratch_repository(repository, record_directory).is_file())
+
+    # --- A store that refuses the record: the run finishes, exits 1 ----------
+    # The store already holds this record's name with other bytes, so the
+    # add-only shipper refuses it, and the record did not reach the store.
+    unreachable_record_name = record_directory.name
+    repository = build_scratch_repository(scratch, "checkout-store-refuses")
+    seed_log_store_record(repository, unreachable_record_name, [])
+    result = run_grid(repository, stubs)
+    record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
+    check("a store holding the record's name with other bytes prints record: REFUSED, "
+          "the run finishes all six, and exits 1",
+          len(record_lines) == 1 and record_lines[0].startswith("record: REFUSED:")
+          and result.returncode == 1 and "All six reports landed" in result.stdout,
+          f"exit {result.returncode}; {record_lines!r}; stderr={result.stderr[-400:]!r}")
 
     # --- A changed target is still shipped: it is evidence -------------------
     repository = build_scratch_repository(scratch, "checkout-changed-still-shipped")
@@ -1603,6 +1617,16 @@ with tempfile.TemporaryDirectory() as scratch:
     record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
     check("a run whose frozen copy moved ships its marked record and exits 3",
           result.returncode == 3 and record_lines and record_lines[0].startswith("record: shipped:"),
+          f"exit {result.returncode}; {record_lines!r}")
+
+    repository = build_scratch_repository(scratch, "checkout-changed-store-unreachable")
+    result = run_grid(repository, stubs, {
+        "COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET": "1",
+        RECORD_SHIP_DESTINATION_VARIABLE: "nobody@no-such-host.invalid:/tmp/no-store",
+        **END_OF_RUN_COMPARISON_ONLY})
+    record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
+    check("a run whose frozen copy moved exits 3 though its record did not arrive either",
+          result.returncode == 3 and record_lines and record_lines[0].startswith("record: FAILED:"),
           f"exit {result.returncode}; {record_lines!r}")
 
     # --- The cells read the frozen copy, never the live document -------------
@@ -2019,7 +2043,7 @@ with tempfile.TemporaryDirectory() as scratch:
               and "refusing cold-read-full-run" not in result.stderr,
               f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
-    # A change merged from a topic branch lands at the merge, not at the
+    # A change merged from an nc-topic-branch lands at the merge, not at the
     # topic's commit: runs between the two reviewed that change and do not count.
     repository = build_scratch_repository(scratch, "full-run-count-merged-topic")
     git_in = lambda *arguments, when=None: subprocess.run(
