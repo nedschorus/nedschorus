@@ -28,8 +28,10 @@ an entry at its own lines, labelled with the name, and only the binding's string
 branches are read. A conditional expression's condition is not read, in a binding or at a
 form, so its strings and names are not text. The returned name is listed whatever its caller does with it, since the
 caller is not read. A local name is not followed when it reaches the form through any call
-but a string literal's join or the exception a raise statement builds, inside a list or tuple that is returned, from a function,
-lambda or class body nested inside its own, or at module level. A message built any other way is not found.
+but a string literal's join or the exception a raise statement builds, inside a list or tuple that is returned, from a function
+body nested inside its own, from a lambda that takes the name as a parameter or a class body that binds it, or at module
+level; a lambda or a class body nested in the function follows its other local names. A lambda's defaults and a class's
+decorators, bases and keywords are read in the scope the definition stands in. A message built any other way is not found.
 
 An entry's kind is "prompt", text a program hands an agent as its instructions, when it was
 found by following local names and reached the form through a local name containing
@@ -40,7 +42,7 @@ raised or put in a hook's output, outside such a name, is a message. Nor is one 
 helper printer that is a method, is defined in another module or more than
 once, or is called under another name; nor one that comes after a *starred
 argument in the call; nor one whose parameter the helper prints only through a
-call, such as json.dumps(payload); nor one passed where an enclosing function's
+call, such as json.dumps(payload), or only in a conditional expression's condition; nor one passed where an enclosing function's
 parameter hides the helper printer's name; nor one that fills a helper's
 *args or **kwargs, as in warn("text") for def warn(*parts): print(*parts). "systemMessage" is not
 among the keys: Claude Code shows that text to the user, not to the agent.
@@ -174,15 +176,25 @@ def printed_arguments(call, helper_printers, receiver_names=()):
         yield from call_arguments_by_parameter(call, *helper_printers[call.func.id])
 
 
-def names_outside_calls(expression):
-    """The names in the expression that are not inside a call, so print(text + "\\n") prints text
-    but print(json.dumps(payload)) does not print payload's strings as they are."""
-    if isinstance(expression, ast.Call):
-        return
-    if isinstance(expression, ast.Name):
-        yield expression.id
-    for child in ast.iter_child_nodes(expression):
-        yield from names_outside_calls(child)
+def calls_and_parameters_they_see(nodes, parameters):
+    """Each call among the nodes, with the parameters a name in it still refers to: inside a
+    nested lambda its own parameters hide them, inside a nested function its parameters and the
+    names its body binds, and inside a nested class body the names that body binds. A nested
+    definition's defaults, decorators and bases see the parameters as its enclosing scope does."""
+    for node in nodes:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            yield from calls_and_parameters_they_see(definition_time_expressions(node), parameters)
+            if isinstance(node, ast.Lambda):
+                hidden, body = function_parameter_names(node), [node.body]
+            elif isinstance(node, ast.ClassDef):
+                hidden, body = scope_assigned_names(node), node.body
+            else:
+                hidden, body = function_parameter_names(node) | scope_assigned_names(node), node.body
+            yield from calls_and_parameters_they_see(body, parameters - hidden)
+            continue
+        if isinstance(node, ast.Call):
+            yield node, parameters
+        yield from calls_and_parameters_they_see(ast.iter_child_nodes(node), parameters)
 
 
 def function_parameter_names(function):
@@ -194,9 +206,10 @@ def function_parameter_names(function):
 
 def helper_printers_in_tree(tree):
     """Each function defined once at module level that prints one of its own parameters, mapped to
-    (positions, names) of those parameters. A parameter is printed when it appears in an argument
-    of print, of sys.stdout.write or sys.stderr.write, of `<parameter>.write`, as in
-    say(stream, text), or of a call to another helper printer in a printed position."""
+    (positions, names) of those parameters. A parameter is printed when an argument of print, of
+    sys.stdout.write or sys.stderr.write, of `<parameter>.write`, as in say(stream, text), or of a
+    call to another helper printer in a printed position carries its text, as names_carried_as_text
+    says, where no nested lambda, function or class body hides the parameter's name."""
     definitions = {}
     for statement in tree.body:
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -214,11 +227,9 @@ def helper_printers_in_tree(tree):
             visible_helper_printers = {name: entry for name, entry in helper_printers.items()
                                        if name not in parameters}
             printed = set()
-            for node in ast.walk(function):
-                if isinstance(node, ast.Call):
-                    for argument in printed_arguments(node, visible_helper_printers, parameters):
-                        printed.update(name for name in names_outside_calls(argument)
-                                       if name in parameters)
+            for call, visible in calls_and_parameters_they_see(function.body, parameters):
+                for argument in printed_arguments(call, visible_helper_printers, visible):
+                    printed.update(name for name in names_carried_as_text(argument) if name in visible)
             if not printed:
                 continue
             entry = ({index for index, name in enumerate(positional) if name in printed}, printed)
@@ -262,23 +273,35 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
             self.entries_by_node_context[identity] = entry
             self.string_entries.append(entry)
 
-    def visit_enclosing_definition(self, node):
-        self.enclosing_names.append(node.name)
-        self.generic_visit(node)
-        self.enclosing_names.pop()
-
     def visit_scope(self, node):
-        """Visit a function, lambda or class body with its own local names, so it follows none of
-        its enclosing function's; its own parameters hide a helper printer's name, as the
-        enclosing function's still do."""
-        is_function = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        self.enclosing_parameter_names.append(
-            set() if isinstance(node, ast.ClassDef) else function_parameter_names(node))
-        self.enclosing_local_string_bindings.append(local_string_bindings(node) if is_function else {})
+        """Visit the expressions a function, lambda or class definition evaluates where it
+        stands, such as defaults, decorators and bases, in the enclosing scope, then its body in
+        its own scope. A function's body follows only its own local names. A lambda's or a class
+        body's follows the enclosing scope's, less the names the lambda takes as parameters or the
+        class body assigns. Its own parameters hide a helper printer's name, as the enclosing
+        function's still do."""
+        for expression in definition_time_expressions(node):
+            self.visit(expression)
+        enclosing = self.enclosing_local_string_bindings[-1] if self.enclosing_local_string_bindings else {}
         if isinstance(node, ast.Lambda):
-            self.generic_visit(node)
+            parameters = function_parameter_names(node)
+            bindings = {name: values for name, values in enclosing.items() if name not in parameters}
+        elif isinstance(node, ast.ClassDef):
+            parameters = set()
+            assigned = scope_assigned_names(node)
+            bindings = {name: values for name, values in enclosing.items() if name not in assigned}
         else:
-            self.visit_enclosing_definition(node)
+            parameters = function_parameter_names(node)
+            bindings = local_string_bindings(node)
+        self.enclosing_parameter_names.append(parameters)
+        self.enclosing_local_string_bindings.append(bindings)
+        if isinstance(node, ast.Lambda):
+            self.visit(node.body)
+        else:
+            self.enclosing_names.append(node.name)
+            for statement in node.body:
+                self.visit(statement)
+            self.enclosing_names.pop()
         self.enclosing_local_string_bindings.pop()
         self.enclosing_parameter_names.pop()
 
@@ -412,6 +435,47 @@ def names_carried_as_text(expression):
     elif not isinstance(expression, ast.Call):
         for child in ast.iter_child_nodes(expression):
             yield from names_carried_as_text(child)
+
+
+def definition_time_expressions(definition):
+    """The expressions a function, lambda or class definition evaluates in the scope it stands
+    in: decorators, parameter defaults and annotations, the return annotation, and a class's
+    bases and keywords."""
+    if isinstance(definition, ast.ClassDef):
+        return [*definition.decorator_list, *definition.bases,
+                *(keyword.value for keyword in definition.keywords)]
+    arguments = definition.args
+    expressions = [*arguments.defaults, *(default for default in arguments.kw_defaults if default is not None)]
+    if isinstance(definition, ast.Lambda):
+        return expressions
+    annotations = [argument.annotation for argument in
+                   [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs,
+                    arguments.vararg, arguments.kwarg] if argument is not None]
+    return [*definition.decorator_list, *expressions,
+            *(annotation for annotation in [*annotations, definition.returns] if annotation is not None)]
+
+
+def scope_assigned_names(scope):
+    """The names a function's or class's own body binds: names it stores to, and the functions
+    and classes it defines."""
+    names = {node.id for node in nodes_in_own_scope(scope)
+             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)}
+    return names | {definition.name for definition in scope_direct_definitions(scope)}
+
+
+def scope_direct_definitions(scope):
+    """The functions and classes defined in the scope's own body, not inside a nested one."""
+    found = []
+    pending = list(scope.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            found.append(node)
+            continue
+        if isinstance(node, ast.Lambda):
+            continue
+        pending.extend(ast.iter_child_nodes(node))
+    return found
 
 
 def nodes_in_own_scope(function):

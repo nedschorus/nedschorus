@@ -243,6 +243,21 @@ LOCAL_NAME_FORMS = (
     ("a printed conditional's branches, its condition left out",
      'def main(mode):\n    state = "internal data"\n    print("Resume" if state == "known" else "Stop")\n',
      [("Resume", "print in main()"), ("Stop", "print in main()")]),
+    ("a local of an enclosing function printed by a lambda nested in it",
+     'def main():\n    text = "outer text"\n    callback = lambda: print(text)\n',
+     [("outer text", "text = in main()")]),
+    ("a local of an enclosing function printed in the body of a class nested in it",
+     'def main():\n    text = "outer text"\n    class Holder:\n        print(text)\n',
+     [("outer text", "text = in main.Holder()")]),
+    ("a local printed in a lambda's default, which the enclosing function evaluates",
+     'def main():\n    text = "Visible message"\n    callback = lambda value=print(text): None\n',
+     [("Visible message", "text = in main()")]),
+    ("a local printed in a class decorator, which the enclosing function evaluates",
+     'def main():\n    text = "Decorated message"\n    @register(print(text))\n    class Holder:\n        pass\n',
+     [("Decorated message", "text = in main()")]),
+    ("a local printed in a class base, which the enclosing function evaluates",
+     'def main():\n    text = "Base message"\n    class Holder(make_base(print(text))):\n        pass\n',
+     [("Base message", "text = in main()")]),
 )
 for case_name, source, expected in LOCAL_NAME_FORMS:
     found = [(entry["text"], entry["label"]) for entry in entries(source)]
@@ -266,9 +281,7 @@ LOCAL_NAME_FORMS_NOT_RECOGNIZED = (
      'def outer(text):\n    def inner():\n        text = "inner text"\n        store(text)\n    print(text)\n'),
     ("a local of an enclosing function, when a lambda prints its own parameter of that spelling",
      'def main():\n    prompt = "unused"\n    callback = lambda prompt: print(prompt)\n'),
-    ("a local of an enclosing function printed by a lambda nested in it",
-     'def main():\n    text = "outer text"\n    callback = lambda: print(text)\n'),
-    ("a local of an enclosing function printed in the body of a class nested in it",
+    ("a local of an enclosing function, when a class body nested in it binds that name itself",
      'def main():\n    text = "outer text"\n    class Holder:\n        text = 3\n        print(text)\n'),
     ("a string bound in a class body and printed there, as at module level",
      'def main():\n    class Holder:\n        text = "class text"\n        print(text)\n'),
@@ -308,6 +321,9 @@ HELPER_PRINTER_FORMS = (
      SAY + 'def refuse(stream, cause):\n    say(stream, cause + ", so refused")\n'
      'refuse(sys.stderr, "cause text")\n',
      [("{cause}, so refused", "say() in refuse()"), ("cause text", "refuse()")]),
+    ("a string passed to a helper whose lambda prints the helper's parameter",
+     'def sink(text):\n    run(lambda: print(text))\nsink("closure text")\n',
+     [("closure text", "sink()")]),
     ("a string passed to a helper that hands its parameter to a helper printer defined after it",
      'def refuse(stream, cause):\n    say(stream, cause + ", so refused")\n' + SAY
      + 'refuse(sys.stderr, "cause text")\n',
@@ -338,6 +354,12 @@ HELPER_PRINTER_FORMS_NOT_RECOGNIZED = (
      'route(lambda p: None, {"key": "value"})\n'),
     ("a string passed to a lambda's parameter that hides a helper printer's name",
      SAY + 'route = lambda say: say(sys.stderr, "hidden text")\n'),
+    ("a string a helper prints only in a conditional's condition, handed through a join",
+     'def status(mode):\n    print("Resume" if mode else "Stop")\n'
+     'def main():\n    prompt = "condition text"\n    status("".join([prompt]))\n'),
+    ("a string a helper's lambda prints only through the lambda's own parameter of that spelling",
+     'def sink(text):\n    callback = lambda text: print(text)\n'
+     'def main():\n    prompt = "shadowed text"\n    sink("".join([prompt]))\n'),
     ("a print keyword that names where to print, not what",
      'def show(text, out):\n    print(text, file=out)\nshow(None, out="file text")\n'),
 )
