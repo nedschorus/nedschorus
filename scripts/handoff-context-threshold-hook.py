@@ -105,6 +105,9 @@ HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE = (
 # Allow a slow cold-read cell plus one retry; the context ceiling still bounds deferral.
 DEFAULT_BACKGROUND_TASK_WAIT_MINUTES = 75.0
 
+# Covers a subagent just woken by its own background task, before it has launched or written more.
+SUBAGENT_OWN_TRANSCRIPT_RECENT_WRITE_SECONDS = 5 * 60
+
 class TranscriptCouldNotBeFullyRead(Exception):
     """An incomplete scan must not be mistaken for no work in flight."""
 
@@ -267,13 +270,19 @@ def record_age_seconds(record, now):
 
 
 def spawned_subagent_ids_in_flight(transcript_path: str) -> list:
-    """Return running Agent-tool ids, excluding background Bash tasks."""
-    return work_in_flight(transcript_path, background_task_wait_seconds=0).subagent_ids
+    """Return Agent-tool ids the session transcript's notices leave running, excluding
+    background Bash tasks."""
+    return work_in_flight(transcript_path, background_task_wait_seconds=0,
+                          read_subagent_transcripts=False).subagent_ids
 
 
 def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
-                   now=None) -> WorkInFlight:
-    """Return running subagents and background tasks in launch order."""
+                   now=None, read_subagent_transcripts=True) -> WorkInFlight:
+    """Return running subagents and background tasks in launch order.
+
+    A subagent whose last task-notification is interim counts only while its own transcript
+    shows work in flight; read_subagent_transcripts=False counts it from the notices alone.
+    """
     # Scan the whole transcript: a running task may have launched hours before the tail.
     # Unreadable candidates raise; treating an incomplete scan as empty could kill running work.
     path = Path(transcript_path).expanduser() if transcript_path else None
@@ -327,11 +336,49 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
         age = launched_task_age[task_id]
         return age is None or age <= background_task_wait_seconds
 
+    def subagent_still_in_flight(agent_id):
+        if agent_id in finished_ids:
+            return False
+        # A subagent with no notice yet has not stopped once; only an interim last notice is doubted.
+        if agent_id not in last_notification_is_interim or not read_subagent_transcripts:
+            return True
+        return subagent_own_transcript_shows_work_in_flight(
+            subagent_transcript_path(path, agent_id), background_task_wait_seconds, now)
+
     return WorkInFlight(
-        [agent_id for agent_id in spawned_ids if agent_id not in finished_ids],
+        [agent_id for agent_id in spawned_ids if subagent_still_in_flight(agent_id)],
         [task_id for task_id in launched_task_ids
          if task_id not in finished_ids and still_within_wait(task_id)],
     )
+
+
+def subagent_transcript_path(session_transcript_path, agent_id) -> Path:
+    """Return where Claude Code writes the subagent's own transcript, beside the session's."""
+    return Path(session_transcript_path).with_suffix("") / "subagents" / f"agent-{agent_id}.jsonl"
+
+
+def subagent_own_transcript_shows_work_in_flight(subagent_path: Path,
+                                                 background_task_wait_seconds: float,
+                                                 now) -> bool:
+    """Return True while the subagent's own transcript was written within the recent-write
+    window, or shows a background task of its own still within its wait.
+
+    A missing transcript shows neither, so the subagent counts as finished. An unreadable one
+    raises TranscriptCouldNotBeFullyRead, as the session transcript's scan does.
+    """
+    if not subagent_path.is_file():
+        return False
+    try:
+        for record in transcript_records.records_newest_first(subagent_path):
+            age = record_age_seconds(record, now)
+            if age is not None:
+                if age <= SUBAGENT_OWN_TRANSCRIPT_RECENT_WRITE_SECONDS:
+                    return True
+                break
+    except (OSError, UnicodeDecodeError) as problem:
+        raise TranscriptCouldNotBeFullyRead(f"{subagent_path}: {problem}") from problem
+    return bool(work_in_flight(str(subagent_path), background_task_wait_seconds, now=now,
+                               read_subagent_transcripts=False).background_task_ids)
 
 
 def main(argv=None) -> int:
