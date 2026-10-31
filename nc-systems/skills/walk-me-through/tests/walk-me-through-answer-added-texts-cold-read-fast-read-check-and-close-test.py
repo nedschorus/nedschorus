@@ -1000,6 +1000,16 @@ def test_no_open_walk_or_no_item_fails():
           result.returncode == 1 and f"minutes are {case.minutes} is paused" in result.stderr
           and "\n#next_to_present item 4 of 9\n" in result.stderr and "no approval-walk is open" not in result.stderr
           and case.minutes.read_bytes() == before, described(result))
+    case = Case(next_to_present="item 2 of 9 #approval_walk_paused the user's stop order")
+    result = case.run("check")
+    check("check on a walk paused on its marker's own line prints a resume line without the pause",
+          result.returncode == 1 and "\n#next_to_present item 2 of 9\n" in result.stderr, described(result))
+    printed_resume_line = next((line for line in result.stderr.splitlines() if line.startswith("#next_to_present")), "")
+    with open(case.minutes, "a") as minutes:
+        minutes.write(printed_resume_line + "\n")
+    result = case.run("check")
+    check("appending the printed resume line resumes the walk",
+          printed_resume_line and "is paused" not in result.stderr, described(result))
     case = Case(next_to_present="item 8 of 9")
     result = case.run("check")
     check("check on an item the walk-document lacks fails on stderr",

@@ -99,9 +99,11 @@ CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 WALK_DIRECTORY = Path("docs") / "walk"
 MINUTES_SUFFIX = "-minutes.md"
 # Group 1 is set only for the hashtag; the old form is read so that open walks it marks are migrated.
-# The value runs to the line's end or the next marker, so two markers on a line are read as two.
+# The value runs to the line's end, the next marker or a pause hashtag, so two markers on a line are read as two
+# and a pause on the marker's line is not read as part of the value.
 NEXT_MARKER = re.compile(
-    r"(?:(#next_to_present)\b|Next to present:)[*_`\s:]*((?:(?!#next_to_present\b|Next to present:)[^\n])*)",
+    r"(?:(#next_to_present)\b|Next to present:)[*_`\s:]*"
+    r"((?:(?!#next_to_present\b|Next to present:|#approval_walk_paused\b)[^\n])*)",
     re.I)
 PAUSE_MARKER = re.compile(r"#approval_walk_paused\b", re.I)
 CLOSED_VALUE = re.compile(r"^(?:none|closed)\b", re.I)
