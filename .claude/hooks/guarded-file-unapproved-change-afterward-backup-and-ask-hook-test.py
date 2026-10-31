@@ -796,7 +796,8 @@ def cases(scratch):
         os.chdir(saved_directory)
         os.environ.clear()
         os.environ.update(saved_environment)
-    check("and does not even open the store", texts == [] and opened == [], (texts, opened))
+    check("and opens the store only once, to find it has no directory for the checkout",
+          texts == [] and opened == ["ned-box"], (texts, opened))
     second_claude = second / "CLAUDE.md"
     base = world.key(second_claude)
     second_claude.write_text("project v2, shell\n")
@@ -826,6 +827,25 @@ def cases(scratch):
           and world.key(claude) in world.store_file(claude, "approved")
           and world.key(claude) in world.versions(claude),
           (message, world.store_file(claude, "approved")))
+    base = world.git("rev-parse", "HEAD:CLAUDE.md").stdout.strip()
+    claude.write_text("project v2\n")
+    world.run()
+    check("when that file changes again, its version at the commit the checkout started from, "
+          "which no run saw, is not approved", base not in world.store_file(claude, "approved"),
+          world.store_file(claude, "approved"))
+
+    # -- a lost checkout state does not silence an unanswered ask
+    world = fresh(scratch, "lost-state-keeps-asking")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2, unapproved\n")
+    message = world.run()
+    check("an unapproved edit is asked about", str(claude) in message, message)
+    world.git("commit", "-qam", "commit the unapproved edit")
+    world.run()
+    next((world.repo / ".git").glob("*-state.json")).write_text("{corrupt")
+    message = world.run()
+    check("after the checkout's state is lost, the committed version the user never approved "
+          "is still asked about", str(claude) in message, message)
 
     # -- a store directory a timed-out run left part-written
     world = fresh(scratch, "part-written-store-directory")
