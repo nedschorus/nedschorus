@@ -682,6 +682,16 @@ def check_cases(root, repository, base, frozen_head):
     code, out, err = run(root, repository, failing_routes, "--check", "--answers", moved_answers)
     check("check: gh failing for another cause while checking a moved entry fails with exit 2",
           code == 2 and "error connecting" in err and "no such pull request" not in err, out + err)
+    for text in ("Moved to pull request soon, once it is opened", "Moved to pull request #",
+                 "Moved to pull request: #41"):
+        prefix_only = answers_file(root, f"1. Fixed.\n2. {text}\n")
+        code, out, err = run(root, repository, routes_for(frozen_head, reviews),
+                             "--check", "--answers", prefix_only)
+        check(f"check: a moved entry with no pull request number or URL refuses with exit 1: {text!r}",
+              code == 1 and "entry 2" in err and "no pull request number or URL follows" in err
+              and "open it as CLAUDE.md says" in err and "If the change did not move after all" in err
+              and f"The check is: python3 {PROGRAM} {NUMBER} --check --answers {prefix_only}" in err,
+              out + err)
 
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", str(root / "no-such-file"))

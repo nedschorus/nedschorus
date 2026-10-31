@@ -22,8 +22,8 @@ and the --check command to finish with, which the subagent runs in its own workt
 With --check, run in the worktree or checkout that holds the round's commit: the commits from the frozen-head to --commit (default
 HEAD) must be none, or one non-merge commit, or with --after-conflict-merge a merge of origin/main
 followed by at most one non-merge commit. The answers file holds one entry per blocking finding,
-each starting "<n>. " on its own line; an entry that goes on with MOVED_TO_PULL_REQUEST_PATTERN must
-name a pull request gh pr view finds, or --check refuses it. By default it is ANSWERS_FILE_NAME_FORMAT at the root of
+each starting "<n>. " on its own line; an entry that starts with MOVED_TO_PULL_REQUEST_PREFIX_PATTERN,
+in any case, must go on with MOVED_TO_PULL_REQUEST_PATTERN naming a pull request gh pr view finds, or --check refuses it. By default it is ANSWERS_FILE_NAME_FORMAT at the root of
 the worktree or checkout --check runs in, and --check refuses when the checked commit's tree holds
 an answers file the frozen-head's tree does not, since a branch cut before .gitignore named the file does not leave it out of
 commits. It prints the files the fix commit changes that no blocking
@@ -57,6 +57,8 @@ BLOCKING_MARKER_DESCRIPTION = "the bold word **Blocks**"
 BLOCKING_COUNT_PATTERN = re.compile(r"\*\*Blocking:\s*(\d+)\*\*")
 ANSWER_START_PATTERN = re.compile(r"^(\d+)\.\s+(\S.*)$")
 MOVED_TO_PULL_REQUEST_PREFIX = "Moved to pull request "
+MOVED_TO_PULL_REQUEST_PREFIX_PATTERN = re.compile(
+    re.escape(MOVED_TO_PULL_REQUEST_PREFIX.rstrip()) + r"\b", re.IGNORECASE)
 MOVED_TO_PULL_REQUEST_PATTERN = re.compile(
     re.escape(MOVED_TO_PULL_REQUEST_PREFIX) + r"(#?\d+|https://github\.com/[^/\s]+/[^/\s]+/pull/\d+)\b",
     re.IGNORECASE)
@@ -409,9 +411,22 @@ def read_answers(path, finding_count):
 def refuse_moved_to_missing_pull_request(answers, path):
     """An entry that says its change moved to a new pull request must name one that exists."""
     for index, answer in answers.items():
+        if not MOVED_TO_PULL_REQUEST_PREFIX_PATTERN.match(answer):
+            continue
         moved = MOVED_TO_PULL_REQUEST_PATTERN.match(answer)
         if not moved:
-            continue
+            raise Refused(f"The answers file {path} says in entry {index} that the finding's change moved "
+                          "to a new pull request, but no pull request number or URL follows "
+                          f"\"{MOVED_TO_PULL_REQUEST_PREFIX}\". An entry that moves a change must name the "
+                          "pull request that now carries it, or the change leaves this pull request and "
+                          "lands nowhere.\n"
+                          "If you have not opened the new pull request yet, open it as CLAUDE.md says, "
+                          f"make the entry start \"{MOVED_TO_PULL_REQUEST_PREFIX}\" followed by its number "
+                          "or URL, then run the check again.\n"
+                          "If the change did not move after all, put it back in the round's commit, rewrite "
+                          "the entry to say what you fixed or why the finding does not hold, then run the "
+                          "check again.\n"
+                          f"The check is: {shlex.join(['python3', *sys.argv])}")
         named = moved.group(1).lstrip("#")
         try:
             gh(["pr", "view", named, "--json", "number"])
