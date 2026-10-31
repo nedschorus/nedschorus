@@ -32,9 +32,13 @@ Other files that begin with the walk's name are noted on stderr and not
 shipped; they are either another walk's or a file none of the five roles
 covers.
 
+In the store, and only there, the walk text can also have revised copies,
+<name>-revised-<n>.md, which REVISED COPIES below describes.
+
 THE RULES. The minutes and the dispositions are replaced in the store; the
 draft, the suggestions and the walk text are add-only, as a
-cold-read-record's files are. The dispositions are replaced because a
+cold-read-record's files are, and a walk text the store would refuse ships
+as a revised copy instead. The dispositions are replaced because a
 cold-read walk's dispositions file is a status file updated after the walk
 closes, not only a record kept as first written. The rules are PER FILE:
 
@@ -47,8 +51,10 @@ closes, not only a record kept as first written. The rules are PER FILE:
     because the walk-me-through skill runs this program again whenever a
     walk is reopened and closed, and a reopened walk that re-planned has a
     changed walk text; a whole-walk refusal would then never deliver the one
-    thing the second shipment exists for, the minutes. The walk text has one exception, APPENDED TO
-    below; draft and suggestions have none.
+    thing the second shipment exists for, the minutes. The walk text has two
+    exceptions, APPENDED TO and REVISED COPIES below, so it is never refused
+    except when another shipment changes the store while this one runs;
+    draft and suggestions have none.
   APPENDED TO: the walk text, and it alone. A stored walk text whose bytes
     are an exact PREFIX of the local one -- the local file only had content
     added after it -- is replaced instead of refused. A walk text grows as
@@ -68,6 +74,24 @@ closes, not only a record kept as first written. The rules are PER FILE:
     overwriting the store with a stale copy, and a stale copy that also grew
     is exactly that. A store listing that reports a digest and no size cannot
     be tested and is refused.
+  REVISED COPIES: the walk text, when the store's latest copy is neither
+    the same bytes as the local one nor an exact prefix of it, as when the
+    agent rewrites an item the user did not follow. The local walk text is
+    added beside the store's copies as <name>-revised-<n>.md, n one more than
+    the highest the store holds, starting at 1, and a stderr line names the
+    copy it differs from and the copy it ships as. The store's latest copy
+    is the highest-numbered revised copy, or the walk text itself while there
+    is none, and the same bytes and APPENDED TO tests above are made against
+    it, never against an older copy: so a walk text whose bytes match an
+    older copy, as after an edit is undone, ships as a new revised copy, and
+    the highest-numbered copy is always the walk text as last shipped. A
+    revised copy is add-only like the walk text, placed by hard link; only
+    the latest one is ever replaced, under APPENDED TO. A file is a revised
+    copy only when n is written in digits with no leading zero, so another
+    walk whose name begins with this one's name and "-revised-" is not
+    counted. The store's copies are listed by a shell glob on the store,
+    before the digests are read; a listing that fails is FAILED, exit 1,
+    with nothing copied.
   REPLACED: the minutes and the dispositions, each on its own. A minutes
     or dispositions file the store does not hold yet is added, and counted as added on the stdout
     line, with no stderr line. A stored copy
@@ -164,7 +188,8 @@ copy or placing step that failed, another staging directory, or ssh or rsync
 that could not be started.
 
 Exit 0 when every file shipped or was already there; 2 when an add-only file
-was refused; 1 when the store could not be reached or written, or a file does
+was refused, which for the walk text happens only when another shipment
+changed the store while this one ran; 1 when the store could not be reached or written, or a file does
 not hold this shipment's bytes after the copy; 64 for a bad invocation. When
 both 1 and 2 apply, 1 wins and the line opens `FAILED:`. A `FAILED:` line
 that names files not holding this shipment's bytes lists the refused files
@@ -180,10 +205,12 @@ import hashlib
 import importlib.util
 import os
 import pathlib
+import re
 import secrets
 import shlex
 import subprocess
 import sys
+import tempfile
 import typing
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -224,6 +251,10 @@ REPLACED_ROLE_SUFFIXES = (MINUTES_ROLE_SUFFIX, "-dispositions")
 # APPENDED TO in the docstring). Every other add-only role is refused on any
 # difference.
 ROLE_SUFFIX_REPLACED_WHEN_ONLY_APPENDED_TO = WALK_TEXT_ROLE_SUFFIX
+# A walk text the store holds that is not a byte prefix of the local one is
+# shipped beside it as <name>-revised-<n>.md, n counting up from 1, and never
+# refused (see REVISED COPIES in the docstring).
+REVISED_WALK_TEXT_NAME_INFIX = "-revised-"
 # What the store's listing prefixes a file's size in bytes with, so one
 # round trip carries both facts the rules need and the sha256sum lines keep
 # the format sha256sum itself prints.
@@ -289,6 +320,62 @@ def walk_name_and_directory(argument: str):
 
 def walk_file_name(name: str, suffix: str) -> str:
     return f"{name}{suffix}.md"
+
+
+def revised_walk_text_file_name(name: str, number: int) -> str:
+    return f"{name}{REVISED_WALK_TEXT_NAME_INFIX}{number}.md"
+
+
+def revised_walk_text_number(name: str, file_name: str) -> typing.Optional[int]:
+    """n when file_name is <name>-revised-<n>.md with n a positive whole
+    number written without leading zeros, else None, so another walk whose
+    name begins with this one's is never read as this walk's copy."""
+    matched = re.fullmatch(re.escape(name + REVISED_WALK_TEXT_NAME_INFIX)
+                           + r"([1-9][0-9]*)\.md", file_name)
+    return int(matched.group(1)) if matched else None
+
+
+def stored_revised_walk_text_numbers(copy_host, walk_path: pathlib.PurePosixPath,
+                                     name: str):
+    """(process, sorted numbers of the walk's revised copies the store holds),
+    with None for the numbers when the store cannot be listed. A store
+    directory that does not exist yet holds none."""
+    if copy_host is None:
+
+        def list_stored():
+            directory = pathlib.Path(walk_path)
+            if not directory.is_dir():
+                return []
+            return [path.name for path in directory.iterdir() if path.is_file()]
+
+        listed, names = shipper.local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
+            list_stored)
+    else:
+        # The glob's fixed part is quoted, its * is not; an unmatched glob is
+        # left as written, which the -f test drops. `ls` is not used, so a
+        # name is never mangled by its output format.
+        pattern = shlex.quote(name + REVISED_WALK_TEXT_NAME_INFIX) + "*.md"
+        script = (f"cd -- {shlex.quote(str(walk_path))} 2>/dev/null || exit 0; "
+                  f"for f in {pattern}; do if [ -f \"$f\" ]; then printf '%s\\n' \"$f\"; fi; done; exit 0")
+        listed = subprocess.run(shipper.SSH_COMMAND + [copy_host, script],
+                                capture_output=True, text=True, check=False)
+        names = listed.stdout.splitlines() if listed.returncode == 0 else None
+    if names is None:
+        return listed, None
+    numbers = sorted(number for number in (revised_walk_text_number(name, file_name)
+                                           for file_name in names)
+                     if number is not None)
+    return listed, numbers
+
+
+def store_file_role_rank(name: str, file_name: str) -> int:
+    """The place of a store file of this walk in the roles' order, a revised
+    copy taking the walk text's place, so the stdout line and the stderr
+    announcements list files in one order."""
+    for rank, (suffix, _) in enumerate(WALK_FILE_ROLES):
+        if file_name == walk_file_name(name, suffix):
+            return rank
+    return [suffix for suffix, _ in WALK_FILE_ROLES].index(WALK_TEXT_ROLE_SUFFIX)
 
 
 def sha256_of(path: pathlib.Path) -> str:
@@ -413,12 +500,14 @@ class PlannedWalkFileReplacement(typing.NamedTuple):
     dispositions file, which is replaced whatever the store holds
     (`required_sha256` None), or a walk text the walk only added to, which
     is replaced only while the store still holds the copy that was tested
-    (`required_sha256` that copy's digest)."""
+    (`required_sha256` that copy's digest). `target_name` is the store's
+    name for it: the source's own, or the walk's latest revised copy."""
 
     source: pathlib.Path
     role_name: str
     required_sha256: typing.Optional[str]
     ruling: str
+    target_name: str
 
 
 REPLACED_ROLE_RULING = (
@@ -436,7 +525,18 @@ APPENDED_TO_RULING = (
 
 def ship_walk(destination: WalkStoreDestination, name: str,
               directory: pathlib.Path) -> int:
-    """One walk, one stdout line, one exit code."""
+    """One walk, one stdout line, one exit code. A new revised copy of the
+    walk text is copied from a file of its own name in a temporary
+    directory, because the store's add-only placing links a staged file
+    under the name it was staged with."""
+    with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as revised_copies:
+        return ship_walk_with_revised_copies_directory(
+            destination, name, directory, pathlib.Path(revised_copies))
+
+
+def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
+                                            name: str, directory: pathlib.Path,
+                                            revised_copies: pathlib.Path) -> int:
     present = {suffix: directory / walk_file_name(name, suffix)
                for suffix, _ in WALK_FILE_ROLES
                if (directory / walk_file_name(name, suffix)).is_file()}
@@ -472,8 +572,21 @@ def ship_walk(destination: WalkStoreDestination, name: str,
 
     targets = {suffix: destination.walk_path / walk_file_name(name, suffix)
                for suffix in present}
+    revised_numbers = []
+    if WALK_TEXT_ROLE_SUFFIX in present:
+        listed, revised_numbers = stored_revised_walk_text_numbers(
+            destination.copy_host, destination.walk_path, name)
+        if revised_numbers is None:
+            reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+                destination.copy_host, listed)
+            print(f"FAILED: {name} — {reason}; the walk's files stay on disk, unshipped.")
+            sys.stderr.write(listed.stderr)
+            return EXIT_FAILED
+    revised_targets = {number: destination.walk_path / revised_walk_text_file_name(name, number)
+                       for number in revised_numbers}
     listed, stored = store_digests_and_sizes(destination.copy_host,
-                                             list(targets.values()))
+                                             list(targets.values())
+                                             + list(revised_targets.values()))
     if stored is None:
         reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
             destination.copy_host, listed)
@@ -490,19 +603,43 @@ def ship_walk(destination: WalkStoreDestination, name: str,
         local_digest = sha256_of(source)
         local_digests[source.name] = local_digest
         in_store = stored.get(str(targets[suffix]))
-        if in_store is not None and in_store.sha256 == local_digest:
+        if suffix == WALK_TEXT_ROLE_SUFFIX:
+            # See REVISED COPIES in the docstring: once a revised copy
+            # exists, the highest-numbered one is the walk text as last
+            # shipped, and the rules apply to it, not to the original.
+            latest_name, latest = source.name, in_store
+            if revised_numbers:
+                latest_name = revised_walk_text_file_name(name, revised_numbers[-1])
+                latest = stored.get(str(revised_targets[revised_numbers[-1]]))
+            local_digests[latest_name] = local_digest
+            if latest is not None and latest.sha256 == local_digest:
+                unchanged.append(latest_name)
+            elif latest is None and not revised_numbers:
+                to_place.append(source)
+            elif latest is not None and stored_copy_is_an_exact_prefix(source, latest):
+                to_replace.append(PlannedWalkFileReplacement(
+                    source, role_name_of[suffix], latest.sha256,
+                    APPENDED_TO_RULING.format(stored_bytes=latest.size_in_bytes,
+                                              local_bytes=source.stat().st_size),
+                    latest_name))
+            else:
+                revised_name = revised_walk_text_file_name(
+                    name, (revised_numbers[-1] if revised_numbers else 0) + 1)
+                revised_copy = revised_copies / revised_name
+                revised_copy.write_bytes(source.read_bytes())
+                local_digests[revised_name] = local_digest
+                to_place.append(revised_copy)
+                print(f"{PROGRAM}: {source.name} differs from {latest_name} in the "
+                      f"store by more than added text, so it ships beside it as "
+                      f"{revised_name}; the store keeps {latest_name} as it is.",
+                      file=sys.stderr)
+        elif in_store is not None and in_store.sha256 == local_digest:
             unchanged.append(source.name)
         elif suffix in REPLACED_ROLE_SUFFIXES:
             to_replace.append(PlannedWalkFileReplacement(
-                source, role_name_of[suffix], None, REPLACED_ROLE_RULING))
+                source, role_name_of[suffix], None, REPLACED_ROLE_RULING, source.name))
         elif in_store is None:
             to_place.append(source)
-        elif (suffix == ROLE_SUFFIX_REPLACED_WHEN_ONLY_APPENDED_TO
-              and stored_copy_is_an_exact_prefix(source, in_store)):
-            to_replace.append(PlannedWalkFileReplacement(
-                source, role_name_of[suffix], in_store.sha256,
-                APPENDED_TO_RULING.format(stored_bytes=in_store.size_in_bytes,
-                                          local_bytes=source.stat().st_size)))
         else:
             refused.append(f"{source.name} (store sha256 {in_store.sha256}, "
                            f"local sha256 {local_digest})")
@@ -529,7 +666,7 @@ def ship_walk(destination: WalkStoreDestination, name: str,
         if to_replace:
             renamed, outcomes = shipper.replace_with_staged_files(
                 destination.copy_host, staging_dir, destination.walk_path,
-                [(planned.source.name, planned.source.name, planned.required_sha256)
+                [(planned.source.name, planned.target_name, planned.required_sha256)
                  for planned in to_replace])
             if isinstance(outcomes, shipper.OtherShipmentStaging):
                 shipper.remove_staging_directory(destination.copy_host, staging_dir)
@@ -546,8 +683,8 @@ def ship_walk(destination: WalkStoreDestination, name: str,
                 sys.stderr.write(renamed.stderr)
                 return EXIT_FAILED
         for planned in to_replace:
-            file_name = planned.source.name
-            local_digest = local_digests[file_name]
+            file_name = planned.target_name
+            local_digest = local_digests[planned.source.name]
             outcome = outcomes.get(file_name)
             if outcome is None:
                 lost.append(f"{file_name} (not in the store after the copy)")
@@ -590,9 +727,9 @@ def ship_walk(destination: WalkStoreDestination, name: str,
             else:
                 refused.append(f"{source.name} (store sha256 {in_store_now}, "
                                f"local sha256 {local_digests[source.name]})")
-        replaced.sort(key=lambda replacement: [
-            source.name for source in present.values()].index(replacement.file_name))
-    added = [source.name for source in present.values() if source.name in added]
+        replaced.sort(key=lambda replacement: (store_file_role_rank(name, replacement.file_name),
+                                               replacement.file_name))
+    added = sorted(added, key=lambda file_name: (store_file_role_rank(name, file_name), file_name))
     # Built from the record shipper's constant, not the destination, which may
     # be a local override the snapshots never hold.
     stored_walk_directory = (shipper.split_destination(
