@@ -1178,6 +1178,10 @@ def test_a_paused_walk_is_not_checked_until_a_later_marker_resumes_it():
     case.reply("Stopped.")
     check_silent("a pause line after the marker on the same line pauses the walk", case.run())
     case = Case()
+    case.walk_files(minutes="#approval_walk_paused reason #next_to_present item 2 of 9")
+    case.reply("Stopped.")
+    check_reminded("a marker after the pause line on the same line resumes the walk", case.run(), "`Item 2 of 9`")
+    case = Case()
     case.walk_files(minutes="#next_to_present item 2 of 9\n\nA quoted `#approval_walk_paused reason` line.")
     case.reply("Stopped.")
     check_reminded("a pause line inside a code span is a quotation and pauses nothing", case.run(),

@@ -422,13 +422,20 @@ def the_open_walk(walk_finder, cwd):
         raise Failure(f"{cwd} is not in a git checkout, so no approval-walk can be open there.")
     parser = walk_finder.markdown_parser()
     walk_directory = top / walk_finder.WALK_DIRECTORY
-    walk = walk_finder.open_walk(walk_directory, parser) if walk_directory.is_dir() else None
+    walk = (walk_finder.newest_unclosed_approval_walk_including_paused(walk_directory, parser)
+            if walk_directory.is_dir() else None)
     if walk is None:
-        raise Failure(f"no approval-walk is open in {walk_directory}, or the open one is paused by a "
-                      f"`#approval_walk_paused` line in its minutes.\n"
-                      f"If the user has resumed a paused walk, add a `#next_to_present` line naming its waiting "
-                      f"item at the end of its minutes, then run this command again.")
-    minutes, value, _ = walk
+        raise Failure(f"no approval-walk is open in {walk_directory}.")
+    minutes, value, _, paused = walk
+    if paused:
+        raise Failure(f"the approval-walk whose minutes are {minutes} is paused: an `#approval_walk_paused` line "
+                      f"comes after its last `#next_to_present` line, so the walk has no item to check or close.\n"
+                      f"If the user has said to resume the walk, add the line below at the end of those minutes, "
+                      f"after the `#approval_walk_paused` line, which stays, and then run the command you just ran "
+                      f"again:\n"
+                      f"#next_to_present {value}\n"
+                      f"Until the user says to resume the walk, leave it paused, do not run this program for it, "
+                      f"and go on with the rest of your work.")
     return top, minutes, value, parser
 
 

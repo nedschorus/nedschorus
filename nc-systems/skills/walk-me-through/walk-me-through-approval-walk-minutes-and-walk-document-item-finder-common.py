@@ -20,7 +20,8 @@ A PAUSED APPROVAL-WALK. A `#approval_walk_paused <reason>` line, found as the
 marker is, pauses the walk when it comes after the minutes' last marker; a
 later `#next_to_present` line resumes it. A paused walk is still the newest
 open one, so no older walk is taken for it, but open_walk returns None for it,
-so the hooks and the check program treat it as no open walk.
+so the hooks treat it as no open walk. newest_unclosed_approval_walk_including_paused returns it
+with its pause, so the check program can say how to resume it.
 
 ITEMS IN THE WALK-DOCUMENT. An item starts at its running count, `Item N of
 M`, `Items 5 and 6 of M`, `Items 10 to 12 of M` or `Items 12 to 12.3 of M`,
@@ -338,17 +339,25 @@ def parse_items(value):
     return expand_numbers(match[1]), match[2]
 
 
-def open_walk(walk_directory, parser):
-    """Return (minutes path, value, whether the marker is the old form) for the open approval-walk, or None
-    when none is open or the open one is paused."""
+def newest_unclosed_approval_walk_including_paused(walk_directory, parser):
+    """Return (minutes path, value, whether the marker is the old form, whether the walk is paused) for the
+    newest minutes whose value is not closed, or None when there are none."""
     newest_first = sorted(walk_directory.glob("*" + MINUTES_SUFFIX),
                           key=lambda minutes: minutes.stat().st_mtime, reverse=True)
     for minutes in newest_first:
         marker = next_to_present(minutes.read_text(encoding="utf-8"), parser)
         if marker is not None and not is_closed(marker[0]):
-            value, old_form, paused = marker
-            return None if paused else (minutes, value, old_form)
+            return (minutes, *marker)
     return None
+
+
+def open_walk(walk_directory, parser):
+    """Return (minutes path, value, whether the marker is the old form) for the open approval-walk, or None
+    when none is open or the open one is paused."""
+    walk = newest_unclosed_approval_walk_including_paused(walk_directory, parser)
+    if walk is None or walk[3]:
+        return None
+    return walk[:3]
 
 
 def item_unit_spans(document_text, parser):
