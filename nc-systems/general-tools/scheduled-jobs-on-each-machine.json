@@ -109,6 +109,28 @@
       }
     },
     {
+      "name": "agent-seat-database-nightly-backup-with-integrity-check",
+      "program": "nc-systems/agent-seat-database/agent-seat-database-nightly-backup-with-integrity-check.py",
+      "arguments": [],
+      "output": ".claude/agent-seat-database-nightly-backup-with-integrity-check.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "15 2 * * *"}
+      }
+    },
+    {
+      "name": "agent-seat-database-newest-backup-copy-to-mac",
+      "program": "nc-systems/agent-seat-database/agent-seat-database-newest-backup-copy-to-mac.py",
+      "arguments": [],
+      "output": ".claude/agent-seat-database-newest-backup-copy-to-mac.log",
+      "on": {
+        "mac": {
+          "scheduler": "launchd",
+          "label": "com.nedschorus.agent-seat-database-newest-backup-copy-to-mac",
+          "launchd_keys": {"StartCalendarInterval": {"Hour": 4, "Minute": 15}}
+        }
+      }
+    },
+    {
       "name": "claude-code-temp-folders-of-exited-agent-sessions-delete",
       "program": "nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py",
       "arguments": [],
