@@ -668,7 +668,7 @@ def record_finding_as_waiting_for_user_ruling(number, finding, what_it_would_cha
         lambda answered: "Each finding takes one answer, so leave this one as it is and go on with the next.")
     if not what_it_would_change.strip():
         raise Refused(f"--what-it-would-change is empty, so nothing was recorded for finding {finding}.\n"
-                      "Run it again with the design or decision of the user's the finding would change: "
+                      "Run it again, saying which of the user's designs or decisions the finding would change: "
                       f"{command(number, WAITING_ARGUMENTS.replace('<n>', str(finding)))}")
     answers[str(finding)] = {WAITING_KEY: " ".join(what_it_would_change.split())}
     record["answers"] = answers

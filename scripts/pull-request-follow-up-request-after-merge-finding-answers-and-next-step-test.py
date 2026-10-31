@@ -1203,7 +1203,7 @@ def test_waiting_for_user_ruling():
         code, out, err = case.run(worktree, waiting, "2", "--what-it-would-change", " ")
         check("record-finding-as-waiting-for-user-ruling refuses empty text, naming the command",
               code == 1 and err == "REFUSED: --what-it-would-change is empty, so nothing was recorded for finding 2.\n"
-                                   "Run it again with the design or decision of the user's the finding would change: "
+                                   "Run it again, saying which of the user's designs or decisions the finding would change: "
                                    f"python3 {program.PROGRAM} {NUMBER} {waiting} 2 --what-it-would-change "
                                    "\"<what it would change>\"\n"
               and "answers" not in case.answers(), err)
