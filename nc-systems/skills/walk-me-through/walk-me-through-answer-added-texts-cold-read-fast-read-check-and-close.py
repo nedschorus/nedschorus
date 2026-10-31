@@ -43,22 +43,24 @@ what code can from the item's evidence lines, each opening with its marker:
 `#not_asked_touches` lists the files the change edits or deletes;
 `#not_asked_test` names the test that fails before a fix and passes after it;
 `#not_asked_source` cites the ruling, merged code or command; `#not_asked_unused`
-names a thing removed; `#not_asked_rename` gives the old name, then the new one.
-Every kind needs a case against rated none or weak. Kind 1, text caught up,
+names a thing removed; `#not_asked_rename` gives the old name, then the new one,
+separated by a space, each in backquotes when it holds a space itself, as in
+#not_asked_rename `instruction guard` `instruction-file guard`. Every kind needs a case against rated none or weak. Kind 1, text caught up,
 needs touches, a source and a `#new` text; kind 2, a code fix, needs touches
 and a test, and every touched file must exist except that test; kind 3, a
 removal, needs touches, and each unused name must appear, by `git grep`, in no
 file outside the touched ones and docs/walk/, or, with no unused line, every
 touched file must be Markdown; kind 4, a rename, needs touches and a rename
-line, the new name as the term of an entry, a line opening `- **<new name>**`,
-in a `*-glossary.md` file, and the old name in no file outside the touched ones
-and docs/walk/; kind 5, carrying out a ruling, needs a source; for kinds 1 to 4
-every touched file but a kind 2 test must exist. An unused or old name is
-searched for as written, matching case, as a whole word. When it has two or
-more words, it is also searched for with its words joined by hyphens, by
-underscores and by nothing; these spellings ignore case and match even inside
-a longer name, so `poem-list` is also found in `poem_list_path`, `POEM_LIST`
-and `PoemList`. A
+line, the new name as the term of an entry, a line opening `- **<new name>**`
+or, with an alias, `- **<new name> (aka <alias>)**`, in a `*-glossary.md` file,
+and the old name in no file outside the touched ones and docs/walk/; kind 5,
+carrying out a ruling, needs a source; for kinds 1 to 4 every touched file but
+a kind 2 test must exist. An unused or old name is searched for as written and,
+when it has two or more words, with its words joined by hyphens, by underscores
+and by nothing, a run of digits staying with the letters before it; every
+spelling ignores case and matches even inside a longer name, so `poem-list` is
+also found in `poem_list_path`, `POEM_LIST` and `PoemList`, `sha256_of` in
+`sha256_of_file`, and `reader` in `Reader` and `readers`. A
 failed check is refused, writing nothing, with every problem listed; a `git
 grep` that fails is a failure too. Otherwise CHECK fast-reads the `#new` texts as
 for A, writes the line `<item>: settled without asking the user, not asked,
@@ -144,7 +146,8 @@ last answer line already opens with the last answer line's item and a colon, as
 every line close writes for an answer does: that answer was closed already, and
 no check has run since. When the `#next_to_present` line names other items than
 the answer line, a new item a finding raised is waiting: the answer is recorded
-as held until the user answers the new item, and the line is written again unchanged as the last line.
+as held until the user answers the new item, and the `#next_to_present` line is
+written again, unchanged, as the minutes' last line.
 Either way it prints the lines the agent's next message must include, the
 status lines among them.
 
@@ -186,13 +189,14 @@ QUOTE_PAIRS = (('"', '"'), ("“", "”"), ("'", "'"))
 ANSWER_LINE = re.compile(r"^(?P<item>items? .+?): (?:the user answered|settled without asking the user,) "
                          r"(?P<answered>.+?)(?: #approved_(?:obvious|after_advisor))?(?: #case_against_[a-z_]+)? "
                          r"\([^)]*\), which makes (?:its change\. Fast reads:|no change\.)$", re.I)
-CASE_AGAINST_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*#case_against\b[*_`]*[:\s]*(.*)$")
+MARKER_END = r"(?=[*_`]*(?:[:\s]|$))"
+CASE_AGAINST_LINE = re.compile(rf"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*#case_against{MARKER_END}[*_`]*[:\s]*(.*)$")
 CASE_AGAINST_RATING = re.compile(r"(very strong|none|weak|medium|strong)\b", re.I)
 CASE_AGAINST_HASHTAG = " #case_against_{rating}"
 NOT_ASKED_RATINGS = ("none", "weak")
 NOT_ASKED_KINDS = (1, 2, 3, 4, 5)
-EVIDENCE_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*(#not_asked_(?:touches|test|source|unused|rename))\b"
-                           r"[*_`]*[:\s]*(.*)$")
+EVIDENCE_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*(#not_asked_(?:touches|test|source|unused|rename))"
+                           rf"{MARKER_END}[*_`]*[:\s]*(.*)$")
 TOUCHES, TEST, SOURCE, UNUSED, RENAME = (f"#not_asked_{name}" for name in ("touches", "test", "source", "unused",
                                                                         "rename"))
 GLOSSARY_FILES = "*-glossary.md"
@@ -351,14 +355,15 @@ NOT_ASKED_STILL_USED_PROBLEM = ("- `{word}`, named on its `{marker}` line, is st
                                 "its `{touches}` line does not list.")
 NOT_ASKED_NOT_MARKDOWN_PROBLEM = ("- it has no `{marker}` line, and `{touches}` names {paths}, which are not "
                                   "Markdown standing instructions; name each thing removed on a `{marker}` line.")
-NOT_ASKED_RENAME_SHAPE_PROBLEM = "- its `{marker}` line `{value}` does not give the old name, then the new name."
-NOT_ASKED_NOT_IN_GLOSSARY_PROBLEM = ("- the new name `{new}` is the term of no entry, a line opening `- **{new}**`, "
-                                     "in a glossary file ({pattern}) in the checkout.")
+NOT_ASKED_RENAME_SHAPE_PROBLEM = ("- its `{marker}` line `{value}` does not give the old name, then the new name, "
+                                  "each in backquotes when it holds a space.")
+NOT_ASKED_NOT_IN_GLOSSARY_PROBLEM = ("- the new name `{new}` is the term of no entry, a line opening `- **{new}**` "
+                                     "or `- **{new} (aka ...)**`, in a glossary file ({pattern}) in the checkout.")
 NOT_ASKED_WHY = {
     TOUCHES: "list on it every file the change edits or deletes, separated by spaces.",
     TEST: "name on it the test that fails before the fix and passes after it.",
     SOURCE: "cite on it the ruling, the merged code or the command that shows the fact.",
-    RENAME: "give on it the old name, then the new name.",
+    RENAME: "give on it the old name, then the new name, each in backquotes when it holds a space.",
 }
 NOT_ASKED_JUDGEMENT_LINES = (
     "{item} is recorded as settled without asking the user, kind {kind}; the program checked only what code can.",
@@ -674,6 +679,12 @@ def words(values):
     return [word.strip("`,;") for value in values for word in value.split() if word.strip("`,;")]
 
 
+def rename_names(value):
+    """The names on a rename line: each name in backquotes, which may hold spaces, or else each word."""
+    return [(quoted or word).strip(",;") for quoted, word in re.findall(r"`([^`]+)`|([^\s`]+)", value)
+            if (quoted or word).strip(",;")]
+
+
 def files_matching(top, options, pattern, item, kind, pathspec=None):
     """Return the checkout files, tracked or untracked, outside the walk directory, in which `git grep` with
     the options given finds the pattern."""
@@ -687,28 +698,29 @@ def files_matching(top, options, pattern, item, kind, pathspec=None):
     return {path for path in result.stdout.split("\n") if path and not path.startswith("docs/walk/")}
 
 
-def other_spellings(name):
-    """The name's words joined by hyphens, by underscores and by nothing, lowercased, when it has two or more."""
-    parts = [part.lower() for part in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+", name)]
-    if len(parts) < 2:
-        return []
-    return sorted({separator.join(parts) for separator in ("-", "_", "")})
+def spellings(name):
+    """The name, lowercased, and, when it has two or more words, its words joined by hyphens, by underscores and
+    by nothing; a digit run stays with the letters before it, so `sha256_of` gives `sha256of`, not `sha_256_of`."""
+    parts = [part.lower() for part in re.findall(r"[A-Z]+[0-9]*(?![a-z])|[A-Z]?[a-z]+[0-9]*|[0-9]+", name)]
+    joined = {separator.join(parts) for separator in ("-", "_", "")} if len(parts) > 1 else set()
+    return sorted(joined | {name.lower()})
 
 
 def files_naming(top, name, item, kind):
-    """Return the files outside the walk directory that hold the name as a word, or another of its spellings,
-    ignoring case, anywhere: a name written `poem-list` in prose is `poem_list` or `PoemList` in code."""
-    found = files_matching(top, ["-w", "-F"], name, item, kind)
-    for spelling in other_spellings(name):
+    """Return the files outside the walk directory that hold one of the name's spellings, ignoring case,
+    anywhere: a name written `poem-list` in prose is `poem_list_path` or `PoemList` in code."""
+    found = set()
+    for spelling in spellings(name):
         found |= files_matching(top, ["-i", "-F"], spelling, item, kind)
     return found
 
 
 def glossary_entry_files(top, name, item, kind):
-    """Return the glossary files with an entry whose term is the name, as in `- **poem-index** — ...`; a name
-    a glossary only mentions, such as an example of a bad name, is not one it lists."""
+    """Return the glossary files with an entry whose term is the name, as in `- **poem-index** — ...` or
+    `- **poem-index (aka PI)** — ...`; a name a glossary only mentions, such as an example of a bad name, is not one
+    it lists."""
     escaped = re.sub(r"([.\[\]()*+?{}|^$\\])", r"\\\1", name)
-    return files_matching(top, ["-i", "-E"], rf"^- \*\*{escaped}\*\*", item, kind, GLOSSARY_FILES)
+    return files_matching(top, ["-i", "-E"], rf"^- \*\*{escaped}( \([^)]*\))?\*\*", item, kind, GLOSSARY_FILES)
 
 
 def not_asked_problems(kind, rating, lines, top, item):
@@ -749,7 +761,7 @@ def not_asked_problems(kind, rating, lines, top, item):
                                                                   paths=", ".join(not_markdown)))
     if kind == 4:
         for value in found[RENAME]:
-            names = words([value])
+            names = rename_names(value)
             if len(names) != 2:
                 problems.append(NOT_ASKED_RENAME_SHAPE_PROBLEM.format(marker=RENAME, value=value))
                 continue
