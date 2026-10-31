@@ -485,7 +485,7 @@ with tempfile.TemporaryDirectory() as scratch:
         skill_target, clock_at_1042)
     check("a record name the log-store holds is passed over, though this checkout lacks it",
           skill_report_beside_the_store == scratch / "in-process-records"
-          / "SKILL-cold-read-2026-09-16-2" / "fast-read.md",
+          / "SKILL-cold-read-2026-09-16-2" / "cold-read-fast-read.md",
           str(skill_report_beside_the_store))
     if os.geteuid() != 0:
         import contextlib
@@ -500,7 +500,7 @@ with tempfile.TemporaryDirectory() as scratch:
             in_process_log_store.chmod(0o755)
         check("when the log-store cannot be listed, the name free in this checkout is used",
               skill_report_unlisted == scratch / "in-process-records"
-              / "SKILL-cold-read-2026-09-16" / "fast-read.md", str(skill_report_unlisted))
+              / "SKILL-cold-read-2026-09-16" / "cold-read-fast-read.md", str(skill_report_unlisted))
         check("and the fast read says on stderr that the name was not checked against the "
               "log-store",
               unlisted_stderr.getvalue().startswith(

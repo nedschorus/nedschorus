@@ -1086,7 +1086,7 @@ with tempfile.TemporaryDirectory() as scratch:
     time.sleep(stub_reading_seconds + 1 - elapsed if elapsed < stub_reading_seconds else 0)
     record_directory = record_directory_of(repository)
     check("the stopped stubs never wrote their reports",
-          sorted(path.name for path in record_directory.glob("*.md")) == ["reference-check.md"],
+          sorted(path.name for path in record_directory.glob("*.md")) == ["cold-read-reference-check.md"],
           sorted(path.name for path in record_directory.glob("*.md")))
 
     # --- A cell that writes its report and then hangs is stopped, report deleted
@@ -1107,7 +1107,7 @@ with tempfile.TemporaryDirectory() as scratch:
           f"elapsed {elapsed:.1f}s; stdout={result.stdout!r}")
     record_directory = record_directory_of(repository)
     check("the hung cells' unfinished reports are not left in the record",
-          sorted(path.name for path in record_directory.glob("*.md")) == ["reference-check.md"],
+          sorted(path.name for path in record_directory.glob("*.md")) == ["cold-read-reference-check.md"],
           sorted(path.name for path in record_directory.glob("*.md")))
 
     # --- Three Codex cells fail both attempts with exit-N ----------------------
