@@ -67,12 +67,14 @@ recovery.claude_json_presets.claude_json_path = lambda: CLAUDE_JSON_SCRATCH_PATH
 # ~/.config/nedschorus/<account>.token. No case may read a real token: HOME is a
 # scratch directory holding a made-up token for each account, for this process and
 # every supervisor a case starts. The "GITHUB TOKEN:" cases empty it on purpose.
+# The accounts come from the supervisor's own table, so an account added there gets a token here.
 SCRATCH_HOME_DIRECTORY = Path(tempfile.mkdtemp(prefix="recover-crashed-seats-home-"))
 atexit.register(shutil.rmtree, SCRATCH_HOME_DIRECTORY, True)
 os.environ["HOME"] = str(SCRATCH_HOME_DIRECTORY)
 GITHUB_TOKEN_BY_ACCOUNT = {
     account: f"github_pat_{account.upper().replace('-', '_')}_TEST_ONLY_not-a-real-credential"
-    for account in ("ubuntu-claude", "mac-claude", "ned-review-merge")}
+    for account in {*recovery.supervisor.AGENT_SEAT_GITHUB_ACCOUNTS_OTHER_THAN_THE_MACHINE_DEFAULT.values(),
+                    "ubuntu-claude", "mac-claude"}}
 (SCRATCH_HOME_DIRECTORY / ".config" / "nedschorus").mkdir(parents=True)
 for _account, _token in GITHUB_TOKEN_BY_ACCOUNT.items():
     (SCRATCH_HOME_DIRECTORY / ".config" / "nedschorus" / f"{_account}.token").write_text(
@@ -106,6 +108,7 @@ CALLING_AGENT_SESSION_TEST_VARIABLES = {
     "TMUX": "/tmp/tmux-1000/calling-seat,1,0",
     "TMUX_PANE": "%0",
     "IS_DEMO": "1",
+    "GH_TOKEN": "decoy-inherited-token",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": "calling-seat",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "/calling/seat/directory",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": "calling-supervisor-session",
@@ -1583,8 +1586,8 @@ with tempfile.TemporaryDirectory() as temporary:
             else:
                 os.environ[name] = value
     started = started_environments[0] if started_environments else {}
-    # IS_DEMO is the supervisor's own: launch_agent_session sets it for every agent-session.
-    seat_owned = ("TMUX", "TMUX_PANE", "IS_DEMO", "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
+    # IS_DEMO and GH_TOKEN are the supervisor's own: it sets both for every agent-session.
+    seat_owned = ("TMUX", "TMUX_PANE", "IS_DEMO", "GH_TOKEN", "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
                   "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
                   "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID")
     leaked = sorted(name for name in CALLING_AGENT_SESSION_TEST_VARIABLES
