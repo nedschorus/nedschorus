@@ -8,6 +8,8 @@ A term used by one system alone is defined in that system's glossary, not here. 
 
 An entry that defines a kind of text, a change to text, or a check on text ends with one or more of the labels #prose, #code and #data, separated by spaces, naming the kinds of text the entry's term covers; the term does not cover a kind its labels leave out. An entry that names a thing, a role or a procedure, such as an agent-seat, merge-lane or the log-store, carries no label: prose, code and data can all refer to it, and each passage that does is checked as its own kind requires. A part of a file that is two kinds at once, such as a Markdown heading that people read and a program reads as data, is covered by a term only when the term's labels name both kinds.
 
+Terms that are each a kind of the same thing form a set; a term that shares its kind with no other term belongs to no set. Each set has one parent entry, the entry for the thing its members are kinds of, which lists every member and ends with one sentence that either names what everything outside the members is or says why nothing falls outside. A term in two sets is listed in both parent entries. This convention holds in this glossary and in each system glossary.
+
 - **/cold-read** — a skill used to improve the readability of prose.
 - **/explain** — a skill that re-explains a message the user could not follow, so he can understand the message without the agent-session's context.
 - **/find-info** — the skill an agent uses to find a stored file, record, transcript or walk-minutes file, or a past discussion, decision or approval, such as an earlier user-ruling.
