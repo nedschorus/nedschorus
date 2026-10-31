@@ -170,7 +170,8 @@ def refresh_all(root: pathlib.Path, failures_only: bool) -> int:
             transcripts_directory, unreadable):
         dialog = refresh_common.session_dialog_path_for_transcript(dialogs_directory, machine, project_key, transcript)
         try:
-            if refresh_common.refresh_session_dialog_unless_current(extractor, extractor_unchanged, transcript, dialog):
+            if refresh_common.refresh_session_dialog_file_unless_current_with_transcript(
+                    extractor, extractor_unchanged, transcript, dialog):
                 written += 1
             else:
                 current += 1

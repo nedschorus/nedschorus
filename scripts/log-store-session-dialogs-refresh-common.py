@@ -132,8 +132,9 @@ def write_text_through_temporary_file(path: pathlib.Path, text: str, modificatio
     os.replace(temporary, path)
 
 
-def refresh_session_dialog_unless_current(extractor, extractor_unchanged: bool, transcript: pathlib.Path,
-                                        dialog: pathlib.Path, refuse_without_subagent_turns=False) -> bool:
+def refresh_session_dialog_file_unless_current_with_transcript(extractor, extractor_unchanged: bool,
+                                                               transcript: pathlib.Path, dialog: pathlib.Path,
+                                                               refuse_without_subagent_turns=False) -> bool:
     """Write the transcript's session dialog unless it is current and extractor_unchanged; return whether written.
 
     extractor is scripts/handoff-extract-conversation.py, loaded. With refuse_without_subagent_turns, a dialog the

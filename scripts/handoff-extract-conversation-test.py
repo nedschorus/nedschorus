@@ -569,7 +569,7 @@ with tempfile.TemporaryDirectory() as workspace:
         assistant_record(f"Item two.\n\n\n  {CLOSING}  \n\nItem one.", timestamp="2026-09-01T08:02:00Z"),
         assistant_record(f"{CLOSING}\n\n{CLOSING}", timestamp="2026-09-01T08:03:00Z"),
     ])
-    session_dialog = extractor.render_complete_dialog_of_transcript_as_markdown(repeats)
+    session_dialog = extractor.render_companion(*extractor.complete_dialog_turns_and_report(repeats))
     repeated_line = "(repeated: Answer A to approve, D to disapprove, or …)"
     check("the session dialog keeps an agent paragraph's first copy whole and makes each later copy the one "
           "line naming its first eight words",
@@ -591,7 +591,7 @@ with tempfile.TemporaryDirectory() as workspace:
                                                                assistant_record(long_paragraph)])
     check("a repeat names only the first eight words of its paragraph",
           "(repeated: word0 word1 word2 word3 word4 word5 word6 word7 …)"
-          in extractor.render_complete_dialog_of_transcript_as_markdown(long_repeats))
+          in extractor.render_companion(*extractor.complete_dialog_turns_and_report(long_repeats)))
     subagent_turns = [{"voice": extractor.SUBAGENT_VOICE, "kind": "report", "text": CLOSING},
                       {"voice": "assistant", "text": CLOSING},
                       {"voice": extractor.SUBAGENT_VOICE, "kind": "report", "text": CLOSING}]
