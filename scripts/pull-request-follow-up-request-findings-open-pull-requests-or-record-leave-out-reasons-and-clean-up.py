@@ -6,6 +6,8 @@ Usage:
   PROGRAM <number> start-topic-branch <topic-branch> --finding-numbers <n>[,<n>...]
   PROGRAM <number> open-pull-request [--handled-finding-numbers <n>[,<n>...]]
   PROGRAM <number> record-finding-leave-out-reason <n> --reason "<why>"
+  PROGRAM <number> record-finding-waiting-for-user-decision <n> --what-it-would-change "<what>"
+  PROGRAM <number> reopen-finding-after-user-decision <n> --user-decision "<his words>"
   PROGRAM <number> finish-follow-up-request-and-print-merge-lane-2-message
   PROGRAM <number> remove-recorded-topic-branches-and-worktrees
 
@@ -25,9 +27,11 @@ decided from the records alone, first match wins: "Done" once finish-follow-up-r
 has recorded the follow-up finished; the topic branch of the lowest finding start-topic-branch took on that has no
 answer yet, to switch to it first when the worktree has another checked out, make the change, commit, write the title
 and description, and run open-pull-request; the findings with
-no answer, to judge each against origin/main and either run record-finding-leave-out-reason or group it into a topic
-and run start-topic-branch; and, every finding answered, finish-follow-up-request-and-print-merge-lane-2-message and
-the message to merge-lane-2. The judging and the change stay with the subagent.
+no answer, each with the user's decision when reopen-finding-after-user-decision recorded one, to judge each against
+origin/main and either run record-finding-leave-out-reason or record-finding-waiting-for-user-decision, or group it
+into a topic and run start-topic-branch; and, every finding answered, finish-follow-up-request-and-print-merge-lane-2-message and
+the message to merge-lane-2. Done lists each finding waiting for the user's decision, with the commands the author
+runs once the user has answered. The judging and the change stay with the subagent.
 
 start-topic-branch, in the subagent's worktree: refuse a finding that does not exist or already has an answer, and a
 worktree with uncommitted changes to tracked files, which git switch could refuse to carry over; git
@@ -55,12 +59,21 @@ request's link is recorded; when gh pr create exits 0 printing no link, the link
 recorded. A push that fails is not tried again.
 
 record-finding-leave-out-reason: record the reason against the finding; refuse a finding that does
-not exist or already has an answer, and an empty reason.
+not exist or already has an answer other than waiting for the user's decision, and an empty reason.
+
+record-finding-waiting-for-user-decision: record the finding as waiting for the user's decision, with what it would
+change, an answer finish accepts; refuse a finding that does not exist or already has an answer, and empty text.
+
+reopen-finding-after-user-decision, in the author's checkout, once the user has decided for a waiting finding: remove
+its answer and the topic branch start-topic-branch recorded for it, record the user's words for next-step's judging
+step, remove the finished mark, and print the brief again, for a new subagent; refuse a finding that does not exist or
+is not waiting, and empty words. A finding the user decided against is recorded with record-finding-leave-out-reason
+instead.
 
 finish-follow-up-request-and-print-merge-lane-2-message: refuse, naming each finding without an answer, until every finding has
 one; then record the follow-up finished, for next-step, and print the message
-for merge-lane-2, which the subagent sends with SendMessage, since a program
-cannot.
+for merge-lane-2, which lists each waiting finding as still open, and which the subagent sends with SendMessage,
+since a program cannot.
 
 remove-recorded-topic-branches-and-worktrees, in the author's checkout once the subagent has ended: remove each
 recorded worktree with git worktree remove, unless the agent harness still
@@ -143,8 +156,10 @@ FETCH_TIMEOUT_SECONDS = 300
 PULL_REQUEST_ALREADY_OPEN_WORDS = "already exists"
 START_ARGUMENTS = "start-topic-branch <topic-branch> --finding-numbers <n>[,<n>...]"
 LEAVE_OUT_ARGUMENTS = 'record-finding-leave-out-reason <n> --reason "<why>"'
+WAITING_ARGUMENTS = 'record-finding-waiting-for-user-decision <n> --what-it-would-change "<what it would change>"'
+REOPEN_ARGUMENTS = 'reopen-finding-after-user-decision <n> --user-decision "<his words>"'
+WAITING_KEY = "waiting_for_user_decision"
 TITLE_AND_DESCRIPTION_FORM = "the pull request's title on the first line, a blank line, then the description"
-NEEDS_USER_DECISION_REASON = "\"Needs the user's decision: <what the finding would change>\""
 DO_NOT_COMMIT_LINE = "Do not commit it: it is never part of the pull request."
 SUBAGENT_LINE = "If you are a subagent, pass that sentence to the agent that dispatched you instead."
 # Each text this program hands an agent follows
@@ -390,7 +405,19 @@ def findings_text(numbers):
 
 
 def answer_text(answer):
-    return answer["link"] if "link" in answer else "Left out: " + answer["reason"]
+    if "link" in answer:
+        return answer["link"]
+    if WAITING_KEY in answer:
+        return "Still open, waiting for the user's decision: it would change " + answer[WAITING_KEY]
+    return "Left out: " + answer["reason"]
+
+
+def waiting_findings(request, answers):
+    return [index for index in range(1, request.finding_count + 1) if WAITING_KEY in answers.get(str(index), {})]
+
+
+def finding_text(request, finding):
+    return FINDING_LINE_PATTERN.match(request.lines[finding]).group(2)
 
 
 def still_unanswered_text(number, request, answers):
@@ -616,7 +643,8 @@ def record_finding_leave_out_reason(number, finding, reason):
     record = read_json(answers_file, {})
     answers = record.get("answers", {})
     refuse_unknown_or_answered(
-        number, request, answers, [finding], "nothing was recorded",
+        number, request, {key: answer for key, answer in answers.items() if WAITING_KEY not in answer},
+        [finding], "nothing was recorded",
         lambda answered: "Each finding takes one answer, so leave this one as it is and go on with the next.")
     if not reason.strip():
         raise Refused(f"--reason is empty, so nothing was recorded for finding {finding}.\n"
@@ -627,6 +655,58 @@ def record_finding_leave_out_reason(number, finding, reason):
     write_json(answers_file, record)
     print(f"Recorded finding {finding} of pull request {number}'s follow-up request as left out.")
     print(still_unanswered_text(number, request, answers))
+
+
+def record_finding_waiting_for_user_decision(number, finding, what_it_would_change):
+    states = state_directory()
+    request = saved_follow_up_request(states, number)
+    answers_file = state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, number)
+    record = read_json(answers_file, {})
+    answers = record.get("answers", {})
+    refuse_unknown_or_answered(
+        number, request, answers, [finding], "nothing was recorded",
+        lambda answered: "Each finding takes one answer, so leave this one as it is and go on with the next.")
+    if not what_it_would_change.strip():
+        raise Refused(f"--what-it-would-change is empty, so nothing was recorded for finding {finding}.\n"
+                      "Run it again with the design or decision of the user's the finding would change: "
+                      f"{command(number, WAITING_ARGUMENTS.replace('<n>', str(finding)))}")
+    answers[str(finding)] = {WAITING_KEY: " ".join(what_it_would_change.split())}
+    record["answers"] = answers
+    write_json(answers_file, record)
+    print(f"Recorded finding {finding} of pull request {number}'s follow-up request as waiting for the user's decision.")
+    print(still_unanswered_text(number, request, answers))
+
+
+def reopen_finding_after_user_decision(number, finding, user_decision):
+    states = state_directory()
+    request = saved_follow_up_request(states, number)
+    answers_file = state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, number)
+    record = read_json(answers_file, {})
+    answers = record.get("answers", {})
+    refuse_unknown_or_answered(number, request, {}, [finding], "nothing was reopened", None)
+    answer = answers.get(str(finding))
+    if answer is None or WAITING_KEY not in answer:
+        raise Refused(f"Finding {finding} of pull request {number}'s follow-up request is not waiting for the user's "
+                      f"decision, so nothing was reopened. Its answer: {answer_text(answer) if answer else 'none yet'}\n"
+                      "Leave the finding as it is: only a finding recorded with "
+                      "record-finding-waiting-for-user-decision is reopened.")
+    if not user_decision.strip():
+        raise Refused(f"--user-decision is empty, so nothing was reopened for finding {finding}.\n"
+                      "Run it again with the user's decision in his words: "
+                      f"{command(number, REOPEN_ARGUMENTS.replace('<n>', str(finding)))}")
+    del answers[str(finding)]
+    record.get("started", {}).pop(str(finding), None)
+    record["user_decisions"] = {**record.get("user_decisions", {}), str(finding): {
+        "would_change": answer[WAITING_KEY], "decision": " ".join(user_decision.split())}}
+    record.pop("finished", None)
+    write_json(answers_file, record)
+    print("\n".join([
+        f"Reopened finding {finding} of pull request {number}'s follow-up request with the user's decision, and "
+        "recorded the follow-up not finished.",
+        "Do what the text below says for you, the author: its subagent follows up the reopened finding.",
+        "",
+        build_follow_up_request_forked_subagent_brief(request),
+    ]))
 
 
 def finish_follow_up_request_and_print_merge_lane_2_message(number):
@@ -649,6 +729,8 @@ def finish_follow_up_request_and_print_merge_lane_2_message(number):
         f"Follow-ups on pull request {number}, answering merge-lane-2's #follow_up_request pull request "
         f"{number}:",
         *(f"{index}. {answer_text(answers[str(index)])}" for index in range(1, request.finding_count + 1)),
+        *(["You will get a new message on each still-open finding once the user has decided."]
+          if waiting_findings(request, answers) else []),
     ]))
 
 
@@ -659,9 +741,26 @@ def next_step(number):
     record = read_json(state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, number), {})
     answers = record.get("answers", {})
     if record.get("finished"):
-        print(f"Done: pull request {number}'s follow-up request is finished.\n"
-              "End your turn with your report, ending it with a question to the user on each finding you left out "
-              "because it would change a design or decision of his.")
+        waiting = waiting_findings(request, answers)
+        if not waiting:
+            print(f"Done: pull request {number}'s follow-up request is finished.\n"
+                  "End your turn with your report.")
+            return
+        print("\n".join([
+            f"Done: pull request {number}'s follow-up request is finished, with {findings_text(waiting)} waiting for "
+            "the user's decision.",
+            "End your turn with your report, ending it with these lines word for word, for the agent that dispatched you:",
+            *(line for finding in waiting for line in (
+                f"Finding {finding} of the follow-up of {build_followed_up_pull_request_citation_with_title_and_link(number)} "
+                "waits for the user's decision: "
+                f"{finding_text(request, finding)}",
+                f"It would change {answers[str(finding)][WAITING_KEY]}.",
+                "Ask the user whether he wants that change.",
+                "If he does, run: " + command(number, REOPEN_ARGUMENTS.replace("<n>", str(finding))),
+                "If he does not, run: " + command(number, LEAVE_OUT_ARGUMENTS.replace("<n>", str(finding)).replace(
+                    '"<why>"', '"The user decided against it: <his words>"')),
+            )),
+        ]))
         return
     started = unanswered_started_findings(record)
     if started:
@@ -679,14 +778,20 @@ def next_step(number):
               f"Then run: {command(number, 'open-pull-request')}")
         return
     unanswered = [index for index in range(1, request.finding_count + 1) if str(index) not in answers]
+    decisions = record.get("user_decisions", {})
     if unanswered:
         print("\n".join([
             f"Next: judge {findings_text(unanswered)}, which {'has' if len(unanswered) == 1 else 'have'} no answer yet:",
-            *(request.lines[index] for index in unanswered),
+            *(line for index in unanswered for line in (
+                request.lines[index],
+                *([f"The user's decision on finding {index}, which would change "
+                   f"{decisions[str(index)]['would_change']}: \"{decisions[str(index)]['decision']}\""]
+                  if str(index) in decisions else []))),
             "Check each against origin/main.",
+            *(["Do as the user decided on each finding that shows his decision; do not ask him again."]
+              if any(str(index) in decisions for index in unanswered) else []),
             f"If a finding no longer holds, run: {command(number, LEAVE_OUT_ARGUMENTS)}",
-            "If a finding would change a design or decision of the user's, run: "
-            + command(number, LEAVE_OUT_ARGUMENTS.replace('"<why>"', NEEDS_USER_DECISION_REASON)),
+            f"If a finding would change a design or decision of the user's, run: {command(number, WAITING_ARGUMENTS)}",
             "Otherwise group it with the findings of its topic, one pull request per topic, and for one topic run: "
             f"{command(number, START_ARGUMENTS)}",
         ]))
@@ -817,6 +922,18 @@ def main(argv=None):
     leave_out_parser = subcommands.add_parser("record-finding-leave-out-reason", help="record why a finding is left out")
     leave_out_parser.add_argument("finding", type=int)
     leave_out_parser.add_argument("--reason", required=True)
+    waiting_parser = subcommands.add_parser(
+        "record-finding-waiting-for-user-decision",
+        help="record that a finding waits for the user's decision, because it would change a design or decision of his")
+    waiting_parser.add_argument("finding", type=int)
+    waiting_parser.add_argument("--what-it-would-change", required=True,
+                                help="the design or decision of the user's the finding would change")
+    reopen_parser = subcommands.add_parser(
+        "reopen-finding-after-user-decision",
+        help="in the author's checkout, once the user wants a waiting finding's change: record his decision and "
+             "reopen the finding for a new subagent")
+    reopen_parser.add_argument("finding", type=int)
+    reopen_parser.add_argument("--user-decision", required=True, help="the user's decision, in his words")
     subcommands.add_parser("finish-follow-up-request-and-print-merge-lane-2-message", help="check every finding has an answer and print the message "
                                           "for merge-lane-2")
     subcommands.add_parser("remove-recorded-topic-branches-and-worktrees", help="in the author's checkout, once the subagent has ended: "
@@ -831,6 +948,10 @@ def main(argv=None):
             open_pull_request(arguments.number, arguments.handled_finding_numbers)
         elif arguments.subcommand == "record-finding-leave-out-reason":
             record_finding_leave_out_reason(arguments.number, arguments.finding, arguments.reason)
+        elif arguments.subcommand == "record-finding-waiting-for-user-decision":
+            record_finding_waiting_for_user_decision(arguments.number, arguments.finding, arguments.what_it_would_change)
+        elif arguments.subcommand == "reopen-finding-after-user-decision":
+            reopen_finding_after_user_decision(arguments.number, arguments.finding, arguments.user_decision)
         elif arguments.subcommand == "finish-follow-up-request-and-print-merge-lane-2-message":
             finish_follow_up_request_and_print_merge_lane_2_message(arguments.number)
         else:

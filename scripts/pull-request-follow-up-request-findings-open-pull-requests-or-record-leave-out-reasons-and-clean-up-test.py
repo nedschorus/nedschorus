@@ -201,14 +201,20 @@ def test_help():
           "<number>" in completed.stdout, completed.stdout)
     check("--help exits 0 and names every subcommand",
           completed.returncode == 0 and all(name in completed.stdout for name in
-                                            ("next-step", "start-topic-branch", "open-pull-request", "record-finding-leave-out-reason", "finish-follow-up-request-and-print-merge-lane-2-message", "remove-recorded-topic-branches-and-worktrees")),
+                                            ("next-step", "start-topic-branch", "open-pull-request", "record-finding-leave-out-reason",
+                                             "record-finding-waiting-for-user-decision", "reopen-finding-after-user-decision",
+                                             "finish-follow-up-request-and-print-merge-lane-2-message", "remove-recorded-topic-branches-and-worktrees")),
           completed.stdout)
     for label, arguments, words in (
             ("no subcommand", (), "required: subcommand"),
             ("start-topic-branch without --finding-numbers", ("start-topic-branch", "topic"),
              "required: --finding-numbers"),
             ("record-finding-leave-out-reason without --reason", ("record-finding-leave-out-reason", "1"),
-             "required: --reason")):
+             "required: --reason"),
+            ("record-finding-waiting-for-user-decision without --what-it-would-change",
+             ("record-finding-waiting-for-user-decision", "1"), "required: --what-it-would-change"),
+            ("reopen-finding-after-user-decision without --user-decision",
+             ("reopen-finding-after-user-decision", "1"), "required: --user-decision")):
         completed = subprocess.run([sys.executable, str(PROGRAM), str(NUMBER), *arguments],
                                    capture_output=True, text=True)
         check(f"{label} is refused by argparse with exit 2",
@@ -1066,17 +1072,21 @@ def test_clean_up_failure():
         case.close()
 
 
-def judge_text(*findings):
+def judge_text(*findings, decisions=None):
     lines = BLOCK.splitlines()
+    decisions = decisions or {}
     numbers = " and ".join(findings)
     plural = len(findings) > 1
     return (f"Next: judge finding{'s' if plural else ''} {numbers}, which {'have' if plural else 'has'} no answer yet:\n"
-            + "".join(lines[int(finding)] + "\n" for finding in findings)
+            + "".join(lines[int(finding)] + "\n" + (decisions[finding] + "\n" if finding in decisions else "")
+                      for finding in findings)
             + "Check each against origin/main.\n"
-            f"If a finding no longer holds, run: python3 {program.PROGRAM} {NUMBER} record-finding-leave-out-reason "
+            + ("Do as the user decided on each finding that shows his decision; do not ask him again.\n"
+               if decisions else "")
+            + f"If a finding no longer holds, run: python3 {program.PROGRAM} {NUMBER} record-finding-leave-out-reason "
             "<n> --reason \"<why>\"\n"
             f"If a finding would change a design or decision of the user's, run: python3 {program.PROGRAM} {NUMBER} "
-            "record-finding-leave-out-reason <n> --reason \"Needs the user's decision: <what the finding would change>\"\n"
+            "record-finding-waiting-for-user-decision <n> --what-it-would-change \"<what it would change>\"\n"
             "Otherwise group it with the findings of its topic, one pull request per topic, and for one topic run: "
             f"python3 {program.PROGRAM} {NUMBER} start-topic-branch <topic-branch> --finding-numbers <n>[,<n>...]\n")
 
@@ -1126,8 +1136,7 @@ def test_next_step():
         code, out, err = case.run(worktree, "next-step")
         check("next-step after finish prints Done",
               code == 0 and out == "Done: pull request 1964's follow-up request is finished.\n"
-                                   "End your turn with your report, ending it with a question to the user on each "
-                                   "finding you left out because it would change a design or decision of his.\n",
+                                   "End your turn with your report.\n",
               out + err)
         git(worktree, "remote", "set-url", "origin", str(case.root / "missing.git"))
         code, out, err = case.run(worktree, "next-step")
@@ -1182,12 +1191,120 @@ def test_next_step_branch_choice():
         case.close()
 
 
+def test_waiting_for_user_decision():
+    case = Case()
+    try:
+        worktree = started(case)
+        waiting = "record-finding-waiting-for-user-decision"
+        reopen = "reopen-finding-after-user-decision"
+        code, out, err = case.run(worktree, waiting, "3", "--what-it-would-change", "x")
+        check("record-finding-waiting-for-user-decision refuses a finding that does not exist",
+              code == 1 and "so there is no finding 3, and nothing was recorded." in err, err)
+        code, out, err = case.run(worktree, waiting, "2", "--what-it-would-change", " ")
+        check("record-finding-waiting-for-user-decision refuses empty text, naming the command",
+              code == 1 and err == "REFUSED: --what-it-would-change is empty, so nothing was recorded for finding 2.\n"
+                                   "Run it again with the design or decision of the user's the finding would change: "
+                                   f"python3 {program.PROGRAM} {NUMBER} {waiting} 2 --what-it-would-change "
+                                   "\"<what it would change>\"\n"
+              and "answers" not in case.answers(), err)
+        code, out, err = case.run(worktree, waiting, "2", "--what-it-would-change", "the hard-wrap\nrule")
+        check("record-finding-waiting-for-user-decision records the finding waiting, on one line, and the status line",
+              code == 0 and out == "Recorded finding 2 of pull request 1964's follow-up request as waiting for the "
+                                   "user's decision.\nFinding 1 has no answer yet.\n"
+              and case.answers()["answers"]["2"] == {"waiting_for_user_decision": "the hard-wrap rule"}, out + err)
+        code, out, err = case.run(worktree, waiting, "2", "--what-it-would-change", "y")
+        check("record-finding-waiting-for-user-decision refuses a finding that already has an answer, showing it",
+              code == 1 and "Finding 2 of pull request 1964's follow-up request already has an answer, so nothing "
+                            "was recorded:\n2. Still open, waiting for the user's decision: it would change the "
+                            "hard-wrap rule\n" in err, err)
+        code, out, err = case.run(worktree, reopen, "1", "--user-decision", "do it")
+        check("reopen-finding-after-user-decision refuses a finding with no answer, changing nothing",
+              code == 1 and err == "REFUSED: Finding 1 of pull request 1964's follow-up request is not waiting for the "
+                                   "user's decision, so nothing was reopened. Its answer: none yet\n"
+                                   "Leave the finding as it is: only a finding recorded with "
+                                   "record-finding-waiting-for-user-decision is reopened.\n"
+              and case.answers()["started"] == {"1": "topic-one"}, err)
+        case.run(worktree, "record-finding-leave-out-reason", "1", "--reason", "fixed")
+        code, out, err = case.run(worktree, reopen, "1", "--user-decision", "do it")
+        check("reopen-finding-after-user-decision refuses a finding left out, showing its answer",
+              code == 1 and "is not waiting for the user's decision, so nothing was reopened. Its answer: Left out: "
+                            "fixed\n" in err and case.answers()["answers"]["1"] == {"reason": "fixed"}, err)
+        code, out, err = case.run(worktree, reopen, "3", "--user-decision", "do it")
+        check("reopen-finding-after-user-decision refuses a finding that does not exist",
+              code == 1 and "so there is no finding 3, and nothing was reopened." in err, err)
+        code, out, err = case.run(worktree, "next-step")
+        check("next-step with a waiting finding and every other answered prints the finish step",
+              code == 0 and out.startswith("Next: every finding has an answer.\n"), out + err)
+        code, out, err = case.run(worktree, "finish-follow-up-request-and-print-merge-lane-2-message")
+        check("finish accepts a waiting finding and lists it as still open, saying merge-lane-2 will hear again",
+              code == 0 and out.endswith("pull request 1964:\n1. Left out: fixed\n2. Still open, waiting for the "
+                                         "user's decision: it would change the hard-wrap rule\n"
+                                         "You will get a new message on each still-open finding once the user has "
+                                         "decided.\n")
+              and case.answers()["finished"] is True, out + err)
+        code, out, err = case.run(worktree, "next-step")
+        check("Done lists each waiting finding with what it would change and the author's two commands",
+              code == 0 and out == "Done: pull request 1964's follow-up request is finished, with finding 2 waiting "
+                                   "for the user's decision.\n"
+                                   "End your turn with your report, ending it with these lines word for word, for the "
+                                   "agent that dispatched you:\n"
+                                   f"Finding 2 of the follow-up of {FOLLOWED_UP} waits for the user's decision: "
+                                   "mac-claude (inline at :713): send every R through repeat_line.\n"
+                                   "It would change the hard-wrap rule.\n"
+                                   "Ask the user whether he wants that change.\n"
+                                   f"If he does, run: python3 {program.PROGRAM} {NUMBER} {reopen} 2 --user-decision "
+                                   "\"<his words>\"\n"
+                                   f"If he does not, run: python3 {program.PROGRAM} {NUMBER} "
+                                   "record-finding-leave-out-reason 2 --reason \"The user decided against it: <his "
+                                   "words>\"\n", out + err)
+        code, out, err = case.run(case.repository, reopen, "2", "--user-decision", " ")
+        check("reopen-finding-after-user-decision refuses empty words, changing nothing",
+              code == 1 and err == "REFUSED: --user-decision is empty, so nothing was reopened for finding 2.\n"
+                                   "Run it again with the user's decision in his words: "
+                                   f"python3 {program.PROGRAM} {NUMBER} {reopen} 2 --user-decision \"<his words>\"\n"
+              and "2" in case.answers()["answers"] and case.answers()["finished"] is True, err)
+        answers = case.answers()
+        answers["started"]["2"] = "topic-one"
+        (case.states() / f"pull-request-{NUMBER}-follow-up-finding-answers.json").write_text(json.dumps(answers))
+        code, out, err = case.run(case.repository, reopen, "2", "--user-decision", "Yes,\ndo it")
+        [request] = program.parse_follow_up_request_blocks_from_message_text(BLOCK)
+        check("reopen-finding-after-user-decision removes the answer, the started branch and the finished mark, "
+              "records the user's words, and prints the brief",
+              code == 0 and out == "Reopened finding 2 of pull request 1964's follow-up request with the user's "
+                                   "decision, and recorded the follow-up not finished.\n"
+                                   "Do what the text below says for you, the author: its subagent follows up the "
+                                   "reopened finding.\n\n"
+                                   + program.build_follow_up_request_forked_subagent_brief(request) + "\n"
+              and case.answers() == {"started": {"1": "topic-one"}, "answers": {"1": {"reason": "fixed"}},
+                                     "user_decisions": {"2": {"would_change": "the hard-wrap rule",
+                                                              "decision": "Yes, do it"}}}, out + err)
+        code, out, err = case.run(worktree, "next-step")
+        check("next-step after the reopen judges the finding, showing the user's decision",
+              code == 0 and out == judge_text("2", decisions={
+                  "2": "The user's decision on finding 2, which would change the hard-wrap rule: \"Yes, do it\""}),
+              out + err)
+        case.run(worktree, waiting, "2", "--what-it-would-change", "the hard-wrap rule")
+        case.run(worktree, "finish-follow-up-request-and-print-merge-lane-2-message")
+        code, out, err = case.run(case.repository, "record-finding-leave-out-reason", "2", "--reason",
+                                  "The user decided against it: no")
+        check("record-finding-leave-out-reason records a waiting finding left out, pointing to finish",
+              code == 0 and out == "Recorded finding 2 of pull request 1964's follow-up request as left out.\n"
+                                   f"Every finding has an answer: run python3 {program.PROGRAM} {NUMBER} "
+                                   "finish-follow-up-request-and-print-merge-lane-2-message\n"
+              and case.answers()["answers"]["2"] == {"reason": "The user decided against it: no"}, out + err)
+        code, out, err = case.run(case.repository, "finish-follow-up-request-and-print-merge-lane-2-message")
+        check("finish with no waiting finding adds no still-open line",
+              code == 0 and out.endswith("\n2. Left out: The user decided against it: no\n"), out + err)
+    finally:
+        case.close()
+
+
 for test in (test_help, test_block_parsing, test_brief_text, test_no_saved_block, test_start,
              test_open_refusals, test_open, test_open_pushes_the_checked_out_recorded_branch_not_the_last,
              test_open_failures, test_open_gh_pr_create_second_try_and_gh_pr_list,
              test_push_time_limit_is_the_pre_push_hooks_budgets_plus_120_seconds,
              test_open_title_and_description_file_removal_failure,
-             test_leave_out_and_finish, test_three_findings,
+             test_leave_out_and_finish, test_three_findings, test_waiting_for_user_decision,
              test_state_failures, test_clean_up, test_clean_up_goes_on_past_each_worktree_and_branch,
              test_clean_up_failure, test_next_step, test_next_step_branch_choice):
     test()
