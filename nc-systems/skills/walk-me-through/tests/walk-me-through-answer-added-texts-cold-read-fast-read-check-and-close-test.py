@@ -990,6 +990,15 @@ def test_no_open_walk_or_no_item_fails():
     result = case.run("check")
     check("check with no open approval-walk fails on stderr",
           result.returncode == 1 and result.stderr.startswith(FAILURE_PREFIX + "check: ") and "no approval-walk is open" in result.stderr, described(result))
+    case = Case(next_to_present="item 4 of 9")
+    with open(case.minutes, "a") as minutes:
+        minutes.write("#approval_walk_paused the user's stop order\n")
+    before = case.minutes.read_bytes()
+    result = case.run("check")
+    check("check on a paused approval-walk fails, writing nothing, and says how to resume it",
+          result.returncode == 1 and "is paused by a `#approval_walk_paused` line" in result.stderr
+          and "add a `#next_to_present` line" in result.stderr and case.minutes.read_bytes() == before,
+          described(result))
     case = Case(next_to_present="item 8 of 9")
     result = case.run("check")
     check("check on an item the walk-document lacks fails on stderr",
