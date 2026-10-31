@@ -300,6 +300,9 @@ in the nedschorus repository, which this machine also clones:
   Bash guards replay's step logs and differences files, one directory per
   replay that exited 1 or 2, written by
   `nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py`
+- `clean-worktrees-removed-worktrees-and-deleted-branches-log/` -- each
+  machine's log of every worktree `scripts/clean-worktrees.py --remove`
+  removed and every branch it deleted, one line each, written by that program
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file
