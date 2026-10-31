@@ -10,6 +10,7 @@ a case needs one to fail.
 """
 
 import datetime
+import importlib.util
 import json
 import os
 import shutil
@@ -20,6 +21,11 @@ from pathlib import Path
 
 PROGRAM = Path(__file__).with_name("log-store-past-discussions-regex-search-newest-first.py")
 PREFIX = "LOG_STORE_PAST_DISCUSSIONS_SEARCH_"
+_refresh_common_specification = importlib.util.spec_from_file_location(
+    "log_store_session_dialogs_refresh_common", Path(__file__).with_name("log-store-session-dialogs-refresh-common.py"))
+refresh_common = importlib.util.module_from_spec(_refresh_common_specification)
+_refresh_common_specification.loader.exec_module(refresh_common)
+EXTRACTOR_SHA256 = refresh_common.load_extractor()[1]
 
 failures = []
 
@@ -101,9 +107,17 @@ def mark_dialogs_current(root):
         os.utime(dialog, ns=(changed, changed))
 
 
-def run(root, *arguments, environment=None, dialogs_current=True):
+def record_extractor_digest(root, digest=EXTRACTOR_SHA256):
+    """Record digest as the refresher's, as the refresher leaves it after a pass with this checkout's extractor."""
+    write(Path(root) / "session-dialogs" / refresh_common.EXTRACTOR_SHA256_FILE_NAME, digest + "\n")
+
+
+def run(root, *arguments, environment=None, dialogs_current=True, extractor_digest_recorded=True):
     if dialogs_current:
         mark_dialogs_current(root)
+    # A case's store with no session-dialogs directory, or none at all, has no dialog to write.
+    if extractor_digest_recorded and (Path(root) / "session-dialogs").is_dir():
+        record_extractor_digest(root)
     env = dict(os.environ)
     # The agent-session running these tests is not one of the store's sessions.
     env.pop("CLAUDE_CODE_SESSION_ID", None)
@@ -279,6 +293,76 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a transcript with no dialog yet gets one before the search",
           crane_dialog.is_file() and "2026-09-06T08:00:00Z  session-dialogs  ned-box  crane" in finding.stdout,
           finding.stdout + finding.stderr)
+    # A dialog written with another checkout's extractor would be stamped current and kept until the next change.
+    for case, digest_recorded in (("another extractor's digest is recorded", True), ("no digest is recorded", False)):
+        write(crane_dialog, "## Agent\n\nthe crane plan, as the refresher wrote it\n")
+        with crane_transcript.open("a") as handle:
+            handle.write(transcript_records(agent("the crane plan, said later", "2026-09-08T08:00:00Z")))
+        if digest_recorded:
+            record_extractor_digest(root, "0" * 64)
+        else:
+            (root / "session-dialogs" / refresh_common.EXTRACTOR_SHA256_FILE_NAME).unlink()
+        finding = run(root, "crane plan", "--kind", "session-dialogs", dialogs_current=False,
+                      extractor_digest_recorded=False)
+        check(f"when {case}, the search writes no dialog, searches the dialogs as they are, and says so on stderr",
+              finding.returncode == 0 and "as the refresher wrote it" in crane_dialog.read_text()
+              and "so the session dialogs were searched as they are" in finding.stderr
+              and "as the refresher wrote it" in finding.stdout, finding.stdout + finding.stderr)
+    record_extractor_digest(root)
+
+    def search_with_extractor_loaded_as(replacement):
+        """Run the search in a process whose refresh_common.load_extractor is replaced by replacement's source."""
+        return subprocess.run([sys.executable, "-c", f"""
+import importlib.util, os, sys
+os.environ[{PREFIX + "LOG_STORE_ROOT_OVERRIDE"!r}] = {str(root)!r}
+os.environ[{PREFIX + "THIS_MACHINE_OVERRIDE"!r}] = "ned-box"
+os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+spec = importlib.util.spec_from_file_location("search", {str(PROGRAM)!r})
+search = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(search)
+real_load_extractor = search.refresh_common.load_extractor
+{replacement}
+search.refresh_common.load_extractor = load_extractor
+sys.exit(search.main(["crane plan", "--kind", "session-dialogs", "--jobs", "1"]))
+"""], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+    write(crane_dialog, "## Agent\n\nthe crane plan, as the refresher wrote it\n")
+    broken = search_with_extractor_loaded_as("""
+def load_extractor():
+    extractor, digest, failure = real_load_extractor()
+    def broken():
+        raise RuntimeError("the tracker is broken")
+    extractor.new_subagent_tracker = broken
+    return extractor, digest, failure
+""")
+    check("when the subagent tracker fails during the pre-search refresh, the dialog is not written without its "
+          "subagent turns, a FAILED line says why, and the search exits 2",
+          broken.returncode == 2 and "as the refresher wrote it" in crane_dialog.read_text()
+          and f"FAILED: the subagent tracker failed on the changed transcript {crane_transcript}" in broken.stderr
+          and "RuntimeError: the tracker is broken" in broken.stderr, broken.stdout + broken.stderr)
+    unreadable_tracker = search_with_extractor_loaded_as("""
+def load_extractor():
+    extractor, digest, failure = real_load_extractor()
+    return extractor, digest, (search.refresh_common.SUBAGENT_TRACKER_PATHS[0], PermissionError("denied"))
+""")
+    check("when the subagent tracker's file cannot be read, no dialog is written, a FAILED line names the file, "
+          "and the search exits 2",
+          unreadable_tracker.returncode == 2 and "as the refresher wrote it" in crane_dialog.read_text()
+          and "FAILED: could not read the subagent tracker's file" in unreadable_tracker.stderr
+          and "PermissionError: denied" in unreadable_tracker.stderr,
+          unreadable_tracker.stdout + unreadable_tracker.stderr)
+    digest_file = root / "session-dialogs" / refresh_common.EXTRACTOR_SHA256_FILE_NAME
+    if os.geteuid() == 0:
+        print("SKIP  a recorded digest that cannot be read: root reads every file")
+    else:
+        digest_file.chmod(0)
+        finding = run(root, "crane plan", "--kind", "session-dialogs", dialogs_current=False,
+                      extractor_digest_recorded=False)
+        digest_file.chmod(0o644)
+        check("a recorded digest that cannot be read is a FAILED line, no dialog is written, and the search exits 2",
+              finding.returncode == 2 and f"FAILED: could not read {digest_file}" in finding.stderr
+              and "as the refresher wrote it" in crane_dialog.read_text(), finding.stdout + finding.stderr)
+
     crane_transcript.chmod(0)
     finding = run(root, "crane plan", "--kind", "session-dialogs", dialogs_current=False)
     crane_transcript.chmod(0o644)

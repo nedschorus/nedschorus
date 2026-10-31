@@ -25,15 +25,57 @@ a reader never sees half a dialog and the two never write into one temporary
 file. When the two race, the rename that lands last wins; if that is the
 older text, it carries the older change time, so the next writer finds it
 not current and writes it again.
+
+A dialog that is current by its change time was written by the extractor and
+subagent tracker whose digest, load_extractor's, the refresher last recorded
+in <store>/session-dialogs/EXTRACTOR_SHA256_FILE_NAME, unless a writer with
+another extractor stamped it. So the search writes a dialog only when its own
+digest equals the recorded one, and never one that leaves out the subagent
+turns: either would stand as current until the next extractor change.
 """
 
+import hashlib
 import os
 import pathlib
 import stat
+import sys
+import types
 
 AGENT_SESSION_FILES_FOLDER_IN_LOG_STORE = "agent-session-files-by-machine"
 SESSION_DIALOGS_DIRECTORY_NAME = "session-dialogs"
 SESSION_DIALOG_FILE_NAME_SUFFIX = "-dialog-complete.md"
+EXTRACTOR_SHA256_FILE_NAME = ".dialogs-written-by-extractor-sha256"
+EXTRACTOR_PATH = pathlib.Path(__file__).resolve().with_name("handoff-extract-conversation.py")
+SUBAGENT_TRACKER_PATHS = (
+    pathlib.Path(__file__).resolve().with_name("handoff-extract-conversation-subagent-tracker-nbd.py"),
+    pathlib.Path(__file__).resolve().with_name("claude-code-subagent-task-notification-interim-recognizer-common.py"))
+
+
+class SubagentTurnsLeftOut(Exception):
+    """The subagent tracker failed while a dialog was rendered, so the dialog was not written."""
+
+
+def load_extractor():
+    """Return (the extractor module, the sha256 of its bytes and its subagent tracker's files', (path, error) or None).
+
+    The tracker's files are SUBAGENT_TRACKER_PATHS; (path, error) names the first that cannot be read. When one
+    cannot be read, all count as empty in the digest: the extractor then writes each dialog without subagent turns
+    and says so in it, which beats leaving every dialog stale.
+    """
+    # One read for both, so a change to the file during a pass cannot pair old code with the new digest.
+    source = EXTRACTOR_PATH.read_bytes()
+    module = types.ModuleType("handoff_extract_conversation")
+    module.__file__ = str(EXTRACTOR_PATH)
+    sys.modules[module.__name__] = module
+    exec(compile(source, str(EXTRACTOR_PATH), "exec"), module.__dict__)
+    tracker_source, tracker_failure = b"", None
+    for path in SUBAGENT_TRACKER_PATHS:
+        try:
+            tracker_source += path.read_bytes()
+        except OSError as error:
+            tracker_source, tracker_failure = b"", (path, error)
+            break
+    return module, hashlib.sha256(source + tracker_source).hexdigest(), tracker_failure
 
 
 def sorted_entries(directory: pathlib.Path, unreadable: list):
@@ -91,14 +133,19 @@ def write_text_through_temporary_file(path: pathlib.Path, text: str, modificatio
 
 
 def refresh_session_dialog_unless_current(extractor, extractor_unchanged: bool, transcript: pathlib.Path,
-                                        dialog: pathlib.Path) -> bool:
+                                        dialog: pathlib.Path, refuse_without_subagent_turns=False) -> bool:
     """Write the transcript's session dialog unless it is current and extractor_unchanged; return whether written.
 
-    extractor is scripts/handoff-extract-conversation.py, loaded. Any failure raises.
+    extractor is scripts/handoff-extract-conversation.py, loaded. With refuse_without_subagent_turns, a dialog the
+    subagent tracker failed on is not written and SubagentTurnsLeftOut raises. Any other failure raises too.
     """
     transcript_changed = transcript.stat().st_ctime_ns
     if extractor_unchanged and dialog.exists() and dialog.stat().st_mtime_ns == transcript_changed:
         return False
-    text = extractor.render_complete_dialog_of_transcript_as_markdown(transcript)
+    turns, report = extractor.complete_dialog_turns_and_report(transcript)
+    left_out = extractor.turns_left_out_notes(turns)
+    if refuse_without_subagent_turns and left_out:
+        raise SubagentTurnsLeftOut(left_out[0]["text"])
+    text = extractor.render_companion(turns, report)
     write_text_through_temporary_file(dialog, text, transcript_changed)
     return True

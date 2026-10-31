@@ -29,6 +29,8 @@ writes, before it searches, each dialog whose transcript changed; both find
 the transcripts and write a dialog with
 scripts/log-store-session-dialogs-refresh-common.py, so the two
 writers agree on what is current and never write into one temporary file.
+The search writes only when its own extractor's digest is the one this
+program last recorded, so a dialog it writes is one this program would.
 
 WHEN A DIALOG IS WRITTEN. When there is none yet, when its modification
 time differs from its transcript's change time (st_ctime), or when the
@@ -88,27 +90,17 @@ store's root for the tests, which point it at a scratch directory.
 import argparse
 import datetime
 import fcntl
-import hashlib
 import importlib.util
 import os
 import pathlib
 import sys
-import types
 
 PROGRAM = "log-store-session-dialogs-refresh"
 LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
 STORE_ROOT_ENVIRONMENT_VARIABLE = "LOG_STORE_SESSION_DIALOGS_REFRESH_LOG_STORE_ROOT_OVERRIDE"
 LOCK_FILE_NAME = ".log-store-session-dialogs-refresh.lock"
-EXTRACTOR_SHA256_FILE_NAME = ".dialogs-written-by-extractor-sha256"
 STALE_DIALOG_WARNING_OPENING = "This dialog could not be refreshed since "
 STALE_DIALOG_WARNING_TIME_FORMAT = "%Y-%m-%d %H:%M UTC"
-EXTRACTOR_PATH = pathlib.Path(__file__).resolve().with_name("handoff-extract-conversation.py")
-SUBAGENT_TRACKER_PATH = pathlib.Path(__file__).resolve().with_name(
-    "handoff-extract-conversation-subagent-tracker-nbd.py")
-SUBAGENT_TRACKER_PATHS = (
-    SUBAGENT_TRACKER_PATH,
-    pathlib.Path(__file__).resolve().with_name("claude-code-subagent-task-notification-interim-recognizer-common.py"))
-
 _refresh_common_specification = importlib.util.spec_from_file_location(
     "log_store_session_dialogs_refresh_common",
     pathlib.Path(__file__).resolve().with_name("log-store-session-dialogs-refresh-common.py"))
@@ -118,29 +110,6 @@ _refresh_common_specification.loader.exec_module(refresh_common)
 EXIT_REFRESHED = 0
 EXIT_FAILED = 1
 EXIT_LOCKED = 3
-
-
-def load_extractor():
-    """Return (the extractor module, the sha256 of its bytes and its subagent tracker's files', (path, error) or None).
-
-    The tracker's files are SUBAGENT_TRACKER_PATHS; (path, error) names the first that cannot be read. When one
-    cannot be read, all count as empty in the digest: the extractor then writes each dialog without subagent turns
-    and says so in it, which beats leaving every dialog stale.
-    """
-    # One read for both, so a change to the file during a pass cannot pair old code with the new digest.
-    source = EXTRACTOR_PATH.read_bytes()
-    module = types.ModuleType("handoff_extract_conversation")
-    module.__file__ = str(EXTRACTOR_PATH)
-    sys.modules[module.__name__] = module
-    exec(compile(source, str(EXTRACTOR_PATH), "exec"), module.__dict__)
-    tracker_source, tracker_failure = b"", None
-    for path in SUBAGENT_TRACKER_PATHS:
-        try:
-            tracker_source += path.read_bytes()
-        except OSError as error:
-            tracker_source, tracker_failure = b"", (path, error)
-            break
-    return module, hashlib.sha256(source + tracker_source).hexdigest(), tracker_failure
 
 
 def store_root() -> pathlib.Path:
@@ -170,9 +139,9 @@ def refresh_all(root: pathlib.Path, failures_only: bool) -> int:
         print(f"FAILED: no {transcripts_directory} directory to read transcripts from; "
               "scripts/transcript-mirror-to-log-store.py creates it on its first pass")
         return EXIT_FAILED
-    extractor, extractor_sha256, tracker_failure = load_extractor()
+    extractor, extractor_sha256, tracker_failure = refresh_common.load_extractor()
     dialogs_directory = root / refresh_common.SESSION_DIALOGS_DIRECTORY_NAME
-    extractor_sha256_file = dialogs_directory / EXTRACTOR_SHA256_FILE_NAME
+    extractor_sha256_file = dialogs_directory / refresh_common.EXTRACTOR_SHA256_FILE_NAME
     written = current = failed = 0
     if tracker_failure is not None:
         unreadable_tracker_path, tracker_error = tracker_failure
