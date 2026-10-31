@@ -30,9 +30,9 @@ says only where to look and how to list what exists.
 THE STORE'S RULES HOLD HERE, WITH ONE DIFFERENCE INSIDE `seats/`. FAIL
 LOUDLY is the record shipper's (nc-systems/cold-read/cold-read-record-ship.py) and is
 kept: an unreachable ned-box prints a line opening FAILED and exits non-zero
-with the file still on disk for a later run; a shipment that stops after its
-copy has begun ends that line with the command that reruns it. ADD-ONLY and REFUSE ON
-DIFFERENCE remain the rules of the records kind, which that program still
+with the file still on disk for a later run; a FAILED line for a shipment that
+stops after its copy has begun ends with the command that reruns it. ADD-ONLY
+and REFUSE ON DIFFERENCE remain the rules of the records kind, which that program still
 enforces unchanged; here a file of the same name whose content differs is
 REPLACED, and the replacement is announced.
 

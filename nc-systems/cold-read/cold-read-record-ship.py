@@ -115,8 +115,10 @@ reads the store's digests back, and removes the staging directory.
 
 A staging directory outlives its shipment only when the copy into it fails
 and ned-box cannot be reached to remove it, when the placing step's ssh call
-fails before the step runs, or when the shipment is killed before the step;
-nothing reads it, so it never stops a later shipment.
+fails before the step runs, or when the shipment is killed before the step.
+A record's placing step links files from its own staging directory and never
+looks for another, so a leftover one never stops a later shipment of a
+record; the replace step below does look, and stops.
 
 NO LOCK IN THE REPLACE STEP EITHER. replace_with_staged_files, the path a
 walk's minutes, dispositions and appended walk text and a seat's files take,

@@ -25,6 +25,7 @@ import io
 import json
 import os
 import pathlib
+import shlex
 import socket
 import subprocess
 import sys
@@ -787,6 +788,19 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-stopped-test-") a
                                 f"not be written. Rerun: `{program} --seat "
                                 f"cold-read-research --as survey.md {source}`\n"),
           f"exit {code}: {out}{err}")
+
+    # The pinned lines above never run the command they print, so a script
+    # that cannot be run as printed (no executable bit) would pass them.
+    rerun_words = shlex.split(out.rsplit("Rerun: `", 1)[-1].rstrip("`\n"))
+    try:
+        rerun_help = subprocess.run(rerun_words[:1] + ["--help"], capture_output=True,
+                                    text=True, check=False)
+        rerun_help_outcome = (rerun_help.returncode == 0,
+                              f"exit {rerun_help.returncode}: {rerun_help.stderr}")
+    except OSError as error:
+        rerun_help_outcome = (False, repr(error))
+    check("the printed rerun command's program runs as printed (exit 0 on --help)",
+          rerun_help_outcome[0], f"{rerun_words[:1]} --help: {rerun_help_outcome[1]}")
 
     def left_behind_then_rerun(out, what_failed):
         if not out.startswith(f"FAILED: cold-read-research/draft.md — {what_failed}. "
