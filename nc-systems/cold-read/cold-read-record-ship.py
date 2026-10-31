@@ -863,10 +863,14 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
     caller to remove, with remove_staging_directory or by placing the rest.
 
     `replacements` is a list of (staged relative path, store relative path,
-    required sha256 or None). A required digest makes the rename conditional:
-    it runs only while the store still holds those bytes, which is how the
-    walk text's APPENDED TO rule is held to the stored copy it was tested
-    against. None replaces whatever is there.
+    required sha256 or None), with an optional fourth element: a store
+    relative path that must not exist, or None. A required digest makes the
+    rename conditional: it runs only while the store still holds those bytes,
+    which is how the walk text's APPENDED TO rule is held to the stored copy
+    it was tested against. A path that must not exist makes it conditional
+    too: it runs only while that path is absent, which is how the walk text
+    is held to being the store's latest copy (scripts/walk-files-ship.py's
+    REVISED COPIES). None for both replaces whatever is there.
 
     WHY A RENAME OF A STAGED COPY, AND NOT rsync STRAIGHT ONTO THE NAME. A
     shipper that read the store's digest, decided, and then copied with
@@ -892,6 +896,7 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
 
     One ssh round trip remotely, running replace_with_staged_files_script;
     os.replace and hashlib locally."""
+    replacements = replacements_with_must_be_absent_path(replacements)
     if host is None:
         staging, store = pathlib.Path(staging_dir), pathlib.Path(store_dir)
 
@@ -901,12 +906,13 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
                 return OtherShipmentStaging(others)
             outcomes = {}
             store.mkdir(parents=True, exist_ok=True)
-            for staged_relative, store_relative, required in replacements:
+            for staged_relative, store_relative, required, absent in replacements:
                 target = store / store_relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 displaced = (hashlib.sha256(target.read_bytes()).hexdigest()
                              if target.is_file() else None)
-                replaced = required is None or displaced == required
+                replaced = ((required is None or displaced == required)
+                            and (absent is None or not (store / absent).exists()))
                 if replaced:
                     os.replace(staging / staged_relative, target)
                 outcomes[store_relative] = (replaced, displaced)
@@ -946,24 +952,35 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
         for relative, (replaced, displaced) in acted.items()}
 
 
+def replacements_with_must_be_absent_path(replacements: list) -> list:
+    """Each replacement as four elements, the path that must not exist None
+    where a caller gave three."""
+    return [tuple(replacement) + (None,) * (4 - len(replacement))
+            for replacement in replacements]
+
+
 def replace_with_staged_files_script(staging_dir: pathlib.PurePosixPath,
                                      store_dir: pathlib.PurePosixPath,
                                      replacements: list) -> str:
     """The POSIX sh script replace_with_staged_files runs on ned-box. For each
     file: read the store's digest of the name (`-` for none), rename the
     staged copy over it when no digest is required or the store's is the
-    required one, and print `replaced <digest> <name>` or `kept <digest>
-    <name>`. Then print `stored <digest> <name>` for each name the store
+    required one, and no path that must not exist is there, and print
+    `replaced <digest> <name>` or `kept <digest> <name>`. Then print
+    `stored <digest> <name>` for each name the store
     holds. `mv -f` within one directory tree is a rename, so the name holds
     the old file or the new one, never part of either. A digest that cannot
     be read exits 1 before anything more is renamed. First it prints
     `other - <path>` for each other staging directory of the same name and,
     if there is one, renames nothing: see NO LOCK; A CHECK INSTEAD in
-    replace_with_staged_files."""
+    replace_with_staged_files. `replacements` is as replace_with_staged_files
+    takes it."""
+    replacements = replacements_with_must_be_absent_path(replacements)
     arguments = " ".join(
-        f"{shlex.quote(staged)} {shlex.quote(target)} {required or '-'}"
-        for staged, target, required in replacements)
-    quoted_targets = " ".join(shlex.quote(target) for _, target, _ in replacements)
+        f"{shlex.quote(staged)} {shlex.quote(target)} {required or '-'} "
+        f"{shlex.quote(absent) if absent else '-'}"
+        for staged, target, required, absent in replacements)
+    quoted_targets = " ".join(shlex.quote(target) for _, target, _, _ in replacements)
     staging = shlex.quote(str(staging_dir))
     store = shlex.quote(str(store_dir))
     return (
@@ -979,14 +996,15 @@ def replace_with_staged_files_script(staging_dir: pathlib.PurePosixPath,
         f"mkdir -p -- {store} || exit 1\n"
         f"set -- {arguments}\n"
         f"while [ $# -gt 0 ]; do\n"
-        f"  staged=$1; target=$2; required=$3; shift 3\n"
+        f"  staged=$1; target=$2; required=$3; absent=$4; shift 4\n"
         f"  mkdir -p -- \"$(dirname -- {store}/\"$target\")\" || exit 1\n"
         f"  current=-\n"
         f"  if [ -f {store}/\"$target\" ]; then\n"
         f"    current=$(sha256sum < {store}/\"$target\" | cut -d' ' -f1)\n"
         f"    [ -n \"$current\" ] || exit 1\n"
         f"  fi\n"
-        f"  if [ \"$required\" = - ] || [ \"$required\" = \"$current\" ]; then\n"
+        f"  if {{ [ \"$required\" = - ] || [ \"$required\" = \"$current\" ]; }} \\\n"
+        f"     && {{ [ \"$absent\" = - ] || ! [ -e {store}/\"$absent\" ]; }}; then\n"
         f"    mv -f -- {staging}/\"$staged\" {store}/\"$target\" || exit 1\n"
         f"    printf 'replaced %s %s\\n' \"$current\" \"$target\"\n"
         f"  else\n"

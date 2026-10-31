@@ -68,12 +68,12 @@ closes, not only a record kept as first written. The rules are PER FILE:
     are not an append -- they are the already-there case above, and a run
     that finds them copies nothing. A shorter local file is content removed
     and a same-length difference is content changed; both fail this test and
-    are refused with the text above. So is a longer file with a byte changed
-    before its added part, which is the whole difference between this test
-    and "the local file is longer": the refusal exists to catch a session
-    overwriting the store with a stale copy, and a stale copy that also grew
-    is exactly that. A store listing that reports a digest and no size cannot
-    be tested and is refused.
+    ship as a revised copy, under REVISED COPIES below. So does a longer file
+    with a byte changed before its added part, which is the whole difference
+    between this test and "the local file is longer": a session must never
+    overwrite the store's copy with a stale one, and a stale copy that also
+    grew is exactly that. A store listing that reports a digest and no size
+    cannot be tested, and the walk text ships as a revised copy.
   REVISED COPIES: the walk text, when the store's latest copy is neither
     the same bytes as the local one nor an exact prefix of it, as when the
     agent rewrites an item the user did not follow. The local walk text is
@@ -129,12 +129,14 @@ place by the record shipper's two steps: an add-only file by hard link, which
 is never made over an existing file (link_staged_files_never_over_existing),
 and a replaced file by rename, the store's digest of what it displaces read
 in the same step (replace_with_staged_files). A walk text the walk only added to is renamed
-in only while the store still holds the copy it was tested against. The
+in only while the store still holds the copy it was tested against and no newer
+revised copy has been added. The
 outcome is judged on what the store holds afterwards: an add-only file
 holding another shipment's bytes is REFUSED by name, a walk text changed in
 the store meanwhile is REFUSED by name, a minutes or dispositions file another
 shipment landed first is replaced and its digest announced as any
-replacement is, and a file that does not hold this run's bytes afterwards --
+replacement is, a walk text whose latest copy another shipment followed with
+a newer revised copy is REFUSED by name, and a file that does not hold this run's bytes afterwards --
 another shipment's rename came after this one's, or the file is missing --
 makes the line FAILED, exit 1. The replace step takes no lock: a walk's
 files are shipped by the seat that runs the walk, one shipment after
@@ -201,6 +203,7 @@ kind with it, which is how the tests point at a scratch directory.
 """
 
 import argparse
+import errno
 import hashlib
 import importlib.util
 import os
@@ -346,6 +349,10 @@ def stored_revised_walk_text_numbers(copy_host, walk_path: pathlib.PurePosixPath
             directory = pathlib.Path(walk_path)
             if not directory.is_dir():
                 return []
+            # is_file() answers False for an entry it cannot stat, so a
+            # directory that cannot be entered would read as holding no copy.
+            if not os.access(directory, os.R_OK | os.X_OK):
+                raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), str(directory))
             return [path.name for path in directory.iterdir() if path.is_file()]
 
         listed, names = shipper.local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
@@ -353,9 +360,13 @@ def stored_revised_walk_text_numbers(copy_host, walk_path: pathlib.PurePosixPath
     else:
         # The glob's fixed part is quoted, its * is not; an unmatched glob is
         # left as written, which the -f test drops. `ls` is not used, so a
-        # name is never mangled by its output format.
+        # name is never mangled by its output format. A directory that cannot
+        # be entered or read exits 1: the glob would otherwise match nothing
+        # and read as "no revised copies".
+        quoted_directory = shlex.quote(str(walk_path))
         pattern = shlex.quote(name + REVISED_WALK_TEXT_NAME_INFIX) + "*.md"
-        script = (f"cd -- {shlex.quote(str(walk_path))} 2>/dev/null || exit 0; "
+        script = (f"[ -d {quoted_directory} ] || exit 0; "
+                  f"cd -- {quoted_directory} || exit 1; [ -r . ] || exit 1; "
                   f"for f in {pattern}; do if [ -f \"$f\" ]; then printf '%s\\n' \"$f\"; fi; done; exit 0")
         listed = subprocess.run(shipper.SSH_COMMAND + [copy_host, script],
                                 capture_output=True, text=True, check=False)
@@ -386,7 +397,8 @@ class StoredWalkFile(typing.NamedTuple):
     """What the store reports about one file it holds. The size is what the
     APPENDED TO rule needs -- how many leading bytes of the local file to
     hash -- and is None when the listing gave a digest and no size, in which
-    case that rule cannot be applied and the difference is refused."""
+    case that rule cannot be applied and the walk text ships as a revised
+    copy."""
 
     sha256: str
     size_in_bytes: typing.Optional[int]
@@ -459,7 +471,7 @@ def stored_copy_is_an_exact_prefix(source: pathlib.Path,
     already routed them to the already-there path, and the strict < excludes
     them anyway. A shorter local file (content removed), a same-length
     difference (content changed) and a longer file with a byte changed before
-    its added part all answer False, so all three stay refused."""
+    its added part all answer False, so all three ship as a revised copy."""
     if in_store.size_in_bytes is None or in_store.size_in_bytes >= source.stat().st_size:
         return False
     with source.open("rb") as opened:
@@ -500,14 +512,18 @@ class PlannedWalkFileReplacement(typing.NamedTuple):
     dispositions file, which is replaced whatever the store holds
     (`required_sha256` None), or a walk text the walk only added to, which
     is replaced only while the store still holds the copy that was tested
-    (`required_sha256` that copy's digest). `target_name` is the store's
-    name for it: the source's own, or the walk's latest revised copy."""
+    (`required_sha256` that copy's digest) and that copy is still the latest:
+    `must_be_absent_name` is the revised copy the next shipment would add,
+    and since copies are numbered one after another, its absence shows no
+    newer copy has been added. `target_name` is the store's name for it: the
+    source's own, or the walk's latest revised copy."""
 
     source: pathlib.Path
     role_name: str
     required_sha256: typing.Optional[str]
     ruling: str
     target_name: str
+    must_be_absent_name: typing.Optional[str] = None
 
 
 REPLACED_ROLE_RULING = (
@@ -621,7 +637,9 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                     source, role_name_of[suffix], latest.sha256,
                     APPENDED_TO_RULING.format(stored_bytes=latest.size_in_bytes,
                                               local_bytes=source.stat().st_size),
-                    latest_name))
+                    latest_name,
+                    revised_walk_text_file_name(
+                        name, (revised_numbers[-1] if revised_numbers else 0) + 1)))
             else:
                 revised_name = revised_walk_text_file_name(
                     name, (revised_numbers[-1] if revised_numbers else 0) + 1)
@@ -666,7 +684,8 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
         if to_replace:
             renamed, outcomes = shipper.replace_with_staged_files(
                 destination.copy_host, staging_dir, destination.walk_path,
-                [(planned.source.name, planned.target_name, planned.required_sha256)
+                [(planned.source.name, planned.target_name, planned.required_sha256,
+                  planned.must_be_absent_name)
                  for planned in to_replace])
             if isinstance(outcomes, shipper.OtherShipmentStaging):
                 shipper.remove_staging_directory(destination.copy_host, staging_dir)
@@ -688,6 +707,10 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
             outcome = outcomes.get(file_name)
             if outcome is None:
                 lost.append(f"{file_name} (not in the store after the copy)")
+            elif not outcome.replaced and outcome.displaced_sha256 == planned.required_sha256:
+                refused.append(f"{file_name} (no longer the store's latest copy: "
+                               f"another shipment added {planned.must_be_absent_name} "
+                               f"while this run ran; local sha256 {local_digest})")
             elif not outcome.replaced:
                 refused.append(f"{file_name} (changed in the store while this run "
                                f"ran: store sha256 {outcome.displaced_sha256}, "
