@@ -32,6 +32,12 @@ in <store>/session-dialogs/EXTRACTOR_SHA256_FILE_NAME, unless a writer with
 another extractor stamped it. So the search writes a dialog only when its own
 digest equals the recorded one, and never one that leaves out the subagent
 turns: either would stand as current until the next extractor change.
+
+The recorded digest is kept only after a pass that wrote every dialog, so
+while a pass with a changed extractor runs, or after one that failed partway,
+the dialogs are of two digests under one record. So each dialog's last line
+names the digest that wrote it, as session_dialog_extractor_sha256_last_line_build says, and the
+search dates a dialog's hits by their turns only when that digest is its own.
 """
 
 import hashlib
@@ -45,6 +51,8 @@ AGENT_SESSION_FILES_FOLDER_IN_LOG_STORE = "agent-session-files-by-machine"
 SESSION_DIALOGS_DIRECTORY_NAME = "session-dialogs"
 SESSION_DIALOG_FILE_NAME_SUFFIX = "-dialog-complete.md"
 EXTRACTOR_SHA256_FILE_NAME = ".dialogs-written-by-extractor-sha256"
+SESSION_DIALOG_EXTRACTOR_SHA256_LAST_LINE_OPENING = "<!-- written by the session dialog extractor whose sha256 is "
+SESSION_DIALOG_EXTRACTOR_SHA256_LAST_LINE_CLOSING = " -->"
 EXTRACTOR_PATH = pathlib.Path(__file__).resolve().with_name("handoff-extract-conversation.py")
 SUBAGENT_TRACKER_PATHS = (
     pathlib.Path(__file__).resolve().with_name("handoff-extract-conversation-subagent-tracker-nbd.py"),
@@ -56,11 +64,13 @@ class SubagentTurnsLeftOut(Exception):
 
 
 def load_extractor():
-    """Return (the extractor module, the sha256 of its bytes and its subagent tracker's files', (path, error) or None).
+    """Return (the extractor module, the sha256 of its bytes, its subagent tracker's files' and this file's,
+    (path, error) or None).
 
-    The tracker's files are SUBAGENT_TRACKER_PATHS; (path, error) names the first that cannot be read. When one
-    cannot be read, all count as empty in the digest: the extractor then writes each dialog without subagent turns
-    and says so in it, which beats leaving every dialog stale.
+    This file is in the digest because it writes the digest line into each dialog. The tracker's files are
+    SUBAGENT_TRACKER_PATHS; (path, error) names the first that cannot be read. When one cannot be read, all count
+    as empty in the digest: the extractor then writes each dialog without subagent turns and says so in it, which
+    beats leaving every dialog stale.
     """
     # One read for both, so a change to the file during a pass cannot pair old code with the new digest.
     source = EXTRACTOR_PATH.read_bytes()
@@ -75,7 +85,22 @@ def load_extractor():
         except OSError as error:
             tracker_source, tracker_failure = b"", (path, error)
             break
-    return module, hashlib.sha256(source + tracker_source).hexdigest(), tracker_failure
+    this_file_source = pathlib.Path(__file__).resolve().read_bytes()
+    return module, hashlib.sha256(source + tracker_source + this_file_source).hexdigest(), tracker_failure
+
+
+def session_dialog_extractor_sha256_last_line_build(extractor_sha256: str) -> str:
+    """The line ending each session dialog written here, naming the digest of the extractor that wrote it."""
+    return SESSION_DIALOG_EXTRACTOR_SHA256_LAST_LINE_OPENING + extractor_sha256 + SESSION_DIALOG_EXTRACTOR_SHA256_LAST_LINE_CLOSING
+
+
+def session_dialog_extractor_sha256_read_from_last_line(dialog_lines) -> str:
+    """The digest the dialog's last line names, or "" when that line is not a digest line."""
+    opening, closing = SESSION_DIALOG_EXTRACTOR_SHA256_LAST_LINE_OPENING, SESSION_DIALOG_EXTRACTOR_SHA256_LAST_LINE_CLOSING
+    last = next((line for line in reversed(dialog_lines) if line.strip()), "")
+    if last.startswith(opening) and last.endswith(closing):
+        return last[len(opening):-len(closing)]
+    return ""
 
 
 def sorted_entries(directory: pathlib.Path, unreadable: list):
@@ -132,12 +157,14 @@ def write_text_through_temporary_file(path: pathlib.Path, text: str, modificatio
     os.replace(temporary, path)
 
 
-def refresh_session_dialog_file_unless_current_with_transcript(extractor, extractor_unchanged: bool,
+def refresh_session_dialog_file_unless_current_with_transcript(extractor, extractor_sha256: str,
+                                                               extractor_unchanged: bool,
                                                                transcript: pathlib.Path, dialog: pathlib.Path,
                                                                refuse_without_subagent_turns=False) -> bool:
     """Write the transcript's session dialog unless it is current and extractor_unchanged; return whether written.
 
-    extractor is scripts/handoff-extract-conversation.py, loaded. With refuse_without_subagent_turns, a dialog the
+    extractor is scripts/handoff-extract-conversation.py, loaded, and extractor_sha256 load_extractor's digest of
+    it, which the dialog's last line names. With refuse_without_subagent_turns, a dialog the
     subagent tracker failed on is not written and SubagentTurnsLeftOut raises. Any other failure raises too.
     """
     transcript_changed = transcript.stat().st_ctime_ns
@@ -147,6 +174,7 @@ def refresh_session_dialog_file_unless_current_with_transcript(extractor, extrac
     left_out = extractor.turns_left_out_notes(turns)
     if refuse_without_subagent_turns and left_out:
         raise SubagentTurnsLeftOut(left_out[0]["text"])
-    text = extractor.render_companion(turns, report)
+    text = (extractor.render_companion(turns, report) + "\n\n"
+            + session_dialog_extractor_sha256_last_line_build(extractor_sha256) + "\n")
     write_text_through_temporary_file(dialog, text, transcript_changed)
     return True
