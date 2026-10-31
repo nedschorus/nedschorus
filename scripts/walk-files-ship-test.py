@@ -782,6 +782,29 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-race-test-") as race_sc
                             "minutes-after-copy", "minutes-after-rename")),
           str(names))
 
+# --- A walk's close writes no handoff marker ----------------------------------
+with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-close-") as close_scratch_name:
+    close_scratch = pathlib.Path(close_scratch_name)
+    close_home = close_scratch / "home"
+    close_home.mkdir()
+    CLOSE_WALK = "close-demo-walk-2026-10-27"
+    closed_minutes = ("# minutes\n\nItem 1 ruled.\n\n#next_to_present item 2 of 2\n"
+                      "Item 2 ruled.\n\n#next_to_present none, closed\n")
+    close_walk_text = write_walk(close_scratch / "walks", CLOSE_WALK,
+                                 {**FILES, "-minutes": closed_minutes})
+    result = ship(str(close_scratch / "store" / "cold-read-records"), str(close_walk_text),
+                  extra_env={"HOME": str(close_home),
+                             "CLAUDE_CODE_SESSION_ID": "walk-files-ship-test-session"})
+    handoffs_directory = close_home / ".claude" / "handoffs"
+    handoff_files = (sorted(str(path) for path in handoffs_directory.rglob("*"))
+                     if handoffs_directory.exists() else [])
+    check("shipping closed minutes with a session id set exits 0 and writes "
+          "nothing under ~/.claude/handoffs",
+          result.returncode == 0 and result.stdout.startswith("shipped:")
+          and not handoff_files,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}; "
+          f"under ~/.claude/handoffs: {handoff_files}")
+
 # --- Failures after part of a shipment reached the store ---------------------
 with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-") as partial_scratch_name:
     partial_scratch = pathlib.Path(partial_scratch_name)

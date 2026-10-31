@@ -1311,28 +1311,28 @@ with tempfile.TemporaryDirectory() as scratch:
               and os.getsid(attempt.process.pid) == attempt.process.pid)
     finally:
         if attempt.process is not None:
-            grid_module.stop_process_tree(attempt.process, grace_seconds=0.1)
+            grid_module.cell_common.stop_process_tree(attempt.process, grace_seconds=0.1)
     check("stopping a cell reaps its launcher", attempt.process.returncode is not None)
 
     for result in (0, subprocess.TimeoutExpired("cell", 5.0)):
-        with mock.patch.object(grid_module.os, "killpg") as killed:
+        with mock.patch.object(grid_module.cell_common.os, "killpg") as killed:
             process = mock.Mock(pid=12345)
             process.wait.side_effect = [result, 0]
-            grid_module.stop_process_tree(process)
+            grid_module.cell_common.stop_process_tree(process)
             check("group termination escalates even when the launcher exits",
                   killed.call_args_list == [
-                      mock.call(process.pid, grid_module.signal.SIGTERM),
-                      mock.call(process.pid, grid_module.signal.SIGKILL)]
+                      mock.call(process.pid, grid_module.cell_common.signal.SIGTERM),
+                      mock.call(process.pid, grid_module.cell_common.signal.SIGKILL)]
                   and process.wait.call_args_list == [mock.call(timeout=5.0), mock.call()])
     process.wait.side_effect = None
     process.wait.reset_mock()
-    with mock.patch.object(grid_module.os, "killpg", side_effect=ProcessLookupError):
-        grid_module.stop_process_tree(process)
+    with mock.patch.object(grid_module.cell_common.os, "killpg", side_effect=ProcessLookupError):
+        grid_module.cell_common.stop_process_tree(process)
         check("an already absent group still reaps its launcher", process.wait.called)
     process.wait.reset_mock()
     # macOS answers a group whose members have all exited with EPERM.
-    with mock.patch.object(grid_module.os, "killpg", side_effect=PermissionError):
-        grid_module.stop_process_tree(process)
+    with mock.patch.object(grid_module.cell_common.os, "killpg", side_effect=PermissionError):
+        grid_module.cell_common.stop_process_tree(process)
         check("a group with no live member left still reaps its launcher", process.wait.called)
 
     # --- The reference pre-pass: a web link is not a path, a bare name is looked up --

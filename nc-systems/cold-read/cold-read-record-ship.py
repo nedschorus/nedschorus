@@ -283,12 +283,12 @@ in the nedschorus repository, which this machine also clones:
   marks, written by `nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py`
 - `handoff-agent-seat-died-without-session-handoff-restart-watcher/` -- each decision of ned-box's
   crash watcher and the notices it showed the user, written by
-  `nc-systems/handoff/handoff-agent-seat-died-without-session-handoff-restart-watcher.py`
+  `nc-systems/handoff/handoff-agent-crash-watcher.py`
 - `uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-checks/` -- each
   machine's weekly check that the work-snapshot hook finds a real claude
   session, written by
   `nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py`
-- `ghi-info-proposed-improvements-or-changes/` -- ghi-info's ruling questions
+- `ghi-guide-agent-proposed-improvements-or-changes/` -- ghi-guide-agent's ruling questions
   about GHI-MDs, each a proposed-improvements-or-changes-file settled in
   place, written by `scripts/ghi-issue-write.py`
 - `guarded-file-versions-and-approvals/` -- each machine's log of every

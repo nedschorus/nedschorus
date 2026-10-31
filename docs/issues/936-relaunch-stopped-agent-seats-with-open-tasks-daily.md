@@ -36,4 +36,4 @@ Put points 1 to 5 to the user. Then build the job as one program run from the sc
 
 ## Search receipt
 
-`scripts/ghi-info-ask.py`, 2026-10-02, asked which issues to read before filing a daily job that relaunches agent-seats with open tasks that are not running. It returned ten related issues, six of them linked above, and none covering a relaunch selected by open tasks. The nearest is the fleet-restart issue linked above, which restarts the agent-seats that were running when the machine stopped.
+`scripts/ghi-guide-agent-ask.py`, 2026-10-02, asked which issues to read before filing a daily job that relaunches agent-seats with open tasks that are not running. It returned ten related issues, six of them linked above, and none covering a relaunch selected by open tasks. The nearest is the fleet-restart issue linked above, which restarts the agent-seats that were running when the machine stopped.

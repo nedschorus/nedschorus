@@ -39,7 +39,7 @@ create` after the push: the frozen head, rerun on it with a too-similar
 verdict standing, exited 65 having made no gh call at all, and with another
 seat's change landed on main under it, exited 66 — either way the branch
 stayed stranded, and the fixed tool opened its pull request without asking
-ghi-info anything. A file whose name carries a number no issue has: the
+ghi-guide-agent anything. A file whose name carries a number no issue has: the
 frozen head pushed the branch and opened the pull request before learning
 that, then exited 1; the fixed tool exits 64 having run nothing but the
 read, and still exits 1 when gh fails for any other reason. gh's own words
@@ -212,7 +212,7 @@ class Recorder:
     still makes the call. A case that wants that resolution to fail passes
     its own answer under the same key.
 
-    The tool sends ghi-info its question in a file it deletes after the
+    The tool sends ghi-guide-agent its question in a file it deletes after the
     call, so the recorder reads the file during the call and records its
     text as the call's last word, where a case looks for it."""
 
@@ -257,7 +257,7 @@ class Recorder:
 
 FILE_TEXT = "---\nstatus: draft\n---\n\n# A statusline that drops its branch name\n\nBody.\n"
 REPO = "nedschorus/nedschorus"
-ASK = "ghi-info-ask.py"   # how a case names the adjudication call
+ASK = "ghi-guide-agent-ask.py"   # how a case names the adjudication call
 
 
 def written(scratch: Path, name="statusline-drops-branch.md", text=FILE_TEXT):
@@ -287,16 +287,16 @@ class StagedReader(Recorder):
         return super().__call__(arguments, timeout, cwd, check)
 
 
-_ghi_info_ask_spec = TOOL.spec_from_file_location(
-    "ghi_info_ask_for_ruling_messages",
-    Path(__file__).resolve().with_name("ghi-info-ask.py"))
-_ghi_info_ask = TOOL.module_from_spec(_ghi_info_ask_spec)
-_ghi_info_ask_spec.loader.exec_module(_ghi_info_ask)
+_ghi_guide_agent_ask_spec = TOOL.spec_from_file_location(
+    "ghi_guide_agent_ask_for_ruling_messages",
+    Path(__file__).resolve().with_name("ghi-guide-agent-ask.py"))
+_ghi_guide_agent_ask = TOOL.module_from_spec(_ghi_guide_agent_ask_spec)
+_ghi_guide_agent_ask_spec.loader.exec_module(_ghi_guide_agent_ask)
 
 
 def ruling_stderr(sentence, leading=""):
-    """What ghi-info-ask.py prints for ghi-info's reply `sentence`."""
-    return leading + _ghi_info_ask.caller_message_for_passthrough_reply(
+    """What ghi-guide-agent-ask.py prints for ghi-guide-agent's reply `sentence`."""
+    return leading + _ghi_guide_agent_ask.caller_message_for_passthrough_reply(
         "ask-user-about-ruling: " + sentence)[0] + "\n"
 
 
@@ -320,9 +320,9 @@ def parsed_issue_value(frontmatter_line):
 
 
 def log_store_at(directory: Path) -> Path:
-    """Points the tool's log-store for ghi-info's questions at `directory`,
+    """Points the tool's log-store for ghi-guide-agent's questions at `directory`,
     so no case writes to the real one."""
-    os.environ[tool.GHI_INFO_LOG_STORE_DIRECTORY_VARIABLE] = str(directory)
+    os.environ[tool.GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY_VARIABLE] = str(directory)
     return directory
 
 
@@ -331,8 +331,8 @@ class SshRunsLocally(Recorder):
     this machine, so the remote reads and writes are tested for real."""
 
     def __call__(self, arguments, timeout=None, cwd=None, check=True):
-        if arguments[:len(tool.GHI_INFO_LOG_STORE_SSH_COMMAND)] == \
-                tool.GHI_INFO_LOG_STORE_SSH_COMMAND:
+        if arguments[:len(tool.GHI_GUIDE_AGENT_LOG_STORE_SSH_COMMAND)] == \
+                tool.GHI_GUIDE_AGENT_LOG_STORE_SSH_COMMAND:
             self.calls.append(list(arguments))
             completed = subprocess.run(
                 ["bash", "-c", arguments[-1]], capture_output=True,
@@ -344,15 +344,15 @@ class SshRunsLocally(Recorder):
         return super().__call__(arguments, timeout, cwd, check)
 
 
-def run_remote_ghi_info_log_store_cases(scratch: Path):
+def run_remote_ghi_guide_agent_log_store_cases(scratch: Path):
     """The log-store reached over ssh, as from the Mac: the scripts the tool
     hands ssh, run here by bash."""
     remote_store = scratch / "remote-store"
-    original_store = tool.ghi_info_log_store
+    original_store = tool.ghi_guide_agent_log_store
     original_date = tool.proposed_improvements_or_changes_file_date
-    saved_override = os.environ.pop(tool.GHI_INFO_LOG_STORE_DIRECTORY_VARIABLE,
+    saved_override = os.environ.pop(tool.GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY_VARIABLE,
                                     None)
-    tool.ghi_info_log_store = lambda: (tool.GHI_INFO_LOG_STORE_HOST,
+    tool.ghi_guide_agent_log_store = lambda: (tool.GHI_GUIDE_AGENT_LOG_STORE_HOST,
                                        str(remote_store))
     tool.proposed_improvements_or_changes_file_date = lambda: "2026-10-03"
     try:
@@ -366,15 +366,15 @@ def run_remote_ghi_info_log_store_cases(scratch: Path):
             runner, quiet, "edited")
         check("over ssh, the file is written whole into a directory the "
               "write makes, and a second of the same day gets -2",
-              lambda: (first == ("570-a-proposed-improvements-or-changes-ghi-info-"
+              lambda: (first == ("570-a-proposed-improvements-or-changes-ghi-guide-agent-"
                         "2026-10-03.md")
               and second == ("570-a-proposed-improvements-or-changes-ghi-"
-                             "info-2026-10-03-2.md")
+                             "guide-agent-2026-10-03-2.md")
               and (remote_store / first).read_text() == written_text),
               (first, second))
-        (remote_store / "570-ab-proposed-improvements-or-changes-ghi-info-"
+        (remote_store / "570-ab-proposed-improvements-or-changes-ghi-guide-agent-"
          "2026-10-03.md").write_text("another GHI-MD's\n")
-        read_back = tool.ghi_info_files_in_log_store("570-a", runner)
+        read_back = tool.ghi_guide_agent_files_in_log_store("570-a", runner)
         check("over ssh, the files read back are this GHI-MD's, each with "
               "its text exactly, a text long enough that GNU base64 wraps it",
               sorted(name for name, _ in read_back) == sorted([first, second])
@@ -382,57 +382,57 @@ def run_remote_ghi_info_log_store_cases(scratch: Path):
               and len(written_text.encode("utf-8")) > 57, read_back)
         check("over ssh, an earlier question about the same text is found "
               "by its key",
-              tool.ghi_info_file_for_reviewed_text(
+              tool.ghi_guide_agent_file_for_reviewed_text(
                   "570-a", tool.pairing_key(text), runner, quiet)
               == (first, written_text))
-        tool.ghi_info_log_store = lambda: (tool.GHI_INFO_LOG_STORE_HOST,
+        tool.ghi_guide_agent_log_store = lambda: (tool.GHI_GUIDE_AGENT_LOG_STORE_HOST,
                                            str(scratch / "no-store-yet"))
         check("over ssh, a store with no directory yet reads as no file",
-              tool.ghi_info_files_in_log_store("570-a", SshRunsLocally())
+              tool.ghi_guide_agent_files_in_log_store("570-a", SshRunsLocally())
               == [])
         check("the citation of a file names the host, so it opens from "
               "either machine",
-              tool.ghi_info_log_store_citation(first)
+              tool.ghi_guide_agent_log_store_citation(first)
               == ("nedlern@ned-box:/home/nedlern/nedschorus-logs/"
-                  "ghi-info-proposed-improvements-or-changes/" + first))
+                  "ghi-guide-agent-proposed-improvements-or-changes/" + first))
         unreachable = Recorder({"ssh": Completed(
             "", returncode=255, stderr="ssh: connect to host ned-box: "
             "No route to host")})
         unreachable_lines = []
         check("a log-store that cannot be read is reported and read as "
-              "holding no earlier question, so ghi-info is asked",
-              tool.ghi_info_file_for_reviewed_text(
+              "holding no earlier question, so ghi-guide-agent is asked",
+              tool.ghi_guide_agent_file_for_reviewed_text(
                   "570-a", "k", unreachable, unreachable_lines.append) is None
               and len(unreachable_lines) == 1
               and unreachable_lines[0].startswith(
-                  "could not read ghi-info's earlier questions in the "
-                  "log-store, so ghi-info is asked:")
+                  "could not read ghi-guide-agent's earlier questions in the "
+                  "log-store, so ghi-guide-agent is asked:")
               and "No route to host" in unreachable_lines[0],
               unreachable_lines)
     finally:
-        tool.ghi_info_log_store = original_store
+        tool.ghi_guide_agent_log_store = original_store
         tool.proposed_improvements_or_changes_file_date = original_date
         if saved_override is not None:
-            os.environ[tool.GHI_INFO_LOG_STORE_DIRECTORY_VARIABLE] = \
+            os.environ[tool.GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY_VARIABLE] = \
                 saved_override
-    saved_override = os.environ.pop(tool.GHI_INFO_LOG_STORE_DIRECTORY_VARIABLE,
+    saved_override = os.environ.pop(tool.GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY_VARIABLE,
                                     None)
     original_hostname = tool.socket.gethostname
     try:
         tool.socket.gethostname = lambda: "ned-box.local"
-        on_ned_box = tool.ghi_info_log_store()
+        on_ned_box = tool.ghi_guide_agent_log_store()
         tool.socket.gethostname = lambda: "neds-mac"
-        on_the_mac = tool.ghi_info_log_store()
+        on_the_mac = tool.ghi_guide_agent_log_store()
     finally:
         tool.socket.gethostname = original_hostname
         if saved_override is not None:
-            os.environ[tool.GHI_INFO_LOG_STORE_DIRECTORY_VARIABLE] = \
+            os.environ[tool.GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY_VARIABLE] = \
                 saved_override
     check("on ned-box the store is the log-store directory itself, reached "
           "with no ssh; elsewhere it is reached through ssh to ned-box",
-          on_ned_box == (None, tool.GHI_INFO_LOG_STORE_DIRECTORY)
+          on_ned_box == (None, tool.GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY)
           and on_the_mac == ("nedlern@ned-box",
-                             tool.GHI_INFO_LOG_STORE_DIRECTORY),
+                             tool.GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY),
           (on_ned_box, on_the_mac))
 
 
@@ -515,147 +515,84 @@ def run_cases(scratch: Path):
               "a copy whose name carries no number" in str(refusal),
               str(refusal))
 
-    # --- A title names the work: no date, no file path ------------------
-    # User-ruled 2026-09-30, item 4 of the walk
-    # open-questions-concerns-and-recommendations-2026-09-30. The detector
-    # is read through getattr so that main's code, which has none, fails
-    # these cases by name instead of killing the suite.
+    # --- A title names the work: no date; a path is allowed -------------
 
-    date_or_path = getattr(tool, "date_or_file_path_in_heading", None)
-    # What `git ls-tree -r --name-only -z HEAD` lists for the cases below: the
-    # detector judges a relative path and a file extension against the
-    # tracked tree, never against what a checkout's directory holds.
-    TRACKED = ["docs/agents/pr-reviewer-instructions.md",
-               "docs/issues/412-build-sanity-checker.md",
-               "config/cold-read-tier-roster.json",
-               "nc-systems/cold-read/cold-read-grid.py",
-               "scripts/ghi-issue-write.py", "CLAUDE.md"]
-    for case_name, heading, expected in [
-            ("a heading carrying an ISO date is caught",
+    def title_refusal_lines(date):
+        return [
+            f"Not filed: this file's first heading carries the date {date}; "
+            "the heading becomes the issue's title, and a title carries no "
+            "date.",
+            f"Remove {date} from the first heading; when the date matters, "
+            "put it in the text below the heading.",
+            "Then rerun the same command."]
+    # The refusal quotes the date it matched, so an agent holding a heading
+    # with other numbers in it knows which characters to remove.
+    for case_name, heading, refused_date in [
+            ("a heading carrying an ISO date is refused, quoting the date",
              "Sweep the bare words, under the 2026-09-15 rule", "2026-09-15"),
-            ("a path opened by an entry at the repository's root is caught",
-             "Rewrite the seat briefs under docs/agents; one ruled",
-             "docs/agents"),
-            ("a root entry named alone is caught",
-             "Group the components under nc-systems/", "nc-systems/"),
-            ("a path ending in a file name is caught, its parenthesis "
-             "stripped",
-             "Founding program (plan: plans/founding-plan.md)",
-             "plans/founding-plan.md"),
-            ("a path under the home directory is caught",
-             "Reviewers never open ~/.config/gh", "~/.config/gh"),
-            ("an absolute path is caught",
-             "Move /home/nedlern/logs aside", "/home/nedlern/logs"),
+            ("a dated heading in parentheses is refused, quoting the date",
+             "Stamp the launch time (user-ruled 2026-08-27)", "2026-08-27"),
+            ("a heading with a version number and a date quotes the date",
+             "Codex 3.8 notes from 2026-10-01", "2026-10-01"),
             ("a heading that only names the work passes",
-             "Build sanity-checker", ""),
-            ("a slash command passes",
-             "Four small skills: /save, /push, /save-MD-as-draft", ""),
-            ("a slashed pair that is not a path passes",
-             "Claude turn/start and turn/steer equivalents, A/B tested", ""),
-            ("a program named without its directory passes",
-             "recover-crashed-seats.py exits nonzero", ""),
-            ("a version number is not read as a file extension",
-             "Codex/Gemini 3.8 notes", ""),
-            ("an ordinary word that is also a root entry passes",
-             "The config/state split", ""),
-            ("so does a root entry paired with a word it does not hold",
-             "Separate docs/code review", ""),
-            ("a product name with a dot passes, no tracked file ending so",
-             "Support Deno/Node.js", ""),
-            ("so does a site name", "Codex/claude.ai parity", ""),
-            ("and a pair of model versions", "Opus 4.x/5.x", "")]:
+             "Build sanity-checker", None),
+            ("a version number is not read as a date",
+             "Codex/Gemini 3.8 notes", None),
+            ("a longer run of digits is not read as a date",
+             "Ticket 12026-09-150 notes", None),
+            ("a directory named from the repository root passes",
+             "Group the components under nc-systems/", None),
+            ("a file path passes",
+             "Ship the records: docs/ship-records.py and the runner", None),
+            ("a path under the home directory passes",
+             "Reviewers never open ~/.config/gh", None),
+            ("an absolute path passes",
+             "Move /home/nedlern/logs aside", None)]:
         try:
-            found = (date_or_path(heading, TRACKED) if date_or_path
-                     else "no detector")
-        except Exception as failure:  # main's detector took a directory
-            found = f"raised {failure!r}"
-        check(case_name, found == expected, f"found {found!r}")
-
-    # The verdict is the tracked tree's, so a directory only one checkout
-    # holds — merge-lane-2's walk-ledgers/, which git ignores — refuses
-    # nothing. Driven through create, whose signature main's code shares.
-    (scratch / "walk-ledgers").mkdir(exist_ok=True)
-    untracked_root = Recorder({
-        "gh issue list": Completed("[]"),
-        "git ls-tree -r --name-only -z HEAD": Completed("\0".join(TRACKED)),
-    })
-    untracked_heading = written(scratch, "untracked-root.md",
-                                "# Tidy the walk-ledgers/notes pile\n\nBody.\n")
-    try:
-        tool.create(untracked_heading, REPO, scratch, untracked_root, quiet)
-        refused = ""
-    except tool.Refused as refusal:
-        refused = str(refusal)
-    except Exception as failure:  # past the check, the stubs run out
-        refused = ""
-    check("a directory the checkout holds but git does not track is no "
-          "path", "file path" not in refused, refused)
-
-    # The same, for a root entry named alone. The two-segment heading above
-    # passes even under a check that reads the directory, because the
-    # directory holds walk-ledgers/ but not walk-ledgers/notes; a heading
-    # naming walk-ledgers/ alone is refused by such a check and by no other
-    # (review of PR [GHI heading check runs after the duplicate
-    # refusals](https://github.com/nedschorus/nedschorus/pull/838)).
-    try:
-        tool.refuse_heading_with_date_or_file_path(
-            "Tidy the walk-ledgers/ pile", scratch, Recorder({
-                "git ls-tree -r --name-only -z HEAD":
-                    Completed("\0".join(TRACKED))}))
-        alone_refused = ""
-    except tool.Refused as refusal:
-        alone_refused = str(refusal)
-    check("an untracked directory named alone is no path either",
-          not alone_refused, alone_refused)
-
-    # A listing the check cannot read lets the heading through, whether git
-    # answers with a failure or does not answer in time: the check only
-    # decides whether to refuse, so a path it cannot see is not a reason to
-    # stop a filing. Until the same review a timeout stopped the run with
-    # exit 1, and no case tested that a failed listing is let through.
-    for case_name, answer in [
-            ("a tracked-tree listing that fails lets the heading through",
-             Completed("", 128, "fatal: Not a valid object name HEAD")),
-            ("and so does one that times out",
-             subprocess.TimeoutExpired(
-                 ["git", "ls-tree", "-r", "--name-only", "-z", "HEAD"], 30))]:
-        try:
-            tool.refuse_heading_with_date_or_file_path(
-                "Group the components under nc-systems/", scratch,
-                Recorder({"git ls-tree -r --name-only -z HEAD": answer}))
-            outcome = ""
-        except Exception as failure:
-            outcome = f"{type(failure).__name__}: {failure}"
-        check(case_name, not outcome, outcome)
-
-    title_refusal_lines = [
-        "Remove the date or file path from this file's first heading; the "
-        "heading becomes the issue's title.",
-        "Put the date or path in the text below the heading.",
-        "Then rerun the same command."]
-    for case_name, heading in [
-            ("create refuses a dated heading before filing anything",
-             "Stamp the launch time (user-ruled 2026-08-27)"),
-            ("create refuses a heading carrying a file path before filing "
-             "anything",
-             "Ship the records: docs/ship-records.py and the runner")]:
-        titled = written(scratch, "titled.md",
-                         f"# {heading}\n\nBody.\n")
-        refusing = Recorder({
-            "gh issue list": Completed("[]"),
-            "git ls-tree -r --name-only -z HEAD": Completed("\0".join(TRACKED)),
-        })
-        try:
-            tool.create(titled, REPO, scratch, refusing, quiet)
-            check(case_name, False, "it filed")
+            tool.refuse_heading_with_date(heading)
+            outcome = None
         except tool.Refused as refusal:
-            check(case_name,
-                  refusal.code == 64
-                  and str(refusal).splitlines() == title_refusal_lines
-                  and not refusing.ran("gh issue create")
-                  and not refusing.ran(ASK),
-                  f"code {refusal.code}: {refusal}; "
-                  f"{refusing.commands()}")
+            outcome = refusal
+        check(case_name,
+              (outcome is not None) == (refused_date is not None)
+              and (outcome is None
+                   or (outcome.code == 64
+                       and str(outcome).splitlines()
+                       == title_refusal_lines(refused_date))),
+              repr(outcome))
+
+    titled = written(scratch, "titled.md",
+                     "# Stamp the launch time (user-ruled 2026-08-27)\n\nBody.\n")
+    refusing = Recorder({"gh issue list": Completed("[]")})
+    try:
+        tool.create(titled, REPO, scratch, refusing, quiet)
+        check("create refuses a dated heading before filing anything",
+              False, "it filed")
+    except tool.Refused as refusal:
+        check("create refuses a dated heading before filing anything",
+              refusal.code == 64
+              and str(refusal).splitlines() == title_refusal_lines("2026-08-27")
+              and not refusing.ran("gh issue create")
+              and not refusing.ran(ASK),
+              f"code {refusal.code}: {refusal}; {refusing.commands()}")
+
+    # A heading naming a path is not refused at the heading check: create
+    # goes on to file it. The stubs run out past that point.
+    pathed = written(scratch, "pathed.md",
+                     "# Group the components under nc-systems/\n\nBody.\n")
+    pathed_run = Recorder({"gh issue list": Completed("[]")})
+    try:
+        tool.create(pathed, REPO, scratch, pathed_run, quiet)
+        pathed_refusal = ""
+    except tool.Refused as refusal:
+        pathed_refusal = str(refusal)
+    except Exception:
+        pathed_refusal = ""
+    check("create does not refuse a heading that names a path, and goes on "
+          "to file it",
+          "first heading" not in pathed_refusal
+          and pathed_run.ran("gh issue create"),
+          f"{pathed_refusal}; {pathed_run.commands()}")
 
     # --- The heading is judged after the refusals the key cannot see -----
     # Review of PR [GHI titles name the work](https://github.com/nedschorus/nedschorus/pull/829):
@@ -683,7 +620,7 @@ def run_cases(scratch: Path):
         check("a dated heading whose filing is in flight is told to wait, "
               "not to change its heading",
               "https://github.com/x/y/pull/9" in str(refusal)
-              and "file path" not in str(refusal), str(refusal))
+              and "first heading" not in str(refusal), str(refusal))
 
     dated_landed_path = f"docs/issues/570-{tool.slug(DATED)}.md"
     dated_landed = Recorder({
@@ -701,7 +638,7 @@ def run_cases(scratch: Path):
         check("a dated heading already on main is sent to the edit "
               "operation, not told to change its heading",
               dated_landed_path in str(refusal)
-              and "file path" not in str(refusal), str(refusal))
+              and "first heading" not in str(refusal), str(refusal))
 
     # --- The dry run answers as the real run does -----------------------
     # Review of PR 829: the dry run validated alone and printed "would
@@ -709,9 +646,7 @@ def run_cases(scratch: Path):
 
     for case_name, heading in [
             ("create --dry-run refuses a dated heading as create does",
-             "Stamp the launch time (user-ruled 2026-08-27)"),
-            ("and a home-directory path, for a file outside any checkout",
-             "Reviewers never open ~/.config/gh")]:
+             "Stamp the launch time (user-ruled 2026-08-27)")]:
         dry = written(scratch, "dry-run.md", f"# {heading}\n\nBody.\n")
         printed, complaint = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(printed), \
@@ -720,7 +655,8 @@ def run_cases(scratch: Path):
                               "--repo", REPO])
         check(case_name,
               code == 64 and "would file" not in printed.getvalue()
-              and complaint.getvalue().splitlines() == title_refusal_lines,
+              and complaint.getvalue().splitlines()
+              == title_refusal_lines("2026-08-27"),
               f"code {code}, {printed.getvalue()!r}, "
               f"{complaint.getvalue()!r}")
 
@@ -999,7 +935,7 @@ def run_cases(scratch: Path):
     tool.create(source, REPO, scratch, resumed, quiet)
     check("a rerun never files a second issue for one file",
           resumed.count("gh issue create") == 0, str(resumed.commands()))
-    check("and it does not ask ghi-info again either",
+    check("and it does not ask ghi-guide-agent again either",
           not resumed.ran(ASK), str(resumed.commands()))
 
     open_branch = Recorder({
@@ -1076,7 +1012,7 @@ def run_cases(scratch: Path):
         check("and the refusal names the landed path and the edit operation",
               LANDED in str(refusal) and "edit operation" in str(refusal),
               str(refusal))
-        check("and it files nothing, lands nothing and asks ghi-info nothing",
+        check("and it files nothing, lands nothing and asks ghi-guide-agent nothing",
               not already_landed.ran("gh issue create")
               and not already_landed.ran("git worktree add")
               and not already_landed.ran(ASK),
@@ -1363,7 +1299,7 @@ def run_cases(scratch: Path):
 
     # --- Adjudication: refuses, fails open, and the reconsider marker -----
 
-    ask = scratch / "scripts" / "ghi-info-ask.py"
+    ask = scratch / "scripts" / "ghi-guide-agent-ask.py"
     ask.parent.mkdir(exist_ok=True)
     ask.write_text("# stands in for the real one; never executed\n")
 
@@ -1378,11 +1314,11 @@ def run_cases(scratch: Path):
               tool.RECONSIDER_LINE in str(refusal))
 
     for case_name, answers in [
-            ("ghi-info answering nothing lets the write proceed",
+            ("ghi-guide-agent answering nothing lets the write proceed",
              {ASK: Completed("", returncode=1)}),
             ("a reply with no verdict line lets the write proceed",
              {ASK: Completed("I could not tell.\n")}),
-            ("ghi-info raising lets the write proceed",
+            ("ghi-guide-agent raising lets the write proceed",
              {ASK: RuntimeError("box unreachable")})]:
         try:
             tool.adjudicate(REPO, "t", FILE_TEXT, scratch, Recorder(answers),
@@ -1391,13 +1327,13 @@ def run_cases(scratch: Path):
         except tool.Refused as refusal:
             check(case_name, False, f"refused: {refusal}")
 
-    # ghi-info-ask.py exits 2, message on stderr, when ghi-info replies
+    # ghi-guide-agent-ask.py exits 2, message on stderr, when ghi-guide-agent replies
     # not-about-issues instead of a list. The write fails open as for any
-    # missing verdict, and the report says what ghi-info said instead of
+    # missing verdict, and the report says what ghi-guide-agent said instead of
     # "did not answer". Exit 3, the ruling question, has its own cases below.
     for case_name, exit_code, first_line in [
             ("an out-of-scope reply lets the write proceed and says so", 2,
-             "Not a question about GitHub issues: ghi-info reports which "
+             "Not a question about GitHub issues: ghi-guide-agent reports which "
              "issues relate to a subject.")]:
         lines = []
         replied = Recorder({ASK: Completed(
@@ -1407,7 +1343,7 @@ def run_cases(scratch: Path):
             tool.adjudicate(REPO, "t", FILE_TEXT, scratch, replied,
                             lines.append)
             check(case_name,
-                  lines == [f"adjudication skipped: ghi-info gave no "
+                  lines == [f"adjudication skipped: ghi-guide-agent gave no "
                             f"verdict: {first_line}"], lines)
         except tool.Refused as refusal:
             check(case_name, False, f"refused: {refusal}")
@@ -1416,26 +1352,26 @@ def run_cases(scratch: Path):
     # why, and the bare report stands when the ask printed nothing.
     for case_name, stderr, expected in [
             ("a failing ask's last stderr line is carried into the report",
-             "ghi-info-ask: a progress line\nghi-info-ask: ned-box cannot "
+             "ghi-guide-agent-ask: a progress line\nghi-guide-agent-ask: ned-box cannot "
              "be reached\n",
-             "adjudication skipped: ghi-info did not answer: ghi-info-ask: "
+             "adjudication skipped: ghi-guide-agent did not answer: ghi-guide-agent-ask: "
              "ned-box cannot be reached"),
             ("a failing ask that printed nothing gets the bare report", "",
-             "adjudication skipped: ghi-info did not answer")]:
+             "adjudication skipped: ghi-guide-agent did not answer")]:
         lines = []
         tool.adjudicate(REPO, "t", FILE_TEXT, scratch, Recorder({ASK: Completed(
             "", returncode=1, stderr=stderr)}), lines.append)
         check(case_name, lines == [expected], lines)
 
-    # On the locked path ghi-info-ask.py writes its seat-checkout refresh line
+    # On the locked path ghi-guide-agent-ask.py writes its seat-checkout refresh line
     # or its reincarnation line to stderr before the message, and the Mac
     # relay copies them through; the report still carries the message.
     for leading_line in [
-            "ghi-info-ask: refreshed the seat checkout 1 commit(s) to "
+            "ghi-guide-agent-ask: refreshed the seat checkout 1 commit(s) to "
             "origin/main",
-            "ghi-info-ask: reincarnating the session — 40 closes since birth"]:
+            "ghi-guide-agent-ask: reincarnating the session — 40 closes since birth"]:
         for exit_code, first_line in [
-                (2, "Not a question about GitHub issues: ghi-info reports "
+                (2, "Not a question about GitHub issues: ghi-guide-agent reports "
                     "which issues relate to a subject.")]:
             case_name = (f"exit {exit_code} after the line "
                          f"{leading_line[:40]!r} reports the message")
@@ -1448,51 +1384,51 @@ def run_cases(scratch: Path):
                 tool.adjudicate(REPO, "t", FILE_TEXT, scratch, replied,
                                 lines.append)
                 check(case_name,
-                      lines == [f"adjudication skipped: ghi-info gave no "
+                      lines == [f"adjudication skipped: ghi-guide-agent gave no "
                                 f"verdict: {first_line}"], lines)
             except tool.Refused as refusal:
                 check(case_name, False, f"refused: {refusal}")
 
     ask_spec = TOOL.spec_from_file_location(
-        "ghi_info_ask_for_exit_codes",
-        Path(__file__).resolve().with_name("ghi-info-ask.py"))
+        "ghi_guide_agent_ask_for_exit_codes",
+        Path(__file__).resolve().with_name("ghi-guide-agent-ask.py"))
     ask_module = TOOL.module_from_spec(ask_spec)
     ask_spec.loader.exec_module(ask_module)
-    check("the tool's copy of ghi-info-ask.py's two no-list exit codes "
+    check("the tool's copy of ghi-guide-agent-ask.py's two no-list exit codes "
           "matches that program's",
-          tool.GHI_INFO_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES
+          tool.GHI_GUIDE_AGENT_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES
           == (ask_module.EXIT_NOT_ABOUT_ISSUES,
               ask_module.EXIT_RULING_QUESTION),
-          tool.GHI_INFO_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES)
-    check("the tool's copy of ghi-info-ask.py's two messages' openings "
+          tool.GHI_GUIDE_AGENT_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES)
+    check("the tool's copy of ghi-guide-agent-ask.py's two messages' openings "
           "matches that program's",
-          tool.GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS
+          tool.GHI_GUIDE_AGENT_ASK_NO_LIST_MESSAGE_OPENINGS
           == (ask_module.NOT_ABOUT_ISSUES_MESSAGE.splitlines()[0].split(
                   ":")[0] + ":",
               ask_module.RULING_QUESTION_MESSAGE_TEMPLATE.split(
                   "{sentence}")[0].rstrip()),
-          tool.GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS)
+          tool.GHI_GUIDE_AGENT_ASK_NO_LIST_MESSAGE_OPENINGS)
 
     check("the tool's copy of the ruling question's exit code and of the "
-          "line after its sentence match ghi-info-ask.py's",
-          tool.GHI_INFO_ASK_RULING_QUESTION_EXIT_CODE
+          "line after its sentence match ghi-guide-agent-ask.py's",
+          tool.GHI_GUIDE_AGENT_ASK_RULING_QUESTION_EXIT_CODE
           == ask_module.EXIT_RULING_QUESTION
           and ask_module.RULING_QUESTION_MESSAGE_TEMPLATE.split(
               "{sentence}\n")[1].startswith(
-                  tool.GHI_INFO_ASK_RULING_QUESTION_SENTENCE_END),
-          tool.GHI_INFO_ASK_RULING_QUESTION_SENTENCE_END)
-    held_in_783 = tool.GHI_INFO_ASK_RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_PATTERN.search(
+                  tool.GHI_GUIDE_AGENT_ASK_RULING_QUESTION_SENTENCE_END),
+          tool.GHI_GUIDE_AGENT_ASK_RULING_QUESTION_SENTENCE_END)
+    held_in_783 = tool.GHI_GUIDE_AGENT_ASK_RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_PATTERN.search(
         "a sentence" + ask_module.RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE.format(
             number=783))
     check("the tool's pattern for the issue number after the ruling "
-          "question's sentence reads ghi-info-ask.py's",
+          "question's sentence reads ghi-guide-agent-ask.py's",
           held_in_783 is not None and held_in_783.group(1) == "783"
           and held_in_783.start() == len("a sentence"),
           ask_module.RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE)
 
     # --- A ruling question: the write goes ahead and records it ----------
 
-    check("the request offers ghi-info the numbered ruling question",
+    check("the request offers ghi-guide-agent the numbered ruling question",
           "ask-user-about-ruling: #<issue>" in " ".join(
               " ".join(call) for call in (lambda r: (tool.adjudicate(
                   REPO, "t", FILE_TEXT, scratch, r, quiet), r.calls)[1])(
@@ -1505,7 +1441,7 @@ def run_cases(scratch: Path):
              46, "the 2026-09-19 ruling may not hold"),
             ("after a refresh line, the question is still found",
              ruling_stderr("#46 the ruling may not hold",
-                           "ghi-info-ask: refreshed the seat checkout 1 "
+                           "ghi-guide-agent-ask: refreshed the seat checkout 1 "
                            "commit(s) to origin/main\n"),
              46, "the ruling may not hold"),
             ("a question naming no issue is returned with no number",
@@ -1532,22 +1468,22 @@ def run_cases(scratch: Path):
     check("an exit 3 whose message is lost fails open and says so",
           tool.adjudicate(REPO, "t", FILE_TEXT, scratch, lost,
                           lost_lines.append) is None
-          and lost_lines == ["adjudication skipped: ghi-info gave no "
+          and lost_lines == ["adjudication skipped: ghi-guide-agent gave no "
                              "verdict: no detail"], lost_lines)
 
     original_date = tool.proposed_improvements_or_changes_file_date
     tool.proposed_improvements_or_changes_file_date = lambda: "2026-10-03"
     try:
         conflict_46 = tool.RulingConflict(46, "the ruling may not hold")
-        check("a file from ghi-info is one entry, E1, in rule 1's entry form, "
+        check("a file from ghi-guide-agent is one entry, E1, in rule 1's entry form, "
               "naming the GHI-MD, citing the ruling's GHI by title and link, "
               "carrying the reviewed text's key, and saying who settles it",
               tool.proposed_improvements_or_changes_file_text(
                   REPO, conflict_46, "Closed issues are frozen",
                   "2026-10-03", "filed", "A statusline", "ghipair1234")
-              == ("# Proposed improvements or changes from ghi-info, "
+              == ("# Proposed improvements or changes from ghi-guide-agent, "
                   "2026-10-03\n\n"
-                  "ghi-info reviewed the GHI-MD \"A statusline\" when "
+                  "ghi-guide-agent reviewed the GHI-MD \"A statusline\" when "
                   "scripts/ghi-issue-write.py filed it. The agent that ran "
                   "the tool dispatches a forked subagent to settle each "
                   "entry in this file by rules 3 to 7 of § The design in "
@@ -1556,12 +1492,12 @@ def run_cases(scratch: Path):
                   "change an entry calls for goes to main, such as an edit "
                   "of the GHI-MD through "
                   "`scripts/ghi-issue-write.py edit`.\n\n"
-                  "Key of the GHI-MD text ghi-info reviewed: ghipair1234\n\n"
+                  "Key of the GHI-MD text ghi-guide-agent reviewed: ghipair1234\n\n"
                   "## E1 — possible problem: the GHI-MD's proposal may go "
                   "against a user-ruling held in GHI [Closed issues are "
                   "frozen](https://github.com/nedschorus/nedschorus/"
                   "issues/46)\n"
-                  "ghi-info's question: the ruling may not hold\n"
+                  "ghi-guide-agent's question: the ruling may not hold\n"
                   "Goes wrong when: the proposal is carried out while that "
                   "user-ruling still applies.\n"
                   "State: open\n"))
@@ -1571,24 +1507,24 @@ def run_cases(scratch: Path):
               .is_file(),
               tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD)
         check("a question naming no GHI says so in the file",
-              "may go against a user-ruling for which ghi-info named no "
+              "may go against a user-ruling for which ghi-guide-agent named no "
               "GHI\n" in tool.proposed_improvements_or_changes_file_text(
                   REPO, tool.RulingConflict(None, "the ruling may not hold"),
                   None, "2026-10-03", "edited", "t", "k"))
 
         collision_store = log_store_at(scratch / "collision-store")
         collision_store.mkdir()
-        (collision_store / "a-proposed-improvements-or-changes-ghi-info-"
+        (collision_store / "a-proposed-improvements-or-changes-ghi-guide-agent-"
          "2026-10-03.md").write_text("earlier\n")
         second_name, _ = tool.record_ruling_question(
             "a", REPO, conflict_46, "t", "k",
             Recorder({"gh issue view 46": Completed("T\n")}), quiet, "filed")
         check("a file of the same name in the log-store gets a numeric "
               "suffix, and the earlier file is left as it was",
-              lambda: (second_name == ("a-proposed-improvements-or-changes-ghi-info-"
+              lambda: (second_name == ("a-proposed-improvements-or-changes-ghi-guide-agent-"
                               "2026-10-03-2.md")
               and (collision_store / "a-proposed-improvements-or-changes-"
-                   "ghi-info-2026-10-03.md").read_text() == "earlier\n"),
+                   "ghi-guide-agent-2026-10-03.md").read_text() == "earlier\n"),
               second_name)
 
         store_is_a_file = scratch / "store-is-a-file"
@@ -1616,18 +1552,19 @@ def run_cases(scratch: Path):
                 check(failure_name,
                       lambda: (refusal.code == 1 and len(lines_out) == 4
                       and lines_out[0].startswith(
-                          "Nothing was filed: ghi-info raised a question "
-                          "about a ruling of the user's, and recording it in "
-                          "the log-store failed:")
+                          "Nothing was filed: ghi-guide-agent raised a question "
+                          "about a ruling of the user's, and writing that "
+                          "question to the log-store failed:")
                       and detail in lines_out[0]
-                      and lines_out[1] == ("ghi-info's question: the ruling "
+                      and lines_out[1] == ("ghi-guide-agent's question: the ruling "
                                            "may not hold")
-                      and lines_out[2] == ("Rerun this command now; do not "
-                                           "wait for the user's answer.")
+                      and lines_out[2] == ("Run the same scripts/ghi-issue-write.py "
+                                           "command again now; the user need not "
+                                           "answer anything first.")
                       and lines_out[3] == (
                           "If this message appears again, do not rerun: tell "
                           "the user what failed, that this draft may conflict "
-                          "with a ruling of his, and give him ghi-info's "
+                          "with a ruling of his, and give him ghi-guide-agent's "
                           "question.")
                       and (not store.is_dir() or not any(store.iterdir()))),
                       lines_out)
@@ -1638,7 +1575,7 @@ def run_cases(scratch: Path):
                             "finding\n\nBody.\n")
         draft_slug = tool.slug("Reopen a closed issue to add its last finding")
         proposed_name = (f"{draft_slug}-proposed-improvements-or-changes-"
-                         "ghi-info-2026-10-03.md")
+                         "ghi-guide-agent-2026-10-03.md")
         create_store = log_store_at(scratch / "create-store")
         draft_dir = scratch / "draft-dir"
         draft_dir.mkdir()
@@ -1669,7 +1606,7 @@ def run_cases(scratch: Path):
                   lambda: ((create_store / proposed_name).is_file()
                   and "closed issues are frozen" in (
                       create_store / proposed_name).read_text()
-                  and ("Key of the GHI-MD text ghi-info reviewed: "
+                  and ("Key of the GHI-MD text ghi-guide-agent reviewed: "
                        + tool.pairing_key(conflicting_text)) in (
                       create_store / proposed_name).read_text().splitlines()
                   and sorted(item.name for item in draft_dir.iterdir())
@@ -1685,7 +1622,7 @@ def run_cases(scratch: Path):
             check(first_name, False, f"escaped unreported: {other!r}")
 
         # The rerun finds its issue by the pairing key and the question by
-        # the reviewed text's key, asks ghi-info nothing, and is the run that
+        # the reviewed text's key, asks ghi-guide-agent nothing, and is the run that
         # tells the agent to dispatch the subagent, since the run that wrote
         # the file stopped before its last lines.
         resumed_create = StagedReader({
@@ -1721,7 +1658,7 @@ def run_cases(scratch: Path):
 
         # A first run that wrote the file and then failed to file the issue:
         # the rerun finds no issue, so it would adjudicate, but the log-store
-        # holds ghi-info's question about this same text.
+        # holds ghi-guide-agent's question about this same text.
         unfiled_store = log_store_at(scratch / "unfiled-store")
         unfiled_dir = scratch / "unfiled-draft-dir"
         unfiled_dir.mkdir()
@@ -1750,7 +1687,7 @@ def run_cases(scratch: Path):
             "gh pr create": Completed("https://github.com/x/y/pull/12\n"),
         })
         unfiled_lines = []
-        unfiled_name = ("a create rerun after filing failed asks ghi-info "
+        unfiled_name = ("a create rerun after filing failed asks ghi-guide-agent "
                         "nothing, says why, writes no second file, and ends "
                         "with the dispatch line citing the first")
         try:
@@ -1763,7 +1700,7 @@ def run_cases(scratch: Path):
                         unfiled_lines.append)
             check(unfiled_name,
                   lambda: (not unfiled_rerun.ran(ASK)
-                  and ("ghi-info already raised a question about this same "
+                  and ("ghi-guide-agent already raised a question about this same "
                        f"text, in {unfiled_store / proposed_name}, so it is "
                        "not asked again") in unfiled_lines
                   and sorted(item.name for item in unfiled_store.iterdir())
@@ -1796,7 +1733,7 @@ def run_cases(scratch: Path):
             "gh pr create": Completed("https://github.com/x/y/pull/10\n"),
         })
         clean_name = ("create with a ruling question lands only the GHI-MD "
-                      "and ends the run with what conflicts, ghi-info's "
+                      "and ends the run with what conflicts, ghi-guide-agent's "
                       "question, where the entry is, and to dispatch the "
                       "subagent now")
         try:
@@ -1807,14 +1744,14 @@ def run_cases(scratch: Path):
                   == [f"docs/issues/571-{draft_slug}.md"]
                   and "This GHI has proposed improvements" not in "".join(
                       clean_create.staged.values())
-                  and ("wrote ghi-info's ruling question to "
+                  and ("wrote ghi-guide-agent's ruling question to "
                        f"{clean_store / proposed_name}") in create_lines
                   and create_lines[-1] == (
-                      "Filed GHI 571. ghi-info thinks the GHI-MD's proposal "
+                      "Filed GHI 571. ghi-guide-agent thinks the GHI-MD's proposal "
                       "may go against a user-ruling held in GHI [Closed "
                       "issues are frozen](https://github.com/nedschorus/"
                       "nedschorus/issues/46).\n"
-                      "ghi-info's question: closed issues are frozen\n"
+                      "ghi-guide-agent's question: closed issues are frozen\n"
                       "The question is entry E1 of "
                       f"{clean_store / proposed_name}, in the log-store, not "
                       "in the pull request.\n"
@@ -1830,7 +1767,7 @@ def run_cases(scratch: Path):
         except Exception as other:                    # noqa: BLE001
             check(clean_name, False, f"escaped unreported: {other!r}")
 
-        # A settled entry about the same text: ghi-info is not asked again,
+        # A settled entry about the same text: ghi-guide-agent is not asked again,
         # and nothing is left to dispatch. The entry is built from the first
         # create's file, so when that create wrote none, this case fails by
         # name and the group goes on.
@@ -1896,7 +1833,7 @@ def run_cases(scratch: Path):
         tool.proposed_improvements_or_changes_file_date = original_date
         log_store_at(scratch / "default-log-store")
 
-    run_remote_ghi_info_log_store_cases(scratch)
+    run_remote_ghi_guide_agent_log_store_cases(scratch)
 
     marker = scratch / tool.RECONSIDERED_MARKER_NAME
     marker.write_text("I checked #13 and it is a different matter.\n")
@@ -2177,30 +2114,13 @@ def run_git_failure_cases(scratch: Path):
               and (answer.returncode == 0) == ("not shown" not in shown),
               shown)
 
-    complaint = io.StringIO()
-    with contextlib.redirect_stderr(complaint):
-        tracked = tool.tracked_paths_at_head(scratch, Recorder({
-            "git ls-tree -r --name-only -z HEAD":
-                Completed("", 128, "fatal: Not a valid object name HEAD")}))
-    check("a tracked-tree listing that fails is printed before the heading "
-          "is let through",
-          tracked == [] and "fatal: Not a valid object name HEAD"
-          in complaint.getvalue() and "not checked for a file path"
-          in complaint.getvalue(), complaint.getvalue())
-
     # A checkout with no commit yet, where git exits 128 for HEAD as it does
     # for a failure, and the stand-in for one whose HEAD git cannot read.
     unborn = scratch / "unborn"
     subprocess.run(["git", "init", "-q", str(unborn)], check=True,
                    capture_output=True)
-    complaint = io.StringIO()
-    with contextlib.redirect_stderr(complaint):
-        tracked = tool.tracked_paths_at_head(unborn, tool.run)
-        located = tool.merge_base_with_main(
-            "4b825dc642cb6eb9a060e54bf8d69288fbee4904", unborn, tool.run)
-    check("a checkout with no commit yet tracks nothing, and says nothing "
-          "about it", tracked == [] and not complaint.getvalue(),
-          (tracked, complaint.getvalue()))
+    located = tool.merge_base_with_main(
+        "4b825dc642cb6eb9a060e54bf8d69288fbee4904", unborn, tool.run)
     check("a checkout with no commit yet has no merge base with main",
           located == "", repr(located))
     try:
@@ -2212,33 +2132,6 @@ def run_git_failure_cases(scratch: Path):
         outcome = str(refusal)
     check("a HEAD git cannot read is raised, not taken for no commit yet",
           "fatal: not a git repository" in outcome, outcome)
-    complaint = io.StringIO()
-    with contextlib.redirect_stderr(complaint):
-        tracked = tool.tracked_paths_at_head(scratch, Recorder({
-            "git ls-tree -r --name-only -z HEAD": Completed(
-                "", 128, "fatal: not a git repository"),
-            "git rev-parse --verify --quiet HEAD": Completed(
-                "", 128, "fatal: not a git repository")}))
-    check("and the heading check still lets the heading through, saying so",
-          tracked == [] and "not checked for a file path"
-          in complaint.getvalue(), complaint.getvalue())
-
-    def unborn_probe_times_out(arguments, **options):
-        if arguments[:2] == ["git", "rev-parse"]:
-            raise subprocess.TimeoutExpired(arguments, 30)
-        return Completed("", 128, "fatal: unable to read tree")
-    complaint = io.StringIO()
-    try:
-        with contextlib.redirect_stderr(complaint):
-            tracked = tool.tracked_paths_at_head(scratch,
-                                                 unborn_probe_times_out)
-    except subprocess.TimeoutExpired as expiry:
-        tracked = expiry
-    check("a failed listing whose no-commit-yet probe times out still lets "
-          "the heading through, saying so",
-          tracked == [] and "not checked for a file path"
-          in complaint.getvalue(), (tracked, complaint.getvalue()))
-
     worktree_parent = scratch / "removal"
     worktree = worktree_parent / "worktree"
     worktree.mkdir(parents=True)
@@ -2388,26 +2281,26 @@ def ran_with(recorder, *fragments):
                for call in recorder.calls)
 
 
-GHI_INFO_HEAD = (f"{EDIT_NAME[:-len('.md')]}-proposed-improvements-or-changes-"
-                 "ghi-info-")
+GHI_GUIDE_AGENT_HEAD = (f"{EDIT_NAME[:-len('.md')]}-proposed-improvements-or-changes-"
+                 "ghi-guide-agent-")
 
 
-def ghi_info_file(question, state="State: open"):
-    """A file from ghi-info as an older tool landed it beside a GHI-MD."""
-    return ("# Proposed improvements or changes from ghi-info, 2026-10-19\n\n"
+def ghi_guide_agent_file(question, state="State: open"):
+    """A file from ghi-guide-agent as an older tool landed it beside a GHI-MD."""
+    return ("# Proposed improvements or changes from ghi-guide-agent, 2026-10-19\n\n"
             "## E1 — possible problem: the GHI-MD's proposal may go against "
             "a user-ruling\n"
-            f"ghi-info's question: {question}\n{state}\n")
+            f"ghi-guide-agent's question: {question}\n{state}\n")
 
 
-def run_old_ghi_info_files_on_main_cases(scratch: Path):
-    """Files from ghi-info that an older version of the tool landed on main
+def run_old_ghi_guide_agent_files_on_main_cases(scratch: Path):
+    """Files from ghi-guide-agent that an older version of the tool landed on main
     beside a GHI-MD."""
     one_link = tool.links_body(REPO, [EDIT_RELATIVE])
-    old_file = f"docs/issues/{GHI_INFO_HEAD}2026-10-19.md"
-    old_file_2 = f"docs/issues/{GHI_INFO_HEAD}2026-10-19-2.md"
+    old_file = f"docs/issues/{GHI_GUIDE_AGENT_HEAD}2026-10-19.md"
+    old_file_2 = f"docs/issues/{GHI_GUIDE_AGENT_HEAD}2026-10-19-2.md"
     listing = Completed(f"{EDIT_RELATIVE}\0{old_file}\0{old_file_2}\0")
-    check("a file from ghi-info beside a GHI-MD is not one of the issue's "
+    check("a file from ghi-guide-agent beside a GHI-MD is not one of the issue's "
           "files",
           tool.ghi_md_paths_for_issue(570, scratch, Recorder(
               {"git ls-tree": listing}), MAIN_COMMIT) == [EDIT_RELATIVE])
@@ -2415,15 +2308,15 @@ def run_old_ghi_info_files_on_main_cases(scratch: Path):
     source = filed_ghi_md(scratch)
     store = log_store_at(scratch / "old-files-store")
     store.mkdir()
-    settled_name = f"{GHI_INFO_HEAD}2026-10-19.md"
-    (store / settled_name).write_text(ghi_info_file(
+    settled_name = f"{GHI_GUIDE_AGENT_HEAD}2026-10-19.md"
+    (store / settled_name).write_text(ghi_guide_agent_file(
         "does ruling one still hold?", "State: settled, not worth doing"))
     answers = {
         f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
         f"git show {MAIN_COMMIT}:{old_file}": Completed(
-            ghi_info_file("does ruling two still hold?")),
+            ghi_guide_agent_file("does ruling two still hold?")),
         f"git show {MAIN_COMMIT}:{old_file_2}": Completed(
-            ghi_info_file("does ruling one still hold?")),
+            ghi_guide_agent_file("does ruling one still hold?")),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git ls-remote": Completed(""),
@@ -2436,12 +2329,12 @@ def run_old_ghi_info_files_on_main_cases(scratch: Path):
     lines = []
     tool.edit(source, REPO, scratch, renaming, lines.append)
     check("a heading change still renames an issue whose only other files "
-          "on main are from ghi-info, and the body still links the GHI-MD "
+          "on main are from ghi-guide-agent, and the body still links the GHI-MD "
           "alone",
           ran_with(renaming, "gh issue edit", "--title", EDIT_TITLE)
           and not ran_with(renaming, "gh issue edit", "--body"),
           str(renaming.commands()))
-    copied = store / f"{GHI_INFO_HEAD}2026-10-19-2.md"
+    copied = store / f"{GHI_GUIDE_AGENT_HEAD}2026-10-19-2.md"
     check("an open question on main that the log-store lacks is copied in "
           "under the next free name, and one the log-store already settled "
           "is not",
@@ -2485,7 +2378,7 @@ def run_old_ghi_info_files_on_main_cases(scratch: Path):
 
     unread_store = log_store_at(scratch / "old-files-unread")
     unread_store.mkdir()
-    held = unread_store / f"{GHI_INFO_HEAD}2026-10-18.md"
+    held = unread_store / f"{GHI_GUIDE_AGENT_HEAD}2026-10-18.md"
     held.write_text("held\n")
     held.chmod(0)
     unread_lines = []
@@ -2503,10 +2396,10 @@ def run_old_ghi_info_files_on_main_cases(scratch: Path):
 
     settled_answers = dict(answers)
     settled_answers[f"git show {MAIN_COMMIT}:{old_file}"] = Completed(
-        ghi_info_file("does ruling two still hold?",
+        ghi_guide_agent_file("does ruling two still hold?",
                       "State: settled, not worth doing"))
     settled_answers[f"git show {MAIN_COMMIT}:{old_file_2}"] = Completed(
-        ghi_info_file("does ruling three still hold?",
+        ghi_guide_agent_file("does ruling three still hold?",
                       "State: settled, done"))
     settled_unwritable = log_store_at(scratch / "settled-unwritable")
     settled_unwritable.mkdir()
@@ -2528,7 +2421,7 @@ def run_old_ghi_info_files_on_main_cases(scratch: Path):
           and not any("copying it into the log-store failed" in line
                       for line in settled_lines), settled_lines)
 
-    check("a file from ghi-info named for an issue is not a filed GHI-MD "
+    check("a file from ghi-guide-agent named for an issue is not a filed GHI-MD "
           "on main",
           tool.ghi_md_paths_on_main(MAIN_COMMIT, scratch, Recorder(
               {"git ls-tree": listing})) == [EDIT_RELATIVE],
@@ -2536,13 +2429,13 @@ def run_old_ghi_info_files_on_main_cases(scratch: Path):
               {"git ls-tree": listing}))))
 
     left = []
-    tool.report_ghi_info_files_left_at_moved_from(
+    tool.report_ghi_guide_agent_files_left_at_moved_from(
         MOVED_RELATIVE, EDIT_RELATIVE, MAIN_COMMIT, scratch,
         Recorder({"git ls-tree": listing}), left.append)
-    check("files from ghi-info left beside the path a GHI-MD moved from "
+    check("files from ghi-guide-agent left beside the path a GHI-MD moved from "
           "are each reported, with where to copy them",
           len(left) == 2 and old_file in left[0] and old_file_2 in left[1]
-          and all(EDIT_RELATIVE in line and GHI_INFO_HEAD in line
+          and all(EDIT_RELATIVE in line and GHI_GUIDE_AGENT_HEAD in line
                   for line in left), left)
 
     moved_store = log_store_at(scratch / "moved-from-store")
@@ -2555,9 +2448,9 @@ def run_old_ghi_info_files_on_main_cases(scratch: Path):
         f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         f"git show {MAIN_COMMIT}:{old_file}": Completed(
-            ghi_info_file("does ruling two still hold?")),
+            ghi_guide_agent_file("does ruling two still hold?")),
         f"git show {MAIN_COMMIT}:{old_file_2}": Completed(
-            ghi_info_file("does ruling one still hold?")),
+            ghi_guide_agent_file("does ruling one still hold?")),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         "git ls-remote": Completed(""),
         "gh pr create": Completed("pr\n"),
@@ -2576,13 +2469,13 @@ def run_old_ghi_info_files_on_main_cases(scratch: Path):
               moved_lines.append)
     moved_left = [line for line in moved_lines
                   if "the path this GHI-MD moved from" in line]
-    check("an edit that moves a GHI-MD reports each file from ghi-info "
+    check("an edit that moves a GHI-MD reports each file from ghi-guide-agent "
           "left beside the path it moved from",
           len(moved_left) == 2 and old_file in moved_left[0]
           and old_file_2 in moved_left[1], moved_lines)
 
-    (moved_store / f"{GHI_INFO_HEAD}2026-10-19.md").write_text(
-        ghi_info_file("does ruling two still hold?"))
+    (moved_store / f"{GHI_GUIDE_AGENT_HEAD}2026-10-19.md").write_text(
+        ghi_guide_agent_file("does ruling two still hold?"))
     rerun_lines = []
     tool.edit(moved_source, REPO, scratch, Recorder(moved_answers),
               rerun_lines.append)
@@ -2595,13 +2488,13 @@ def run_old_ghi_info_files_on_main_cases(scratch: Path):
 
 
 def run_saved_question_on_resume_cases(scratch: Path):
-    """A run that saved ghi-info's question and stopped before its last
-    lines: the rerun takes a path that asks ghi-info nothing, and must still
+    """A run that saved ghi-guide-agent's question and stopped before its last
+    lines: the rerun takes a path that asks ghi-guide-agent nothing, and must still
     show the question."""
     store = log_store_at(scratch / "resume-store")
     store.mkdir()
-    saved = store / f"{GHI_INFO_HEAD}2026-10-19.md"
-    saved.write_text(ghi_info_file("does the ruling still hold?"))
+    saved = store / f"{GHI_GUIDE_AGENT_HEAD}2026-10-19.md"
+    saved.write_text(ghi_guide_agent_file("does the ruling still hold?"))
     source = filed_ghi_md(scratch)
     staged = staged_form()
     for landing_name, extra in (
@@ -2627,7 +2520,7 @@ def run_saved_question_on_resume_cases(scratch: Path):
         except tool.Refused as refusal:
             lines.append(f"refused: {refusal}")
         check(f"an edit rerun on the {landing_name} path shows the question "
-              "an earlier run saved, without asking ghi-info",
+              "an earlier run saved, without asking ghi-guide-agent",
               not resumed.ran(ASK) and bool(lines)
               and lines[-1].startswith("Edited GHI 570.")
               and str(saved) in lines[-1]
@@ -2636,8 +2529,8 @@ def run_saved_question_on_resume_cases(scratch: Path):
 
     created_name = "a-statusline-that-drops-its-branch-name"
     created_saved = store / (f"{created_name}-proposed-improvements-or-"
-                             "changes-ghi-info-2026-10-19.md")
-    created_saved.write_text(ghi_info_file("may the filing go ahead?"))
+                             "changes-ghi-guide-agent-2026-10-19.md")
+    created_saved.write_text(ghi_guide_agent_file("may the filing go ahead?"))
     numbered = Recorder({
         "gh issue view 570": Completed(json.dumps(
             {"body": tool.placeholder_body(tool.pairing_key(FILE_TEXT))})),
@@ -2657,8 +2550,8 @@ def run_saved_question_on_resume_cases(scratch: Path):
 
     unreadable = log_store_at(scratch / "resume-unreadable")
     unreadable.mkdir()
-    (unreadable / f"{GHI_INFO_HEAD}2026-10-19.md").write_text("x")
-    (unreadable / f"{GHI_INFO_HEAD}2026-10-19.md").chmod(0)
+    (unreadable / f"{GHI_GUIDE_AGENT_HEAD}2026-10-19.md").write_text("x")
+    (unreadable / f"{GHI_GUIDE_AGENT_HEAD}2026-10-19.md").chmod(0)
     lines = []
     try:
         tool.edit(source, REPO, scratch, Recorder({
@@ -2667,12 +2560,12 @@ def run_saved_question_on_resume_cases(scratch: Path):
                                         tool.links_body(REPO, [EDIT_RELATIVE])),
             "git ls-tree": Completed(EDIT_RELATIVE + "\0")}), lines.append)
     finally:
-        (unreadable / f"{GHI_INFO_HEAD}2026-10-19.md").chmod(0o600)
+        (unreadable / f"{GHI_GUIDE_AGENT_HEAD}2026-10-19.md").chmod(0o600)
     check("a log-store that cannot be read at the end of a run is reported, "
           "with where to look and what to dispatch",
-          any(line.startswith("could not read ghi-info's questions in the "
+          any(line.startswith("could not read ghi-guide-agent's questions in the "
                               "log-store, so an open one may be missing")
-              and GHI_INFO_HEAD in line
+              and GHI_GUIDE_AGENT_HEAD in line
               and "dispatch a forked subagent" in line for line in lines),
           lines[-2:])
     log_store_at(scratch / "default-log-store")
@@ -2681,17 +2574,17 @@ def run_saved_question_on_resume_cases(scratch: Path):
 def run_remote_read_failure_cases(scratch: Path):
     """The read over ssh tells a store with no directory yet from one it
     could not read."""
-    original_store = tool.ghi_info_log_store
+    original_store = tool.ghi_guide_agent_log_store
     remote = scratch / "remote-unreadable"
     remote.mkdir()
-    blocked = remote / "570-a-proposed-improvements-or-changes-ghi-info-2026-10-03.md"
+    blocked = remote / "570-a-proposed-improvements-or-changes-ghi-guide-agent-2026-10-03.md"
     blocked.write_text("held\n")
     # A readable file after it, so the loop's last step succeeds and only
     # the read's own failure can make the script exit nonzero.
-    (remote / "570-a-proposed-improvements-or-changes-ghi-info-"
+    (remote / "570-a-proposed-improvements-or-changes-ghi-guide-agent-"
      "2026-10-04.md").write_text("readable\n")
     try:
-        tool.ghi_info_log_store = lambda: (tool.GHI_INFO_LOG_STORE_HOST,
+        tool.ghi_guide_agent_log_store = lambda: (tool.GHI_GUIDE_AGENT_LOG_STORE_HOST,
                                            str(remote))
         for name, change, undo in (
                 ("a file in it that cannot be read",
@@ -2700,7 +2593,7 @@ def run_remote_read_failure_cases(scratch: Path):
                  lambda: remote.chmod(0), lambda: remote.chmod(0o700))):
             change()
             try:
-                tool.ghi_info_files_in_log_store("570-a", SshRunsLocally())
+                tool.ghi_guide_agent_files_in_log_store("570-a", SshRunsLocally())
                 check(f"over ssh, a store with {name} is refused, not read "
                       "as empty", False, "it read as a store")
             except tool.Refused:
@@ -2712,11 +2605,11 @@ def run_remote_read_failure_cases(scratch: Path):
             finally:
                 undo()
     finally:
-        tool.ghi_info_log_store = original_store
+        tool.ghi_guide_agent_log_store = original_store
 
 
 def run_edit_cases(scratch: Path):
-    ask = scratch / "scripts" / "ghi-info-ask.py"
+    ask = scratch / "scripts" / "ghi-guide-agent-ask.py"
     ask.parent.mkdir(parents=True, exist_ok=True)
     ask.write_text("# stands in for the real one; never executed\n")
 
@@ -2991,7 +2884,7 @@ def run_edit_cases(scratch: Path):
     tool.proposed_improvements_or_changes_file_date = lambda: "2026-10-03"
     edit_store = log_store_at(scratch / "edit-store")
     proposed_name = (f"{EDIT_NAME[:-len('.md')]}-proposed-improvements-or-"
-                     "changes-ghi-info-2026-10-03.md")
+                     "changes-ghi-guide-agent-2026-10-03.md")
     proposed_in_store = edit_store / proposed_name
     try:
         conflicting_edit_answers = {
@@ -3034,7 +2927,7 @@ def run_edit_cases(scratch: Path):
 
         rerun = StagedReader(dict(conflicting_edit_answers))
         rerun_lines = []
-        rerun_name = ("the rerun after the failed push asks ghi-info nothing, "
+        rerun_name = ("the rerun after the failed push asks ghi-guide-agent nothing, "
                       "writes no second file, lands only the GHI-MD, and "
                       "ends with the dispatch line")
         try:
@@ -3047,7 +2940,7 @@ def run_edit_cases(scratch: Path):
                   and rerun.count("git commit") == 1
                   and bool(rerun_lines)
                   and rerun_lines[-1].startswith(
-                      "Edited GHI 570. ghi-info thinks the GHI-MD's proposal "
+                      "Edited GHI 570. ghi-guide-agent thinks the GHI-MD's proposal "
                       "may go against a user-ruling held in GHI [Closed "
                       "issues are frozen](")
                   and f"The question is entry E1 of {proposed_in_store}, "
@@ -3076,8 +2969,8 @@ def run_edit_cases(scratch: Path):
             check(lookup_name,
                   lambda: (refusal.code == 1
                   and str(refusal).startswith("Nothing was edited:")
-                  and "Rerun this command now; do not wait for the user's "
-                  "answer." in str(refusal)
+                  and "Run the same scripts/ghi-issue-write.py command again "
+                  "now; the user need not answer anything first." in str(refusal)
                   and not failing_lookup.ran("git push")
                   and not lookup_store.exists()
                   and source.read_text() == FILE_TEXT),
@@ -3109,8 +3002,8 @@ def run_edit_cases(scratch: Path):
           str(landing.commands()))
     check("the worktree is removed even though the run succeeded",
           landing.ran("git worktree remove"), str(landing.commands()))
-    check("the question to ghi-info says which issue to leave out",
-          ran_with(landing, "ghi-info-ask.py", "edit of issue #570",
+    check("the question to ghi-guide-agent says which issue to leave out",
+          ran_with(landing, "ghi-guide-agent-ask.py", "edit of issue #570",
                    "leave that issue out"), "the ask carried no exclusion")
 
     class Reader(Recorder):
@@ -3444,7 +3337,7 @@ def run_edit_cases(scratch: Path):
 
     # A draft the conflict refusal rejects must leave no file behind, ruling
     # question or not: the refusals run before the question is written, so
-    # a rerun after the author's hand-merge asks ghi-info about the new
+    # a rerun after the author's hand-merge asks ghi-guide-agent about the new
     # content rather than taking a stale file for an earlier run's.
     for case, extra in (
             ("a file that moved on main", {}),
@@ -3781,7 +3674,7 @@ def run_edit_cases(scratch: Path):
           "however far the title is from it",
           not ran_with(resumed, "gh issue edit", "--title"),
           str(resumed.commands()))
-    check("and the rerun does not spend a model call asking ghi-info again",
+    check("and the rerun does not spend a model call asking ghi-guide-agent again",
           not resumed.ran(ASK), str(resumed.commands()))
 
     # --- The pull request is already open --------------------------------
@@ -3809,7 +3702,7 @@ def run_edit_cases(scratch: Path):
           f"refused {getattr(waiting_refusal, 'code', None)}: "
           f"{str(waiting_refusal)[:160]}" if waiting_refusal
           else str(waiting.commands()))
-    check("nor does a rerun whose pull request is already open ask ghi-info "
+    check("nor does a rerun whose pull request is already open ask ghi-guide-agent "
           "again, or get refused for an edit it already landed",
           waiting_refusal is None and not waiting.ran(ASK),
           f"refused: {str(waiting_refusal)[:160]}" if waiting_refusal
@@ -3847,7 +3740,7 @@ def run_edit_cases(scratch: Path):
           f"refused {getattr(stranded_refusal, 'code', None)}: "
           f"{str(stranded_refusal)[:160]}" if stranded_refusal
           else str(pushed_only.commands()))
-    check("and it asks ghi-info nothing, this content being pushed already: "
+    check("and it asks ghi-guide-agent nothing, this content being pushed already: "
           "a rerun that only opens the missing pull request has nothing new "
           "to adjudicate",
           not pushed_only.ran(ASK), str(pushed_only.commands()))
@@ -3951,7 +3844,7 @@ def run_edit_cases(scratch: Path):
     except tool.Refused as refusal:
         check("an edit with new content to land is adjudicated still",
               refusal.code == 65 and new_to_land.ran(ASK),
-              f"code {refusal.code}, asked ghi-info: "
+              f"code {refusal.code}, asked ghi-guide-agent: "
               f"{new_to_land.ran(ASK)}")
     check("and the verdict stops it before anything is pushed or opened",
           not new_to_land.ran("git worktree add")
@@ -3984,7 +3877,7 @@ def run_edit_cases(scratch: Path):
         check("and so is a move, which main has nothing at the author's "
               "path to compare with",
               refusal.code == 65 and moved_to_land.ran(ASK),
-              f"code {refusal.code}, asked ghi-info: "
+              f"code {refusal.code}, asked ghi-guide-agent: "
               f"{moved_to_land.ran(ASK)}")
     check("and nothing of that move is staged, removed or pushed",
           not moved_to_land.ran("git worktree add")
@@ -4055,7 +3948,7 @@ def run_edit_cases(scratch: Path):
               False, "it landed")
     except tool.Refused as refusal:
         check("an edit that changes the heading to a dated one is refused",
-              refusal.code == 64 and "file path" in str(refusal),
+              refusal.code == 64 and "first heading" in str(refusal),
               f"code {refusal.code}: {refusal}")
     check("and nothing of it is adjudicated, landed or renamed",
           not renamed_to_a_date.ran(ASK)
@@ -4777,9 +4670,6 @@ def run_real_git_listing_cases(scratch: Path):
                       ["update-ref", "refs/remotes/origin/main", "HEAD"]):
         subprocess.run(["git", "-C", str(repository), *arguments], check=True,
                        capture_output=True)
-    check("the tracked paths at HEAD name a non-ASCII file as stored",
-          accented in tool.tracked_paths_at_head(repository, tool.run),
-          str(tool.tracked_paths_at_head(repository, tool.run)))
     check("the filed GHI-MDs on main include a non-ASCII name",
           tool.ghi_md_paths_on_main("HEAD", repository, tool.run) == [accented],
           str(tool.ghi_md_paths_on_main("HEAD", repository, tool.run)))
@@ -4791,8 +4681,8 @@ def run_real_git_listing_cases(scratch: Path):
 def run_edit_landing_real_git_cases(scratch: Path):
     """An edit lands only its own change while main moves under the run.
 
-    Real git, with a bare remote; only `gh` and the ghi-info ask are
-    stubbed. While the run waits on ghi-info, another seat lands a line in
+    Real git, with a bare remote; only `gh` and the ghi-guide-agent ask are
+    stubbed. While the run waits on ghi-guide-agent, another seat lands a line in
     the same GHI-MD and the author's checkout fetches it, as a fetch from any
     other worktree of the same clone does, since they share origin/main. The
     pull request the run opens must still carry the other seat's line once
@@ -4817,7 +4707,7 @@ def run_edit_landing_real_git_cases(scratch: Path):
         f"# {EDIT_TITLE}\n\n" + "\n".join(body_lines) + "\n"))
     (author / relative).parent.mkdir(parents=True)
     (author / relative).write_text(base_text, encoding="utf-8")
-    ask = author / "scripts" / "ghi-info-ask.py"
+    ask = author / "scripts" / "ghi-guide-agent-ask.py"
     ask.parent.mkdir(parents=True)
     ask.write_text("# stands in for the real one; never executed\n")
     git("add", "-A", cwd=author)
@@ -5000,7 +4890,7 @@ def run_whole_file_set_cases(scratch: Path):
     log_store_at(scratch / "file-set-store")
     try:
         (scratch / "scripts").mkdir(exist_ok=True)
-        (scratch / "scripts" / "ghi-info-ask.py").write_text("# stand-in\n")
+        (scratch / "scripts" / "ghi-guide-agent-ask.py").write_text("# stand-in\n")
         title = "Reopen a closed issue to add its last finding"
         text = f"# {title}\n\nBody.\n"
         draft_dir = scratch / "rerun-draft-dir"
@@ -5068,18 +4958,18 @@ def run_whole_file_set_cases(scratch: Path):
 
 
 def run_adjudication_question_file_cases(scratch: Path):
-    """ghi-info's question travels in a file, not as one command-line
+    """ghi-guide-agent's question travels in a file, not as one command-line
     argument, so a question over Linux's 128 KiB limit for one argument
-    still reaches ghi-info."""
-    ask = scratch / "scripts" / "ghi-info-ask.py"
+    still reaches ghi-guide-agent."""
+    ask = scratch / "scripts" / "ghi-guide-agent-ask.py"
     ask.parent.mkdir(parents=True, exist_ok=True)
     ask.write_text("# stands in for the real one; never executed\n")
     # A request over Linux's 128 KiB limit for one argument, run for real
-    # against a stand-in ghi-info-ask.py that records what it was asked.
+    # against a stand-in ghi-guide-agent-ask.py that records what it was asked.
     oversized_root = scratch / "oversized"
     (oversized_root / "scripts").mkdir(parents=True)
     received = oversized_root / "received.txt"
-    (oversized_root / "scripts" / "ghi-info-ask.py").write_text(
+    (oversized_root / "scripts" / "ghi-guide-agent-ask.py").write_text(
         "import sys\n"
         "from pathlib import Path\n"
         "arguments = sys.argv[1:]\n"
@@ -5091,11 +4981,11 @@ def run_adjudication_question_file_cases(scratch: Path):
     tool.adjudicate(REPO, EDIT_TITLE, oversized_text, oversized_root,
                     tool.run, oversized_lines.append, exclude_issue=570)
     received_text = received.read_text() if received.is_file() else ""
-    check("a request over 128 KiB reaches ghi-info whole, and its verdict "
+    check("a request over 128 KiB reaches ghi-guide-agent whole, and its verdict "
           "is read",
           lambda: (len(received_text.encode()) > 128 * 1024
           and oversized_text in received_text
-          and "ghi-info: verdict: unrelated" in oversized_lines
+          and "ghi-guide-agent: verdict: unrelated" in oversized_lines
           and not list(Path(tempfile.gettempdir()).glob(
               "ghi-issue-write-question-*"))),
           (len(received_text), oversized_lines))
@@ -5114,9 +5004,9 @@ def run_adjudication_question_file_cases(scratch: Path):
     finally:
         tool.tempfile.mkstemp = mkstemp_orig
     check("a question file that cannot be written fails open and says so, "
-          "without asking ghi-info",
+          "without asking ghi-guide-agent",
           unwritable_result is None and not unwritable.ran(ASK)
-          and any(line.startswith("adjudication skipped: ghi-info did not "
+          and any(line.startswith("adjudication skipped: ghi-guide-agent did not "
                                   "answer") and "No space left" in line
                   for line in unwritable_lines), unwritable_lines)
 
@@ -5149,7 +5039,7 @@ def main():
                 with tempfile.TemporaryDirectory(prefix="ghi-issue-file-set-test-") as name:
                     run_group(run_whole_file_set_cases, Path(name))
                 with tempfile.TemporaryDirectory(prefix="ghi-issue-old-files-test-") as name:
-                    run_group(run_old_ghi_info_files_on_main_cases, Path(name))
+                    run_group(run_old_ghi_guide_agent_files_on_main_cases, Path(name))
                 with tempfile.TemporaryDirectory(prefix="ghi-issue-resume-test-") as name:
                     run_group(run_saved_question_on_resume_cases, Path(name))
                 with tempfile.TemporaryDirectory(prefix="ghi-issue-remote-read-test-") as name:

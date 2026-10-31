@@ -200,10 +200,10 @@ def run_restart_failure_cases(workspace: Path):
         check(f"NOT RESTARTED ({case}): the successor's initial agent instructions carry why, "
               "in one line",
               successor_prompt.startswith("SUCCESSOR PROMPT ")
-              and f'reason: "{expected}". Tell the user that the handoff-supervisor did not '
-                  "restart itself on main's code, and quote its reason" in successor_prompt
-              and "only when the handoff-supervisor restarts" in successor_prompt
-              and str(supervisor.REPOSITORY_ROOT) in successor_prompt,
+              and f'reason: "{expected}". Tell the user now that the handoff-supervisor did not '
+                  "restart itself on main's code, quote its reason, and name the checkout "
+                  f"{supervisor.REPOSITORY_ROOT}." in successor_prompt
+              and "only when the handoff-supervisor restarts" in successor_prompt,
               successor_prompt)
         check(f"NOT RESTARTED ({case}): the console says why",
               f"not restarted on main's code, carrying on with the code this process started "
@@ -278,7 +278,8 @@ def recovery_note_for_a_missing_transcript(occasion: str, session_id: str, works
     return (f"(Recovered at {occasion}: the previous session's conversation-tail is unavailable, "
             "because the handoff-supervisor could not extract session "
             f"{session_id}'s session-dialog, and that session's transcript is not at "
-            f"{transcript}; this next-step and the repository are your whole context.) ")
+            f"{transcript} or in any other folder under {supervisor.PROJECTS_ROOT}/; this "
+            "next-step and the repository are your whole context.) ")
 
 
 def run_missing_transcript_cases(workspace: Path):

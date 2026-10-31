@@ -754,12 +754,12 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           agent_text(result))
     git(["cherry-pick", "--abort"], sequencing)
 
-    # The ghi-info shape (nedschorus#334): no commits of its own, far behind,
+    # The ghi-guide-agent shape (nedschorus#334): no commits of its own, far behind,
     # never pushed — so it is simply brought level, the same fast-forward the
-    # box's ghi-info-ask now does for itself (#375).
-    ghi = tmp / "ghi-info-worktree"
+    # box's ghi-guide-agent-ask now does for itself (#375).
+    ghi = tmp / "ghi-guide-agent-worktree"
     first_commit = git(["rev-list", "--max-parents=0", "main"], reference).stdout.strip()
-    git(["worktree", "add", "-q", "-b", "ghi-info", str(ghi), first_commit], reference)
+    git(["worktree", "add", "-q", "-b", "ghi-guide-agent", str(ghi), first_commit], reference)
     configure_identity(ghi)
     result = run_catch_up(["--cwd", str(ghi)])
     check("a never-pushed branch with no own commits, far behind, is brought level",

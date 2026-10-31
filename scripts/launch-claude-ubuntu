@@ -147,28 +147,15 @@ case "$AGENT_NAME" in
     (*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*|"") echo "launch-claude-ubuntu: agent names are letters, digits, - and _" >&2; exit 2 ;;
 esac
 
-# Which GitHub account a box seat acts as — the twin of the same block in
-# scripts/launch-claude-mac, where the rule it applies (credential ruling
-# C4 in nc-systems/main-gatekeeper/main-gatekeeper-design.md: each agent host
-# holds a fine-grained token for this repository only, never a classic
-# all-repository token and never the `workflow` scope) and the measured
-# defect it closes are written out in full. The default here is the BOX's
-# account. Measured on the box: `gh` is logged in as
-# `ubuntu-claude` — the right identity already — but with a CLASSIC token
-# carrying read:org, repo and workflow, and there is no
-# `ubuntu-claude.token` file on the box at all, only copies of
-# `mac-claude.token` and `ned-review-merge.token`. So until that file is
-# written, every box launch takes the warning branch below by design.
-#
-# Charset-checked for the same two reasons as the Mac twin: the value is
-# spliced into a command that crosses BOTH parses, and letters, digits, -
-# and _ need no escaping at either; and an override either works or is
-# blocked, never a third state.
-SEAT_GITHUB_ACCOUNT="${NEDSCHORUS_SEAT_GITHUB_ACCOUNT:-ubuntu-claude}"
-case "$SEAT_GITHUB_ACCOUNT" in
-    (*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*|"") echo "launch-claude-ubuntu: NEDSCHORUS_SEAT_GITHUB_ACCOUNT is a GitHub account name — letters, digits, - and _" >&2; exit 2 ;;
-esac
-SEAT_GITHUB_TOKEN_FILE_UNDER_HOME=".config/nedschorus/$SEAT_GITHUB_ACCOUNT.token"
+# Which GitHub account a seat acts as is decided box-side by the
+# handoff-supervisor, which sets GH_TOKEN for every agent-session it starts
+# (agent_seat_github_account_lookup_and_token_file_read in
+# nc-systems/handoff/handoff-supervisor.py), so this launcher takes no account.
+if [ -n "${NEDSCHORUS_SEAT_GITHUB_ACCOUNT:-}" ]; then
+    echo "launch-claude-ubuntu: refused, because NEDSCHORUS_SEAT_GITHUB_ACCOUNT is set, but this launcher does not choose the GitHub account an agent-seat acts as: the handoff-supervisor does, from AGENT_SEAT_GITHUB_ACCOUNTS_OTHER_THAN_THE_MACHINE_DEFAULT in nc-systems/handoff/handoff-supervisor.py." >&2
+    echo "launch-claude-ubuntu: unset NEDSCHORUS_SEAT_GITHUB_ACCOUNT and launch again; if this agent-seat must act as an account other than ubuntu-claude, add an entry for it, agent-seat name to account, to that table in a pull request, and put that account's token in ~/.config/nedschorus/<account>.token on the machine the agent-seat runs on." >&2
+    exit 2
+fi
 
 # Every operator value spliced into the remote command is escaped for the
 # parses it actually crosses: hand-written quotes break on an apostrophe, and
@@ -227,42 +214,10 @@ AGENT_DIRECTORY_SUPERVISOR="~/agents/$AGENT_NAME"
 # the pane command because $HOME here is the BOX's home at P2 — same rename
 # and same never-overwrite rule as the Mac twin.
 #
-# The seat's own GitHub credential, box-side — the twin of the same block
-# in scripts/launch-claude-mac, where the mechanism is written out in full.
-# The one thing that is the BOX's, and the reason both twins read the file
-# with `IFS= read -r` rather than `$(cat ...)`: this pane command crosses
-# TWO parses, and a `$(...)` reaching the box's login shell at P1 is run
-# THERE — the box would substitute the token into the string it then hands
-# tmux, which is a `ps` listing on the box carrying the credential for as
-# long as the seat lives. Measured against this suite's
-# tmux-argv capture, which is the post-P1 text: with `$(cat ...)` the token
-# stands in it; with the read below it does not, and the value is present
-# only in the supervisor's environment. A redirection has no such
-# behaviour: `<` is an ordinary character inside P1's double-quote context
-# and a redirection at P2, where the seat's own shell performs the read.
+# The pane sets no GH_TOKEN: the supervisor sets it for the agent-sessions it
+# starts, so a `gh` or `claude --continue` typed in the after-exit shell acts
+# as gh's own login on the box, not as the seat's account.
 #
-# The leading `unset GH_TOKEN` makes the prepare step's warning true rather
-# than nearly true: the seat's account is decided by this launcher, never
-# inherited from whatever shell the pane was started under.
-#
-# The override variable itself needs no unset on this side, where the Mac
-# twin needs one: nothing here exports it to the box. ssh forwards no
-# environment, and the value reaches the box only as text inside the
-# composed command — the same reason this twin does not unset the
-# extra-arguments hook variable either.
-#
-# The `if` keeps GH_TOKEN UNSET rather than empty when the file is absent,
-# which is the box's ordinary state today — `gh` falls back to its keyring
-# login on an unset variable and fails outright on an empty one. It
-# re-checks box-side what the prepare step's warning checks box-side a
-# moment earlier; the check that decides is this one, in the seat's own
-# shell. \$HOME is escaped so the BOX's home is the one resolved, exactly
-# as the task-list migration line beside it does, and SEAT_GITHUB_ACCOUNT
-# needs no escaping at either parse (charset-checked above).
-#
-# The after-exit shell inherits this export, as it inherits the task-list
-# pin, and for the same reason: the `claude --continue` it offers is the
-# same seat, and a `gh` typed there is the seat acting.
 # The seat's own git identity, box-side — the twin of the same block in
 # scripts/launch-claude-mac, where the defect and the design are written out
 # in full. The exports ride inside the pane command because ssh
@@ -271,7 +226,6 @@ AGENT_DIRECTORY_SUPERVISOR="~/agents/$AGENT_NAME"
 # exactly as the task-list id beside them does, and AGENT_NAME needs no
 # escaping at either parse (charset-checked above).
 SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
-unset GH_TOKEN; if [ -s \"\$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME\" ]; then IFS= read -r GH_TOKEN < \"\$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME\"; export GH_TOKEN; fi; \
 if [ -d \"\$HOME/.claude/tasks/$AGENT_NAME-tasks\" ] && [ ! -e \"\$HOME/.claude/tasks/nedschorus-$AGENT_NAME-tasks\" ]; then mv \"\$HOME/.claude/tasks/$AGENT_NAME-tasks\" \"\$HOME/.claude/tasks/nedschorus-$AGENT_NAME-tasks\"; fi; \
 export CLAUDE_CODE_TASK_LIST_ID='nedschorus-$AGENT_NAME-tasks'; \
 export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; \
@@ -388,37 +342,6 @@ echo \"launch-claude-ubuntu: if you are the user, run the command in the first o
 # The twin does the same locally, at scripts/launch-claude-mac.
 PREPARE_COMMAND="$PREPARE_COMMAND && \
 python3 \$HOME/Projects/nedschorus/scripts/claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py \"$AGENT_DIRECTORY_REMOTE\""
-
-# A missing token file WARNS and launches anyway, rather than refusing: the
-# box holds no `ubuntu-claude.token` today, and
-# a launcher that refused would take every box seat down at once over a
-# credential that is an improvement, not a prerequisite. The warning is loud
-# because the fallback is the defect this change exists to close.
-#
-# It rides the PREPARE step rather than the pane command, which is where the
-# Mac twin differs and why: this launcher runs on the Mac and cannot see the
-# box's filesystem, so the check has to happen box-side — and of the two
-# box-side places, only this one reaches the operator. The prepare step runs
-# in the ssh command, so its stderr comes back down the connection to the
-# terminal that typed the launch, on the attached and the detached path
-# alike; a warning inside the pane command would land in the seat's tmux
-# pane, which a detached launch leaves nobody watching. An attach onto a
-# seat that is already running skips this step, correctly: nothing is being
-# started, so no credential is being chosen.
-#
-# Brace-grouped and always 0: the `&&` chain above joins the update, the
-# trust mark and the checkout, and an un-grouped step that reported a
-# missing file as a failure would abort the launch — the failure mode the
-# SEAT_SOCKET_SELECTION_COMMAND comment below records.
-PREPARE_COMMAND="$PREPARE_COMMAND && { [ -s \"\$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME\" ] || { \
-echo \"launch-claude-ubuntu: ============================================================\" >&2; \
-echo \"launch-claude-ubuntu: NO SEAT TOKEN — $AGENT_NAME will NOT act as $SEAT_GITHUB_ACCOUNT\" >&2; \
-echo \"launch-claude-ubuntu:   account wanted: $SEAT_GITHUB_ACCOUNT\" >&2; \
-echo \"launch-claude-ubuntu:   file looked in: \$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME (on the box)\" >&2; \
-echo \"launch-claude-ubuntu:   GH_TOKEN stays unset, so gh and git act as the keyring login gh holds on the box\" >&2; \
-echo \"launch-claude-ubuntu:   write the fine-grained token for that account to that file on the box, mode 600, then relaunch this seat\" >&2; \
-echo \"launch-claude-ubuntu:   or export NEDSCHORUS_SEAT_GITHUB_ACCOUNT naming an account whose token file is there\" >&2; \
-echo \"launch-claude-ubuntu: ============================================================\" >&2; }; }"
 
 # Per-seat tmux servers on the box: every seat runs on its OWN
 # tmux server, socket `-L <name>`, because a machine's single shared server
@@ -545,10 +468,13 @@ if [ "$ATTACH" = yes ]; then
         [ "$RECONNECT_WAIT_SECONDS" -ge 30 ] || RECONNECT_WAIT_SECONDS=$((RECONNECT_WAIT_SECONDS * 2))
     done
 fi
+# The trailing `exit $?` stops the pane's shell from exec'ing into the
+# supervisor: with tmux as its direct parent, tmux wakes it at once after a
+# `kill -STOP`. Its `$` is escaped twice, so the pane shell, not P1, expands it.
 # The existing-seat case is checked before anything runs, so that a failed
 # prepare step or tmux start is reported as itself and exits nonzero, never
 # as "already exists"; like the attach path, a live seat is not re-prepared.
 exec ssh "$AGENT_BOX" \
     "if $SEAT_EXISTS_COMMAND; then echo 'launch-claude-ubuntu: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-ubuntu $AGENT_NAME)'; \
-else $PREPARE_COMMAND && $SEAT_SOCKET_SELECTION_COMMAND && tmux -L \"\$SEAT_TMUX_SOCKET\" new-session -d -s '$AGENT_NAME' -c \"$AGENT_DIRECTORY_REMOTE\" \"$SUPERVISOR_COMMAND\" $SEAT_TMUX_OPTIONS_CHAIN \
+else $PREPARE_COMMAND && $SEAT_SOCKET_SELECTION_COMMAND && tmux -L \"\$SEAT_TMUX_SOCKET\" new-session -d -s '$AGENT_NAME' -c \"$AGENT_DIRECTORY_REMOTE\" \"$SUPERVISOR_COMMAND; exit \\\$?\" $SEAT_TMUX_OPTIONS_CHAIN \
 || { LAUNCH_STATUS=\$?; echo \"launch-claude-ubuntu: preparing or starting $AGENT_NAME on the box failed (exit \$LAUNCH_STATUS); the failing step's own message is above\" >&2; exit \$LAUNCH_STATUS; }; fi"
