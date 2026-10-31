@@ -445,7 +445,7 @@ def instrument_built_record_directory(directory: pathlib.Path) -> bool:
     """Return whether target/ or the reference-check file, under either of its names, marks an instrument-built record directory."""
     return ((directory / record_names.FROZEN_TARGET_DIRECTORY_NAME).is_dir()
             or record_names.cold_read_record_file_path_prefixed_name_else_name_before_prefix(
-                directory, record_names.COLD_READ_REFERENCE_CHECK_FILE_NAME).is_file())
+                directory, record_names.COLD_READ_REFERENCE_CHECK_REPORT_FILE_NAME).is_file())
 
 
 def recover_near_miss_report(

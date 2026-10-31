@@ -146,7 +146,7 @@ OWNED_NAMES = frozenset({
     "frozen_target_candidate_paths", "record_holds_completed_report",
     "SENTENCE_ID_MARKED_COPY_SUFFIX", "GENERATED_INPUT_COPY_SUFFIXES",
     "COLD_READ_FAST_READ_REPORT_FILE_NAME", "COLD_READ_TRIAGE_FILE_NAME",
-    "COLD_READ_REFERENCE_CHECK_FILE_NAME", "FILE_NAME_BEFORE_COLD_READ_PREFIX",
+    "COLD_READ_REFERENCE_CHECK_REPORT_FILE_NAME", "COLD_READ_RECORD_FILE_NAME_TO_ITS_NAME_BEFORE_COLD_READ_PREFIX",
     "cold_read_record_file_name_prefixed_name_else_name_before_prefix",
     "cold_read_record_file_path_prefixed_name_else_name_before_prefix"})
 # The constant whose join says a path is being built inside the frozen copy's
@@ -493,7 +493,7 @@ names = importlib.util.module_from_spec(_names_spec)
 _names_spec.loader.exec_module(names)
 with tempfile.TemporaryDirectory() as scratch:
     record = pathlib.Path(scratch)
-    for name, old_name in names.FILE_NAME_BEFORE_COLD_READ_PREFIX.items():
+    for name, old_name in names.COLD_READ_RECORD_FILE_NAME_TO_ITS_NAME_BEFORE_COLD_READ_PREFIX.items():
         check(f"a record holding neither name of {name} is given {name}",
               names.cold_read_record_file_path_prefixed_name_else_name_before_prefix(record, name)
               == record / name)

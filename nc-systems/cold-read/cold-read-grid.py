@@ -519,7 +519,7 @@ def reference_integrity_pre_pass(target: pathlib.Path, record_dir: pathlib.Path)
         lines.append(f"- {'ok' if resolved or sharing == 1 else 'UNRESOLVED'}: `{clean}`{note}")
     if not candidates and not file_link_paths:
         lines.append("- no path-like references found")
-    (record_dir / record_names.COLD_READ_REFERENCE_CHECK_FILE_NAME).write_text(
+    (record_dir / record_names.COLD_READ_REFERENCE_CHECK_REPORT_FILE_NAME).write_text(
         "\n".join(lines) + "\n", encoding="utf-8")
 
 
