@@ -37,7 +37,8 @@ WHAT ONE RUN DOES, in order.
 A step that fails stops the run there: a failed fetch, a state file that
 cannot be read or no longer names an ancestor of origin/main, a missing
 cosmic-ray venv, a mutation testing run that exits other than 0 or 1, runs
-past the limit or writes no readable JSON, and a task that cannot be opened.
+past the limit or writes no readable JSON, and a mutant's diff or task that
+cannot be written.
 The commit it stopped at is not recorded as tested, so the next run tries it
 again; a task already opened for one of its mutants is not opened twice. The
 record names the failure, and the run exits EXIT_STEP_FAILED. A mutant the
@@ -56,8 +57,11 @@ The id is one more than the highest of the list's task ids and its
 place only where no file of that name exists, and the `.highwatermark` is
 raised to it, so a task Claude Code creates at the same moment is not
 overwritten. The task asks the agent-seat to add a test that kills the
-mutant, or to end the line with a `# pragma: no mutate` comment saying why no
-test can, which every mutation pass then skips.
+mutant, shown killed by the mutation testing program's
+--recorded-mutant-killed-check, or to end the line with a `# pragma: no
+mutate` comment saying why no test can, which every mutation pass then skips.
+Before the task is opened, the mutant's diff is written for that check to
+SURVIVING_MUTANT_DIFFS_DIRECTORY_NAME/<mutant key>.diff beside the records.
 
 THE RECORD is one text file per run in the log-store:
 
@@ -109,6 +113,7 @@ MUTATION_TESTING_PROGRAM = Path(__file__).resolve().with_name(
     "mutation-testing-changed-lines-quick-or-full-pass-survivors.py")
 DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
 RECORDS_DIRECTORY_NAME = "scheduled-full-mutation-pass-runs-of-merged-pull-requests"
+SURVIVING_MUTANT_DIFFS_DIRECTORY_NAME = "surviving-mutant-diffs"
 LOG_STORE_HOST = "nedlern@ned-box"
 DEFAULT_STATE_DIRECTORY = (Path.home() / ".local" / "state" / "nedschorus"
                            / "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open")
@@ -256,7 +261,8 @@ def agent_seat_task_list_new_pending_task_write(list_directory, subject, descrip
     return task_id
 
 
-def task_text(mutant, merge, merge_subject, author, owner_reason, record_citation):
+def task_text(mutant, merge, merge_subject, author, owner_reason, record_citation,
+              mutant_diff_file):
     subject = (f"Surviving mutant in {mutant['module_path']}:{mutant['line']}: add a test that "
                f"kills it, or record why no test can")
     whose = ("You wrote the line." if owner_reason is None
@@ -271,14 +277,19 @@ def task_text(mutant, merge, merge_subject, author, owner_reason, record_citatio
         f"The mutant, as a diff against main at {merge[:12]}:\n{mutant['diff']}\n\n"
         f"If the line is no longer on main as the diff shows it: mark this task completed; "
         f"there is nothing to do.\n"
-        f"If a test can tell the mutant from the code: add that test in a new pull request, "
-        f"and show it kills the mutant by applying the diff above to the file by hand, "
-        f"running the test's suite, seeing it fail, and undoing the diff.\n"
+        f"If a test can tell the mutant from the code: write that test, run the command this "
+        f"task names on your branch, and open a new pull request with the test once the "
+        f"command reports the mutant killed; put the command's last line in the pull "
+        f"request's description.\n"
+        f"The command, run on ned-box at the root of your checkout with the test committed: "
+        f"python3 scripts/{MUTATION_TESTING_PROGRAM.name} --recorded-mutant-killed-check "
+        f"{shlex.quote(str(mutant_diff_file))}\n"
         f"If no test can, because the mutant behaves exactly as the code does: in a new pull "
         f"request, end the line with a comment that starts `# pragma: no mutate` and goes on "
         f"to say why no test can kill its mutants, such as `# pragma: no mutate, both "
         f"branches return the same value`; every mutation pass skips a line whose comment "
         f"says `pragma: no mutate`.\n"
+        f"Once you have opened a pull request for this task, mark this task completed.\n"
         f"The run's record: {record_citation}")
     return subject, description
 
@@ -374,10 +385,14 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
                        if line.startswith("author ")), "")
         owner, owner_reason = task_list_owner(author, arguments.task_lists_directory,
                                               arguments.agent_seats_directory)
+        mutant_diff_file = (Path(arguments.log_store_root) / RECORDS_DIRECTORY_NAME
+                            / SURVIVING_MUTANT_DIFFS_DIRECTORY_NAME / f"{key}.diff")
         subject, description = task_text(mutant, merge, merge_subject, author, owner_reason,
-                                         record_citation)
+                                         record_citation, mutant_diff_file)
         list_directory = arguments.task_lists_directory / f"nedschorus-{owner}-tasks"
         try:
+            mutant_diff_file.parent.mkdir(parents=True, exist_ok=True)
+            mutant_diff_file.write_text(mutant["diff"], encoding="utf-8")
             task_id = agent_seat_task_list_new_pending_task_write(list_directory, subject, description)
         except OSError as error:
             raise StepFailed(
@@ -386,7 +401,8 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
                 f"tries this merge again, and opens no second task for a mutant already "
                 f"given one.\n"
                 f"Fix what the error names, such as a missing task list directory "
-                f"{list_directory}, then run this program again on ned-box: {RUN_BY_HAND}") from error
+                f"{list_directory} or a mutant's diff file {mutant_diff_file} that cannot be "
+                f"written, then run this program again on ned-box: {RUN_BY_HAND}") from error
         state["tasks_opened"][key] = {"agent_seat": owner, "task_id": task_id}
         write_state(state_file, state)
         record.append(f"  SURVIVED {place}: task #{task_id} opened on {owner}'s task list")

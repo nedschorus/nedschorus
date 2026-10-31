@@ -156,7 +156,9 @@ class Fixture:
 
     def records(self):
         directory = self.log_store / job.RECORDS_DIRECTORY_NAME
-        return sorted(directory.iterdir()) if directory.exists() else []
+        # The surviving mutants' diffs are kept in a directory beside the records.
+        return sorted(path for path in directory.iterdir() if path.is_file()) \
+            if directory.exists() else []
 
     def calls(self):
         log = self.root / "calls.log"
@@ -245,6 +247,26 @@ def run_cases():
               and "+    return x * x" in task.get("description", "")
               and "`# pragma: no mutate`" in task.get("description", "")
               and "You wrote the line." in task.get("description", ""), task)
+        diff_file = (fixture.log_store / job.RECORDS_DIRECTORY_NAME
+                     / job.SURVIVING_MUTANT_DIFFS_DIRECTORY_NAME
+                     / f"{job.mutant_key(survivor())}.diff")
+        description = task.get("description", "")
+        check("merges: the survivor's diff is written beside the records, for the recorded "
+              "mutant killed check",
+              diff_file.is_file() and diff_file.read_text() == SURVIVOR_DIFF, diff_file)
+        check("merges: the task names the recorded mutant killed check with the mutant's diff "
+              "file, and says, word for word as approved, when to open the pull request",
+              "If a test can tell the mutant from the code: write that test, run the command "
+              "this task names on your branch, and open a new pull request with the test once "
+              "the command reports the mutant killed; put the command's last line in the pull "
+              "request's description.\n" in description
+              and f"python3 scripts/{job.MUTATION_TESTING_PROGRAM.name} "
+                  f"--recorded-mutant-killed-check {diff_file}\n" in description
+              and "by hand" not in description, description)
+        check("merges: the task says to mark it completed once its pull request is opened, just "
+              "before the line citing the run's record",
+              "\nOnce you have opened a pull request for this task, mark this task completed.\n"
+              "The run's record: " in description, description)
         record = fixture.records()[0].read_text()
         check("merges: the record has each merge's SUMMARY, the task, the ERRORED mutant and the "
               "file with no suite",
@@ -337,6 +359,29 @@ def run_cases():
               and "nedschorus-merge-lane-2-tasks does not exist" in completed.stderr
               and fixture.state_json()["last_tested_main_commit"] == start,
               f"rc={completed.returncode} err={completed.stderr}")
+
+    # The survivor's diff cannot be written: no task is opened and the merge is not recorded as
+    # tested.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        merge = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                               author="alpha")
+        (fixture.log_store / job.RECORDS_DIRECTORY_NAME).mkdir(parents=True)
+        (fixture.log_store / job.RECORDS_DIRECTORY_NAME
+         / job.SURVIVING_MUTANT_DIFFS_DIRECTORY_NAME).write_text("a file, not a directory")
+        completed = fixture.run({merge: {"json": verdict(survived=[survivor()])}})
+        check("a survivor's diff that cannot be written stops the run at that merge, exit 4, "
+              "naming the diff file, with no task opened",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and f"merge {merge[:12]}: no task could be opened on alpha's task list"
+              in completed.stderr
+              and f"{job.mutant_key(survivor())}.diff that cannot be written" in completed.stderr
+              and task_files(alpha_list) == []
+              and fixture.state_json()["last_tested_main_commit"] == start,
+              f"rc={completed.returncode} err={completed.stderr} tasks={task_files(alpha_list)}")
 
     # A run stopped after one survivor's task is opened keeps that task in the state, so the
     # next run, which tries the merge again, opens no second task for it.

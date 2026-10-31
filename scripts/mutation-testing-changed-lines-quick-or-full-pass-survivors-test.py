@@ -231,7 +231,8 @@ def script_command_and_environment(repository, control, *flags, path_override=No
     environment.update(extra_environment or {})
     # The full mutation pass, unless the case names a pass: it mutates every changed line.
     passes = (load_script_module().QUICK_MUTATION_PASS_COMMAND_LINE_FLAG,
-              load_script_module().FULL_MUTATION_PASS_COMMAND_LINE_FLAG)
+              load_script_module().FULL_MUTATION_PASS_COMMAND_LINE_FLAG,
+              load_script_module().RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG)
     if not any(flag in passes for flag in flags):
         flags = (passes[1], *flags)
     # Never the real machine lock or admission, which the suite runner the test command runs
@@ -271,8 +272,10 @@ HEAD_FILES = {
     "scripts/thing-test.py": "import sys\nsys.exit(0)\n",
 }
 
+# As cosmic-ray 8.7.0 writes it for HEAD_FILES' scripts/thing.py: no newline after the last
+# context line, which is the empty line after the file's last newline.
 SURVIVOR_DIFF = ("--- mutation diff ---\n--- a/scripts/thing.py\n+++ b/scripts/thing.py\n"
-                 "@@ -1,2 +1,2 @@\n-    return x + x\n+    return x * x\n")
+                 "@@ -1,3 +1,3 @@\n def double(x):\n-    return x + x\n+    return x * x\n ")
 
 
 def runner_output_with_suites_timed_out(timed_out, others=()):
@@ -384,6 +387,160 @@ def write_recording(control, repository, suite, recording):
 def suites_named(control):
     _, words = config_and_test_command_words(control)
     return words[words.index("--only-suites-named") + 1:] if words else []
+
+
+def run_recorded_mutant_killed_check(scratch_name, head_files, diff_text, *flags):
+    """Run --recorded-mutant-killed-check on a scratch repository holding head_files.
+
+    The suites are real fixture suites, run by the real suite runner; no cosmic-ray is given."""
+    survivors = load_script_module()
+    repository, _, head = scratch_repository(scratch_name, head_files)
+    control = Path(scratch_name) / "control"
+    control.mkdir()
+    diff_file = Path(scratch_name) / "mutant.diff"
+    if diff_text is not None:
+        diff_file.write_text(diff_text)
+    worktrees_before = worktrees_of(repository)
+    completed = run_script(repository, control,
+                           survivors.RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG,
+                           str(diff_file), *flags)
+    return completed, repository, worktrees_before, head
+
+
+def run_recorded_mutant_killed_check_cases():
+    survivors = load_script_module()
+    runner = load_test_suite_runner()
+    killing_test = ("import importlib.util, sys\n"
+                    "spec = importlib.util.spec_from_file_location('thing', 'scripts/thing.py')\n"
+                    "thing = importlib.util.module_from_spec(spec)\n"
+                    "spec.loader.exec_module(thing)\n"
+                    "sys.exit(0 if thing.double(3) == 6 else 1)\n")
+    killing_files = {**HEAD_FILES, "scripts/thing-test.py": killing_test}
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, repository, worktrees_before, head = run_recorded_mutant_killed_check(
+            scratch_name, killing_files, SURVIVOR_DIFF)
+        last = completed.stdout.strip().splitlines()[-1] if completed.stdout.strip() else ""
+        check("the recorded mutant killed check exits 0 and its last line starts MUTANT KILLED "
+              "when a suite at the head fails with the mutant applied",
+              completed.returncode == 0 and last.startswith(survivors.MUTANT_KILLED_LINE_PREFIX)
+              and head[:12] in last,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+        check("the recorded mutant killed check removes its scratch worktree, and leaves the "
+              "checkout's file unmutated",
+              worktrees_of(repository) == worktrees_before
+              and (repository / "scripts/thing.py").read_text() == HEAD_FILES["scripts/thing.py"],
+              worktrees_of(repository))
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        # double(2) is 4 under x + x and x * x alike.
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**HEAD_FILES, "scripts/thing-test.py":
+                           killing_test.replace("double(3) == 6", "double(2) == 4")},
+            SURVIVOR_DIFF)
+        check("the recorded mutant killed check exits 1 with a MUTANT SURVIVED line when every "
+              "suite passes with the mutant applied",
+              completed.returncode == 1
+              and f"\n{survivors.MUTANT_SURVIVED_LINE_PREFIX}: " in "\n" + completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, repository, worktrees_before, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**HEAD_FILES, "scripts/thing-test.py": "import sys\nsys.exit(1)\n"},
+            SURVIVOR_DIFF)
+        check("the recorded mutant killed check exits 2 when the suites fail without the "
+              "mutant, and removes its worktree",
+              completed.returncode == 2
+              and "do not pass at head" in completed.stderr
+              and "without the mutant" in completed.stderr
+              and worktrees_of(repository) == worktrees_before,
+              f"rc={completed.returncode} err={completed.stderr}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, repository, worktrees_before, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**killing_files,
+                           "scripts/thing.py": "def double(x):\n    return 2 * x\n"},
+            SURVIVOR_DIFF)
+        check("the recorded mutant killed check exits 2 when the mutant's diff does not apply "
+              "at the head, and removes its worktree",
+              completed.returncode == 2 and "does not apply to scripts/thing.py" in completed.stderr
+              and worktrees_of(repository) == worktrees_before,
+              f"rc={completed.returncode} err={completed.stderr}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(scratch_name, killing_files, None)
+        check("the recorded mutant killed check exits 2 when the diff file cannot be read",
+              completed.returncode == 2 and "cannot be read" in completed.stderr,
+              f"rc={completed.returncode} err={completed.stderr}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, killing_files, "--- mutation diff ---\n@@ -1 +1 @@\n-a\n+b\n")
+        check("the recorded mutant killed check exits 2 when the diff names no file",
+              completed.returncode == 2 and "names no file to mutate or no change to make"
+              in completed.stderr,
+              f"rc={completed.returncode} err={completed.stderr}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, {"scripts/thing.py": HEAD_FILES["scripts/thing.py"]}, SURVIVOR_DIFF)
+        check("the recorded mutant killed check exits 2 when the mutated file has no suite",
+              completed.returncode == 2 and "no recorded suite reads scripts/thing.py"
+              in completed.stderr,
+              f"rc={completed.returncode} err={completed.stderr}")
+
+    path, hunks = survivors.recorded_mutant_module_path_and_hunks(SURVIVOR_DIFF)
+    check("a recorded mutant's diff names the file it changes, and its one hunk",
+          path == "scripts/thing.py" and hunks == [
+              (1, ["def double(x):", "    return x + x", ""],
+               ["def double(x):", "    return x * x", ""])], (path, hunks))
+    apply_mutant = survivors.source_with_recorded_mutant_applied
+    source = HEAD_FILES["scripts/thing.py"]
+    check("a recorded mutant applies at its own line, the file's last newline kept",
+          apply_mutant(source, hunks) == "def double(x):\n    return x * x\n",
+          apply_mutant(source, hunks))
+    check("a recorded mutant whose lines the branch moved applies where they appear once",
+          apply_mutant("import os\n\n" + source, hunks)
+          == "import os\n\ndef double(x):\n    return x * x\n",
+          apply_mutant("import os\n\n" + source, hunks))
+    check("a recorded mutant whose lines appear twice away from its own line does not apply",
+          apply_mutant("import os\n" + source + "\n" + source, hunks) is None)
+    check("a recorded mutant whose lines are gone does not apply",
+          apply_mutant("def double(x):\n    return 2 * x\n", hunks) is None)
+    two_hunks = [(1, ["a"], ["A"]), (3, ["c"], ["C"])]
+    check("a recorded mutant with two hunks applies both",
+          apply_mutant("a\nb\nc\n", two_hunks) == "A\nb\nC\n", apply_mutant("a\nb\nc\n", two_hunks))
+
+    verdict = survivors.recorded_mutant_run_verdict
+    check("a run with the mutant applied that exits 0 is a survivor",
+          verdict(0, "", runner) == ("survived", None), verdict(0, "", runner))
+    check("a run with the mutant applied whose suite failed by its exit code is a kill",
+          verdict(1, runner_output_with_a_suite_failed_with_exit_code(
+              "scripts/thing-test.py", 1), runner) == ("killed", None))
+    timed_out = verdict(1, runner_output_with_suites_timed_out(
+        [("scripts/thing-test.py", 600)]), runner)
+    check("a run with the mutant applied whose suite ran past its own limit is no verdict, "
+          "naming the suite and the limit",
+          timed_out[0] is None and "scripts/thing-test.py ran past its own limit of 600 s"
+          in timed_out[1], timed_out)
+    refused = verdict(3, f"{runner.PROGRAM}: not run — another run holds the lock\n", runner)
+    check("a run with the mutant applied that the runner refused is no verdict, quoting the "
+          "runner's refusal",
+          refused[0] is None and "judged no suite failing" in refused[1]
+          and "another run holds the lock" in refused[1], refused)
+
+    completed = subprocess.run([sys.executable, str(SCRIPT),
+                                survivors.RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG,
+                                "x.diff", "--pull-request", "1"],
+                               capture_output=True, text=True, check=False)
+    check("--recorded-mutant-killed-check with --pull-request exits 2 and says why",
+          completed.returncode == 2 and "not --pull-request or --base" in completed.stderr,
+          completed.stderr)
+    completed = subprocess.run([sys.executable, str(SCRIPT), "--full-mutation-pass"],
+                               capture_output=True, text=True, check=False)
+    check("a pass with neither --pull-request nor --head exits 2 and says one is required",
+          completed.returncode == 2 and "--pull-request --head is required" in completed.stderr,
+          completed.stderr)
 
 
 def run_quick_mutation_pass_cases():
@@ -1543,6 +1700,8 @@ def run_cases():
                   f"exec seen {worktree} rc={script.returncode} "
                   f"worktrees={worktrees_of(repository)} "
                   f"left={list(temporary_directory.iterdir())} out={out} err={err}")
+
+    run_recorded_mutant_killed_check_cases()
 
     # ------------------------------------------------------------------
     # Bad invocations.
