@@ -258,6 +258,15 @@ LOCAL_NAME_FORMS = (
     ("a local printed in a class base, which the enclosing function evaluates",
      'def main():\n    text = "Base message"\n    class Holder(make_base(print(text))):\n        pass\n',
      [("Base message", "text = in main()")]),
+    ("a local printed in a nested function's default, which the enclosing function evaluates",
+     'def main():\n    text = "Default message"\n    def inner(value=print(text)):\n        pass\n',
+     [("Default message", "text = in main()")]),
+    ("a local printed in a lambda's default whose parameter has the local's name",
+     'def main():\n    text = "Shadowed default"\n    callback = lambda text=print(text): None\n',
+     [("Shadowed default", "text = in main()")]),
+    ("a local printed by a lambda in a class body that rebinds the name, since the lambda skips class scope",
+     'def main():\n    text = "outer lambda"\n    class Holder:\n        text = 3\n        f = lambda: print(text)\n',
+     [("outer lambda", "text = in main.Holder()")]),
 )
 for case_name, source, expected in LOCAL_NAME_FORMS:
     found = [(entry["text"], entry["label"]) for entry in entries(source)]
@@ -331,6 +340,13 @@ HELPER_PRINTER_FORMS = (
     ("a string built with % for a helper printer, inside a function",
      SAY + 'def main():\n    say(sys.stderr, "branch %s failed" % name)\n',
      [("branch %s failed", "say() in main()")]),
+    ("a string passed to a helper whose method prints the parameter its class body rebinds, since the method skips class scope",
+     'def sink(text):\n    class Holder:\n        text = 3\n        def show(self):\n            print(text)\n'
+     '    Holder().show()\nsink("method sees outer")\n',
+     [("method sees outer", "sink()")]),
+    ("a string passed to a helper whose lambda's default prints the parameter",
+     'def sink(text):\n    callback = lambda value=print(text): None\nsink("default helper")\n',
+     [("default helper", "sink()")]),
 )
 for case_name, source, expected in HELPER_PRINTER_FORMS:
     found = [(entry["text"], entry["label"]) for entry in entries(source)]
@@ -362,6 +378,10 @@ HELPER_PRINTER_FORMS_NOT_RECOGNIZED = (
      'def main():\n    prompt = "shadowed text"\n    sink("".join([prompt]))\n'),
     ("a print keyword that names where to print, not what",
      'def show(text, out):\n    print(text, file=out)\nshow(None, out="file text")\n'),
+    ("a string passed to a helper whose class body rebinds the parameter before printing it",
+     'def sink(text):\n    class Holder:\n        text = 3\n        print(text)\nsink("class rebound")\n'),
+    ("a string passed to a helper whose nested function rebinds the parameter before printing it",
+     'def sink(text):\n    def inner():\n        text = 3\n        print(text)\nsink("inner rebound")\n'),
 )
 for case_name, source in HELPER_PRINTER_FORMS_NOT_RECOGNIZED:
     found = [entry["text"] for entry in entries(source)

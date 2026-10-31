@@ -27,11 +27,22 @@ a string built from it, directly or through another such local name; each bindin
 an entry at its own lines, labelled with the name, and only the binding's string-building
 branches are read. A conditional expression's condition is not read, in a binding or at a
 form, so its strings and names are not text. The returned name is listed whatever its caller does with it, since the
-caller is not read. A local name is not followed when it reaches the form through any call
-but a string literal's join or the exception a raise statement builds, inside a list or tuple that is returned, from a function
-body nested inside its own, from a lambda that takes the name as a parameter or a class body that binds it, or at module
-level; a lambda or a class body nested in the function follows its other local names. A lambda's defaults and a class's
-decorators, bases and keywords are read in the scope the definition stands in. A message built any other way is not found.
+caller is not read.
+
+How a followed name may reach the form: directly, through a string literal's join, or as an
+argument of the exception a raise statement builds. A name that reaches the form through any
+other call, or inside a list or tuple that is returned, is not followed.
+
+Where a followed name may be bound: in the function that holds the form. A function nested in
+it follows only its own local names, never the outer function's, and names bound at module level
+are not followed. A lambda or a class body nested in a function follows that function's local
+names, with two exceptions: a lambda's parameter hides the function's local of the same name
+inside the lambda, and a name the class body assigns hides the function's local of the same name
+in the class's own statements; a function or lambda nested in the class still sees the function's
+local, as Python skips class scope. A function's or lambda's defaults and decorators, and a
+class's decorators, bases and keywords, are read in the scope the definition stands in.
+
+A message built any other way is not found.
 
 An entry's kind is "prompt", text a program hands an agent as its instructions, when it was
 found by following local names and reached the form through a local name containing
@@ -176,25 +187,34 @@ def printed_arguments(call, helper_printers, receiver_names=()):
         yield from call_arguments_by_parameter(call, *helper_printers[call.func.id])
 
 
-def calls_and_parameters_they_see(nodes, parameters):
+def calls_and_parameters_they_see(nodes, parameters, parameters_nested_scopes_see=None):
     """Each call among the nodes, with the parameters a name in it still refers to: inside a
     nested lambda its own parameters hide them, inside a nested function its parameters and the
-    names its body binds, and inside a nested class body the names that body binds. A nested
-    definition's defaults, decorators and bases see the parameters as its enclosing scope does."""
+    names its body binds, and inside a nested class body the names that body binds, in the class's
+    own statements only. A function or lambda nested in a class skips the class's scope, as Python
+    does, so it sees the parameters the class body was handed: parameters_nested_scopes_see, which
+    is the parameters themselves outside a class body. A nested definition's defaults, decorators
+    and bases see the parameters as its enclosing scope does."""
+    if parameters_nested_scopes_see is None:
+        parameters_nested_scopes_see = parameters
     for node in nodes:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
-            yield from calls_and_parameters_they_see(definition_time_expressions(node), parameters)
+            yield from calls_and_parameters_they_see(definition_time_expressions(node), parameters,
+                                                     parameters_nested_scopes_see)
+            outer = parameters_nested_scopes_see
             if isinstance(node, ast.Lambda):
-                hidden, body = function_parameter_names(node), [node.body]
+                seen = outer - function_parameter_names(node)
+                yield from calls_and_parameters_they_see([node.body], seen)
             elif isinstance(node, ast.ClassDef):
-                hidden, body = scope_assigned_names(node), node.body
+                yield from calls_and_parameters_they_see(node.body, outer - scope_assigned_names(node), outer)
             else:
-                hidden, body = function_parameter_names(node) | scope_assigned_names(node), node.body
-            yield from calls_and_parameters_they_see(body, parameters - hidden)
+                seen = outer - (function_parameter_names(node) | scope_assigned_names(node))
+                yield from calls_and_parameters_they_see(node.body, seen)
             continue
         if isinstance(node, ast.Call):
             yield node, parameters
-        yield from calls_and_parameters_they_see(ast.iter_child_nodes(node), parameters)
+        yield from calls_and_parameters_they_see(ast.iter_child_nodes(node), parameters,
+                                                 parameters_nested_scopes_see)
 
 
 def function_parameter_names(function):
@@ -255,6 +275,9 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
         self.helper_printers = helper_printers or {}
         # For each enclosing function, its local name -> the string expressions bound to it.
         self.enclosing_local_string_bindings = []
+        # For each enclosing scope, the bindings a function or lambda nested in it sees: a class
+        # body's own bindings are skipped, as Python skips class scope for nested scopes.
+        self.local_string_bindings_nested_scopes_see = []
 
     def collect_expression_strings(self, expression, label, kind="message"):
         if expression is None:
@@ -277,24 +300,30 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
         """Visit the expressions a function, lambda or class definition evaluates where it
         stands, such as defaults, decorators and bases, in the enclosing scope, then its body in
         its own scope. A function's body follows only its own local names. A lambda's or a class
-        body's follows the enclosing scope's, less the names the lambda takes as parameters or the
-        class body assigns. Its own parameters hide a helper printer's name, as the enclosing
-        function's still do."""
+        body's follows the enclosing function's, less the names the lambda takes as parameters or
+        the class body assigns; the class body's names hide the enclosing ones only in the class's
+        own statements, not in a function or lambda nested in the class. Its own parameters hide
+        a helper printer's name, as the enclosing function's still do."""
         for expression in definition_time_expressions(node):
             self.visit(expression)
-        enclosing = self.enclosing_local_string_bindings[-1] if self.enclosing_local_string_bindings else {}
+        outer = (self.local_string_bindings_nested_scopes_see[-1]
+                 if self.local_string_bindings_nested_scopes_see else {})
         if isinstance(node, ast.Lambda):
             parameters = function_parameter_names(node)
-            bindings = {name: values for name, values in enclosing.items() if name not in parameters}
+            bindings = {name: values for name, values in outer.items() if name not in parameters}
+            nested_see = bindings
         elif isinstance(node, ast.ClassDef):
             parameters = set()
             assigned = scope_assigned_names(node)
-            bindings = {name: values for name, values in enclosing.items() if name not in assigned}
+            bindings = {name: values for name, values in outer.items() if name not in assigned}
+            nested_see = outer
         else:
             parameters = function_parameter_names(node)
             bindings = local_string_bindings(node)
+            nested_see = bindings
         self.enclosing_parameter_names.append(parameters)
         self.enclosing_local_string_bindings.append(bindings)
+        self.local_string_bindings_nested_scopes_see.append(nested_see)
         if isinstance(node, ast.Lambda):
             self.visit(node.body)
         else:
@@ -302,6 +331,7 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
             for statement in node.body:
                 self.visit(statement)
             self.enclosing_names.pop()
+        self.local_string_bindings_nested_scopes_see.pop()
         self.enclosing_local_string_bindings.pop()
         self.enclosing_parameter_names.pop()
 
