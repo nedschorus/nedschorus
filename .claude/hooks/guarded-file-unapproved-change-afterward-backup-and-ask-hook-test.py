@@ -739,6 +739,22 @@ def cases(scratch):
     check("once git reads origin/main again, the next run approves the version",
           message == "" and world.key(claude) in world.store_file(claude, "approved"), message)
 
+    world = fresh(scratch, "origin-main-moves-to-an-unsettled-version")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2, merged on main later\n")
+    message = world.run()
+    check("a shell edit origin/main does not hold is asked about",
+          str(claude) in message and "has not approved" in message, message)
+    world.git("commit", "-qam", "the version a pull request will merge")
+    message = world.run()
+    check("the committed version is still waiting while origin/main does not hold it",
+          str(claude) in message and world.key(claude) not in world.store_file(claude, "approved"),
+          message)
+    world.git("update-ref", "refs/remotes/origin/main", "HEAD")
+    message = world.run()
+    check("once origin/main moves to the waiting version, the next run approves it and is silent",
+          message == "" and world.key(claude) in world.store_file(claude, "approved"), message)
+
     # -- stash
     world = fresh(scratch, "stash")
     claude = world.repo / "CLAUDE.md"
