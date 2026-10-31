@@ -1393,9 +1393,9 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
           and "`ssh nedlern@ned-box 'rm -rf -- /home/nedlern/nedschorus-logs/walk/.ship-staging-w-0123456789ab'`"
           in remote_sentences, remote_sentences)
 
-    def rerun_line_for(directory):
+    def rerun_line_for(directory, walk="named-walk-2026-10-31"):
         return left.walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
-            None, "named-walk-2026-10-31", directory,
+            None, walk, directory,
             pathlib.PurePosixPath("/store/walk/.ship-staging-x"),
             "rsync exit 23 during the copy", None)
 
@@ -1409,6 +1409,11 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
           below_line.endswith(f"walk-files-ship.py "
                               f"{left.WALK_DIRECTORY}/older/named-walk-2026-10-31-minutes.md`"),
           below_line)
+    dash_line = rerun_line_for(pathlib.Path(str(left.WALK_DIRECTORY)), walk="-dash-walk")
+    check("a walk under docs/walk/ whose name begins with a dash is rerun by the path to "
+          "its minutes, which argparse cannot read as an option",
+          dash_line.endswith(f"walk-files-ship.py {left.WALK_DIRECTORY}/-dash-walk-minutes.md`"),
+          dash_line)
 
 print()
 if failures:

@@ -566,10 +566,8 @@ def staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_
     """What a FAILED line says when remove_staging_directory could not remove
     this run's staging directory: the replace step of every later shipment of
     the walk stops on it until it is deleted."""
-    shown = f"{copy_host}:{staging_dir}" if copy_host else str(staging_dir)
-    command = f"rm -rf -- {shlex.quote(str(staging_dir))}"
-    if copy_host:
-        command = f"ssh {copy_host} {shlex.quote(command)}"
+    shown, command = shipper.staging_directory_host_colon_path_and_local_or_ssh_rm_command(
+        copy_host, staging_dir)
     return (f"This run's staging directory {shown} is left behind: removing it "
             f"failed ({why}). Until it is deleted it stops nearly every later "
             f"shipment of this walk. Deleting it loses nothing, because every "
@@ -584,7 +582,9 @@ def walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_b
     command that reruns this shipment, after the deletion of this run's
     staging directory when that could not be removed, since the rerun's
     replace step would stop on it."""
-    walk_argument = (name if directory == WALK_DIRECTORY
+    # A name that begins with a dash would be read by argparse as an option,
+    # so such a walk is rerun by its minutes' path, as a walk elsewhere is.
+    walk_argument = (name if directory == WALK_DIRECTORY and not name.startswith("-")
                      else str(directory / walk_file_name(name, MINUTES_ROLE_SUFFIX)))
     rerun = (f"{shlex.quote(str(REPO_ROOT / 'scripts' / 'walk-files-ship.py'))} "
              f"{shlex.quote(walk_argument)}")
