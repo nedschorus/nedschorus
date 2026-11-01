@@ -149,6 +149,114 @@ with tempfile.TemporaryDirectory() as directory:
           and "1 matching user message(s)" in run.stdout,
           f"exit {run.returncode}: {run.stdout}{run.stderr}")
 
+def typed_with(text, **fields):
+    record = typed(text)
+    record.update(fields)
+    return record
+
+
+with tempfile.TemporaryDirectory() as directory:
+    path = write_transcript(directory, [
+        typed_with("go on", origin={"kind": "human"}),
+        typed_with("Another Claude session sent a message: done", origin={"kind": "peer"}),
+        typed_with("<channel source=\"reviewer\">x</channel> trailing", origin={"kind": "channel"}),
+        typed_with("<task-notification>x</task-notification> trailing", origin={"kind": "task-notification"}),
+        typed_with("Stop hook feedback:\nrefused", isMeta=True),
+        typed_with("Review this file for a range of defects.", entrypoint="sdk-cli"),
+        typed_with("no origin field at all"),
+        typed_with("origin is not a dict", origin=None),
+        agent("ok"),
+    ])
+    texts = user_texts(path)
+    check("a user turn whose origin is not human, or that is meta or a claude -p prompt, is not the user's",
+          texts == ["go on", "no origin field at all"], texts)
+
+with tempfile.TemporaryDirectory() as directory:
+    path = write_transcript(directory, [
+        typed_with("This session is being continued from a previous conversation that ran out of context."),
+        typed_with("Read /h/.claude/handoffs/a-dialog-0002.md — the dialog from the session you are continuing, "
+                   "written at 10:00", origin={"kind": "human"}),
+        typed_with("Read /h/.claude/handoffs/a-dialog-0001.md — it is the dialog from the session you are "
+                   "continuing", origin={"kind": "human"}),
+        typed_with("Next step.\n\n(Recovered at supervisor boot: the previous session's conversation-tail is "
+                   "unavailable; this next-step and the repository are your whole context.)",
+                   origin={"kind": "human"}),
+        typed_with("I said: Read the file — the dialog from the session you are continuing is long",
+                   origin={"kind": "human"}),
+    ])
+    texts = user_texts(path)
+    check("a compaction summary and a handoff successor's opening prompt are not the user's",
+          texts == ["I said: Read the file — the dialog from the session you are continuing is long"], texts)
+
+with tempfile.TemporaryDirectory() as directory:
+    path = write_transcript(directory, [
+        typed("start"),
+        queued("y"),
+        typed("y"),
+    ])
+    texts = user_texts(path)
+    check("the same words typed right after a queued message, with no interrupt between, are a second message",
+          texts == ["start", "y", "y"], texts)
+
+# Each prompt below comes from the program that writes it, so a prompt it adds or rewords is tested here.
+recover_module = search_module.crash_recovery
+supervisor_module = search_module.handoff_supervisor
+with tempfile.TemporaryDirectory() as directory:
+    handoffs = Path(directory)
+    no_handoff_yet = supervisor_module.NO_HANDOFF_YET_PROMPT_TEMPLATE.format(agent="MD-skills")
+    launch_prompts = [
+        recover_module.write_resume_prompt(handoffs, "alpha").read_text(),
+        recover_module.write_resume_prompt(handoffs, "alpha", unreplied_successor=True).read_text(),
+        recover_module.write_first_prompt_after_recorded_exit(handoffs, "alpha", by_hand=True, resuming=True).read_text(),
+        recover_module.write_first_prompt_after_recorded_exit(handoffs, "alpha", by_hand=False, resuming=True).read_text(),
+        recover_module.write_first_prompt_after_recorded_exit(handoffs, "alpha", by_hand=False, resuming=False).read_text(),
+        recover_module.conversation_tail_ignition_prompt(handoffs / "alpha-conversation-tail.md"),
+        supervisor_module.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF,
+        no_handoff_yet,
+        no_handoff_yet + "\n\nLeftover work-snapshots: 1 copy(ies) of uncommitted work left by an agent of this "
+        "agent-seat whose `claude` process is gone, and no longer in its worktree:",
+        supervisor_module.build_ignition_prompt(
+            handoffs / "alpha-dialog-0003.md",
+            {"next-step": "Do the work.", "written-at": "2026-11-01T19:27:02Z"}),
+        supervisor_module.IgnitionPlanWithoutConversationTail(next_step="Do the work.").compose(""),
+        supervisor_module.IgnitionPlanWithoutConversationTail(
+            next_step="Do the work.", occasion="login", unextracted_session_id="s1",
+            unextracted_transcript_path=handoffs / "s1.jsonl").compose(""),
+        supervisor_module.IgnitionPlanWithoutConversationTail(
+            next_step="Do the work.", unextracted_session_id="s1",
+            unextracted_transcript_paths_in_several_folders=(handoffs / "a.jsonl", handoffs / "b.jsonl")).compose(""),
+        supervisor_module.IgnitionPlanWithoutConversationTail(
+            next_step="Do the work.", unextracted_session_id="s1",
+            unextracted_transcript_expected_path=handoffs / "s1.jsonl").compose(""),
+    ]
+    missed = [prompt[:60] for prompt in launch_prompts
+              if not search_module.written_by_a_program({"origin": {"kind": "human"}}, prompt)]
+    check("every launch prompt crash recovery and the handoff-supervisor write is recognized as a program's",
+          missed == [], missed)
+
+quoting = "I said: You are MD-skills. No handoff exists yet; ask what to work on."
+check("the user's words that quote the no-handoff prompt after his own opening are still his",
+      not search_module.written_by_a_program({"origin": {"kind": "human"}}, quoting))
+
+with tempfile.TemporaryDirectory() as directory:
+    path = write_transcript(directory, [
+        typed("start"),
+        queued("stop"),
+        interrupt_notice(),
+        typed("stop"),
+        agent("Stopped."),
+    ])
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    whole = search_module.TurnReader()
+    whole_turns = [whole.turn(record) for record in records]
+    first_half = search_module.TurnReader()
+    turns = [first_half.turn(record) for record in records[:3]]
+    resumed = search_module.TurnReader(json.loads(json.dumps(first_half.state())))
+    turns += [resumed.turn(record) for record in records[3:]]
+    check("a reader resumed from its saved state reads the rest as one reader would",
+          turns == whole_turns and [t for t in turns if t] == [("user", "start"), ("user", "stop"),
+                                                                ("agent", "Stopped.")], turns)
+
 def search(directory, *arguments):
     return subprocess.run([sys.executable, str(SEARCH_SCRIPT), "--projects-dir", directory, *arguments],
                           capture_output=True, text=True)
