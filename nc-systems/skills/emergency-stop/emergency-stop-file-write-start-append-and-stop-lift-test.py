@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Tests for emergency-stop-file-start-append-and-lift.py: starting a stop,
+"""Tests for emergency-stop-file-write-start-append-and-stop-lift.py: starting a stop,
 adding to the one in force, naming a coordinating agent-seat, recording the
 push notification, handing the lift over, lifting, and each FAILED path.
 
 Every case drives run() in-process with NEDSCHORUS_EMERGENCY_STOP_FOLDER set to
 a temporary folder; one runs the file as a subprocess. None touches the
-log-store. Run: python3 nc-systems/skills/emergency-stop/emergency-stop-file-start-append-and-lift-test.py
+log-store. Run: python3 nc-systems/skills/emergency-stop/emergency-stop-file-write-start-append-and-stop-lift-test.py
 Prints one line per case and exits non-zero if any case fails."""
 
 import contextlib
@@ -18,7 +18,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-PROGRAM = Path(__file__).with_name("emergency-stop-file-start-append-and-lift.py")
+PROGRAM = Path(__file__).with_name("emergency-stop-file-write-start-append-and-stop-lift.py")
 _spec = importlib.util.spec_from_file_location("emergency_stop_file_start_append_and_lift", PROGRAM)
 program = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(program)

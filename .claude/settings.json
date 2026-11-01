@@ -50,7 +50,7 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/emergency-stop/emergency-stop-file-shown-and-push-and-merge-refusal-hook.py",
-            "timeout": 10
+            "timeout": 30
           }
         ]
       }
@@ -117,7 +117,7 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/emergency-stop/emergency-stop-file-shown-and-push-and-merge-refusal-hook.py",
-            "timeout": 10
+            "timeout": 30
           }
         ]
       },

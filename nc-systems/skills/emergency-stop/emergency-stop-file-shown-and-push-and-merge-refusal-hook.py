@@ -53,7 +53,7 @@ MAX_FILE_CHARACTERS = 4000
 NOTE_RECORD_DIRECTORY_NAME = "nedschorus-emergency-stop-hook-notes"
 SESSION_ID_SAFE_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}")
 GIT_OPTIONS_TAKING_A_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
-PROGRAM_PATH = "nc-systems/skills/emergency-stop/emergency-stop-file-start-append-and-lift.py"
+PROGRAM_PATH = "nc-systems/skills/emergency-stop/emergency-stop-file-write-start-append-and-stop-lift.py"
 
 RULES = """EMERGENCY STOP in force: {path}
 Every agent-seat follows these rules until the user lifts the emergency stop:
