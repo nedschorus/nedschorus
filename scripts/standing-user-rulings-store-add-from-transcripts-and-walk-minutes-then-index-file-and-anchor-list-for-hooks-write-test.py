@@ -8,9 +8,11 @@ Every case builds its own log-store, agents directory and git repository in a te
 no real transcript, walk-minutes or store is read or written.
 """
 
+import contextlib
 import datetime
 import fcntl
 import importlib.util
+import io
 import json
 import os
 import sqlite3
@@ -327,11 +329,14 @@ with tempfile.TemporaryDirectory() as directory:
 
 # Walk-minutes: the check program's answer line, a deferred line, a dated citation, a shipped copy.
 walk_check = load("walk_me_through_check", WALK_CHECK_PROGRAM)
-answer_line = walk_check.CHECK_MINUTES.format(item="item 6.2 of 8", answered="approved", hashtag="",
-                                              date_and_time="2026-10-29 07:24")
-obvious_line = walk_check.CHECK_MINUTES.format(item="item 2 of 8", answered="approved",
-                                               hashtag=walk_check.OBVIOUS_HASHTAG, date_and_time="2026-01-15 23:30")
-deferred_line = walk_check.CHECK_DEFERRED_MINUTES.format(item="item 6 of 8", date_and_time="2026-10-28 18:04")
+answer_line = walk_check.CHECK_MINUTES.format(item="item 6.2 of 8", answered="approved", hashtag="", rating="",
+                                              date_and_time="2026-10-29 07:24", words="")
+obvious_line = walk_check.CHECK_MINUTES.format(
+    item="item 2 of 8", answered="approved", hashtag=walk_check.OBVIOUS_HASHTAG,
+    rating=walk_check.CASE_AGAINST_HASHTAG.format(rating="very_strong"), date_and_time="2026-01-15 23:30",
+    words=walk_check.USER_WORDS.format(words="ao, and (yes) do it"))
+deferred_line = walk_check.CHECK_DEFERRED_MINUTES.format(item="item 6 of 8", answered="deferred", rating="",
+                                                        date_and_time="2026-10-28 18:04", words="")
 cited_line = 'Item 5.2 (GHI 2118, scripts/tool-one.py): "y" (user-ruled 2026-10-16). Approved as shown.'
 timed_line = "Item 17.2, A, approved (user-ruled 2026-10-29T00:16:22Z)."
 with tempfile.TemporaryDirectory() as directory:
@@ -452,35 +457,46 @@ with tempfile.TemporaryDirectory() as directory:
           result.returncode == 0 and not (case.log_store / "agent-session-files-by-machine").exists()
           and case.index()[0]["standing_entry_count"] == 0 and case.anchors() == [], described(result))
 
-# A failure part way through a transcript leaves neither its entries nor its progress behind.
-with tempfile.TemporaryDirectory() as directory:
-    case = Case(directory)
-    path = case.transcript("ned-box", [human("first", "2026-10-22T00:00:00Z"), human("second", "2026-10-22T00:01:00Z")])
-    case.store_directory.mkdir(parents=True)
-    connection = program.open_store(case.store_directory / program.STORE_FILE_NAME)
-    repository = program.Repository(case.checkout)
+# A failure part way through a transcript or a walk-minutes file, inside run(), leaves neither its entries nor its
+# progress behind, and the run reports it.
+def run_with_add_entry_failing_at(case, failing_text):
     real_add_entry, calls = program.add_entry, []
 
-    def add_entry_failing_at_second(connection_, entry, tags_by_source):
+    def add_entry_failing(connection_, entry, tags_by_source):
         calls.append(entry["text"])
-        if entry["text"] == "second":
+        if entry["text"] == failing_text:
             raise sqlite3.OperationalError("disk I/O error")
         return real_add_entry(connection_, entry, tags_by_source)
 
-    program.add_entry = add_entry_failing_at_second
+    program.add_entry = add_entry_failing
+    stdout, stderr = io.StringIO(), io.StringIO()
     try:
-        with connection:
-            program.read_transcript(connection, "ned-box", path, repository, set())
-        raised = False
-    except sqlite3.OperationalError:
-        raised = True
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = program.run(case.log_store, case.agents, case.checkout)
     finally:
         program.add_entry = real_add_entry
-    check("a failure part way through a transcript rolls back its entries and its progress",
-          raised and calls == ["first", "second"]
-          and connection.execute("SELECT count(*) FROM entries").fetchone() == (0,)
-          and connection.execute("SELECT count(*) FROM source_files_read").fetchone() == (0,), calls)
-    connection.close()
+    return exit_code, stderr.getvalue(), calls
+
+
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    path = case.transcript("ned-box", [human("first", "2026-10-22T00:00:00Z"), human("second", "2026-10-22T00:01:00Z")])
+    exit_code, stderr, calls = run_with_add_entry_failing_at(case, "second")
+    check("a failure part way through a transcript, inside run(), rolls back its entries and its progress, and exits 1",
+          exit_code == 1 and f"FAILED: transcript {path}: disk I/O error" in stderr and calls == ["first", "second"]
+          and case.entries() == [] and case.query("SELECT count(*) FROM source_files_read") == [(0,)],
+          f"exit {exit_code}: {stderr} {calls}")
+
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    path = case.minutes("alpha-seat-walk-2026-10-28-minutes.md",
+                        ["First (user-ruled 2026-10-16).", "Second (user-ruled 2026-10-17)."])
+    exit_code, stderr, calls = run_with_add_entry_failing_at(case, "Second (user-ruled 2026-10-17).")
+    check("a failure part way through a walk-minutes file, inside run(), rolls back its entries and its progress, "
+          "and exits 1",
+          exit_code == 1 and f"FAILED: walk-minutes {path}: disk I/O error" in stderr and len(calls) == 2
+          and case.entries() == [] and case.query("SELECT count(*) FROM source_files_read") == [(0,)],
+          f"exit {exit_code}: {stderr} {calls}")
 
 # The index file cannot be written.
 with tempfile.TemporaryDirectory() as directory:
@@ -592,6 +608,28 @@ with tempfile.TemporaryDirectory() as directory:
     case.run()
     check("a text of exactly 30 words is in the index file whole, without the mark of a cut",
           case.index()[1][0]["text"] == thirty, case.index())
+
+# A path at the end of a sentence.
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    case.transcript("ned-box", [human("Edit scripts/tool-one.py.", "2026-10-26T00:00:00Z"),
+                                human("Is it nc-systems/handoff/handoff-supervisor.py?", "2026-10-26T00:01:00Z")])
+    case.run()
+    check("a file named at the end of a sentence is tagged without the sentence's full stop or question mark",
+          case.tags("Edit scripts/tool-one.py.") == {"scripts/tool-one.py"}
+          and "nc-systems/handoff/handoff-supervisor.py" in case.tags("Is it nc-systems/handoff/handoff-supervisor.py?"),
+          f"{case.tags('Edit scripts/tool-one.py.')} {case.tags('Is it nc-systems/handoff/handoff-supervisor.py?')}")
+
+# A prompt crash recovery wrote reaches the transcript with human origin; it is not the user's words.
+recover = load("recover_crashed_seats", Path(__file__).with_name("recover-crashed-seats.py"))
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    resume_prompt = recover.write_resume_prompt(case.top / "handoffs", "alpha-seat").read_text()
+    case.transcript("ned-box", [human(resume_prompt, "2026-10-27T00:00:00Z"),
+                                human("my own words", "2026-10-27T00:01:00Z")])
+    case.run()
+    check("crash recovery's resume prompt is not stored as the user's words",
+          [entry[1] for entry in case.entries()] == ["my own words"], case.entries())
 
 print(f"{'FAILED' if failures else 'all cases passed'}: {len(failures)} failure(s)")
 sys.exit(1 if failures else 0)

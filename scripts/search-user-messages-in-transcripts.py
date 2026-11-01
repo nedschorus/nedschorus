@@ -39,6 +39,15 @@ REINCARNATION_OPENER_MARKER = "the dialog from the session you are continuing"
 REINCARNATION_OPENER_PATTERN = re.compile(
     r"Read .+? — (?:it is )?" + re.escape(REINCARNATION_OPENER_MARKER))
 IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER = "the previous session's conversation-tail is unavailable"
+# The launch prompts of handoff-supervisor.py and recover-crashed-seats.py reach the transcript with
+# human origin; the test feeds each program's own prompt through written_by_a_program.
+LAUNCH_PROMPT_MARKERS = (
+    "This session was resumed by crash recovery (nedschorus#120)",
+    "This seat's supervisor recorded the exit of its last session",
+    "This session was launched by nc-systems/handoff/handoff-supervisor.py",
+    "this next-step and the repository are your whole context",
+)
+CONVERSATION_TAIL_IGNITION_PATTERN = re.compile(r"Read .+? — it is the dialog from this seat's last recorded session")
 
 
 def written_by_a_program(record, text):
@@ -50,7 +59,9 @@ def written_by_a_program(record, text):
         return True
     return (text.startswith(COMPACTION_SUMMARY_OPENING)
             or REINCARNATION_OPENER_PATTERN.match(text) is not None
-            or IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER in text)
+            or CONVERSATION_TAIL_IGNITION_PATTERN.match(text) is not None
+            or IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER in text
+            or any(marker in text for marker in LAUNCH_PROMPT_MARKERS))
 
 
 def typed_by_user(record):

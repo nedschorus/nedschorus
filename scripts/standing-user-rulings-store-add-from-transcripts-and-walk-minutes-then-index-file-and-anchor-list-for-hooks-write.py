@@ -220,14 +220,16 @@ PULL_REQUEST_REFERENCE = re.compile(
     r"|github\.com/nedschorus/nedschorus/pull/(\d{1,5})\b", re.IGNORECASE)
 TASK_REFERENCE = re.compile(r"(?:\b([a-z][a-z0-9-]*[a-z0-9])(?:'s|’s)\s+)?\btasks?\s+#(\d{1,5})\b",
                             re.IGNORECASE)
-PATH_TOKEN = re.compile(r"[\w.~@-]*(?:/[\w.@-]+)+/?")
+# Each part ends on a word character, @ or -, so a path at a sentence's end leaves its full stop out.
+PATH_TOKEN = re.compile(r"[\w.~@-]*(?:/[\w.@-]*[\w@-])+/?")
 NEDSCHORUS_SESSION_DIRECTORY = re.compile(
     r"^/(?:home/nedlern|Users/el)/(?:agents/(?P<seat>[^/]+)|Projects/nedschorus)(?:/|$)")
 AGENT_SEAT_DIRECTORY = re.compile(r"/agents/(?P<seat>[^/]+)/docs/walk/[^/]+$")
 # The answer line walk-me-through's check program writes (its CHECK_MINUTES); "deferred" has no such line.
 ANSWER_LINE_WITH_TIME = re.compile(
-    r"^(?P<item>items? .+?): the user answered (?P<answered>.+?)(?: #approved_(?:obvious|after_advisor))? "
-    r"\((?P<when>\d{4}-\d\d-\d\d \d\d:\d\d)\), which makes its change\. Fast reads:$", re.IGNORECASE)
+    r"^(?P<item>items? .+?): the user answered (?P<answered>.+?)(?: #approved_(?:obvious|after_advisor))?"
+    r"(?: #case_against_[a-z_]+)? \((?P<when>\d{4}-\d\d-\d\d \d\d:\d\d)\)(?: in his words \".*\")?, "
+    r"which makes its change\. Fast reads:$", re.IGNORECASE)
 USER_RULED_CITATION = re.compile(r"\buser-ruled (?P<date>\d{4}-\d\d-\d\d)(?P<time>T\d\d:\d\d(?::\d\d)?Z)?")
 
 # Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.

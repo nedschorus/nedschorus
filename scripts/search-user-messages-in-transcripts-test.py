@@ -202,6 +202,26 @@ _recover_spec = importlib.util.spec_from_file_location(
     "recover_crashed_seats", SEARCH_SCRIPT.with_name("recover-crashed-seats.py"))
 recover_module = importlib.util.module_from_spec(_recover_spec)
 _recover_spec.loader.exec_module(recover_module)
+with tempfile.TemporaryDirectory() as directory:
+    handoffs = Path(directory)
+    launch_prompts = [
+        recover_module.write_resume_prompt(handoffs, "alpha").read_text(),
+        recover_module.write_resume_prompt(handoffs, "alpha", unreplied_successor=True).read_text(),
+        recover_module.write_first_prompt_after_recorded_exit(handoffs, "alpha", by_hand=True, resuming=True).read_text(),
+        recover_module.write_first_prompt_after_recorded_exit(handoffs, "alpha", by_hand=False, resuming=True).read_text(),
+        recover_module.write_first_prompt_after_recorded_exit(handoffs, "alpha", by_hand=False, resuming=False).read_text(),
+        "Read /h/.claude/handoffs/alpha-conversation-tail.md — it is the dialog from this seat's last recorded "
+        "session; the session that followed it ended without writing a handoff (crash recovery, nedschorus#120).",
+        "Next step.\n\n(Recovered at login: no conversation-tail was found in /h or in any other folder under /p/; "
+        "this next-step and the repository are your whole context.)",
+        "Do the work.\n\nThis session was launched by nc-systems/handoff/handoff-supervisor.py, which watches this "
+        "seat and composed this prompt — read it if you need to investigate the handoff mechanism.",
+    ]
+    missed = [prompt[:60] for prompt in launch_prompts
+              if not search_module.written_by_a_program({"origin": {"kind": "human"}}, prompt)]
+    check("every launch prompt crash recovery and the handoff-supervisor write is recognized as a program's",
+          missed == [], missed)
+
 check("the handoff opener constants equal recover-crashed-seats.py's",
       (search_module.REINCARNATION_OPENER_MARKER, search_module.REINCARNATION_OPENER_PATTERN.pattern,
        search_module.IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER)
