@@ -36,7 +36,7 @@ infinite ways to do that."
 A pre-emptive gate screens **tool calls**. This one checks the **file**, so it
 catches bash heredocs, `sed`, Python scripts, and subagents alike.
 
-Measured 2026-09-13, which is what settled it. `.claude/hooks/instruction-file-guard.py`
+Measured 2026-09-13, which is what settled it. `.claude/guard-hooks/instruction-file-guard.py`
 is PreToolUse on `Edit|Write|NotebookEdit`. Two payloads naming the same
 `CLAUDE.md` were fed to it: the `Edit` payload exited 2 (denied, with the
 walk-approval message), the `Bash` heredoc payload exited 0 (allowed). Two

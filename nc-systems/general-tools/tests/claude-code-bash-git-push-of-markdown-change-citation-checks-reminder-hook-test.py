@@ -312,7 +312,7 @@ def main():
               len(registered) == 1 and isinstance(registered[0], (int, float))
               and registered[0] > hook.GIT_BUDGET_SECONDS, repr(registered))
 
-        # A copy without scripts/ beside it cannot load the force-push guard's file.
+        # A copy without .claude/guard-hooks/ beside it cannot load the force-push guard's file.
         copy = root / "copy" / "nc-systems" / "general-tools" / HOOK_SCRIPT.name
         copy.parent.mkdir(parents=True)
         shutil.copy(HOOK_SCRIPT, copy)

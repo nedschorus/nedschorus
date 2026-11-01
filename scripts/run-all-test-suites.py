@@ -542,7 +542,7 @@ which calls see no file and which commands run on another repository.
 The files that differ are `git diff --no-renames COMMIT` against the
 checkout's files, plus untracked files git does not ignore, as added. Every
 suite runs when one of them is this program (it holds the recorder), under
-.claude/hooks/, or .claude/settings.json. Otherwise a suite runs when: it
+.claude/hooks/ or .claude/guard-hooks/, or .claude/settings.json. Otherwise a suite runs when: it
 has no recording on this machine, or one made by an older version of this
 program; its recorded run did not exit 0, since a run that failed or was
 killed recorded only what it read before it stopped; its recorded run
@@ -937,7 +937,7 @@ PYTHON_INPUT_RECORDER_METHOD = "python-audit-hook"
 STRACE_INPUT_RECORDER_METHOD = "strace"
 # The runner, hooks and settings can affect every suite or session a suite starts.
 EVERY_SUITE_RUNS_WHEN_THESE_CHANGE = (
-    "scripts/run-all-test-suites.py", ".claude/hooks/", ".claude/settings.json")
+    "scripts/run-all-test-suites.py", ".claude/hooks/", ".claude/guard-hooks/", ".claude/settings.json")
 # Object-store content reads evade recorders; only metadata-only commands belong here.
 # status is excluded because stale timestamps can make it read working files.
 GIT_COMMANDS_THAT_ONLY_LIST = frozenset((

@@ -63,7 +63,7 @@ One pending file per writing session:
 
 **The `pending/` directory is required, not decoration.** As written on 2026-08-31, the reason was this. `prune_old_generations` globs `<seat>-handoff-*.md`. A new file of that shape placed beside the old ones would match the glob, and an old handoff-supervisor would delete a live pending handoff as a stale generation. A subdirectory puts the new files outside every existing glob, and it makes "presence means waiting" literal. The next section says how far that reason still holds.
 
-The directory needs no permission work. `.claude/hooks/instruction-file-guard.py` has carved `.claude/handoffs/` out of its protection since PR [instruction-file-guard: carve out .claude/handoffs/](https://github.com/nedschorus/nedschorus/pull/215), merged 2026-08-31, and the carve-out covers subdirectories. One limit: the guard checks its protected file names before any carve-out, so a `CLAUDE.md` or `CLAUDE.local.md` anywhere beneath `.claude/handoffs/` is still refused. `.claude/hooks/instruction-file-guard-test.py` pins that case.
+The directory needs no permission work. `.claude/guard-hooks/instruction-file-guard.py` has carved `.claude/handoffs/` out of its protection since PR [instruction-file-guard: carve out .claude/handoffs/](https://github.com/nedschorus/nedschorus/pull/215), merged 2026-08-31, and the carve-out covers subdirectories. One limit: the guard checks its protected file names before any carve-out, so a `CLAUDE.md` or `CLAUDE.local.md` anywhere beneath `.claude/handoffs/` is still refused. `.claude/guard-hooks/instruction-file-guard-test.py` pins that case.
 
 ### A recorded correction: the double write
 

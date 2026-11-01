@@ -19,7 +19,7 @@ A file in a queue directory is named as it will be in its final location, apart 
   - **Location:** `nc-systems/skills/<skill name>/`, where `<skill name>` is the skill's name without its slash, such as `cold-read`
   - **Naming:** `<skill name>-<prompt name>-prompt.md`, where <prompt name> says what the prompt asks for, such as `cold-read-defect-hunt-prompt.md`.
 - **Hook**
-  - **Location:** `.claude/hooks/` for a hook that guards which files or GitHub issues an agent may change; every other hook in its system's directory, `nc-systems/<system-name>/`, or in `nc-systems/general-tools/` when it belongs to no system
+  - **Location:** `.claude/guard-hooks/` for a guard, a hook that refuses a tool call before it runs; every other hook in its system's directory, `nc-systems/<system-name>/`, or in `nc-systems/general-tools/` when it belongs to no system
   - **Naming:** `<what it does>.py`, such as `instruction-file-guard.py` or `ghi-issue-write-hand-typed-gh-command-refusal.py`
 - **Tests, test-designs, design-contracts**
   - **Location:** a test goes in a `tests/` subdirectory when the code sits in a directory of its own, such as `nc-systems/main-gatekeeper/tests/` or `scripts/design-to-main/tests/`; beside the script it tests when the script sits loose in `scripts/` or `.claude/hooks/`, for example `scripts/dangling-path-citation-check-test.py`; a program in `nc-systems/general-tools/` has its test in `nc-systems/general-tools/tests/`.
@@ -63,7 +63,7 @@ The user reviews each change to these files that `docs/nedschorus-wiki/nedschoru
 - every file of standing instructions, whose name ends `-prompt.md` or `-instructions.md`;
 - `CLAUDE.md`, any `CLAUDE.local.md`, and everything under `.claude/` except its working space: `worktrees/`, `jobs/` and `handoffs/`.
 
-The list does not reach the places for documents pending approval, where agents write them freely: any `queue/` directory, such as `docs/agents/queue/`, `docs/issues/queue/` or `docs/nedschorus-wiki/queue/`, `nc-queue/`, and `docs/drafts/`. Test-designs and design-contracts are not on the list, wherever they sit, `nc-systems/skills/` included: design-to-main brings them to the user. Nor are the frozen copies inside `cold-read-records/`, `md-review-records/` and `sanity-check-records/`. `.claude/hooks/instruction-file-guard.py` enforces the list for an agent's file-editing tools; a shell command, `git mv` or a program is not checked.
+The list does not reach the places for documents pending approval, where agents write them freely: any `queue/` directory, such as `docs/agents/queue/`, `docs/issues/queue/` or `docs/nedschorus-wiki/queue/`, `nc-queue/`, and `docs/drafts/`. Test-designs and design-contracts are not on the list, wherever they sit, `nc-systems/skills/` included: design-to-main brings them to the user. Nor are the frozen copies inside `cold-read-records/`, `md-review-records/` and `sanity-check-records/`. `.claude/guard-hooks/instruction-file-guard.py` enforces the list for an agent's file-editing tools; a shell command, `git mv` or a program is not checked.
 
 ## Filename suffixes
 

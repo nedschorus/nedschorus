@@ -11,7 +11,7 @@ Cases named F1..F11 are regressions from the 2026-08-17 PR #82 review round:
 the original fixture modeled the guard's idea of commands, not the commands
 the field writes. Each such case uses the review's command verbatim.
 
-Run: python3 scripts/synthetic-keystroke-guard-hook-test.py
+Run: python3 .claude/guard-hooks/synthetic-keystroke-guard-hook-test.py
 """
 
 import importlib.util
@@ -482,7 +482,7 @@ check("an unverifiable target is denied, fail-closed",
       reason is not None and "could not verify" in reason, reason)
 check("the unverifiable denial carries the check command and the override",
       reason is not None
-      and "Check the target with: python3 scripts/synthetic-keystroke-guard-hook.py "
+      and "Check the target with: python3 .claude/guard-hooks/synthetic-keystroke-guard-hook.py "
           "--is-target-detached gatekeeper --ssh-host ned" in reason
       and "CLAUDE_VERIFIED_DETACHED=1" in reason and "session_attached" not in reason,
       reason)

@@ -24,7 +24,7 @@ from pathlib import Path
 
 _shell_reader_spec = importlib.util.spec_from_file_location(
     "shell_command_tree_sitter_bash_reader_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
     / "shell-command-tree-sitter-bash-reader-common.py")
 shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
 _shell_reader_spec.loader.exec_module(shell_reader)

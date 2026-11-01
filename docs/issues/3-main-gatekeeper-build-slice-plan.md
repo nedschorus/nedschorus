@@ -50,7 +50,7 @@ the instruction-file class
 (issue [Review-system design requirements learned from the legacy gate — dormant until a class of work first requires review](https://github.com/nedschorus/nedschorus/issues/31), guard
 1). It needs an approval-evidence format that does not exist yet, and the
 in-session tamper guard
-([`.claude/hooks/instruction-file-guard.py`](../../.claude/hooks/instruction-file-guard.py))
+([`.claude/guard-hooks/instruction-file-guard.py`](../../.claude/guard-hooks/instruction-file-guard.py))
 covers the same surface today. It became slice 6 when that format was
 designed — and slice 6 is **NOT BUILT and will not be**, user-ruled
 2026-08-17.
