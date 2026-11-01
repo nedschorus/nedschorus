@@ -90,6 +90,7 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 - **reference-checkout** — the main worktree of a machine's clone of the repository, `~/Projects/nedschorus` on the Mac and on ned-box, which stays on `main`; the git hooks of every checkout of that clone run from its `scripts/git-client-side-hooks/`, and no agent works in it.
 - **reincarnate-seat** — the handoff-supervisor replacing an agent-session with a fresh one that continues from the session-handoff, usually when the agent-session's context runs low.
 - **retire-seat** — to end an agent-seat for good so its name can be freed or reused; distinct from pausing it. The steps are in `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`.
+- **ruling-agent** — the agent-seat on ned-box that keeps the user's user-rulings and his words in one store, and checks each approval-walk item against them before the item is shown.
 - **SDLC-term** — a standard term of software engineering or of another computing field, such as operating systems, networking or databases, used with its standard meaning, as `flock` is; `docs/nedschorus-wiki/nedschorus-sdlc-terms.md` lists those this project relies on.
 - **seat-branch** — the long-lived git branch of one agent-seat, named for the agent-seat, that the handoff-supervisor's launcher creates; its agent-sessions work on nc-topic-branches cut from main.
 - **seat-brief** — the `CLAUDE.local.md` at the root of an agent-seat's checkout, which git does not track: the file an agent-seat's occupant reads to learn its job.
