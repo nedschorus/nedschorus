@@ -382,10 +382,9 @@ def log_store_listed_record_directory_names_or_listing_failure_reason(host, reco
             return {entry.name for entry in directory.iterdir() if entry.is_dir()}, None
         except OSError as error:
             return None, f"listing {directory} failed: {error}"
-    # The store a remote host holds is on ned-box, whose find is GNU find.
     script = (f"if [ -d {shlex.quote(str(records_path))} ]; then find "
               f"{shlex.quote(str(records_path))} -mindepth 1 -maxdepth 1 -type d "
-              f"-printf '%f\\n'; fi")
+              f"-exec basename {{}} \\; ; fi")
     listed = subprocess.run(SSH_COMMAND + [host, script],
                             capture_output=True, text=True, check=False)
     if listed.returncode != 0:
