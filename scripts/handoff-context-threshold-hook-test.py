@@ -1049,6 +1049,71 @@ with tempfile.TemporaryDirectory() as workspace:
               result.returncode == 0 and not result.stderr.strip(),
               f"code {result.returncode}, stderr {result.stderr[:200]}")
 
+        # --- A deferral that a compaction pushed below the threshold ---------
+        # Without the deferred marker, every Stop after the compaction returns at
+        # the threshold check, so the promised handoff message never comes.
+        COMPACTED_PROBE_SESSION_ID = "handoff-threshold-hook-test-compacted-deferral-session"
+        compacted_marker_file = (
+            hook.HANDOFF_DIRECTORY / f"{COMPACTED_PROBE_SESSION_ID}-handoff-asked")
+        compacted_deferred_marker_file = (
+            hook.HANDOFF_DIRECTORY / f"{COMPACTED_PROBE_SESSION_ID}-handoff-deferred")
+        compacted_payload = {"session_id": COMPACTED_PROBE_SESSION_ID}
+        compacted_finished = transcript_of(workspace, "compacted-deferral-finished.jsonl", [
+            usage_record(100_000, cache_read=130_000),  # 23%
+            subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool"),
+            subagent_completion_record("a2573a7737ae643dc"),
+        ])
+        try:
+            result = run_hook({**compacted_payload, "transcript_path": str(running)})
+            check("the compacted-deferral session defers first, at 55%",
+                  result.returncode == 2 and "handoff deferred" in result.stderr
+                  and compacted_deferred_marker_file.exists(),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+
+            result = run_hook({**compacted_payload, "transcript_path": str(below_threshold)})
+            check("below the threshold after a deferral, a running subagent still holds the handoff",
+                  result.returncode == 0 and not result.stderr.strip()
+                  and not compacted_marker_file.exists(),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+
+            result = run_hook({**compacted_payload, "transcript_path": str(compacted_finished)})
+            check("below the threshold after a deferral, the handoff fires once nothing runs",
+                  result.returncode == 2 and is_handoff_instruction(result.stderr),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+            check("firing below the threshold after a deferral writes the fired marker",
+                  compacted_marker_file.exists(), str(compacted_marker_file))
+
+            result = run_hook({**compacted_payload, "transcript_path": str(compacted_finished)})
+            check("the fired marker still stops a repeat below the threshold",
+                  result.returncode == 0 and not result.stderr.strip(),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+            compacted_marker_file.unlink(missing_ok=True)
+            compacted_deferred_marker_file.unlink(missing_ok=True)
+
+            # The unknown-count deferral: the transcript first could not be read,
+            # then the context fell below the threshold.
+            code, stderr = run_hook_in_process(
+                {**compacted_payload, "transcript_path": str(running)},
+                scan_replacement=scan_that_cannot_read)
+            check("the compacted-deferral session defers with an unknown count first",
+                  code == 2 and "unknown" in stderr and compacted_deferred_marker_file.exists(),
+                  f"code {code}, stderr {stderr[:200]}")
+            code, stderr = run_hook_in_process(
+                {**compacted_payload, "transcript_path": str(compacted_finished)},
+                scan_replacement=scan_that_cannot_read)
+            check("below the threshold an unreadable transcript still holds an unknown-count deferral",
+                  code == 0 and not stderr.strip() and not compacted_marker_file.exists(),
+                  f"code {code}, stderr {stderr[:200]}")
+            code, stderr = run_hook_in_process(
+                {**compacted_payload, "transcript_path": str(compacted_finished)})
+            check("below the threshold an unknown-count deferral fires once the transcript reads "
+                  "fully and nothing runs",
+                  code == 2 and is_handoff_instruction(stderr) and compacted_marker_file.exists(),
+                  f"code {code}, stderr {stderr[:200]}")
+        finally:
+            compacted_marker_file.unlink(missing_ok=True)
+            compacted_deferred_marker_file.unlink(missing_ok=True)
+
         # --- The deferral while a background task runs (user-ruled 2026-09-14) --
         # The same session at four moments: the grid launched ten minutes ago,
         # the grid finished, the grid launched two hours ago (presumed stuck or
