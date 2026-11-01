@@ -631,5 +631,62 @@ with tempfile.TemporaryDirectory() as directory:
     check("crash recovery's resume prompt is not stored as the user's words",
           [entry[1] for entry in case.entries()] == ["my own words"], case.entries())
 
+# A prompt stored before the reader knew it: the handoff-supervisor's own no-handoff prompt, put in the store as
+# an earlier run did, with a tag, is deleted, tag and full-text row included; the user's words stay.
+supervisor = program.transcript_reader.handoff_supervisor
+
+
+def store_with_an_earlier_runs_entries(case, texts):
+    case.transcript("ned-box", [human("kept words", "2026-10-28T00:00:00Z")])
+    case.run()
+    connection = sqlite3.connect(str(case.store_directory / program.STORE_FILE_NAME))
+    with connection:
+        for number, text in enumerate(texts):
+            cursor = connection.execute(
+                "INSERT INTO entries (kind, said_at_utc, text, source_path, source_line, added_at_utc, added_by, "
+                "duplicate_key) VALUES ('user-words', ?, ?, 'p', 1, 'a', 'b', ?)",
+                (f"2026-08-24T23:5{number}:58Z", text, f"key-{number}"))
+            connection.execute("INSERT INTO entry_tags (entry_id, tag, tag_source) VALUES (?, 'GHI 1', 'user-words')",
+                               (cursor.lastrowid,))
+    connection.close()
+
+
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    prompt = (supervisor.NO_HANDOFF_YET_PROMPT_TEMPLATE.format(agent="MD-skills")
+              + "\n\nLeftover work-snapshots: 1 copy(ies) of uncommitted work")
+    store_with_an_earlier_runs_entries(case, [prompt])
+    result = case.run()
+    check("a stored entry the reader now tells is the handoff-supervisor's prompt is deleted with its tags and its "
+          "full-text row, and the run says how many it deleted",
+          result.returncode == 0 and [entry[1] for entry in case.entries()] == ["kept words"]
+          and case.query("SELECT count(*) FROM entry_tags") == [(0,)]
+          and case.query("SELECT rowid FROM entries_full_text WHERE entries_full_text MATCH 'handoff'") == []
+          and "deleted 1 user-words entries that were a program's prompt" in result.stdout, described(result))
+
+# The delete fails inside run(): the run reports it and exits 1, and the store keeps every entry.
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    prompt = supervisor.NO_HANDOFF_YET_PROMPT_TEMPLATE.format(agent="MD-skills")
+    store_with_an_earlier_runs_entries(case, [prompt])
+    real_delete = program.delete_entries_written_by_a_program
+
+    def delete_failing(connection_):
+        real_delete(connection_)
+        raise sqlite3.OperationalError("disk I/O error")
+
+    program.delete_entries_written_by_a_program = delete_failing
+    stdout, stderr = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = program.run(case.log_store, case.agents, case.checkout)
+    finally:
+        program.delete_entries_written_by_a_program = real_delete
+    check("a delete that fails is reported FAILED, exit 1, and rolls back, leaving every entry in the store",
+          exit_code == 1
+          and "FAILED: deleting the entries that were a program's prompt: disk I/O error" in stderr.getvalue()
+          and [entry[1] for entry in case.entries()] == ["kept words", prompt],
+          f"exit {exit_code}: {stderr.getvalue()} {case.entries()}")
+
 print(f"{'FAILED' if failures else 'all cases passed'}: {len(failures)} failure(s)")
 sys.exit(1 if failures else 0)

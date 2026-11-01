@@ -10,9 +10,12 @@ A user turn that Claude Code marks with an origin other than human, or as meta,
 is not his: such turns carry other agents' messages, hook feedback and delivery
 notices. Neither is a turn of a `claude -p` agent-session, whose entrypoint is
 sdk-cli and whose prompts a program wrote, nor the summary Claude Code writes
-when it compacts a conversation, nor the opening prompt the handoff-supervisor
-gives a successor agent-session. Turns written before Claude Code recorded an
-origin are read by their text alone."""
+when it compacts a conversation, nor a prompt that the handoff-supervisor or
+crash recovery (scripts/recover-crashed-seats.py) starts or resumes an
+agent-session with, which this reader recognizes by those programs' own
+constants. A prompt an agent wrote and passed with --first-prompt-file, such as
+a new agent-seat's founding prompt, has no such text and is read as his. Turns
+written before Claude Code recorded an origin are read by their text alone."""
 
 import argparse
 import glob
@@ -30,24 +33,37 @@ _claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.u
 claude_code_session_transcript_lookup_and_text_search_common = importlib.util.module_from_spec(_claude_code_session_transcript_lookup_and_text_search_common_spec)
 _claude_code_session_transcript_lookup_and_text_search_common_spec.loader.exec_module(claude_code_session_transcript_lookup_and_text_search_common)
 
+# The programs that write the prompts a supervised agent-session starts or resumes with. Their own
+# constants recognize those prompts, so a prompt they add or reword cannot slip past this reader.
+_crash_recovery_spec = importlib.util.spec_from_file_location(
+    "recover_crashed_seats", Path(__file__).resolve().parent / "recover-crashed-seats.py")
+crash_recovery = importlib.util.module_from_spec(_crash_recovery_spec)
+_crash_recovery_spec.loader.exec_module(crash_recovery)
+handoff_supervisor = crash_recovery.supervisor
+
 DEFAULT_PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 WRAPPED_BLOCK = re.compile(r"\A\s*<[a-z-]+>.*</[a-z-]+>\s*\Z", re.DOTALL)
 PROGRAM_PROMPT_ENTRYPOINT = "sdk-cli"
 COMPACTION_SUMMARY_OPENING = "This session is being continued from a previous conversation"
-# Copies of scripts/recover-crashed-seats.py's constants; its test keeps them equal.
-REINCARNATION_OPENER_MARKER = "the dialog from the session you are continuing"
-REINCARNATION_OPENER_PATTERN = re.compile(
-    r"Read .+? — (?:it is )?" + re.escape(REINCARNATION_OPENER_MARKER))
-IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER = "the previous session's conversation-tail is unavailable"
-# The launch prompts of handoff-supervisor.py and recover-crashed-seats.py reach the transcript with
-# human origin; the test feeds each program's own prompt through written_by_a_program.
-LAUNCH_PROMPT_MARKERS = (
-    "This session was resumed by crash recovery (nedschorus#120)",
-    "This seat's supervisor recorded the exit of its last session",
-    "This session was launched by nc-systems/handoff/handoff-supervisor.py",
-    "this next-step and the repository are your whole context",
+NO_HANDOFF_YET_PROMPT_PATTERN = re.compile(
+    re.escape(handoff_supervisor.NO_HANDOFF_YET_PROMPT_TEMPLATE).replace(re.escape("{agent}"), ".+?"))
+CONVERSATION_TAIL_IGNITION_PATTERN = re.compile(
+    r"Read .+? — " + re.escape(crash_recovery.CONVERSATION_TAIL_IGNITION_MARKER))
+# Each phrase is inside every prompt of one kind, wherever it falls in that prompt.
+LAUNCH_PROMPT_PHRASES = (
+    crash_recovery.IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER,
+    crash_recovery.FIRST_PROMPT_AFTER_RECORDED_EXIT_MARKER,
 )
-CONVERSATION_TAIL_IGNITION_PATTERN = re.compile(r"Read .+? — it is the dialog from this seat's last recorded session")
+
+
+def text_written_by_a_program(text):
+    """Whether a user turn's text is a compaction summary or a prompt the handoff-supervisor or crash recovery wrote."""
+    return (text.startswith(COMPACTION_SUMMARY_OPENING)
+            or text.startswith(handoff_supervisor.CRASH_RECOVERY_RESUME_PROMPT_OPENING)
+            or NO_HANDOFF_YET_PROMPT_PATTERN.match(text) is not None
+            or crash_recovery.REINCARNATION_OPENER_PATTERN.match(text) is not None
+            or CONVERSATION_TAIL_IGNITION_PATTERN.match(text) is not None
+            or any(phrase in text for phrase in LAUNCH_PROMPT_PHRASES))
 
 
 def written_by_a_program(record, text):
@@ -57,11 +73,7 @@ def written_by_a_program(record, text):
     origin = record.get("origin")
     if "origin" in record and (not isinstance(origin, dict) or origin.get("kind") != "human"):
         return True
-    return (text.startswith(COMPACTION_SUMMARY_OPENING)
-            or REINCARNATION_OPENER_PATTERN.match(text) is not None
-            or CONVERSATION_TAIL_IGNITION_PATTERN.match(text) is not None
-            or IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER in text
-            or any(marker in text for marker in LAUNCH_PROMPT_MARKERS))
+    return text_written_by_a_program(text)
 
 
 def typed_by_user(record):

@@ -40,7 +40,9 @@ WHAT IT STORES. One entry per message of his, kind user-words, with its UTC time
 text of the agent's messages since his previous message (the agent message he was answering), at most
 AGENT_MESSAGE_ANSWERED_KEPT_CHARACTERS of its end, and its link, the transcript's path in the log-store and
 the line number. One entry per walk-minutes user-ruling line, kind walk-minutes-user-ruling, linked to its
-walk-minutes file and line. Every entry is added as standing; nothing is changed or deleted. Pairs are not
+walk-minutes file and line. Every entry is added as standing, and its text is never edited. Each run deletes, with its
+tags, every user-words entry whose text the transcript reader now tells is a program's prompt, so a
+prompt stored before the reader knew it leaves the store once the reader learns it. Pairs are not
 made: the design links two entries as a pair only when ruling-agent's prompt judges that they conflict, and
 that prompt is part 2, so entry_pairs stays empty, ready, with its unreviewed state.
 
@@ -67,7 +69,8 @@ from being added twice.
 
 THE INDEX FILE AND THE ANCHOR LIST, written from the store after every run. The index file is JSON Lines:
 its first line {"index_built_at_utc": ..., "standing_entry_count": ...}; then one line per standing entry,
-newest first, with its id ("entry-<number>", never reused), kind, said_at_utc, link, tags, anchors and
+newest first, with its id ("entry-<number>", not reused unless the newest entry is the one deleted), kind,
+said_at_utc, link, tags, anchors and
 text, the text cut to its first INDEX_FILE_TEXT_WORDS words with "…" appended when cut (the full text is in
 the store). The anchor list holds one anchor per line, sorted, every anchor of an entry in the index file.
 An anchor is a literal string a hook finds in a tool's file path: "/<path>" for a tagged repository file,
@@ -84,9 +87,9 @@ run at all: the store cannot be opened, or origin/main cannot be read in the rep
 tags are fixed when an entry is added and would be lost; 3 when another run holds the lock, which is
 expected when a run outlasts the minute between two runs.
 
-WHAT IT DOES NOT HANDLE. A message of his that Claude Code recorded before it wrote an origin on user turns,
-and that a program wrote, such as an early launch prompt, is stored as his words: TurnReader can tell such
-turns only by their text. Words he typed only on the Mac reach the store once mirrored. A tag is only as
+WHAT IT DOES NOT HANDLE. A prompt an agent wrote and passed with --first-prompt-file, such as a new
+agent-seat's founding prompt, is stored as his words: TurnReader knows only the prompts the handoff-supervisor
+and crash recovery write. Words he typed only on the Mac reach the store once mirrored. A tag is only as
 good as the name matched: a GHI named without "GHI", "issue" or a link, or a system named without its
 path, is missed.
 """
@@ -201,6 +204,10 @@ CREATE TRIGGER IF NOT EXISTS entries_full_text_after_insert AFTER INSERT ON entr
     INSERT INTO entries_full_text (rowid, text, agent_message_answered)
     VALUES (new.entry_id, new.text, new.agent_message_answered);
 END;
+CREATE TRIGGER IF NOT EXISTS entries_full_text_after_delete AFTER DELETE ON entries BEGIN
+    INSERT INTO entries_full_text (entries_full_text, rowid, text, agent_message_answered)
+    VALUES ('delete', old.entry_id, old.text, old.agent_message_answered);
+END;
 CREATE TRIGGER IF NOT EXISTS entries_full_text_after_text_update
 AFTER UPDATE OF text, agent_message_answered ON entries BEGIN
     INSERT INTO entries_full_text (entries_full_text, rowid, text, agent_message_answered)
@@ -272,7 +279,8 @@ LOCK_HELD_LINE = ("standing-user-rulings index program: another run holds {lock}
                   "the next run reads what this one would have. No action is needed: the lock ends with the run that "
                   "holds it, even a run that is killed.")
 SUMMARY_LINE = ("standing-user-rulings index program: added {user_words} user-words and {walk} "
-                "walk-minutes-user-ruling entries; index file {index} holds {entries} standing entries "
+                "walk-minutes-user-ruling entries; deleted {deleted} user-words entries that were a program's "
+                "prompt; index file {index} holds {entries} standing entries "
                 "({index_bytes} bytes); anchor list {anchors_path} holds {anchors} anchors ({anchor_bytes} bytes)")
 
 
@@ -419,6 +427,16 @@ def open_store(store_path):
 
 def duplicate_key(*parts):
     return hashlib.sha256("\0".join(parts).encode()).hexdigest()
+
+
+def delete_entries_written_by_a_program(connection):
+    """Delete the user-words entries whose text the reader tells is a program's prompt; return how many."""
+    entry_ids = [(entry_id,) for entry_id, text in connection.execute(
+        "SELECT entry_id, text FROM entries WHERE kind = ?", (KIND_USER_WORDS,))
+        if transcript_reader.text_written_by_a_program(text)]
+    connection.executemany("DELETE FROM entry_tags WHERE entry_id = ?", entry_ids)
+    connection.executemany("DELETE FROM entries WHERE entry_id = ?", entry_ids)
+    return len(entry_ids)
 
 
 def add_entry(connection, entry, tags_by_source):
@@ -646,6 +664,13 @@ def run(log_store, agents_directory, repository_checkout):
                     user_words_added += read_transcript(connection, machine, path, repository, known_seats)
             except (OSError, sqlite3.Error) as error:
                 source_failures.append(FAILED_LINE.format(what=f"transcript {path}", error=error))
+    deleted = 0
+    try:
+        with connection:
+            deleted = delete_entries_written_by_a_program(connection)
+    except sqlite3.Error as error:
+        source_failures.append(FAILED_LINE.format(what="deleting the entries that were a program's prompt",
+                                                  error=error))
     minutes_paths = (sorted(agents_directory.glob(f"*/docs/walk/{WALK_MINUTES_GLOB}"))
                      + sorted((log_store / SHIPPED_WALK_DIRECTORY_NAME).glob(WALK_MINUTES_GLOB)))
     for path in minutes_paths:
@@ -677,7 +702,7 @@ def run(log_store, agents_directory, repository_checkout):
         print(line, file=sys.stderr)
     if output_failures:
         print("\n".join(OUTPUT_FAILED_INSTRUCTIONS), file=sys.stderr)
-    print(SUMMARY_LINE.format(user_words=user_words_added, walk=walk_added, index=index_path,
+    print(SUMMARY_LINE.format(user_words=user_words_added, walk=walk_added, deleted=deleted, index=index_path,
                               entries=len(lines) - 1, index_bytes=index_bytes, anchors_path=anchor_path,
                               anchors=len(anchors), anchor_bytes=anchor_bytes))
     return EXIT_SOURCE_OR_OUTPUT_FAILED if failures else EXIT_OK

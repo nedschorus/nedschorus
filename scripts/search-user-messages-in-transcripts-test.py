@@ -198,35 +198,45 @@ with tempfile.TemporaryDirectory() as directory:
     check("the same words typed right after a queued message, with no interrupt between, are a second message",
           texts == ["start", "y", "y"], texts)
 
-_recover_spec = importlib.util.spec_from_file_location(
-    "recover_crashed_seats", SEARCH_SCRIPT.with_name("recover-crashed-seats.py"))
-recover_module = importlib.util.module_from_spec(_recover_spec)
-_recover_spec.loader.exec_module(recover_module)
+# Each prompt below comes from the program that writes it, so a prompt it adds or rewords is tested here.
+recover_module = search_module.crash_recovery
+supervisor_module = search_module.handoff_supervisor
 with tempfile.TemporaryDirectory() as directory:
     handoffs = Path(directory)
+    no_handoff_yet = supervisor_module.NO_HANDOFF_YET_PROMPT_TEMPLATE.format(agent="MD-skills")
     launch_prompts = [
         recover_module.write_resume_prompt(handoffs, "alpha").read_text(),
         recover_module.write_resume_prompt(handoffs, "alpha", unreplied_successor=True).read_text(),
         recover_module.write_first_prompt_after_recorded_exit(handoffs, "alpha", by_hand=True, resuming=True).read_text(),
         recover_module.write_first_prompt_after_recorded_exit(handoffs, "alpha", by_hand=False, resuming=True).read_text(),
         recover_module.write_first_prompt_after_recorded_exit(handoffs, "alpha", by_hand=False, resuming=False).read_text(),
-        "Read /h/.claude/handoffs/alpha-conversation-tail.md — it is the dialog from this seat's last recorded "
-        "session; the session that followed it ended without writing a handoff (crash recovery, nedschorus#120).",
-        "Next step.\n\n(Recovered at login: no conversation-tail was found in /h or in any other folder under /p/; "
-        "this next-step and the repository are your whole context.)",
-        "Do the work.\n\nThis session was launched by nc-systems/handoff/handoff-supervisor.py, which watches this "
-        "seat and composed this prompt — read it if you need to investigate the handoff mechanism.",
+        recover_module.conversation_tail_ignition_prompt(handoffs / "alpha-conversation-tail.md"),
+        supervisor_module.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF,
+        no_handoff_yet,
+        no_handoff_yet + "\n\nLeftover work-snapshots: 1 copy(ies) of uncommitted work left by an agent of this "
+        "agent-seat whose `claude` process is gone, and no longer in its worktree:",
+        supervisor_module.build_ignition_prompt(
+            handoffs / "alpha-dialog-0003.md",
+            {"next-step": "Do the work.", "written-at": "2026-11-01T19:27:02Z"}),
+        supervisor_module.IgnitionPlanWithoutConversationTail(next_step="Do the work.").compose(""),
+        supervisor_module.IgnitionPlanWithoutConversationTail(
+            next_step="Do the work.", occasion="login", unextracted_session_id="s1",
+            unextracted_transcript_path=handoffs / "s1.jsonl").compose(""),
+        supervisor_module.IgnitionPlanWithoutConversationTail(
+            next_step="Do the work.", unextracted_session_id="s1",
+            unextracted_transcript_paths_in_several_folders=(handoffs / "a.jsonl", handoffs / "b.jsonl")).compose(""),
+        supervisor_module.IgnitionPlanWithoutConversationTail(
+            next_step="Do the work.", unextracted_session_id="s1",
+            unextracted_transcript_expected_path=handoffs / "s1.jsonl").compose(""),
     ]
     missed = [prompt[:60] for prompt in launch_prompts
               if not search_module.written_by_a_program({"origin": {"kind": "human"}}, prompt)]
     check("every launch prompt crash recovery and the handoff-supervisor write is recognized as a program's",
           missed == [], missed)
 
-check("the handoff opener constants equal recover-crashed-seats.py's",
-      (search_module.REINCARNATION_OPENER_MARKER, search_module.REINCARNATION_OPENER_PATTERN.pattern,
-       search_module.IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER)
-      == (recover_module.REINCARNATION_OPENER_MARKER, recover_module.REINCARNATION_OPENER_PATTERN.pattern,
-          recover_module.IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER))
+quoting = "I said: You are MD-skills. No handoff exists yet; ask what to work on."
+check("the user's words that quote the no-handoff prompt after his own opening are still his",
+      not search_module.written_by_a_program({"origin": {"kind": "human"}}, quoting))
 
 with tempfile.TemporaryDirectory() as directory:
     path = write_transcript(directory, [
