@@ -62,13 +62,15 @@ with the design:
      cold-read-triage.md; an older record, and a sanity-check record, names
      it triage.md. The shipper replaces whichever of the two the record
      holds; when it holds both, it replaces cold-read-triage.md and leaves
-     triage.md as it is. The two names are two files to the store: when the
-     store holds the triage file under one name and the record holds it only
-     under the other, the store holds a file the record lacks, so rule 2
-     refuses the whole record and copies nothing. Its line offers to rename
-     the directory, but the record is the same read: give the record's
-     triage file the name the store holds it under instead, then ship
-     again. It is the one file in a
+     triage.md as it is. The store treats the two names as two separate
+     files. When the store holds the triage file under one name and the
+     record holds it only under the other, rule 2's check for a store file
+     the record lacks runs before this rule's replacement, on the inventory
+     taken before anything is copied, so the whole record is refused and the
+     store is left as it was. The refusal's message offers to rename the
+     directory, but the record is the same read as the store's, and a new
+     name would file it as another: rename the local record's triage file to
+     the name the store holds it under, then ship again. It is the one file in a
      cold-read-record written twice on purpose: the agent triages the
      reviewers' findings into it, and it is written again with the user's
      rulings once the approval-walk closes. Rules 1 and 2 refused that second
