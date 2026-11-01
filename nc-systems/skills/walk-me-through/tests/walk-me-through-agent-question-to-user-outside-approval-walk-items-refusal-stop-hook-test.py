@@ -878,6 +878,9 @@ def test_silent_during_an_emergency_stop():
     stop_file.write_text("# Emergency stop\ncoordinating agent-seat: reboot-test\n")
     check_silent("a question outside the walk passes while an emergency stop is in force",
                  case.run(model="no", environment_extra={"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(stop_folder)}))
+    stop_file.write_bytes(b"\xff\xfe")
+    check_silent("an unreadable emergency-stop file counts as a stop in force",
+                 case.run(model="no", environment_extra={"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(stop_folder)}))
     stop_file.write_text("started\n#emergency_stop_lifted all clear\n")
     check_blocked("after the lift the question is refused again",
                   case.run(model="no", environment_extra={"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(stop_folder)}),
