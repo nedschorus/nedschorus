@@ -62,6 +62,7 @@ sys.exit(answer["exit_code"])
 """
 
 GOOD_REPORT = "VERDICT 1 supported: the program exists\n  nc-systems/example/tool.py:1 `x = 1`\nCOUNTS supported=1 contradicted=0 unsupported=0\n"
+UNSUPPORTED_REPORT = "VERDICT 1 unsupported: the program exists\nCOUNTS supported=0 contradicted=0 unsupported=1\n"
 
 
 def check(name, condition, detail=""):
@@ -131,20 +132,22 @@ class Fixture:
              "--report-directory", str(report_directory or self.reports), *arguments],
             cwd=self.repository, env=self.environment, capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
 
-    def run_in_process_with_timeouts(self, *, fresh_agent_seconds, lint_seconds):
-        """Run main() here, so a test can shorten a timeout the program cannot be told from outside."""
+    def run_in_process_with_timeouts(self, *, fresh_agent_seconds=60, lint_seconds=60, run_git=None):
+        """Run main() here, so a test can shorten a timeout or replace run_git, which the program cannot be told from outside."""
         saved = (claim_check.FRESH_AGENT_TIMEOUT_SECONDS, claim_check.MD_DRIFT_LINT_TIMEOUT_SECONDS,
-                 dict(os.environ), os.getcwd())
+                 dict(os.environ), os.getcwd(), claim_check.run_git)
         claim_check.FRESH_AGENT_TIMEOUT_SECONDS, claim_check.MD_DRIFT_LINT_TIMEOUT_SECONDS = fresh_agent_seconds, lint_seconds
+        claim_check.run_git = run_git or claim_check.run_git
         os.environ.clear()
         os.environ.update(self.environment)
         os.chdir(self.repository)
         try:
-            with contextlib.redirect_stderr(io.StringIO()) as stderr:
+            with contextlib.redirect_stderr(io.StringIO()) as stderr, contextlib.redirect_stdout(io.StringIO()):
                 code = claim_check.main(["--overview", OVERVIEW, "--report-directory", str(self.reports)])
             return code, stderr.getvalue()
         finally:
             claim_check.FRESH_AGENT_TIMEOUT_SECONDS, claim_check.MD_DRIFT_LINT_TIMEOUT_SECONDS = saved[0], saved[1]
+            claim_check.run_git = saved[4]
             os.environ.clear()
             os.environ.update(saved[2])
             os.chdir(saved[3])
@@ -162,6 +165,8 @@ def run_unit_cases():
     check("a contradicted claim gives the counts that fall short",
           result("VERDICT 1 supported: a\nVERDICT 2 contradicted: b\nCOUNTS supported=1 contradicted=1 unsupported=0\n")
           == "not all claims supported: 1 contradicted, 0 unsupported, 1 supported")
+    check("an unsupported claim with none contradicted gives the counts that fall short",
+          result(UNSUPPORTED_REPORT) == "not all claims supported: 0 contradicted, 1 unsupported, 0 supported")
     check("a COUNTS line that disagrees with the VERDICT lines is malformed",
           result("VERDICT 1 supported: a\nCOUNTS supported=2 contradicted=0 unsupported=0\n").startswith("malformed: the COUNTS line"))
     check("VERDICT lines out of order are malformed",
@@ -207,6 +212,33 @@ def run_program_cases(fixture):
     newest = claim_check.find_newest_architecture_overview_claim_check_report_path_and_result_for_overview_git_blob(fixture.reports, OVERVIEW, blob)
     check("a contradicted claim exits 5, and the newest report says so",
           result.returncode == 5 and newest[1].startswith("not all claims supported: 1 contradicted"), (result, newest))
+
+    fixture.answer(claude_stdout=UNSUPPORTED_REPORT)
+    result = fixture.run()
+    newest = claim_check.find_newest_architecture_overview_claim_check_report_path_and_result_for_overview_git_blob(fixture.reports, OVERVIEW, blob)
+    check("an unsupported claim with none contradicted exits 5, and the newest report says so",
+          result.returncode == 5 and newest[1] == "not all claims supported: 0 contradicted, 1 unsupported, 0 supported",
+          (result, newest))
+
+    real_run_git = claim_check.run_git
+
+    def run_git_whose_worktree_remove_fails(repository, *arguments, check=True):
+        if arguments[:2] == ("worktree", "remove"):
+            return subprocess.CompletedProcess(["git", *arguments], 128, "", "fatal: injected removal failure")
+        return real_run_git(repository, *arguments, check=check)
+
+    count = len(fixture.reports_written())
+    fixture.answer()
+    code, stderr = fixture.run_in_process_with_timeouts(run_git=run_git_whose_worktree_remove_fails)
+    check("a worktree that git cannot remove exits 6, with git's words and the worktree's path, after writing the report",
+          code == 6 and "injected removal failure" in stderr and "checkout-at-checked-against-commit" in stderr
+          and len(fixture.reports_written()) == count + 1, stderr)
+    fixture.git("worktree", "prune")
+    fixture.answer(claude_stdout="", claude_exit=1)
+    code, stderr = fixture.run_in_process_with_timeouts(run_git=run_git_whose_worktree_remove_fails)
+    check("a worktree that git cannot remove after a failed fresh-agent keeps exit 4 and still reports the removal",
+          code == 4 and "injected removal failure" in stderr and len(fixture.reports_written()) == count + 1, stderr)
+    fixture.git("worktree", "prune")
 
     fixture.answer(claude_stdout="I ran out of time.\n")
     result = fixture.run()

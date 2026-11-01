@@ -32,9 +32,11 @@ page sends it to the user; no report records his ruling); an overview not on
 the path the page gives; a run on the Mac, where the log-store is not local.
 Failures: every failure is printed to stderr with what to do and exits
 nonzero; no report is written unless the fresh-agent produced output. The
-temporary worktree is removed on every path, including a failure. The program
-writes nothing in the checkout it is run from apart from git's worktree
-bookkeeping, which the removal undoes.
+temporary worktree is removed on every path, including a failure; when git
+cannot remove it, the program prints git's words and the worktree's path, and
+exits 6 even after writing a report, leaving git's record of the worktree in
+the checkout until `git worktree prune` runs. Apart from that record, the
+program writes nothing in the checkout it is run from.
 
 Usage:
   python3 nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py \\
@@ -44,7 +46,9 @@ Usage:
 Exit 0: report written, every claim supported. 1: refused, nothing run.
 2: program defect. 3: md-drift-lint found problems, so no fresh-agent ran.
 4: the fresh-agent failed, so no report was written. 5: report written, and
-not every claim is supported, or the report is malformed.
+not every claim is supported, or the report is malformed. 6: git could not
+remove the temporary worktree; any report was still written, and its result
+printed.
 """
 
 import argparse
@@ -261,6 +265,7 @@ def check_overview_claims(arguments):
     with tempfile.TemporaryDirectory(prefix=PROGRAM + "-") as temporary:
         worktree = Path(temporary) / "checkout-at-checked-against-commit"
         run_git(repository, "worktree", "add", "--quiet", "--detach", str(worktree), commit)
+        worktree_removal = None
         try:
             (worktree / overview_path).parent.mkdir(parents=True, exist_ok=True)
             (worktree / overview_path).write_text(text, encoding="utf-8")
@@ -283,8 +288,14 @@ def check_overview_claims(arguments):
                                         "Do what its output says, then run this again.", exit_code=4)
             report = run_fresh_agent(worktree, overview_path, commit, writer_answers)
         finally:
-            run_git(repository, "worktree", "remove", "--force", str(worktree), check=False)
+            worktree_removal = run_git(repository, "worktree", "remove", "--force", str(worktree), check=False)
             run_git(repository, "worktree", "prune", check=False)
+            if worktree_removal.returncode:
+                print(f"{PROGRAM}: `git worktree remove --force {worktree}` failed with exit "
+                      f"{worktree_removal.returncode}: {worktree_removal.stderr.strip()}\n"
+                      f"To clean up, once this program has exited: run `git -C {repository} worktree prune`, then "
+                      f"check that `git -C {repository} worktree list` no longer shows {worktree}; if it does, tell "
+                      "the user.", file=sys.stderr)
 
     result = result_from_fresh_agent_report(report)
     destination_directory = overview_write_architecture_overview_claim_check_report_directory_for_overview(report_directory, overview_path)
@@ -295,6 +306,8 @@ def check_overview_claims(arguments):
         f"overview: {overview_path}\noverview blob: {blob}\nrevision: {revision}\nchecked against: {commit}\n"
         f"writer answers: {writer_answers or 'none'}\n{RESULT_LINE_PREFIX}{result}\n\n{report}", encoding="utf-8")
     print(f"{PROGRAM}: {result}. Report: {destination}")
+    if worktree_removal.returncode:
+        return 6
     return 0 if result == OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED else 5
 
 
