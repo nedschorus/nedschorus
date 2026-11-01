@@ -6,7 +6,7 @@ THE FILE. `worktree-owner.json`, in the worktree's own git directory, the one
 `git rev-parse --absolute-git-dir` prints inside the worktree, such as
 <clone>/.git/worktrees/<name>/worktree-owner.json. There `git status` never
 lists it, no commit can carry it, and `git worktree remove` deletes it with
-the worktree. It holds one JSON object:
+the worktree. It holds one JSON object, of one of these two forms:
 
   {"owner_kind": "agent-seat", "agent_seat": "<name>"}
   {"owner_kind": "agent-session", "agent_seat": "<name>", "owner_key": "<key>"}
@@ -77,12 +77,15 @@ AGENT_SEAT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
 
 WORKTREE_OWNER_FILE_COMMAND_FAILED_NEXT_STEP_LINES = (
-    "If the line above says the owner file already exists, the worktree already has its owner, "
-    "and nothing needs doing.\n"
-    "Otherwise fix the cause the line above names, then run this command again once.\n"
-    "If it fails the same way again, tell whoever asked for the worktree what the line above says: "
-    "scripts/clean-worktrees.py never removes a worktree that has no owner file, so it stays on "
-    "disk until someone removes it with git worktree remove.")
+    "If the FAILED line ends \"already exists\", the worktree already has its owner file, and "
+    "nothing needs doing.\n"
+    "Otherwise fix the cause the FAILED line names, then run the same "
+    "scripts/worktree-owner-file-read-and-write.py command again once, with the same "
+    "arguments.\n"
+    "If it fails the same way again, give the FAILED line to the agent that dispatched you, or to "
+    "the user if no agent did, and say that scripts/clean-worktrees.py never removes a worktree "
+    "that has no owner file, so the worktree stays on disk until someone runs "
+    "git worktree remove <the worktree's path>.")
 
 _work_snapshots = None
 _handoff_supervisor = None

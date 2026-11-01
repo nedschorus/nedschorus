@@ -1093,6 +1093,13 @@ with tempfile.TemporaryDirectory() as scratch:
         commit_in(branch_blocked_wt, "detached-work")
         blocked_branch = f"worktree-cleaner-detached-commits-branch-blocked-wt-{head_of(branch_blocked_wt)[:12]}"
         git(checkout, "branch", blocked_branch, "origin/main")
+        # An earlier --remove made the branch for this worktree's commits on no branch, then failed
+        # at a later step: the branch already names the very commit.
+        premade_wt = owned_worktree("premade-branch-wt", stopped_owner, detach=True)
+        commit_in(premade_wt, "detached-work-an-earlier-run-kept")
+        premade_commit = head_of(premade_wt)
+        premade_branch = f"worktree-cleaner-detached-commits-premade-branch-wt-{premade_commit[:12]}"
+        git(checkout, "branch", premade_branch, premade_commit)
         blocked = run_owner_rules("--remove")
         check("a work-snapshot that cannot be written keeps a stopped owner's worktree and its file, "
               "fails the run, and says why",
@@ -1107,6 +1114,16 @@ with tempfile.TemporaryDirectory() as scratch:
               and f"branch-blocked-wt: branch for its commits on no branch FAILED, worktree kept — "
                   f"git branch {blocked_branch} " in blocked.stdout
               and "branch-blocked-wt: removed" not in blocked.stdout,
+              blocked.stdout + blocked.stderr)
+        check("a branch an earlier run made on the worktree's own detached commit counts as made, "
+              "so the worktree is removed and the branch still holds the commit",
+              not premade_wt.exists()
+              and f"premade-branch-wt: its commits on no branch are already kept on the branch "
+                  f"{premade_branch}, which an earlier scripts/clean-worktrees.py --remove run made"
+                  in blocked.stdout
+              and "premade-branch-wt: removed" in blocked.stdout
+              and "premade-branch-wt: branch for its commits on no branch FAILED" not in blocked.stdout
+              and git(checkout, "rev-parse", premade_branch).strip() == premade_commit,
               blocked.stdout + blocked.stderr)
         check("each of those failures is followed by a line, holding no FAILED, saying the next "
               "--remove tries again",
@@ -1142,6 +1159,28 @@ with tempfile.TemporaryDirectory() as scratch:
         check("gh that cannot be run is a listing failure",
               isinstance(not_run, module.PullRequestListingFailed)
               and "could not be run" in str(not_run), repr(not_run))
+        committed_late_wt = owned_worktree("committed-late-wt", running_session_owner)
+        judged_head = head_of(committed_late_wt)
+        commit_in(committed_late_wt, "committed-after-the-verdict")
+        committed_late_output = io.StringIO()
+        real_stdout = sys.stdout
+        sys.stdout = committed_late_output
+        try:
+            committed_late_result = module.remove_worktree(
+                committed_late_wt, "committed-late-wt-branch", checkout,
+                module.Verdict(True, "", "", running_session_owner, module.owner_file.RUNNING,
+                               judged_head=judged_head, judged_branch="committed-late-wt-branch"))
+        finally:
+            sys.stdout = real_stdout
+        check("--remove keeps a worktree whose running owner committed after the verdict matched "
+              "its finished pull request",
+              committed_late_result is True and committed_late_wt.exists()
+              and "committed-late-wt: kept — its owner, an agent-session of seat-running" in
+                  committed_late_output.getvalue()
+              and f"the worktree's HEAD or branch changed during this run: it was {judged_head} on "
+                  f"committed-late-wt-branch, the head commit of a merged or closed pull request, "
+                  f"and is now {head_of(committed_late_wt)} on committed-late-wt-branch"
+                  in committed_late_output.getvalue(), committed_late_output.getvalue())
         late_wt = owned_worktree("late-wt", running_session_owner)
         (late_wt / "written-after-the-verdict.txt").write_text("new\n", encoding="utf-8")
         late_output = io.StringIO()

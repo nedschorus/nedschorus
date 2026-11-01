@@ -646,6 +646,10 @@ class Verdict:
     discarded: list = field(default_factory=list)
     # The detached HEAD whose commits origin/main lacks, which --remove first puts on a branch.
     detached_commit: str | None = None
+    # The HEAD and branch a running owner's finished pull request was matched against; --remove
+    # keeps the worktree when either has changed since.
+    judged_head: str | None = None
+    judged_branch: str | None = None
 
 
 def owner_text(owner):
@@ -760,7 +764,8 @@ def classify(worktree, branch, record, pull_requests):
     if discarded:
         why += (f"; removing it discards {len(discarded)} uncommitted, untracked or ignored "
                 f"file(s): {discarded_files_text(discarded)}")
-    return Verdict(True, why, "", owner, state, uncommitted, discarded, detached_commit)
+    return Verdict(True, why, "", owner, state, uncommitted, discarded, detached_commit,
+                   record.head if running else None, branch if running else None)
 
 
 def detached_commits_branch_name(worktree, commit):
@@ -778,14 +783,23 @@ def keep_what_removal_would_lose(worktree, repo, verdict):
     files in a work-snapshot; print and return False when either fails."""
     if verdict.detached_commit:
         name = detached_commits_branch_name(worktree, verdict.detached_commit)
-        made = run_git(repo, "branch", name, verdict.detached_commit)
-        if made.returncode != 0:
+        # An earlier --remove may have made this branch and then failed at a later step.
+        if commit_of(repo, f"refs/heads/{name}") == verdict.detached_commit:
+            made = None
+        else:
+            made = run_git(repo, "branch", name, verdict.detached_commit)
+        if made is not None and made.returncode != 0:
             print(f"{worktree.name}: branch for its commits on no branch FAILED, worktree kept — "
                   f"git branch {name} {verdict.detached_commit} exited {made.returncode}: "
                   f"{made.stderr.strip()[:160] or 'no error text'}")
             print(WORKTREE_KEPT_AFTER_FAILURE_NEXT_REMOVE_RUN_RETRIES_LINE_TEMPLATE.format(name=worktree.name))
             return False
-        print(f"{worktree.name}: its commits on no branch are kept on the new branch {name}")
+        if made is None:
+            print(f"{worktree.name}: its commits on no branch are already kept on the branch "
+                  f"{name}, which an earlier scripts/clean-worktrees.py --remove run made before "
+                  f"that run failed")
+        else:
+            print(f"{worktree.name}: its commits on no branch are kept on the new branch {name}")
     if verdict.uncommitted:
         agent_seat = verdict.owner["agent_seat"]
         try:
@@ -858,6 +872,20 @@ def remove_worktree(worktree, branch, repo, verdict):
                         f"{len(uncommitted)} uncommitted or untracked file(s): "
                         f"{discarded_files_text(uncommitted)}")
             print(f"{worktree.name}: kept — {why}")
+            return True
+        # The owner may have committed, or switched branch, since classify() matched the finished
+        # pull request to the HEAD it read; that pull request does not cover new commits.
+        head_now = commit_of(worktree, "HEAD")
+        branch_read = run_git(worktree, "symbolic-ref", "--quiet", "--short", "HEAD")
+        branch_now = branch_read.stdout.strip() if branch_read.returncode == 0 else None
+        if head_now != verdict.judged_head or branch_now != verdict.judged_branch:
+            print(f"{worktree.name}: kept — its owner, {owner_text(verdict.owner)}, runs, and the "
+                  f"worktree's HEAD or branch changed during this run: it was {verdict.judged_head} "
+                  f"on {verdict.judged_branch or 'no branch'}, the head commit of a merged or "
+                  f"closed pull request, and is now {head_now} on {branch_now or 'no branch'}. "
+                  f"A merged or closed pull request counts only for the commit at its head, on "
+                  f"its branch. Nothing needs doing now: the next scripts/clean-worktrees.py "
+                  f"--remove run, daily or at a handoff, judges the worktree again")
             return True
     elif not keep_what_removal_would_lose(worktree, repo, verdict):
         return False
