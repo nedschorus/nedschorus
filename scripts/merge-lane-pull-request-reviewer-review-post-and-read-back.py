@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Post the Claude reviewer's review of a pull request as mac-claude, then read it back from GitHub.
 
-Did the review get posted on the named head commit, as the verdict says? Exits 0
+Did the review get posted on the named nc-head-commit, as the verdict says? Exits 0
 if the review was posted and read back as expected, 2 otherwise.
 
 Usage:
@@ -20,11 +20,12 @@ not finish.
 GitHub refuses a whole review when one inline comment is on a line outside the
 pull request's diff, so each comment whose path and line are not on the new
 side of the diff GitHub reports for the pull request is moved into the body,
-under a heading, as `path:line: comment`. A file whose diff GitHub does not
-show, such as a binary file, takes no inline comments.
+under a heading, as `path:line: comment`, and the success line ends with how
+many were moved. A file whose diff GitHub does not show, such as a binary
+file, takes no inline comments.
 
 The review is posted as mac-claude, with the token in
-~/.config/nedschorus/mac-claude.token, on the head commit given. Its body
+~/.config/nedschorus/mac-claude.token, on the nc-head-commit given. Its body
 starts with a line APPROVE or REQUEST_CHANGES, so the verdict shows even when
 the review is posted as a comment. The review's event is the verdict when the
 pull request's author is ned-review-merge, because GitHub refuses an approving
@@ -208,7 +209,7 @@ def parse_arguments(argv):
     parser.add_argument("--pull-request", type=int, required=True,
                         help="the pull request's number")
     parser.add_argument("--head-commit", required=True,
-                        help="the full hash of the head commit the review is on")
+                        help="the full hash of the nc-head-commit the review is on")
     parser.add_argument("review_file", type=Path,
                         help="the review: a JSON object with verdict, body and comments")
     return parser.parse_args(argv)
@@ -249,7 +250,9 @@ def main(argv=None):
         print(NOT_POSTED.format(reason=f"reading the pull request's diff failed: {reason_of(error)}"),
               file=sys.stderr)
         return EXIT_NOT_POSTED
-    body, comments = with_outside_comments_in_body(body, comments, lines)
+    body, inline_comments = with_outside_comments_in_body(body, comments, lines)
+    moved_count = len(comments) - len(inline_comments)
+    comments = inline_comments
     event = verdict if author == MERGE_LANE_ACCOUNT else "COMMENT"
     review_id = None
     try:
@@ -282,8 +285,10 @@ def main(argv=None):
                                            repository=REPOSITORY),
                   file=sys.stderr)
             return EXIT_NOT_POSTED
+        moved = f"; {moved_count} comment(s) moved into the body" if moved_count else ""
         print(f"review {review_id} posted on pull request {number} as {event}, verdict "
-              f"{verdict}, on commit {head}; GitHub's copy reads back as {EVENT_STATES[event]}")
+              f"{verdict}, on commit {head}; GitHub's copy reads back as {EVENT_STATES[event]}"
+              f"{moved}")
         return EXIT_POSTED
     except (KeyboardInterrupt, SystemExit):
         # gh_json's subprocess.run has killed gh before this runs, so nothing more is sent.

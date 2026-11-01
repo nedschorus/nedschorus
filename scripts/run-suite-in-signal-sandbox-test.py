@@ -55,13 +55,13 @@ def check(case_name, condition, detail=""):
 def linux_only_cases_run_here(cases):
     """True on Linux; elsewhere prints why the cases are skipped and returns False.
 
-    Every case that builds or inspects a test sandbox, runs bwrap or reads /proc goes
+    Every case that builds or inspects an nc-test-sandbox, runs bwrap or reads /proc goes
     through this, since only Linux has them. scripts/run-all-test-suites-signal-sandbox-test.py
     runs this file as if on a Mac, and fails a case that does not.
     """
     if sys.platform.startswith("linux"):
         return True
-    print(f"SKIP  {cases}: test sandboxes, bwrap and /proc exist only on Linux")
+    print(f"SKIP  {cases}: nc-test-sandboxes, bwrap and /proc exist only on Linux")
     return False
 
 
@@ -526,7 +526,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
             refused = True
         check(f"a suite path outside the checkout is refused: {outside}", refused)
 
-# --- What the launch shows read-only in the test sandbox ----------------------
+# --- What the launch shows read-only in the nc-test-sandbox ----------------------
 
 class LaunchPathsRecorded(Exception):
     pass
@@ -672,7 +672,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
           "runs with no prefix, and the inside check still proves the inherited sandbox",
           code == program.EXIT_PASSED_OR_KILLED and len(ran) == 1 and ran[0][3] == ()
           and ran[0][5] == "darwin", (code, output, ran))
-    # Under a bwrap prefix the suite runs in its test sandbox, admitted by readings of
+    # Under a bwrap prefix the suite runs in its nc-test-sandbox, admitted by readings of
     # this machine that only Linux gives.
     if linux_only_cases_run_here("the child subreaper on Linux"):
         bwrap_prefix = ("/usr/bin/bwrap",)
@@ -749,8 +749,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
           code == program.EXIT_NOT_RUN and ran == [] and "not a file" in output,
           (code, output, ran))
 
-# --- In a test sandbox the suite runs at low priority, in a cgroup scope of its own ---
-if linux_only_cases_run_here("the low-priority cgroup scope of a suite in a test sandbox"):
+# --- In an nc-test-sandbox the suite runs at low priority, in a cgroup scope of its own ---
+if linux_only_cases_run_here("the low-priority cgroup scope of a suite in an nc-test-sandbox"):
     with tempfile.TemporaryDirectory() as scratch_name:
         scratch = pathlib.Path(scratch_name).resolve()
         repository = scratch_checkout(scratch)
@@ -786,15 +786,54 @@ if linux_only_cases_run_here("the low-priority cgroup scope of a suite in a test
         (program.subprocess.Popen, program.stop_descendants,
          program.runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none) = originals
         nice = ["nice", "-n", str(program.runner.TEST_SUITE_NICE_INCREMENT)]
-        check("in a test sandbox, the suite runs in a cgroup scope of its own and at low "
+        check("in an nc-test-sandbox, the suite runs in a cgroup scope of its own and at low "
               "priority, as the runner's suites do",
               len(launched) == 2
-              and launched[0][:len(program.runner.TEST_SUITE_CGROUP_SCOPE_COMMAND)]
-              == list(program.runner.TEST_SUITE_CGROUP_SCOPE_COMMAND)
+              and launched[0][:len(program.runner.test_suite_cgroup_scope_command())]
+              == list(program.runner.test_suite_cgroup_scope_command())
               and any(launched[0][index:index + 3] == nice for index in range(len(launched[0]))),
               launched[:1])
         check("where no cgroup scope can be made, the suite still runs at low priority",
               len(launched) == 2 and launched[1][:3] == nice, launched[1:])
+
+        # A launch that stands in for a suite that exited 0 after the kernel killed one of
+        # its processes at its memory ceiling: the counters say so, and the inside check
+        # vouched for the sandbox.
+        class ExitedZero:
+            returncode = 0
+
+            def wait(self):
+                return 0
+
+        def suite_with_a_process_killed_at_its_memory_ceiling(command, *arguments, **options):
+            if not any("doubling-test.py" in str(part) for part in command):
+                return real_popen(command, *arguments, **options)
+            launched.append(list(command))
+            os.write(options["pass_fds"][0], b"usage_usec 1000000\nmemory.peak 5\noom_kill 1\n")
+            (scratch / "proof").write_text(program.PID_ONE_PROOF + "\n")
+            return ExitedZero()
+
+        launched.clear()
+        program.subprocess.Popen = suite_with_a_process_killed_at_its_memory_ceiling
+        program.stop_descendants = lambda: None
+        program.runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none = \
+            lambda: None
+        printed = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(printed):
+                code = program.run_suite_confined(repository, "doubling-test.py",
+                                                  sys.executable, ("/usr/bin/bwrap",),
+                                                  scratch / "proof")
+        finally:
+            (program.subprocess.Popen, program.stop_descendants,
+             program.runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none) = \
+                originals
+        check("a suite that exits 0 after the kernel killed one of its processes at its memory "
+              "ceiling fails, killed by SIGKILL, and the run says OUT OF MEMORY with the ceiling",
+              code == -signal.SIGKILL
+              and f"MemoryMax={program.runner.TEST_SUITE_MEMORY_CEILING_BYTES}" in launched[0]
+              and "OUT OF MEMORY: the kernel killed 1 of the suite's processes at its memory "
+                  "ceiling of 4 GB" in printed.getvalue(), (code, printed.getvalue(), launched))
 
 if not linux_only_cases_run_here("the cases that run a suite"):
     pass
@@ -1011,7 +1050,7 @@ else:
               work_directories_left(scratch, "terminated"))
 
         # --- An interrupted run leaves no process of the suite running ---------
-        # Looked for by a marker in the command line, from outside: a suite in a test sandbox
+        # Looked for by a marker in the command line, from outside: a suite in an nc-test-sandbox
         # of its own writes nowhere this test can read.
         marker = f"left-behind-by-the-interrupted-suite-{os.getpid()}"
 
@@ -1182,7 +1221,7 @@ else:
             holder.write("pid 1, checkout elsewhere, started then\n")
             holder.flush()
             started = time.monotonic()
-            # The lock is taken only where the suite gets no test sandbox, so the program
+            # The lock is taken only where the suite gets no nc-test-sandbox, so the program
             # is told it already runs inside a sandbox; it refuses before running anything.
             completed, last = run_program(
                 scratch, repository, "doubling-test.py", "--mutant", str(killing),

@@ -111,8 +111,8 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/find-deleted-path-across-backups-test.py": 37,
     "scripts/find-deleted-path-across-backups.py": 33,
     "scripts/force-push-with-open-pull-request-guard-hook-test.py": 2,
-    "scripts/ghi-info-ask-test.py": 18,
-    "scripts/ghi-info-ask.py": 38,
+    "scripts/ghi-guide-agent-ask-test.py": 18,
+    "scripts/ghi-guide-agent-ask.py": 38,
     "scripts/ghi-issue-write-test.py": 38,
     "scripts/ghi-issue-write.py": 76,
     "scripts/ghi-mirror-refresh-test.py": 4,
@@ -128,7 +128,7 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/install-restart-live-seats-at-login-systemd-unit.py": 4,
     "scripts/launch-claude-mac-test.py": 18,
     "scripts/launch-claude-pre-trust-step-test.py": 5,
-    "scripts/launch-claude-ubuntu-test.py": 20,
+    "scripts/launch-claude-ubuntu-test.py": 12,
     "scripts/locate-file-copies-across-machines-test.py": 19,
     "scripts/md-drift-lint-test.py": 21,
     "scripts/md-drift-lint.py": 1,
@@ -161,7 +161,7 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/transcript-mirror-to-log-store.py": 9,
     "scripts/walk-file-endings-match-the-skill-test.py": 3,
     "scripts/walk-files-ship-test.py": 12,
-    "scripts/walk-files-ship.py": 12,
+    "scripts/walk-files-ship.py": 1,
 }
 
 # Lines whose marker is data the code needs, not history: (path, text): reason.

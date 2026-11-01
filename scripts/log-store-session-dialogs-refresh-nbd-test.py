@@ -24,6 +24,7 @@ EXTRACTOR_PATH = Path(__file__).with_name("handoff-extract-conversation.py")
 SUBAGENT_TRACKER_PATH = Path(__file__).with_name("handoff-extract-conversation-subagent-tracker-nbd.py")
 INTERIM_RECOGNIZER_PATH = Path(__file__).with_name(
     "claude-code-subagent-task-notification-interim-recognizer-common.py")
+REFRESH_COMMON_PATH = Path(__file__).with_name("log-store-session-dialogs-refresh-common.py")
 # The transcripts' times are set after the extractor's, so a dialog's time is its transcript's.
 LATER_THAN_THE_EXTRACTOR = int(max(time.time(), EXTRACTOR_PATH.stat().st_mtime)) + 1000
 STORE_ROOT_VARIABLE = "LOG_STORE_SESSION_DIALOGS_REFRESH_LOG_STORE_ROOT_OVERRIDE"
@@ -312,6 +313,7 @@ with tempfile.TemporaryDirectory() as workspace:
     shutil.copy2(EXTRACTOR_PATH, programs / EXTRACTOR_PATH.name)
     shutil.copy2(SUBAGENT_TRACKER_PATH, programs / SUBAGENT_TRACKER_PATH.name)
     shutil.copy2(INTERIM_RECOGNIZER_PATH, programs / INTERIM_RECOGNIZER_PATH.name)
+    shutil.copy2(REFRESH_COMMON_PATH, programs / REFRESH_COMMON_PATH.name)
     settled = run(store, "--failures-only", script_path=script_copy)
     touched = run(store, script_path=script_copy)
     with (programs / EXTRACTOR_PATH.name).open("a", encoding="utf-8") as handle:
@@ -363,6 +365,16 @@ with tempfile.TemporaryDirectory() as workspace:
           and "wrote 0 session dialogs" in recognizer_after.stdout,
           (recognizer_rewritten.stdout, recognizer_after.stdout))
 
+    # And a change to the module that writes each dialog's digest line, so every dialog gets the new line.
+    with (programs / REFRESH_COMMON_PATH.name).open("a", encoding="utf-8") as handle:
+        handle.write("# changed\n")
+    common_rewritten = run(store, script_path=script_copy)
+    common_after = run(store, script_path=script_copy)
+    check("after the refresh-common module's bytes change, one pass rewrites the dialogs, and the next writes none",
+          common_rewritten.returncode == 0 and "wrote 0 session dialogs" not in common_rewritten.stdout
+          and "wrote 0 session dialogs" in common_after.stdout,
+          (common_rewritten.stdout, common_after.stdout))
+
     # A tracker that cannot be read still lets every dialog be written, without subagent turns and saying so.
     tracker_copy = programs / SUBAGENT_TRACKER_PATH.name
     tracker_aside = programs / "tracker-set-aside.py"
@@ -396,6 +408,19 @@ with tempfile.TemporaryDirectory() as workspace:
           tracker_back.returncode == 0 and "wrote 0 session dialogs" not in tracker_back.stdout
           and "## Subagent task " in box_dialog.read_text(encoding="utf-8"),
           (tracker_back.stdout, box_dialog.read_text(encoding="utf-8")[:400]))
+    recognizer_copy = programs / INTERIM_RECOGNIZER_PATH.name
+    recognizer_aside = programs / "recognizer-set-aside.py"
+    recognizer_copy.rename(recognizer_aside)
+    try:
+        without_recognizer = run(store, "--failures-only", script_path=script_copy)
+    finally:
+        recognizer_aside.rename(recognizer_copy)
+    check("an interim recognizer that cannot be read, beside a readable tracker, prints a FAILED line naming "
+          "the recognizer and not the tracker, and the pass exits 1",
+          without_recognizer.returncode == 1
+          and f"FAILED: cannot read {recognizer_copy.resolve()}" in without_recognizer.stdout
+          and f"FAILED: cannot read {tracker_copy.resolve()}" not in without_recognizer.stdout,
+          (without_recognizer.returncode, without_recognizer.stdout, without_recognizer.stderr))
 
     # A digest that cannot be read or kept is a failure: otherwise every pass would rewrite every dialog unseen.
     digest_store = Path(workspace) / "digest-store"

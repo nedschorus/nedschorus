@@ -38,8 +38,10 @@ decides which strings are agent-facing and which files are tests. Agent-facing
 strings are printed, written or raised strings; strings assigned to names
 ending in _ADVICE, _INSTRUCTION, _LINE, _MESSAGE, _NOTICE, _REASON, _REFUSAL
 or _TEMPLATE, or in one of those followed by S, such as _MESSAGES; string
-values of a hook's agent-facing JSON output keys in a dict literal; and a
-module docstring printed through __doc__. Test files are those ending in
+values of a hook's agent-facing JSON output keys in a dict literal; a module
+docstring printed through __doc__; and the strings a function returns when a
+call of that function stands where one of these strings would, as
+print(stopped_line(...)) does. Test files are those ending in
 -test.py or under a tests directory, and are excluded: a test's copy of an
 expected message is not handed to an agent. F-string
 placeholders survive in the listing. Beside each listed string is its
@@ -51,6 +53,9 @@ system temporary directory, named after the source file and a digest of the
 text. A target that cannot be
 written is marked in the plan, which leaves its message with no
 cold-read-fast-read command, so the program exits 3 after printing the plan.
+A string the collector's kind calls a prompt, text a program hands an agent as
+its instructions, is also marked "needs the user's approval", and has
+needs_user_approval set in --json; a printed message is not.
 
 Merged pull requests use the merge commit's first parent as the diff base:
 the current base branch already contains the head and would hide the change.
@@ -464,7 +469,8 @@ def changed_agent_facing_text_entries(repository, old_revision, new_revision, ch
         new_nodes = agent_facing_string_nodes_in_source(read_revision_blob_or_none(repository, new_revision, path))
         if changed_file["status"] == "A":
             entries.extend({"path": path, "line": node["line"], "label": node["label"],
-                            "old_text": None, "new_text": node["text"]} for node in new_nodes)
+                            "old_text": None, "new_text": node["text"],
+                            "needs_user_approval": node["kind"] == "prompt"} for node in new_nodes)
             continue
         old_nodes = agent_facing_string_nodes_in_source(read_revision_blob_or_none(repository, old_revision, path))
         diff_text = required_git_output(repository, "diff", "-U0", "--no-ext-diff", "--no-textconv", "--no-color",
@@ -487,7 +493,8 @@ def changed_agent_facing_text_entries(repository, old_revision, new_revision, ch
                     used_old_nodes.add(old_match[0])
                 listed_new_nodes.add(new_index)
                 entries.append({"path": path, "line": new_node["line"], "label": new_node["label"],
-                                "old_text": old_match[1]["text"] if old_match else None, "new_text": new_node["text"]})
+                                "old_text": old_match[1]["text"] if old_match else None, "new_text": new_node["text"],
+                                "needs_user_approval": new_node["kind"] == "prompt"})
     return sorted(entries, key=lambda entry: (entry["path"], entry["line"], entry["label"]))
 
 
@@ -780,11 +787,16 @@ def changed_lines_for_agent_text_entry(entry):
     return list(difflib.unified_diff(old_lines, new_lines, lineterm="", n=2))[2:]
 
 
+PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE = "needs the user's approval: this is a prompt, text the program hands an agent as its instructions"
+
+
 def render_text_agent_entries(entries):
     lines = []
     for entry in entries:
         lines.append(f"  {entry['path']}:{entry['line']} {entry['label']}")
         lines.append("    " + fast_read_line_for_agent_text_entry(entry))
+        if entry["needs_user_approval"]:
+            lines.append("    " + PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE)
         changed_lines = changed_lines_for_agent_text_entry(entry)
         if changed_lines is not None:
             lines.append("    changed lines:")
@@ -841,6 +853,8 @@ def render_pull_request_brief_skeleton(plan):
         for entry in entries:
             lines.extend([f"{entry['path']}:{entry['line']} {entry['label']}", "",
                           *markdown_fenced_text_lines(fast_read_line_for_agent_text_entry(entry)), ""])
+            if entry["needs_user_approval"]:
+                lines.extend([PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE, ""])
             changed_lines = changed_lines_for_agent_text_entry(entry)
             if changed_lines is not None:
                 lines.extend(["changed lines:", *markdown_fenced_text_lines("\n".join(changed_lines), "diff"), ""])

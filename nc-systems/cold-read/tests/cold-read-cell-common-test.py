@@ -80,7 +80,7 @@ WHAT IS PINNED HERE.
     The search covers the whole `cold-read-records/` tree — a neighbouring
     directory a model invented, and the root of the tree itself — and takes
     nothing from a directory the instrument built (one holding `target/` or
-    `reference-check.md`). That check is what makes the wide search safe now
+    `cold-read-reference-check.md`, or `reference-check.md` in an older record). That check is what makes the wide search safe now
     that the files inside a record are bare cell names (user-ruled
     2026-09-18): another run's real report has this report's exact name. The
     case that proves the point is the concurrent one: a second cold-read
@@ -441,7 +441,9 @@ def provenance_stamp_of(report):
 
 
 with tempfile.TemporaryDirectory() as scratch:
-    scratch = Path(scratch)
+    # Resolved, as the paths the cells build from their cwd are, where TMPDIR is reached
+    # through a link.
+    scratch = Path(scratch).resolve()
     stubs = scratch / "stub-bin"
 
     # --- The already-dirty file the reviewer edits -------------------------
@@ -1961,6 +1963,23 @@ check("the Codex cell does not claim a clean git status proves anything",
 check("the Codex cell does not claim every tracked-file change is reported",
       "reports any tracked-file change as a stray write" not in codex_cell_prose,
       "the docstring still describes the name-only detector replaced in nedschorus#167")
+
+# A record the grid built holds its reference-check file under the
+# cold-read- name, or under the bare name when it was written before that.
+_instrument_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common_instrument_records", SYSTEM_DIRECTORY / "cold-read-cell-common.py")
+_instrument_common = importlib.util.module_from_spec(_instrument_spec)
+_instrument_spec.loader.exec_module(_instrument_common)
+with tempfile.TemporaryDirectory() as instrument_scratch:
+    for file_name, built in (("cold-read-reference-check.md", True),
+                             ("reference-check.md", True),
+                             ("claude-hunt-deep.md", False)):
+        directory = Path(instrument_scratch) / file_name
+        directory.mkdir()
+        (directory / file_name).write_text("- ok\n", encoding="utf-8")
+        check(f"a record directory holding only {file_name} "
+              f"{'is' if built else 'is not'} taken as instrument-built",
+              _instrument_common.instrument_built_record_directory(directory) is built)
 
 print()
 if failures:

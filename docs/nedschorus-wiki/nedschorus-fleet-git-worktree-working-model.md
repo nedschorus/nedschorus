@@ -58,7 +58,7 @@ passing review.
   reached only through the main-gatekeeper, which logs every use). Dormant
   until its credential work lands.
 - **The PR process** — until the gate activates: each pull request
-  merges one atomic topic branch, and
+  merges one atomic nc-topic-branch, and
   the merge-lane agent-seat reviews and merges every PR (deputization, recorded
   at R13, is the ruled exception). Recorded in CLAUDE.md's PR-process paragraph.
   The earlier form — commits accumulating on a seat-branch, cherry-picked

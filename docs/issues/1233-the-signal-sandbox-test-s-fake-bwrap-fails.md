@@ -71,13 +71,13 @@ The defect is in the test's fake bwrap only. The real bwrap is a compiled progra
 
 ## Status on 2026-10-19
 
-The cause is fixed on main, but the test case under "Done when" is not written. Commit `9f5cbf47`, merged to main in PR [Test sandbox, phase 2: runs overlap, admission by free CPU and memory, per-suite records](https://github.com/nedschorus/nedschorus/pull/1427) at 2026-10-15T09:05:57Z, changed the fake bwrap's first line to `#!/bin/bash`, the first of the two fixes this GHI-MD proposed; the commit does not name this issue. Each of the nine failing merge commits above lacks `9f5cbf47` (`git merge-base --is-ancestor 9f5cbf47 <commit>` fails for each of the three from PRs 1265, 1311 and 1372). In the records searched above, 187 head test runs started after that merge ran this suite, and none failed. On main at `21af2b5c`, `grep -n 'dup2\|status-fd 12' scripts/run-all-test-suites-signal-sandbox-test.py` finds nothing, so no case runs the fake bwrap with a two-digit descriptor.
+The cause is fixed on main. Commit `9f5cbf47`, merged to main in PR [Test sandbox, phase 2: runs overlap, admission by free CPU and memory, per-suite records](https://github.com/nedschorus/nedschorus/pull/1427) at 2026-10-15T09:05:57Z, changed the fake bwrap's first line to `#!/bin/bash`, the first of the two fixes this GHI-MD proposed; the commit does not name this issue. Each of the nine failing merge commits above lacks `9f5cbf47` (`git merge-base --is-ancestor 9f5cbf47 <commit>` fails for each of the three from PRs 1265, 1311 and 1372). In the records searched above, 187 head test runs started after that merge ran this suite, and none failed. On main at `21af2b5c`, `grep -n 'dup2\|status-fd 12' scripts/run-all-test-suites-signal-sandbox-test.py` finds nothing, so no case runs the fake bwrap with a two-digit descriptor.
 
 Two names quoted above have changed on main: the suite the test copies is now `scripts/mac-request-from-ned-box-forced-command-test.py` (renamed in `cbd02c16`), and the case is now "with the sandbox on, test-run-report.txt says each suite runs in its own test sandbox, named by the bwrap program".
 
-## Next action
+## Outcome
 
-Write the test case under "Done when", so that a return of the fake bwrap to `#!/bin/sh` fails a test instead of failing head test runs at random; or, if the user rules that the switch to bash and the clean runs since are enough, record that ruling here and close the issue as completed.
+Done. PR [Signal sandbox test: the stand-in bwrap is run with status descriptors 9 and 12](https://github.com/nedschorus/nedschorus/pull/2273) merged to main at 2026-10-31T08:28:00Z as merge commit `70d33bca`. It adds the test case under "Done when" to `scripts/run-all-test-suites-signal-sandbox-test.py`: it moves a pipe's write end to descriptor 9 and then 12 with `os.dup2`, runs the stand-in bwrap directly with `--json-status-fd <n>` and `sh -c 'echo started'` under `pass_fds=(n,)`, and checks that the pipe gets the `child-pid` line and the command prints `started`. On ned-box, with the stand-in bwrap's first line set back to `#!/bin/sh`, the descriptor-12 run failed with `eval: Syntax error: Bad fd number`; with `#!/bin/bash`, as committed, both runs passed. The issue is closed as completed.
 
 ## Done when
 
@@ -87,4 +87,4 @@ A new test case in `scripts/run-all-test-suites-signal-sandbox-test.py` runs the
 
 GHI [#1112](https://github.com/nedschorus/nedschorus/issues/1112) collects test cases that fail on a busy machine because a deadline runs out. This failure is a different matter: no deadline is involved, and #1112's fix of longer deadlines or waiting for events would not change it.
 
-Search receipt: on 2026-10-13 UTC, `scripts/ghi-info-ask.py --include-closed` found no issue, open or closed, naming this test file, this case, "PID namespace", "a-test.py", "bwrap" or "signal-sandbox" for a failure; and `gh issue list --state all --search` on "signal-sandbox", "PID namespace", "flaky test", "intermittent" and "bwrap" returned no issue about this failure.
+Search receipt: on 2026-10-13 UTC, `scripts/ghi-guide-agent-ask.py --include-closed` found no issue, open or closed, naming this test file, this case, "PID namespace", "a-test.py", "bwrap" or "signal-sandbox" for a failure; and `gh issue list --state all --search` on "signal-sandbox", "PID namespace", "flaky test", "intermittent" and "bwrap" returned no issue about this failure.

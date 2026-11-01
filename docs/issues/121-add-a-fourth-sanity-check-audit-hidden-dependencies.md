@@ -16,6 +16,6 @@ Two boundaries the prompt must draw, or it poaches from siblings: mechanization'
 
 Build path, mirroring how the standing three earned their STANDING headers: draft the prompt (name it per the multi-part naming convention, grep-checked); md-review it; walk the findings; STANDING header; register it in the runner (an `ATTACK_PROMPT_FILES` entry plus docstring lines — the infrastructure is audit-count-agnostic). The two queued first-run sanity-checks (mechanization and fresh-eyes prompts as targets) run on the standing three and do not wait for this build.
 
-Search receipt: `gh issue list --state all --search "sanity-check audit"` and `--search "sanity"` (2026-08-21) returned no issue covering the instrument's stances; `scripts/ghi-info-ask.py` is absent from this checkout.
+Search receipt: `gh issue list --state all --search "sanity-check audit"` and `--search "sanity"` (2026-08-21) returned no issue covering the instrument's stances; `scripts/ghi-guide-agent-ask.py` is absent from this checkout.
 
 — filed from session https://claude.ai/code/session_01F9s9L5vPfehGRgrDHoc4Pk (doctrine-queue-drain seat)

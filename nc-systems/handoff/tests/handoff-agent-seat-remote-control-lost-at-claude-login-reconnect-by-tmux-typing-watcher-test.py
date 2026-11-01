@@ -141,7 +141,7 @@ class Fixture:
 
     @property
     def transcript(self) -> Path:
-        return (watcher.project_directory_module.project_directory_for_seat(self.seat_directory, self.projects)
+        return (watcher.claude_code_session_transcript_lookup_and_text_search_common.project_directory_for_seat(self.seat_directory, self.projects)
                 / f"{SESSION_ID}.jsonl")
 
     def write_transcript(self, *entries, tail=""):

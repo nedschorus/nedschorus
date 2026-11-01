@@ -4,7 +4,7 @@
 Run: python3 scripts/obsolete-file-edit-warning-hook-test.py
 Prints one line per case and exits non-zero if any case fails. Every case
 runs against throwaway repositories under a temporary directory: an "origin"
-reached by path, and a clone on a topic branch standing in for a seat's
+reached by path, and a clone on an nc-topic-branch standing in for a seat's
 checkout.
 
 Two things are asserted by INSTRUMENT rather than by inspection, because
@@ -243,7 +243,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                 log.read_text(encoding="utf-8").splitlines()].count(subcommand)
 
     # The "remote", and a clone standing in for a seat's checkout, on its own
-    # topic branch cut from main.
+    # nc-topic-branch cut from main.
     origin = tmp / "origin-repo"
     origin.mkdir()
     git(["init", "-q", "-b", "main"], origin)

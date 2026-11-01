@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Give one document the cold-read-fast-read: one fast-clarify cold-read-cell
-on the fast cold-read-tier.
+on the fast cold-read-tier, then one cold-read-cell on Opus for Question 4.
 
 Usage:
   nc-systems/cold-read/cold-read-fast-read.py --target docs/walk/foo-draft.md
@@ -21,7 +21,13 @@ Sonnet backup. It then prints exactly one line on stdout:
 the report's absolute path on success, or, when both the Gemini cell and the
 Sonnet backup failed, a line opening `FAILED` that names both causes. Exit 0 on success, 1 on failure, 64 when
 the invocation itself was wrong (a --target that is not a file) and nothing
-was launched. When the cold-read-target belongs to a class the
+was launched. A read that wrote its report but whose record did not reach the
+log-store also exits 1, with the report's path still the line on stdout and
+the shipper's `record:` line on stderr, FAILED or REFUSED; that is the one
+exit 1 whose stdout line is a path rather than a line opening `FAILED`,
+apart from a run from the Mac whose ssh a signal killed after the read on
+ned-box had finished. A walk draft's read ships nothing, so it never exits 1
+for its record. When the cold-read-target belongs to a class the
 /cold-read skill's step 2 sends to the cold-read-full-run -- CLAUDE.md, a
 skill or its prompt, a file under docs/agents/, a wiki file, a design, a test
 design, a design-contract -- the read also says that, unless step 2 exempts
@@ -68,16 +74,18 @@ checkout or in any other git worktree, gets its suggestions file beside it:
 Anything else -- a design, a skill, a record copy, a file in no git
 worktree -- gets a cold-read-record of its own under the
 gitignored records tree:
-`cold-read-records/<name>-<YYYY-MM-DD>/fast-read.md`, where <name> is the
+`cold-read-records/<name>-<YYYY-MM-DD>/cold-read-fast-read.md`, where <name> is the
 cold-read-target's file name without its extension -- `SKILL-<skill name>`
 for a skill, whose file is always SKILL.md -- the date is local, and the
-directory takes a -2, -3 suffix when the day's name is taken, the
-cold-read-grid's rule (user-ruled 2026-09-18). That directory
+directory takes a -2, -3 suffix when the day's name is taken in this
+checkout or in the log-store, the cold-read-grid's rule (user-ruled 2026-09-18). That directory
 also gets `target/<repository path>`, the exact bytes the reviewer read,
 frozen before the cold-read-cell launches, and once the report has landed the
 directory is shipped to the log-store on ned-box by
 nc-systems/cold-read/cold-read-record-ship.py, whose one line is printed on stderr as
-`record:` (user-ruled 2026-09-07; a shipping failure never fails the read).
+`record:` (user-ruled 2026-09-07). When shipping fails, the report is still
+kept and its path printed, and then the read exits 1, because the record did
+not reach the log-store.
 The cold-read-cell launcher pre-clears the report path, so a suggestions file
 left by an earlier read is replaced, never appended to.
 
@@ -158,6 +166,23 @@ the report, one more line on stderr opens `Ultra quota used up; Sonnet read
 this;` and gives the reset time Gemini named, without its seconds, and the
 line after it tells the agent that ran the read to copy that line into its
 next message to the user, so the user hears that Ultra ran out.
+
+QUESTION 4, WHAT SHOULD BE CODE. The fast-clarify cell answers Questions 1
+to 3. Once it, or the Sonnet backup, has written the report, a second cell
+asks Question 4 of the cold-read-target itself, not the marked copy, through
+the claude launcher on claude-opus-5-5 at high effort, with
+COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE below, whose reading rules are cut from
+FAST_CLARIFY_PROMPT_TEMPLATE. Its answer, under its own provenance stamp,
+becomes the report's `## Question 4: What should be code` section, placed
+before the sentence coverage section, so the report has four sections. It
+runs after the fast-clarify cell, not beside it: the claude launcher reports
+as a stray write any file in the checkout that changes while it runs, and on
+the walk route the fast-clarify cell writes its report there; run afterwards,
+that report already exists when the launcher starts. When the cell fails, or gives no answer within
+COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS, after which
+its process group is killed, the section and a line on stderr say so and
+why, and the read still delivers Questions 1 to 3 with the exit it would
+have had. When Questions 1 to 3 fail, Question 4 is not asked.
 """
 
 from __future__ import annotations
@@ -181,8 +206,12 @@ AGY_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-agy-cell.py")
 CLAUDE_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-claude-cell.py")
 # The program that copies a cold-read-record to the log-store on ned-box.
 # Its one line goes to stderr, since this program's stdout is the report path
-# and nothing else, and a shipping failure never fails the read.
+# and nothing else; when it is not `shipped:`, the report is still printed and
+# then the read exits 1.
 RECORD_SHIPPER = pathlib.Path(__file__).with_name("cold-read-record-ship.py")
+# The shipper's one line opens with this only when the record reached the
+# log-store; REFUSED and FAILED both leave it on disk alone.
+RECORD_SHIPPED_LINE_PREFIX = "shipped:"
 # What a cold-read-record is called and where it lives, defined once in a
 # module so no program keeps its own copy. importlib, because the filename
 # has hyphens.
@@ -191,7 +220,7 @@ _record_names_spec = importlib.util.spec_from_file_location(
     pathlib.Path(__file__).with_name("cold-read-record-names-common.py"))
 record_names = importlib.util.module_from_spec(_record_names_spec)
 _record_names_spec.loader.exec_module(record_names)
-# Loaded only for LOG_STORE_RECORDS_DESTINATION, where a read's record lands.
+# Loaded for where a read's record lands and for a record name free in the store.
 _record_shipper_spec = importlib.util.spec_from_file_location(
     "cold_read_record_ship", RECORD_SHIPPER)
 record_shipper = importlib.util.module_from_spec(_record_shipper_spec)
@@ -267,6 +296,53 @@ Number the items in sections 2 and 3 separately, ORDERED MOST IMPORTANT FIRST â€
 Write your report to {REPORT_PATH}, once, when your analysis is complete. That file is your entire deliverable: what you say in conversation is discarded. Start your report with a list of the files you were told to examine. Note if you were unable to read any of them. {REPORT_PATH} is the only file to create; write nothing anywhere else.
 """
 
+# QUESTION 4, asked of every document by a cell of its own: the user's text,
+# word for word, heading included. The heading is also the report section's.
+WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING = "## Question 4: What should be code"
+WHAT_SHOULD_BE_CODE_QUESTION = WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING + """
+What here relies on an LLM following English instructions, or on a human remembering to do something, where code could do the job? The model handles what truly needs interpretation: understanding ambiguous intent, classifying semantically complex material, drafting open-ended content, ranking alternatives no known libraries or algorithms cover. Code handles everything where variability adds nothing: validation, parsing, calculation, state transitions, sequencing, retries, deduplication, filtering, formatting contracts, invariant enforcement, tool routing when the rule is known. Go through every step the text gives to a model or a person, and ask whether code could do it, constrain it to a bounded choice, take over its state or control flow, or check its result. A step that works reliably today, costs little, and fails loudly is not an issue, and neither is one that code already does. BE CONCISE: for each step, quote the exact phrase, then a sentence naming the work and the code that could do or check it. Number each item, most useful first. If there are none, say "No issues"."""
+
+# The fast-clarify prompt's rules on what a reader reads and may not touch,
+# from its first sentence to its last: the Question 4 cell reads by the same
+# rules, so they are cut from that prompt rather than kept twice.
+FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES_OPENING_WORDS = "Before the documents, read `CLAUDE.md`"
+FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES_CLOSING_WORDS = "gaps or inconsistencies are not."
+FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES = FAST_CLARIFY_PROMPT_TEMPLATE[
+    FAST_CLARIFY_PROMPT_TEMPLATE.index(FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES_OPENING_WORDS):
+    FAST_CLARIFY_PROMPT_TEMPLATE.index(FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES_CLOSING_WORDS)
+    + len(FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES_CLOSING_WORDS)]
+COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE = (
+    "Read {TARGET_PATH} in full, including any YAML frontmatter, and answer one "
+    "question about it. " + FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES + " Read all of them, then answer the "
+    "question for each document. The question is numbered 4 because another "
+    "reviewer answers Questions 1 to 3 about the same text, and the program that "
+    "runs you puts your report after theirs.\n\n"
+    + WHAT_SHOULD_BE_CODE_QUESTION + "\n\n"
+    "Write your report to {REPORT_PATH}, once, when your analysis is complete. Do "
+    "not write the question's heading: the program that runs you puts your report "
+    "under it. For more than one document, give each document's numbered items, or "
+    "\"No issues\", under the document's name. That file is your entire deliverable: "
+    "what you say in conversation is discarded. {REPORT_PATH} is the only file to "
+    "create; write nothing anywhere else.\n")
+WHAT_SHOULD_BE_CODE_QUESTION_COLD_READ_CELL_LABEL = "what-should-be-code"
+WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID = "claude-opus-5-5"
+WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_EFFORT = "high"
+# The claude launcher requires a tier; --model and --effort above override its pins.
+WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_COLD_READ_TIER = "deep"
+WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_SCRATCH_FILE_NAME = (
+    "cold-read-fast-read-embedded-what-should-be-code-prompt.md")
+WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_FILE_NAME = "cold-read-fast-read-what-should-be-code-answer.md"
+# The answer sits one directory below the scratch directory because the
+# launcher's misplaced-report recovery searches the report's grandparent for
+# a file of the same name; directly in the scratch directory, that would be
+# the shared temporary root, where a concurrent fast read writes its own.
+WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_DIRECTORY_NAME = "what-should-be-code-answer"
+WHAT_SHOULD_BE_CODE_QUESTION_LAUNCHER_OUTPUT_SCRATCH_FILE_NAME = (
+    "cold-read-fast-read-what-should-be-code-launcher-output.txt")
+# Opus 5.5 defect-hunt cells at xhigh, a larger task than one question at
+# high, took a median of 14 minutes and at most 44 in the log-store's records.
+COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60
+
 PROGRAM = "cold-read-fast-read"
 WALK_DRAFT_SUFFIX = "-draft.md"
 # Both endings are the walk-me-through skill's to name; this program only
@@ -339,16 +415,23 @@ _claude_cell_spec = importlib.util.spec_from_file_location(
 claude_cell = importlib.util.module_from_spec(_claude_cell_spec)
 _claude_cell_spec.loader.exec_module(claude_cell)
 SONNET_BACKUP_MODEL = claude_cell.TIER_TO_CLAUDE_MODEL_CHAIN[FAST_READ_TIER][0]
+# Loaded only for stop_process_tree, which stops the Question 4 cell's
+# process group, the model it started included, at its time limit.
+_cell_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common", pathlib.Path(__file__).with_name("cold-read-cell-common.py"))
+cell_common = importlib.util.module_from_spec(_cell_common_spec)
+_cell_common_spec.loader.exec_module(cell_common)
 # The claude launcher sets no time limit of its own; the Sonnet backup is
 # allowed as long as one Gemini attempt.
 COLD_READ_FAST_READ_SONNET_BACKUP_RUN_ALLOWANCE_SECONDS = 30 * 60
-# Each Gemini attempt of the read on ned-box is bounded by the --print-timeout
-# the agy cell gives each model of the cold-read-tier's chain; the five
+# Each Gemini attempt of the read on ned-box is bounded by the time after
+# which the agy cell kills each model of the cold-read-tier's chain; the five
 # minutes more cover git, the shipper and the connect.
 COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS = (
     FAST_READ_ATTEMPTS * len(agy_cell.TIER_TO_AGY_MODEL_CHAIN[FAST_READ_TIER])
-    * agy_cell.COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS
-    + COLD_READ_FAST_READ_SONNET_BACKUP_RUN_ALLOWANCE_SECONDS + 5 * 60)
+    * agy_cell.COLD_READ_AGY_CELL_PER_MODEL_RUN_KILL_AFTER_SECONDS
+    + COLD_READ_FAST_READ_SONNET_BACKUP_RUN_ALLOWANCE_SECONDS + 5 * 60
+    + COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS)
 
 
 class CheckoutRootUnreadable(RuntimeError):
@@ -409,7 +492,7 @@ def cold_read_fast_read_report_location_seen_from_mac_for_target_sent_over_ssh(n
                    if checkout_root is not None else None)
     if suggestions is not None:
         return str(suggestions)
-    return (f"fast-read.md in the newest directory whose name starts "
+    return (f"{record_names.COLD_READ_FAST_READ_REPORT_FILE_NAME} in the newest directory whose name starts "
             f"{record_names.record_name_for_target(mac_target)}- in "
             f"{record_shipper.LOG_STORE_RECORDS_DESTINATION}/")
 
@@ -547,6 +630,11 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
               f"subagent, tell the agent that dispatched you instead; then go on with "
               f"your task without the result. When the second run fails in any other "
               f"way, follow the message it prints.", file=sys.stderr)
+    elif stdout.strip() and not stdout.lstrip().startswith("FAILED"):
+        print(f"{PROGRAM}: the fast read on ned-box wrote its report, whose path is "
+              f"the result line on stdout, and exited {completed.returncode}; its "
+              f"`record:` line, above, says why its record did not reach the log-store.",
+              file=sys.stderr)
     else:
         failure = (f"the fast read on ned-box exited {completed.returncode} "
                    f"and printed no result line")
@@ -655,8 +743,12 @@ def fast_read_report_path_for_target(
         target, checkout_root_holding(target))
     if suggestions is not None:
         return suggestions
-    return (fresh_record_dir(RECORDS_DIR / record_directory_name_for_target(target, now))
-            / "fast-read.md")
+    record_dir, store_unlisted = record_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
+        RECORDS_DIR / record_directory_name_for_target(target, now))
+    if store_unlisted is not None:
+        print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(PROGRAM, record_dir, store_unlisted),
+              file=sys.stderr)
+    return record_dir / record_names.COLD_READ_FAST_READ_REPORT_FILE_NAME
 
 
 def walk_draft_suggestions_file_path_for_target_in_worktree_or_none(
@@ -680,7 +772,8 @@ def walk_draft_suggestions_file_path_for_target_in_worktree_or_none(
 
 # THE RECORD-NAME RULE: `<file stem>-<YYYY-MM-DD>`, and
 # `SKILL-<skill name>-<YYYY-MM-DD>` for a skill; a second read of one document
-# on one day takes -2, -3. The document comes first so every read of one
+# on one day takes -2, -3, the first free both in this checkout and in the
+# log-store, where another checkout's read of that day may already be. The document comes first so every read of one
 # document sits together in the log-store's listing. Two documents with the
 # same stem in different directories read on one day come out as -2 of each
 # other (target/ shows which was which), and the -N count says nothing about
@@ -689,7 +782,7 @@ def walk_draft_suggestions_file_path_for_target_in_worktree_or_none(
 # holds it, and this program and nc-systems/cold-read/cold-read-grid.py both import it, so
 # the two cannot drift apart. nc-systems/cold-read/tests/cold-read-record-names-common-test.py fails a
 # program that writes its own copy back. The report inside the record is
-# bare `fast-read.md`: the directory says which read, the file says what it is.
+# `cold-read-fast-read.md`: the directory says which read, the file says what it is.
 RECORD_CLOCK_OVERRIDE_VARIABLE = "COLD_READ_RECORD_CLOCK_OVERRIDE"
 RECORD_CLOCK_OVERRIDE_FORMAT = "%Y-%m-%dT%H:%M"
 
@@ -699,7 +792,7 @@ def record_clock_reading() -> datetime.datetime:
     taken from, so the two cannot disagree across midnight.
 
     COLD_READ_RECORD_CLOCK_OVERRIDE, when set as `YYYY-MM-DDTHH:MM`, is read
-    instead of the clock: it is how the test suites name a cold-read-record
+    instead of the clock: it is how the nc-test-suites name a cold-read-record
     exactly without depending on the wall clock or flaking across a minute
     boundary.
     The override is a clock value, not a finished name, so the tests still go
@@ -713,9 +806,6 @@ def record_clock_reading() -> datetime.datetime:
 
 record_name_for_target = record_names.record_name_for_target
 record_directory_name_for_target = record_names.record_directory_name_for_target
-
-
-fresh_record_dir = record_names.fresh_record_directory
 
 
 # --- Sentence ids -------------------------------------------------------
@@ -917,9 +1007,11 @@ SENTENCE_COVERAGE_HEADING = "## Sentence coverage (added by cold-read-fast-read)
 def attach_sentences_and_coverage(report_text: str, sentences: dict,
                                   document: pathlib.Path = None,
                                   marked_copy_kept: pathlib.Path = None,
-                                  full_run_class_name: str = None) -> str:
+                                  full_run_class_name: str = None,
+                                  section_before_coverage: str = "") -> str:
     """Put each original sentence under the restatement claiming its id, and
-    append what the restatement missed.
+    append `section_before_coverage`, then what the restatement missed. The
+    section is placed, not read: an id standing alone in it claims nothing.
 
     The reviewer sees only the marked copy, so its report cites ids and not
     the prose. Attaching the original here is what makes the report readable
@@ -983,7 +1075,8 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict,
         # the same sentence the author saw on stderr.
         sentence = full_run_required_line(full_run_class_name)
         coverage.append(f"- {sentence[0].upper()}{sentence[1:]}")
-    return "\n".join(lines).rstrip("\n") + "\n" + "\n".join(coverage) + "\n"
+    return ("\n".join(lines).rstrip("\n") + "\n" + section_before_coverage
+            + "\n".join(coverage) + "\n")
 
 
 # A bare issue, pull request or task number: `#` and digits, with whatever
@@ -1079,7 +1172,8 @@ def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> None:
 
 def ship_record(record_dir: pathlib.Path) -> str:
     """The shipper's one line, or a FAILED line of this program's own when
-    it could not run. Reported on stderr by the caller, never fatal."""
+    it could not run. The caller prints it on stderr, and exits 1 when it is
+    not `shipped:`, after the report path is printed."""
     try:
         completed = subprocess.run(
             [sys.executable, str(RECORD_SHIPPER), str(record_dir)],
@@ -1173,8 +1267,9 @@ def ultra_quota_line(error_line: str) -> str:
             else f"{ULTRA_QUOTA_LINE_OPENING} Gemini gave no reset time.")
 
 
-def fast_clarify_cell_failure_cause(launcher: pathlib.Path, exit_code: int,
-                                    output: str) -> str:
+def cold_read_cell_reviewer_launcher_failure_cause_line(
+    launcher: pathlib.Path, exit_code: int, output: str,
+) -> str:
     """One line naming why a cell failed: Gemini's spending cap, or else the
     Ultra sign-in's quota with its reset time, when `launcher` is the agy
     launcher and agy's error line in `output` names it, else the launcher's
@@ -1193,20 +1288,94 @@ def fast_clarify_cell_failure_cause(launcher: pathlib.Path, exit_code: int,
     return f"exit {exit_code}: {detail}"
 
 
+def what_should_be_code_section(target: pathlib.Path, scratch: pathlib.Path) -> str:
+    """Ask the Question 4 cell about `target`, re-emit its launcher's output on
+    stderr, and return the report section: the heading, then the cell's
+    provenance stamp and answer, or, when the cell failed, a paragraph saying
+    so and why, also printed on stderr. A failed cell never fails the read."""
+    prompt_file = scratch / WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_SCRATCH_FILE_NAME
+    prompt_file.write_text(COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE, encoding="utf-8")
+    answer_directory = scratch / WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_DIRECTORY_NAME
+    answer_directory.mkdir()
+    answer = answer_directory / WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_FILE_NAME
+    launcher_output = scratch / WHAT_SHOULD_BE_CODE_QUESTION_LAUNCHER_OUTPUT_SCRATCH_FILE_NAME
+    command = [
+        sys.executable, str(CLAUDE_CELL_LAUNCHER),
+        "--cell", WHAT_SHOULD_BE_CODE_QUESTION_COLD_READ_CELL_LABEL,
+        "--tier", WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_COLD_READ_TIER,
+        "--model", WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID,
+        "--effort", WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_EFFORT,
+        "--target", str(target), "--report", str(answer),
+        "--prompt-file", str(prompt_file),
+    ]
+    print(f"{PROGRAM}: Questions 1 to 3 are answered; asking Question 4, What should "
+          f"be code, about {target}, of {WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID} at "
+          f"{WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_EFFORT} effort, for up to "
+          f"{COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS / 60:g} minutes. "
+          f"If the Question 4 cell fails or runs past that time, the report still holds "
+          f"Questions 1 to 3, and its Question 4 section says why Question 4 was not answered.",
+          file=sys.stderr)
+    # A file, not a pipe: the launcher's output is read only after it exits.
+    with launcher_output.open("w", encoding="utf-8") as output:
+        process = subprocess.Popen(
+            command, stdout=output, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+            cwd=REPO_ROOT, start_new_session=True)
+        try:
+            exit_code = process.wait(
+                timeout=COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            exit_code = None
+            cell_common.stop_process_tree(process)
+    output_text = launcher_output.read_text(encoding="utf-8")
+    print(output_text, file=sys.stderr, end="")
+    if exit_code == 0:
+        return (f"\n{WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING}\n\n"
+                f"{answer.read_text(encoding='utf-8').strip()}\n")
+    if exit_code is None:
+        cause = (f"no answer within "
+                 f"{COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS / 60:g} "
+                 f"minutes, so this program stopped the cell")
+    else:
+        cause = cold_read_cell_reviewer_launcher_failure_cause_line(
+            CLAUDE_CELL_LAUNCHER, exit_code, output_text)
+    rerun = shlex.join(["python3", str(pathlib.Path(__file__).resolve()),
+                        "--target", str(target)])
+    failure = (f"Question 4 was not answered: the "
+               f"{WHAT_SHOULD_BE_CODE_QUESTION_COLD_READ_CELL_LABEL} cell, which "
+               f"asks Question 4 of {WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID}, failed ({cause}). "
+               f"Questions 1 to 3 are answered in the report's sections before this one "
+               f"and stand on their own.\n"
+               f"If you need Question 4's answer: run this command once, after the reset "
+               f"time if the cause above names one; it reads the whole document again "
+               f"into a new report:\n{rerun}\n"
+               f"If that report's Question 4 section also says Question 4 was not "
+               f"answered, or you do not need the answer: go on without it.")
+    print(f"{PROGRAM}: {failure}", file=sys.stderr)
+    return f"\n{WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING}\n\n{failure}\n"
+
+
 def fast_read_report_finish_and_print_path(
     *, report: pathlib.Path, target: pathlib.Path, sentences: dict,
     marked_copy_kept, full_run_class_name, bare_references, launch_sha256: str,
-    on_records_route: bool, backup_line: str, quota_line: str = "",
+    on_records_route: bool, backup_line: str, scratch: pathlib.Path,
+    quota_line: str = "",
 ) -> int:
-    """Turn the cell's report into the read's: attach the sentences, the
-    coverage and the bare numbers, name an edit made during the read and the
-    Sonnet backup, ship the record, print the path. Returns 0."""
+    """Turn the cell's report into the read's: ask Question 4 and add its
+    section, attach the sentences, the coverage and the bare numbers, name an
+    edit made during the read and the Sonnet backup, ship the record, print
+    the path. Returns 0, or 1 when the record did not reach the log-store,
+    whether or not Question 4 was answered."""
+    # Asked only once Questions 1 to 3 have a report to hold the answer, and
+    # not beside the fast-clarify cell: the claude launcher reports as a stray
+    # write any file in the checkout that changes while it runs, and on the
+    # walk route that cell's report is written there.
+    question_4_section = what_should_be_code_section(target, scratch)
     # Before anything reads or ships it: put each original sentence under
     # the restatement claiming its id, and say which sentences no
     # restatement claimed.
     attached = attach_sentences_and_coverage(
         report.read_text(encoding="utf-8"), sentences, target,
-        marked_copy_kept, full_run_class_name)
+        marked_copy_kept, full_run_class_name, question_4_section)
     if bare_references is not None:
         attached += bare_references_section(bare_references)
     changed_line = target_changed_during_read_line(target, launch_sha256, marked_copy_kept)
@@ -1229,10 +1398,13 @@ def fast_read_report_finish_and_print_path(
         print(f"{PROGRAM}: bare issue, pull request or task numbers in "
               f"this walk draft: {len(bare_references)}; the suggestions "
               "file lists each one.", file=sys.stderr)
+    shipped = True
     if on_records_route:
-        print(f"{PROGRAM}: record: {ship_record(report.parent)}", file=sys.stderr)
+        record_line = ship_record(report.parent)
+        print(f"{PROGRAM}: record: {record_line}", file=sys.stderr)
+        shipped = record_line.startswith(RECORD_SHIPPED_LINE_PREFIX)
     print(report)
-    return 0
+    return 0 if shipped else 1
 
 
 def main() -> int:
@@ -1297,14 +1469,16 @@ def main() -> int:
             report=report, target=target, sentences=sentences,
             marked_copy_kept=marked_copy if on_records_route else None,
             full_run_class_name=full_run_class_name, bare_references=bare_references,
-            launch_sha256=launch_sha256, on_records_route=on_records_route)
+            launch_sha256=launch_sha256, on_records_route=on_records_route,
+            scratch=pathlib.Path(scratch))
         quota_error_line = ""
         for attempt in range(1, FAST_READ_ATTEMPTS + 1):
             exit_code, output = run_one_fast_clarify_cell(
                 AGY_CELL_LAUNCHER, marked_copy, report, prompt_file)
             if exit_code == 0:
                 return fast_read_report_finish_and_print_path(**finish, backup_line="")
-            gemini_cause = fast_clarify_cell_failure_cause(AGY_CELL_LAUNCHER, exit_code, output)
+            gemini_cause = cold_read_cell_reviewer_launcher_failure_cause_line(
+                AGY_CELL_LAUNCHER, exit_code, output)
             if exit_code == EXIT_BAD_INVOCATION:
                 print(f"{PROGRAM}: the cell launcher refused the invocation "
                       f"(exit {EXIT_BAD_INVOCATION}); not retried, because the "
@@ -1336,7 +1510,8 @@ def main() -> int:
                              f"failed ({gemini_cause}), so {SONNET_BACKUP_MODEL} read "
                              "this document instead, as the provenance stamp says."),
                 quota_line=ultra_quota_line(quota_error_line) if quota_error_line else "")
-        sonnet_cause = fast_clarify_cell_failure_cause(CLAUDE_CELL_LAUNCHER, exit_code, output)
+        sonnet_cause = cold_read_cell_reviewer_launcher_failure_cause_line(
+            CLAUDE_CELL_LAUNCHER, exit_code, output)
     if bare_references:
         print(f"{PROGRAM}: bare issue, pull request or task numbers in this walk "
               f"draft: {len(bare_references)}. The read failed, so no suggestions "

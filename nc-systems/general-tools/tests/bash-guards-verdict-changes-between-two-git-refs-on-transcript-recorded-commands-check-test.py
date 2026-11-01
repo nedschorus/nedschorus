@@ -479,6 +479,18 @@ try:
           == (3 + 9) * (len(replay.GUARDS) + 1) * 7 + replay.STEP_DEADLINE_MARGIN_SECONDS,
           replay.step_deadline_seconds(9, 3, 7))
 
+    class GhiMdGuardNaming:
+        def __init__(self, replaced):
+            self.replaced = replaced
+
+        def ghi_md_replaced_by_command(self, command, working_directory):
+            return self.replaced
+
+    for replaced, expected in (("/c/docs/issues/46-a.md", ("refused", "replaces /c/docs/issues/46-a.md")),
+                               (None, ("passed", None))):
+        reading = replay.read_ghi_md_whole_file_replacement(GhiMdGuardNaming(replaced), "cp a b", "/c", None)
+        check(f"the GHI-MD soft-block's reading when its guard names {replaced}", reading == expected, reading)
+
     def add_bash_hook(worktree):
         path = worktree / ".claude" / "settings.json"
         settings = json.loads(path.read_text())
@@ -1325,6 +1337,16 @@ try:
     check("transcripts: distinct (command, working directory) pairs of Bash calls only, in order",
           pairs == [["ls", "/a"], ["ls", "/b"]], pairs)
     check("transcripts: a line that is not JSON is counted, not dropped silently", lines_not_json == 1, lines_not_json)
+
+    subagent_transcript = transcripts / "a" / "subagents" / "agent-1.jsonl"
+    subagent_transcript.parent.mkdir(parents=True)
+    subagent_transcript.write_text(bash_call("ls", "/e") + "\n")
+    pairs, _ = replay.recorded_command_pairs([str(Path(scratch) / "transcripts")])
+    check("transcripts: a Bash call found only in a subagent's transcript is read too",
+          sorted(pairs) == [["ls", "/a"], ["ls", "/b"], ["ls", "/e"]], pairs)
+    subagent_transcript.unlink()
+    subagent_transcript.parent.rmdir()
+    subagent_transcript.parent.parent.rmdir()
 
     unreadable = transcripts / "unreadable.jsonl"
     unreadable.write_text(bash_call("ls", "/d"))

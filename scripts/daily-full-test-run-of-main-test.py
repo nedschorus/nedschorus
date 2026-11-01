@@ -34,6 +34,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1101,6 +1102,25 @@ def run_line_copying_cases(workspace: Path):
           f"{outcome} {pid_file.read_text() if pid_file.is_file() else 'no pid file'}")
 
 
+def run_not_run_suite_record_cases():
+    runner = program.run_all_test_suites
+    not_run = {"suite": "scripts/b-test.py", "exit": 1, "seconds": 0.1, "skips": [],
+               "test sandbox did not start": True}
+    not_run_lines = [runner.suite_line(not_run),
+                     f"{runner.NOT_RUN_SUITE_LINE_PREFIX}{not_run['suite']} "
+                     f"{runner.why_suite_failed(not_run)} — log /a/log/directory/scripts__b-test.py.log"]
+    summary = "SUMMARY: 1 passed, 0 failed, 1 not run, 2 total"
+    printed = ["run-all-test-suites: /a/checkout at 0123456789ab", "PASS scripts/a-test.py (0.1s)",
+               not_run_lines[0], "", "1 not run, because bwrap could not build the "
+               "nc-test-sandbox; each log says why and what to do:", not_run_lines[1], summary]
+    kept = program.runner_output_lines_for_the_record(
+        types.SimpleNamespace(stdout="\n".join(printed) + "\n", stderr=""))
+    check("a run with a suite whose nc-test-sandbox did not start keeps both of the runner's "
+          "NOT RUN lines for it in the record, as the runner's own code prints them",
+          [line for line in kept if line in not_run_lines] == not_run_lines
+          and summary in kept, repr(kept))
+
+
 def pid_is_running(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -1119,6 +1139,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_user_runtime_directory_cases()
     run_log_store_readme_cases()
     run_line_copying_cases(workspace_root)
+    run_not_run_suite_record_cases()
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")

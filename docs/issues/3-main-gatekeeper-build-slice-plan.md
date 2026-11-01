@@ -1066,7 +1066,7 @@ shape (the branch's older copy against main's landed version).
 
 **The interim, accepted deliberately.** Until the gate is live, nothing
 enforces this. The session-start half exists — the ignition prompt carries
-the branch-sync result and, per pull request
+the launch-time-git-sync result and, per pull request
 PR [ignition: catch up with main before the first substantive action, and verify it](https://github.com/nedschorus/nedschorus/pull/220), tells the
 successor to catch up with main before its first substantive action — and
 the harness already refuses an edit to a file that changed on disk since
