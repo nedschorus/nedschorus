@@ -1,19 +1,19 @@
 """Write an event into this machine's local events file, and start the sender.
 
-A program never sends an event to agent-seat-database-service.py itself: it
+A program never sends an event to nc-shared-database-service.py itself: it
 calls write_event_to_local_events_file_and_start_sender, which commits the
 event as a row of the local events file, an outbox, and then starts
-agent-seat-database-local-events-file-sender.py without waiting for it. The row waits there until the service has stored it,
+nc-shared-database-local-events-file-sender.py without waiting for it. The row waits there until the service has stored it,
 so an agent-seat keeps working while ned-box cannot be reached.
 
 Load it by path, under the snake_case form of its file name:
 
     spec = importlib.util.spec_from_file_location(
-        "agent_seat_database_local_events_file_common", <path>)
+        "nc_shared_database_local_events_file_common", <path>)
 
 It runs on both machines, the Mac's Apple Python 3.9 included.
 
-THE LOCAL EVENTS FILE, AGENT_SEAT_DATABASE_LOCAL_EVENTS_FILE_PATH, holds four
+THE LOCAL EVENTS FILE, NC_SHARED_DATABASE_LOCAL_EVENTS_FILE_PATH, holds four
 tables:
   outbox_event   one row per event, in the order programs wrote them: the event
                  as sent (body), when it was written, and `sent` with `sequence`
@@ -37,15 +37,15 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-AGENT_SEAT_DATABASE_LOCAL_EVENTS_FILE_PATH = (Path.home() / ".local" / "state" / "nedschorus"
+NC_SHARED_DATABASE_LOCAL_EVENTS_FILE_PATH = (Path.home() / ".local" / "state" / "nedschorus"
                                               / "agent-seat-events.sqlite")
 SENDER_LOCK_FILE_NAME = "agent-seat-events-sender.sqlite"
 SENDER_STOP_REPORT_FILE_NAME = "agent-seat-events-sender-stopped.txt"
-AGENT_SEAT_DATABASE_SERVICE_URL = "http://ned-box.local:8765"
-AGENT_SEAT_DATABASE_SERVICE_TOKEN_FILE_PATH = (Path.home() / ".config" / "nedschorus"
-                                               / "agent-seat-database-service.token")
-GENERATION_HEADER = "Agent-Seat-Database-Generation-Id"
-SENDER_PATH = Path(__file__).resolve().with_name("agent-seat-database-local-events-file-sender.py")
+NC_SHARED_DATABASE_SERVICE_URL = "http://ned-box.local:8765"
+NC_SHARED_DATABASE_SERVICE_TOKEN_FILE_PATH = (Path.home() / ".config" / "nedschorus"
+                                               / "nc-shared-database-service.token")
+NC_SHARED_DATABASE_GENERATION_ID_HTTP_HEADER = "Nc-Shared-Database-Generation-Id"
+SENDER_PATH = Path(__file__).resolve().with_name("nc-shared-database-local-events-file-sender.py")
 THIS_MACHINE = "mac" if sys.platform == "darwin" else "ned-box"
 BUSY_TIMEOUT_SECONDS = 10
 
@@ -73,11 +73,11 @@ def utc_now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def local_events_file_sender_lock_file_path(local_events_file):
+def nc_shared_database_local_events_file_sender_lock_file_path(local_events_file):
     return Path(local_events_file).with_name(SENDER_LOCK_FILE_NAME)
 
 
-def local_events_file_sender_stop_report_path(local_events_file):
+def nc_shared_database_local_events_file_sender_stop_report_path(local_events_file):
     """The file in which a sender that stopped with rows queued, or failed, says why.
 
     The sender writes it, and deletes it once the queue is empty; the writer
@@ -87,7 +87,7 @@ def local_events_file_sender_stop_report_path(local_events_file):
     return Path(local_events_file).with_name(SENDER_STOP_REPORT_FILE_NAME)
 
 
-def open_local_events_file(local_events_file=AGENT_SEAT_DATABASE_LOCAL_EVENTS_FILE_PATH):
+def open_local_events_file(local_events_file=NC_SHARED_DATABASE_LOCAL_EVENTS_FILE_PATH):
     """Open the file, making it and its tables when absent; transactions are explicit."""
     Path(local_events_file).parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(str(local_events_file), timeout=BUSY_TIMEOUT_SECONDS,
@@ -100,7 +100,7 @@ def open_local_events_file(local_events_file=AGENT_SEAT_DATABASE_LOCAL_EVENTS_FI
     return connection
 
 
-def generation_seen(connection):
+def read_local_events_file_last_seen_nc_shared_database_generation_id(connection):
     return connection.execute("SELECT generation_id FROM database_generation_seen").fetchone()[0]
 
 
@@ -112,7 +112,7 @@ def requeue_sent_events_for_new_database_generation_id(connection, old_generatio
     """
     connection.execute("BEGIN IMMEDIATE")
     try:
-        if generation_seen(connection) == old_generation:
+        if read_local_events_file_last_seen_nc_shared_database_generation_id(connection) == old_generation:
             connection.execute("UPDATE outbox_event SET sent = NULL, sequence = NULL "
                                "WHERE sent IS NOT NULL")
             connection.execute("UPDATE database_generation_seen SET generation_id = ?",
@@ -123,7 +123,7 @@ def requeue_sent_events_for_new_database_generation_id(connection, old_generatio
         raise
 
 
-def start_sender(local_events_file=AGENT_SEAT_DATABASE_LOCAL_EVENTS_FILE_PATH,
+def start_sender(local_events_file=NC_SHARED_DATABASE_LOCAL_EVENTS_FILE_PATH,
                  sender_arguments=()):
     """Start the sender in its own session, and do not wait for it."""
     subprocess.Popen(
@@ -134,7 +134,7 @@ def start_sender(local_events_file=AGENT_SEAT_DATABASE_LOCAL_EVENTS_FILE_PATH,
 
 
 def write_event_to_local_events_file_and_start_sender(
-        operation, seat_id, fields, local_events_file=AGENT_SEAT_DATABASE_LOCAL_EVENTS_FILE_PATH,
+        operation, seat_id, fields, local_events_file=NC_SHARED_DATABASE_LOCAL_EVENTS_FILE_PATH,
         sender_arguments=()):
     """Queue one event for the service, start the sender, and return the event's ID.
 
@@ -152,13 +152,13 @@ def write_event_to_local_events_file_and_start_sender(
                            "VALUES (?, ?, ?)", (event_id, json.dumps(body), utc_now()))
     finally:
         connection.close()
-    stop_report = local_events_file_sender_stop_report_path(local_events_file)
+    stop_report = nc_shared_database_local_events_file_sender_stop_report_path(local_events_file)
     try:
         stopped = stop_report.read_text(encoding="utf-8")
     except FileNotFoundError:
         stopped = None
     if stopped is not None:
-        print(f"Events from this machine are not reaching the agent-seat database service: "
+        print(f"Events from this machine are not reaching the nc-shared-database service: "
               f"the last sender stopped, and wrote in {stop_report}:\n{stopped.rstrip()}",
               file=sys.stderr)
     start_sender(local_events_file, sender_arguments)

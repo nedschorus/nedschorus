@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for nc-systems/agent-seat-database/agent-seat-database-nightly-backup-with-integrity-check.py.
+"""Tests for nc-systems/nc-shared-database/nc-shared-database-nightly-backup-with-integrity-check.py.
 
 The cases back up a database made by the service's own schema under a
 temporary directory: a copy kept as one file with the newest backup's mark
@@ -9,7 +9,7 @@ check command its message prints run as printed, an event stored between the
 backup and the read of the copy's highest sequence number, and a database that
 does not exist.
 
-Run: python3 nc-systems/agent-seat-database/tests/agent-seat-database-nightly-backup-with-integrity-check-test.py
+Run: python3 nc-systems/nc-shared-database/tests/nc-shared-database-nightly-backup-with-integrity-check-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -32,9 +32,9 @@ def load(name, file_name):
     return module
 
 
-service = load("agent_seat_database_service", "agent-seat-database-service.py")
-backup = load("agent_seat_database_nightly_backup_with_integrity_check",
-              "agent-seat-database-nightly-backup-with-integrity-check.py")
+service = load("nc_shared_database_service", "nc-shared-database-service.py")
+backup = load("nc_shared_database_nightly_backup_with_integrity_check",
+              "nc-shared-database-nightly-backup-with-integrity-check.py")
 
 failures = 0
 
@@ -65,8 +65,8 @@ def newest_backup_row(database):
 
 with tempfile.TemporaryDirectory() as scratch:
     scratch = Path(scratch)
-    database = scratch / "agent-seat-database.sqlite3"
-    service.create_database_if_absent(database)
+    database = scratch / "nc-shared-database.sqlite3"
+    service.create_nc_shared_database_if_absent(database)
     live = sqlite3.connect(str(database), isolation_level=None)
     generation = live.execute("SELECT generation_id FROM database_generation").fetchone()[0]
     backups = scratch / "backups"
@@ -81,16 +81,16 @@ with tempfile.TemporaryDirectory() as scratch:
     live.execute("DELETE FROM event WHERE sequence = 7")
     for first_copy in backups.iterdir():
         first_copy.unlink()
-    old_copies = [backups / f"agent-seat-database-20260101T0000{second:02d}Z.sqlite3"
+    old_copies = [backups / f"nc-shared-database-20260101T0000{second:02d}Z.sqlite3"
                   for second in range(14)]
     for old_copy in old_copies:
         old_copy.write_bytes(b"old")
     code, printed, errors = run(database, backups)
-    kept = sorted(backups.glob("agent-seat-database-*.sqlite3"))
+    kept = sorted(backups.glob("nc-shared-database-*.sqlite3"))
     newest = kept[-1]
     copy = sqlite3.connect(str(newest))
     check("the copy is kept as one file, with every event and the database's generation ID",
-          code == 0 and newest.name.startswith("agent-seat-database-2")
+          code == 0 and newest.name.startswith("nc-shared-database-2")
           and copy.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
           and copy.execute("SELECT count(*) FROM event").fetchone()[0] == 6
           and copy.execute("SELECT generation_id FROM database_generation").fetchone()[0]
@@ -115,7 +115,7 @@ with tempfile.TemporaryDirectory() as scratch:
     failed = list(backups.glob("*.failed-integrity-check"))
     check("a copy that fails its integrity check exits 1 and is not kept as a backup",
           code == 1 and len(failed) == 1
-          and sorted(backups.glob("agent-seat-database-*.sqlite3")) == kept, (code, errors))
+          and sorted(backups.glob("nc-shared-database-*.sqlite3")) == kept, (code, errors))
     check("after a failed check the older copies and the database's newest_backup stay as they were",
           newest_backup_row(database) == [(generation, 6)] and old_copies[1].exists(),
           newest_backup_row(database))

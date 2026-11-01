@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for nc-systems/agent-seat-database/agent-seat-database-service.py.
+"""Tests for nc-systems/nc-shared-database/nc-shared-database-service.py.
 
 Each case starts the service on a loopback port with a database and an
 accepted-tokens file under a temporary directory, sends real HTTP requests,
@@ -9,7 +9,7 @@ state each operation leaves, the newest backup's mark in every answer, the
 500 answer to an error no check foresaw, and that a request which gets no
 answer fails only its own case.
 
-Run: python3 nc-systems/agent-seat-database/tests/agent-seat-database-service-test.py
+Run: python3 nc-systems/nc-shared-database/tests/nc-shared-database-service-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -24,8 +24,8 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-SERVICE_PATH = Path(__file__).resolve().parents[1] / "agent-seat-database-service.py"
-_spec = importlib.util.spec_from_file_location("agent_seat_database_service", SERVICE_PATH)
+SERVICE_PATH = Path(__file__).resolve().parents[1] / "nc-shared-database-service.py"
+_spec = importlib.util.spec_from_file_location("nc_shared_database_service", SERVICE_PATH)
 service = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(service)
 
@@ -58,10 +58,10 @@ SEAT_FIELDS = {"seat_name": "merge-lane-2", "seat_directory": "/home/nedlern/age
 
 with tempfile.TemporaryDirectory() as scratch:
     scratch = Path(scratch)
-    database = scratch / "state" / "agent-seat-database.sqlite3"
+    database = scratch / "state" / "nc-shared-database.sqlite3"
     tokens = scratch / "accepted-tokens"
     tokens.write_text(f"{TOKEN}\n\n  ned-box-token  \n", encoding="utf-8")
-    server = service.make_server(database, tokens, "127.0.0.1", 0)
+    server = service.make_nc_shared_database_service_http_server(database, tokens, "127.0.0.1", 0)
     server.RequestHandlerClass.log_message = lambda *arguments: None
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
@@ -73,7 +73,7 @@ with tempfile.TemporaryDirectory() as scratch:
         if token is not None:
             headers["Authorization"] = f"{scheme} {token}"
         if generation_id is not None:
-            headers[service.GENERATION_HEADER] = (
+            headers[service.events_file.NC_SHARED_DATABASE_GENERATION_ID_HTTP_HEADER] = (
                 generation if generation_id == "current" else generation_id)
         data = raw if raw is not None else (
             json.dumps(body).encode("utf-8") if body is not None else None)
@@ -94,9 +94,9 @@ with tempfile.TemporaryDirectory() as scratch:
           db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
           and str(uuid.UUID(generation)) == generation)
     beside = scratch / "beside.sqlite3"
-    service.create_database_if_absent(beside)
+    service.create_nc_shared_database_if_absent(beside)
     check("a database is made in a directory that already exists", beside.exists())
-    service.create_database_if_absent(database)
+    service.create_nc_shared_database_if_absent(database)
     check("an existing database keeps its generation ID",
           db.execute("SELECT generation_id FROM database_generation").fetchall() == [(generation,)])
 
