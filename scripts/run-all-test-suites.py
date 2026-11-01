@@ -315,10 +315,13 @@ and peak memory, every process it starts included. Every scope is in one
 slice of the user's systemd, TEST_SUITE_CGROUP_SLICE, at CPU weight 10, a
 sibling of app.slice and of the tmux-spawn scopes tmux puts agent-seats in,
 whose weight is 100: while an agent-seat in such a scope wants the CPU, the
-suites together get a tenth of its share. Nice and the slice's weight count
-only within user@1000.service, so an agent-seat whose tmux server runs in
-system.slice, such as one cron started, competes with the suites at the
-weight of user.slice against system.slice, which only root can change.
+suites together get a tenth of its share. Nice orders a process only against
+processes in the same cgroup, here the suite's own scope, so nice 10 gives an
+agent-seat no priority over any suite: only the slice's weight does. That
+weight counts only within user@1000.service, so an agent-seat whose tmux
+server runs in system.slice, such as one cron started, competes with the
+suites at the weight of user.slice against system.slice, which only root can
+change.
 
 MEMORY CEILING, where suites run in cgroup scopes. A suite's scope may hold
 TEST_SUITE_MEMORY_CEILING_BYTES, 4 GB, or what
