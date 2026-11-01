@@ -99,6 +99,21 @@ summary. Apart from the retry, a cause changes what is reported, never what
 is decided: the absence, the closing text and the exit code turn only on
 whether a report landed.
 
+QUESTION 4, WHAT SHOULD BE CODE, IS ASKED ONCE PER RUN, beside the six,
+by a seventh cold-read-cell: the claude launcher on the model and effort the
+cold-read-fast-read uses for it, with the cold-read-fast-read's own prompt
+for it, read from that program so the two runs cannot drift apart. It reads
+the frozen copy like the six and is retried and timed out by the same
+rules, but it is not one of the six: whether its report landed changes
+neither the closing text's variant, the INCOMPLETE SET marker, the
+AGENT-BINARY DOWN line, "Tell the user: ..." nor the exit code. When one of
+the six is absent, its landed report gets the INCOMPLETE SET marker like
+every .md file in the record; its own absence puts no marker anywhere. Its report file's name starts with neither agent-binary, so a run in
+which it alone landed is not counted among the three. The grid writes the
+question's heading under the report's provenance comment, as the prompt
+tells the reviewer it will, and the closing text says where the answer is,
+or why there is none.
+
 AN EDIT TO THE ORIGINAL STOPS NOTHING.
 Every cold-read-cell reads the frozen copy, so an edit to the original leaves
 each report a review of bytes that are still in the record: the run finishes,
@@ -153,6 +168,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 import typing
 import urllib.parse
@@ -200,6 +216,18 @@ _git_machine_readable_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
 _git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
+# Loaded only for the Question 4 prompt, heading, model and effort, so the
+# cold-read-full-run asks Question 4 exactly as the cold-read-fast-read does.
+_fast_read_spec = importlib.util.spec_from_file_location(
+    "cold_read_fast_read", pathlib.Path(__file__).with_name("cold-read-fast-read.py"))
+fast_read = importlib.util.module_from_spec(_fast_read_spec)
+_fast_read_spec.loader.exec_module(fast_read)
+# Starts with neither agent-binary's name, so FULL_RUN_REPORT_NAME_PATTERN
+# does not count a run in which this report alone landed, and the
+# AGENT-BINARY DOWN check, which groups cells by that name's first word,
+# never counts it among an agent-binary's cells.
+COLD_READ_FULL_RUN_WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_FILE_NAME = "question-4-what-should-be-code-answer.md"
+WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_FILE_NAME = "cold-read-grid-what-should-be-code-prompt.md"
 # The log also contains runtime and model text; only program-prefixed lines are cell status.
 CELL_PROGRAM_NAMES = tuple(path.stem for path in CELL_LAUNCHERS.values())
 # Pin terminology effort explicitly so launcher tier-map changes cannot change the pass.
@@ -237,6 +265,13 @@ SOME_LANDED_OPENING = (
     "{landed} of {launched} reports landed in {record_dir}. The set is valid "
     "and incomplete: triage the reports that landed.")
 NONE_LANDED_OPENING = "No report landed in {record_dir}, so there is nothing to triage."
+WHAT_SHOULD_BE_CODE_QUESTION_ANSWERED_LINE = (
+    "Question 4, What should be code, is answered in {report_path}, by one more "
+    "reviewer of the same frozen-copy. Triage its numbered items as you triage the "
+    "defect-hunt reports' findings.")
+WHAT_SHOULD_BE_CODE_QUESTION_NOT_ANSWERED_LINE = (
+    "Question 4, What should be code, was not answered: {cause} (log: {log_path}). "
+    "The six reports do not depend on it: go on without its answer.")
 NONE_LANDED_CLOSING = (
     "Start a new cold-read-full-run once the causes above that the user can "
     "clear are cleared, or at once if none of them is.")
@@ -714,6 +749,8 @@ class RunOutcome(typing.NamedTuple):
     down: dict
     stopped: list
     moved_mid_run: typing.Optional[tuple]
+    # The Question 4 cell's absence, kept out of `absent`: it fails no run.
+    what_should_be_code_question_absent: dict
 
 
 def cell_name_of(report_path: pathlib.Path) -> str:
@@ -761,6 +798,52 @@ def launch_cells(target: pathlib.Path, record_dir: pathlib.Path,
             # The reviewer writes its report; captured chat can omit findings written before tool calls.
             running[report_path] = start_attempt(command, report_path, 1, stderr_path)
     return running
+
+
+def launch_what_should_be_code_question_cell(
+    target: pathlib.Path, record_dir: pathlib.Path, target_origin: pathlib.Path,
+    prompt_file: pathlib.Path,
+) -> dict:
+    """Return {report_path: CellAttempt} for the one cell that asks Question 4
+    of the frozen target, with the prompt the cold-read-fast-read uses."""
+    prompt_file.write_text(
+        fast_read.COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE,
+        encoding="utf-8")
+    report_path = record_dir / COLD_READ_FULL_RUN_WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_FILE_NAME
+    command = [str(CELL_LAUNCHERS["claude"]),
+               "--cell", fast_read.WHAT_SHOULD_BE_CODE_QUESTION_COLD_READ_CELL_LABEL,
+               "--tier", fast_read.WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_COLD_READ_TIER,
+               "--model", fast_read.WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID,
+               "--effort", fast_read.WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_EFFORT,
+               "--target", str(target),
+               "--target-origin", str(target_origin),
+               "--report", str(report_path),
+               "--prompt-file", str(prompt_file)]
+    stderr_path = record_dir / (report_path.name + ".stderr.log")
+    return {report_path: start_attempt(command, report_path, 1, stderr_path)}
+
+
+def what_should_be_code_question_closing_line(record_dir: pathlib.Path,
+                                              outcome: "RunOutcome") -> str:
+    """Put the question's heading under the landed report's provenance comment,
+    as the prompt promises the reviewer, and return the closing text's line
+    saying where the answer is or why there is none; empty when the run
+    stopped the cell."""
+    report_path = record_dir / COLD_READ_FULL_RUN_WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_FILE_NAME
+    name = cell_name_of(report_path)
+    absent = outcome.what_should_be_code_question_absent.get(name)
+    if absent is not None:
+        return WHAT_SHOULD_BE_CODE_QUESTION_NOT_ANSWERED_LINE.format(
+            cause=f"{absent.cause_class}{cell_common.CAUSE_SEPARATOR}{absent.detail}",
+            log_path=absent.log_path)
+    if name in outcome.stopped:
+        return ""
+    lines = report_path.read_text(encoding="utf-8").split("\n")
+    insert_at = 1 if lines and lines[0].startswith("<!-- provenance:") else 0
+    lines[insert_at:insert_at] = [
+        fast_read.WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING, ""]
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    return WHAT_SHOULD_BE_CODE_QUESTION_ANSWERED_LINE.format(report_path=report_path)
 
 
 def cell_status_line(line: str, phrase: str) -> bool:
@@ -844,7 +927,7 @@ def wait_for_cells(running: dict,
     """Retry failed cells once, unless the cause is user-clearable or the attempt
     timed out, and wait for reports, absences or a changed target."""
     # A successful exit alone does not prove a review exists; require a nonempty report.
-    outcome = RunOutcome([], {}, {}, [], None)
+    outcome = RunOutcome([], {}, {}, [], None, {})
     told_the_user = set()
     last_target_check = time.monotonic()
     cells_by_runtime = {}
@@ -878,7 +961,8 @@ def wait_for_cells(running: dict,
             if attempt.process is not None and code == 0 and has_report:
                 attempt.stderr_path.unlink(missing_ok=True)
                 print(f"saved: {report_path}", flush=True)
-                outcome.landed.append(name)
+                if report_path.name != COLD_READ_FULL_RUN_WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_FILE_NAME:
+                    outcome.landed.append(name)
             else:
                 # A stopped attempt's exit status is the signal, which says nothing of why.
                 cause_class, detail = ((TIMED_OUT_CAUSE_CLASS, TIMED_OUT_CAUSE_DETAIL) if timed_out
@@ -896,9 +980,12 @@ def wait_for_cells(running: dict,
                     exit_text = "none" if attempt.process is None else str(code)
                     report = AbsentReport(
                         name, runtime_of(name), cause_class, detail, attempt.stderr_path)
+                    is_question_4 = report_path.name == COLD_READ_FULL_RUN_WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_FILE_NAME
                     # On the FAILED line, so the Monitor that watches FAILED delivers it.
+                    # Not for Question 4: the six do not depend on its answer.
                     tell = ""
-                    if (cause_class in cell_common.USER_CLEARABLE_CAUSE_CLASSES
+                    if (not is_question_4
+                            and cause_class in cell_common.USER_CLEARABLE_CAUSE_CLASSES
                             and (report.runtime, cause_class) not in told_the_user):
                         told_the_user.add((report.runtime, cause_class))
                         tell = f". Tell the user: {user_clearable_cause_text(report)}."
@@ -906,7 +993,10 @@ def wait_for_cells(running: dict,
                           f"{cause} (stderr kept: {attempt.stderr_path})"
                           f"{STOPPED_CELL_UNFINISHED_REPORT_DELETED_PHRASE if report_deleted else ''}{tell}",
                           flush=True)
-                    outcome.absent[name] = report
+                    if is_question_4:
+                        outcome.what_should_be_code_question_absent[name] = report
+                    else:
+                        outcome.absent[name] = report
             announce_agent_binary_down(cells_by_runtime, outcome)
         if running and time.monotonic() - last_target_check >= target_check_interval_seconds:
             last_target_check = time.monotonic()
@@ -1088,17 +1178,27 @@ def main() -> int:
               f"counting the earlier cold-read-full-runs of {target.name}: "
               f"{count_unavailable}\n"
               f"Tell the user what this line says.")
-    print(f"Launched six reviewers against {target}. Reports appear in "
+    print(f"Launched six reviewers against {target}, and a seventh that answers "
+          f"Question 4, What should be code. Reports appear in "
           f"{record_dir} as each completes — read each as it arrives.")
 
-    outcome = wait_for_cells(
-        launch_cells(frozen_target, record_dir, target),
-        lambda: moved_frozen_copy(frozen_target, target_before),
-        float(os.environ.get(TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE) or 0),
-        float(os.environ.get(CELL_POLL_INTERVAL_OVERRIDE_VARIABLE)
-              or CELL_POLL_INTERVAL_DEFAULT_SECONDS),
-        float(os.environ.get(CELL_ATTEMPT_TIMEOUT_OVERRIDE_VARIABLE)
-              or CELL_ATTEMPT_TIMEOUT_DEFAULT_SECONDS))
+    # Outside the checkout, like the cold-read-fast-read's: the cell's prompt is
+    # not part of the record, and the claude launcher needs it as a file.
+    with tempfile.TemporaryDirectory(prefix="cold-read-grid-") as scratch:
+        running = launch_cells(frozen_target, record_dir, target)
+        running.update(launch_what_should_be_code_question_cell(
+            frozen_target, record_dir, target,
+            pathlib.Path(scratch) / WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_FILE_NAME))
+        outcome = wait_for_cells(
+            running,
+            lambda: moved_frozen_copy(frozen_target, target_before),
+            float(os.environ.get(TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE) or 0),
+            float(os.environ.get(CELL_POLL_INTERVAL_OVERRIDE_VARIABLE)
+                  or CELL_POLL_INTERVAL_DEFAULT_SECONDS),
+            float(os.environ.get(CELL_ATTEMPT_TIMEOUT_OVERRIDE_VARIABLE)
+                  or CELL_ATTEMPT_TIMEOUT_DEFAULT_SECONDS))
+    # Before any marker goes in and before shipping: the store refuses changed bytes.
+    question_4_line = what_should_be_code_question_closing_line(record_dir, outcome)
     # Retain the poll result if the changed bytes were restored before the final comparison.
     move = moved_frozen_copy(frozen_target, target_before) or outcome.moved_mid_run
     target_changed = move is not None
@@ -1154,6 +1254,9 @@ def main() -> int:
         print(NONE_LANDED_OPENING.format(record_dir=record_dir))
         print(absences)
         print(NONE_LANDED_CLOSING)
+    if question_4_line and not target_changed:
+        print()
+        print(question_4_line)
     if tell:
         print(tell)
     # A changed target invalidates the review; missing reports only make the review incomplete.
