@@ -684,6 +684,77 @@ def cases(scratch):
     check("a resolution a run saw before the finishing commit is asked about",
           str(claude) in message, message)
 
+    # -- a version origin/main holds is approved, even one a run saw unapproved
+    world = fresh(scratch, "origin-main")
+    claude = world.repo / "CLAUDE.md"
+    notes = world.repo / "notes.txt"
+    world.git("checkout", "-q", "-b", "topic")
+    notes.write_text("topic notes\n")
+    world.git("commit", "-qam", "topic")
+    world.git("checkout", "-q", "main")
+    claude.write_text("project v2, merged on main\n")
+    notes.write_text("main notes\n")
+    world.git("commit", "-qam", "a reviewed pull request")
+    world.git("update-ref", "refs/remotes/origin/main", "main")
+    world.git("reset", "-q", "--hard", "HEAD~1")
+    world.git("checkout", "-q", "topic")
+    world.run()
+    world.git("rebase", "origin/main", check_ok=False)
+    during = world.run()
+    check("nothing is asked while a rebase onto origin/main is stopped on a conflict", during == "",
+          during)
+    notes.write_text("resolved notes\n")
+    world.git("add", "notes.txt")
+    world.extra_environment["GIT_EDITOR"] = "true"
+    world.git("rebase", "--continue")
+    del world.extra_environment["GIT_EDITOR"]
+    message = world.run()
+    check("origin/main's version, which a run saw during the rebase, is not asked about",
+          message == "", message)
+    check("origin/main's version enters the approved set",
+          world.key(claude) in world.store_file(claude, "approved"),
+          world.store_file(claude, "approved"))
+    claude.write_text("project v3, not on main\n")
+    message = world.run()
+    check("a version origin/main does not hold is still asked about",
+          str(claude) in message and "has not approved" in message, message)
+
+    world = fresh(scratch, "origin-main-unreadable")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2, on main\n")
+    world.git("commit", "-qam", "main")
+    world.git("update-ref", "refs/remotes/origin/main", "main")
+    world.git("reset", "-q", "--hard", "HEAD~1")
+    world.run()
+    claude.write_text("project v2, on main\n")
+    world.failing_git("refs/remotes/origin/main")
+    message = world.run()
+    check("a git failing to read origin/main is reported, the version neither approved nor asked "
+          "about",
+          "did not run" in message and "exited 128" in message and "injected failure" in message
+          and "has not approved" not in message
+          and world.key(claude) not in world.store_file(claude, "approved"), message)
+    world.failing_git(None)
+    message = world.run()
+    check("once git reads origin/main again, the next run approves the version",
+          message == "" and world.key(claude) in world.store_file(claude, "approved"), message)
+
+    world = fresh(scratch, "origin-main-moves-to-an-unsettled-version")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2, merged on main later\n")
+    message = world.run()
+    check("a shell edit origin/main does not hold is asked about",
+          str(claude) in message and "has not approved" in message, message)
+    world.git("commit", "-qam", "the version a pull request will merge")
+    message = world.run()
+    check("the committed version is still waiting while origin/main does not hold it",
+          str(claude) in message and world.key(claude) not in world.store_file(claude, "approved"),
+          message)
+    world.git("update-ref", "refs/remotes/origin/main", "HEAD")
+    message = world.run()
+    check("once origin/main moves to the waiting version, the next run approves it and is silent",
+          message == "" and world.key(claude) in world.store_file(claude, "approved"), message)
+
     # -- stash
     world = fresh(scratch, "stash")
     claude = world.repo / "CLAUDE.md"
