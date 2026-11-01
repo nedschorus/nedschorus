@@ -543,6 +543,12 @@ def read_markdown_push_reminder(guard, command, working_directory, search_file_d
             "\n\n".join(messages) or None]
 
 
+def read_emergency_stop(guard, command, working_directory, search_file_directory):
+    # The hook refuses only while an emergency stop is in force, which no replay sets up, so what it
+    # would refuse then, a push or a merge, is its verdict.
+    return "refused during an emergency stop" if guard.bash_command_pushes_or_merges(command) else "passed", None
+
+
 # A renamed guard's former file path, which a base ref's settings.json may still run, to its path in GUARDS.
 # The line does nothing once main's settings.json no longer runs the former path, and may then be removed.
 BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {
@@ -562,6 +568,7 @@ GUARDS = {
     "scripts/hand-typed-codex-exec-command-refusal-hook.py": read_codex_exec,
     "nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py":
         read_markdown_push_reminder,
+    "nc-systems/skills/emergency-stop/emergency-stop-file-shown-and-push-and-merge-refusal-hook.py": read_emergency_stop,
     ".claude/hooks/ghi-md-whole-file-replacement-soft-block.py": read_ghi_md_whole_file_replacement,
 }
 SEARCH_FILE_GUARD = "scripts/search-file-argument-read-as-option-guard-hook.py"

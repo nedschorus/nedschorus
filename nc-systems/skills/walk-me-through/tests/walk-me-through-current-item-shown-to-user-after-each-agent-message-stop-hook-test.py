@@ -181,6 +181,8 @@ class Case:
         environment = {name: value for name, value in os.environ.items()
                        if name not in ("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
                                        "CLAUDE_CODE_SESSION_ATTENDED")}
+        # The machine's real emergency-stop folder must not decide a case.
+        environment["NEDSCHORUS_EMERGENCY_STOP_FOLDER"] = str(self.checkout / "no-emergency-stop")
         environment.update(environment_extra or {})
         return subprocess.run(
             [sys.executable, str(HOOK_SCRIPT)],
@@ -1292,6 +1294,24 @@ def test_faults_are_reported():
     check("with no open walk, the transcript is not read, so a transcript that cannot be read is no fault",
           result.returncode == 0 and result.stdout == "" and result.stderr == "",
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+
+
+def test_silent_during_an_emergency_stop():
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    case.reply("The background job finished.")
+    stop_folder = case.checkout / "emergency-stop"
+    stop_folder.mkdir()
+    stop_file = stop_folder / "2026-10-30T01-00-00Z.md"
+    stop_file.write_text("# Emergency stop\ncoordinating agent-seat: reboot-test\n")
+    check_silent("a reply leaving out the waiting item passes while an emergency stop is in force",
+                 case.run(environment_extra={"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(stop_folder)}))
+    stop_file.write_bytes(b"\xff\xfe")
+    check_silent("an unreadable emergency-stop file counts as a stop in force",
+                 case.run(environment_extra={"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(stop_folder)}))
+    stop_file.write_text("started\n#emergency_stop_lifted all clear\n")
+    check_reminded("after the lift the waiting item is checked again",
+                   case.run(environment_extra={"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(stop_folder)}), "`Item 2 of 9`")
 
 
 def main():

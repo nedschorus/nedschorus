@@ -180,7 +180,9 @@ class Case:
                                        "CLAUDE_CODE_SESSION_ATTENDED")}
         environment.update({"PATH": f"{FAKE_BIN}{os.pathsep}{os.environ['PATH']}",
                             "FAKE_CLAUDE_CALLS": str(self.calls), "FAKE_CLAUDE_MODE": model,
-                            hook.LOG_PATH_VARIABLE: str(self.log)})
+                            hook.LOG_PATH_VARIABLE: str(self.log),
+                            # The machine's real emergency-stop folder must not decide a case.
+                            "NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(self.calls.parent / "no-emergency-stop")})
         environment.update(environment_extra or {})
         return subprocess.run([sys.executable, str(HOOK_SCRIPT)],
                               input=json.dumps(payload) if stdin_text is None else stdin_text,
@@ -865,6 +867,21 @@ def test_a_fault_exits_1_and_names_it():
               "walk-me-through-agent-question-to-user-outside-approval-walk-items-refusal-stop-hook: the hook failed")
           and "JSONDecodeError" in result.stderr and "Traceback" not in result.stderr,
           f"exit {result.returncode}, stderr {result.stderr!r}")
+
+
+def test_silent_during_an_emergency_stop():
+    case = Case()
+    case.reply("The tests passed.\n\nShould I merge the pull request now?\n\nItem 2 of 10 is waiting for your answer.")
+    stop_folder = case.root / "emergency-stop"
+    stop_folder.mkdir()
+    stop_file = stop_folder / "2026-10-30T01-00-00Z.md"
+    stop_file.write_text("# Emergency stop\ncoordinating agent-seat: reboot-test\n")
+    check_silent("a question outside the walk passes while an emergency stop is in force",
+                 case.run(model="no", environment_extra={"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(stop_folder)}))
+    stop_file.write_text("started\n#emergency_stop_lifted all clear\n")
+    check_blocked("after the lift the question is refused again",
+                  case.run(model="no", environment_extra={"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(stop_folder)}),
+                  "approval-walk question check")
 
 
 def main():
