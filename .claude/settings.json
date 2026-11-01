@@ -2,6 +2,7 @@
   "env": {
     "DISABLE_AUTOUPDATER": "1"
   },
+  "idleCompaction": false,
   "statusLine": {
     "type": "command",
     "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}\"/scripts/session-statusline-command.py"
@@ -62,6 +63,11 @@
           },
           {
             "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/checkout-freshness-changed-skill-invoke-again-refusal-stop-hook.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/agent-seat-due-task-raise-hook.py",
             "timeout": 30
           },
@@ -105,37 +111,42 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/synthetic-keystroke-guard-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/synthetic-keystroke-guard-hook.py",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/force-push-with-open-pull-request-guard-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/search-file-argument-read-as-option-guard-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/hand-typed-codex-exec-command-refusal-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py",
             "timeout": 30
           },
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py",
             "timeout": 30
           }
         ]
@@ -145,20 +156,45 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/instruction-file-guard.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/instruction-file-guard.py"
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-location-write-guard.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/session-location-write-guard.py"
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/backup-and-snapshot-write-guard.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/backup-and-snapshot-write-guard.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/claude-code-agent-tool-subagent-scratch-folder-make-and-prompt-write-scratch-only-here-line-add-hook.py",
+            "timeout": 30
           }
         ]
       }
     ],
     "PostToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/claude-code-agent-tool-subagent-scratch-folder-path-to-launching-agent-hook.py",
+            "timeout": 30
+          }
+        ]
+      },
       {
         "matcher": "Edit|Write",
         "hooks": [

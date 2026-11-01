@@ -109,6 +109,12 @@ _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+_rule_failure_lines_spec = importlib.util.spec_from_file_location(
+    "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py")
+RULE_FAILURE_LINES = importlib.util.module_from_spec(_rule_failure_lines_spec)
+_rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)
 THIS_SUITE_RELATIVE_PATH = "scripts/" + Path(__file__).name
 PROJECT_GLOSSARY_RELATIVE_PATH = "docs/nedschorus-wiki/nedschorus-glossary.md"
 PROJECT_GLOSSARY_DIRECTORY = posixpath.dirname(PROJECT_GLOSSARY_RELATIVE_PATH)
@@ -174,19 +180,29 @@ def system_glossary_paragraph(page_text):
     if len(carrying) == 1:
         return carrying[0], ""
     if not carrying:
-        return None, (
+        return None, "\n".join([
             f'the paragraph could not be located: no paragraph of '
-            f'{PROJECT_GLOSSARY_RELATIVE_PATH} carries "'
-            f'{SYSTEM_GLOSSARY_PARAGRAPH_ANCHOR}" — put that wording back in the '
-            f'paragraph above the entries, or set '
-            f'SYSTEM_GLOSSARY_PARAGRAPH_ANCHOR in {THIS_SUITE_RELATIVE_PATH} to '
-            f'wording that paragraph carries')
-    return None, (
+            f'{PROJECT_GLOSSARY_RELATIVE_PATH} carries "{SYSTEM_GLOSSARY_PARAGRAPH_ANCHOR}", '
+            f'the wording this suite finds that paragraph by; without the paragraph it cannot '
+            f'check that every system glossary is listed.',
+            "If your change reworded or removed that wording by mistake, put it back.",
+            f"If the new wording is meant to stay, set SYSTEM_GLOSSARY_PARAGRAPH_ANCHOR in "
+            f"{THIS_SUITE_RELATIVE_PATH} to wording only the listing paragraph carries.",
+            "If your change deleted the listing paragraph on purpose, put the question to the "
+            "user before you go on: the suite needs a paragraph that lists the system glossaries.",
+            RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(PROJECT_GLOSSARY_RELATIVE_PATH),
+            RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
+    return None, "\n".join([
         f'the paragraph could not be located: {len(carrying)} paragraphs of '
-        f'{PROJECT_GLOSSARY_RELATIVE_PATH} carry "'
-        f'{SYSTEM_GLOSSARY_PARAGRAPH_ANCHOR}" — leave that wording in the one '
-        f'paragraph above the entries, or set SYSTEM_GLOSSARY_PARAGRAPH_ANCHOR '
-        f'in {THIS_SUITE_RELATIVE_PATH} to wording only that paragraph carries')
+        f'{PROJECT_GLOSSARY_RELATIVE_PATH} carry "{SYSTEM_GLOSSARY_PARAGRAPH_ANCHOR}", the '
+        f'wording this suite finds the listing paragraph by, so it cannot tell which one lists '
+        f'the system glossaries.',
+        "If your change copied that wording into another paragraph by mistake, reword the copy.",
+        f"If the wording is meant to appear in more than one paragraph, set "
+        f"SYSTEM_GLOSSARY_PARAGRAPH_ANCHOR in {THIS_SUITE_RELATIVE_PATH} to wording only the "
+        f"listing paragraph carries.",
+        RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(PROJECT_GLOSSARY_RELATIVE_PATH),
+        RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
 
 
 def repository_relative_readings(written_path):
@@ -248,6 +264,18 @@ def named_but_not_tracked(page_text, tracked_glossaries):
     return sorted(set(absent))
 
 
+def named_but_not_tracked_failure_detail(absent):
+    return "\n".join([
+        f"named but not tracked: {absent}; a path the project glossary names must lead a "
+        f"reader to a glossary in the repository.",
+        f"If a glossary named there was renamed, or its path is mistyped, correct the path in "
+        f"{PROJECT_GLOSSARY_RELATIVE_PATH}.",
+        f"If a glossary named there was deleted, remove it from {PROJECT_GLOSSARY_RELATIVE_PATH}.",
+        "If a glossary named there is new and not yet committed, commit it.",
+        RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(PROJECT_GLOSSARY_RELATIVE_PATH),
+        RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
+
+
 def project_glossary_promise_cases(repo_root):
     """Every case the project glossary's promise makes of a checkout, as
     (case name, passed, detail) triples."""
@@ -287,10 +315,12 @@ def project_glossary_promise_cases(repo_root):
 
     absent = named_but_not_tracked(page, tracked)
     cases.append((EVERY_NAMED_PATH_TRACKED_CASE, not absent,
-                  f"named but not tracked: {absent} — correct each in "
-                  f"{PROJECT_GLOSSARY_RELATIVE_PATH} to a path git tracks, or "
-                  f"commit the file it names"))
+                  named_but_not_tracked_failure_detail(absent)))
     return cases
+
+
+def case_detail(cases, case_name):
+    return next((detail for name, _, detail in cases if name == case_name), None)
 
 
 def failing_case_details(cases):
@@ -420,6 +450,21 @@ if __name__ == "__main__":
               any("could not be located" in fault for fault in faults), faults)
         check("with the paragraph not located, the listing case does not pass",
               not case_passed(cases, EVERY_GLOSSARY_LISTED_CASE), cases)
+        check("the missing paragraph's failure gives the rule, one fix per cause, the guarded-file "
+              "line and the line for a rule main broke",
+              (case_detail(cases, PARAGRAPH_LOCATED_CASE) or "").split("\n") == [
+                  f'the paragraph could not be located: no paragraph of '
+                  f'{PROJECT_GLOSSARY_RELATIVE_PATH} carries "{SYSTEM_GLOSSARY_PARAGRAPH_ANCHOR}", '
+                  f'the wording this suite finds that paragraph by; without the paragraph it cannot '
+                  f'check that every system glossary is listed.',
+                  "If your change reworded or removed that wording by mistake, put it back.",
+                  f"If the new wording is meant to stay, set SYSTEM_GLOSSARY_PARAGRAPH_ANCHOR in "
+                  f"{THIS_SUITE_RELATIVE_PATH} to wording only the listing paragraph carries.",
+                  "If your change deleted the listing paragraph on purpose, put the question to the "
+                  "user before you go on: the suite needs a paragraph that lists the system glossaries.",
+                  RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(PROJECT_GLOSSARY_RELATIVE_PATH),
+                  RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
+              case_detail(cases, PARAGRAPH_LOCATED_CASE))
 
         # A page carrying the anchor's wording twice: which paragraph holds
         # the list is then a guess, so the test refuses to guess. This is the
@@ -438,6 +483,20 @@ if __name__ == "__main__":
                   for fault in failing_case_details(cases)), cases)
         check("with the paragraph ambiguous, the listing case does not pass",
               not case_passed(cases, EVERY_GLOSSARY_LISTED_CASE), cases)
+        check("the ambiguous paragraph's failure counts the paragraphs, gives one fix per cause, "
+              "the guarded-file line and the line for a rule main broke",
+              (case_detail(cases, PARAGRAPH_LOCATED_CASE) or "").split("\n") == [
+                  f'the paragraph could not be located: 2 paragraphs of '
+                  f'{PROJECT_GLOSSARY_RELATIVE_PATH} carry "{SYSTEM_GLOSSARY_PARAGRAPH_ANCHOR}", the '
+                  f'wording this suite finds the listing paragraph by, so it cannot tell which one '
+                  f'lists the system glossaries.',
+                  "If your change copied that wording into another paragraph by mistake, reword the copy.",
+                  f"If the wording is meant to appear in more than one paragraph, set "
+                  f"SYSTEM_GLOSSARY_PARAGRAPH_ANCHOR in {THIS_SUITE_RELATIVE_PATH} to wording only "
+                  f"the listing paragraph carries.",
+                  RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(PROJECT_GLOSSARY_RELATIVE_PATH),
+                  RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
+              case_detail(cases, PARAGRAPH_LOCATED_CASE))
 
         # The three ways a correct page writes a path. The backticked one is
         # also the leading-dot regression: the first run of this test read
@@ -470,11 +529,24 @@ if __name__ == "__main__":
               (names_an_untracked_path / "docs/gone/gone-glossary.md").is_file(),
               "the untracked file was not written, so the case below would "
               "prove nothing")
-        faults = failing_case_details(
-            project_glossary_promise_cases(names_an_untracked_path))
+        untracked_cases = project_glossary_promise_cases(names_an_untracked_path)
+        faults = failing_case_details(untracked_cases)
         check("a path the page names that git does not track is faulted by name",
               any("docs/gone/gone-glossary.md" in fault for fault in faults),
               faults)
+        check("the untracked path's failure says why it must be tracked, gives one fix per cause, "
+              "the guarded-file line and the line for a rule main broke",
+              (case_detail(untracked_cases, EVERY_NAMED_PATH_TRACKED_CASE) or "").split("\n") == [
+                  "named but not tracked: ['docs/gone/gone-glossary.md']; a path the project "
+                  "glossary names must lead a reader to a glossary in the repository.",
+                  f"If a glossary named there was renamed, or its path is mistyped, correct the "
+                  f"path in {PROJECT_GLOSSARY_RELATIVE_PATH}.",
+                  f"If a glossary named there was deleted, remove it from "
+                  f"{PROJECT_GLOSSARY_RELATIVE_PATH}.",
+                  "If a glossary named there is new and not yet committed, commit it.",
+                  RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(PROJECT_GLOSSARY_RELATIVE_PATH),
+                  RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
+              case_detail(untracked_cases, EVERY_NAMED_PATH_TRACKED_CASE))
 
         # A scratch checkout's git step that fails must stop the build, not
         # leave a half-built checkout for a case to judge. Nothing is staged,

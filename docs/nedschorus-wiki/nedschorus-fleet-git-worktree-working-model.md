@@ -175,7 +175,7 @@ repository as CLAUDE.md, so the print adds zero reach.
 
 **R3. Detached HEAD or sitting in the reference checkout refuses writes —
 BUILT (PR [session-location write guard: no file writes from a detached HEAD or the reference checkout](https://github.com/nedschorus/nedschorus/pull/88), merged 2026-08-17).**
-`.claude/hooks/session-location-write-guard.py`, PreToolUse block on
+`.claude/guard-hooks/session-location-write-guard.py`, PreToolUse block on
 Edit/Write/NotebookEdit; exception lane via `.location-write-approved`.
 Scope, corrected 2026-08-19: the detached-HEAD test governs writes into
 the session's *own* checkout; a write landing in the reference checkout is
@@ -240,7 +240,7 @@ correctly refuses, and `--claim` is the sanctioned path.
 
 **R10. Whether a change to an agent-instructions file needs the user's approval is set by the [approval page](nedschorus-which-changes-need-the-users-approval.md) —
 built-live (root-resolution fixed by PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedschorus/nedschorus/pull/86)).**
-`.claude/hooks/instruction-file-guard.py`: CLAUDE.md, per-seat
+`.claude/guard-hooks/instruction-file-guard.py`: CLAUDE.md, per-seat
 `CLAUDE.local.md`, `.claude/` (minus `worktrees/`, `jobs/` and `handoffs/`),
 reusable prompts, and the files the user reviews block on write; approval quoted into `.walk-approved`, or, for a change `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` does not require his approval for, `#pre_approved_change` and the reason. **The shell-write gap is
 named and ruled unguarded** (2026-08-17): every recorded bypass was
@@ -254,7 +254,7 @@ decision, and consistent with CLAUDE.md's rule on guards, which landed alongside
 
 **R11. Backup stores are read-only to agents — built-live; lane removed
 (user-ruled 2026-08-17).**
-`.claude/hooks/backup-and-snapshot-write-guard.py`: the Timeshift store
+`.claude/guard-hooks/backup-and-snapshot-write-guard.py`: the Timeshift store
 and configuration and Time Machine state refuse agent tool-writes
 *unconditionally* — no marker lane; a real configuration need routes to
 the user's keyboard. Rationale: an undo store agents can write is not

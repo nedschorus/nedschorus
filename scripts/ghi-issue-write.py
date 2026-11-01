@@ -8,7 +8,7 @@ its GHI-MD and nothing else: one copy of every fact, GitHub
 holding the state and the file holding the content. Nothing could build that
 rule by hand, because a body of links needs its files on main first and main
 takes no direct push. This is the program that does it. Designed in
-docs/issues/46-ghi-info-agent-design.md § The GHI write path; that design is
+docs/issues/46-ghi-guide-agent-design.md § The GHI write path; that design is
 the authority and this docstring does not restate it.
 
 WHAT IS AND IS NOT IN THIS SLICE. `create` and `edit`. There is no comment
@@ -16,24 +16,24 @@ operation and there will be none: what would have been a comment goes into
 the GHI-MD, through `edit` (user-ruled 2026-09-24, item 4 of the meta-walk
 reboot-test-meta-walk-2026-09-23: "But I don't want comments as agents
 forget to read them. Better to update the ghi-Md"). The PreToolUse hook
-.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py refuses a hand-typed
+.claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py refuses a hand-typed
 `gh issue comment`, `gh issue create` or body edit on this repository and
 sends the author here.
 
-A ruling question goes into a file for the same reason. When ghi-info
+A ruling question goes into a file for the same reason. When ghi-guide-agent
 answers a draft with a question about a ruling of the user's, the write goes
 ahead, and the tool writes the question as entry E1 of a
 proposed-improvements-or-changes-file in the log-store on ned-box,
-GHI_INFO_LOG_STORE_DIRECTORY, named
-`<GHI-MD name>-proposed-improvements-or-changes-ghi-info-<YYYY-MM-DD>.md`.
+GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY, named
+`<GHI-MD name>-proposed-improvements-or-changes-ghi-guide-agent-<YYYY-MM-DD>.md`.
 The file never reaches main: the subagent that settles the entry, by the
 rules of PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD, settles it
 in that file, and only the change an entry calls for lands, such as an
 edit of the GHI-MD through `edit`.
 So the run tells the agent to dispatch that subagent at once. The file is
 written before any step that reaches GitHub, and it carries the key of the
-GHI-MD text ghi-info reviewed, so a rerun after any failure finds it and
-does not ask ghi-info again about the same text. A file of that name
+GHI-MD text ghi-guide-agent reviewed, so a rerun after any failure finds it and
+does not ask ghi-guide-agent again about the same text. A file of that name
 already present gets a numeric suffix rather than an edit.
 
 THE SEQUENCE, and what makes each step safe to run twice:
@@ -41,7 +41,7 @@ THE SEQUENCE, and what makes each step safe to run twice:
   1. Validate   the file exists, opens with a heading, and is not already
                 filed under an issue whose filing finished; a new filing's
                 heading carries no date.
-  2. Adjudicate ask ghi-info whether an open issue already covers this.
+  2. Adjudicate ask ghi-guide-agent whether an open issue already covers this.
                 Fail-open: unreachable means the write proceeds. A ruling
                 question is written to a proposed-improvements-or-changes-
                 file in the log-store before step 3; such a file carrying
@@ -140,7 +140,7 @@ the edit operation's work.
 
 WHERE THE GIT WORK HAPPENS. In a throwaway worktree cut from a just-fetched
 origin/main, removed afterwards. The user ruled this on 2026-09-20, in place
-of the design's original ghi-info checkout on ned-box reached over ssh. The
+of the design's original ghi-guide-agent checkout on ned-box reached over ssh. The
 2026-09-15 ruling it replaces wanted one thing — that a write never runs
 against stale disk — and a worktree made from a fresh fetch cannot be stale
 or dirty by construction. It also means filing an issue does not need the
@@ -244,7 +244,7 @@ retry, no lock, no merge, as the ruling says.
 The main the check compares and the main the landing commit is cut from
 are one commit, resolved once after the fetch. They must be: this clone's
 worktrees share one origin/main, which other seats' fetches move while a run
-waits on ghi-info, and a landing commit cut from a newer main than the one
+waits on ghi-guide-agent, and a landing commit cut from a newer main than the one
 checked writes the author's whole file over lines that landed in between,
 so its pull request reverts them. Cut from the checked commit, the pull
 request's diff is the author's change alone, and git merges it onto
@@ -426,47 +426,47 @@ GH_TIMEOUT_SECONDS = 120
 # and git sending the branch.
 PUSH_TIME_MARGIN_SECONDS = 120
 ADJUDICATION_TIMEOUT_SECONDS = 420
-# scripts/ghi-info-ask.py's EXIT_NOT_ABOUT_ISSUES and EXIT_RULING_QUESTION:
-# ghi-info answered, but with an `out-of-scope` or `escalate:` reply rather
+# scripts/ghi-guide-agent-ask.py's EXIT_NOT_ABOUT_ISSUES and EXIT_RULING_QUESTION:
+# ghi-guide-agent answered, but with an `out-of-scope` or `escalate:` reply rather
 # than a verdict. Copied rather than imported, because this program runs that
 # one as a subprocess and loads nothing from it; ghi-issue-write-test.py
 # checks the two stay equal.
-GHI_INFO_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES = (2, 3)
+GHI_GUIDE_AGENT_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES = (2, 3)
 # How each of those two exits' messages opens: NOT_ABOUT_ISSUES_MESSAGE's first
 # line, and RULING_QUESTION_MESSAGE_TEMPLATE up to its {sentence}. The message
 # is not the first line on stderr whenever the ask refreshed the seat checkout
 # or reincarnated the session first, so adjudicate finds it by these openings.
 # Copied for the same reason as the exit codes, and checked the same way.
-GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS = (
+GHI_GUIDE_AGENT_ASK_NO_LIST_MESSAGE_OPENINGS = (
     "Not a question about GitHub issues:",
-    "ghi-info found a ruling of the user's that it cannot tell still applies:")
-GHI_INFO_ASK_RULING_QUESTION_EXIT_CODE = 3
+    "ghi-guide-agent found a ruling of the user's that it cannot tell still applies:")
+GHI_GUIDE_AGENT_ASK_RULING_QUESTION_EXIT_CODE = 3
 # Where the ruling question's sentence ends: the opening of the line that
-# follows {sentence} in ghi-info-ask.py's RULING_QUESTION_MESSAGE_TEMPLATE.
+# follows {sentence} in ghi-guide-agent-ask.py's RULING_QUESTION_MESSAGE_TEMPLATE.
 # A sentence can run over several lines. Copied and checked like the above.
-GHI_INFO_ASK_RULING_QUESTION_SENTENCE_END = "If you file or edit the GHI"
-# How the sentence ends when ghi-info named the issue holding the ruling:
-# ghi-info-ask.py's RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE, as a pattern whose group
+GHI_GUIDE_AGENT_ASK_RULING_QUESTION_SENTENCE_END = "If you are filing or editing a GHI"
+# How the sentence ends when ghi-guide-agent named the issue holding the ruling:
+# ghi-guide-agent-ask.py's RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE, as a pattern whose group
 # is the number. Copied and checked like the above.
-GHI_INFO_ASK_RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_PATTERN = re.compile(
+GHI_GUIDE_AGENT_ASK_RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_PATTERN = re.compile(
     r"\s*\(held in GHI (\d+)\)$")
-# ghi-info's ruling questions are kept in the log-store on ned-box, never on
+# ghi-guide-agent's ruling questions are kept in the log-store on ned-box, never on
 # main: one proposed-improvements-or-changes-file each (the glossary's entry),
-# named `<GHI-MD name>-proposed-improvements-or-changes-ghi-info-<YYYY-MM-DD>[-<n>].md`.
-# GHI_INFO_LOG_STORE_DIRECTORY_VARIABLE points a test at a local directory.
+# named `<GHI-MD name>-proposed-improvements-or-changes-ghi-guide-agent-<YYYY-MM-DD>[-<n>].md`.
+# GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY_VARIABLE points a test at a local directory.
 PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX = "-proposed-improvements-or-changes-"
-PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_INFO = "ghi-info"
+PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_GUIDE_AGENT = "ghi-guide-agent"
 # Such a file's whole name, from any source. Older versions of this tool
 # landed them on main beside a GHI-MD; one found there is never counted or
 # linked as one of the issue's files.
 PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE_PATTERN = re.compile(
     re.escape(PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX)
     + r"[a-z0-9]+(?:-[a-z0-9]+)*-(\d{4}-\d{2}-\d{2})(?:-\d+)?\.md$")
-GHI_INFO_LOG_STORE_HOST = "nedlern@ned-box"
-GHI_INFO_LOG_STORE_HOSTNAME = "ned-box"
-GHI_INFO_LOG_STORE_DIRECTORY = "/home/nedlern/nedschorus-logs/ghi-info-proposed-improvements-or-changes"
-GHI_INFO_LOG_STORE_DIRECTORY_VARIABLE = "GHI_ISSUE_WRITE_GHI_INFO_LOG_STORE_DIRECTORY"
-GHI_INFO_LOG_STORE_SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o",
+GHI_GUIDE_AGENT_LOG_STORE_HOST = "nedlern@ned-box"
+GHI_GUIDE_AGENT_LOG_STORE_HOSTNAME = "ned-box"
+GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY = "/home/nedlern/nedschorus-logs/ghi-guide-agent-proposed-improvements-or-changes"
+GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY_VARIABLE = "GHI_ISSUE_WRITE_GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY"
+GHI_GUIDE_AGENT_LOG_STORE_SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o",
                                   "ConnectTimeout=10"]
 # The design of record for how the entries are settled: the subagent the run
 # tells the agent to dispatch follows its § The design, rules 3 to 7.
@@ -480,7 +480,7 @@ RECONSIDER_LINE = (
 
 
 class RulingConflict:
-    """ghi-info's ruling question about a draft: the issue holding the
+    """ghi-guide-agent's ruling question about a draft: the issue holding the
     ruling, or None when the question named none, and the sentence naming
     the ruling and the doubt, without that number."""
 
@@ -494,18 +494,18 @@ def ruling_conflict_from_stderr(stderr: str):
     opening is not there. The ask can write progress lines first, so the
     opening is looked for on any line."""
     lines = (stderr or "").splitlines()
-    opening = GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS[1]
+    opening = GHI_GUIDE_AGENT_ASK_NO_LIST_MESSAGE_OPENINGS[1]
     for index, line in enumerate(lines):
         if not line.strip().startswith(opening):
             continue
         parts = [line.strip()[len(opening):].strip()]
         for following in lines[index + 1:]:
             if following.strip().startswith(
-                    GHI_INFO_ASK_RULING_QUESTION_SENTENCE_END):
+                    GHI_GUIDE_AGENT_ASK_RULING_QUESTION_SENTENCE_END):
                 break
             parts.append(following.strip())
         sentence = " ".join(part for part in parts if part)
-        held_in = GHI_INFO_ASK_RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_PATTERN.search(sentence)
+        held_in = GHI_GUIDE_AGENT_ASK_RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_PATTERN.search(sentence)
         if held_in:
             return RulingConflict(int(held_in.group(1)),
                                   sentence[:held_in.start()].strip())
@@ -1036,12 +1036,12 @@ def refuse_if_filing_is_in_flight(repo: str, issues, title: str, runner):
 
 def adjudicate(repo: str, title: str, text: str, repository_root: Path,
                runner, report, exclude_issue=None):
-    """Step 2. Fail-open by design: ghi-info unreachable means the write
+    """Step 2. Fail-open by design: ghi-guide-agent unreachable means the write
     proceeds, because an infrastructure failure must never look like a
     refusal. A too-similar verdict is a soft block — the caller reconsiders
     once and passes by leaving its reasoning in the marker file.
 
-    Returns the RulingConflict when ghi-info answered with a ruling
+    Returns the RulingConflict when ghi-guide-agent answered with a ruling
     question, for the caller to record in the log-store before anything
     reaches GitHub; otherwise None. A ruling question
     does not stop the write."""
@@ -1051,9 +1051,9 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
         report("adjudication skipped: the reconsidered marker was present "
                "and is consumed by this write")
         return None
-    ask = repository_root / "scripts" / "ghi-info-ask.py"
+    ask = repository_root / "scripts" / "ghi-guide-agent-ask.py"
     if not ask.is_file():
-        report("adjudication skipped: ghi-info-ask.py is not in this "
+        report("adjudication skipped: ghi-guide-agent-ask.py is not in this "
                "checkout")
         return None
     excluded = ""
@@ -1080,35 +1080,35 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
                             question_path],
                            timeout=ADJUDICATION_TIMEOUT_SECONDS, check=False)
     except Exception as failure:                      # noqa: BLE001
-        report(f"adjudication skipped: ghi-info did not answer ({failure})")
+        report(f"adjudication skipped: ghi-guide-agent did not answer ({failure})")
         return None
     finally:
         if question_path is not None:
             Path(question_path).unlink(missing_ok=True)
-    if completed.returncode == GHI_INFO_ASK_RULING_QUESTION_EXIT_CODE:
+    if completed.returncode == GHI_GUIDE_AGENT_ASK_RULING_QUESTION_EXIT_CODE:
         conflict = ruling_conflict_from_stderr(completed.stderr)
         if conflict is not None:
-            report("ghi-info raised a question about a ruling of the "
+            report("ghi-guide-agent raised a question about a ruling of the "
                    "user's; the write goes ahead and records it in a "
                    "proposed-improvements-or-changes-file in the log-store")
             return conflict
     stderr_lines = [line.strip() for line in
                     (completed.stderr or "").splitlines() if line.strip()]
-    if completed.returncode in GHI_INFO_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES:
-        # ghi-info answered, but with no verdict: the question was not about
+    if completed.returncode in GHI_GUIDE_AGENT_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES:
+        # ghi-guide-agent answered, but with no verdict: the question was not about
         # issues, or it found a ruling it may not judge. Fail-open like any
         # other missing verdict, and say which, rather than "did not answer".
         # The ask's own progress lines can come first, so the message is found
         # by its opening, falling back on the last line, where main() puts it.
         said = next((line for line in stderr_lines if line.startswith(
-            GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS)),
+            GHI_GUIDE_AGENT_ASK_NO_LIST_MESSAGE_OPENINGS)),
             stderr_lines[-1] if stderr_lines else "no detail")
-        report(f"adjudication skipped: ghi-info gave no verdict: {said}")
+        report(f"adjudication skipped: ghi-guide-agent gave no verdict: {said}")
         return None
     if completed.returncode != 0:
         # The ask prints why it failed, such as ned-box being unreachable,
         # as its last stderr line.
-        report("adjudication skipped: ghi-info did not answer" +
+        report("adjudication skipped: ghi-guide-agent did not answer" +
                (f": {stderr_lines[-1]}" if stderr_lines else ""))
         return None
     verdict = ""
@@ -1116,7 +1116,7 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
         if line.strip().lower().startswith("verdict:"):
             verdict = line.strip()
     if not verdict:
-        report("adjudication skipped: ghi-info's reply had no verdict line")
+        report("adjudication skipped: ghi-guide-agent's reply had no verdict line")
         return None
     if "too-similar" in verdict.lower():
         # The design's § Prompts gives this refusal verbatim, including the
@@ -1135,7 +1135,7 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
                 f"it Superseded-by: {covering} and close it with a reason.")
         paragraphs.append(RECONSIDER_LINE)
         raise Refused("\n\n".join(paragraphs), 65)
-    report(f"ghi-info: {verdict}")
+    report(f"ghi-guide-agent: {verdict}")
     return None
 
 
@@ -1145,24 +1145,24 @@ def proposed_improvements_or_changes_file_date() -> str:
     return datetime.date.today().isoformat()
 
 
-def ghi_info_log_store():
+def ghi_guide_agent_log_store():
     """(the ssh host the store is reached through, or None where it is a
     directory on this machine; the store's directory)."""
-    override = os.environ.get(GHI_INFO_LOG_STORE_DIRECTORY_VARIABLE)
+    override = os.environ.get(GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY_VARIABLE)
     if override:
         return None, override
-    if socket.gethostname().split(".")[0] == GHI_INFO_LOG_STORE_HOSTNAME:
-        return None, GHI_INFO_LOG_STORE_DIRECTORY
-    return GHI_INFO_LOG_STORE_HOST, GHI_INFO_LOG_STORE_DIRECTORY
+    if socket.gethostname().split(".")[0] == GHI_GUIDE_AGENT_LOG_STORE_HOSTNAME:
+        return None, GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY
+    return GHI_GUIDE_AGENT_LOG_STORE_HOST, GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY
 
 
-def ghi_info_log_store_citation(name: str) -> str:
+def ghi_guide_agent_log_store_citation(name: str) -> str:
     """The file as a reader on either machine opens it: in the scp form, or
     as the local path when a test points the store at a directory."""
-    override = os.environ.get(GHI_INFO_LOG_STORE_DIRECTORY_VARIABLE)
+    override = os.environ.get(GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY_VARIABLE)
     if override:
         return str(Path(override) / name)
-    return f"{GHI_INFO_LOG_STORE_HOST}:{GHI_INFO_LOG_STORE_DIRECTORY}/{name}"
+    return f"{GHI_GUIDE_AGENT_LOG_STORE_HOST}:{GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY}/{name}"
 
 
 def is_proposed_improvements_or_changes_file(path: str) -> bool:
@@ -1170,36 +1170,36 @@ def is_proposed_improvements_or_changes_file(path: str) -> bool:
         Path(path).name))
 
 
-def ghi_info_file_name_head(prefix: str) -> str:
+def ghi_guide_agent_file_name_head(prefix: str) -> str:
     return (f"{prefix}{PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX}"
-            f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_INFO}-")
+            f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_GUIDE_AGENT}-")
 
 
-# The lines of a file from ghi-info that this tool reads back: entry E1's
-# heading, ghi-info's question, the key of the GHI-MD text it reviewed, and
+# The lines of a file from ghi-guide-agent that this tool reads back: entry E1's
+# heading, ghi-guide-agent's question, the key of the GHI-MD text it reviewed, and
 # the entry's state while it is open.
-GHI_INFO_ENTRY_HEADING_OPENING = "## E1 — possible problem: "
-GHI_INFO_QUESTION_LINE_OPENING = "ghi-info's question: "
-GHI_INFO_REVIEWED_TEXT_KEY_LINE_OPENING = "Key of the GHI-MD text ghi-info reviewed: "
-GHI_INFO_OPEN_STATE_LINE = "State: open"
+GHI_GUIDE_AGENT_ENTRY_HEADING_OPENING = "## E1 — possible problem: "
+GHI_GUIDE_AGENT_QUESTION_LINE_OPENING = "ghi-guide-agent's question: "
+GHI_GUIDE_AGENT_REVIEWED_TEXT_KEY_LINE_OPENING = "Key of the GHI-MD text ghi-guide-agent reviewed: "
+GHI_GUIDE_AGENT_OPEN_STATE_LINE = "State: open"
 
 
 def proposed_improvements_or_changes_file_text(
         repo: str, conflict, ruling_title, date: str, operation_done: str,
         title: str, reviewed_text_key: str) -> str:
-    """What a file from ghi-info says: one entry, E1, in the entry form of
+    """What a file from ghi-guide-agent says: one entry, E1, in the entry form of
     PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD's rule 1. It
     names the GHI-MD by its first heading, the issue's title, because on a
     new filing it is written before the issue exists. `operation_done` is
     "filed" or "edited"."""
     if conflict.ruling_issue is None:
-        ruling = "a user-ruling for which ghi-info named no GHI"
+        ruling = "a user-ruling for which ghi-guide-agent named no GHI"
     else:
         ruling = (f"a user-ruling held in GHI [{ruling_title}](https://"
                   f"github.com/{repo}/issues/{conflict.ruling_issue})")
     return (
-        f"# Proposed improvements or changes from ghi-info, {date}\n\n"
-        f"ghi-info reviewed the GHI-MD \"{title}\" when "
+        f"# Proposed improvements or changes from ghi-guide-agent, {date}\n\n"
+        f"ghi-guide-agent reviewed the GHI-MD \"{title}\" when "
         f"scripts/ghi-issue-write.py {operation_done} it. The agent that ran "
         "the tool dispatches a forked subagent to settle each entry in this "
         "file by rules 3 to 7 of § The design in "
@@ -1207,34 +1207,34 @@ def proposed_improvements_or_changes_file_text(
         "stays in the log-store; only the change an entry calls for goes to "
         "main, such as an edit of the GHI-MD through "
         "`scripts/ghi-issue-write.py edit`.\n\n"
-        f"{GHI_INFO_REVIEWED_TEXT_KEY_LINE_OPENING}{reviewed_text_key}\n\n"
-        f"{GHI_INFO_ENTRY_HEADING_OPENING}the GHI-MD's proposal may go "
+        f"{GHI_GUIDE_AGENT_REVIEWED_TEXT_KEY_LINE_OPENING}{reviewed_text_key}\n\n"
+        f"{GHI_GUIDE_AGENT_ENTRY_HEADING_OPENING}the GHI-MD's proposal may go "
         f"against {ruling}\n"
-        f"{GHI_INFO_QUESTION_LINE_OPENING}{conflict.sentence}\n"
+        f"{GHI_GUIDE_AGENT_QUESTION_LINE_OPENING}{conflict.sentence}\n"
         "Goes wrong when: the proposal is carried out while that user-ruling "
         "still applies.\n"
-        f"{GHI_INFO_OPEN_STATE_LINE}\n")
+        f"{GHI_GUIDE_AGENT_OPEN_STATE_LINE}\n")
 
 
 def ruling_question_lines(text: str):
-    """(the possible problem, ghi-info's question) read back from a file
-    from ghi-info, for the run's last lines; either is None when the file
+    """(the possible problem, ghi-guide-agent's question) read back from a file
+    from ghi-guide-agent, for the run's last lines; either is None when the file
     lacks its line."""
     problem = question = None
     for line in text.splitlines():
-        if problem is None and line.startswith(GHI_INFO_ENTRY_HEADING_OPENING):
-            problem = line[len(GHI_INFO_ENTRY_HEADING_OPENING):].strip()
+        if problem is None and line.startswith(GHI_GUIDE_AGENT_ENTRY_HEADING_OPENING):
+            problem = line[len(GHI_GUIDE_AGENT_ENTRY_HEADING_OPENING):].strip()
         elif (question is None
-              and line.startswith(GHI_INFO_QUESTION_LINE_OPENING)):
-            question = line[len(GHI_INFO_QUESTION_LINE_OPENING):].strip()
+              and line.startswith(GHI_GUIDE_AGENT_QUESTION_LINE_OPENING)):
+            question = line[len(GHI_GUIDE_AGENT_QUESTION_LINE_OPENING):].strip()
     return problem, question
 
 
-def ghi_info_files_in_log_store(prefix: str, runner) -> list:
-    """(name, text) of every file from ghi-info in the log-store for the
+def ghi_guide_agent_files_in_log_store(prefix: str, runner) -> list:
+    """(name, text) of every file from ghi-guide-agent in the log-store for the
     GHI-MD whose name is `prefix`. A store that cannot be read is raised."""
-    host, directory = ghi_info_log_store()
-    head = ghi_info_file_name_head(prefix)
+    host, directory = ghi_guide_agent_log_store()
+    head = ghi_guide_agent_file_name_head(prefix)
     if host is None:
         store = Path(directory)
         if not store.is_dir():
@@ -1255,41 +1255,41 @@ def ghi_info_files_in_log_store(prefix: str, runner) -> list:
               "[ -f \"$f\" ] || continue; "
               "printf '%s\\0' \"$f\" && base64 < \"$f\" && printf '\\0' "
               "|| exit 1; done")
-    completed = runner([*GHI_INFO_LOG_STORE_SSH_COMMAND, host, script])
+    completed = runner([*GHI_GUIDE_AGENT_LOG_STORE_SSH_COMMAND, host, script])
     fields = (completed.stdout or "").split("\0")
     return [(fields[index],
              base64.b64decode(fields[index + 1]).decode("utf-8"))
             for index in range(0, len(fields) - 1, 2)]
 
 
-def ghi_info_file_for_reviewed_text(prefix: str, reviewed_text_key: str,
+def ghi_guide_agent_file_for_reviewed_text(prefix: str, reviewed_text_key: str,
                                     runner, report):
-    """(name, text) of the file from ghi-info in the log-store that an
+    """(name, text) of the file from ghi-guide-agent in the log-store that an
     earlier run wrote about this same GHI-MD text, or None. A store that
     cannot be read is reported and read as holding none, so the write goes
-    ahead and ghi-info is asked, as when ghi-info cannot be reached."""
+    ahead and ghi-guide-agent is asked, as when ghi-guide-agent cannot be reached."""
     try:
-        found = ghi_info_files_in_log_store(prefix, runner)
+        found = ghi_guide_agent_files_in_log_store(prefix, runner)
     except (Refused, subprocess.TimeoutExpired, OSError,
             ValueError) as failure:
-        report("could not read ghi-info's earlier questions in the "
-               f"log-store, so ghi-info is asked: {failure}")
+        report("could not read ghi-guide-agent's earlier questions in the "
+               f"log-store, so ghi-guide-agent is asked: {failure}")
         return None
-    wanted = GHI_INFO_REVIEWED_TEXT_KEY_LINE_OPENING + reviewed_text_key
+    wanted = GHI_GUIDE_AGENT_REVIEWED_TEXT_KEY_LINE_OPENING + reviewed_text_key
     for name, text in found:
         if wanted in text.splitlines():
             return name, text
     return None
 
 
-def write_ghi_info_file_to_log_store(prefix: str, text: str, date: str,
+def write_ghi_guide_agent_file_to_log_store(prefix: str, text: str, date: str,
                                      runner) -> str:
-    """Writes a new file from ghi-info into the log-store under
-    `<prefix>-proposed-improvements-or-changes-ghi-info-<date>.md`, or with
+    """Writes a new file from ghi-guide-agent into the log-store under
+    `<prefix>-proposed-improvements-or-changes-ghi-guide-agent-<date>.md`, or with
     `-<n>` after the date, the lowest n from 2 that no file there has, and
     returns its name. Never replaces a file."""
-    host, directory = ghi_info_log_store()
-    base = f"{ghi_info_file_name_head(prefix)}{date}"
+    host, directory = ghi_guide_agent_log_store()
+    base = f"{ghi_guide_agent_file_name_head(prefix)}{date}"
     if host is None:
         store = Path(directory)
         store.mkdir(parents=True, exist_ok=True)
@@ -1309,14 +1309,14 @@ def write_ghi_info_file_to_log_store(prefix: str, text: str, date: str,
               f"n={shlex.quote(base)}-$i.md; i=$((i+1)); done && "
               f"printf %s {encoded} | base64 -d > \"$n\" && "
               "printf %s \"$n\"")
-    completed = runner([*GHI_INFO_LOG_STORE_SSH_COMMAND, host, script])
+    completed = runner([*GHI_GUIDE_AGENT_LOG_STORE_SSH_COMMAND, host, script])
     return (completed.stdout or "").strip()
 
 
 def record_ruling_question(prefix: str, repo: str, conflict, title: str,
                            reviewed_text_key: str, runner, report,
                            operation_done: str):
-    """Writes ghi-info's ruling question to a new file from ghi-info in the
+    """Writes ghi-guide-agent's ruling question to a new file from ghi-guide-agent in the
     log-store, before any step that reaches GitHub, and returns (its name,
     its text). The ruling's title is looked up first; when that or the
     write fails, nothing has been written anywhere, and the refusal says
@@ -1331,54 +1331,55 @@ def record_ruling_question(prefix: str, repo: str, conflict, title: str,
         text = proposed_improvements_or_changes_file_text(
             repo, conflict, ruling_title, date, operation_done, title,
             reviewed_text_key)
-        name = write_ghi_info_file_to_log_store(prefix, text, date, runner)
+        name = write_ghi_guide_agent_file_to_log_store(prefix, text, date, runner)
     except (Refused, subprocess.TimeoutExpired, OSError) as failure:
         raise Refused(
-            f"Nothing was {operation_done}: ghi-info raised a question about "
-            "a ruling of the user's, and recording it in the log-store "
-            f"failed: {failure}\n"
-            f"ghi-info's question: {conflict.sentence}\n"
-            "Rerun this command now; do not wait for the user's answer.\n"
+            f"Nothing was {operation_done}: ghi-guide-agent raised a question about "
+            "a ruling of the user's, and writing that question to the "
+            f"log-store failed: {failure}\n"
+            f"ghi-guide-agent's question: {conflict.sentence}\n"
+            "Run the same scripts/ghi-issue-write.py command again now; the "
+            "user need not answer anything first.\n"
             "If this message appears again, do not rerun: tell the user what "
             "failed, that this draft may conflict with a ruling of his, and "
-            "give him ghi-info's question.", 1)
-    report("wrote ghi-info's ruling question to "
-           f"{ghi_info_log_store_citation(name)}")
+            "give him ghi-guide-agent's question.", 1)
+    report("wrote ghi-guide-agent's ruling question to "
+           f"{ghi_guide_agent_log_store_citation(name)}")
     return name, text
 
 
 def earlier_ruling_question(prefix: str, text: str, runner, report):
-    """(name, text) of the file from ghi-info in the log-store about this
-    same GHI-MD text, which means ghi-info was asked already and is not
+    """(name, text) of the file from ghi-guide-agent in the log-store about this
+    same GHI-MD text, which means ghi-guide-agent was asked already and is not
     asked again; None when there is none."""
-    earlier = ghi_info_file_for_reviewed_text(prefix, pairing_key(text),
+    earlier = ghi_guide_agent_file_for_reviewed_text(prefix, pairing_key(text),
                                               runner, report)
     if earlier is not None:
-        report("ghi-info already raised a question about this same text, in "
-               f"{ghi_info_log_store_citation(earlier[0])}, so it is not "
+        report("ghi-guide-agent already raised a question about this same text, in "
+               f"{ghi_guide_agent_log_store_citation(earlier[0])}, so it is not "
                "asked again")
     return earlier
 
 
 def report_ruling_question(number: int, operation_done: str, recorded,
                            report):
-    """The run's last lines when a file from ghi-info about this GHI-MD
-    text holds an open entry: what ghi-info thinks, its question, where the
+    """The run's last lines when a file from ghi-guide-agent about this GHI-MD
+    text holds an open entry: what ghi-guide-agent thinks, its question, where the
     entry is, and to dispatch the subagent that settles it now.
     `operation_done` is "filed" or "edited"; `recorded` is the file's
     (name, text), or None when there is no file."""
     if recorded is None:
         return
     name, text = recorded
-    if GHI_INFO_OPEN_STATE_LINE not in text.splitlines():
+    if GHI_GUIDE_AGENT_OPEN_STATE_LINE not in text.splitlines():
         return
     problem, question = ruling_question_lines(text)
-    lines = [f"{operation_done.capitalize()} GHI {number}. ghi-info thinks "
+    lines = [f"{operation_done.capitalize()} GHI {number}. ghi-guide-agent thinks "
              f"{problem or 'the GHI-MD may go against a user-ruling'}."]
     if question:
-        lines.append(f"{GHI_INFO_QUESTION_LINE_OPENING}{question}")
+        lines.append(f"{GHI_GUIDE_AGENT_QUESTION_LINE_OPENING}{question}")
     lines += [
-        f"The question is entry E1 of {ghi_info_log_store_citation(name)}, "
+        f"The question is entry E1 of {ghi_guide_agent_log_store_citation(name)}, "
         "in the log-store, not in the pull request.",
         "Dispatch a forked subagent now to settle the entry in that file by "
         "rules 3 to 7 of § The design in "
@@ -1389,8 +1390,8 @@ def report_ruling_question(number: int, operation_done: str, recorded,
     report("\n".join(lines))
 
 
-def ghi_info_prefixes(file_name: str, number: int) -> list:
-    """The GHI-MD names that files from ghi-info about this issue's GHI-MD
+def ghi_guide_agent_prefixes(file_name: str, number: int) -> list:
+    """The GHI-MD names that files from ghi-guide-agent about this issue's GHI-MD
     are named after: its file name, and, for a file named for its issue, the
     name without the number, which is what a question raised when the GHI-MD
     was filed is named after."""
@@ -1402,21 +1403,21 @@ def ghi_info_prefixes(file_name: str, number: int) -> list:
 
 def report_open_ruling_questions(number: int, operation_done: str, prefixes,
                                  runner, report):
-    """The run's last lines: one block for each file from ghi-info in the
+    """The run's last lines: one block for each file from ghi-guide-agent in the
     log-store about this GHI-MD that holds an open entry, read at the end of
     every run, so a question saved by a run that stopped partway is shown by
     whichever run comes next. `operation_done` is "filed" or "edited"."""
     found = {}
     for prefix in prefixes:
         try:
-            found.update(ghi_info_files_in_log_store(prefix, runner))
+            found.update(ghi_guide_agent_files_in_log_store(prefix, runner))
         except (Refused, subprocess.TimeoutExpired, OSError,
                 ValueError) as failure:
             report(
-                "could not read ghi-info's questions in the log-store, so an "
+                "could not read ghi-guide-agent's questions in the log-store, so an "
                 f"open one may be missing here: {failure}\n"
                 "Read the files named "
-                f"{ghi_info_log_store_citation(ghi_info_file_name_head(prefix))}"
+                f"{ghi_guide_agent_log_store_citation(ghi_guide_agent_file_name_head(prefix))}"
                 "* yourself, and dispatch a forked subagent to settle each "
                 "entry whose state is open, by rules 3 to 7 of § The design "
                 f"in {PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD}.")
@@ -1425,11 +1426,11 @@ def report_open_ruling_questions(number: int, operation_done: str, prefixes,
                                report)
 
 
-def ghi_info_files_beside_on_main(relative: str, revision: str,
+def ghi_guide_agent_files_beside_on_main(relative: str, revision: str,
                                   repository_root: Path, runner) -> list:
-    """The files from ghi-info that main holds beside the GHI-MD at
+    """The files from ghi-guide-agent that main holds beside the GHI-MD at
     `relative`, landed there by an older version of this tool."""
-    head = ghi_info_file_name_head(Path(relative).name[:-len(".md")])
+    head = ghi_guide_agent_file_name_head(Path(relative).name[:-len(".md")])
     listed = runner(["git", "ls-tree", "--name-only", "-z", revision,
                      f"{Path(relative).parent}/"], cwd=str(repository_root))
     return [line for line in git_output.nul_separated_fields(listed.stdout or "")
@@ -1437,22 +1438,22 @@ def ghi_info_files_beside_on_main(relative: str, revision: str,
             and is_proposed_improvements_or_changes_file(line)]
 
 
-def migrate_ghi_info_files_on_main(relative: str, revision: str,
+def migrate_ghi_guide_agent_files_on_main(relative: str, revision: str,
                                    repository_root: Path, runner, report):
-    """Copies into the log-store each file from ghi-info that main holds
+    """Copies into the log-store each file from ghi-guide-agent that main holds
     beside this GHI-MD, unless a file there already asks its question, so
     the question is settled, and shown while open, where every other one is.
     Never replaces a file: one whose name is taken goes in under the next
     free name. A file that cannot be copied while it holds an open entry is
     reported with its question, since main is then the only place it is."""
-    on_main = ghi_info_files_beside_on_main(relative, revision,
+    on_main = ghi_guide_agent_files_beside_on_main(relative, revision,
                                             repository_root, runner)
     if not on_main:
         return
     prefix = Path(relative).name[:-len(".md")]
     try:
         asked = {ruling_question_lines(text)[1]
-                 for _, text in ghi_info_files_in_log_store(prefix, runner)}
+                 for _, text in ghi_guide_agent_files_in_log_store(prefix, runner)}
         unread = None
     except (Refused, subprocess.TimeoutExpired, OSError,
             ValueError) as failure:
@@ -1469,22 +1470,22 @@ def migrate_ghi_info_files_on_main(relative: str, revision: str,
             date = PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE_PATTERN.search(
                 Path(item).name).group(1)
             try:
-                name = write_ghi_info_file_to_log_store(prefix, text, date,
+                name = write_ghi_guide_agent_file_to_log_store(prefix, text, date,
                                                         runner)
             except (Refused, subprocess.TimeoutExpired, OSError) as written:
                 failure = written
         if failure is None:
             asked.add(question)
             report(f"copied {item}, which main still holds, into the "
-                   f"log-store as {ghi_info_log_store_citation(name)}")
-        elif GHI_INFO_OPEN_STATE_LINE in text.splitlines():
+                   f"log-store as {ghi_guide_agent_log_store_citation(name)}")
+        elif GHI_GUIDE_AGENT_OPEN_STATE_LINE in text.splitlines():
             report(
                 f"{item} on main holds an open ruling question from "
-                f"ghi-info, and copying it into the log-store failed: "
+                f"ghi-guide-agent, and copying it into the log-store failed: "
                 f"{failure}\n"
-                f"{GHI_INFO_QUESTION_LINE_OPENING}{question}\n"
+                f"{GHI_GUIDE_AGENT_QUESTION_LINE_OPENING}{question}\n"
                 "Dispatch a forked subagent now to copy the file into "
-                f"{ghi_info_log_store_citation('')} and settle its entry "
+                f"{ghi_guide_agent_log_store_citation('')} and settle its entry "
                 "there by rules 3 to 7 of § The design in "
                 f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD}; "
                 "do not wait for the user's answer.")
@@ -1497,11 +1498,11 @@ def migrate_ghi_info_files_on_main(relative: str, revision: str,
                 "doing now.")
 
 
-def report_ghi_info_files_left_at_moved_from(relative: str, moved_from: str,
+def report_ghi_guide_agent_files_left_at_moved_from(relative: str, moved_from: str,
                                              revision: str,
                                              repository_root: Path, runner,
                                              report):
-    """Files from ghi-info that main holds beside the path this GHI-MD
+    """Files from ghi-guide-agent that main holds beside the path this GHI-MD
     moved from are not copied, because the log-store names them by the old
     file name and the run looks for questions under the new one. One whose
     question the log-store already holds under the new name, copied there
@@ -1509,12 +1510,12 @@ def report_ghi_info_files_left_at_moved_from(relative: str, moved_from: str,
     prefix = Path(relative).name[:-len(".md")]
     try:
         asked = {ruling_question_lines(text)[1]
-                 for _, text in ghi_info_files_in_log_store(prefix, runner)}
+                 for _, text in ghi_guide_agent_files_in_log_store(prefix, runner)}
     except (Refused, subprocess.TimeoutExpired, OSError, ValueError):
         # Unread, every file is reported: a copy made twice is settled
         # twice, which costs less than a question never copied.
         asked = set()
-    for item in ghi_info_files_beside_on_main(moved_from, revision,
+    for item in ghi_guide_agent_files_beside_on_main(moved_from, revision,
                                               repository_root, runner):
         # Checked: the path came from a listing of this same commit.
         text = runner(["git", "show", f"{revision}:{item}"],
@@ -1522,12 +1523,12 @@ def report_ghi_info_files_left_at_moved_from(relative: str, moved_from: str,
         if ruling_question_lines(text)[1] in asked:
             continue
         report(
-            f"{item} on main is a file from ghi-info beside {moved_from}, "
+            f"{item} on main is a file from ghi-guide-agent beside {moved_from}, "
             f"the path this GHI-MD moved from, and was not copied into the "
             "log-store.\n"
             "Dispatch a forked subagent to copy it into "
-            f"{ghi_info_log_store_citation('')} under the name "
-            f"{ghi_info_file_name_head(Path(relative).name[:-len('.md')])}"
+            f"{ghi_guide_agent_log_store_citation('')} under the name "
+            f"{ghi_guide_agent_file_name_head(Path(relative).name[:-len('.md')])}"
             "<date>.md, and to settle its entry there if it is open, by "
             "rules 3 to 7 of § The design in "
             f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD}.")
@@ -1904,7 +1905,7 @@ def ghi_md_paths_for_issue(number: int, repository_root: Path, runner,
     A proposed-improvements-or-changes-file that an older version of this
     tool landed beside a GHI-MD is not one of the issue's files: counted, a
     heading change on an issue with one GHI-MD no longer renamed it.
-    `migrate_ghi_info_files_on_main` copies such a file into the log-store."""
+    `migrate_ghi_guide_agent_files_on_main` copies such a file into the log-store."""
     listed = runner(
         ["git", "ls-tree", "-r", "--name-only", "-z", revision,
          f"{GHI_MD_DIRECTORY}/", f"{SYSTEM_DIRECTORY}/"],
@@ -1978,7 +1979,7 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
         finished = link_body(repo, filed_number, repository_root, runner,
                              report, str(path))
         report_open_ruling_questions(
-            filed_number, "filed", ghi_info_prefixes(path.name, filed_number),
+            filed_number, "filed", ghi_guide_agent_prefixes(path.name, filed_number),
             runner, report)
         return filed_number, finished
 
@@ -2015,7 +2016,7 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
     finished = link_body(repo, number, repository_root, runner, report,
                          destination)
     report_open_ruling_questions(
-        number, "filed", ghi_info_prefixes(Path(destination).name, number),
+        number, "filed", ghi_guide_agent_prefixes(Path(destination).name, number),
         runner, report)
     return number, finished
 
@@ -2138,7 +2139,7 @@ def validate_edit(path: Path, repository_root: Path):
                 f"lives directly in {GHI_MD_DIRECTORY}/ before its system's "
                 f"code starts and directly in {SYSTEM_DIRECTORY}/<system>/ "
                 "after, and in neither a queue nor an archive below them "
-                "(docs/issues/46-ghi-info-agent-design.md § Where the tool "
+                "(docs/issues/46-ghi-guide-agent-design.md § Where the tool "
                 "may write). A design whose code has landed lives in the "
                 f"{LANDED_DESIGN_DIRECTORY_NAME}/ directory of its code's "
                 "directory, under a name with no number.\n"
@@ -2479,7 +2480,7 @@ def edit_landing_state(number: int, staged: str, on_main,
     reviewing PR [Build the GHI write tool's edit
     verb](https://github.com/nedschorus/nedschorus/pull/596). In the second
     state main's copy is NOT this file — the edit has not merged — so the
-    run asked ghi-info a question it had already asked, and the question is
+    run asked ghi-guide-agent a question it had already asked, and the question is
     the same draft with the same exclusion, so the answer is the same: a
     too-similar verdict raised 65 before the resume was reached, every
     rerun, and the one run that could open the missing pull request was the
@@ -2886,10 +2887,10 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         if moved_from else None)
     if on_main is None and moved_from is None and paths:
         report_no_moved_from_match(number, relative, paths, report)
-    migrate_ghi_info_files_on_main(relative, main_commit, repository_root,
+    migrate_ghi_guide_agent_files_on_main(relative, main_commit, repository_root,
                                    runner, report)
     if moved_from:
-        report_ghi_info_files_left_at_moved_from(
+        report_ghi_guide_agent_files_left_at_moved_from(
             relative, moved_from, main_commit, repository_root, runner,
             report)
 
@@ -2922,7 +2923,7 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         # only finishes steps 4 and 5 costs no model call — the same reason
         # create skips the question when it resumes onto its own issue. Two
         # states mean that, and testing main's copy alone saw one of them:
-        # see `edit_landing_state`. A question ghi-info already raised
+        # see `edit_landing_state`. A question ghi-guide-agent already raised
         # about this same text is the third: an earlier run asked.
         prefix = Path(relative).name[:-len(".md")]
         conflict = None
@@ -2949,7 +2950,7 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         report("the body follows main's copy of the files, so it changes "
                "when that pull request merges; rerun this command then")
     report_open_ruling_questions(
-        number, "edited", ghi_info_prefixes(Path(relative).name, number),
+        number, "edited", ghi_guide_agent_prefixes(Path(relative).name, number),
         runner, report)
     if waiting:
         return number, False

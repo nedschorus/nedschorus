@@ -32,17 +32,25 @@ THE TEXT CHECKED is the reply, line by line, without:
 - quoted text, `"..."`, `“...”` or a `>` line, that the walk-document holds;
 - a waiting item's closing line, the line the walk-me-through skill ends
   every message with, `[Item 4 of 9, <the point>](<page link>) · ` and then
-  the answer hook's ANSWER_LETTERS_TEXT, when the item it names is waiting and
-  its total is the open walk's. The line, spaces at its ends aside, must be
-  one Markdown link, as the Markdown parser reads it, so a point holding
-  brackets, escaped or not, still makes one link, whose text starts `Item N
-  of M` and has nothing after that or `, ` and a point, followed by exactly
-  ` · ` and ANSWER_LETTERS_TEXT. The point and the link target are not
-  compared, since the agent writes its own point and the user's letter after
-  the line answers that item whatever the point says, and a link target is
-  not text he reads. A line with no link, with anything outside the link but
-  the answer letters, such as a list mark, bold marks or a sentence, or that
-  names another item or total, is checked;
+  the answer hook's ANSWER_LETTERS_TEXT, when every item it names is waiting
+  and its total is the open walk's. The line is what the approval-walk
+  finder's approval_walk_closing_line_read reads, as the finder's docstring
+  says, the reader the current-item Stop hook uses too, so a point holding
+  brackets, escaped or not, still makes one link. The point and the link
+  target are not compared, since the agent writes its own point and the
+  user's letter after the line answers that item whatever the point says, and
+  a link target is not text he reads. The line without its link, `Item 4 of 9,
+  <the point> · ` and ANSWER_LETTERS_TEXT, is left out only when the newest
+  `#item_page` line of every item it names records a failed publish, because
+  the current-item Stop hook then requires that form. A line with anything
+  outside the link but the answer letters, such as a list mark, bold marks or
+  a sentence, or that names another item or total, is checked;
+- the line a sub-step that asks for no decision ends with, `[No decision
+  here; type N or next to continue.](<page link>)`, alone on its line, when a
+  waiting item is a sub-step, with a dotted number such as `Item 4.1 of 9`;
+  the link target is not compared, as the closing line's is not; and the
+  same line without its link when the newest `#item_page` line of a waiting
+  sub-step records a failed publish;
 - a sentence that only names waiting items, `Item 4 of 9 is waiting for your
   answer.`, the line the walk-me-through skill ended every message with before
   the closing line, when every item it names is waiting and its total is the
@@ -262,10 +270,6 @@ def normalized(line):
     return EMPHASIS_AND_SPACING.sub(" ", line).strip().lower()
 
 
-CLOSING_LINE_LABEL = re.compile(rf"Item (?P<number>{walk_finder.NUMBER}) of (?P<total>\d+)(?:, .+)?", re.S)
-CLOSING_LINE_AFTER_LINK = " · " + answer_hook.ANSWER_LETTERS_TEXT
-
-
 # Built on first use, not at import: building it can install markdown-it-py under HOME, which must not happen
 # before run's stays-silent check.
 @functools.cache
@@ -335,23 +339,25 @@ def shown_item_lines(reply_lines, document_lines, units):
     return shown
 
 
-def is_closing_line(line, waiting_numbers, total):
-    """Whether line is the closing line of a waiting item of the open walk, whose total is total, as the module
-    docstring's THE TEXT CHECKED says."""
-    (inline,) = closing_line_parser().parseInline(line.strip())
-    tokens = inline.children
-    if not tokens or tokens[0].type != "link_open":
+def is_closing_line(line, waiting_numbers, total, pages):
+    """Whether line is the closing line of waiting items of the open walk, whose total is total, as the module
+    docstring's THE TEXT CHECKED says; pages are the walk-minutes' newest `#item_page` link per item."""
+    closing = walk_finder.approval_walk_closing_line_read(line, closing_line_parser(), answer_hook.ANSWER_LETTERS_TEXT)
+    if closing is None:
         return False
-    close = next((index for index, token in enumerate(tokens) if token.type == "link_close"), None)
-    if close is None or [token.type for token in tokens[close + 1:]] != ["text"] \
-            or tokens[close + 1].content != CLOSING_LINE_AFTER_LINK:
-        return False
-    label = "".join(token.content for token in tokens[:close])  # the link_open token holds no text
-    closing = CLOSING_LINE_LABEL.fullmatch(label)
-    # The count must be plain text: the parser gives a label opening with emphasis an empty text token first.
-    count_is_plain = bool(closing) and tokens[1].type == "text" and tokens[1].content.startswith(
-        label[:closing.end("total")])
-    return count_is_plain and closing["number"] in waiting_numbers and closing["total"] == total
+    numbers, line_total, link = closing
+    return (line_total == total and set(numbers) <= set(waiting_numbers)
+            and (link is not None or all(pages.get(number) == walk_finder.ITEM_PAGE_PUBLISH_FAILED
+                                         for number in numbers)))
+
+
+def is_no_decision_line(line, waiting_numbers, pages):
+    """Whether line is the no-decision line of a waiting sub-step, as the module docstring's THE TEXT CHECKED says."""
+    link = walk_finder.approval_walk_sub_step_no_decision_closing_line_page_link_or_none(line)
+    sub_steps = [number for number in waiting_numbers if "." in number]
+    return link is not None and bool(sub_steps) and (
+        link != walk_finder.ITEM_PAGE_PUBLISH_FAILED
+        or any(pages.get(number) == walk_finder.ITEM_PAGE_PUBLISH_FAILED for number in sub_steps))
 
 
 def is_waiting_reminder(sentence, waiting_numbers, totals):
@@ -365,7 +371,7 @@ def is_waiting_reminder(sentence, waiting_numbers, totals):
         return False
 
 
-def checked_lines(reply, document_text, units, parser, waiting_numbers, total):
+def checked_lines(reply, document_text, units, parser, waiting_numbers, total, pages):
     """The reply's lines as the module docstring's THE TEXT CHECKED says, emphasis dropped, empty ones left out,
     and each list joined to the line ending in `:` that introduces it, so the list is judged with its lead-in;
     then those an interruption item holds, compared as the reply wrote them, left out. Each comes as (the line
@@ -377,7 +383,8 @@ def checked_lines(reply, document_text, units, parser, waiting_numbers, total):
     shown = shown_item_lines(lines, document_lines, units)
     kept, written, introduced_list = [], [], False
     for line in lines:
-        if normalized(line) in shown or is_closing_line(line, waiting_numbers, total):
+        if (normalized(line) in shown or is_closing_line(line, waiting_numbers, total, pages)
+                or is_no_decision_line(line, waiting_numbers, pages)):
             continue
         if line.lstrip().startswith(">") and normalized(line) in normalized_document:
             continue
@@ -482,12 +489,11 @@ def next_free_item(waiting, held):
     return f"{waiting}.{suffix}"
 
 
-def closing_lines(minutes, name, document_text, units, parser, numbers, total, new_total):
+def closing_lines(pages, name, document_text, units, parser, numbers, total, new_total):
     """(each waiting item's closing line, in code marks, once the walk's count M is new_total, built by the answer
-    hook's closing_line with the link of the item's `#item_page` line, or NO_PAGE_LINK when the minutes record no
-    page for it; the numbers of the items the minutes record no page for)."""
-    pages = dict(answer_hook.ITEM_PAGE.findall(
-        "\n".join(walk_finder.prose_lines(minutes.read_text(encoding="utf-8"), parser))))
+    hook's closing_line with the link of the item's newest `#item_page` line in pages, or NO_PAGE_LINK when the minutes
+    record no page for it; the numbers of the items the minutes record no page for)."""
+    pages = dict(pages)
     without_page = [number for number in numbers if number not in pages]
     pages.update(dict.fromkeys(without_page, NO_PAGE_LINK))
     points = answer_hook.heading_points(document_text.split("\n"), units, total, parser)
@@ -535,7 +541,8 @@ def output_for(payload, environment, model=model_judgement):
         total, _ = walk_finder.waiting_item_units(document, value, numbers, total, parser, all_units=units)
     except walk_finder.UnusableRange:
         return None
-    checked = checked_lines(reply, document_text, units, parser, numbers, total)
+    pages = walk_finder.newest_item_page_link_per_item_from_walk_minutes(minutes.read_text(encoding="utf-8"), parser)
+    checked = checked_lines(reply, document_text, units, parser, numbers, total, pages)
     lines = [line for line, _ in checked]
     kinds = [(line, line_kind(line)) for line in lines]
     clear = [line for line, kind in kinds if kind == "clear"]
@@ -559,7 +566,7 @@ def output_for(payload, environment, model=model_judgement):
     waiting = numbers[-1]
     waiting_label = " and ".join(numbers)
     new_total = str(int(total) + 1)
-    closing, without_page = closing_lines(minutes, name, document_text, units, parser, numbers, total, new_total)
+    closing, without_page = closing_lines(pages, name, document_text, units, parser, numbers, total, new_total)
     values = {"walk": name, "last_waiting": waiting, "sentence": sentence, "decided": decided, "waiting": waiting_label,
               "document": document, "minutes": minutes, "total": total, "new_total": new_total,
               "new_item": next_free_item(waiting, held),

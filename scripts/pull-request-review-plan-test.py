@@ -93,7 +93,7 @@ BASELINE_FILE_CONTENTS = {
     "scripts/example-program-test.py": 'EXPECTED = "old"\nassert EXPECTED\n',
     ".claude/hooks/example-hook.py": 'print("old")\n',
     ".claude/hooks/example-hook-test.py": 'print("old")\n',
-    "scripts/synthetic-keystroke-guard-hook.py": 'print("old")\n',
+    ".claude/guard-hooks/synthetic-keystroke-guard-hook.py": 'print("old")\n',
     "scripts/registered-example-hook.py": 'print("old")\n',
     ".claude/settings.json": json.dumps({"hooks": {"PreToolUse": [{"hooks": [
         {"command": 'python3 "$CLAUDE_PROJECT_DIR"/scripts/registered-example-hook.py'}]}]}}) + "\n",
@@ -264,7 +264,7 @@ def run_classification_cases(fixture):
         ("Python logic changes get claude-and-codex-review-and-head-tests-tier", "scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace("return 1", "return 2")),
         ("every hook directory file gets claude-and-codex-review-and-head-tests-tier", ".claude/hooks/example-hook.py", 'print("new")\n'),
         ("settings gets claude-and-codex-review-and-head-tests-tier", ".claude/settings.json", '{"hooks": {}}\n'),
-        ("a Bash guard string-only change gets claude-and-codex-review-and-head-tests-tier", "scripts/synthetic-keystroke-guard-hook.py", 'print("new")\n'),
+        ("a Bash guard string-only change gets claude-and-codex-review-and-head-tests-tier", ".claude/guard-hooks/synthetic-keystroke-guard-hook.py", 'print("new")\n'),
         ("a registered hook string-only change gets claude-and-codex-review-and-head-tests-tier", "scripts/registered-example-hook.py", 'print("new")\n'),
         ("a new Python program gets claude-and-codex-review-and-head-tests-tier", "scripts/new-example-program.py", 'print("new")\n'),
         ("a test under the hook directory gets claude-and-codex-review-and-head-tests-tier", ".claude/hooks/example-hook-test.py", 'print("new")\n'),
@@ -579,6 +579,57 @@ def run_agent_text_cases(fixture):
     fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
     plan = fixture.read_review_plan()
     check("reflowed identical messages are omitted", plan["agent_facing_text_delta"] == [], plan)
+    # Modelled on pull request 2119, which changed only the recovery note that
+    # IgnitionPlanWithoutConversationTail.compose() builds in a local name and returns in its prompt.
+    compose_before = ('class IgnitionPlan:\n    def compose(self):\n        if self.transcript_path is None:\n'
+                      '            recovery_note = "old note, whole context."\n        else:\n'
+                      '            recovery_note = f"old note, transcript at {self.transcript_path}."\n'
+                      '        prompt = f"{self.next_step} (Recovered: {recovery_note})"\n        return prompt\n')
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file("nc-systems/handoff/recovery-note-program.py", compose_before)
+    earlier = fixture.commit_fixture_changes("recovery note")
+    fixture.write_fixture_file("nc-systems/handoff/recovery-note-program.py",
+                               compose_before.replace("old note, transcript", "new note, transcript"))
+    head = fixture.commit_fixture_changes("recovery note changed")
+    fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
+    delta = fixture.read_review_plan()["agent_facing_text_delta"]
+    check("a changed recovery note built in a local name and returned in a prompt is listed, needing approval",
+          [(entry["label"], entry["old_text"], entry["new_text"], entry["needs_user_approval"]) for entry in delta]
+          == [("recovery_note = in IgnitionPlan.compose()", "f'old note, transcript at {self.transcript_path}.'",
+               "f'new note, transcript at {self.transcript_path}.'", True)], delta)
+    text_plan = fixture.run_review_plan(json_output=False).stdout
+    check("the text plan marks the changed prompt as needing the user's approval",
+          review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE in text_plan, text_plan)
+    skeleton_path = fixture.control_directory / "prompt-brief.md"
+    fixture.run_review_plan("--brief-skeleton", str(skeleton_path))
+    skeleton = skeleton_path.read_text() if skeleton_path.exists() else ""
+    check("the brief skeleton marks the changed prompt as needing the user's approval",
+          review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE in skeleton, skeleton)
+    fixture.reset_fixture_to_base()
+    printed_before = compose_before.replace("return prompt", "print(prompt)").replace("prompt", "line")
+    fixture.write_fixture_file("nc-systems/handoff/recovery-note-program.py", printed_before)
+    earlier = fixture.commit_fixture_changes("printed note")
+    fixture.write_fixture_file("nc-systems/handoff/recovery-note-program.py",
+                               printed_before.replace("old note, transcript", "new note, transcript"))
+    head = fixture.commit_fixture_changes("printed note changed")
+    fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
+    delta = fixture.read_review_plan()["agent_facing_text_delta"]
+    text_plan = fixture.run_review_plan(json_output=False).stdout
+    check("a changed message built in a local name and printed is listed with no approval needed",
+          [(entry["label"], entry["needs_user_approval"]) for entry in delta]
+          == [("recovery_note = in IgnitionPlan.compose()", False)]
+          and review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE not in text_plan, (delta, text_plan))
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file("nc-systems/handoff/added-prompt-program.py",
+                               'def compose(next_step):\n    prompt = f"added prompt: {next_step}"\n    return prompt\n\n\n'
+                               'def report(name):\n    line = f"added message: {name}"\n    print(line)\n')
+    head = fixture.commit_fixture_changes("added prompt program")
+    fixture.configure_github_answers(head, reviews=[[fixture_review(101, fixture.base_head)]])
+    entries = [entry for entry in fixture.read_review_plan()["agent_facing_text_whole_pull_request"]
+               if entry["path"] == "nc-systems/handoff/added-prompt-program.py"]
+    check("an added file's prompt built in a local name needs approval, and its printed message does not",
+          sorted((entry["label"], entry["needs_user_approval"]) for entry in entries)
+          == [("line = in report()", False), ("prompt = in compose()", True)], entries)
 
 
 def run_fast_read_command_cases(fixture):

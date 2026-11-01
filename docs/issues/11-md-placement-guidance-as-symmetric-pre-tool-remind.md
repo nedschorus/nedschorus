@@ -22,7 +22,7 @@ Boss pick. During the founding window the deployment surface is the OLD system's
 
 ## Retargeted 2026-09-11, user-approved: the PreToolUse design is withdrawn, and split in two
 
-**The layer was wrong.** All three existing write guards (`.claude/hooks/instruction-file-guard.py`, `session-location-write-guard.py`, `backup-and-snapshot-write-guard.py`) match `Edit|Write|NotebookEdit`. A shell write passes through every one of them, and two of the three say so in their own docstrings. Seats are instructed to prefer the shell, so a remind hook built the same way would watch the tools agents are told not to use.
+**The layer was wrong.** All three existing write guards (`.claude/guard-hooks/instruction-file-guard.py`, `session-location-write-guard.py`, `backup-and-snapshot-write-guard.py`) match `Edit|Write|NotebookEdit`. A shell write passes through every one of them, and two of the three say so in their own docstrings. Seats are instructed to prefer the shell, so a remind hook built the same way would watch the tools agents are told not to use.
 
 Demonstrated live, 2026-09-11: the user asked the cold-read-research seat to repair an Obsidian vault, which meant writing inside the reference checkout — exactly what `session-location-write-guard.py` refuses — and nothing stopped it, because the writes went through the shell. The user's instruction is what authorised that, not the guard.
 

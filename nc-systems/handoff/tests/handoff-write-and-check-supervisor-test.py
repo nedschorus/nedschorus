@@ -1049,6 +1049,22 @@ def run_roster_never_blocks_a_handoff_cases(workspace: Path):
     check("a missing transcript tells the agent to name its subagents by hand",
           "not derived" in missing.stdout and "by hand" in missing.stdout, missing.stdout)
 
+    # The session's transcript in two project folders, neither keyed: no one of them is the session's.
+    two_folders_session_id = "00000000-0000-4000-8000-0000000002f0"
+    for folder in ("-fixture-project", "-another-fixture-project"):
+        write_fixture_transcript(home / ".claude" / "projects" / folder / f"{two_folders_session_id}.jsonl")
+    two_folders = run_writer(
+        handoffs, "carry on\n", "--agent", "rostertwofolderscase",
+        environment_overrides={"HOME": str(home), "CLAUDE_CODE_SESSION_ID": two_folders_session_id},
+    )
+    two_folders_body = handoff_text(handoffs, "rostertwofolderscase")
+    check("a transcript in two project folders still writes the handoff, with no roster field",
+          "next-step: carry on" in two_folders_body and "spawned-subagent-" not in two_folders_body,
+          two_folders_body)
+    check("a transcript in two project folders tells the agent no single transcript was found",
+          "no single transcript found" in two_folders.stdout and "by hand" in two_folders.stdout,
+          two_folders.stdout)
+
     # No session id at all — the case every existing test already runs under.
     unidentified = run_writer(handoffs, "carry on\n", "--agent", "rosterunidentifiedcase")
     check("a session with no id still writes the handoff",
@@ -1182,7 +1198,7 @@ def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Pat
     # (d) The reviewer's route, reproduced at 08398ce. A supervised parent seat
     # has handed off once, and its supervisor has consumed that handoff. A
     # child `claude -p` the parent started in another seat's directory -- as
-    # scripts/ghi-info-ask.py starts one in ghi-info -- inherits the parent's
+    # scripts/ghi-guide-agent-ask.py starts one in ghi-guide-agent -- inherits the parent's
     # three variables but has its own CLAUDE_CODE_SESSION_ID. Its handoff must
     # land under its own directory's name and leave the parent's untouched:
     # taken under the parent's name, it passes the foreign-claim check, raises

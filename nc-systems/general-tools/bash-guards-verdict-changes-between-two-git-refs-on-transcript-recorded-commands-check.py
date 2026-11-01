@@ -76,6 +76,11 @@ _transcript_mirror_spec = importlib.util.spec_from_file_location(
     Path(__file__).resolve().parents[2] / "scripts" / "transcript-mirror-to-log-store.py")
 _transcript_mirror = importlib.util.module_from_spec(_transcript_mirror_spec)
 _transcript_mirror_spec.loader.exec_module(_transcript_mirror)
+_claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_lookup_and_text_search_common",
+    Path(__file__).resolve().parents[2] / "scripts" / "claude-code-session-transcript-lookup-and-text-search-common.py")
+_claude_code_session_transcript_lookup_and_text_search_common = importlib.util.module_from_spec(_claude_code_session_transcript_lookup_and_text_search_common_spec)
+_claude_code_session_transcript_lookup_and_text_search_common_spec.loader.exec_module(_claude_code_session_transcript_lookup_and_text_search_common)
 _, _AGENT_SESSION_FILES = _transcript_mirror.split_destination(
     _transcript_mirror.LOG_STORE_AGENT_SESSION_FILES_DESTINATION)
 
@@ -267,10 +272,6 @@ def stop_deferred():
 
 # ---------------------------------------------------------------- step 1: the pairs
 
-def raise_walk_failed(error):
-    raise ReplayFailed(f"reading the transcripts failed: {error}")
-
-
 def recorded_command_pairs(transcript_directories):
     """Return (the distinct [command, working directory] pairs of the Bash tool calls in first-seen order,
     the number of transcript lines that are not JSON)."""
@@ -279,36 +280,37 @@ def recorded_command_pairs(transcript_directories):
     for directory in transcript_directories:
         if not os.path.isdir(directory):
             raise ReplayFailed(f"transcript directory {directory} does not exist")
-        for parent, _, names in os.walk(directory, onerror=raise_walk_failed):
-            for name in sorted(names):
-                if not name.endswith(".jsonl"):
+    # ripgrep leaves out the transcripts with no Bash call faster than Python reads them.
+    paths, problems = _claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcripts_matching_any_pattern_ignoring_case(
+        transcript_directories, ['"Bash"'], include_subagents=True)
+    if problems:
+        raise ReplayFailed("reading the transcripts failed: " + "; ".join(problems))
+    for path in paths:
+        try:
+            handle = open(path, "rb")
+        except FileNotFoundError:
+            continue  # Removed after the search listed it.
+        except OSError as error:
+            raise ReplayFailed(f"transcript {path} cannot be read: {error}") from error
+        with handle:
+            for line in handle:
+                if b'"Bash"' not in line:
                     continue
-                path = os.path.join(parent, name)
                 try:
-                    handle = open(path, "rb")
-                except FileNotFoundError:
-                    continue  # Removed after the walk listed it.
-                except OSError as error:
-                    raise ReplayFailed(f"transcript {path} cannot be read: {error}") from error
-                with handle:
-                    for line in handle:
-                        if b'"Bash"' not in line:
-                            continue
-                        try:
-                            record = json.loads(line)
-                        except ValueError:
-                            lines_not_json += 1  # Most often the last line of a transcript still being written.
-                            continue
-                        message = record.get("message")
-                        content = message.get("content") if isinstance(message, dict) else None
-                        if not isinstance(content, list):
-                            continue
-                        for item in content:
-                            if (isinstance(item, dict) and item.get("type") == "tool_use"
-                                    and item.get("name") == "Bash"):
-                                command = (item.get("input") or {}).get("command")
-                                if isinstance(command, str):
-                                    seen.setdefault((command, record.get("cwd") or "/"), None)
+                    record = json.loads(line)
+                except ValueError:
+                    lines_not_json += 1  # Most often the last line of a transcript still being written.
+                    continue
+                message = record.get("message")
+                content = message.get("content") if isinstance(message, dict) else None
+                if not isinstance(content, list):
+                    continue
+                for item in content:
+                    if (isinstance(item, dict) and item.get("type") == "tool_use"
+                            and item.get("name") == "Bash"):
+                        command = (item.get("input") or {}).get("command")
+                        if isinstance(command, str):
+                            seen.setdefault((command, record.get("cwd") or "/"), None)
     return [list(pair) for pair in seen], lines_not_json
 
 
@@ -341,7 +343,9 @@ def check_guards_match_settings(hooks, replayed, label):
             "command through it.\n"
             "When the pull request renames a guard's file: change its path in GUARDS, and add the line "
             "\"<former path>\": \"<new path>\", to the BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH map in this script, "
-            "so the base's hook at the former path is read as the same guard.\n"
+            "so the base's hook at the former path is read as the same guard. End the former path's line with the "
+            "comment \"# in git history only\", or scripts/branch-leaves-no-citations-of-removed-paths-test.py "
+            "fails on it.\n"
             "Make the change in the pull request that adds or renames the hook, and run this check from that pull "
             "request's copy of this script, because only that copy has the change.")
 
@@ -506,6 +510,12 @@ def read_codex_exec(guard, command, working_directory, search_file_directory):
     return "refused" if reason else "passed", reason
 
 
+def read_ghi_md_whole_file_replacement(guard, command, working_directory, search_file_directory):
+    # The marker file is never read here: replaying a command must not consume an agent's reason.
+    replaced = guard.ghi_md_replaced_by_command(command, working_directory)
+    return ("refused", f"replaces {replaced}") if replaced else ("passed", None)
+
+
 class MarkdownChangingCheckoutProbeRunner(StubbedProbeRunner):
     """Answers the Markdown push reminder's git as a checkout whose every ref changes one Markdown file.
 
@@ -538,24 +548,41 @@ def read_markdown_push_reminder(guard, command, working_directory, search_file_d
 # A renamed guard's former file path, which a base ref's settings.json may still run, to its path in GUARDS.
 # The line does nothing once main's settings.json no longer runs the former path, and may then be removed.
 BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {
-    ".claude/hooks/ghi-issue-write-redirect.py": ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
-    "scripts/hand-typed-codex-exec-redirect-hook.py": "scripts/hand-typed-codex-exec-command-refusal-hook.py",
+    ".claude/hooks/ghi-issue-write-redirect.py":  # in git history only
+        ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
+    "scripts/hand-typed-codex-exec-redirect-hook.py":  # in git history only
+        ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py",
+    "scripts/synthetic-keystroke-guard-hook.py":  # in git history only
+        ".claude/guard-hooks/synthetic-keystroke-guard-hook.py",
+    "scripts/force-push-with-open-pull-request-guard-hook.py":  # in git history only
+        ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py",
+    ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py":  # in git history only
+        ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
+    "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py":  # in git history only
+        ".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py",
+    "scripts/search-file-argument-read-as-option-guard-hook.py":  # in git history only
+        ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py",
+    "scripts/hand-typed-codex-exec-command-refusal-hook.py":  # in git history only
+        ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py",
+    ".claude/hooks/ghi-md-whole-file-replacement-soft-block.py":  # in git history only
+        ".claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py",
 }
 
 # Every Bash PreToolUse hook in .claude/settings.json, by the file it runs, with the function
 # that reads one command through it. check_guards_match_settings() names each hook missing here,
 # so a new guard is one line: its file and a reading function like the ones above.
 GUARDS = {
-    "scripts/synthetic-keystroke-guard-hook.py": read_synthetic_keystroke,
-    "scripts/force-push-with-open-pull-request-guard-hook.py": read_force_push,
-    ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py": read_issue_write,
-    "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py": read_tmux_kill,
-    "scripts/search-file-argument-read-as-option-guard-hook.py": read_search_file,
-    "scripts/hand-typed-codex-exec-command-refusal-hook.py": read_codex_exec,
+    ".claude/guard-hooks/synthetic-keystroke-guard-hook.py": read_synthetic_keystroke,
+    ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py": read_force_push,
+    ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py": read_issue_write,
+    ".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py": read_tmux_kill,
+    ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py": read_search_file,
+    ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py": read_codex_exec,
     "nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py":
         read_markdown_push_reminder,
+    ".claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py": read_ghi_md_whole_file_replacement,
 }
-SEARCH_FILE_GUARD = "scripts/search-file-argument-read-as-option-guard-hook.py"
+SEARCH_FILE_GUARD = ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py"
 
 
 def guard_readings(guards, command, working_directory, search_file_directory):

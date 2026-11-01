@@ -23,7 +23,7 @@ When a pull request changes what a program does, a design document or an archite
 - `scripts/dangling-path-citation-check.py` reports new citations and citations of removed paths. The pull request removed no path line 20 names.
 - `docs/agents/pr-reviewer-instructions.md`, in its Review scope section, already lets a code finding name "a markdown file the change breaks". The reviewer who found line 20 raised a finding of that kind. The sentence permits such a finding and does not ask the reviewer to look for one, and merge-lane-2 recorded this finding as non-blocking.
 
-A search for an existing GHI came up empty: `scripts/ghi-info-ask.py --include-closed` on 2026-10-28, asking for a GHI, open or closed, about checking that design prose still matches the code it describes, and `gh issue list --repo nedschorus/nedschorus --state all --search '"design prose" OR "stale design" OR "design drift" OR "design still describes"'`, which returned nothing.
+A search for an existing GHI came up empty: `scripts/ghi-guide-agent-ask.py --include-closed` (then named `ghi-info-ask.py`) on 2026-10-28, asking for a GHI, open or closed, about checking that design prose still matches the code it describes, and `gh issue list --repo nedschorus/nedschorus --state all --search '"design prose" OR "stale design" OR "design drift" OR "design still describes"'`, which returned nothing.
 
 ## What a listing of lines would have shown
 
@@ -42,21 +42,33 @@ CLAUDE.md lets an agent propose a guard or a validation only when the failure ha
 
 Whether a new program or a new reviewer instruction is worth building on one case is the user's decision.
 
+## The user's ruling of 2026-11-01
+
+On 2026-11-01 the user answered "A", approving the rule quoted below and ruling out options 3 and 4, at item 2.25 of cold-read-research's approval-walk cold-read-research-carried-items-2026-10-28 (minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/cold-read-research-carried-items-2026-10-28-minutes.md` once shipped):
+
+> Until a pull request merges, while its code is built, tested and reviewed, the design document that describes that code is expected to drift from it; no agent is asked to sync the two before the merge, and a mismatch between them blocks no push and no merge of that pull request.
+
+His words at that item, where "this mutation period" is the time while code is built, tested and reviewed: "during this mutation period, we just have to let things get out of sync, and then only after code's been fully tested does it make any sense to try to sync back the design. And even then, I probably would wait ... So I'd probably wait to update the design until we have a reason to update the design."
+
+What happens to the design after its code lands is his rule of 2026-10-29 on line 40 of `docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md`: once its code lands, a design "is revised only to fix a flaw found in it, and only after human review".
+
+Options 3 and 4 below are ruled out because each would ask an agent to sync a design to its code before the merge: option 3 by blocking the merge on a design line the code has drifted from, option 4 by handing the pull request reviewer a list of such lines to judge. Options 1, 2 and 5 stay open.
+
 ## Options for the user
 
-None of these is decided; the user chooses.
+Options 3 and 4 are ruled out by the user's ruling of 2026-11-01 above. Options 1, 2 and 5 are not decided; the user chooses among them.
 
-1. **Build nothing now.** A pull request reviewer caught this case without being asked to look, and PR [Handoff design drops the walk-close threshold clause, and the walk shipper's test checks a close writes no walk-closed marker](https://github.com/nedschorus/nedschorus/pull/2073) fixes the line; on 2026-10-28 that pull request is open.
+1. **Build nothing now.** A pull request reviewer caught this case without being asked to look, and PR [Handoff design drops the walk-close threshold clause, and the walk shipper's test checks a close writes no walk-closed marker](https://github.com/nedschorus/nedschorus/pull/2073) fixed the line; it merged on 2026-10-29 as commit 55895b0.
 2. **Remove the prose that restates the code.** The header of `nc-systems/handoff/handoff-design.md` says the document "was gutted to that charter on 2026-08-12 (user-ruled: there is no utility in prose that documents what is better understood by reading the code — mechanism prose drifts)", and that each script's module docstring says what it does. Line 20 is one of the bullets that still say what each script does. Replacing those bullets with the file names alone, pointing at the docstrings, leaves fewer sentences that can go false. The same could be done in other designs.
-3. **Make such a line a blocking finding.** `docs/agents/pr-reviewer-instructions.md` could say explicitly that a design or architecture-overview line the change makes false is "a markdown file the change breaks", so that a finding on it blocks the merge, and could ask the reviewer to look for such lines.
-4. **A program that lists the lines for the reviewer.** For each non-Markdown file a pull request changes, the program lists each line in a design document or an architecture-overview that names the file, and the pull request reviewer judges each one. On the approval-walk pull request above it would have listed 25 lines, one false. It finds only lines that name a changed file: no design line names `scripts/walk-files-ship.py`, though that pull request changed what the file does. Code would narrow and the reviewer would decide, so the program would be a candidate under the reference-integrity checker GHI listed below.
+3. **Ruled out on 2026-11-01: make such a line a blocking finding.** `docs/agents/pr-reviewer-instructions.md` could say explicitly that a design or architecture-overview line the change makes false is "a markdown file the change breaks", so that a finding on it blocks the merge, and could ask the reviewer to look for such lines.
+4. **Ruled out on 2026-11-01: a program that lists the lines for the reviewer.** For each non-Markdown file a pull request changes, the program lists each line in a design document or an architecture-overview that names the file, and the pull request reviewer judges each one. On the approval-walk pull request above it would have listed 25 lines, one false. It finds only lines that name a changed file: no design line names `scripts/walk-files-ship.py`, though that pull request changed what the file does. Code would narrow and the reviewer would decide, so the program would be a candidate under the reference-integrity checker GHI listed below.
 5. **Rely on refresh-design.** GHI [refresh-design: when a system's code lands, bring its design, build-slice plan and overview into line — removing, never revising](https://github.com/nedschorus/nedschorus/issues/670) brings a system's design and architecture-overview into line with merged code, run at a session-handoff for each system whose code moved. It is not built, and it runs per system over a range of commits rather than per pull request.
 
-Recommendation: option 2 for `nc-systems/handoff/handoff-design.md`, and option 1, building nothing, in place of options 3, 4 and 5, because CLAUDE.md's rule on proposing a validation is not met for a new program, and removing the restating prose removes the kind of line that went false.
+Recommendation: options 1 and 2 together, and not option 5: remove the prose that restates the code in `nc-systems/handoff/handoff-design.md` (option 2), because that removes the kind of line that went false, and build no program and no refresh-design step for this (option 1), because CLAUDE.md's rule on proposing a validation is not met for a new program.
 
 ## Next action
 
-Bring the options to the user as one approval-walk item.
+cold-read-research, the agent-seat that held the 2026-11-01 approval-walk, brings options 1, 2 and 5 to the user as one item of a later approval-walk, with the recommendation above, and records his choice in this GHI-MD.
 
 ## Related, not parents
 

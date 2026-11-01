@@ -14,7 +14,7 @@ The page goes where `docs/nedschorus-wiki/nedschorus-file-naming-and-location-st
 
 The user often has to ask an agent whether what it just showed him could be code-prompt-code. cold-read-research's study of the transcripts, cited below, found 107 confirmed requests from July to October 2026, 79 of them in October, in 23 agent-seats: since 2026-10-15, about 1 in every 36 assistant turns the user answered (64 of 2,278) drew a request.
 
-No text on main says when to use code-prompt-code. The glossary entry, line 33 of `docs/nedschorus-wiki/nedschorus-glossary.md`, says what code-prompt-code is: "a program built from both code and prompts". The paragraph at line 17 of `docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md` says why the project builds that way: code gives reliability, testability and speed, prompts give flexibility, and "proven prompts can be replaced with code". Neither says how to tell, for one step in one text, which kind the step should be, and neither shows an example.
+The glossary entry, line 33 of `docs/nedschorus-wiki/nedschorus-glossary.md`, says what code-prompt-code is: "a program whose code does every step that needs no judgment, such as sequencing, saving and reading state, validation and retries, and hands an agent a prompt only for work that needs judgment". CLAUDE.md's bullet that begins "Build code-prompt-code" makes that the rule. The paragraph at line 17 of `docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md` says why the project builds that way: code gives reliability, testability and speed, prompts give flexibility, and "proven prompts can be replaced with code". None of them says how to tell, for one step in one text, whether the step needs judgment, and none shows an example from this project.
 
 The user approved this GHI as item 2.2.1.2 of cold-read-research's approval-walk cold-read-research-carried-items-2026-10-28, on 2026-10-29 by cold-read-research's account. The walk-document is on the Mac, at `/Users/el/agents/cold-read-research/docs/walk/cold-read-research-carried-items-2026-10-28.md`; its walk-minutes go to `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/` when the approval-walk closes, and were not there on 2026-10-28. In his words: "I approve this new GHI, but I think this is something we should do sooner rather than later, so I would also make it a task." Earlier in the same approval-walk he said the page should be "a well-written page on code prompt code and when it should be used", and: "we have a month of examples now, so that should be a pretty damn good page."
 
@@ -50,24 +50,24 @@ Both prompts, and examples of what next-step prints, are saved at `nedlern@ned-b
 
 ## Texts that link to the page instead of repeating it
 
-The pull request that adds the page also changes these two texts, so that each keeps its one line on the subject and links to the page for the rest:
+After the page merges, cold-read-research changes these two texts, so that each keeps its one line on the subject and links to the page for the rest:
 
 - the glossary entry for code-prompt-code, line 33 of `docs/nedschorus-wiki/nedschorus-glossary.md`;
 - the paragraph on code-prompt-code, line 17 of `docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md`.
 
 The page itself links to `docs/nedschorus-wiki/nedschorus-enforcement-ladder.md`, whose rung 6 says a do-or-not-do rule stays as text only until a program enforces it, rather than repeating that rung.
 
-After the page merges, cold-read-research adds further links to the page: from the new "Question 4: What should be code" of the cold-read-fast-read, from the copy of that question in the cold-read-full-run, from a line in CLAUDE.md, and from a new glossary entry that cold-read-research chooses. Those changes are cold-read-research's, not part of this GHI's pull request.
+After the page merges, cold-read-research adds further links to the page: from the new "Question 4: What should be code" of the cold-read-fast-read, from the copy of that question in the cold-read-full-run, from a line in CLAUDE.md, and from a new glossary entry that cold-read-research chooses. These links, and the two above, are cold-read-research's, not part of the page's pull request.
 
 ## Search for an existing GHI
 
-On 2026-10-28, `scripts/ghi-info-ask.py --include-closed`, asked for any GHI, open or closed, or GHI-MD, about a page on when to use code-prompt-code, or about deciding which agent steps should be code, returned GHI 237 (closed, cited above) and GHI 1036 (open, a different subject, cited above), and found no GHI on a "what should be code" question in the cold-read-fast-read.
+On 2026-10-28, `scripts/ghi-guide-agent-ask.py --include-closed` (then named `ghi-info-ask.py`), asked for any GHI, open or closed, or GHI-MD, about a page on when to use code-prompt-code, or about deciding which agent steps should be code, returned GHI 237 (closed, cited above) and GHI 1036 (open, a different subject, cited above), and found no GHI on a "what should be code" question in the cold-read-fast-read.
 
 ## Next action
 
 The user wants this done soon, so the agent-seat that takes it on puts it on its own task list as well.
 
 1. Read the two research reports and the before-and-after file above, and ask cold-read-research for the final text of the follow-up request example.
-2. Write the page on a topic branch from origin/main. In the same pull request, change the glossary entry and the objective page's paragraph to link to the page, as the section above says.
-3. Give the page its /cold-read, which for a wiki page includes a cold-read-full-run, then open the pull request; merge-lane-2 reviews and merges it.
+2. Write the page on a topic branch from origin/main.
+3. Give the page its /cold-read, which for a wiki page includes a cold-read-full-run and the approval-walk with the user in which its step 9 ends, then open the pull request; merge-lane-2 reviews and merges it.
 4. When the pull request merges, tell the agent-seat cold-read-research, with Claude Code's SendMessage tool, the page's path, so that cold-read-research adds its links.

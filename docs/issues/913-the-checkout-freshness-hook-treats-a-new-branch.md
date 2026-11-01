@@ -10,7 +10,7 @@ issue: "[The checkout-freshness hook treats a new branch cut at a pull request's
 
 `scripts/obsolete-file-edit-warning-hook.py` reads the same state and tells the agent, after each edit, that the branch "has never been pushed, so nobody else has it" and to run `git rebase origin/main`.
 
-A branch of this kind is ordinary, not exotic. `.claude/hooks/session-location-write-guard.py` refuses an edit from a detached HEAD and tells the agent to "Get onto a branch first (git switch -c <a-branch-name>)". A fix-round subagent checks out a pull request's pushed head detached, because the pull request's own branch is checked out in the agent-seat's worktree and git lets one branch be checked out in one worktree only. Following the guard's instruction creates exactly the branch this hook misclassifies.
+A branch of this kind is ordinary, not exotic. `.claude/guard-hooks/session-location-write-guard.py` refuses an edit from a detached HEAD and tells the agent to "Get onto a branch first (git switch -c <a-branch-name>)". A fix-round subagent checks out a pull request's pushed head detached, because the pull request's own branch is checked out in the agent-seat's worktree and git lets one branch be checked out in one worktree only. Following the guard's instruction creates exactly the branch this hook misclassifies.
 
 Why the frozen head matters: CLAUDE.md freezes a pull request's head the moment it is pushed, because that is when its review is commissioned; a fix is one commit on top of that head. A rebased head can no longer take a fix as one commit on top without being recovered first.
 
@@ -21,7 +21,7 @@ The closed GHI [checkout-freshness catch-up merges main into a branch whose head
 - `scripts/checkout-freshness-catch-up.py`, `head_state()`: returns `"unpushed"` when `git rev-parse --verify --quiet origin/<branch>` fails, which is the case for any branch name never pushed, whatever its commits.
 - The same file, the never-pushed step (3a) in `main()`: when the state is `"unpushed"`, `rebase_never_pushed_branch()` runs `git rebase origin/main`; a dirty tree only postpones the rebase, which is attempted again at every turn end.
 - `scripts/obsolete-file-edit-warning-hook.py`, `head_advice()`: returns `NEVER_PUSHED_ADVICE` for the same `"unpushed"` state, which says "This branch has never been pushed, so nobody else has it: commit or set aside your work and run `git rebase origin/main`".
-- `.claude/hooks/session-location-write-guard.py`, the detached-HEAD refusal: "Get onto a branch first (git switch -c <a-branch-name>)".
+- `.claude/guard-hooks/session-location-write-guard.py`, the detached-HEAD refusal: "Get onto a branch first (git switch -c <a-branch-name>)".
 - Who meets which: the Stop hook runs when a main session's turn ends. `.claude/settings.json` registers no `SubagentStop` hook, so a subagent meets only the edit warning's advice, while a main session that cuts such a branch meets the rebase itself.
 
 ## What happened
@@ -57,4 +57,4 @@ The next action above is done: a direction was chosen and built in that pull req
 
 ## Search receipt
 
-`scripts/ghi-info-ask.py`, asked on 2026-10-01 whether any open issue covers this, and asked again with `--include-closed`: no open issue covers it. The nearest prior art is three closed issues on the same hook, all closed 2026-09-15: GHI [checkout-freshness catch-up merges main into a branch whose head is frozen under review](https://github.com/nedschorus/nedschorus/issues/324), GHI [checkout-freshness catch-up: pin the two git rebase --abort shapes healthy git cannot produce](https://github.com/nedschorus/nedschorus/issues/389), and GHI [checkout-freshness catch-up's block decision overwrites the answer of a claude -p subprocess whose output a program reads](https://github.com/nedschorus/nedschorus/issues/334). None records the misreading of a new branch name as never pushed.
+`scripts/ghi-guide-agent-ask.py`, asked on 2026-10-01 whether any open issue covers this, and asked again with `--include-closed`: no open issue covers it. The nearest prior art is three closed issues on the same hook, all closed 2026-09-15: GHI [checkout-freshness catch-up merges main into a branch whose head is frozen under review](https://github.com/nedschorus/nedschorus/issues/324), GHI [checkout-freshness catch-up: pin the two git rebase --abort shapes healthy git cannot produce](https://github.com/nedschorus/nedschorus/issues/389), and GHI [checkout-freshness catch-up's block decision overwrites the answer of a claude -p subprocess whose output a program reads](https://github.com/nedschorus/nedschorus/issues/334). None records the misreading of a new branch name as never pushed.

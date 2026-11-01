@@ -50,7 +50,7 @@ the instruction-file class
 (issue [Review-system design requirements learned from the legacy gate — dormant until a class of work first requires review](https://github.com/nedschorus/nedschorus/issues/31), guard
 1). It needs an approval-evidence format that does not exist yet, and the
 in-session tamper guard
-([`.claude/hooks/instruction-file-guard.py`](../../.claude/hooks/instruction-file-guard.py))
+([`.claude/guard-hooks/instruction-file-guard.py`](../../.claude/guard-hooks/instruction-file-guard.py))
 covers the same surface today. It became slice 6 when that format was
 designed — and slice 6 is **NOT BUILT and will not be**, user-ruled
 2026-08-17.
@@ -1066,7 +1066,7 @@ shape (the branch's older copy against main's landed version).
 
 **The interim, accepted deliberately.** Until the gate is live, nothing
 enforces this. The session-start half exists — the ignition prompt carries
-the branch-sync result and, per pull request
+the launch-time-git-sync result and, per pull request
 PR [ignition: catch up with main before the first substantive action, and verify it](https://github.com/nedschorus/nedschorus/pull/220), tells the
 successor to catch up with main before its first substantive action — and
 the harness already refuses an edit to a file that changed on disk since

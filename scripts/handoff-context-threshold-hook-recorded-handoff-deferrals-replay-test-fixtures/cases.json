@@ -1,0 +1,568 @@
+[
+ {
+  "case": "01-merge-lane-2-77f258ba",
+  "session_transcript": "01-merge-lane-2-77f258ba/77f258ba-57b9-4587-8fdc-683bd9968788.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-28T05:38:12.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": [
+     "b7ei50mer"
+    ]
+   }
+  ]
+ },
+ {
+  "case": "02-ned-box-helper-96a84209",
+  "session_transcript": "02-ned-box-helper-96a84209/96a84209-8a24-40b8-9588-c45f10212105.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-28T05:40:38.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": [
+     "bjn63b4g3",
+     "bkky678qs"
+    ]
+   }
+  ]
+ },
+ {
+  "case": "03-merge-lane-2-72d04355-65-percent-ceiling",
+  "session_transcript": "03-merge-lane-2-72d04355-65-percent-ceiling/72d04355-2bb3-4d2e-be94-37b13423d74d.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-28T06:17:06.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [
+     "a043d8c1b4dfbec37"
+    ],
+    "background_tasks": [
+     "bhllz1pyj",
+     "b53rzcs0i",
+     "bg4phmbrg",
+     "b5kaqyfr2",
+     "bgi7b1sp6"
+    ]
+   },
+   {
+    "moment": "2026-10-28T21:46:37.000Z",
+    "why_this_moment": "the hook asked for the session-handoff (the -handoff-asked marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [
+     "a043d8c1b4dfbec37"
+    ],
+    "background_tasks": [
+     "b5bexxw3g",
+     "ba3c37sy4",
+     "btbc5p00y"
+    ]
+   }
+  ]
+ },
+ {
+  "case": "04-prime-intellect-060f059b",
+  "session_transcript": "04-prime-intellect-060f059b/060f059b-3093-4646-80a6-d44c83fb7c96.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-28T13:34:31.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [
+     "a69d9fffda7122433"
+    ],
+    "subagents_counted_by_notices_alone": [
+     "a04eac63a690756b5",
+     "a69d9fffda7122433"
+    ],
+    "background_tasks": []
+   },
+   {
+    "moment": "2026-10-28T22:54:05.000Z",
+    "why_this_moment": "the hook asked for the session-handoff (the -handoff-asked marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "05-agent-instructions-editor-b6f4960d",
+  "session_transcript": "05-agent-instructions-editor-b6f4960d/b6f4960d-0614-4e9b-8a38-006488b0c123.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-28T15:36:41.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [
+     "ae6e0670e9bcd7245"
+    ],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "06-ned-box-helper-329c61e9-65-percent-ceiling",
+  "session_transcript": "06-ned-box-helper-329c61e9-65-percent-ceiling/329c61e9-768b-4f49-ba30-e96248b687b8.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-28T20:12:53.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [
+     "a02b7a7d740cd3218"
+    ],
+    "subagents_counted_by_notices_alone": [
+     "a6b77c0b547e9fc5a",
+     "a02b7a7d740cd3218"
+    ],
+    "background_tasks": []
+   },
+   {
+    "moment": "2026-10-29T16:17:52.000Z",
+    "why_this_moment": "the hook asked for the session-handoff (the -handoff-asked marker's time)",
+    "subagents_counted_by_own_transcripts": [
+     "a9ab243b54a67773a",
+     "a25748fab364a9faa"
+    ],
+    "subagents_counted_by_notices_alone": [
+     "a6b77c0b547e9fc5a",
+     "a02b7a7d740cd3218",
+     "aa4c1778a2d5aa274",
+     "a58525f52bc0df17c",
+     "a17d3891493e79960",
+     "a9ab243b54a67773a",
+     "a25748fab364a9faa"
+    ],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "07-fleet-restart-at-login-1306bfd9-65-percent-ceiling",
+  "session_transcript": "07-fleet-restart-at-login-1306bfd9-65-percent-ceiling/1306bfd9-d3e0-4188-9b6b-d598e3de8cf5.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-28T20:59:22.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [
+     "a0d4c5f93066353cf"
+    ],
+    "subagents_counted_by_notices_alone": [
+     "a0d4c5f93066353cf",
+     "aeca42aac0dc3eab8"
+    ],
+    "background_tasks": []
+   },
+   {
+    "moment": "2026-10-30T00:07:19.000Z",
+    "why_this_moment": "the hook asked for the session-handoff (the -handoff-asked marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [
+     "aeca42aac0dc3eab8"
+    ],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "08-reboot-test-ffcf06b0",
+  "session_transcript": "08-reboot-test-ffcf06b0/ffcf06b0-c7d5-49d9-91ee-91b6515b17e9.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-28T21:43:38.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [
+     "a216af419f0dd1cfb"
+    ],
+    "subagents_counted_by_notices_alone": [
+     "a216af419f0dd1cfb",
+     "a7276d177d47af430"
+    ],
+    "background_tasks": []
+   },
+   {
+    "moment": "2026-10-28T22:53:34.000Z",
+    "why_this_moment": "the hook asked for the session-handoff (the -handoff-asked marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "09-merge-lane-2-522fbd2a",
+  "session_transcript": "09-merge-lane-2-522fbd2a/522fbd2a-2932-49e7-97f0-a71abecda302.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-28T22:39:06.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": [
+     "bl2mvkgp8"
+    ]
+   },
+   {
+    "moment": "2026-10-28T22:51:42.000Z",
+    "why_this_moment": "the hook asked for the session-handoff (the -handoff-asked marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "10-MD-skills-860b0766",
+  "session_transcript": "10-MD-skills-860b0766/860b0766-55a4-48fc-8a06-0072f4cf1a6d.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-29T01:18:11.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [
+     "a8ba83138cea54c5b",
+     "a6b17b4c172bac2e1"
+    ],
+    "subagents_counted_by_notices_alone": [
+     "a8ba83138cea54c5b",
+     "a6b17b4c172bac2e1"
+    ],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "11-merge-lane-2-7ff29f73",
+  "session_transcript": "11-merge-lane-2-7ff29f73/7ff29f73-2dd2-4507-9c92-05a0ecec87de.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-29T02:25:11.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [
+     "a07780148e2fa084d",
+     "a97a2c20df3d3c923",
+     "ad119bfe647aad638",
+     "a94da04f4b7e182af",
+     "a481d405effcffc6e",
+     "ab819f0c0e2ed0e8d"
+    ],
+    "subagents_counted_by_notices_alone": [
+     "a07780148e2fa084d",
+     "a97a2c20df3d3c923",
+     "ad119bfe647aad638",
+     "a94da04f4b7e182af",
+     "a481d405effcffc6e",
+     "ab819f0c0e2ed0e8d"
+    ],
+    "background_tasks": [
+     "bosf3agd1"
+    ]
+   },
+   {
+    "moment": "2026-10-29T04:44:00.000Z",
+    "why_this_moment": "the hook asked for the session-handoff (the -handoff-asked marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "12-reboot-test-45480b2b",
+  "session_transcript": "12-reboot-test-45480b2b/45480b2b-79a5-4071-8cdf-a2360a4556db.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-29T03:28:23.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [
+     "a41c89945c63b7753",
+     "a3cd76bf29db8f72f"
+    ],
+    "subagents_counted_by_notices_alone": [
+     "a41c89945c63b7753",
+     "a3cd76bf29db8f72f"
+    ],
+    "background_tasks": []
+   },
+   {
+    "moment": "2026-10-29T04:43:12.000Z",
+    "why_this_moment": "the hook asked for the session-handoff (the -handoff-asked marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "13-merge-lane-2-ff9c083b",
+  "session_transcript": "13-merge-lane-2-ff9c083b/ff9c083b-81b7-4aef-9c84-ea41bf986c9a.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-29T05:35:41.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": [
+     "bub1ddn62",
+     "b170f7lup",
+     "bz5nsahqu"
+    ]
+   },
+   {
+    "moment": "2026-10-29T06:31:10.000Z",
+    "why_this_moment": "the hook asked for the session-handoff (the -handoff-asked marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "14-merge-lane-2-f8bbe743",
+  "session_transcript": "14-merge-lane-2-f8bbe743/f8bbe743-9cc0-4277-9b2d-f05d6f2d4723.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-29T07:25:03.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": [
+     "buje952k1",
+     "b2ykg8sx6",
+     "bwzc9n56z",
+     "bzyen7i6a"
+    ]
+   },
+   {
+    "moment": "2026-10-29T07:55:40.000Z",
+    "why_this_moment": "the hook asked for the session-handoff (the -handoff-asked marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "15-merge-lane-2-9e73c09d",
+  "session_transcript": "15-merge-lane-2-9e73c09d/9e73c09d-16d8-40d6-aaa9-771a3d4e8e5b.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-29T08:38:17.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": [
+     "bgx6rahku",
+     "btjoituad"
+    ]
+   },
+   {
+    "moment": "2026-10-29T08:59:26.000Z",
+    "why_this_moment": "the hook asked for the session-handoff (the -handoff-asked marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "16-merge-lane-2-5202ccfd",
+  "session_transcript": "16-merge-lane-2-5202ccfd/5202ccfd-9791-46ae-885a-6a3dbce4fe5b.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-29T10:03:12.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": [
+     "b2dotbu1k",
+     "bw3rhn9g1",
+     "bo172ld3t",
+     "bcnqu054d",
+     "bk8w4fph2",
+     "bazuakt8s"
+    ]
+   },
+   {
+    "moment": "2026-10-29T14:40:07.000Z",
+    "why_this_moment": "the hook asked for the session-handoff (the -handoff-asked marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "17-prime-intellect-93e84689",
+  "session_transcript": "17-prime-intellect-93e84689/93e84689-4462-4479-8ea4-5e903e73d11a.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-29T14:31:54.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [
+     "a9f4656b275e1fbd4",
+     "ab691ba564e8442c8",
+     "a7a25e7f511954fdf"
+    ],
+    "subagents_counted_by_notices_alone": [
+     "a9f4656b275e1fbd4",
+     "ab691ba564e8442c8",
+     "a7a25e7f511954fdf"
+    ],
+    "background_tasks": []
+   },
+   {
+    "moment": "2026-10-29T20:21:56.000Z",
+    "why_this_moment": "the hook asked for the session-handoff (the -handoff-asked marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "18-merge-lane-2-085a6b9f",
+  "session_transcript": "18-merge-lane-2-085a6b9f/085a6b9f-c721-459e-bed6-1cd33284f752.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-29T15:34:19.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": [
+     "bb13tjgyh",
+     "bm545fboz",
+     "br2di5d8x",
+     "bfk5te5ly",
+     "bkoua1jy5"
+    ]
+   },
+   {
+    "moment": "2026-10-29T15:45:21.000Z",
+    "why_this_moment": "the hook asked for the session-handoff (the -handoff-asked marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "19-reboot-test-222a1661",
+  "session_transcript": "19-reboot-test-222a1661/222a1661-826e-4213-834e-439b45884194.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-29T22:54:14.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [
+     "a145fa7adbc036372"
+    ],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "20-reboot-test-28da2061-pr-2213-fix-round-fork",
+  "session_transcript": "20-reboot-test-28da2061-pr-2213-fix-round-fork/28da2061-82fc-4850-acf8-c1a7e4268ace.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-30T20:36:12.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [
+     "aecc60a4911a7ff7e"
+    ],
+    "subagents_counted_by_notices_alone": [
+     "aecc60a4911a7ff7e"
+    ],
+    "background_tasks": []
+   },
+   {
+    "moment": "2026-10-30T20:43:30.000Z",
+    "why_this_moment": "the fork's own transcript last written 20:37:59, its background task blrsaarzi 9 minutes old",
+    "subagents_counted_by_own_transcripts": [
+     "aecc60a4911a7ff7e"
+    ],
+    "subagents_counted_by_notices_alone": [
+     "aecc60a4911a7ff7e"
+    ],
+    "background_tasks": []
+   },
+   {
+    "moment": "2026-10-30T21:50:00.000Z",
+    "why_this_moment": "blrsaarzi, launched 20:34:15 and never notified, is past its 75 minutes",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [
+     "aecc60a4911a7ff7e"
+    ],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "21-cold-read-improvement-71798983-wait-loop-left-running",
+  "session_transcript": "21-cold-read-improvement-71798983-wait-loop-left-running/71798983-6cdc-4445-b0c4-cac4572bd97b.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-30T23:37:56.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [
+     "ad56ae45fe2c853dc",
+     "ab320e85027411b7f",
+     "a2afcbed0809bf6b0"
+    ],
+    "subagents_counted_by_notices_alone": [
+     "ad56ae45fe2c853dc",
+     "ab320e85027411b7f",
+     "a2afcbed0809bf6b0"
+    ],
+    "background_tasks": []
+   },
+   {
+    "moment": "2026-10-31T00:30:00.000Z",
+    "why_this_moment": "the subagent reported PR 2237 at 00:19:16; its wait loop bzmb2f3ij is past its 75 minutes",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [
+     "ad56ae45fe2c853dc"
+    ],
+    "background_tasks": []
+   },
+   {
+    "moment": "2026-10-31T02:00:52.000Z",
+    "why_this_moment": "the hook asked for the session-handoff (the -handoff-asked marker's time)",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [],
+    "background_tasks": []
+   }
+  ]
+ },
+ {
+  "case": "22-ned-box-helper-7d38ec25-pr-2171-subagent",
+  "session_transcript": "22-ned-box-helper-7d38ec25-pr-2171-subagent/7d38ec25-055d-4e06-92cc-9c38612c0d70.jsonl",
+  "moments": [
+   {
+    "moment": "2026-10-29T22:37:46.000Z",
+    "why_this_moment": "the hook deferred the session-handoff (the -handoff-deferred marker's time)",
+    "subagents_counted_by_own_transcripts": [
+     "abd1716b2b8ca7d95"
+    ],
+    "subagents_counted_by_notices_alone": [
+     "ac0cee90b8ff7486a",
+     "a0ed2394e145025b3",
+     "abd1716b2b8ca7d95"
+    ],
+    "background_tasks": []
+   },
+   {
+    "moment": "2026-10-31T04:00:00.000Z",
+    "why_this_moment": "the hook still counted ac0cee90b8ff7486a, last written 2026-10-29T16:41Z",
+    "subagents_counted_by_own_transcripts": [],
+    "subagents_counted_by_notices_alone": [
+     "ac0cee90b8ff7486a"
+    ],
+    "background_tasks": []
+   }
+  ]
+ }
+]

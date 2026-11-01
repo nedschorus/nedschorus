@@ -560,6 +560,51 @@ with tempfile.TemporaryDirectory() as workspace:
         extractor.project_directory_for_working_directory(Path("/Users/el/Projects/nedschorus")).name,
     )
 
+# --- Repeated agent paragraphs in the log-store's session dialogs ----------
+CLOSING = "Answer A to approve, D to disapprove, or Z to defer this item."
+with tempfile.TemporaryDirectory() as workspace:
+    repeats = write_transcript(workspace, "repeats.jsonl", [
+        assistant_record(f"Item one.\n\n{CLOSING}", timestamp="2026-09-01T08:00:00Z"),
+        user_record(CLOSING, timestamp="2026-09-01T08:01:00Z"),
+        assistant_record(f"Item two.\n\n\n  {CLOSING}  \n\nItem one.", timestamp="2026-09-01T08:02:00Z"),
+        assistant_record(f"{CLOSING}\n\n{CLOSING}", timestamp="2026-09-01T08:03:00Z"),
+    ])
+    session_dialog = extractor.render_companion(*extractor.complete_dialog_turns_and_report(repeats))
+    repeated_line = "(repeated: Answer A to approve, D to disapprove, or …)"
+    check("the session dialog keeps an agent paragraph's first copy whole and makes each later copy the one "
+          "line naming its first eight words",
+          session_dialog.count(CLOSING) == 2 and session_dialog.count(repeated_line) == 3
+          and "(repeated: Item one. …)" in session_dialog, session_dialog)
+    check("the user's turns are never shortened, even when they repeat an agent paragraph",
+          f"## User\n\n{CLOSING}\n" in session_dialog, session_dialog)
+    check("a repeat keeps the blank lines around it, and a paragraph whose outer whitespace differs counts as "
+          "the same",
+          f"Item two.\n\n\n{repeated_line}\n\n(repeated: Item one. …)" in session_dialog, session_dialog)
+    lines, notes = extractor.complete_dialog_lines_with_turn_timestamps(repeats)
+    check("the lines dated for the search are the session dialog's lines, each repeat dated by its own turn",
+          [line for line, _ in lines] == session_dialog.split("\n")
+          and [stamp for line, stamp in lines if line == repeated_line]
+          == ["2026-09-01T08:02:00Z", "2026-09-01T08:03:00Z", "2026-09-01T08:03:00Z"] and not notes,
+          lines)
+    long_paragraph = " ".join(f"word{number}" for number in range(12))
+    long_repeats = write_transcript(workspace, "long.jsonl", [assistant_record(long_paragraph),
+                                                               assistant_record(long_paragraph)])
+    check("a repeat names only the first eight words of its paragraph",
+          "(repeated: word0 word1 word2 word3 word4 word5 word6 word7 …)"
+          in extractor.render_companion(*extractor.complete_dialog_turns_and_report(long_repeats)))
+    subagent_turns = [{"voice": extractor.SUBAGENT_VOICE, "kind": "report", "text": CLOSING},
+                      {"voice": "assistant", "text": CLOSING},
+                      {"voice": extractor.SUBAGENT_VOICE, "kind": "report", "text": CLOSING}]
+    check("subagent turns are never shortened, and do not count as the agent having shown a paragraph",
+          [turn["text"] for turn in extractor.turns_with_repeated_agent_paragraphs_shortened(subagent_turns)]
+          == [CLOSING, CLOSING, CLOSING])
+    output = Path(workspace) / "seat-dialog-0001.md"
+    extractor.main(["--transcript-path", str(repeats), "--last-turns", "1", "--output", str(output)])
+    companion = output.with_name("seat-dialog-0001-complete.md").read_text(encoding="utf-8")
+    check("the handoff's own dialog files keep every repeat whole",
+          "(repeated:" not in output.read_text(encoding="utf-8") + companion and companion.count(CLOSING) == 5,
+          companion)
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

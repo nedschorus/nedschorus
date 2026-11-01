@@ -522,7 +522,7 @@ def main() -> int:
     # The session's OWN view of where it works. Never $CLAUDE_PROJECT_DIR:
     # that variable lies in forked sessions, naming the main checkout while
     # settings load from the worktree — the same reason
-    # checkout-freshness-catch-up.py and .claude/hooks/instruction-file-guard.py
+    # checkout-freshness-catch-up.py and .claude/guard-hooks/instruction-file-guard.py
     # both read cwd from the payload.
     working_directory = payload.get("cwd")
     if not working_directory or not isinstance(working_directory, str):

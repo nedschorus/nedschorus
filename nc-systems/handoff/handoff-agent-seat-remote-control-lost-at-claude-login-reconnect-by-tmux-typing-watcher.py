@@ -82,11 +82,11 @@ PROGRAM = "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-t
 
 REPOSITORY = Path(__file__).resolve().parent.parent.parent
 MAC_WINDOW_OPENER_PROGRAM = REPOSITORY / "scripts" / "open-mac-window-from-ned-box.py"
-_project_directory_specification = importlib.util.spec_from_file_location(
-    "claude_code_session_transcript_project_directory_for_agent_seat_common",
-    REPOSITORY / "scripts" / "claude-code-session-transcript-project-directory-for-agent-seat-common.py")
-project_directory_module = importlib.util.module_from_spec(_project_directory_specification)
-_project_directory_specification.loader.exec_module(project_directory_module)
+_claude_code_session_transcript_lookup_and_text_search_common_specification = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_lookup_and_text_search_common",
+    REPOSITORY / "scripts" / "claude-code-session-transcript-lookup-and-text-search-common.py")
+claude_code_session_transcript_lookup_and_text_search_common = importlib.util.module_from_spec(_claude_code_session_transcript_lookup_and_text_search_common_specification)
+_claude_code_session_transcript_lookup_and_text_search_common_specification.loader.exec_module(claude_code_session_transcript_lookup_and_text_search_common)
 
 LOG_DIRECTORY = Path.home() / "nedschorus-logs" / PROGRAM
 SESSION_RECORDS_DIRECTORY = Path.home() / ".claude" / "sessions"
@@ -415,7 +415,7 @@ def check_seat(run: Run, seat, pid, age, session_records_directory: Path, projec
                    f"sessionId, cwd and status: {type(error).__name__}: {error}",
                    key=f"{seat}:{pid}:record-unreadable:{type(error).__name__}")
         return
-    transcript = (project_directory_module.project_directory_for_seat(
+    transcript = (claude_code_session_transcript_lookup_and_text_search_common.project_directory_for_seat(
         Path(working_directory), projects_directory) / f"{session_id}.jsonl")
     if str(transcript) in run.saved_read_positions:
         run.transcript_read_positions.setdefault(str(transcript), run.saved_read_positions[str(transcript)])

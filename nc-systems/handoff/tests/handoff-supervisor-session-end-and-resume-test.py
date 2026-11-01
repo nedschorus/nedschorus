@@ -55,6 +55,7 @@ SCRIPT_PATH = fixture.SCRIPT_PATH
 git_in = fixture.git_in
 StubLaunchedSession = fixture.StubLaunchedSession
 supervisor_names_replaced = fixture.supervisor_names_replaced
+REMOVALS_LOG_OVERRIDE_VARIABLE = "CLEAN_WORKTREES_REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE"
 
 
 def stub_process(poll_result):
@@ -420,12 +421,18 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
     the handoff's next step as its prompt, told that the session-dialog could
     not be extracted and where the transcript is, and the handoff is consumed.
     The handoff names another session as its writer, so the extraction must be
-    tried on the writer, not on the session the supervisor launched. A second
-    handoff, whose writer has no transcript, gives a successor told so."""
+    tried on the writer, not on the session the supervisor launched. The
+    writer's transcript is in another seat's project folder, which the
+    transcript search still finds. A second handoff, whose writer has no
+    transcript, and a third, whose writer's transcript is in two project
+    folders, give successors told what the search reported."""
     handoff_directory = workspace / "failedextraction"
     handoff_directory.mkdir(parents=True)
-    projects = workspace / "failedextraction-projects"
-    projects.mkdir()
+    keyed_project_directory = supervisor.project_directory_for_working_directory(workspace)
+    other_project_directory = supervisor.PROJECTS_ROOT / "failedextraction-other-project"
+    another_project_directory = supervisor.PROJECTS_ROOT / "failedextraction-another-project"
+    other_project_directory.mkdir(parents=True)
+    another_project_directory.mkdir(parents=True)
     settings = supervisor.SupervisorSettings(
         agent="failedextraction", working_directory=workspace,
         handoff_directory=handoff_directory, agent_command="unused-stub-agent",
@@ -433,11 +440,17 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
     launched_session_ids, launched_prompts, extracted_from = [], [], []
     writer_session_id = "11111111-2222-3333-4444-555555555555"
     writer_without_a_transcript = "66666666-7777-8888-9999-000000000000"
-    (projects / f"{writer_session_id}.jsonl").write_text("{}\n", encoding="utf-8")
+    writer_in_two_project_folders = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    (other_project_directory / f"{writer_session_id}.jsonl").write_text("{}\n", encoding="utf-8")
+    for project_directory in (other_project_directory, another_project_directory):
+        (project_directory / f"{writer_in_two_project_folders}.jsonl").write_text(
+            "{}\n", encoding="utf-8")
     handoffs_to_write = [
         f"restart-counter: 1\nwritten-by-session: {writer_session_id}\nnext-step: carry on\n",
         f"restart-counter: 2\nwritten-by-session: {writer_without_a_transcript}\n"
         "next-step: carry on further\n",
+        f"restart-counter: 3\nwritten-by-session: {writer_in_two_project_folders}\n"
+        "next-step: carry on still\n",
     ]
 
     def launch(agent_command, session_id, working_directory, prompt, **_):
@@ -459,19 +472,19 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
             extract_dialog=failing_extract_dialog,
             launch_time_git_sync=lambda working_directory: "launch-time-git-sync: stubbed",
             remove_finished_worktrees_at_handoff=lambda working_directory: "worktrees: stubbed",
-            project_directory_for_working_directory=lambda working_directory: projects,
             memory_review_due_lines=lambda: (),
             stdin_isatty=True), \
             contextlib.redirect_stdout(console), contextlib.redirect_stderr(errors):
         exit_code = supervisor.supervise_sessions(settings)
     state = supervisor.read_supervisor_state(settings.state_path)
     check("FAILED EXTRACTION: a handoff whose dialog cannot be extracted still starts a successor",
-          exit_code == 0 and len(launched_session_ids) == 3
-          and len(set(launched_session_ids)) == 3,
+          exit_code == 0 and len(launched_session_ids) == 4
+          and len(set(launched_session_ids)) == 4,
           f"{exit_code!r} {launched_session_ids!r} {extracted_from!r}")
     check("FAILED EXTRACTION: the extraction is tried on the handoff's writer, "
           "not on the launched session",
-          extracted_from == [writer_session_id, writer_without_a_transcript],
+          extracted_from == [writer_session_id, writer_without_a_transcript,
+                             writer_in_two_project_folders],
           f"{extracted_from!r} {launched_session_ids!r}")
     check("FAILED EXTRACTION: the failure is still printed, naming the session, "
           "and nothing says it is not relaunching",
@@ -486,28 +499,44 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
           console.getvalue()[-600:])
     successor_prompt = launched_prompts[1] if len(launched_prompts) > 1 else ""
     check("FAILED EXTRACTION: the successor's prompt is the next step, then says the "
-          "session-dialog could not be extracted and gives the transcript's path",
+          "session-dialog could not be extracted and gives the path of the transcript, "
+          "which is in another seat's project folder",
           successor_prompt.startswith(
               "carry on\n\n(Recovered at a handoff: the previous session's conversation-tail "
               "is unavailable, because the handoff-supervisor could not extract session "
               f"{writer_session_id}'s session-dialog; this next-step and the repository are "
               f"your context, and that session's transcript is "
-              f"{projects / (writer_session_id + '.jsonl')}, which you can read when the "
-              "next-step leaves out something you need.) "),
+              f"{other_project_directory / (writer_session_id + '.jsonl')}, which you can read "
+              "when the next-step leaves out something you need.) "),
           successor_prompt[:600])
-    last_prompt = launched_prompts[2] if len(launched_prompts) > 2 else ""
-    check("FAILED EXTRACTION: when the writer's transcript is not where it should be, the "
-          "successor's prompt says so instead of sending it there",
-          last_prompt.startswith(
+    no_transcript_prompt = launched_prompts[2] if len(launched_prompts) > 2 else ""
+    check("FAILED EXTRACTION: when no project folder holds the writer's transcript, the "
+          "successor's prompt says it is not where it was expected nor in any other project "
+          "folder, and that the next step and the repository are its whole context",
+          no_transcript_prompt.startswith(
               "carry on further\n\n(Recovered at a handoff: the previous session's "
               "conversation-tail is unavailable, because the handoff-supervisor could not "
               f"extract session {writer_without_a_transcript}'s session-dialog, and that "
               "session's transcript is not at "
-              f"{projects / (writer_without_a_transcript + '.jsonl')}; this next-step and the "
+              f"{keyed_project_directory / (writer_without_a_transcript + '.jsonl')} or in any "
+              f"other folder under {supervisor.PROJECTS_ROOT}/; this next-step and the "
               "repository are your whole context.) "),
-          last_prompt[:600])
+          no_transcript_prompt[:900])
+    two_folders_prompt = launched_prompts[3] if len(launched_prompts) > 3 else ""
+    check("FAILED EXTRACTION: when two project folders hold the writer's transcript, the "
+          "successor's prompt names both, joined by \"and\"",
+          two_folders_prompt.startswith(
+              "carry on still\n\n(Recovered at a handoff: the previous session's "
+              "conversation-tail is unavailable, because the handoff-supervisor could not "
+              f"extract session {writer_in_two_project_folders}'s session-dialog; this "
+              "next-step and the repository are your context, and that session's transcript "
+              "is in more than one folder, at "
+              f"{another_project_directory / (writer_in_two_project_folders + '.jsonl')} and "
+              f"{other_project_directory / (writer_in_two_project_folders + '.jsonl')}, which "
+              "you can read when the next-step leaves out something you need.) "),
+          two_folders_prompt[:900])
     check("FAILED EXTRACTION: each handoff is consumed",
-          state.get("consumed_counter") == 2, str(state))
+          state.get("consumed_counter") == 3, str(state))
 
 
 def process_is_gone_within_seconds(process_id: int, seconds: float) -> bool:
@@ -535,9 +564,12 @@ def run_handoff_worktree_cleanup_cases(workspace: Path):
     redirecting = {name: os.environ.pop(name)
                    for name in _git_environment_fixture.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
                    if name in os.environ}
+    # The real cleaner's --remove would otherwise append to the real log-store's log of removals.
+    os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(workspace / "clean-worktrees-removals-log.txt")
     try:
         run_handoff_worktree_cleanup_cases_without_git_redirection(workspace)
     finally:
+        del os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE]
         os.environ.update(redirecting)
 
 
@@ -700,7 +732,8 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           "record-holding-worktree: record shipment FAILED, worktree kept — removing it would "
           "delete a record the log-store does not hold: cold-read-records/foo-2026-10-19 "
           "(REFUSED:" in refused_report
-          and refused_report.count("record-holding-worktree") == 1
+          # The shipper's line names the record's path, which holds the worktree's name.
+          and refused_report.count("record-holding-worktree: ") == 1
           and "exited 1" not in refused_report and "failed:" not in refused_report,
           refused_report)
     git_in(["worktree", "remove", "--force", str(holding_record)], home)
@@ -787,6 +820,40 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           "redirect the cleanup to another repository",
           not second_finished.exists() and "other-landed-branch" in other_branches,
           f"{report} {other_branches}")
+
+    # A log-of-removals line the cleaner cannot write: the report must keep the command that
+    # writes it, because the worktree and its branch are gone by then.
+    unlogged = home / ".claude" / "worktrees" / "unlogged-finished-worktree"
+    git_in(["worktree", "add", "--quiet", "-b", "unlogged-finished-branch", str(unlogged)], home)
+    os.utime(unlogged / ".git", (long_ago, long_ago))
+    not_a_directory = root / "removals-log-parent-is-a-file"
+    not_a_directory.write_text("", encoding="utf-8")
+    saved_log_file = os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE]
+    os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(not_a_directory / "ned-box.txt")
+    try:
+        unlogged_report = supervisor.remove_finished_worktrees_at_handoff(home)
+    finally:
+        os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = saved_log_file
+    record_by_hand = unlogged_report.partition(
+        "unlogged-finished-worktree: to record it, run this once: ")[2].partition(
+        "; unlogged-finished-worktree: if that printf command fails too")[0]
+    check("WORKTREE CLEANUP: when the log of removals cannot be written, the report keeps the "
+          "FAILED line, the command that writes the unwritten line and what to do if it fails",
+          not unlogged.exists() and "1 failed: unlogged-finished-worktree: log of removals "
+          "line(s) FAILED" in unlogged_report and record_by_hand
+          and "; to record by hand what the log of removals is missing: "
+          "unlogged-finished-worktree: to record it, run this once: " in unlogged_report
+          and "unlogged-finished-worktree: if that printf command fails too, do not run "
+          "scripts/clean-worktrees.py again; tell the user" in unlogged_report, unlogged_report)
+    if record_by_hand:
+        not_a_directory.unlink()
+        subprocess.run(["/bin/sh", "-c", record_by_hand], capture_output=True, check=False)
+        written = ((not_a_directory / "ned-box.txt").read_text(encoding="utf-8")
+                   if (not_a_directory / "ned-box.txt").is_file() else "")
+        check("WORKTREE CLEANUP: the command the report keeps writes the removal's line",
+              "\tremoved-worktree\t" in written
+              and f"/{unlogged.name}\tbranch=unlogged-finished-branch\t" in written,
+              record_by_hand + "\n" + written)
 
     not_a_checkout = root / "not-a-checkout"
     not_a_checkout.mkdir()
@@ -1429,6 +1496,36 @@ def run_by_hand_resume_cases(workspace: Path):
           launched and launched[0][2] is not True
           and launched[0][0] != "failed-successor",
           str(launched))
+
+    # 3a. A transcript folder that cannot be listed is not "nothing worth resuming": a fresh
+    # session's transcript would become the newest and bury the crashed one.
+    if os.geteuid() == 0:
+        print("SKIP  BY HAND: a transcript folder that cannot be listed stops startup: "
+              "root can list any folder")
+    else:
+        unreadable_projects = workspace / "by-hand-resume-projects-unreadable"
+        unreadable_projects.mkdir(parents=True, exist_ok=True)
+        (unreadable_projects / crashed.name).write_bytes(crashed.read_bytes())
+        settings = settings_for("transcript-folder-unreadable")
+        supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
+        launched, errors = [], io.StringIO()
+        unreadable_projects.chmod(0o000)
+        try:
+            with supervisor_names_replaced(
+                    launch_agent_session=launch_empty,
+                    project_directory_for_working_directory=lambda _: unreadable_projects,
+                    launch_time_git_sync=no_launch_time_git_sync), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+                exit_status = supervisor.supervise_sessions(settings)
+        finally:
+            unreadable_projects.chmod(0o755)
+        check("BY HAND: a transcript folder that cannot be listed stops startup with exit 5 "
+              "and launches nothing",
+              exit_status == 5 and not launched, (exit_status, launched))
+        check("BY HAND: and the stop is printed to stderr, naming the folder and the error",
+              "startup stopped" in errors.getvalue()
+              and str(unreadable_projects) in errors.getvalue()
+              and "Permission denied" in errors.getvalue(), errors.getvalue())
 
     # 4. An unconsumed handoff is the fresher truth and boot-ignition takes it,
     # exactly as before: the by-hand resume must not steal a waiting handoff.

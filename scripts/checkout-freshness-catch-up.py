@@ -64,7 +64,9 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
      copy carries no work of its own by construction, and 2026-08-17 it sat
      33 commits stale, running a superseded extractor under every supervisor
      on the machine. A reference that cannot update — someone left work
-     there — is a user line; a success is silent.
+     there — is a user line; a success is silent, unless git's output from
+     the fast-forward carries a FAILED line from the post-merge hook, which
+     git does not count as a failure.
 
 The user's lines travel as the Stop hook's `systemMessage`. The agent's notes
 are NOT emitted at Stop: a Stop hook's `additionalContext` makes Claude Code
@@ -318,7 +320,8 @@ DRIFT_PATH_CATEGORIES = (
     ("skills you run under",
      lambda path: path.startswith(".claude/skills/")),
     ("hooks and wiring that run on your work",
-     lambda path: path.startswith(".claude/hooks/") or path == ".claude/settings.json"),
+     lambda path: path.startswith((".claude/hooks/", ".claude/guard-hooks/"))
+     or path == ".claude/settings.json"),
     ("systems you build on, code and design of record",
      lambda path: path.startswith("nc-systems/")),
     ("scripts your tests run against",
@@ -1653,6 +1656,11 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
     stamp["behind"], stamp["last_action"] = 0, f"reference fast-forwarded {behind}"
     stamp.pop("last_reference_blockers", None)
     write_stamp(stamp_path, stamp)
+    # Git exits 0 whatever the post-merge hook returns, and puts the hook's
+    # output on its own stderr, so a hook's failure is seen only here.
+    if "FAILED" in pulled.stderr:
+        report(f"catch-up: reference checkout {reference} fast-forwarded {behind} commit(s), "
+               f"and its post-merge hook reported a failure:\n{pulled.stderr.strip()}")
     if operator_facing:
         report(f"catch-up: reference checkout {reference} fast-forwarded {behind} commit(s) "
                f"to origin/main")

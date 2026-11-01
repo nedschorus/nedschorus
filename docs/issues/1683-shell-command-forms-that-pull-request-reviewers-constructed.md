@@ -4,7 +4,7 @@ issue: "[Shell command forms that pull request reviewers constructed and the Bas
 
 # Shell command forms that pull request reviewers constructed and the Bash guards' shared shell reader misreads
 
-The Bash guards, the PreToolUse hooks in `.claude/settings.json` that check a Bash command before it runs, all read the command through one shared shell reader, `nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py`. Reviewers of pull requests that change that reader keep constructing commands it reads differently from bash, such as a force push the force-push guard, `scripts/force-push-with-open-pull-request-guard-hook.py`, lets through. No agent has run any of these commands. This GHI is the one place those constructed forms are collected, so that each does not become its own follow-up pull request.
+The Bash guards, the PreToolUse hooks in `.claude/settings.json` that check a Bash command before it runs, all read the command through one shared shell reader, `nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py`. Reviewers of pull requests that change that reader keep constructing commands it reads differently from bash, such as a force push the force-push guard, `.claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py`, lets through. No agent has run any of these commands. This GHI is the one place those constructed forms are collected, so that each does not become its own follow-up pull request.
 
 ## How this GHI is used
 

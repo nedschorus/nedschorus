@@ -224,11 +224,11 @@ def find_session_transcript(session_id: str, working_directory: Path):
     """Return the session transcript path, or None if absent or ambiguous."""
     if not session_id or session_id == "unknown":
         return None
-    keyed_path = project_directory_for_working_directory(working_directory) / f"{session_id}.jsonl"
-    if keyed_path.is_file():
-        return keyed_path
-    matches = sorted(PROJECTS_ROOT.glob(f"*/{session_id}.jsonl"))
-    return matches[0] if len(matches) == 1 else None
+    try:
+        return supervisor.claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcript_path_found_by_session_id(
+            session_id, working_directory, PROJECTS_ROOT)
+    except supervisor.claude_code_session_transcript_lookup_and_text_search_common.ClaudeCodeSessionTranscriptFoundInSeveralProjectDirectoriesError:
+        return None
 
 
 def timestamp_to_whole_seconds(stamp: str) -> str:
