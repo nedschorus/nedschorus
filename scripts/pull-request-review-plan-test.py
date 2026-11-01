@@ -713,7 +713,10 @@ def run_fast_read_command_cases(fixture):
     check("after a text run, the message gives this run's own command with --json and without --brief-skeleton",
           rerun_words == ["python3", "scripts/pull-request-review-plan.py",
                           "--pull-request", str(FIXTURE_PULL_REQUEST_NUMBER), "--repository", str(fixture.repository.resolve()),
-                          "--github-repository", FIXTURE_GITHUB_REPOSITORY, "--json"], text_result.stderr)
+                          "--github-repository", FIXTURE_GITHUB_REPOSITORY, "--json",
+                          "--overview-write-architecture-overview-claim-check-report-directory",
+                          str(review_plan_module.overview_claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_REPORT_DIRECTORY.resolve())],
+          text_result.stderr)
     fixture.environment = {**saved_environment, "TMPDIR": str(blocked_temporary_directory)}
     try:
         relative_result = subprocess.run(
@@ -966,6 +969,73 @@ def run_git_failure_cases(fixture):
           refused_with_git_failure(result) and not result.stdout, result.stderr + result.stdout)
 
 
+FIXTURE_OVERVIEW_PATH = "docs/nedschorus-wiki/nedschorus-example-architecture-overview.md"
+FIXTURE_HOW_TO_PAGE_PATH = "docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md"
+
+
+def run_architecture_overview_claim_check_cases(fixture):
+    """Rule 4: an overview the pull request adds or changes needs a report showing every claim supported."""
+    claim_check = review_plan_module.overview_claim_check
+    report_directory = fixture.repository.parent / "claim-check-reports"
+    flag = ["--overview-write-architecture-overview-claim-check-report-directory", str(report_directory)]
+
+    def write_report(blob, result, stamp):
+        directory = claim_check.overview_write_architecture_overview_claim_check_report_directory_for_overview(report_directory, FIXTURE_OVERVIEW_PATH)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{blob}-{stamp}.md").write_text(
+            f"overview: {FIXTURE_OVERVIEW_PATH}\n{claim_check.RESULT_LINE_PREFIX}{result}\n\nVERDICT 1 supported: x\n",
+            encoding="utf-8")
+
+    fixture.reset_fixture_to_base()
+    shutil.rmtree(report_directory, ignore_errors=True)
+    fixture.write_fixture_file(FIXTURE_OVERVIEW_PATH, "# Example overview\n\nThe example system.\n")
+    head = fixture.commit_fixture_changes("add an overview of nc-systems/example")
+    fixture.configure_github_answers(head)
+    blob = fixture.git_command("rev-parse", f"{head}:{FIXTURE_OVERVIEW_PATH}")
+    result = fixture.run_review_plan(*flag)
+    check("an added overview with no claim-check report is refused, naming the overview and the command that checks it",
+          refusal_has_expected_prefix(result) and not result.stdout
+          and f"{FIXTURE_OVERVIEW_PATH} (git blob {blob[:12]} at head): looked " in result.stderr
+          and "newest report found: none" in result.stderr
+          and f"--overview {FIXTURE_OVERVIEW_PATH}\n" in result.stderr, result.stderr)
+    write_report("0" * 40, claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED, "2026-01-01T00-00-00-000000Z")
+    result = fixture.run_review_plan(*flag)
+    check("a report for another text of the overview does not clear the refusal",
+          refusal_has_expected_prefix(result) and "newest report found: none" in result.stderr, result.stderr)
+    write_report(blob, claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED, "2026-01-01T00-00-00-000000Z")
+    write_report(blob, "not all claims supported: 1 contradicted, 0 unsupported, 3 supported", "2026-01-02T00-00-00-000000Z")
+    result = fixture.run_review_plan(*flag)
+    check("the newest report decides, so a later report that falls short is refused and named",
+          refusal_has_expected_prefix(result) and "whose result is: not all claims supported: 1 contradicted" in result.stderr, result.stderr)
+    write_report(blob, claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED, "2026-01-03T00-00-00-000000Z")
+    result = fixture.run_review_plan(*flag)
+    check("a newest report showing every claim supported lets the plan through",
+          result.returncode == 0 and json.loads(result.stdout)["head"] == head, result.stderr)
+    fixture.configure_github_answers(head, state="MERGED", merge_commit=head)
+    shutil.rmtree(report_directory)
+    result = fixture.run_review_plan(*flag)
+    check("a merged pull request that changed an overview is not refused", result.returncode == 0, result.stderr)
+
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file(FIXTURE_HOW_TO_PAGE_PATH, "# How to write one\n")
+    fixture.write_fixture_file("docs/nedschorus-wiki/nedschorus-nosystem-architecture-overview.md", "# No system\n")
+    head = fixture.commit_fixture_changes("pages the template matches with no nc-systems directory")
+    fixture.configure_github_answers(head)
+    result = fixture.run_review_plan(*flag)
+    check("the how-to page and a page naming no directory under nc-systems/ are not overviews, so they are not refused",
+          result.returncode == 0, result.stderr)
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file(FIXTURE_OVERVIEW_PATH, "# Example overview\n")
+    with_overview = fixture.commit_fixture_changes("overview on main")
+    fixture.git_command("update-ref", "refs/remotes/origin/main", with_overview)
+    (fixture.repository / FIXTURE_OVERVIEW_PATH).unlink()
+    head = fixture.commit_fixture_changes("delete the overview")
+    fixture.configure_github_answers(head, live_base=with_overview)
+    result = fixture.run_review_plan(*flag)
+    check("a pull request that deletes an overview is not refused", result.returncode == 0, result.stderr)
+    fixture.reset_fixture_to_base()
+
+
 def main():
     start_time = time.monotonic()
     run_unit_cases()
@@ -979,6 +1049,7 @@ def main():
         run_repository_and_output_cases(fixture)
         run_refusal_and_call_shape_cases(fixture)
         run_git_failure_cases(fixture)
+        run_architecture_overview_claim_check_cases(fixture)
     print(f"{len(CHECK_FAILURE_NAMES)} failed; elapsed {time.monotonic() - start_time:.2f}s")
     return 1 if CHECK_FAILURE_NAMES else 0
 
