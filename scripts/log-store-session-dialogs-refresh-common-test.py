@@ -67,32 +67,41 @@ with tempfile.TemporaryDirectory() as workspace:
           dialog == store / "session-dialogs" / "mac" / "-Users-someone-project" / "s1-dialog-complete.md", dialog)
 
     extractor, rendered = counting_extractor()
-    written = refresh_common.refresh_session_dialog_unless_current(extractor, True, transcript, dialog)
-    check("a transcript with no dialog gets one, carrying the transcript's change time",
-          written and dialog.read_text() == "dialog of s1.jsonl\n"
+    written = refresh_common.refresh_session_dialog_file_unless_current_with_transcript(
+        extractor, "ab12", True, transcript, dialog)
+    check("a transcript with no dialog gets one, ending with a line naming the extractor's digest, and carrying "
+          "the transcript's change time",
+          written
+          and dialog.read_text() == ("dialog of s1.jsonl\n\n\n"
+                                     + refresh_common.session_dialog_extractor_sha256_last_line_build("ab12") + "\n")
+          and refresh_common.session_dialog_extractor_sha256_read_from_last_line(dialog.read_text().split("\n")) == "ab12"
           and dialog.stat().st_mtime_ns == transcript.stat().st_ctime_ns, (written, dialog.stat()))
-    written = refresh_common.refresh_session_dialog_unless_current(extractor, True, transcript, dialog)
+    written = refresh_common.refresh_session_dialog_file_unless_current_with_transcript(
+        extractor, "ab12", True, transcript, dialog)
     check("a current dialog is not written again, and its transcript is not read",
           not written and len(rendered) == 1, (written, rendered))
-    written = refresh_common.refresh_session_dialog_unless_current(extractor, False, transcript, dialog)
+    written = refresh_common.refresh_session_dialog_file_unless_current_with_transcript(
+        extractor, "ab12", False, transcript, dialog)
     check("a current dialog is written again when the extractor changed", written and len(rendered) == 2, rendered)
     os.utime(transcript)
-    written = refresh_common.refresh_session_dialog_unless_current(extractor, True, transcript, dialog)
+    written = refresh_common.refresh_session_dialog_file_unless_current_with_transcript(
+        extractor, "ab12", True, transcript, dialog)
     check("a dialog whose transcript changed since it was written is written again",
           written and dialog.stat().st_mtime_ns == transcript.stat().st_ctime_ns, written)
 
     failing_extractor, rendered = counting_extractor(left_out=["The subagent tracker failed."])
     os.utime(transcript)
     try:
-        refresh_common.refresh_session_dialog_unless_current(failing_extractor, True, transcript, dialog,
-                                                             refuse_without_subagent_turns=True)
+        refresh_common.refresh_session_dialog_file_unless_current_with_transcript(
+            failing_extractor, "ab12", True, transcript, dialog, refuse_without_subagent_turns=True)
         check("a dialog the subagent tracker failed on is refused, not written, when the caller asks", False,
               "nothing raised")
     except refresh_common.SubagentTurnsLeftOut as error:
         check("a dialog the subagent tracker failed on is refused, not written, when the caller asks",
               str(error) == "The subagent tracker failed." and dialog.stat().st_mtime_ns != transcript.stat().st_ctime_ns,
               error)
-    written = refresh_common.refresh_session_dialog_unless_current(failing_extractor, True, transcript, dialog)
+    written = refresh_common.refresh_session_dialog_file_unless_current_with_transcript(
+        failing_extractor, "ab12", True, transcript, dialog)
     check("a dialog the subagent tracker failed on is written when the caller does not refuse it",
           written and dialog.stat().st_mtime_ns == transcript.stat().st_ctime_ns, written)
 

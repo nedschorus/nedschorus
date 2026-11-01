@@ -26,12 +26,14 @@ whose transcript changed since the dialog was written, as the dialogs
 refresher, scripts/log-store-session-dialogs-refresh-nbd.py, does every 10
 minutes, so a dialog is as current as the transcript the mirror last copied,
 about a minute behind the session. It writes them only with the dialog
-extractor, scripts/handoff-extract-conversation.py, and subagent tracker the
-refresher last wrote every dialog with, as the digest it records in
+extractor, scripts/handoff-extract-conversation.py, subagent tracker and
+scripts/log-store-session-dialogs-refresh-common.py the refresher last wrote
+every dialog with, as the digest it records in
 session-dialogs/.dialogs-written-by-extractor-sha256 shows. When this
-checkout's differ, as on a branch that changes them or in a worktree behind
-main, or no digest is recorded, it says so on stderr and searches the dialogs
-as they are; the refresher rewrites them on its next pass. A dialog the
+checkout's differ, or no digest is recorded, it says so on stderr and
+searches the dialogs as they are. The refresher runs from ned-box's main
+checkout, so this checkout's match only when they are main's: on a branch
+that changes them, or in a worktree behind main, they never do. A dialog the
 subagent tracker fails on, or every dialog when the tracker cannot be read, is
 not written, and the search says what failed and exits 2.
 
@@ -57,8 +59,16 @@ match. The date is the one in the file's name for walk, cold-read-records and
 analysis, or the file's modification date when the name has none; the time
 the user sent a message; and for a session dialog the time of the turn that
 holds the matching line: a dialog's turns carry no time, so the dialog is
-built again from the session's transcript, with the extractor that wrote it,
-and the line's turn gives the time. A line said several times is matched by
+built again from the session's transcript with this checkout's extractor,
+and the line's turn gives the time. That is done only for a dialog whose last
+line names this checkout's digest as the one that wrote it, since another
+extractor may place a line in another turn; a hit in any other dialog is
+dated by the session's last activity, and says so. The search reads each
+dialog with hits once more after ripgrep, and takes from that one read the
+dialog's last line, which is never a hit, the digest it names, and each
+hit's place among the dialog's lines; a hit whose line that read no longer
+holds where ripgrep found it, since the dialog was written again in between,
+is dated by the session's last activity, and says so. A line said several times is matched by
 its place among them: its second appearance in the dialog takes the second
 turn's time. When the extractor's subagent tracker fails, the dialog built
 again lacks its subagent turns, and when it failed as the dialog was
@@ -116,7 +126,8 @@ be slow, and ripgrep is not reliably on the Mac's PATH.
 FAILURES. A record that could not be searched prints a line opening FAILED,
 naming what failed and what to do, after the hits found elsewhere: a missing
 log-store or kind directory, a file ripgrep could not read, a transcript the
-reader could not read, a session dialog the extractor could not build again
+reader could not read, a session dialog that could not be read after ripgrep
+searched it, a session dialog the extractor could not build again
 whole, a session dialog not written again from its changed transcript, a
 directory of transcripts not looked through for changed ones, ripgrep missing,
 and ned-box unreachable from the Mac. A dialog not written again, or one under
@@ -237,6 +248,23 @@ NEVER_COMPACTED = "never"
 COMPACTION_UNKNOWN = "unknown"
 COMPACTION_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z")
 NOT_FOUND_IN_TRANSCRIPT_NOTE = "session's last activity: its turn was not found in the transcript"
+OTHER_EXTRACTOR_NOTE = ("session's last activity: this checkout's dialog extractor may not be the one that wrote "
+                        "the dialog, so it cannot tell the turn")
+CHANGED_DURING_SEARCH_NOTE = ("session's last activity: the dialog was written again after ripgrep searched it and "
+                              "no longer holds the matched line at that line number, so its turn cannot be told")
+NOT_READ_NOTE = "session's last activity: the dialog could not be read to tell the turn, as a FAILED line says"
+OTHER_EXTRACTOR_RECORDED_NOTE = (
+    "NOTE: the session dialogs were searched as they are, without writing again those whose transcripts changed, "
+    "so they may lack their sessions' latest turns: the digest of handoff-extract-conversation.py, its subagent "
+    "tracker's files and log-store-session-dialogs-refresh-common.py in {scripts} is not the one {recorded} "
+    "records, or none is recorded.\n"
+    "If main changed one of those files and this checkout has the change, wait: the dialogs refresher, "
+    "scripts/log-store-session-dialogs-refresh-nbd.py, which runs from ned-box's main checkout every 10 minutes, "
+    "brings the dialogs up to date within 10 minutes.\n"
+    "If those files in this checkout differ from main's, as on a branch that changes them or in a worktree behind "
+    "main, the recorded digest never matches them, since the refresher records the digest of main's: for a search "
+    "of up-to-date dialogs, run " + NED_BOX_PROGRAM_PATH + " with the same pattern and options instead, or, in a "
+    "worktree behind main, merge origin/main into it.")
 
 
 _claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.util.spec_from_file_location(
@@ -605,6 +633,8 @@ def refresh_changed_session_dialogs(root, failures):
     """Write again each session dialog whose transcript changed since it was written; add each failure to failures.
 
     Writes nothing unless this checkout's extractor digest is the one the refresher recorded and its tracker loads.
+    Returns the digest to date the dialogs' hits by, or None when the tracker cannot be read, since every dialog
+    built again would then lack its subagent turns.
     """
     extractor, extractor_sha256, tracker_failure = refresh_common.load_extractor()
     if tracker_failure is not None:
@@ -612,7 +642,7 @@ def refresh_changed_session_dialogs(root, failures):
         failures.append(f"could not read the subagent tracker's file {path}, so no session dialog was written again "
                         f"before the search, and the dialogs searched may lack their sessions' latest turns: "
                         f"{type(error).__name__}: {error}")
-        return
+        return None
     recorded_file = root / SESSION_DIALOGS / refresh_common.EXTRACTOR_SHA256_FILE_NAME
     try:
         recorded_sha256 = recorded_file.read_text(encoding="utf-8").strip()
@@ -622,23 +652,20 @@ def refresh_changed_session_dialogs(root, failures):
         failures.append(f"could not read {recorded_file}, so no session dialog was written again before the search, "
                         f"and the dialogs searched may lack their sessions' latest turns: "
                         f"{type(error).__name__}: {error}")
-        return
+        return extractor_sha256
     if recorded_sha256 != extractor_sha256:
         # A dialog written with another extractor would be stamped current and kept until the next extractor change.
-        print(f"NOTE: {PROGRAM_FILE_NAME}'s dialog extractor or subagent tracker in {Path(__file__).resolve().parent} "
-              f"is not the one {recorded_file} records, so the session dialogs were searched as they are, without "
-              f"writing again those whose transcripts changed; the dialogs refresher, "
-              f"scripts/log-store-session-dialogs-refresh-nbd.py, brings them up to date within 10 minutes.",
+        print(OTHER_EXTRACTOR_RECORDED_NOTE.format(scripts=Path(__file__).resolve().parent, recorded=recorded_file),
               file=sys.stderr)
-        return
+        return extractor_sha256
     unreadable = []
     for machine, project_key, transcript in refresh_common.find_session_transcripts_mirrored_in_log_store(
             root / AGENT_SESSION_FILES_FOLDER_IN_LOG_STORE, unreadable):
         dialog = refresh_common.session_dialog_path_for_transcript(root / SESSION_DIALOGS, machine, project_key,
                                                                    transcript)
         try:
-            refresh_common.refresh_session_dialog_unless_current(extractor, True, transcript, dialog,
-                                                                 refuse_without_subagent_turns=True)
+            refresh_common.refresh_session_dialog_file_unless_current_with_transcript(
+                extractor, extractor_sha256, True, transcript, dialog, refuse_without_subagent_turns=True)
         except refresh_common.SubagentTurnsLeftOut as error:
             failures.append(f"the subagent tracker failed on the changed transcript {transcript}, so its session "
                             f"dialog {dialog} was not written again, and the dialog searched may lack the session's "
@@ -652,6 +679,7 @@ def refresh_changed_session_dialogs(root, failures):
         failures.append(f"could not look through {path} for transcripts changed since their session dialogs were "
                         f"written, so the dialogs of the sessions under it may lack their latest turns: "
                         f"{type(error).__name__}: {error}")
+    return extractor_sha256
 
 
 def left_out_sections(lines, extractor):
@@ -662,17 +690,70 @@ def left_out_sections(lines, extractor):
                if line == heading and lines[number + 2].startswith(opening))
 
 
-def dialog_line_turn_times(transcript_text, dialog_text, line_numbers):
-    """Return ({line number: its turn's timestamp, or ""}, error or None) for one session dialog.
+def earlier_occurrences(lines, hits):
+    """{line number of each hit: how often the line it numbers comes before it in lines}, from one pass over lines."""
+    wanted = {hit["line"] for hit in hits}
+    seen = collections.Counter()
+    found = {}
+    for number, line in enumerate(lines, 1):
+        if number in wanted:
+            found[number] = seen[line]
+        seen[line] += 1
+    return found
 
-    Runs in a worker process, so it takes and returns only plain values.
+
+def session_dialog_hits_checked_against_one_read(hits, extractor_sha256, failures):
+    """The session-dialog hits less each that is its dialog's own last line, all judged from one read of each dialog.
+
+    A dialog's last non-blank line names the digest of the extractor that wrote it and is never a hit; a turn that
+    quotes that line is. A kept hit gets "occurrence", how often its line comes before it in the dialog, and
+    "left_out_sections", when its line still reads as ripgrep matched it and the dialog's last line names
+    extractor_sha256; every other kept hit gets "undated_note", saying why it is dated by its session's last
+    activity.
+    """
+    by_dialog = {}
+    for hit in hits:
+        hit["turn_date"] = ""
+        by_dialog.setdefault(hit["path"], []).append(hit)
+    kept = []
+    for path, its_hits in by_dialog.items():
+        try:
+            # ripgrep numbers lines at "\n" alone, so universal newlines would misnumber them.
+            lines = Path(path).read_bytes().decode("utf-8", "replace").split("\n")
+        except OSError as error:
+            failures.append(f"could not read the session dialog {path} after ripgrep searched it, so its hits are "
+                            f"dated by the session's last activity: {type(error).__name__}: {error}")
+            for hit in its_hits:
+                hit["undated_note"] = NOT_READ_NOTE
+            kept += its_hits
+            continue
+        written_by = refresh_common.session_dialog_extractor_sha256_read_from_last_line(lines)
+        last = max((number for number, line in enumerate(lines, 1) if line.strip()), default=0)
+        left_out = left_out_sections(lines, extractor_in_this_process()) if written_by == extractor_sha256 else 0
+        occurrences = earlier_occurrences(lines, its_hits)
+        for hit in its_hits:
+            number = hit["line"]
+            if number > len(lines) or lines[number - 1] != hit["text"]:
+                hit["undated_note"] = CHANGED_DURING_SEARCH_NOTE
+            elif number == last and written_by:
+                continue
+            elif written_by != extractor_sha256:
+                hit["undated_note"] = OTHER_EXTRACTOR_NOTE
+            else:
+                hit["occurrence"] = occurrences[number]
+                hit["left_out_sections"] = left_out
+            kept.append(hit)
+    return kept
+
+
+def dialog_line_turn_times(transcript_text, dialog_text, wanted, written_left_out_sections):
+    """Return ({line number: its turn's timestamp, or ""}, error or None) for one session dialog's hits.
+
+    wanted holds (line number, line, how often the line comes before it in the dialog) for each hit, and
+    written_left_out_sections how often the dialog holds the section saying the subagent tracker failed. Runs in a
+    worker process, so it takes and returns only plain values.
     """
     extractor = extractor_in_this_process()
-    try:
-        # ripgrep numbers lines at "\n" alone, so universal newlines would misnumber them.
-        written = Path(dialog_text).read_bytes().decode("utf-8", "replace").split("\n")
-    except OSError as error:
-        return {}, f"could not read the session dialog {dialog_text} to date its hits by their turns: {error}"
     try:
         built, left_out_notes = extractor.complete_dialog_lines_with_turn_timestamps(Path(transcript_text))
     except OSError as error:
@@ -683,7 +764,7 @@ def dialog_line_turn_times(transcript_text, dialog_text, line_numbers):
                     f"dialog built again from {transcript_text} lacks its subagent turns: "
                     f"{' '.join(left_out_notes)}")
     # The dialog built again holds the section only where a turn quotes it, since its tracker did not fail.
-    if left_out_sections(written, extractor) > left_out_sections([line for line, _ in built], extractor):
+    if written_left_out_sections > left_out_sections([line for line, _ in built], extractor):
         return {}, (f"could not date the hits in the session dialog {dialog_text} by their turns, since it "
                     f"was written while the subagent tracker failed and lacks the subagent turns the dialog "
                     f"built again from {transcript_text} holds; the dialogs refresher, "
@@ -692,42 +773,48 @@ def dialog_line_turn_times(transcript_text, dialog_text, line_numbers):
     stamps_by_line = collections.defaultdict(list)
     for line, stamp in built:
         stamps_by_line[line].append(stamp)
-    wanted = set(line_numbers)
-    times = {number: "" for number in wanted}
-    seen = collections.Counter()
-    for number, line in enumerate(written, 1):
-        if number in wanted:
-            stamps = stamps_by_line.get(line, [])
-            times[number] = stamps[seen[line]] if seen[line] < len(stamps) else ""
-        seen[line] += 1
+    times = {}
+    for number, line, occurrence in wanted:
+        stamps = stamps_by_line.get(line, [])
+        times[number] = stamps[occurrence] if occurrence < len(stamps) else ""
     return times, None
 
 
 def dialog_turn_dates(hits, root, failures, jobs):
-    """Set each session-dialog hit's "turn_date": its own turn's timestamp, or "" when not found."""
-    lines_by_dialog = {}
-    transcripts = {}
+    """Set each session-dialog hit's "turn_date" to its own turn's timestamp, or "" when not found.
+
+    Each hit holds "occurrence" and "left_out_sections" from session_dialog_hits_checked_against_one_read.
+    """
+    by_dialog = {}
     for hit in hits:
-        lines_by_dialog.setdefault(hit["path"], set()).add(hit["line"])
-        transcripts[hit["path"]] = session_transcript(root, hit)
-    arguments = [(str(transcripts[path]), path, sorted(lines))
-                 for path, lines in lines_by_dialog.items() if transcripts[path].is_file()]
+        by_dialog.setdefault(hit["path"], []).append(hit)
+    arguments = []
+    for path, its_hits in by_dialog.items():
+        transcript = session_transcript(root, its_hits[0])
+        if transcript.is_file():
+            arguments.append((str(transcript), path,
+                              [(hit["line"], hit["text"], hit["occurrence"]) for hit in its_hits],
+                              its_hits[0]["left_out_sections"]))
     if jobs <= 1 or len(arguments) <= 1:
         results = [dialog_line_turn_times(*each) for each in arguments]
     else:
         with concurrent.futures.ProcessPoolExecutor(max_workers=min(jobs, len(arguments))) as processes:
             results = list(processes.map(dialog_line_turn_times, *zip(*arguments), chunksize=4))
-    times = {}
-    for (_, path, _), (found, error) in zip(arguments, results):
-        times[path] = found
+    for (_, path, _, _), (found, error) in zip(arguments, results):
         if error:
             failures.append(error)
-    for hit in hits:
-        hit["turn_date"] = times.get(hit["path"], {}).get(hit["line"], "")
+        for hit in by_dialog[path]:
+            hit["turn_date"] = found.get(hit["line"], "")
 
 
-def dated_file_hits(hits, root, seat, machine, since, until, failures, own_session="", jobs=1):
-    """Fill in each hit's date and drop those outside the filters."""
+def dated_file_hits(hits, root, seat, machine, since, until, failures, own_session="", jobs=1,
+                    dialog_extractor_sha256=None):
+    """Fill in each hit's date and drop those outside the filters.
+
+    A session-dialog hit is dated by its turn only when its dialog's last line names dialog_extractor_sha256, the
+    digest of this checkout's extractor; otherwise, and always when it is None, by its session's last activity. A
+    hit on its dialog's own last line, which names the extractor that wrote it, is dropped.
+    """
     kept = []
     modification_dates = {}
     last_activities = {}
@@ -742,7 +829,10 @@ def dated_file_hits(hits, root, seat, machine, since, until, failures, own_sessi
             if own_session and session_id_of(hit["path"]) == own_session:
                 continue
         selected.append(hit)
-    dialog_turn_dates([hit for hit in selected if hit["kind"] == SESSION_DIALOGS], root, failures, jobs)
+    dialog_hits = session_dialog_hits_checked_against_one_read(
+        [hit for hit in selected if hit["kind"] == SESSION_DIALOGS], dialog_extractor_sha256, failures)
+    dialog_turn_dates([hit for hit in dialog_hits if "occurrence" in hit], root, failures, jobs)
+    selected = [hit for hit in selected if hit["kind"] != SESSION_DIALOGS] + dialog_hits
     for hit in selected:
         path = Path(hit["path"])
         if hit["kind"] == SESSION_DIALOGS and hit["turn_date"]:
@@ -771,7 +861,7 @@ def dated_file_hits(hits, root, seat, machine, since, until, failures, own_sessi
             hit["date"] = modification_dates[hit["path"]]
         if hit["kind"] == SESSION_DIALOGS:
             if hit["date"]:
-                hit["date_note"] = NOT_FOUND_IN_TRANSCRIPT_NOTE
+                hit["date_note"] = hit.get("undated_note", NOT_FOUND_IN_TRANSCRIPT_NOTE)
             last = hit["date"][:10]
             if since and last and last < since:
                 continue
@@ -1062,15 +1152,14 @@ def main(argv=None):
     # A session not known to be compacted is left out whole before its records are read; else after they are dated.
     left_out_whole = "" if compacted_at else own_session
     own_undated = []
-    if SESSION_DIALOGS in kinds:
-        refresh_changed_session_dialogs(root, file_failures)
+    dialog_extractor_sha256 = refresh_changed_session_dialogs(root, file_failures) if SESSION_DIALOGS in kinds else None
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as threads:
             file_search = threads.submit(
                 lambda: dated_file_hits(
                     file_hits(root, kinds, parsed.pattern, max(0, parsed.context), file_failures),
                     root, parsed.seat, parsed.machine, parsed.since, parsed.until, file_failures,
-                    left_out_whole, parsed.jobs))
+                    left_out_whole, parsed.jobs, dialog_extractor_sha256))
             transcript_search = (threads.submit(transcript_candidates, root, parsed.pattern, parsed.seat,
                                                 parsed.machine, parsed.since, user_failures, left_out_whole)
                                  if USER_MESSAGES in kinds else None)

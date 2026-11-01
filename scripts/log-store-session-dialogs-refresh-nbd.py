@@ -46,10 +46,11 @@ file system whenever rsync puts a new copy in place. The extractor is known
 by the sha256 of its bytes, its subagent tracker's
 (scripts/handoff-extract-conversation-subagent-tracker-nbd.py) and those of
 the module the tracker loads
-(scripts/claude-code-subagent-task-notification-interim-recognizer-common.py),
-kept in session-dialogs/ after each pass that had no failure; a pass that
-finds any of the three files changed rewrites every dialog, so one change
-rewrites every dialog once. A transcript with no dialog in it still gets a
+(scripts/claude-code-subagent-task-notification-interim-recognizer-common.py)
+and of scripts/log-store-session-dialogs-refresh-common.py, which writes it as
+the last line of each dialog, kept in session-dialogs/ after each pass that
+had no failure; a pass that finds any of the four files changed rewrites
+every dialog, so one change rewrites every dialog once. A transcript with no dialog in it still gets a
 dialog, one saying it holds no turns, so it is not read again until it
 changes.
 
@@ -170,7 +171,8 @@ def refresh_all(root: pathlib.Path, failures_only: bool) -> int:
             transcripts_directory, unreadable):
         dialog = refresh_common.session_dialog_path_for_transcript(dialogs_directory, machine, project_key, transcript)
         try:
-            if refresh_common.refresh_session_dialog_unless_current(extractor, extractor_unchanged, transcript, dialog):
+            if refresh_common.refresh_session_dialog_file_unless_current_with_transcript(
+                    extractor, extractor_sha256, extractor_unchanged, transcript, dialog):
                 written += 1
             else:
                 current += 1

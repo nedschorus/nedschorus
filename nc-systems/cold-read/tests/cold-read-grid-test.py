@@ -108,7 +108,7 @@ WHAT IS PINNED HERE.
 
   - Every file the grid writes into a record directory is a bare role name
     (user-ruled 2026-09-18) — `<runtime>-<pass>-<tier>.md` for a report and
-    `reference-check.md` for the pre-pass; the directory's name says which
+    `cold-read-reference-check.md` for the pre-pass; the directory's name says which
     read. From 2026-09-15 to 2026-09-18 every file carried the record's name
     as a prefix, added because two cold-read runs going at once in one
     checkout each held a file of every one of those names and a cell's
@@ -135,10 +135,12 @@ WHAT IS PINNED HERE.
 Run: python3 nc-systems/cold-read/tests/cold-read-grid-test.py
 """
 
+import contextlib
 import datetime
 import hashlib
 import importlib.util
 import inspect
+import io
 import json
 import os
 import shlex
@@ -254,6 +256,11 @@ TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 # COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS, when set, is how long the
 # stub hangs after writing its report: a reviewer that wrote and never exited.
 # The fast cell does not hang either, so it can still edit the target.
+# COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET_AFTER_THESE_REPORT_FILES_EXIST, when set, is a
+# comma-separated list of report names in the stub's own record directory;
+# the stub that edits its given target first waits, for at most 30 seconds,
+# until every one of them exists, so the edit cannot come before a slow
+# launcher has written its report.
 STUB_MODEL_RUNTIME = r'''#!/usr/bin/env python3
 import json, os, pathlib, re, sys, time
 
@@ -350,6 +357,12 @@ if prompt_log:
     with open(prompt_log, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(prompt) + "\n")
 if os.environ.get("COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET") and target_match:
+    awaited_reports = [given.parent / name for name in filter(None, os.environ.get(
+        "COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET_AFTER_THESE_REPORT_FILES_EXIST", "").split(","))]
+    deadline = time.monotonic() + 30
+    while (not all(report.is_file() for report in awaited_reports)
+           and time.monotonic() < deadline):
+        time.sleep(0.1)
     # A reviewer editing the very document it was handed. The frozen copy is
     # read-only, so this forces the mode first: the point of the case is the
     # fingerprint catching an edit to the copy, not the mode bit stopping a
@@ -712,14 +725,16 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch, "checkout-target-moves-mid-report")
     hung_stubs = scratch / "stub-bin-target-moves-mid-report"
     hang_seconds = 120
+    hung_cells = ("claude-hunt-deep", "claude-hunt-second-strongest-model",
+                  "claude-terminology-deep", "codex-hunt-deep", "codex-terminology-deep")
     started = time.monotonic()
     result = run_grid(repository, hung_stubs, {
         "COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS": str(hang_seconds),
         "COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT": "codex-hunt-second-strongest-model",
-        "COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET": "1"})
+        "COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET": "1",
+        "COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET_AFTER_THESE_REPORT_FILES_EXIST":
+            ",".join(f"{name}.md" for name in hung_cells)})
     elapsed = time.monotonic() - started
-    hung_cells = ("claude-hunt-deep", "claude-hunt-second-strongest-model",
-                  "claude-terminology-deep", "codex-hunt-deep", "codex-terminology-deep")
     check("a frozen copy moved mid-report stops the run before the hung cells exit, exit 3",
           elapsed < 60 and result.returncode == 3,
           f"{elapsed:.0f} s, exit {result.returncode}; stdout={result.stdout!r}")
@@ -866,7 +881,7 @@ with tempfile.TemporaryDirectory() as scratch:
     closing_text = " ".join(result.stdout.split())
     check("the triage instructions read to every report that landed and record the absence",
           "until you have read every report that landed" in closing_text
-          and "Record each absent report and its cause in triage.md." in closing_text
+          and "Record each absent report and its cause in cold-read-triage.md." in closing_text
           and "read all six" not in closing_text, repr(result.stdout))
     check("an exit-N cause is not one the user can clear: no Tell the user sentence, no AGENT-BINARY DOWN",
           "Tell the user:" not in result.stdout and "AGENT-BINARY DOWN:" not in result.stdout,
@@ -1071,7 +1086,7 @@ with tempfile.TemporaryDirectory() as scratch:
     time.sleep(stub_reading_seconds + 1 - elapsed if elapsed < stub_reading_seconds else 0)
     record_directory = record_directory_of(repository)
     check("the stopped stubs never wrote their reports",
-          sorted(path.name for path in record_directory.glob("*.md")) == ["reference-check.md"],
+          sorted(path.name for path in record_directory.glob("*.md")) == ["cold-read-reference-check.md"],
           sorted(path.name for path in record_directory.glob("*.md")))
 
     # --- A cell that writes its report and then hangs is stopped, report deleted
@@ -1092,7 +1107,7 @@ with tempfile.TemporaryDirectory() as scratch:
           f"elapsed {elapsed:.1f}s; stdout={result.stdout!r}")
     record_directory = record_directory_of(repository)
     check("the hung cells' unfinished reports are not left in the record",
-          sorted(path.name for path in record_directory.glob("*.md")) == ["reference-check.md"],
+          sorted(path.name for path in record_directory.glob("*.md")) == ["cold-read-reference-check.md"],
           sorted(path.name for path in record_directory.glob("*.md")))
 
     # --- Three Codex cells fail both attempts with exit-N ----------------------
@@ -1120,7 +1135,7 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}; stdout={result.stdout!r}")
     record_directory = record_directory_of(repository)
     check("the marker still goes into the reference-check file, the set's one .md",
-          markers_in(record_directory, "<!-- INCOMPLETE SET: 6 of 6 reports absent") == ["reference-check.md"],
+          markers_in(record_directory, "<!-- INCOMPLETE SET: 6 of 6 reports absent") == ["cold-read-reference-check.md"],
           markers_in(record_directory, "<!-- INCOMPLETE SET:"))
 
     # --- A cell program the grid cannot start (user-ruled 2026-09-16) --------
@@ -1294,7 +1309,7 @@ with tempfile.TemporaryDirectory() as scratch:
         if directory.is_dir())
     grid_record_directories = [
         directory for directory in record_directories
-        if (directory / "reference-check.md").is_file()]
+        if (directory / "cold-read-reference-check.md").is_file()]
     recovered_record_directory_name = (
         grid_record_directories[0].name if grid_record_directories else "")
     check("the RECOVERED line names the cell it belongs to",
@@ -1406,7 +1421,7 @@ with tempfile.TemporaryDirectory() as scratch:
         " defect-hunt-prompt.md, then no-such-prompt-anywhere.md and"
         " nc-systems/cold-read/no-such-file.py.\n", encoding="utf-8")
     grid_module.reference_integrity_pre_pass(reference_target, reference_directory)
-    reference_lines = (reference_directory / "reference-check.md").read_text(
+    reference_lines = (reference_directory / "cold-read-reference-check.md").read_text(
         encoding="utf-8").splitlines()
     check("reference pre-pass: when git lists files, no skipped-lookup line",
           not any("not looked up" in line for line in reference_lines), repr(reference_lines))
@@ -1424,7 +1439,7 @@ with tempfile.TemporaryDirectory() as scratch:
         "[PR 661](https://github.com/nedschorus/nedschorus/pull/661)nc-systems/cold-read/"
         "no-such-file-after-link.py\n", encoding="utf-8")
     grid_module.reference_integrity_pre_pass(link_followed_by_path_target, reference_directory)
-    reference_lines = (reference_directory / "reference-check.md").read_text(
+    reference_lines = (reference_directory / "cold-read-reference-check.md").read_text(
         encoding="utf-8").splitlines()
     check("reference pre-pass: a path written straight after a link's closing parenthesis is listed",
           "- UNRESOLVED: `nc-systems/cold-read/no-such-file-after-link.py`" in reference_lines,
@@ -1437,7 +1452,7 @@ with tempfile.TemporaryDirectory() as scratch:
         f" [broken](file://{reference_directory}/no-such-linked-file.md)\n",
         encoding="utf-8")
     grid_module.reference_integrity_pre_pass(file_link_target, reference_directory)
-    reference_lines = (reference_directory / "reference-check.md").read_text(
+    reference_lines = (reference_directory / "cold-read-reference-check.md").read_text(
         encoding="utf-8").splitlines()
     check("reference pre-pass: a file link to an existing file is ok",
           f"- ok: `{existing_file_link}`" in reference_lines, repr(reference_lines))
@@ -1452,7 +1467,7 @@ with tempfile.TemporaryDirectory() as scratch:
             f" [missing home file](file://{reference_directory}/no-such-home-file.md)\n",
             encoding="utf-8")
         grid_module.reference_integrity_pre_pass(mac_link_target, reference_directory)
-    reference_lines = (reference_directory / "reference-check.md").read_text(
+    reference_lines = (reference_directory / "cold-read-reference-check.md").read_text(
         encoding="utf-8").splitlines()
     check("reference pre-pass: a /Volumes/nedhome file link read on ned-box resolves under the home",
           "- ok: `/Volumes/nedhome/linked file.md`" in reference_lines, repr(reference_lines))
@@ -1474,7 +1489,7 @@ with tempfile.TemporaryDirectory() as scratch:
         encoding="utf-8")
     with mock.patch.object(grid_module, "MAC_HOME", "/no-such-top-directory-for-the-grid-test/el/"):
         grid_module.reference_integrity_pre_pass(cleanup_target, reference_directory)
-    reference_lines = (reference_directory / "reference-check.md").read_text(
+    reference_lines = (reference_directory / "cold-read-reference-check.md").read_text(
         encoding="utf-8").splitlines()
     check("reference pre-pass: a file link with a #fragment resolves to its file",
           f"- ok: `{linked_file}`" in reference_lines
@@ -1500,7 +1515,7 @@ with tempfile.TemporaryDirectory() as scratch:
         f"[sibling of a home](file://{other_top_directory}/no-such-user/x.md)\n", encoding="utf-8")
     with mock.patch.object(grid_module, "MAC_HOME", str(other_top_directory) + "/el/"):
         grid_module.reference_integrity_pre_pass(other_machine_target, reference_directory)
-    reference_lines = (reference_directory / "reference-check.md").read_text(
+    reference_lines = (reference_directory / "cold-read-reference-check.md").read_text(
         encoding="utf-8").splitlines()
     check("reference pre-pass: only the named root of the other machine is not checkable, not its parent's other entries",
           f"- UNRESOLVED: `{other_top_directory}/no-such-user/x.md`" in reference_lines,
@@ -1516,7 +1531,7 @@ with tempfile.TemporaryDirectory() as scratch:
     with mock.patch.object(grid_module, "MAC_MOUNT_OF_NED_BOX_HOME", str(mac_mount) + "/"), \
             mock.patch.object(grid_module, "NED_BOX_HOME", str(scratch / "no-ned-box-home-on-the-mac") + "/"):
         grid_module.reference_integrity_pre_pass(mac_view_target, reference_directory)
-    reference_lines = (reference_directory / "reference-check.md").read_text(
+    reference_lines = (reference_directory / "cold-read-reference-check.md").read_text(
         encoding="utf-8").splitlines()
     check("reference pre-pass: a valid mount link read on the Mac is ok, checked as written",
           f"- ok: `{mac_mount}/on-the-mac.md`" in reference_lines, repr(reference_lines))
@@ -1528,7 +1543,7 @@ with tempfile.TemporaryDirectory() as scratch:
     with mock.patch.object(grid_module, "MAC_MOUNT_OF_NED_BOX_HOME", str(scratch / "no-mount-here") + "/"), \
             mock.patch.object(grid_module, "NED_BOX_HOME", str(scratch / "no-ned-box-home-here") + "/"):
         grid_module.reference_integrity_pre_pass(unmounted_target, reference_directory)
-    reference_lines = (reference_directory / "reference-check.md").read_text(
+    reference_lines = (reference_directory / "cold-read-reference-check.md").read_text(
         encoding="utf-8").splitlines()
     check("reference pre-pass: a mount link is not checkable where neither the mount nor ned-box's home is",
           f"- not checkable on this machine: `{scratch}/no-mount-here/x.md`" in reference_lines,
@@ -1536,7 +1551,7 @@ with tempfile.TemporaryDirectory() as scratch:
     shared_name_target = reference_directory / "shared-name.md"
     shared_name_target.write_text("See SKILL.md.\n", encoding="utf-8")
     grid_module.reference_integrity_pre_pass(shared_name_target, reference_directory)
-    reference_lines = (reference_directory / "reference-check.md").read_text(
+    reference_lines = (reference_directory / "cold-read-reference-check.md").read_text(
         encoding="utf-8").splitlines()
     check("reference pre-pass: a bare name that several files share is UNRESOLVED, with the count",
           any(line.startswith("- UNRESOLVED: `SKILL.md` (") and line.endswith(" files have this name)")
@@ -1551,13 +1566,13 @@ with tempfile.TemporaryDirectory() as scratch:
     bare_untracked_target.write_text(f"See {untracked_name}.\n", encoding="utf-8")
     with mock.patch.object(grid_module, "REPO_ROOT", untracked_repository):
         grid_module.reference_integrity_pre_pass(bare_untracked_target, reference_directory)
-    reference_lines = (reference_directory / "reference-check.md").read_text(
+    reference_lines = (reference_directory / "cold-read-reference-check.md").read_text(
         encoding="utf-8").splitlines()
     check("reference pre-pass: a bare name of a new, not yet tracked file is ok",
           f"- ok: `{untracked_name}`" in reference_lines, repr(reference_lines))
     with mock.patch.dict(os.environ, {"GIT_DIR": str(scratch / "no-such-git-directory")}):
         grid_module.reference_integrity_pre_pass(reference_target, reference_directory)
-    reference_lines = (reference_directory / "reference-check.md").read_text(
+    reference_lines = (reference_directory / "cold-read-reference-check.md").read_text(
         encoding="utf-8").splitlines()
     check("reference pre-pass: an inherited GIT_DIR does not stop the bare-name lookup",
           "- ok: `defect-hunt-prompt.md`" in reference_lines, repr(reference_lines))
@@ -1565,7 +1580,7 @@ with tempfile.TemporaryDirectory() as scratch:
     not_a_repository.mkdir()
     with mock.patch.object(grid_module, "REPO_ROOT", not_a_repository):
         grid_module.reference_integrity_pre_pass(reference_target, reference_directory)
-    reference_lines = (reference_directory / "reference-check.md").read_text(
+    reference_lines = (reference_directory / "cold-read-reference-check.md").read_text(
         encoding="utf-8").splitlines()
     check("reference pre-pass: when git cannot list files, the check says the lookup was skipped",
           any(line.startswith("- bare file names were not looked up: git ls-files exited 128")
@@ -1611,6 +1626,48 @@ with tempfile.TemporaryDirectory() as scratch:
           and grid_record_name("/r/docs/drafts/a.md", datetime.datetime(2026, 9, 16, 21, 5))
           == "a-2026-09-16")
 
+    # make_record_dir in process, with this checkout's records and the
+    # log-store both pointed at scratch: another checkout's read of the
+    # document that day, in the log-store alone, is passed over.
+    real_grid_records = grid_module.RECORDS_DIR
+    grid_module.RECORDS_DIR = scratch / "grid-in-process-records"
+    grid_in_process_log_store = scratch / "grid-in-process-log-store"
+    (grid_in_process_log_store / "a-2026-09-16").mkdir(parents=True)
+    real_grid_destination = os.environ.get(RECORD_SHIP_DESTINATION_VARIABLE)
+    os.environ[RECORD_SHIP_DESTINATION_VARIABLE] = str(grid_in_process_log_store)
+    try:
+        grid_record_beside_the_store = grid_module.make_record_dir(
+            Path("/r/docs/drafts/a.md"), clock_at_1042)
+        unlisted_grid_stderr = None
+        if os.geteuid() != 0:
+            grid_in_process_log_store.chmod(0)
+            unlisted_grid_stderr = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(unlisted_grid_stderr):
+                    grid_record_unlisted = grid_module.make_record_dir(
+                        Path("/r/docs/drafts/b.md"), clock_at_1042)
+            finally:
+                grid_in_process_log_store.chmod(0o755)
+    finally:
+        grid_module.RECORDS_DIR = real_grid_records
+        if real_grid_destination is None:
+            os.environ.pop(RECORD_SHIP_DESTINATION_VARIABLE, None)
+        else:
+            os.environ[RECORD_SHIP_DESTINATION_VARIABLE] = real_grid_destination
+    check("grid: a record name the log-store holds is passed over, though this checkout "
+          "lacks it, and the directory is made",
+          grid_record_beside_the_store == scratch / "grid-in-process-records" / "a-2026-09-16-2"
+          and grid_record_beside_the_store.is_dir(), str(grid_record_beside_the_store))
+    if unlisted_grid_stderr is not None:
+        check("grid: when the log-store cannot be listed, the name free in this checkout is "
+              "made, and stderr says it was not checked against the log-store",
+              grid_record_unlisted == scratch / "grid-in-process-records" / "b-2026-09-16"
+              and grid_record_unlisted.is_dir()
+              and unlisted_grid_stderr.getvalue().startswith(
+                  "cold-read-grid: the record name b-2026-09-16 is free in this checkout")
+              and str(grid_in_process_log_store) in unlisted_grid_stderr.getvalue(),
+              unlisted_grid_stderr.getvalue())
+
     # Through the real grid: a skill read twice in one day, then once the
     # next day. The first run takes the plain name, the second -2, and the
     # third its own later name with no suffix.
@@ -1645,7 +1702,7 @@ with tempfile.TemporaryDirectory() as scratch:
     suffixed_record = repository / "cold-read-records" / "SKILL-some-named-skill-2026-09-16-2"
     check("the files in a suffixed record are bare role names too",
           (suffixed_record / "claude-hunt-deep.md").is_file()
-          and (suffixed_record / "reference-check.md").is_file(),
+          and (suffixed_record / "cold-read-reference-check.md").is_file(),
           sorted(p.name for p in suffixed_record.iterdir()) if suffixed_record.is_dir() else "absent")
 
 
@@ -1673,14 +1730,14 @@ with tempfile.TemporaryDirectory() as scratch:
           store_copy.is_dir() and sorted(p.relative_to(store_copy) for p in store_copy.rglob("*") if p.is_file())
           == sorted(p.relative_to(record_directory) for p in record_directory.rglob("*") if p.is_file()),
           f"store={sorted(str(p) for p in store_copy.rglob('*'))}")
-    check("the closing text names the ship command for after triage.md",
+    check("the closing text names the ship command for after cold-read-triage.md",
           f"nc-systems/cold-read/cold-read-record-ship.py {record_directory.resolve()}" in result.stdout
           and "gitignored" in result.stdout and "user-ruled 2026-08-14" not in result.stdout,
           result.stdout[-900:])
     check("a settled run that shipped still exits 0",
           result.returncode == 0, f"exit {result.returncode}")
 
-    # --- An incomplete set ships with its marker, so triage.md can follow ----
+    # --- An incomplete set ships with its marker, so cold-read-triage.md can follow ----
     # The shipper is add-only and refuses a record whose stored file differs
     # from the local one, so the INCOMPLETE SET marker must be in the reports
     # BEFORE the run ships them: a marker written after the ship left the
@@ -1725,12 +1782,12 @@ with tempfile.TemporaryDirectory() as scratch:
           stored_report.is_file()
           and "<!-- INCOMPLETE SET:" in stored_report.read_text(encoding="utf-8"),
           stored_report.read_text(encoding="utf-8")[:300] if stored_report.is_file() else "absent")
-    (record_directory / "triage.md").write_text("# Triage\n\nOne absent report.\n", encoding="utf-8")
+    (record_directory / "cold-read-triage.md").write_text("# Triage\n\nOne absent report.\n", encoding="utf-8")
     third_ship = ship_again()
-    check("triage.md written after the run lands in the store on the next ship",
+    check("cold-read-triage.md written after the run lands in the store on the next ship",
           third_ship.returncode == 0 and third_ship.stdout.startswith("shipped:")
           and "1 file(s) added" in third_ship.stdout
-          and (store_copy / "triage.md").is_file(),
+          and (store_copy / "cold-read-triage.md").is_file(),
           f"exit {third_ship.returncode}; stdout={third_ship.stdout!r}")
 
     # --- A store that cannot be reached: the run finishes, exits 1 ------------
@@ -1750,10 +1807,18 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- A store that refuses the record: the run finishes, exits 1 ----------
     # The store already holds this record's name with other bytes, so the
     # add-only shipper refuses it, and the record did not reach the store.
+    # The grid names its record against the store's names too, so the store
+    # root is made unlistable (write and search only): the grid then falls
+    # back to a name free in the checkout, which the store already holds.
     unreachable_record_name = record_directory.name
     repository = build_scratch_repository(scratch, "checkout-store-refuses")
     seed_log_store_record(repository, unreachable_record_name, [])
-    result = run_grid(repository, stubs)
+    store_root = repository / SCRATCH_LOG_STORE_RELATIVE
+    store_root.chmod(0o333)
+    try:
+        result = run_grid(repository, stubs)
+    finally:
+        store_root.chmod(0o755)
     record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
     check("a store holding the record's name with other bytes prints record: REFUSED, "
           "the run finishes all six, and exits 1",
@@ -1980,7 +2045,7 @@ with tempfile.TemporaryDirectory() as scratch:
                  if not path.name.endswith(".md"))
           == ["frozen-copy-changed-during-run-stop-marker.txt", "target"])
     expected_names = sorted(
-        ["reference-check.md", "frozen-copy-changed-during-run-stop-marker.txt"]
+        ["cold-read-reference-check.md", "frozen-copy-changed-during-run-stop-marker.txt"]
         + [f"{runtime}-{pass_token}-{tier}.md"
            for runtime in ("claude", "codex")
            for pass_token, tier in (("hunt", "deep"), ("hunt", "second-strongest-model"),
@@ -2003,7 +2068,7 @@ with tempfile.TemporaryDirectory() as scratch:
     run_grid(repository, stubs / "dot-directory-reference")
     record_directory = record_directory_of(repository)
     reference_check = (
-        record_directory / "reference-check.md"
+        record_directory / "cold-read-reference-check.md"
     ).read_text(encoding="utf-8")
     check("a path under a dot directory resolves with its dot intact",
           f"- ok: `{dotted}`" in reference_check, reference_check)
@@ -2024,7 +2089,7 @@ with tempfile.TemporaryDirectory() as scratch:
     run_grid(repository, stubs / "multi-dot-file-name-reference")
     record_directory = record_directory_of(repository)
     reference_check = (
-        record_directory / "reference-check.md"
+        record_directory / "cold-read-reference-check.md"
     ).read_text(encoding="utf-8")
     check("a bare file name with two dots resolves with its whole name",
           "- ok: `CLAUDE.local.md`" in reference_check, reference_check)

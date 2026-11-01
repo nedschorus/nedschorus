@@ -55,14 +55,17 @@ dialog is written as a sibling file: the tail is the successor's working set,
 the companion is the conversation's history without the raw transcript's tool
 dumps.
 
-The session dialogs the log-store keeps for the past-discussion search come
-from render_complete_dialog_of_transcript_as_markdown, which is not the
-handoff's companion: in it, an agent paragraph identical to one the agent
-showed earlier in the session becomes one line, "(repeated: <its first eight
+The session dialogs the log-store keeps for the past-discussion search hold
+all of a session's turns, and scripts/log-store-session-dialogs-refresh-common.py
+writes them from the session's transcript with this file's renderer for the
+handoff's companion. They differ from the companion in two ways. First, in
+them, an agent paragraph identical to one the agent showed earlier in the
+session becomes one line, "(repeated: <its first eight
 words> …)". A paragraph is text between blank lines. The first copy stays
 whole, and the user's and the subagent turns are never shortened. The
 handoff's own files keep every repeat, since a successor needs the current
-item's closing line.
+item's closing line. Second, each session dialog ends with a line naming the
+sha256 of the extractor that wrote it, which the companion does not have.
 
 Exit codes: 0 extraction written, 2 bad invocation, 3 transcript not
 found, 4 transcript unusable (empty, unparseable, or boundary not found).
@@ -598,18 +601,10 @@ def render_companion(turns, report: ExtractionReport) -> str:
     return "\n".join(lines)
 
 
-def render_complete_dialog_of_transcript_as_markdown(transcript_path: Path) -> str:
-    """Return a transcript's session dialog for the log-store: its complete filtered dialog, subagent turns included,
-    with each agent paragraph shown before made one line, as turns_with_repeated_agent_paragraphs_shortened says.
-
-    A transcript with no dialog turns still yields a dialog, one that says it holds none,
-    so a caller that writes it has a file to say the session was read.
-    """
-    return render_companion(*complete_dialog_turns_and_report(transcript_path))
-
-
 def complete_dialog_turns_and_report(transcript_path: Path):
-    """Return (turns, report) of the session dialog render_complete_dialog_of_transcript_as_markdown renders."""
+    """Return (turns, report) for render_companion to render as a transcript's session dialog for the log-store:
+    its complete filtered dialog, subagent turns included, with each agent paragraph shown before made one line,
+    as turns_with_repeated_agent_paragraphs_shortened says."""
     turns, skip_counts = read_dialog_turns(transcript_path, include_subagent_tasks_and_reports=True)
     turns = turns_with_repeated_agent_paragraphs_shortened(turns)
     report = ExtractionReport(
@@ -624,7 +619,7 @@ def complete_dialog_turns_and_report(transcript_path: Path):
 
 
 def complete_dialog_lines_with_turn_timestamps(transcript_path: Path):
-    """Return (lines, left_out_notes) for the text render_complete_dialog_of_transcript_as_markdown gives.
+    """Return (lines, left_out_notes) for the text of the transcript's session dialog for the log-store.
 
     lines pairs each line with the timestamp of the turn it belongs to: "" for a heading line, or a turn
     whose record has none. left_out_notes holds the text of each note saying the subagent tracker failed,

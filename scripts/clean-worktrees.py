@@ -38,7 +38,10 @@ mechanical checks all pass:
 Uncommitted, untracked and ignored files do NOT keep a done worktree: they
 are removed with it. The one exception is the records whose home is the
 log-store: before --remove removes a done worktree, it ships each walk in the
-worktree's docs/walk/, given by its minutes, with scripts/walk-files-ship.py,
+worktree's docs/walk/, one for each <name>-minutes.md there, with
+scripts/walk-files-ship.py, given by its walk text <name>.md, or by its
+minutes when it has no walk text, which the shipper refuses, so the
+worktree is kept,
 and each non-empty record directory under its cold-read-records/ and
 sanity-check-records/ with the shipper of that kind
 (LOG_STORE_RECORD_SHIPPERS), and keeps the worktree when any walk or record
@@ -80,10 +83,13 @@ keeps it:
                 runs from its agent-home, so the vacancy check cannot see it.
                 If a time cannot be read, the worktree is kept.
   7. walks shipped - before --remove removes it, each walk in its
-                docs/walk/ (each <name>-minutes.md names one) is shipped to
-                the log-store with scripts/walk-files-ship.py, as the
-                records are, and a walk that is refused or fails to ship
-                keeps the worktree, printed as a record that did not ship.
+                docs/walk/ (each <name>-minutes.md names one, handed to
+                the shipper as its walk text <name>.md, or as its
+                minutes when it has no walk text, which the shipper
+                then refuses) is shipped to the log-store with
+                scripts/walk-files-ship.py, as the records are, and a
+                walk that is refused or fails to ship keeps the
+                worktree, printed as a record that did not ship.
 
 Every other worktree outside <repo>/.claude/worktrees/ — the agent-homes, the
 reference-checkout, a worktree deeper in ~/agents/, such as one under
@@ -139,6 +145,32 @@ Modes:
                the worktree when one does not ship. Orphaned branch refs are deleted the same way, and
                a refusal there is a failure rather than a silence.
 
+THE LOG OF REMOVALS. --remove appends one line for each worktree it removes
+and each branch it deletes to its machine's file in the log-store, whichever
+program ran it, so a removal can be traced afterwards without the caller's
+output:
+
+  nedlern@ned-box:/home/nedlern/nedschorus-logs/clean-worktrees-removed-worktrees-and-deleted-branches-log/<machine>.txt
+
+<machine> is `ned-box` or `mac`. Each line is tab-separated: the UTC time,
+the machine, `removed-worktree` or `deleted-branch`, then key=value fields:
+for a worktree its path, its branch (`none` when detached), its head commit
+and the number of uncommitted, untracked or ignored files discarded with
+it; for a branch its name and the commit it pointed at; and for both the
+repository given with --repo, and the parent process that ran this one, its
+pid and command line, which tells the handoff-supervisor, cron and a shell
+apart. A commit git could not read is written as `unknown`. On ned-box the
+line is appended locally, on the Mac over ssh, with run_on_ned_box_or_here
+from nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py.
+When a line cannot be written, the run prints a line containing FAILED
+with the cause, then the command that writes the unwritten line once the
+cause is fixed, then what to do if that command fails; it carries on
+removing, and exits 1 at the end. When the handoff-supervisor runs --remove
+at a session-handoff, its report keeps all three lines. The environment variable
+CLEAN_WORKTREES_REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE names
+a local file to append to instead, which is how the tests keep out of the
+log-store.
+
 SCHEDULED. --remove runs once a day on both machines, from the reference
 clone, so worktrees that sessions and subagents leave behind do not pile up
 between handoffs. The job is declared in
@@ -156,8 +188,8 @@ the next day.
 Usage:
   scripts/clean-worktrees.py [--only-done | --remove] [--repo PATH]
 
-Exit codes: 0 ok, 1 a removal, a record's shipment, a ref deletion, or a
-work-snapshot listing or deletion failed, 2 bad invocation, or git could not
+Exit codes: 0 ok, 1 a removal, a record's shipment, a ref deletion, a line
+of the log of removals, or a work-snapshot listing or deletion failed, 2 bad invocation, or git could not
 list the worktrees or the branches, which stops the run where it failed.
 """
 
@@ -168,6 +200,7 @@ import shutil
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -192,7 +225,25 @@ _next_step_lines_spec = importlib.util.spec_from_file_location(
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
-# The reference clone's walk shipper, given the path of one walk's minutes, ships that walk; loaded
+_mark_spec = importlib.util.spec_from_file_location(
+    "handoff_user_review_of_agent_memory_stores_mark",
+    REPO_ROOT / "nc-systems" / "handoff" / "handoff-user-review-of-agent-memory-stores-mark.py")
+mark = importlib.util.module_from_spec(_mark_spec)
+_mark_spec.loader.exec_module(mark)
+
+REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_DIRECTORY = (
+    "/home/nedlern/nedschorus-logs/clean-worktrees-removed-worktrees-and-deleted-branches-log")
+REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE_VARIABLE = (
+    "CLEAN_WORKTREES_REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE")
+REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_WRITE_TIMEOUT_SECONDS = 30
+# nc-systems/handoff/handoff-supervisor.py keeps the lines holding these in its handoff report.
+LOG_OF_REMOVALS_RECORD_BY_HAND_PHRASE = ": to record it, run this once: "
+LOG_OF_REMOVALS_RECORD_BY_HAND_FAILED_PHRASE = (
+    ": if that printf command fails too, do not run scripts/clean-worktrees.py again; ")
+# printf's own escape, so the command it starts stays on one line.
+PRINTF_EACH_ARGUMENT_ON_ITS_OWN_LINE = r"%s\n"
+
+# The reference clone's walk shipper, given the path of one walk's file, ships that walk; loaded
 # as a module by walk_files_ship_module only so that which files make a walk is decided by its own rules.
 WALK_FILES_SHIPPER = REPO_ROOT / "scripts" / "walk-files-ship.py"
 WALK_MINUTES_SUFFIX = "-minutes.md"
@@ -315,15 +366,78 @@ def branch_refs_with_no_worktree_fully_on_main(repo):
             if branch not in attached]
 
 
+def commit_of(repo, revision):
+    """Return the commit a revision names, or "unknown" when git cannot read it."""
+    resolved = run_git(repo, "rev-parse", "--verify", "--quiet", f"{revision}^{{commit}}")
+    return resolved.stdout.strip() if resolved.returncode == 0 else "unknown"
+
+
+def parent_process_id_and_command_line():
+    """Return the parent process's pid and command line: they tell which caller ran this run."""
+    parent = os.getppid()
+    try:
+        command = subprocess.run(["ps", "-o", "args=", "-p", str(parent)], capture_output=True,
+                                 text=True, check=False, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        command = ""
+    return f"{parent} {' '.join(command.split()) or 'unknown'}"
+
+
+def append_removed_worktree_or_deleted_branch_log_lines(events, repo, name):
+    """Append one line per (event, fields) to this machine's log of removals, in one write; print
+    why and return False when it fails."""
+    on_ned_box = mark.this_machine_is_ned_box()
+    machine = "ned-box" if on_ned_box else "mac"
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    run_by = parent_process_id_and_command_line()
+    text = "".join(
+        "\t".join([now, machine, event,
+                   *(f"{key}={' '.join(str(value).split())}"
+                     for key, value in {**fields, "repo": repo, "run-by": run_by}.items())]) + "\n"
+        for event, fields in events)
+    override = os.environ.get(REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE_VARIABLE)
+    if override:
+        log_file, ssh_target = override, None
+    else:
+        log_file = f"{REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_DIRECTORY}/{machine}.txt"
+        ssh_target = None if on_ned_box else mark.NED_BOX_SSH_TARGET
+    command = (f"mkdir -p {shlex.quote(os.path.dirname(log_file) or '.')} && "
+               f"cat >> {shlex.quote(log_file)}")
+    try:
+        mark.run_on_ned_box_or_here(command, ssh_target,
+                                    REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_WRITE_TIMEOUT_SECONDS,
+                                    stdin_text=text)
+    except mark.DailyMemoryReviewReadOrWriteFailed as error:
+        # No line may contain ": removed", ": deleted" or ": removal FAILED": the handoff-supervisor counts those.
+        place = f"{mark.NED_BOX_SSH_TARGET if ssh_target else machine}:{log_file}"
+        writer = ([*mark.NED_BOX_SSH_COMMAND, ssh_target, command] if ssh_target
+                  else ["/bin/sh", "-c", command])
+        # The handoff-supervisor keeps the two lines after a FAILED line by these phrases.
+        print(f"{name}: log of removals line(s) FAILED to be written to {place} — {error}. "
+              f"The removal or branch deletion named above stands, but no file outside this "
+              f"run's output records it.\n"
+              f"{name}{LOG_OF_REMOVALS_RECORD_BY_HAND_PHRASE}"
+              f"{shlex.join(['printf', PRINTF_EACH_ARGUMENT_ON_ITS_OWN_LINE, *text.splitlines()])} | "
+              f"{shlex.join(writer)}\n"
+              f"{name}{LOG_OF_REMOVALS_RECORD_BY_HAND_FAILED_PHRASE}"
+              f"tell the user that scripts/clean-worktrees.py on {machine} could not write "
+              f"its log of removals at {place}, quoting both the error above and the one the printf "
+              f"command printed; a subagent tells the agent that dispatched it instead.")
+        return False
+    return True
+
+
 def delete_orphaned_branch_ref(branch, repo):
-    """Delete a ref and return whether git accepted the deletion."""
+    """Delete a ref and log it; return whether git deleted it and its log line was written."""
+    commit = commit_of(repo, f"refs/heads/{branch}")
     # Keep -d: git's merged-branch check is independent of our containment test.
     deletion = run_git(repo, "branch", "-d", branch)
     if deletion.returncode != 0:
         print(f"branch {branch}: deletion FAILED — {deletion.stderr.strip()[:120]}")
         return False
     print(f"branch {branch}: deleted (no worktree, nothing beyond origin/main)")
-    return True
+    return append_removed_worktree_or_deleted_branch_log_lines(
+        [("deleted-branch", {"branch": branch, "commit": commit})], repo, f"branch {branch}")
 
 
 def in_progress_git_operation_keep_reason(worktree):
@@ -488,10 +602,16 @@ def discarded_files_text(paths):
 
 
 def log_store_records_in(worktree):
-    """Return (shipper, path to ship) for the minutes file of each walk in the worktree's docs/walk/
-    and for each non-empty record directory it holds."""
-    records = [(WALK_FILES_SHIPPER, minutes)
-               for minutes in sorted((worktree / "docs" / "walk").glob(f"*{WALK_MINUTES_SUFFIX}"))]
+    """Return (shipper, path to ship) for each walk in the worktree's docs/walk/, one for each
+    <name>-minutes.md, and for each non-empty record directory it holds. A walk is given by its walk
+    text <name>.md: the shipper resolves a path to the longest walk name whose walk text and minutes
+    are present, so the minutes of walk foo, foo-minutes.md, would name walk foo-minutes when that
+    walk is there too, while foo.md names only foo. A walk without its walk text is given by its
+    minutes, which the shipper then refuses, keeping the worktree."""
+    records = []
+    for minutes in sorted((worktree / "docs" / "walk").glob(f"*{WALK_MINUTES_SUFFIX}")):
+        walk_text = minutes.with_name(minutes.name[:-len(WALK_MINUTES_SUFFIX)] + ".md")
+        records.append((WALK_FILES_SHIPPER, walk_text if walk_text.is_file() else minutes))
     for directory_name, shipper in LOG_STORE_RECORD_SHIPPERS:
         records_directory = worktree / directory_name
         if not records_directory.is_dir():
@@ -513,31 +633,30 @@ def shipper_line(shipment):
     return line
 
 
-def walks_and_unshippable_walk_files_in(worktree):
-    """Return ({walk name: path of its walk text} for each walk the shipper can ship from the
-    worktree's docs/walk/, sorted relative paths of the files there that no such walk ships): a
-    walk never presented, which lacks its walk text or minutes, or a file of no walk role."""
+def worktree_removal_unshippable_approval_walk_files_relative_paths(worktree):
+    """Return the sorted relative paths of the files in the worktree's docs/walk/ that no walk the
+    shipper can ship holds: a walk never presented, which lacks its walk text or minutes, or a file
+    of no walk role."""
     directory = worktree / "docs" / "walk"
     if not directory.is_dir():
-        return {}, []
+        return []
     files = sorted(path for path in directory.iterdir() if path.is_file())
     walk_files_ship = walk_files_ship_module()
-    walks = {}
+    walk_names = set()
     for path in files:
         name, _ = walk_files_ship.walk_name_and_directory(str(path))
         if all((directory / walk_files_ship.walk_file_name(name, suffix)).is_file()
                for suffix in walk_files_ship.REQUIRED_ROLE_SUFFIXES):
-            walks[name] = directory / walk_files_ship.walk_file_name(name, "")
+            walk_names.add(name)
     shipped_names = {walk_files_ship.walk_file_name(name, suffix)
-                     for name in walks for suffix, _ in walk_files_ship.WALK_FILE_ROLES}
-    unshippable = [str(path.relative_to(worktree)) for path in files if path.name not in shipped_names]
-    return walks, unshippable
+                     for name in walk_names for suffix, _ in walk_files_ship.WALK_FILE_ROLES}
+    return [str(path.relative_to(worktree)) for path in files if path.name not in shipped_names]
 
 
-def report_unshippable_walk_files(worktree):
+def worktree_removal_unshippable_approval_walk_files_report(worktree):
     """Print a line naming the files in the worktree's docs/walk/ that no walk ships, which the
     removal discards with its other ignored files."""
-    _, unshippable = walks_and_unshippable_walk_files_in(worktree)
+    unshippable = worktree_removal_unshippable_approval_walk_files_relative_paths(worktree)
     if unshippable:
         print(f"{worktree.name}: {len(unshippable)} file(s) in docs/walk/ no walk ships, a walk never "
               f"presented or a file of no walk role, are discarded with the worktree: "
@@ -636,7 +755,7 @@ def remove_worktree(worktree, branch, repo, discarded, topic_worktree):
                   f"ships the record again; "
                   f"if the record fails the same way there, fix the cause its line names")
         return False
-    report_unshippable_walk_files(worktree)
+    worktree_removal_unshippable_approval_walk_files_report(worktree)
     # classify() judged it clean before the slow vacancy check and the shipments; an agent may have written since.
     if topic_worktree:
         keep_reason = topic_worktree_uncommitted_files_keep_reason(worktree)
@@ -647,15 +766,17 @@ def remove_worktree(worktree, branch, repo, discarded, topic_worktree):
     if discarded:
         print(f"{worktree.name}: removing it will discard {len(discarded)} uncommitted, "
               f"untracked or ignored file(s): {discarded_files_text(discarded)}")
+    head = commit_of(worktree, "HEAD")
     # A single --force removes untracked and modified files but still refuses a locked worktree.
     removal = run_git(repo, "worktree", "remove", "--force", str(worktree))
     if removal.returncode != 0:
         print(f"{worktree.name}: removal FAILED — {removal.stderr.strip()[:120]}")
         return False
     line = f"{worktree.name}: removed"
+    branch_deleted = False
     if branch:
-        branch_deletion = run_git(repo, "branch", "-d", branch)
-        if branch_deletion.returncode == 0:
+        branch_deleted = run_git(repo, "branch", "-d", branch).returncode == 0
+        if branch_deleted:
             line += f", branch {branch} deleted"
         else:
             line += f", branch {branch} left in place (git branch -d refused)"
@@ -663,7 +784,11 @@ def remove_worktree(worktree, branch, repo, discarded, topic_worktree):
     if discarded:
         print(f"{worktree.name}: discarded with it {len(discarded)} uncommitted, untracked "
               f"or ignored file(s): {discarded_files_text(discarded)}")
-    return True
+    events = [("removed-worktree", {"path": worktree, "branch": branch or "none", "head": head,
+                                    "discarded-files": len(discarded)})]
+    if branch_deleted:
+        events.append(("deleted-branch", {"branch": branch, "commit": head}))
+    return append_removed_worktree_or_deleted_branch_log_lines(events, repo, worktree.name)
 
 
 def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):

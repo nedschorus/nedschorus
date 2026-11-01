@@ -2,8 +2,9 @@
 """Tests for pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py.
 
 Each case runs the program in a scratch git repository with a fake `gh` first on PATH. The fake
-answers from a routes file the case writes, keyed by its arguments joined with spaces, and
-exits 1 on an unarranged call.
+answers from a routes file the case writes, keyed by its arguments joined with spaces, or by a
+prefix of them when the key ends with "*"; it exits 1 on an unarranged call, and appends each
+call's arguments to the calls file.
 
 Run: python3 scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check-test.py
 """
@@ -28,6 +29,8 @@ PROGRAM = Path(__file__).with_name(
     "pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py")
 NUMBER = 7
 REVIEWS = f"api --paginate repos/{{owner}}/{{repo}}/pulls/{NUMBER}/reviews --jq .[]"
+ISSUE_COMMENTS = f"api --paginate repos/{{owner}}/{{repo}}/issues/{NUMBER}/comments --jq .[]"
+ROUND_RECORD_POST = f"api repos/{{owner}}/{{repo}}/issues/{NUMBER}/comments -f body="
 PR_VIEW = f"pr view {NUMBER} --json url,headRefOid,headRefName"
 BRANCH = "topic-branch-of-the-pull-request"
 URL = f"https://github.com/o/r/pull/{NUMBER}"
@@ -38,7 +41,10 @@ ADVISOR_SENTENCE = ("This is the pull request's third fix-round, its last before
 FAKE_GH = r'''#!/usr/bin/env python3
 import json, os, sys
 key = " ".join(sys.argv[1:])
+with open(os.environ["FAKE_GH_CALLS"], "a") as calls:
+    calls.write(json.dumps(sys.argv[1:]) + "\n")
 routes = json.load(open(os.environ["FAKE_GH_ROUTES"]))
+key = next((pattern for pattern in routes if pattern.endswith("*") and key.startswith(pattern[:-1])), key)
 if key not in routes:
     sys.stderr.write("fake gh: unarranged call %r\n" % key)
     sys.exit(1)
@@ -107,6 +113,17 @@ BLOCKING_COMMENTS = [
 ]
 
 
+def gh_calls(root):
+    return [json.loads(line) for line in (root / "calls.jsonl").read_text().splitlines()]
+
+
+def round_record(frozen_head, review_ids, comment_id=900):
+    """An issue comment as GitHub returns it, holding the record --check posts for a round with no commit."""
+    return {"id": comment_id, "html_url": f"{URL}#issuecomment-{comment_id}",
+            "body": f"Fix-round answered without a commit: frozen-head {frozen_head}, reviews "
+                    f"{' '.join(map(str, review_ids))}.\nSomething else on the next line."}
+
+
 def lines(objects):
     return "".join(json.dumps(item) + "\n" for item in objects)
 
@@ -115,6 +132,8 @@ def routes_for(head, reviews, comments=BLOCKING_COMMENTS, review_id=11):
     return {
         PR_VIEW: {"stdout": json.dumps({"url": URL, "headRefOid": head, "headRefName": BRANCH})},
         REVIEWS: {"stdout": lines(reviews)},
+        ISSUE_COMMENTS: {"stdout": ""},
+        ROUND_RECORD_POST + "*": {"stdout": "{}"},
         f"api --paginate repos/{{owner}}/{{repo}}/pulls/{NUMBER}/reviews/{review_id}/comments --jq .[]":
             {"stdout": lines(comments)},
     }
@@ -126,7 +145,9 @@ def run(root, repository, routes, *arguments, path_has_gh=True):
     (bin_directory / "gh").write_text(FAKE_GH)
     (bin_directory / "gh").chmod(0o755)
     (root / "routes.json").write_text(json.dumps(routes))
-    environment = dict(os.environ, FAKE_GH_ROUTES=str(root / "routes.json"))
+    (root / "calls.jsonl").write_text("")
+    environment = dict(os.environ, FAKE_GH_ROUTES=str(root / "routes.json"),
+                       FAKE_GH_CALLS=str(root / "calls.jsonl"))
     git_only_directory = root / "git-only-bin"
     if not git_only_directory.exists():
         git_only_directory.mkdir()
@@ -779,6 +800,7 @@ def commissioned_reviewer_cases(root, repository, base, frozen_head):
     ]
     round_0 = {PR_VIEW: {"stdout": json.dumps({"url": URL, "headRefOid": frozen_head, "headRefName": BRANCH})},
                REVIEWS: {"stdout": lines([reviewer_round_0, merge_lane_round_0])},
+               ISSUE_COMMENTS: {"stdout": ""}, ROUND_RECORD_POST + "*": {"stdout": "{}"},
                **comments_route(5718075290, reviewer_comments),
                **comments_route(5718084175, merge_lane_comments)}
     code, out, err = run(root, repository, round_0)
@@ -872,6 +894,92 @@ def split_review_cases(root, repository, base, frozen_head):
           code == 0 and out.count(ADVISOR_SENTENCE) == 1, err + out)
 
 
+def rounds_on_one_head_cases(root, repository, base, frozen_head):
+    """Two rounds on one frozen-head, and a review that re-posts an earlier one's Blocks.
+
+    The re-post shape is pull request 2236's: merge-lane-2's graded review with no marked comment,
+    then a second changes-requested review of the same head that re-posts its Block inline; ids,
+    order and logins as GitHub returned them, the stated count written as this program reads it."""
+    graded = review(review_id=5721453347, commit_id=frozen_head,
+                    body="merge-lane-2's graded review.\n\n**Blocking: 2**, the reviewer's inline Blocks.")
+    reposted = review(review_id=5721459882, commit_id=frozen_head,
+                      body="merge-lane-2 reposts the 2 blocking finding(s) of its review 5721453347 as "
+                           "comments of this review.")
+    routes = {**routes_for(frozen_head, [graded, reposted], comments=[BLOCKING_COMMENTS[1]],
+                           review_id=5721453347),
+              **comments_route(5721459882, [BLOCKING_COMMENTS[0], BLOCKING_COMMENTS[2]])}
+    code, out, err = run(root, repository, routes)
+    check("2236: an earlier changes-requested review's stated count is checked against the later review "
+          "that re-posts its Blocks", code == 0 and "Blocking findings (2)" in out, err + out)
+
+    commissioned = review(state="COMMENTED", review_id=20, commit_id=frozen_head, login="mac-claude",
+                          body="REQUEST_CHANGES")
+    grading = review(review_id=21, commit_id=frozen_head,
+                     body="merge-lane-2's graded review.\n\n**Blocking: 1**, the reviewer's inline Block.")
+    graded = {**routes_for(frozen_head, [commissioned, grading], comments=[BLOCKING_COMMENTS[0]],
+                           review_id=20), **comments_route(21, [])}
+    code, out, err = run(root, repository, graded)
+    check("a stated count in merge-lane-2's review with no marked comment of its own is checked against "
+          "the Blocks of the commissioned reviewer's review posted before it",
+          code == 0 and "Blocking findings (1)" in out and "hook.py swallows the error" in out, err + out)
+    overstated = dict(graded, **{REVIEWS: {"stdout": lines([commissioned, dict(
+        grading, body="merge-lane-2's graded review.\n\n**Blocking: 2**")])}})
+    code, out, err = run(root, repository, overstated)
+    check("a stated count that the round's other reviews' Blocks do not match is refused",
+          code == 1 and "says **Blocking: 2**" in err
+          and "1 of the inline comments of the round's other reviews" in err, err)
+
+    first = review(review_id=21, commit_id=frozen_head, body="Round one.")
+    second = review(review_id=22, commit_id=frozen_head, body="Round two: the finding still holds.")
+    reviewer = review(state="COMMENTED", review_id=20, commit_id=frozen_head, login="mac-claude",
+                      body="REQUEST_CHANGES")
+    second_block = [comment("run.py", "**Blocks.** run.py still drops the exit code.", line=40, comment_id=31)]
+    answered = {**routes_for(frozen_head, [review(review_id=19, commit_id="earlier-head-19"),
+                                           reviewer, first, second],
+                             comments=second_block, review_id=22),
+                **comments_route(20, []), **comments_route(21, BLOCKING_COMMENTS),
+                ISSUE_COMMENTS: {"stdout": lines([round_record(frozen_head, [20, 21])])}}
+    code, out, err = run(root, repository, answered)
+    check("a changes-requested review after a round answered without a commit on the same head "
+          "briefs only its own Blocks",
+          code == 0 and "Blocking findings (1)" in out and "still drops the exit code" in out
+          and "hook.py swallows" not in out
+          and f"The round's reviews: {URL}#pullrequestreview-22\n" in out
+          and f"fix-round-pull-request-{NUMBER}-review-22" in out, err + out)
+    check("a round answered without a commit counts as a round, so the next one on the same head "
+          "is the third and asks for the advisor", code == 0 and out.count(ADVISOR_SENTENCE) == 1, err + out)
+    unanswered = dict(answered, **{ISSUE_COMMENTS: {"stdout": lines([round_record("f" * 40, [20, 21])])}})
+    code, out, err = run(root, repository, unanswered)
+    check("a record of a round on another head leaves both changes-requested reviews of this head in one round",
+          code == 0 and "Blocking findings (3)" in out and "advisor" not in out, err + out)
+
+    one_round = routes_for(frozen_head, [reviewer, first], review_id=21) | comments_route(20, [])
+    code, out, err = run(root, repository, one_round, "--check", "--answers", answers_file(root, GOOD_ANSWERS))
+    posts = [call for call in gh_calls(root) if "-f" in call]
+    check("check: a round with no commit records on the pull request which reviews it answered",
+          code == 0 and "Send merge-lane-2 this message" in out and len(posts) == 1
+          and posts[0][:3] == ["api", f"repos/{{owner}}/{{repo}}/issues/{NUMBER}/comments", "-f"]
+          and posts[0][3].startswith(f"body=Fix-round answered without a commit: frozen-head {frozen_head}, "
+                                     "reviews 20 21.\n"), err + out + json.dumps(posts))
+    recorded = dict(one_round, **{ISSUE_COMMENTS: {"stdout": lines([round_record(frozen_head, [20, 21])])}})
+    del recorded[ROUND_RECORD_POST + "*"]
+    code, out, err = run(root, repository, recorded, "--check", "--answers", answers_file(root, GOOD_ANSWERS))
+    check("check: run again after the record is posted, it prints the message and posts no second record",
+          code == 0 and "Send merge-lane-2 this message" in out, err + out)
+    failing = dict(one_round, **{ROUND_RECORD_POST + "*": {"exit": 1, "stderr": "HTTP 403"}})
+    code, out, err = run(root, repository, failing, "--check", "--answers", answers_file(root, GOOD_ANSWERS))
+    check("check: when the record cannot be posted, it fails with exit 2 and prints no message for merge-lane-2",
+          code == 2 and "HTTP 403" in err and "Send merge-lane-2" not in out, err + out)
+    fix = commit_file(repository, "hook.py", "fixed\n", "fix")
+    code, out, err = run(root, repository, routes_for(fix, [reviewer, first], review_id=21) | comments_route(20, []),
+                         "--check", "--answers", answers_file(root, GOOD_ANSWERS))
+    check("check: a round that pushed a commit posts no record",
+          code == 0 and f"New head {fix}" in out
+          and not any("-f" in call for call in gh_calls(root)), err + out)
+    git(repository, "reset", "-q", "--hard", frozen_head)
+    del base
+
+
 def gh_timeout_case():
     specification = importlib.util.spec_from_file_location("fix_round_program", PROGRAM)
     program = importlib.util.module_from_spec(specification)
@@ -897,5 +1005,6 @@ case("brief", brief_cases)
 case("check", check_cases)
 case("commissioned reviewer", commissioned_reviewer_cases)
 case("split review", split_review_cases)
+case("rounds on one head", rounds_on_one_head_cases)
 print(f"{'FAILED' if failures else 'PASSED'}: {len(failures)} failed")
 sys.exit(1 if failures else 0)

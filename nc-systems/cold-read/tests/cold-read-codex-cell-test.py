@@ -58,6 +58,13 @@ at a scratch home, so the cell's credential scan and the permission profile
 it hands codex name no path in the real home (checked on the successful
 path, from the argv the stub was given).
 
+Every case runs a copy of the cell outside this checkout, most of them from
+the scratch git repository that cold-read-scratch-repository-test-fixture.py
+builds, as the other cold-read cell suites do. The cell takes its repository
+root from its own path and runs `git status` over that root, so a cell run
+from this checkout would make every tracked file an input of this suite to
+scripts/run-all-test-suites.py.
+
 Run: python3 nc-systems/cold-read/tests/cold-read-codex-cell-test.py
 """
 
@@ -71,12 +78,31 @@ import sys
 import tempfile
 from pathlib import Path
 
-CELL_SCRIPT = Path(__file__).resolve().parent.parent / "cold-read-codex-cell.py"
+SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
+REPO_ROOT = SYSTEM_DIRECTORY.parent.parent
+PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
+CELL_RELATIVE_PATH = "nc-systems/cold-read/cold-read-codex-cell.py"
 # The shared cell module, whose own suite pins its wording; the cases here take that wording from it.
 _cell_common_spec = importlib.util.spec_from_file_location(
-    "cold_read_cell_common", CELL_SCRIPT.with_name("cold-read-cell-common.py"))
+    "cold_read_cell_common", SYSTEM_DIRECTORY / "cold-read-cell-common.py")
 cell_common = importlib.util.module_from_spec(_cell_common_spec)
 _cell_common_spec.loader.exec_module(cell_common)
+
+_scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
+    "cold_read_scratch_repository_test_fixture",
+    SYSTEM_DIRECTORY / "tests" / "cold-read-scratch-repository-test-fixture.py")
+scratch_repository_fixture = importlib.util.module_from_spec(_scratch_repository_fixture_spec)
+_scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
+
+
+def build_scratch_repository(scratch):
+    """A git repository holding the prompt templates and a copy of nc-systems/cold-read/."""
+    repository = scratch / "scratch-checkout"
+    scratch_prompts = repository / ".claude" / "skills" / "cold-read" / "prompts"
+    scratch_prompts.mkdir(parents=True)
+    for prompt_path in PROMPTS_DIR.glob("*.md"):
+        shutil.copy2(prompt_path, scratch_prompts / prompt_path.name)
+    return scratch_repository_fixture.commit_seeded_cold_read_scratch_repository(repository)
 
 # The Codex logged-out line, captured 2026-09-18 on ned-box (codex-cli
 # 0.153.4) from a scratch directory outside any checkout with an empty
@@ -167,7 +193,11 @@ def run_cell(stub_directory, stub_body, report_path, *arguments, argv_path=None,
 
 
 with tempfile.TemporaryDirectory() as scratch:
-    scratch = Path(scratch)
+    # Resolved because the cell resolves its own path, and a temporary directory
+    # can sit under a symlink, as /var/folders does under /private on the Mac.
+    scratch = Path(scratch).resolve()
+    SCRATCH_REPOSITORY = build_scratch_repository(scratch)
+    CELL_SCRIPT = SCRATCH_REPOSITORY / CELL_RELATIVE_PATH
     stubs = scratch / "stub-bin"
     target = scratch / "a-document.md"
     target.write_text("# a document for the cell to be pointed at\n", encoding="utf-8")
@@ -333,13 +363,18 @@ with tempfile.TemporaryDirectory() as scratch:
     profile_table = next((argument for argument in received_argv
                           if ".filesystem=" in argument), "")
     real_home = Path.home().resolve()
-    repository_root = CELL_SCRIPT.parents[2]
+    repository_root = SCRATCH_REPOSITORY
     profile_keys = re.findall(r'"([^"]+)"=', profile_table)
     real_home_paths = [
         path for path in profile_keys
         if not path.startswith(":") and not path.startswith("/**")
         and (Path(path) == real_home or real_home in Path(path).parents)
         and repository_root not in Path(path).parents]
+    codex_directories = [received_argv[index + 1]
+                         for index, argument in enumerate(received_argv[:-1]) if argument == "-C"]
+    check("the cell runs codex, and its git status, in the scratch repository, not this checkout",
+          [Path(directory).resolve() for directory in codex_directories] == [SCRATCH_REPOSITORY],
+          repr(codex_directories))
     check("the cell's permission profile reached codex",
           bool(profile_table) and bool(profile_keys), repr(received_argv[:6]))
     check("the permission profile names no path in the real home",
@@ -428,7 +463,7 @@ with tempfile.TemporaryDirectory() as scratch:
             "nc-systems/cold-read/cold-read-record-names-common.py",
             "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py"):
         (copied_checkout / relative_path).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(CELL_SCRIPT.parents[2] / relative_path, copied_checkout / relative_path)
+        shutil.copy2(REPO_ROOT / relative_path, copied_checkout / relative_path)
     copied_temporary_directory = scratch / "a-temporary-directory"
     copied_temporary_directory.mkdir()
     stubs.mkdir(parents=True, exist_ok=True)

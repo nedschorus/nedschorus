@@ -9,7 +9,10 @@ run, hashes only a file whose stat data differs, logs each new version in this m
 directory of the log-store kind guarded-file-versions-and-approvals/, copies it there unless
 the file's checkout is on a branch whose HEAD commit holds it, and, when the version is not in its path's
 approved set, tells the agent to show the user the change and run this program with --approve
-or --restore. The change stays in place while he is asked. A version with no copy is read
+or --restore. A version that the checkout's local origin/main holds at the same path enters the
+approved set without asking, since main's versions came through reviewed pull requests; when
+git cannot read origin/main, the run reports that failure and settles nothing. The change stays
+in place while he is asked. A version with no copy is read
 back from git; a file outside every checkout, such as ~/.claude/CLAUDE.md, is always copied.
 
 A checkout's first run records the commit HEAD names, in the checkout's state, and counts every
@@ -94,8 +97,12 @@ FILE_WRITING_TOOLS = ("Edit", "Write", "NotebookEdit")
 # A reflog subject starting with this is a commit the agent made; any other subject is git's
 # own work: a switch, reset, merge, pull, rebase, cherry-pick or revert.
 COMMIT_SUBJECT_PREFIX = "commit"
+# Every version on main came through a reviewed pull request, so a version this ref holds at its
+# path is approved, even one a run saw unapproved, such as during a rebase stopped on a conflict.
+ORIGIN_MAIN_REF = "refs/remotes/origin/main"
 
 HOW_GIT = "git"
+HOW_ORIGIN_MAIN = "origin-main"
 HOW_EDIT = "edit"
 HOW_USER = "user"
 HOW_OBVIOUS_FIX = "obvious-fix"
@@ -510,13 +517,7 @@ def versions_head_holds(checkout, versions):
     tool call; a version only another durable ref holds is copied, and the daily prune deletes
     the copy. Raises BranchUnreadable, a RuntimeError carrying git's stderr, when git
     rev-parse --verify or git symbolic-ref fails with any exit other than 1."""
-    relative = {}
-    for path, blob_id in versions:
-        if blob_id == DELETED:
-            continue
-        relative[os.path.relpath(Path(path).parent.resolve() / Path(path).name, checkout)] = (
-            path, blob_id)
-    if not relative:
+    if all(blob_id == DELETED for _, blob_id in versions):
         return set()
     # git rev-parse -q --verify exits 1, with nothing on stderr, when HEAD names no commit yet.
     head_commit = subprocess.run(["git", "-C", str(checkout), "rev-parse", "-q", "--verify",
@@ -537,8 +538,21 @@ def versions_head_holds(checkout, versions):
         raise BranchUnreadable(f"git symbolic-ref -q HEAD in {checkout} exited "
                                f"{on_branch.returncode}: "
                                f"{on_branch.stderr.decode(errors='replace').strip()}")
+    return versions_commit_holds(checkout, "HEAD", versions)
+
+
+def versions_commit_holds(checkout, commit, versions):
+    """The (path, blob id) pairs among versions whose path, in the commit's tree, is that blob."""
+    relative = {}
+    for path, blob_id in versions:
+        if blob_id == DELETED:
+            continue
+        relative[os.path.relpath(Path(path).parent.resolve() / Path(path).name, checkout)] = (
+            path, blob_id)
+    if not relative:
+        return set()
     output = git_text(checkout, "--literal-pathspecs", "ls-tree", "-r", "-z", "--full-tree",
-                      "HEAD", "--", *sorted(relative))
+                      commit, "--", *sorted(relative))
     held = set()
     for entry in output.split("\0"):
         header, _, name = entry.partition("\t")
@@ -547,6 +561,26 @@ def versions_head_holds(checkout, versions):
                 and relative[name][1] == fields[2]:
             held.add(relative[name])
     return held
+
+
+def versions_origin_main_holds(checkout, versions):
+    """The (path, blob id) pairs among versions that the checkout's origin/main holds at their
+    path; none when the repository has no origin/main. The local ref is read and never fetched,
+    so the run stays fast. Raises RuntimeError carrying git's stderr when git rev-parse --verify
+    fails with any exit other than 1, or git ls-tree fails."""
+    if all(blob_id == DELETED for _, blob_id in versions):
+        return set()
+    # git rev-parse -q --verify exits 1, with nothing on stderr, when the ref does not exist.
+    main_commit = subprocess.run(["git", "-C", str(checkout), "rev-parse", "-q", "--verify",
+                                  ORIGIN_MAIN_REF + "^{commit}"],
+                                 capture_output=True, timeout=60, check=False)
+    if main_commit.returncode == 1:
+        return set()
+    if main_commit.returncode != 0:
+        raise RuntimeError(f"git rev-parse -q --verify {ORIGIN_MAIN_REF}^{{commit}} in {checkout} "
+                           f"exited {main_commit.returncode}: "
+                           f"{main_commit.stderr.decode(errors='replace').strip()}")
+    return versions_commit_holds(checkout, main_commit.stdout.decode().strip(), versions)
 
 
 def version_from_git(path: str, blob_id: str):
@@ -1122,9 +1156,16 @@ def run_hook(payload):
                 new_position = state.get("reflog")
             elif window:
                 approvals = git_own_work(checkout, window, state, changed)
+            on_main = versions_origin_main_holds(
+                checkout, [(path, value[2]) for path, value in changed.items()] + unsettled)
+            # A changed file is approved through its check, which reads its approved set anyway.
+            approvals = [(path, key, HOW_ORIGIN_MAIN, APPROVE_ALWAYS)
+                         for path, key in unsettled if (path, key) in on_main] + approvals
+        else:
+            on_main = set()
         plans.append([kind, state_path, state, files, changed, unsettled, approvals, quiet,
                       new_position, stocking, set(state["files"]) != listed_before, held,
-                      base_versions, base_matched, checkout_root])
+                      base_versions, base_matched, checkout_root, on_main])
 
     stocking_machine = outside_stocking
     nothing_to_do = all(not plan[4] and not plan[5] and not plan[6] and not plan[9]
@@ -1151,7 +1192,7 @@ def run_hook(payload):
                     log_seen(store, path, session, owner(), key, key, HOW_STOCK)
         for plan in plans:
             (kind, state_path, state, files, changed, unsettled, approvals, quiet, _, stocking, _,
-             held, base_versions, base_matched, checkout_root) = plan
+             held, base_versions, base_matched, checkout_root, on_main) = plan
             # The version at the commit the worktree started from, not at HEAD: an agent's
             # commit of an unapproved edit moves HEAD, never that commit.
             for path, (blob, data) in base_versions.items():
@@ -1164,7 +1205,9 @@ def run_hook(payload):
             checks = []
             for path, (now, data, key, copy_hash) in changed.items():
                 how = ""
-                if stocking:
+                if (path, key) in on_main:
+                    how = HOW_ORIGIN_MAIN
+                elif stocking:
                     log = store.log(path)
                     if not (key not in store.approved(path) and seen_lines(log, key)):
                         how = HOW_STOCK

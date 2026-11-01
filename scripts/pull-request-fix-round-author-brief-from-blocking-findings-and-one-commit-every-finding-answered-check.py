@@ -7,15 +7,21 @@ Usage:
 
 The round is set by merge-lane-2's latest review that requests changes, as long as every later
 review of merge-lane-2's comments on the same commit, where merge-lane-2 can add or re-post
-blockers. That commit is the frozen-head. The round's reviews are that review, then every other
-review of the frozen-head, whoever posted it and whatever its state, apart from PENDING and
-DISMISSED: the commissioned reviewer posts its review as a comment, before merge-lane-2's, and
-merge-lane-2 may split its own review of one head into several changes-requested reviews. The
-round's number counts the commits merge-lane-2 has requested changes on. The blocking findings are the round's reviews' inline comments
-whose body starts with a match of BLOCKING_MARKER_PATTERN; the bodies' free text is never parsed for findings. A blocker
-re-posted with the same path, line and body counts once. A review's stated **Blocking: N** is
-checked against its own marked comments, or, when it has none, against those of the reviews after
-it in that order, which then re-post its blockers.
+blockers. That commit is the frozen-head. The round's reviews are every review of the frozen-head,
+in the order GitHub returns them, whoever posted it and whatever its state, apart from PENDING and
+DISMISSED, and apart from those a round record names that does not name that latest review: the
+commissioned reviewer posts its review as a comment, before merge-lane-2's, and merge-lane-2 may
+split its own review of one head into several changes-requested reviews, or re-post an earlier
+one's blockers in a later one. The brief names that latest review first. A round record is a pull request comment whose first line matches
+ROUND_RECORD_PATTERN; --check posts one when a round ends with no commit, naming the frozen-head
+and the round's reviews, because nothing else on GitHub tells that round's reviews apart from those
+of a later round on the same head. The round's number counts merge-lane-2's changes-requested
+reviews, taking as one those of the same commit that no round record tells apart. The blocking
+findings are the round's reviews' inline comments whose body starts with a match of
+BLOCKING_MARKER_PATTERN; the bodies' free text is never parsed for findings. A blocker re-posted
+with the same path, line and body counts once. A review's stated **Blocking: N** is checked against
+its own marked comments, or, when it has none, against those of the round's other reviews, such as
+the commissioned reviewer's Blocks it grades or a later review that re-posts its blockers.
 
 Without --check, run in the author's checkout: refuse when the pull request's head has moved past
 the frozen-head, else print the brief: the frozen-head, ADVISOR_FIX_ROUND_INSTRUCTION when the
@@ -31,7 +37,9 @@ the worktree or checkout --check runs in, and --check refuses when the checked c
 an answers file the frozen-head's tree does not, since a branch cut before .gitignore named the file does not leave it out of
 commits. It prints the files the fix commit changes that no blocking
 finding names, and, once GitHub's head is the checked commit or the frozen-head, the message for
-merge-lane-2, which the agent sends with SendMessage, since a program cannot.
+merge-lane-2, which the agent sends with SendMessage, since a program cannot. When the round has no
+commit, it first posts the round record, unless one already names the round's latest
+changes-requested review.
 
 Exit codes: 0 brief printed or round passes; 1 the review or the round breaks a rule, said on
 stderr; 2 gh, git or the answers file could not be read, said on stderr.
@@ -58,6 +66,11 @@ MERGE_LANE_2_REVIEWER_LOGIN = "ned-review-merge"
 BLOCKING_MARKER_PATTERN = re.compile(r"\*\*Blocks\b[^*\n]*\*\*")
 BLOCKING_MARKER_DESCRIPTION = "the bold word **Blocks**"
 BLOCKING_COUNT_PATTERN = re.compile(r"\*\*Blocking:\s*(\d+)\*\*")
+ROUND_RECORD_FORMAT = ("Fix-round answered without a commit: frozen-head {frozen_head}, reviews {review_ids}.\n"
+                       "Posted by {program} --check. A changes-requested review of the same head posted "
+                       "after this comment starts a new fix-round.")
+ROUND_RECORD_PATTERN = re.compile(r"Fix-round answered without a commit: frozen-head ([0-9a-f]+), "
+                                  r"reviews (\d+(?: \d+)*)\.")
 ANSWER_START_PATTERN = re.compile(r"^(\d+)\.\s+(\S.*)$")
 GH_TIMEOUT_SECONDS = 60
 PROGRAM = "scripts/" + Path(__file__).name
@@ -177,11 +190,34 @@ def pull_request(number):
     return tuple(facts[field] for field in PULL_REQUEST_FIELDS)
 
 
+def round_records(number):
+    """(frozen-head, set of review ids) for each round record on the pull request, oldest first."""
+    comments = gh_json_lines(["api", "--paginate", f"repos/{{owner}}/{{repo}}/issues/{number}/comments",
+                              "--jq", ".[]"])
+    records = []
+    for comment in comments:
+        match = ROUND_RECORD_PATTERN.match(comment.get("body") or "")
+        if match:
+            records.append((match.group(1), {int(review_id) for review_id in match.group(2).split()}))
+    return records
+
+
+def round_count(requested_reviews, records):
+    """Changes-requested reviews of one commit are one round, until a round record names some of them."""
+    def round_key(review):
+        commit = review.get("commit_id")
+        naming = [index for index, (head, review_ids) in enumerate(records)
+                  if head == commit and review.get("id") in review_ids]
+        return commit, naming[0] if naming else None
+    return len({round_key(review) for review in requested_reviews})
+
+
 def round_reviews(number, reviewer_login):
-    """merge-lane-2's latest changes-requested review, then every other review of the same commit;
-    and the round's number, which counts the commits merge-lane-2 requested changes on."""
+    """merge-lane-2's latest changes-requested review; the round's reviews, in the order GitHub
+    returns them; whether a round record already names that review; and the round's number."""
     reviews = gh_json_lines(["api", "--paginate", f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews",
                              "--jq", ".[]"])
+    records = round_records(number)
     own = [(position, review) for position, review in enumerate(reviews)
            if (review.get("user") or {}).get("login") == reviewer_login
            and review.get("state") != "PENDING"]
@@ -191,14 +227,19 @@ def round_reviews(number, reviewer_login):
                       "Wait for merge-lane-2's review; run this again when it requests changes.")
     requested = [index for index, (_, review) in enumerate(own) if review.get("state") == "CHANGES_REQUESTED"]
     if requested:
-        anchor_position, anchor = own[requested[-1]]
+        _, anchor = own[requested[-1]]
         frozen_head = anchor.get("commit_id")
         if all(review.get("state") == "COMMENTED" and review.get("commit_id") == frozen_head
                for _, review in own[requested[-1] + 1:]):
-            others = [review for position, review in enumerate(reviews)
-                      if position != anchor_position and review.get("commit_id") == frozen_head
-                      and review.get("state") not in ("PENDING", "DISMISSED")]
-            return [anchor, *others], len({own[index][1].get("commit_id") for index in requested})
+            on_head = [review_ids for head, review_ids in records if head == frozen_head]
+            recorded = any(anchor.get("id") in review_ids for review_ids in on_head)
+            earlier_rounds = set().union(*(review_ids for review_ids in on_head
+                                           if anchor.get("id") not in review_ids))
+            round_list = [review for review in reviews
+                          if review.get("commit_id") == frozen_head and review.get("id") not in earlier_rounds
+                          and review.get("state") not in ("PENDING", "DISMISSED")]
+            return (anchor, round_list, recorded,
+                    round_count([own[index][1] for index in requested], records))
     latest = own[-1][1]
     on_commit = f" on commit {latest.get('commit_id')}" if latest.get("state") == "COMMENTED" else ""
     raise Refused(f"merge-lane-2's latest review of pull request {number} ({latest.get('html_url')}) "
@@ -230,14 +271,18 @@ def without_reposts(comments):
     return kept
 
 
-def blocking_findings(number, reviews):
+def latest_first(anchor, reviews):
+    return [anchor, *(review for review in reviews if review is not anchor)]
+
+
+def blocking_findings(number, anchor, reviews):
     comments_by_review = [gh_json_lines(["api", "--paginate",
                                          f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews/{review['id']}/comments",
                                          "--jq", ".[]"]) for review in reviews]
     marked_by_review = [marked(comments) for comments in comments_by_review]
     findings = without_reposts([comment for found in marked_by_review for comment in found])
-    named = review_links(reviews)
-    asked_about = reviews[0].get("html_url")
+    named = review_links(latest_first(anchor, reviews))
+    asked_about = anchor.get("html_url")
     whose = "its" if len(reviews) == 1 else f"the reviews {named}'"
     ask = ("Until merge-lane-2 answers, change nothing and push nothing.\n"
            f"Ask merge-lane-2 with SendMessage which findings block, naming its changes-requested review, "
@@ -253,11 +298,10 @@ def blocking_findings(number, reviews):
         if not stated:
             continue
         own = without_reposts(marked_by_review[index])
-        counted = own or without_reposts([comment for found in marked_by_review[index + 1:]
-                                          for comment in found])
+        counted = own or findings
         if int(stated.group(1)) != len(counted):
             where = ("its own inline comments" if own or len(reviews) == 1
-                     else "the inline comments of the reviews after it")
+                     else "the inline comments of the round's other reviews")
             raise Refused(f"The review {review.get('html_url')} says **Blocking: {stated.group(1)}**, "
                           f"but {len(counted)} of {where} start with {BLOCKING_MARKER_DESCRIPTION}"
                           + (f" ({named})" if len(reviews) > 1 else "") + ".\n"
@@ -272,18 +316,18 @@ def finding_place(comment):
 
 def round_facts(number, reviewer_login):
     url, head, branch = pull_request(number)
-    reviews, fix_round_number = round_reviews(number, reviewer_login)
-    review = reviews[0]
-    frozen_head = review.get("commit_id")
+    anchor, reviews, recorded, fix_round_number = round_reviews(number, reviewer_login)
+    frozen_head = anchor.get("commit_id")
     if not frozen_head:
-        raise StepFailed(f"merge-lane-2's review {review.get('html_url')} carries no commit_id")
-    return (url, head, branch, review_links(reviews), review.get("id"), frozen_head,
-            blocking_findings(number, reviews), fix_round_number)
+        raise StepFailed(f"merge-lane-2's review {anchor.get('html_url')} carries no commit_id")
+    return (url, head, branch, review_links(latest_first(anchor, reviews)), anchor.get("id"), frozen_head,
+            blocking_findings(number, anchor, reviews), fix_round_number,
+            None if recorded else [review.get("id") for review in reviews])
 
 
 def print_brief(number, reviewer_login):
     (url, head, branch, review_link, review_id, frozen_head, findings,
-     fix_round_number) = round_facts(number, reviewer_login)
+     fix_round_number, _unrecorded_review_ids) = round_facts(number, reviewer_login)
     if head != frozen_head:
         raise Refused(f"Pull request {url} has head {head}, but merge-lane-2 reviewed {frozen_head}; "
                       "a commit was pushed after the review, so this fix-round has already pushed.\n"
@@ -337,7 +381,8 @@ def print_brief(number, reviewer_login):
         f"8. When it passes with a commit not yet pushed, push once, with: git push origin HEAD:{shlex.quote(branch)}",
         "   Then run the same check command "
         "again. When it passes and prints a message for merge-lane-2, which it does at once if you "
-        "made no commit, send that message to merge-lane-2 with SendMessage.",
+        "made no commit, after recording on the pull request, in a comment, which reviews this round "
+        "answered, send that message to merge-lane-2 with SendMessage.",
         "9. If anything fails after the push, do not push again or rewrite the branch: tell "
         "merge-lane-2 with SendMessage what failed, and the next fix-round takes it.",
         "   If the push itself fails, do not retry it by force or rewrite the branch: tell "
@@ -464,7 +509,7 @@ def unnamed_files(base, fix_commit, findings):
 
 def check_round(number, reviewer_login, answers_path, commit_name, after_conflict_merge):
     (url, head, _branch, review_link, _review_id, frozen_head, findings,
-     _fix_round_number) = round_facts(number, reviewer_login)
+     _fix_round_number, unrecorded_review_ids) = round_facts(number, reviewer_login)
     answers = read_answers(answers_path or default_answers_path(number), len(findings))
     commit = git(["rev-parse", "--verify", f"{commit_name}^{{commit}}"]).strip()
     git(["cat-file", "-e", f"{frozen_head}^{{commit}}"])
@@ -496,6 +541,9 @@ def check_round(number, reviewer_login, answers_path, commit_name, after_conflic
     if leftovers:
         message += ["Files the fix commit changes that no blocking finding names: "
                     + ", ".join(leftovers) + ". Why each belongs: <fill in>"]
+    if commit == frozen_head and unrecorded_review_ids:
+        gh(["api", f"repos/{{owner}}/{{repo}}/issues/{number}/comments", "-f", "body=" + ROUND_RECORD_FORMAT.format(
+            frozen_head=frozen_head, review_ids=" ".join(map(str, unrecorded_review_ids)), program=PROGRAM)])
     lines += ["", "Send merge-lane-2 this message with SendMessage:", "", *message]
     print("\n".join(lines))
 

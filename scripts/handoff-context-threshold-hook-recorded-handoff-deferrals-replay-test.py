@@ -14,7 +14,9 @@ what the subagent's full transcript shows it did after that moment.
 Run: python3 scripts/handoff-context-threshold-hook-recorded-handoff-deferrals-replay-test.py
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -119,12 +121,30 @@ def counted(session, now=NOW):
         return f"raised {type(problem).__name__}: {problem}"
 
 
-def raises_could_not_read(session):
+def check_raises_could_not_read(case_name, session):
+    """Checks that the hook raises TranscriptCouldNotBeFullyRead; when it raises anything else, the
+    FAIL line names that exception and the suite goes on, as counted() does."""
     try:
         hook.work_in_flight(str(session), WAIT_SECONDS, now=NOW)
     except hook.TranscriptCouldNotBeFullyRead:
-        return True
-    return False
+        outcome = None
+    except Exception as problem:
+        outcome = f"raised {type(problem).__name__}: {problem}"
+    else:
+        outcome = "returned without raising"
+    check(case_name, outcome is None, outcome)
+
+
+def printed_by_check_raises_could_not_read(session):
+    """What check_raises_could_not_read() prints for the session, leaving the suite's failures untouched."""
+    failures_before = list(failures)
+    printed = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(printed):
+            check_raises_could_not_read("the checked case", session)
+    finally:
+        failures[:] = failures_before
+    return printed.getvalue()
 
 
 def run_synthetic_cases(workspace):
@@ -212,16 +232,16 @@ def run_synthetic_cases(workspace):
     own_path = hook.subagent_transcript_path(session, SUBAGENT_ID)
     own_path.write_bytes(b'{"type":"assistant","timestamp":"2026-10-30T20:59:00.000Z"}\n'
                          b'{"type":"assistant","note":"\xff\xfe"}\n')
-    check("an own transcript holding bytes that are not UTF-8 raises TranscriptCouldNotBeFullyRead",
-          raises_could_not_read(session))
+    check_raises_could_not_read("an own transcript holding bytes that are not UTF-8 raises "
+                                "TranscriptCouldNotBeFullyRead", session)
 
     session = session_with_interim_subagent(
         case_directory("own-transcript-bad-bytes-before-stale-newest-record"), [])
     own_path = hook.subagent_transcript_path(session, SUBAGENT_ID)
     own_path.write_bytes(b'{"type":"assistant","note":"\xff\xfe"}\n'
                          b'{"type":"assistant","timestamp":"2026-10-30T20:00:00.000Z"}\n')
-    check("bytes that are not UTF-8 before a stale newest record raise "
-          "TranscriptCouldNotBeFullyRead", raises_could_not_read(session))
+    check_raises_could_not_read("bytes that are not UTF-8 before a stale newest record raise "
+                                "TranscriptCouldNotBeFullyRead", session)
 
     session_bad_bytes = case_directory("session-transcript-bad-bytes-outside-records") / "session.jsonl"
     session_bad_bytes.parent.mkdir(parents=True, exist_ok=True)
@@ -237,8 +257,8 @@ def run_synthetic_cases(workspace):
     # No search permission makes stat() on the transcript fail with EACCES, not ENOENT.
     subagents_directory.chmod(0o600)
     try:
-        check("an own transcript whose lookup fails for a reason other than absence raises "
-              "TranscriptCouldNotBeFullyRead", raises_could_not_read(session))
+        check_raises_could_not_read("an own transcript whose lookup fails for a reason other than absence "
+                                    "raises TranscriptCouldNotBeFullyRead", session)
     finally:
         subagents_directory.chmod(0o700)
 
@@ -250,11 +270,30 @@ def run_synthetic_cases(workspace):
 
     hook.transcript_records.records_newest_first = reader_that_cannot_open
     try:
-        check("an own transcript that cannot be opened raises TranscriptCouldNotBeFullyRead",
-              raises_could_not_read(session))
+        check_raises_could_not_read("an own transcript that cannot be opened raises "
+                                    "TranscriptCouldNotBeFullyRead", session)
     finally:
         hook.transcript_records.records_newest_first = real_reader
 
+    session = session_with_interim_subagent(case_directory("own-transcript-reader-raises-value-error"), [])
+
+    def reader_that_raises_value_error(path):
+        raise ValueError("injected by this test")
+
+    hook.transcript_records.records_newest_first = reader_that_raises_value_error
+    try:
+        printed = printed_by_check_raises_could_not_read(session)
+    finally:
+        hook.transcript_records.records_newest_first = real_reader
+    check("a hook exception other than TranscriptCouldNotBeFullyRead prints a FAIL line naming the "
+          "case and the exception",
+          printed == "FAIL  the checked case  raised ValueError: injected by this test\n", repr(printed))
+
+    session = session_with_interim_subagent(case_directory("own-transcript-readable"), [
+        {"type": "assistant", "timestamp": utc_iso(NOW - timedelta(minutes=1))}])
+    printed = printed_by_check_raises_could_not_read(session)
+    check("a hook that raises nothing prints a FAIL line saying so",
+          printed == "FAIL  the checked case  returned without raising\n", repr(printed))
 
 def cut_copy(source_session, destination_directory, moment):
     """Copy a fixture session and its subagents' transcripts, each ending before its first record

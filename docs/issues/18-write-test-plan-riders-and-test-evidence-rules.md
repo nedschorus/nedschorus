@@ -45,7 +45,7 @@ Two rules the 2026-09-02 walk adopted, to be carried into the skill as concrete 
 - When adding or changing a test fixture that represents the output of an external system, run the real command first and generate the fixture from what it printed. If the command is unsafe to run directly, capture it in a sandbox and say so in the capture note — the fixture then proves what the sandbox does, not what the real system does. Never type, copy or infer those values from the code under test. Record the capture command and the machine it ran on beside the fixture. Without that capture, the test is not finished.
 - Do not merge a code path that neither the author nor a reviewer can execute. If nobody can run it, get an environment that can, or leave the path out.
 
-A third rule — at least one test per script that asks the real system on every run, rather than replaying a recording — was drafted four times and never reached wording the user accepted. It is the live-check half of rider 1 and is unresolved; the skill build is where it gets settled. The project's existing idiom for its absent-system case is the visible SKIP line, as in `scripts/clean-worktrees-test.py`.
+A third rule — at least one test per script that asks the real system on every run, rather than replaying a recording — was drafted four times and never reached wording the user accepted. It is the live-check half of rider 1 and is closed, replaced by the canary-test rules the user approved in items 19 to 32 of approval-walk md-skills-seat-open-decisions-2026-10-15 (minutes `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/md-skills-seat-open-decisions-2026-10-15-minutes.md`): a change needs a canary test when no test in the repository runs the real program to check a behaviour the change relies on, and a test in the repository that runs the real program counts, and is better. A scheduled-canary-test is kept, and a scheduled job reruns it. The project's existing idiom for its absent-system case is the visible SKIP line, as in `scripts/clean-worktrees-test.py`.
 
 ## 2026-09-16: code that runs only against a stand-in
 
@@ -95,13 +95,19 @@ The user, in approval-walk daily-memory-review-2026-10-09: a smoke test, a compr
 
 The cost of running a check decides which tier runs it, not whether the check is planned.
 
+## 2026-10-30: write-test-plan is a skill
+
+Whether write-test-plan is a skill at all, the question that came before the build, is settled. The user ruled on 2026-09-06, on the reboot-test seat's walk: "prose instructions are a skill only if used outside the state machine, e.g. at the user's request; instructions that exist only for a node are 'canned instructions', not skills." The state machine is design-to-main's. Planning tests is what design-to-main's `test-design-writing` node does, but as of 2026-10-30 design-to-main is not running, and every pull request is built outside it, by an author who plans its tests.
+
+On 2026-10-30 at 14:00 the user approved item 5 of approval-walk md-skills-seat-open-questions-from-item-2-carried-over-approval-walk-2026-10-28 (minutes `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/md-skills-seat-open-questions-from-item-2-carried-over-approval-walk-2026-10-28-minutes.md`, line 189). The choice he approved, as the item showed it (walk-document `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/md-skills-seat-open-questions-from-item-2-carried-over-approval-walk-2026-10-28.md`, line 232):
+
+> Choice 1: a skill, in `.claude/skills/write-test-plan/`, for any agent writing tests; the test-design-writing agent-instructions point to it.
+
+So the build produces a skill, `.claude/skills/write-test-plan/`, for any agent writing tests, and the agent-instructions of design-to-main's `test-design-writing` node, drafted at `docs/agents/queue/design-to-main-test-design-writing-agent-instructions.md`, point to it rather than repeating it.
+
 ## Next action
 
-One question comes before the build: whether write-test-plan is a skill at all.
-
-The user ruled on 2026-09-06, on the reboot-test seat's walk, that a capability belonging to a design-to-main node is that node's agent-instructions rather than a skill. Planning a test suite is what design-to-main's `test-design-writing` node does, and a draft of that node's agent-instructions already exists at `docs/agents/queue/design-to-main-test-design-writing-agent-instructions.md`.
-
-So settle that first, because the answer decides what the build produces: a `SKILL.md` under `.claude/skills/`, or agent-instructions under `docs/agents/`. Either way the riders in this file are the content.
+Build the skill `.claude/skills/write-test-plan/`, with the riders and rules in this file as its content. When it lands, the draft at `docs/agents/queue/design-to-main-test-design-writing-agent-instructions.md` points to it, and the failure-test rule held in CLAUDE.md moves into it, as "2026-10-10: a failure-test rule held in CLAUDE.md until this build lands" says. CLAUDE.md's "Before pushing" bullet words that rule today as "Code that handles a failure, such as an `except` block or an exit-code check, gets a test that causes that failure, checked by mutation testing."
 
 ## Evidence of record
 
