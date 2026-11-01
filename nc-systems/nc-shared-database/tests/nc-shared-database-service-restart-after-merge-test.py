@@ -7,8 +7,9 @@ a fake `systemctl` on PATH that records its arguments and succeeds or fails on
 request: a merge that changes the service restarts the unit, one that does not
 leaves it, a failed restart prints systemctl's error and exits 1, a checkout
 that is not the reference-checkout is left alone, and git failing to list the
-merge's changes is reported. A last case merges through the real post-merge
-hook in a checkout that is not ned-box's reference-checkout.
+merge's changes is reported. One case checks that the trigger files name the
+service file and exist. A last case merges through the real post-merge hook in
+a checkout that is not ned-box's reference-checkout, with nothing on stderr.
 
 Run: python3 nc-systems/nc-shared-database/tests/nc-shared-database-service-restart-after-merge-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -179,13 +180,22 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the reference-checkout by default is ned-box's",
           restarter.NED_BOX_REFERENCE_CHECKOUT == "/home/nedlern/Projects/nedschorus")
 
+    # The cases above commit to the tuple's own path, so they pass whatever path it names.
+    service_path = "nc-systems/nc-shared-database/nc-shared-database-service.py"
+    trigger_files = restarter.NC_SHARED_DATABASE_SERVICE_RESTART_AFTER_MERGE_TRIGGER_FILES
+    check("the merge restarts the service when the service file changes: the trigger files "
+          "name it, and each is a file of the repository",
+          service_path in trigger_files
+          and all((REPOSITORY_ROOT / f).is_file() for f in trigger_files),
+          trigger_files)
+
     commit_on_branch("service-again", restarter.NC_SHARED_DATABASE_SERVICE_RESTART_AFTER_MERGE_TRIGGER_FILES[0], "print('newer')")
     if systemctl_log.exists():
         systemctl_log.unlink()
     merged = git("merge", "--ff-only", "service-again", hooks=str(HOOKS_DIRECTORY))
     check("through the real post-merge hook, a merge in a checkout that is not ned-box's "
           "reference-checkout succeeds and restarts nothing",
-          merged.returncode == 0 and not systemctl_log.exists()
+          merged.returncode == 0 and merged.stderr == "" and not systemctl_log.exists()
           and git("rev-parse", "HEAD").stdout == git("rev-parse", "service-again").stdout,
           (merged.returncode, merged.stdout, merged.stderr))
 
