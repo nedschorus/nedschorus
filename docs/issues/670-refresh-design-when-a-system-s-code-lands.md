@@ -7,7 +7,19 @@ kind: design
 
 ## What is wanted
 
-Build **`refresh-design`**: the step that brings a system's three documents — its design, its build-slice plan and its overview — into line with what has landed on main since the last refresh, removing and never revising. The name is the user's coinage (walk of 2026-09-22, item 6). Nothing performs this step today.
+Build **`refresh-design`**: the step that brings a system's three documents — its design, its build-slice plan and its overview — into line with what has landed on main since the last refresh, removing and never revising. The name is the user's coinage (walk of 2026-09-22, item 6). Nothing performs this step today. The user's rulings of 2026-10-30 and 2026-10-31 make the refresh a nightly maintenance job that also fixes a stale line the code cannot show, as the section "What is decided: the refresh as a nightly maintenance job" says; where an older section below differs, the section "What is decided: the refresh as a nightly maintenance job" decides.
+
+## What is decided: the refresh as a nightly maintenance job
+
+The user ruled these on 2026-10-30 and 2026-10-31, as items 9.2, 9.3, 9.3.1 and 9.4 of prime-intellect's approval-walk prime-intellect-handed-over-items-2026-10-29. Its walk-document and walk-minutes, which record each answer with his words, are `docs/walk/prime-intellect-handed-over-items-2026-10-29.md` and `docs/walk/prime-intellect-handed-over-items-2026-10-29-minutes.md` in prime-intellect's checkout on ned-box, shipped to `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/` when the walk closes. He approved each item's recommendation, except item 9.4, whose answer the bullet "It is a maintenance job" gives.
+
+- **It covers designs as well as overviews, and fixes what the code cannot show (item 9.3.1, approved 2026-10-30).** A stale line that restates what the code shows, such as a list of files to read, is removed; a stale line about what the code cannot show, such as a reason or a decision, is fixed. This revises the rule of 2026-09-22 that a refresh removes and never revises. The user's words of 2026-10-30: "stale items should be either fixed or removed. It makes sense to remove design items which can simply be, here are the files you should read. [...] things that are not easily or not visibly not in the code or otherwise clear from reading the code have to be fixed."
+- **What is due (item 9.3.1).** Each document gets a `**Checked against:**` line when it is checked. A program lists a document as due when its system's code changed after that line's commit, or when it has no such line.
+- **How often, and when (items 9.3.1 and 9.2).** One document every 2 hours, the oldest check first. While the 5-hour usage limit lasts, the refresh runs only overnight: from the end of the full test run of main, which moves from 03:30 to 00:00 Pacific in GHI 1058's build, until 08:00 Pacific; after that, around the clock.
+- **It is a maintenance job (item 9.4, answered D on 2026-10-31).** The refresh becomes one of the maintenance jobs of GHI [Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user](https://github.com/nedschorus/nedschorus/issues/1058), and its questions go to the approval-walk of that GHI's nightly overseer agent-session. The overseer runs in tmux on ned-box with Remote Control on, and an iTerm2 window on the Mac, attached to its tmux session, opens each night. The recommendation built no Mac window; the user disapproved that recommendation, so the window opens: "It'd be safer to make it show up in Tmux Mac, just in case there's some message I need to see that doesn't get echoed in remote control."
+- **A question waits until the user answers it (item 9.3, approved 2026-10-30).** A question has no deadline and carries into the next night's continuation of the same approval-walk. This replaces the ruling of 2026-10-04, decision 2 of the supporting design `docs/issues/670-system-overview-refresh-agent-design.md`, that the waiting agent-session ends at 04:30 and the next night asks afresh.
+
+The supporting design `docs/issues/670-system-overview-refresh-agent-design.md` predates these rulings: its 05:00 start, its overview-only scope, its agent-session of its own in the tmux session `system-overview-refresh`, and its 04:30 end are replaced by them.
 
 **The glossary gets its entry only when the step exists.** The user's words, 2026-09-23: "I would not add this to the glossary yet. I'd try to keep the glossary true now, not true eventually. Instead I'd make a GHI for it, assuming there isn't one." Until it is built, this issue is where the definition lives. A search on 2026-09-23 found no issue for it: `scripts/ghi-guide-agent-ask.py --include-closed` over open and closed issues, and `gh issue list --state all --search 'refresh-design OR "refresh design" OR overview OR BIPP OR "design lifecycle"'`.
 
@@ -23,7 +35,7 @@ The walk's minutes are shipped at its close to the log-store as `nedlern@ned-box
 
 1. **A design is pinned to what landed (item 5, accepted).** It is not refined between design-to-main runs. It carries decisions, never build status: decisions do not go out of phase, descriptions of the build do. The evidence: `nc-systems/main-gatekeeper/main-gatekeeper-design.md` carries a `status:` line and an Implementation status block and has been patched out of phase; `nc-systems/handoff/handoff-design.md` carries neither and has taken no substantive edit since moving.
 2. **What a refresh is (item 6; the user: "Y but be careful").**
-   - **It removes; it never revises.** A change that revises a decision is a **redesign** — a full design-to-main run with its own five-verdict review (`scripts/design-to-main/design-to-main-state-tables-common.py`: reject design, contract, implementation, tests, test-design). Checkable: a refresh commit's diff is deletions plus the pinned line. His caution, in his words: "We ran into endless problems with designs chasing code, code and test code chasing design changes … once the code lands on main (ie pasts all test) then we can refresh the design."
+   - **It removes; it never revises.** Revised on 2026-10-30 by item 9.3.1, as the section "What is decided: the refresh as a nightly maintenance job" says: a stale line the code cannot show is fixed. A change that revises a decision is a **redesign** — a full design-to-main run with its own five-verdict review (`scripts/design-to-main/design-to-main-state-tables-common.py`: reject design, contract, implementation, tests, test-design). Checkable, before that revision: a refresh commit's diff is deletions plus the pinned line. His caution, in his words: "We ran into endless problems with designs chasing code, code and test code chasing design changes … once the code lands on main (ie pasts all test) then we can refresh the design."
    - **It runs at landing** (his word: "y").
    - **It refreshes all three documents.** His words: "Designs do go stale, that's why we need refresh-design (which probably should refresh all 3 documents)."
    - **The design does not move**, and each landing appends one pinned line carrying the **commit**, not only a date — so the next refresh's range is exact.
@@ -41,7 +53,7 @@ The walk's minutes are shipped at its close to the log-store as `nedlern@ned-box
 
 - **Design-to-main is not built** (its design, `docs/design-to-main/design-to-main-state-machine-design.md`, reads `status: design, not built`). So no landing fires a refresh today, and until it is built the supervisor's staleness check is the only trigger.
 - **The supervisor half belongs to the fleet seat**, which owns `nc-systems/handoff/` and the reincarnation cycle.
-- The pinned line's format is not yet fixed; the staleness check reads it, so the two are built together.
+- Item 9.3.1 of 2026-10-30 names the line a check adds `**Checked against:**`; its exact format, and whether it replaces the pinned line of the rulings above, are not yet fixed, and the program that lists due documents reads it, so the two are built together.
 
 ## What the first refresh by hand taught, 2026-09-23
 
@@ -65,7 +77,7 @@ The staleness check of item 5 is built: `nc-systems/handoff/handoff-supervisor.p
 
 ## Next action
 
-Settle the draft definition and the pinned line's format with the user, then build: the fleet seat builds the supervisor's staleness check; the refresh itself is built as a skill a subagent runs over one system and one commit range. Add the glossary entry in the pull request that makes the step exist.
+Build the refresh as a maintenance job of GHI 1058, after that GHI's nightly overseer, which is built first: the program that lists the documents due by their `**Checked against:**` line, and the refresh itself, one document every 2 hours overnight, as the section "What is decided: the refresh as a nightly maintenance job" says. Settle the draft definition and the line's format with the user first. Add the glossary entry in the pull request that makes the step exist.
 
 ## Provisional additions (not yet vetted by the user)
 
