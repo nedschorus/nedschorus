@@ -24,53 +24,51 @@ SYNTHETIC_ASSISTANT_MODEL = "<synthetic>"
 
 
 def first_user_turn_text(transcript_path: Path) -> str:
-    """Return the first non-meta user text, or "" if unreadable."""
-    try:
-        with transcript_path.open(encoding="utf-8", errors="replace") as stream:
-            for line in stream:
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if record.get("type") != "user" or record.get("isMeta"):
-                    continue
-                content = (record.get("message") or {}).get("content")
-                if isinstance(content, str):
-                    return content
-                if isinstance(content, list):
-                    return json.dumps(content)
-                return ""
-    except OSError:
-        pass
+    """Return the first non-meta user text, or "" when there is none.
+
+    Raise OSError when the transcript cannot be opened or read."""
+    with transcript_path.open(encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if record.get("type") != "user" or record.get("isMeta"):
+                continue
+            content = (record.get("message") or {}).get("content")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                return json.dumps(content)
+            return ""
     return ""
 
 
 def substantive_turn_count(transcript_path: Path) -> int:
-    """Count assistant turns with text or tool use, excluding harness messages."""
+    """Count assistant turns with text or tool use, excluding harness messages.
+
+    Raise OSError when the transcript cannot be opened or read."""
     # Replacing invalid UTF-8 preserves the death-path exit record when a transcript ends mid-character.
     count = 0
-    try:
-        with transcript_path.open(encoding="utf-8", errors="replace") as stream:
-            for line in stream:
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if record.get("type") != "assistant":
-                    continue
-                message = record.get("message") or {}
-                if message.get("model") == SYNTHETIC_ASSISTANT_MODEL:
-                    continue
-                content = message.get("content")
-                if isinstance(content, str) and content.strip():
-                    count += 1
-                elif isinstance(content, list) and any(
-                        x.get("type") == "tool_use"
-                        or (x.get("type") == "text" and x.get("text", "").strip())
-                        for x in content if isinstance(x, dict)):
-                    count += 1
-    except OSError:
-        pass
+    with transcript_path.open(encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if record.get("type") != "assistant":
+                continue
+            message = record.get("message") or {}
+            if message.get("model") == SYNTHETIC_ASSISTANT_MODEL:
+                continue
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                count += 1
+            elif isinstance(content, list) and any(
+                    x.get("type") == "tool_use"
+                    or (x.get("type") == "text" and x.get("text", "").strip())
+                    for x in content if isinstance(x, dict)):
+                count += 1
     return count
 
 
@@ -78,8 +76,9 @@ def newest_real_transcript(project_directory: Path):
     """Return (session id, path) for the newest real transcript, or (None, reason).
 
     A missing directory is a reason. Raise OSError when the directory exists but cannot be
-    listed, or a transcript in it cannot be stat'ed, because answering "no transcripts" then
-    would read a seat whose transcripts are unreadable as having nothing worth resuming."""
+    listed, or a transcript in it cannot be stat'ed or read, because answering "no transcripts"
+    or skipping that transcript would read a seat whose transcripts are unreadable as having
+    nothing worth resuming."""
     # Path.glob and Path.is_dir return nothing for a folder they cannot read; os.scandir raises.
     try:
         with os.scandir(project_directory) as entries:

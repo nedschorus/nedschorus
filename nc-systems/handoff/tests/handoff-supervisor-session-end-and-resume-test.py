@@ -1110,7 +1110,8 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     def supervise_a_seat_whose_sessions_die(case: str, deaths, stdin_isatty=True,
                                             adopted_session=None, handoffs_after_launches=(),
                                             resume_session_id="", seat_first_prompt=None,
-                                            transcripts_before_the_supervisor=None):
+                                            transcripts_before_the_supervisor=None,
+                                            transcripts_unreadable_after_launches=()):
         """Supervise a seat whose every session ends without a handoff.
 
         `deaths` is one (exit_code, substantive_turns_written) per launch, in
@@ -1129,6 +1130,9 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
         `successor-<generation>`. `transcripts_before_the_supervisor` maps a
         session id to the substantive turns its transcript already holds when
         the supervisor starts, which is what a startup resume resumes.
+        `transcripts_unreadable_after_launches` names launches, counted from 1,
+        after which that launch's transcript loses its read permission; 0 does
+        the same to the transcripts already there when the supervisor starts.
         """
         case_projects = workspace / f"death-resume-projects-{case}"
         case_projects.mkdir(parents=True, exist_ok=True)
@@ -1148,6 +1152,8 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
                     stream.write(json.dumps(
                         {"type": "assistant",
                          "message": {"model": "claude", "content": "work"}}) + "\n")
+            if 0 in transcripts_unreadable_after_launches:
+                (case_projects / f"{earlier_session_id}.jsonl").chmod(0o000)
         real_wait_for_handoff = supervisor.wait_for_handoff
 
         def wait_for_handoff(process, *arguments):
@@ -1170,9 +1176,11 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
                     stream.write(json.dumps(
                         {"type": "assistant",
                          "message": {"model": "claude", "content": "work"}}) + "\n")
+            if len(launches) in transcripts_unreadable_after_launches:
+                (case_projects / f"{session_id}.jsonl").chmod(0o000)
             return StubLaunchedSession(exit_code)
 
-        console, overran = io.StringIO(), ""
+        console, errors, overran, exit_status = io.StringIO(), io.StringIO(), "", None
         with supervisor_names_replaced(
                 launch_agent_session=launch,
                 project_directory_for_working_directory=lambda _: case_projects,
@@ -1182,15 +1190,17 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
                 carry_over_to_successor=lambda settings, retiring, fields, generation: (
                     f"successor-{generation}", None),
                 stdin_isatty=stdin_isatty), \
-                contextlib.redirect_stdout(console):
+                contextlib.redirect_stdout(console), contextlib.redirect_stderr(errors):
             try:
-                supervisor.supervise_sessions(settings)
-            except RuntimeError as overrun:
+                exit_status = supervisor.supervise_sessions(settings)
+            # A launch onto a transcript made unreadable cannot append to it.
+            except (RuntimeError, PermissionError) as overrun:
                 overran = str(overrun)
         state = supervisor.read_supervisor_state(settings.state_path)
         return SimpleNamespace(
             launches=launches, state_at_each_launch=state_at_each_launch,
-            printed=console.getvalue(), overran=overran, state=state,
+            printed=console.getvalue(), errors=errors.getvalue(), exit_status=exit_status,
+            overran=overran, state=state,
             record=supervisor.agent_exit_record_from_supervisor_state(state))
 
     # 1. A clean exit stops. The ruling: /exit or a headless turn ending is a
@@ -1330,6 +1340,38 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
           and not startup_working.overran,
           f"{startup_working.launches} {startup_working.overran} "
           f"{startup_working.printed[-400:]}")
+    # 5c. A transcript that cannot be read is not a transcript with no work: reading it as
+    # one would spend the resume budget on a guess, or resume a session the agent-binary
+    # cannot read.
+    if os.geteuid() == 0:
+        print("SKIP  UNREADABLE TRANSCRIPT: root can read any file")
+    else:
+        died_unreadable = supervise_a_seat_whose_sessions_die(
+            "deathunreadable", [(-15, 1)], transcripts_unreadable_after_launches=(1,))
+        check("UNREADABLE TRANSCRIPT: a death whose transcript cannot be read stops the "
+              "supervisor with exit 5, records the exit, and resumes nothing",
+              died_unreadable.exit_status == 5 and len(died_unreadable.launches) == 1
+              and not died_unreadable.overran and died_unreadable.record is not None,
+              f"{died_unreadable.exit_status} {died_unreadable.launches} "
+              f"{died_unreadable.overran} {died_unreadable.record}")
+        check("UNREADABLE TRANSCRIPT: and the stop is printed to stderr, naming the "
+              "transcript and the error",
+              "stopped" in died_unreadable.errors
+              and f"{died_unreadable.launches[0][0]}.jsonl" in died_unreadable.errors
+              and "Permission denied" in died_unreadable.errors, died_unreadable.errors)
+        resume_unreadable = supervise_a_seat_whose_sessions_die(
+            "startupresumeunreadable", [(-15, 0)], resume_session_id="crashed-session",
+            transcripts_before_the_supervisor={"crashed-session": 7},
+            transcripts_unreadable_after_launches=(0,))
+        check("UNREADABLE TRANSCRIPT: a --resume-session-id whose transcript cannot be read "
+              "stops the supervisor with exit 5 before launching",
+              resume_unreadable.exit_status == 5 and not resume_unreadable.launches
+              and not resume_unreadable.overran
+              and "crashed-session.jsonl" in resume_unreadable.errors
+              and "Permission denied" in resume_unreadable.errors,
+              f"{resume_unreadable.exit_status} {resume_unreadable.launches} "
+              f"{resume_unreadable.errors}")
+
     # The by-hand resume: no first prompt, no handoff, no recorded exit, and a
     # real transcript on disk, so the first launch resumes it.
     by_hand_workless = supervise_a_seat_whose_sessions_die(

@@ -918,11 +918,24 @@ def project_directory_for_working_directory(working_directory: Path) -> Path:
 
 
 def substantive_turn_count_of_session_transcript(session_id: str, working_directory: Path) -> int:
-    """Return the session's substantive turn count, or zero if unreadable."""
+    """Return the session's substantive turn count, or zero when the session wrote no transcript.
+
+    Raise OSError when the transcript exists but cannot be read."""
     # Launch prompts and synthetic error records grow the transcript without work and must not reset the budget.
     transcript_path = (project_directory_for_working_directory(working_directory)
                        / f"{session_id}.jsonl")
-    return worth_resuming.substantive_turn_count(transcript_path)
+    try:
+        return worth_resuming.substantive_turn_count(transcript_path)
+    except FileNotFoundError:
+        # A session that died before writing anything did no work.
+        return 0
+
+
+def transcript_unreadable_stop_message(session_id: str, error: OSError) -> str:
+    return (f"handoff-supervisor: stopped: whether session {session_id} did new work could not "
+            f"be decided, because its transcript could not be read: "
+            f"{error.filename}: {error.strerror}.\n"
+            f"When that file's permissions are fixed, start the seat again.")
 
 
 def queue_status_line(working_directory: Path) -> str:
@@ -2195,9 +2208,9 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         except OSError as error:
             # A fresh session's transcript would become the newest and bury the crashed one.
             print(f"handoff-supervisor: startup stopped: whether this seat has a transcript "
-                  f"worth resuming could not be decided, because {project_directory} could not "
-                  f"be read: {error.filename}: {error.strerror}.\n"
-                  f"When that folder's permissions are fixed, start the seat again.",
+                  f"worth resuming could not be decided, because a path in {project_directory} "
+                  f"could not be read: {error.filename}: {error.strerror}.\n"
+                  f"When that path's permissions are fixed, start the seat again.",
                   file=sys.stderr)
             return 5
         if by_hand_session_id is not None:
@@ -2256,9 +2269,13 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             )
             if next_launch_resumes_the_session:
                 consecutive_resumes_without_new_work += 1
-                substantive_turns_at_the_last_resume = (
-                    substantive_turn_count_of_session_transcript(
-                        session_id, settings.working_directory))
+                try:
+                    substantive_turns_at_the_last_resume = (
+                        substantive_turn_count_of_session_transcript(
+                            session_id, settings.working_directory))
+                except OSError as error:
+                    print(transcript_unreadable_stop_message(session_id, error), file=sys.stderr)
+                    return 5
             else:
                 consecutive_resumes_without_new_work = 0
                 substantive_turns_at_the_last_resume = None
@@ -2286,8 +2303,14 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             print(f"handoff-supervisor: {death.reason}")
             if death.resume:
                 # Only substantive work restores the resume budget; launch bookkeeping must not sustain a loop.
-                substantive_turns = substantive_turn_count_of_session_transcript(
-                    session_id, settings.working_directory)
+                try:
+                    substantive_turns = substantive_turn_count_of_session_transcript(
+                        session_id, settings.working_directory)
+                except OSError as error:
+                    record_agent_exit_in_supervisor_state(settings.state_path, state,
+                                                          process.returncode)
+                    print(transcript_unreadable_stop_message(session_id, error), file=sys.stderr)
+                    return 5
                 if (substantive_turns_at_the_last_resume is None
                         or substantive_turns > substantive_turns_at_the_last_resume):
                     consecutive_resumes_without_new_work = 0
