@@ -106,7 +106,9 @@ OUTPUT: {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
 a block's reason reaches neither the agent nor the user's window, only the
 terminal the session runs in. The text opens with one line naming the answer
 and the approval-walk item it answers, or saying no approval-walk is open;
-then the answer's lines.
+then the answer's lines; while an approval-walk is open, or the walk state
+cannot be read, a last line gives the check step's --user-reply-as-typed flag
+with the prompt, its whitespace runs squeezed, quoted for the shell.
 
 WHEN READING THE WALK STATE FAILS, such as a minutes file that is not UTF-8,
 the first line says so and why, and the text gives the answer's lines both for
@@ -122,6 +124,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -182,6 +185,9 @@ WALK_UNKNOWN_FIND = (
     "waiting item, and a value other than `none` or `closed` marks the approval-walk open.")
 IF_WALK_OPEN = "If an approval-walk is open:"
 IF_NO_WALK = "If no approval-walk is open:"
+USER_REPLY_LINE = (
+    "If you run the check step for this answer, give each run `--user-reply-as-typed {reply}`, the user's reply "
+    "as he typed it, which check writes into the minutes beside the answer it counts as.")
 
 # The walk-me-through skill's text for Aa, word for word; the hook's test checks SKILL.md still holds it.
 AA_SKILL_TEXT = (
@@ -778,6 +784,8 @@ def output_for(payload):
     if named_item_missing(answer, walk, walk_error):
         return None
     context = context_for(answer, walk, walk_error)
+    if walk is not None or walk_error is not None:
+        context += "\n" + USER_REPLY_LINE.format(reply=shlex.quote(" ".join(payload["prompt"].split())))
     return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}
 
 
