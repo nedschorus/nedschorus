@@ -731,6 +731,8 @@ def check_flags(arguments):
         flags += " --deferred"
     if arguments.moved_on_no_decision:
         flags += " --moved-on-no-decision"
+    if arguments.moved_on is not None:
+        flags += f" --moved-on {shlex.quote(arguments.moved_on)}"
     if arguments.option is not None:
         flags += f" --option {arguments.option}"
     if arguments.not_asked is not None:

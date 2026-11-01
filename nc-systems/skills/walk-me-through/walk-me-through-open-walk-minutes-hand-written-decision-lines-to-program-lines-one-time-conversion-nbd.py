@@ -16,7 +16,9 @@ reading count it the same way:
   line by its number and its opening words, with `<rejected>` when that line
   carries `<rejected>` or opens with disapproved or rejected, and `<accepted>`
   otherwise; one that carries `<moved on, no decision>` becomes the close step's
-  moved-on line instead;
+  moved-on line instead, also when a later `<revised, awaiting ruling>` line
+  undid it in the old reading and no later line decides the item, since an item
+  that asked for no decision awaits no ruling;
 - a deferral becomes the close step's deferral line, or its second-deferral line
   when the item already has a deferral; a deferral of an item either reading
   counts as decided is left alone, since the walk never names a decided item;
@@ -113,8 +115,9 @@ def says_outcome(pattern, line):
 
 def old_reading(program, walk_finder, text, parser):
     """Return (item -> (line index, line) of the last line that left it decided, item -> [(line index, line)] of
-    each line that deferred it), as the old reading counted them."""
-    decided_by, deferred_by = {}, collections.defaultdict(list)
+    each line that deferred it, item -> (line index, line) of a move-on line that a later awaiting-ruling line
+    undid), as the old reading counted them."""
+    decided_by, deferred_by, undone_move_on = {}, collections.defaultdict(list), {}
     for index, line in enumerate(walk_finder.prose_lines(text, parser)):
         if program.ANSWER_LINE.match(line):
             continue
@@ -131,7 +134,11 @@ def old_reading(program, walk_finder, text, parser):
         defers = bool(first) and first[1].lower() == "deferred"
         if AWAITING_RULING in outcomes:
             for item in items:
-                decided_by.pop(item, None)
+                source = decided_by.pop(item, None)
+                if source and MOVED_ON_TAG in {tag.strip().lower() for tag in OUTCOME_TAG.findall(source[1])}:
+                    undone_move_on[item] = source
+                elif source:
+                    undone_move_on.pop(item, None)
         elif outcomes & DECIDING_OUTCOMES:
             decided_by.update((item, (index, line)) for item in items)
             defers = False
@@ -143,7 +150,7 @@ def old_reading(program, walk_finder, text, parser):
         if defers:
             for item in items:
                 deferred_by[item].append((index, line))
-    return decided_by, deferred_by
+    return decided_by, deferred_by, undone_move_on
 
 
 def excerpt(line):
@@ -200,7 +207,7 @@ def walk_total(walk_finder, text, parser):
 
 def expected_reading(program, walk_finder, parser, text, skipped_lines):
     """Return (items decided, Counter of deferrals) as the old reading reads text, without the skipped lines."""
-    decided_by, deferred_by = old_reading(program, walk_finder, text, parser)
+    decided_by, deferred_by, _ = old_reading(program, walk_finder, text, parser)
     decided = {item for item, (index, _) in decided_by.items() if index + 1 not in skipped_lines}
     deferrals = collections.Counter({item: sum(index + 1 not in skipped_lines for index, _ in sources)
                                      for item, sources in deferred_by.items() if item not in decided})
@@ -217,8 +224,12 @@ def unconverted(program, walk_finder, parser, text, expected):
 
 def proposals(program, walk_finder, parser, text, skipped_lines, moved_on_lines=frozenset()):
     """Return ([(line index, line, item, proposed line)], [NOTE text]) for one walk-minutes file's text."""
-    decided_by, deferred_by = old_reading(program, walk_finder, text, parser)
+    decided_by, deferred_by, undone_move_on = old_reading(program, walk_finder, text, parser)
     decided_by = {item: source for item, source in decided_by.items() if source[0] + 1 not in skipped_lines}
+    # An item that asked for no decision awaits no ruling, so rewriting it does not reopen it.
+    for item, source in undone_move_on.items():
+        if item not in decided_by and source[0] + 1 not in skipped_lines:
+            decided_by[item] = source
     new_decided, new_deferrals = program.minutes_record(walk_finder, text, parser)
     total = walk_total(walk_finder, text, parser)
     found, notes = [], []

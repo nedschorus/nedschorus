@@ -158,6 +158,58 @@ def test_a_write_whose_appended_deciding_line_the_check_program_does_not_read_is
           output.getvalue())
 
 
+# From agent-instructions-editor's walk-minutes, lines 35-37 and 40: no-decision items moved on from, then rewritten.
+REVISED_NO_DECISION_MINUTES = """# Minutes
+
+Item 3.1 of 29: shown; it needs no answer. <moved on, no decision>
+Item 3.2 of 29: shown; it needs no answer. <moved on, no decision>
+Item 3.3 of 29: shown; it needs no answer. <moved on, no decision>
+#next_to_present item 3.4 of 29
+- Items 3.1 to 3.4 rewritten from the 2026-10-27 surveys (synthesis report.md); one advisor round was enough. <revised, awaiting ruling>
+item 3.4 of 29: approved; every text the change adds has had a fast read. <accepted>
+#next_to_present item 4 of 29
+"""
+
+
+def test_a_hand_written_move_on_that_a_later_revision_undid_is_proposed_as_a_move_on():
+    path = minutes_file("revised-no-decision", REVISED_NO_DECISION_MINUTES)
+    result = run("--minutes", str(path), "--write")
+    check_program = load(CHECK_PROGRAM, "check_program_revised_no_decision")
+    finder = check_program.load_walk_finder()
+    decided, _ = check_program.minutes_record(finder, path.read_text(), finder.markdown_parser())
+    expected = [f'item 3.{n} of 29: moved on, no decision: the hand-written minutes line {n + 2}, "Item 3.{n} of 29: '
+                f'shown; it needs no answer. <moved on, no decision>"; the walk does not come back to it. '
+                f'<moved on, no decision>' for n in (1, 2, 3)]
+    check("a hand-written move-on line that a later <revised, awaiting ruling> line undid, with nothing deciding the "
+          "item after it, is converted to the close step's moved-on line, and the check program then counts the item",
+          result.returncode == 0 and "FAILED" not in result.stdout
+          and [line[len("  append: "):] for line in result.stdout.split("\n")
+               if line.startswith("  append: ")] == expected
+          and decided == {"3.1", "3.2", "3.3", "3.4"}, described(result) + path.read_text())
+    path = minutes_file("revised-no-decision-skip", REVISED_NO_DECISION_MINUTES)
+    result = run("--minutes", str(path), "--skip", f"{path}:4")
+    check("--skip on an undone hand-written move-on line drops its proposal and keeps the others",
+          result.returncode == 0 and "item 3.2 of 29" not in result.stdout
+          and "item 3.1 of 29: moved on" in result.stdout and "item 3.3 of 29: moved on" in result.stdout,
+          described(result))
+    text = ("# Minutes\n\nItem 3.1 of 29: shown; it needs no answer. <moved on, no decision>\n"
+            "- Item 3.1 of 29 rewritten. <revised, awaiting ruling>\nItem 3.1 of 29: approved. <accepted>\n"
+            "- Item 3.1 of 29 rewritten again. <revised, awaiting ruling>\n#next_to_present item 3.1 of 29\n")
+    path = minutes_file("revised-twice", text)
+    result = run("--minutes", str(path))
+    check("a move-on line undone, then a later decision undone too, proposes nothing: the later rewrite reopened "
+          "an item that asked for a decision",
+          result.returncode == 0 and result.stdout.startswith(f"== {path}: 0 lines to append"), described(result))
+    text = ("# Minutes\n\nItem 3.1 of 29: shown; it needs no answer. <moved on, no decision>\n"
+            "- Item 3.1 of 29 rewritten. <revised, awaiting ruling>\nItem 3.1 of 29: approved. <accepted>\n"
+            "#next_to_present item 3.2 of 29\n")
+    path = minutes_file("revised-then-approved", text)
+    result = run("--minutes", str(path))
+    check("a move-on line undone, then a later hand-written approval, proposes the approval, not the move on",
+          result.returncode == 0 and 'append: item 3.1 of 29: already decided by the hand-written minutes line 5'
+          in result.stdout and "moved on, no decision: the hand-written" not in result.stdout, described(result))
+
+
 def test_a_skipped_line_proposes_nothing():
     path = minutes_file("skip")
     result = run("--minutes", str(path), "--skip", f"{path}:10", "--skip", f"{path}:8")

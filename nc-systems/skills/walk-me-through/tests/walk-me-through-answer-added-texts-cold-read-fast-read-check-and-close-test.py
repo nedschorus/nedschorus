@@ -912,7 +912,13 @@ def test_only_a_line_the_program_writes_records_a_decision_or_a_deferral():
             ("item 2 of 5: settled without asking the user, moved on, no decision: x (2026-10-29 10:00), which "
              "makes no change.\n", (set(), {}), "check's answer line for a move on records nothing"),
             ("Items 4 to 2 of 5: approved; every text the change adds has had a fast read. <accepted>\n",
-             (set(), {}), "a close-form line naming a backwards range records nothing")):
+             (set(), {}), "a close-form line naming a backwards range records nothing"),
+            ("item 3 of 9: deferred; it moves to just before the summary item. <open> later he approved it\n",
+             (set(), {}), "close's deferral line with words after its end records nothing"),
+            ("item 3 of 9: part 1 approved <accepted>; every text the change adds has had a fast read.(later revised)\n",
+             (set(), {}), "close's parts line with words after its end records nothing"),
+            ("item 3 of 9: moved on; the item asked for no decision. <moved on, no decision> but he asked again\n",
+             (set(), {}), "close's moved-on line with words after its end records nothing")):
         decided, deferrals = program.minutes_record(walk_finder, line, parser)
         check(case_name, (decided, dict(deferrals)) == expected, repr((decided, deferrals)))
 
@@ -2125,6 +2131,12 @@ def test_the_rerun_command_a_refusal_prints_keeps_the_answer_flag():
         check(f"check {flags} on a `#case_against` line with no rating is refused with a rerun command that keeps "
               f"{flag}", result.returncode == 1 and f"check {flags} --user-reply-as-typed a` again." in result.stderr,
               described(result))
+    case = Case(document=unrated)
+    result = case.run("check", "--moved-on", "the item was withdrawn")
+    check("check --moved-on on a `#case_against` line with no rating is refused with a rerun command that keeps "
+          "--moved-on and its reason",
+          result.returncode == 1 and "check --moved-on 'the item was withdrawn'` again." in result.stderr,
+          described(result))
 
 
 def test_a_reply_given_with_not_asked_is_refused_writing_nothing():
