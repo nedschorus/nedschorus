@@ -114,6 +114,50 @@ def test_a_held_answer_whose_new_item_is_decided_takes_that_items_outcome():
                   f"{outcome}"], described(result))
 
 
+def test_a_held_answer_whose_new_item_only_a_hand_written_line_decides_is_converted_in_the_same_run():
+    for outcome in ("<accepted>", "<rejected>"):
+        word = "approved" if outcome == "<accepted>" else "disapproved"
+        text = ("# Minutes\n\nitem 6 of 29: answer held: item 6.1 of 30, raised by a fast-read finding, waits for the "
+                f"user's answer. <open>\nItem 6.1 of 30: {word}. {outcome}\n#next_to_present item 7 of 30\n")
+        path = minutes_file(f"held-hand-written-{word}", text)
+        result = run("--minutes", str(path), "--write")
+        check_program = load(CHECK_PROGRAM, f"check_program_held_{word}")
+        finder = check_program.load_walk_finder()
+        decided, _ = check_program.minutes_record(finder, path.read_text(), finder.markdown_parser())
+        check(f"a held item whose new item only a hand-written {word} line decides is converted in the same run, "
+              f"{outcome}, with the new item, and the run exits 0",
+              result.returncode == 0 and decided == {"6", "6.1"} and "FAILED" not in result.stdout
+              and f"item 6 of 30: already decided by the user's answer to item 6.1 of 30, which the hand-written "
+                  f"minutes line 3" in path.read_text()
+              and path.read_text().rstrip().split("\n")[-2].endswith(outcome),
+              described(result) + path.read_text())
+
+
+def test_a_write_whose_appended_deciding_line_the_check_program_does_not_read_is_reported_as_failed():
+    text = ("# Minutes\n\nitem 6 of 29: answer held: item 6.1 of 30, raised by a fast-read finding, waits for the "
+            "user's answer. <open>\nItem 6.1 of 30: approved. <accepted>\n#next_to_present item 7 of 30\n")
+    path = minutes_file("held-unread", text)
+    script = load(SCRIPT, "conversion_held_unread")
+    check_program = load(CHECK_PROGRAM, "check_program_held_unread")
+    real_record = check_program.minutes_record
+    reads = []
+
+    def record_missing_item_6_after_the_write(*arguments):
+        decided, deferrals = real_record(*arguments)
+        reads.append(1)
+        return (decided - {"6"} if len(reads) > 1 else decided), deferrals
+
+    check_program.minutes_record = record_missing_item_6_after_the_write
+    script.load_walk_me_through_check_program_module = lambda: check_program
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        status = script.main(["--minutes", str(path), "--write"])
+    check("a held item the run appended a deciding line for, which the new reading then does not count, is a FAILED "
+          "line and exit 1",
+          status == 1 and "FAILED: " in output.getvalue() and "item 6 reads as less decided" in output.getvalue(),
+          output.getvalue())
+
+
 def test_a_skipped_line_proposes_nothing():
     path = minutes_file("skip")
     result = run("--minutes", str(path), "--skip", f"{path}:10", "--skip", f"{path}:8")

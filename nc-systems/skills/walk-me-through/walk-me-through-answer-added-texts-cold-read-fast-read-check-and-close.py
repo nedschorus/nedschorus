@@ -11,7 +11,7 @@ Usage, from the agent-session's checkout:
       [--obvious | --after-advisor | --disapproved | --deferred | --option N
        | --part-answer N=ANSWER ... | --moved-on-no-decision | --not-asked KIND
        | --already-decided USER_RULING | --moved-on REASON]
-      --user-reply-as-typed REPLY    (every answer but --not-asked, which takes none)
+      --user-reply-as-typed REPLY    (every answer but --not-asked, --already-decided and --moved-on)
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py close
 
 The answer is an approval, A, unless a flag says otherwise: --obvious for AO,
@@ -31,12 +31,13 @@ item that asks for no decision, such as a summary item: it needs no
 `#case_against` line, runs no fast read, and close records the item as `<moved on, no
 decision>`.
 
-Every answer but --not-asked needs --user-reply-as-typed, the user's reply
+Every answer but --not-asked, --already-decided and --moved-on, which record an
+item the user is not shown, needs --user-reply-as-typed, the user's reply
 exactly as he typed it; check writes it, its whitespace runs squeezed to single
 spaces, into the answer line right after the date, as in `in his words "a
 trivial - a bit longer doesn't matter."`, so that the minutes keep a
 remark that rides with the answer. A check without it is refused, writing
-nothing, and so is one that gives it with --not-asked. A reply that is a
+nothing, and so is one that gives it with any of those three. A reply that is a
 navigation word alone, next, N, continue or go, whatever its case and any
 trailing period or exclamation mark, is refused for every answer but
 --moved-on-no-decision, writing nothing: it approves nothing, and the
@@ -161,7 +162,8 @@ order, a once-deferred item placed just before the summary item, from the item
 after the answered one, and round again from the first, the first item the
 minutes do not record; `none, closed` when there is none. Only a line CLOSE
 writes records anything: a line for an answer that took effect, for answers to
-parts, for --already-decided or for --moved-on decides its items; a line for a
+parts, for --moved-on-no-decision, for --already-decided or for --moved-on
+decides its items; a line for a
 deferral defers its items once. Every other line records nothing, whatever it
 says, an agent's note included, so that a note such as `Items 3 to 5 revised
 (item 3 is the change he approved today)` leaves items 3 to 5 waiting; CHECK's
@@ -365,7 +367,8 @@ def after_the_items_pattern(template):
 
 
 DECIDING_LINES = tuple(after_the_items_pattern(template) for template in (
-    CLOSE_TOOK_EFFECT_MINUTES, CLOSE_PARTS_TOOK_EFFECT_MINUTES, CLOSE_ALREADY_DECIDED_MINUTES, CLOSE_MOVED_ON_MINUTES))
+    CLOSE_TOOK_EFFECT_MINUTES, CLOSE_PARTS_TOOK_EFFECT_MINUTES, CLOSE_ALREADY_DECIDED_MINUTES, CLOSE_MOVED_ON_MINUTES,
+    CLOSE_MOVED_ON_NO_DECISION_MINUTES))
 DEFERRING_LINES = tuple(after_the_items_pattern(template)
                         for template in (CLOSE_DEFERRED_MINUTES, CLOSE_DEFERRED_AGAIN_MINUTES))
 SUMMARY_HEADING = re.compile(r"\bof\s+\d+\b[*_\s:.\-\u2013\u2014]*summary\b", re.I)
@@ -396,9 +399,9 @@ USER_WORDS_MISSING = (
     "Run `python3 {program} check{flags} --user-reply-as-typed <his reply>` with the user's reply exactly as he "
     "typed it, quoted for the shell, as in `--user-reply-as-typed 'a but trivial'`.")
 USER_WORDS_NOT_ASKED = (
-    "nothing written: --user-reply-as-typed was given with --not-asked, but an item settled without asking the "
+    "nothing written: --user-reply-as-typed was given with {flag}, but an item settled without asking the "
     "user has no reply of his to record.\n"
-    "If the user did answer the item, run check with the flag for his answer instead of --not-asked.\n"
+    "If the user did answer the item, run check with the flag for his answer instead of {flag}.\n"
     "Otherwise run check again without --user-reply-as-typed.")
 NAVIGATION_WORD_REFUSED = (
     "nothing written: the user's reply \"{words}\" is a navigation word alone, which does not approve, disapprove "
@@ -890,9 +893,12 @@ def check(arguments):
             value=f"item <number>{f' of {total}' if total else ''}")))
     words = " ".join((arguments.user_reply_as_typed or "").split())
     program = Path(__file__).resolve()
-    if arguments.not_asked is not None and words:
-        raise Failure(USER_WORDS_NOT_ASKED)
-    if arguments.not_asked is None and not words:
+    not_shown_flag = ("--not-asked" if arguments.not_asked is not None
+                      else "--already-decided" if arguments.already_decided is not None
+                      else "--moved-on" if arguments.moved_on is not None else None)
+    if not_shown_flag and words:
+        raise Failure(USER_WORDS_NOT_ASKED.format(flag=not_shown_flag))
+    if not not_shown_flag and not words:
         raise Failure(USER_WORDS_MISSING.format(program=program, flags=check_flags(arguments)))
     if NAVIGATION_WORD_ALONE.match(words) and not arguments.moved_on_no_decision:
         raise Failure(NAVIGATION_WORD_REFUSED.format(words=words, item=item, answered=answered_word(arguments),
@@ -1170,7 +1176,7 @@ def main(argv=None):
                              "walk-me-through skill's list of items that need no answer, if its evidence lines pass")
     parser.add_argument("--user-reply-as-typed", metavar="REPLY",
                         help="check: the user's reply exactly as he typed it, written into the minutes beside the "
-                             "answer; needed for every answer but --not-asked")
+                             "answer; needed for every answer but --not-asked, --already-decided and --moved-on")
     parser.add_argument("--cwd", default=os.getcwd(), help="a directory in the walk's checkout")
     parser.add_argument("--cold-read-records", type=Path, action="append",
                         help="a cold-read-records directory to search instead of the defaults; repeatable")

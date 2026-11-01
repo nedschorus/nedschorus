@@ -20,11 +20,12 @@ reading count it the same way:
 - a deferral becomes the close step's deferral line, or its second-deferral line
   when the item already has a deferral; a deferral of an item either reading
   counts as decided is left alone, since the walk never names a decided item;
-- an item whose answer the close step held for a new item, which neither
-  reading counts as decided once that new item is decided, since the old close
-  left recording it to the agent, becomes the close step's already-decided line
-  citing the new item's answer, `<rejected>` when the close line deciding the
-  new item carries `<rejected>` and `<accepted>` otherwise.
+- an item a held-answer line holds for a new item becomes the close step's
+  already-decided line, citing the user's answer to the new item, once the new
+  reading counts the new item as decided, by a line already there or by one
+  this run proposes, and nothing decides the held item; that line carries
+  `<rejected>` when the close line deciding the new item carries `<rejected>`,
+  and `<accepted>` otherwise.
 It also prints, as NOTE lines, each item the new reading counts as decided that
 the old one did not, since a hand-written `<revised, awaiting ruling>` line no
 longer undoes a decision; it proposes nothing for those.
@@ -50,7 +51,8 @@ everything already there, then a `#walk_minutes_hand_written_lines_converted`
 line, which makes any later run leave the file alone; it changes no other line.
 It then reads the file again and prints FAILED for each item the new reading
 counts as less decided, or less often deferred, than the old reading counted it
-before the write, other than through a skipped line.
+before the write, other than through a skipped line, and for each item it
+appended a deciding line for that the new reading still counts as undecided.
 
 It does not handle: a minutes file whose walk-document is gone, since the line
 it writes names the item with the walk's count from the `#next_to_present` line
@@ -58,11 +60,14 @@ alone; or an item whose old reading came from a line that both decides and
 names other items, beyond writing one line per item. It can fail by proposing a
 line for a hand-written note the old reading misread, such as a note that says
 an item was approved in an earlier walk; that is why it is a dry run first and
-why --skip exists. A wrong appended line is undone by deleting it. It writes
+why --skip exists. A wrong appended line is undone by deleting it; to run the
+script on that file again, also delete its
+`#walk_minutes_hand_written_lines_converted` line. It writes
 only to the walk-minutes it names, and only with --write.
 
-Exit 0 when every file was read and, with --write, every item now reads alike;
-exit 1, after a FAILED line, otherwise.
+Exit 0 when every file was read and, with --write, no item reads as less
+decided or less often deferred than before, and every item it appended a
+deciding line for reads as decided; exit 1, after a FAILED line, otherwise.
 """
 import argparse
 import collections
@@ -162,15 +167,20 @@ def proposed_line(program, item_text, index, line, moved_on=False):
         outcome=program.OUTCOMES[program.DISAPPROVED if rejected else program.APPROVED])
 
 
-def new_items_rejected(program, walk_finder, parser, text, new_items):
-    """Return whether the last line the close step wrote deciding any of new_items carries `<rejected>`."""
+def decides(program, line):
+    """Return whether line is one the close step writes that decides the items it names."""
+    match = program.PROGRAM_LINE_ITEMS.match(line)
+    return bool(match) and any(pattern.match(line[match.end():]) for pattern in program.DECIDING_LINES)
+
+
+def new_items_rejected(program, walk_finder, lines, new_items):
+    """Return whether the last of lines that the close step writes deciding any of new_items carries `<rejected>`."""
     last = None
-    for line in walk_finder.prose_lines(text, parser):
-        match = program.PROGRAM_LINE_ITEMS.match(line)
-        if not match or not any(pattern.match(line[match.end():]) for pattern in program.DECIDING_LINES):
+    for line in lines:
+        if not decides(program, line):
             continue
         try:
-            items, _ = walk_finder.parse_items(match[1])
+            items, _ = walk_finder.parse_items(program.PROGRAM_LINE_ITEMS.match(line)[1])
         except walk_finder.UnusableRange:
             continue
         if set(items) & set(new_items):
@@ -241,6 +251,10 @@ def proposals(program, walk_finder, parser, text, skipped_lines, moved_on_lines=
             recorded += 1
             found.append((index, line, item, template.format(item=item_text(item))))
     proposed_items = {item for _, _, item, _ in found}
+    # A new item may be decided only by a line proposed above, which is appended after every line already there.
+    proposed_decisions = [proposed for _, _, _, proposed in found if decides(program, proposed)]
+    decided_once_written = new_decided | {item for _, _, item, proposed in found if decides(program, proposed)}
+    written_lines = list(walk_finder.prose_lines(text, parser)) + proposed_decisions
     for index, line in enumerate(walk_finder.prose_lines(text, parser)):
         held = program.HELD_ANSWER_LINE.match(line)
         if not held or index + 1 in skipped_lines:
@@ -250,9 +264,9 @@ def proposals(program, walk_finder, parser, text, skipped_lines, moved_on_lines=
             new_items, _ = walk_finder.parse_items(held[2])
         except walk_finder.UnusableRange:
             continue
-        if not set(new_items) <= new_decided:
+        if not set(new_items) <= decided_once_written:
             continue
-        outcome = program.OUTCOMES[program.DISAPPROVED if new_items_rejected(program, walk_finder, parser, text,
+        outcome = program.OUTCOMES[program.DISAPPROVED if new_items_rejected(program, walk_finder, written_lines,
                                                                               new_items) else program.APPROVED]
         for item in held_items:
             if item in new_decided or item in proposed_items or item in decided_by:
@@ -326,11 +340,13 @@ def main(argv=None):
         for note in notes:
             print(note)
         if arguments.write and found:
-            expected = expected_reading(program, walk_finder, markdown, text, skipped)
+            decided, deferrals = expected_reading(program, walk_finder, markdown, text, skipped)
+            expected = (decided | {item for _, _, item, proposed in found if decides(program, proposed)}, deferrals)
             program.append_to_minutes(minutes, [proposed for _, _, _, proposed in found] + [CONVERTED_MARKER])
             for item in unconverted(program, walk_finder, markdown, minutes.read_text(encoding="utf-8"), expected):
-                print(f"FAILED: {minutes}: after the write, item {item} reads as less decided or less deferred than "
-                      f"the old reading read it; delete the lines this run appended and report it.")
+                print(f"FAILED: {minutes}: after the write, item {item} reads as less decided or less often deferred than "
+                      f"this run expected; delete the `append:` lines printed above for this file and the "
+                      f"`{CONVERTED_MARKER}` line after them, then report this FAILED line.")
                 failed = True
     return 1 if failed else 0
 

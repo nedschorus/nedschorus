@@ -212,7 +212,7 @@ class Case:
             ignored_signal=None, reply="a"):
         """Run the program; a check gets `--user-reply-as-typed reply` unless reply is None or the flags
         hold --not-asked or a reply of their own."""
-        if step == "check" and reply is not None and not {"--not-asked", "--user-reply-as-typed"} & set(flags):
+        if step == "check" and reply is not None and not {"--not-asked", "--already-decided", "--moved-on", "--user-reply-as-typed"} & set(flags):
             flags = (*flags, "--user-reply-as-typed", reply)
         environment = dict(environment or os.environ, STAND_IN_MODE=mode, STAND_IN_CALLS=str(self.calls),
                            STAND_IN_RECORDS=str(self.records), TMPDIR=str(self.temporary_directory))
@@ -2046,6 +2046,9 @@ def test_a_navigation_word_inside_a_longer_reply_is_an_answer():
 
 def test_moving_on_from_an_item_that_asks_no_decision_records_it_and_presents_the_next():
     case = Case(next_to_present="item 1 of 3", document=SUMMARY_FIRST_DOCUMENT)
+    # Only a line close writes decides an item, so item 2's record is close's line, not the fixture's hand-written one.
+    case.minutes.write_text("# Minutes\n\nitem 2 of 3: approved; every text the change adds has had a fast read. "
+                            "<accepted>\n#next_to_present item 1 of 3\n")
     checked = case.run("check", "--moved-on-no-decision", reply="next")
     closed = case.run("close")
     minutes = case.minutes.read_text()
@@ -2093,8 +2096,8 @@ def test_a_check_without_the_users_reply_is_refused_writing_nothing():
               and "check --obvious --user-reply-as-typed <his reply>`" in result.stderr, described(result))
 
 
-# Each answer flag that takes a reply, with the values it is given. --not-asked takes no reply, so no refusal
-# that asks for one repeats it.
+# Each answer flag that takes a reply, with the values it is given. --not-asked, --already-decided and --moved-on
+# take no reply, so no refusal that asks for one repeats them.
 ANSWER_FLAGS_TAKING_A_REPLY = {"--obvious": (), "--after-advisor": (), "--disapproved": (), "--deferred": (),
                                "--moved-on-no-decision": (), "--option": ("2",), "--part-answer": ("1=A",)}
 
@@ -2104,7 +2107,7 @@ def test_every_answer_flag_is_covered_by_the_rerun_command_cases():
     group = re.search(r"\[(--obvious[^\]]*)\]", " ".join(usage.stdout.split()))
     flags = set(re.findall(r"--[\w-]+", group[1])) if group else set()
     check("the rerun command cases cover every answer flag of check's --help",
-          usage.returncode == 0 and flags == {*ANSWER_FLAGS_TAKING_A_REPLY, "--not-asked"},
+          usage.returncode == 0 and flags == {*ANSWER_FLAGS_TAKING_A_REPLY, "--not-asked", "--already-decided", "--moved-on"},
           f"--help answer flags {sorted(flags)}, {described(usage)}")
 
 
@@ -2131,6 +2134,16 @@ def test_a_reply_given_with_not_asked_is_refused_writing_nothing():
     check("check --not-asked with --user-reply-as-typed is refused, writing nothing",
           result.returncode == 1 and case.minutes.read_text() == before
           and "--user-reply-as-typed was given with --not-asked" in result.stderr, described(result))
+
+
+def test_a_reply_given_with_already_decided_or_moved_on_is_refused_writing_nothing():
+    for flag, value in (("--already-decided", "walk x's minutes, item 3"), ("--moved-on", "the item was withdrawn")):
+        case = Case(next_to_present="item 4 of 9")
+        before = case.minutes.read_text()
+        result = case.run("check", flag, value, "--user-reply-as-typed", "a")
+        check(f"check {flag} with --user-reply-as-typed is refused, writing nothing",
+              result.returncode == 1 and case.minutes.read_text() == before
+              and f"--user-reply-as-typed was given with {flag}" in result.stderr, described(result))
 
 
 def stopped_by_sigterm(*_):
