@@ -1,112 +1,81 @@
 #!/usr/bin/env python3
-"""Report or remove finished session worktrees under .claude/worktrees/, and finished
-topic-worktrees beside the agent-homes in ~/agents/.
+"""Report or remove the worktrees whose work is done, judged by each worktree's owner file.
 
-Session worktrees pile up invisibly: every Claude session gets one, sessions
-end, and nothing reaps them. A worktree is DONE — removable — when these
-mechanical checks all pass:
+WHICH WORKTREES. Every worktree of the clone except its main checkout, the
+reference-checkout, wherever the worktree is. Only a worktree holding an owner
+file can be removed: scripts/worktree-owner-file-read-and-write.py says where
+the file is, what it holds, and when its owner, an agent-seat or an
+agent-session, counts as running. A worktree is KEPT, with the reason, when:
 
-  0. at rest  - no rebase, merge, cherry-pick or revert is in progress in
-                it: its git directory holds none of rebase-merge,
-                rebase-apply, MERGE_HEAD, CHERRY_PICK_HEAD and REVERT_HEAD.
-                Mid-rebase, HEAD is detached at a commit already on
-                origin/main, so the landed check alone reads the work as
-                finished. If git cannot locate those files, the worktree is
-                kept.
-  1. landed   - no commits beyond origin/main (`git log origin/main..HEAD`
-                is empty, and git exits 0), so everything the worktree's
-                branch carries is already on main. origin/main is read as
-                fetched; a stale ref only errs toward keeping. If
-                origin/main is missing or git cannot compare, the worktree
-                is kept and the reason says so.
-  2. vacant   - no live process has its working directory inside the
-                worktree (lsof). Vacancy must be proven, never assumed: if
-                lsof is missing, cannot be run, times out, exits nonzero, or
-                reports no working directories at all, the worktree is kept
-                and the reason says the check could not be trusted — it does
-                not claim a process that was never seen.
-  3. quiet    - for a worktree the Agent tool made for a subagent
-                (`agent-<id>`), neither the subagent's transcript nor the
-                worktree itself was written in the last
-                AGENT_WORKTREE_QUIET_SECONDS. The vacancy check cannot see
-                such a subagent: it runs inside its parent `claude` process,
-                whose working directory stays the seat home, and only the
-                short-lived shell of each Bash call sits in the worktree. The
-                subagent's transcript, written on every message, is the one
-                trace of it that lives outside a process.
+  - it has no owner file, as agent-homes, merge-lane review checkouts and
+    worktrees made by hand have, or its owner file cannot be read;
+  - it is locked with `git worktree lock`, as Claude Code locks a subagent's
+    worktree while the subagent runs;
+  - git would prune it, its directory being gone;
+  - a rebase, merge, cherry-pick or revert is in progress in it, or git
+    cannot locate the files that show one;
+  - whether its owner runs cannot be read;
+  - a live process has its working directory inside it, or the vacancy check
+    (lsof) cannot be trusted: lsof missing, failing, timing out or listing no
+    working directories at all.
 
-Uncommitted, untracked and ignored files do NOT keep a done worktree: they
-are removed with it. The one exception is the records whose home is the
-log-store: before --remove removes a done worktree, it ships each walk in the
-worktree's docs/walk/, one for each <name>-minutes.md there, with
-scripts/walk-files-ship.py, given by its walk text <name>.md, or by its
-minutes when it has no walk text, which the shipper refuses, so the
-worktree is kept,
-and each non-empty record directory under its cold-read-records/ and
+Otherwise the owner and the branch's pull request decide. The pull requests
+come from one `gh pr list --state all` per invocation; a pull request is the
+branch's when its head branch has the branch's name, and, for a merged or
+closed one, when its head commit is the worktree's HEAD, so a new worktree on a
+reused branch name is not judged by an old pull request. If gh fails, every
+worktree whose verdict needs a pull request is kept.
+
+  WHILE ITS OWNER RUNS, a worktree is removed only when its branch's pull
+  request has merged or been closed and it holds no uncommitted or untracked
+  file; every other worktree is kept, a new one with no pull request among
+  them.
+
+  ONCE ITS OWNER HAS STOPPED, an open pull request on its branch keeps it.
+  Otherwise it is removed, after two steps, each of which keeps it when it
+  fails: commits on no branch, in a worktree whose detached HEAD has commits
+  origin/main lacks, get a branch of their own, named
+  worktree-cleaner-detached-commits-<worktree directory name>-<12 hex digits
+  of the commit>; and its uncommitted and untracked files go to a
+  work-snapshot (nc-systems/handoff/uncommitted-work-snapshots.py) owned by
+  this invocation's own process and carrying the owner file's agent-seat, so
+  the agent-seat's next agent-session is told of it once this invocation has
+  ended. The branch keeps its commits.
+
+Ignored files do not keep a worktree. Before --remove removes one, it ships
+each walk in the worktree's docs/walk/, one for each <name>-minutes.md there,
+with scripts/walk-files-ship.py, given by its walk text <name>.md, or by its
+minutes when it has no walk text, which the shipper refuses, so the worktree
+is kept, and each non-empty record directory under its cold-read-records/ and
 sanity-check-records/ with the shipper of that kind
 (LOG_STORE_RECORD_SHIPPERS), and keeps the worktree when any walk or record
 is refused or fails to ship, printing the shipper's line. The shippers are
 add-only, so a record already in the store ships as "nothing new". Files in
 docs/walk/ that no walk ships, a walk never presented, which has no minutes,
 or a file of no walk role, are named on a line of their own and go with the
-worktree. The report modes name the walks and records and ship nothing. The files are listed after the other checks, each file
-inside an untracked or ignored directory named on its own; the report names
-them, and --remove names them twice: before each removal, as files it will
-discard, and after a removal succeeds, as files discarded with it. A removal
-that fails or is stopped partway has named its files beforehand, so a loss
-is visible in the output either way. Regenerable junk
-(.DS_Store, __pycache__, at any depth) is not listed. If git cannot list a
-worktree's files, the worktree is kept.
+worktree. The report modes name the walks and records and ship nothing. The
+files a removal discards are listed, each file inside an untracked or ignored
+directory named on its own; the report names them, and --remove names them
+twice: before each removal, as files it will discard, and after a removal
+succeeds, as files discarded with it. A removal that fails or is stopped
+partway has named its files beforehand, so a loss is visible in the output
+either way. Regenerable junk (.DS_Store, __pycache__, at any depth) is not
+listed. If git cannot list a worktree's files, the worktree is kept. While
+its owner runs, --remove checks again just before the removal, after the slow
+checks and the shipments, that the worktree holds no uncommitted or untracked
+file, so a file written meanwhile keeps it.
 
-Anything that fails a check is KEPT, with the failing reason.
+BRANCHES. The cleaner deletes a local branch other than main whose commits
+are all on origin/main and which no worktree has checked out, with
+`git branch -d`, and no other branch: the removed worktree's branch when it
+qualifies, and every other such branch, named on one line in the report
+modes. origin/main is read as fetched; a stale ref only keeps more.
 
-TOPIC-WORKTREES BESIDE THE AGENT-HOMES. A worktree directly in ~/agents/ of
-the machine it runs on (the home directory's agents/, read from HOME) is
-judged too, when its directory name is an agent-home's name followed by a
-hyphen and more, such as cold-read-improvement-claude-md-batching-sentence,
-and it is no agent-home itself. An agent-home here is a worktree directly
-in ~/agents/ that is on a branch named like its directory or holds a
-seat-brief (CLAUDE.local.md); the seat-brief keeps an agent-home checked
-out on another branch from being judged. Such a
-topic-worktree passes the four checks above and four more, each of which
-keeps it:
-
-  4. clean    - no uncommitted change and no untracked file (ignored files
-                do not count). Unlike a worktree under .claude/worktrees/,
-                such files keep it: an agent-seat may still want them.
-                --remove checks this again just before the removal, after
-                the slow checks and the shipments, so a file written while
-                they ran keeps the worktree.
-  5. on a branch - its HEAD is not detached.
-  6. quiet    - no file or directory in it was written in the last
-                TOPIC_WORKTREE_QUIET_SECONDS. An agent-seat working there
-                runs from its agent-home, so the vacancy check cannot see it.
-                If a time cannot be read, the worktree is kept.
-  7. walks shipped - before --remove removes it, each walk in its
-                docs/walk/ (each <name>-minutes.md names one, handed to
-                the shipper as its walk text <name>.md, or as its
-                minutes when it has no walk text, which the shipper
-                then refuses) is shipped to the log-store with
-                scripts/walk-files-ship.py, as the records are, and a
-                walk that is refused or fails to ship keeps the
-                worktree, printed as a record that did not ship.
-
-Every other worktree outside <repo>/.claude/worktrees/ — the agent-homes, the
-reference-checkout, a worktree deeper in ~/agents/, such as one under
-~/agents/agent-instructions-editor-worktrees/, the merge-lane's review
-checkouts — is always kept: its lifecycle belongs to its
-owner, not to this script.
-
-Removing a worktree does not remove the branch it was on, and nothing has
-ever swept a branch whose worktree is already gone — list_worktrees()
-enumerates worktrees, not refs. So the report also carries one line naming
-every local branch that no worktree has checked out and that carries nothing
-origin/main lacks: the refs removable losing nothing. Orphaned refs that DO
-carry commits origin/main lacks are deliberately NOT named — 41 of the 51
-local branches left after 2026-08-31's hand sweep were in that state. Their
-disposal is a judgment rather than a sweep, and printing them at every boot
-teaches a reader to skip the line. The line prints in every mode; --remove
-deletes the refs it names.
+THE COUNT LINE. The report and --remove end their worktree lines with one
+line of counts: worktrees kept, by reason; worktrees with no owner file;
+local branches other than main with no pull request; and work-snapshots
+still present. A second line names the kept worktrees owned by an agent-seat
+whose handoff-supervisor is not running, when there are any.
 
 Separately from the worktrees themselves, the report ends with one line
 naming dead registrations — the ones `git worktree prune` would remove,
@@ -129,21 +98,17 @@ id. --only-done prints only the ones --remove would delete.
 A live owner's work-snapshot is never touched.
 
 Modes:
-  (default)    report every worktree, one line each
+  (default)    report every worktree, one line each, then the count lines
   --only-done  print only what needs someone's attention — done worktrees,
                the orphaned-branch-ref line, and the dead-registration line
                when there are any; nothing otherwise (the launchers run this
                at boot, so a reapable worktree, an orphaned branch ref or a
                dead registration is named at the moment someone is looking)
-  --remove     check each worktree and, when it is done, remove it at once;
-               each removal also deletes the worktree's fully-merged branch
-               (git branch -d, which refuses anything unmerged). Removal is
-               `git worktree remove --force`, which removes untracked and
-               modified files and still refuses a locked worktree. Before
-               the removal it ships the worktree's cold-read-records,
-               sanity-check records and walks to the log-store, and keeps
-               the worktree when one does not ship. Orphaned branch refs are deleted the same way, and
-               a refusal there is a failure rather than a silence.
+  --remove     check each worktree and, when it is done, remove it at once,
+               with `git worktree remove --force`, which removes untracked
+               and modified files and still refuses a locked worktree, then
+               delete the branches the BRANCHES paragraph names. A refusal
+               there is a failure rather than a silence.
 
 THE LOG OF REMOVALS. --remove appends one line for each worktree it removes
 and each branch it deletes to its machine's file in the log-store, whichever
@@ -172,8 +137,7 @@ a local file to append to instead, which is how the tests keep out of the
 log-store.
 
 SCHEDULED. --remove runs once a day on both machines, from the reference
-clone, so worktrees that sessions and subagents leave behind do not pile up
-between handoffs. The job is declared in
+clone, and at every session-handoff. The job is declared in
 nc-systems/general-tools/scheduled-jobs-on-each-machine.json and installed
 with nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py: on
 the Mac a launchd job at 06:30, so a run missed while the Mac sleeps starts at
@@ -181,25 +145,26 @@ the next wake; on ned-box the cron line
 
     30 6 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/clean-worktrees.py --remove >> /home/nedlern/.claude/clean-worktrees.log 2>&1
 
-It does not fetch; a stale origin/main only keeps more. A worktree still
-locked by the claude process that made it fails to remove and is tried again
-the next day.
+It does not fetch; a stale origin/main only keeps more.
 
 Usage:
   scripts/clean-worktrees.py [--only-done | --remove] [--repo PATH]
 
-Exit codes: 0 ok, 1 a removal, a record's shipment, a ref deletion, a line
-of the log of removals, or a work-snapshot listing or deletion failed, 2 bad invocation, or git could not
+Exit codes: 0 ok, 1 a removal, a record's shipment, a branch or work-snapshot
+made before a removal, a ref deletion, a line of the log of removals, or a
+work-snapshot listing or deletion failed, 2 bad invocation, or git could not
 list the worktrees or the branches, which stops the run where it failed.
 """
 
 import importlib.util
+import json
 import os
 import shlex
 import shutil
 import subprocess
 import sys
-import time
+from collections import Counter
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -265,12 +230,25 @@ DISPOSABLE_JUNK_BASENAMES = (".DS_Store", "__pycache__")
 
 DISCARDED_FILES_NAMED_AT_MOST = 10
 
-# A topic-worktree's agent-seat runs from its agent-home, out of lsof's sight; a few hours without a
-# write is the evidence it has finished there.
-TOPIC_WORKTREE_QUIET_SECONDS = 4 * 3600
+# Never deleted, whatever it holds.
+MAIN_BRANCH = "main"
 
-# Marks a directory in ~/agents/ as an agent-home whatever branch it is on.
-SEAT_BRIEF_FILE_NAME = "CLAUDE.local.md"
+# One listing of every pull request serves the whole invocation; gh pages through them all.
+PULL_REQUEST_LISTING_TIMEOUT_SECONDS = 300
+PULL_REQUEST_LISTING_LIMIT = 100000
+
+# No next-step line may contain FAILED: the handoff-supervisor counts each such line as a failure.
+WORKTREE_KEPT_AFTER_FAILURE_NEXT_REMOVE_RUN_RETRIES_LINE_TEMPLATE = (
+    "{name}: do nothing now: the worktree and everything in it are kept, and the next "
+    "scripts/clean-worktrees.py --remove, daily or at a handoff, tries again; if it fails the same "
+    "way there, fix the cause the line above names")
+
+DETACHED_COMMITS_BRANCH_NAME_TEMPLATE = "worktree-cleaner-detached-commits-{worktree_name}-{commit:.12}"
+
+_owner_file_spec = importlib.util.spec_from_file_location(
+    "worktree_owner_file_read_and_write", REPO_ROOT / "scripts" / "worktree-owner-file-read-and-write.py")
+owner_file = importlib.util.module_from_spec(_owner_file_spec)
+_owner_file_spec.loader.exec_module(owner_file)
 
 # Gitignored directories whose records belong in the log-store, each with the program that ships one
 # record of that kind. The reference clone's shippers, not the worktree's possibly older copies.
@@ -290,11 +268,6 @@ IN_PROGRESS_GIT_OPERATION_FILES = (
 
 # lsof scans all processes and can be slow under load; a timeout must keep worktrees.
 VACANCY_CHECK_TIMEOUT_SECONDS = 120
-
-# An isolated subagent's cwd may remain outside its worktree between tool calls.
-# Require transcript and .git quiet time as well as the process vacancy check.
-AGENT_WORKTREE_QUIET_SECONDS = 3600
-AGENT_WORKTREE_NAME_PREFIX = "agent-"
 
 
 def run_git(repo, *arguments):
@@ -323,8 +296,8 @@ def main_checkout_of(repo):
 
 
 def list_worktrees(repo, main_checkout):
-    """Return (path, branch-or-None) pairs excluding the primary checkout; raise
-    git_output.GitCommandFailed when git cannot list them."""
+    """Return (path, branch-or-None, git's record) for each worktree but the primary checkout;
+    raise git_output.GitCommandFailed when git cannot list them."""
     listing = git_output.run_git(repo, ["worktree", "list", "--porcelain", "-z"])
     worktrees = []
     for record in git_output.worktree_records(listing):
@@ -336,7 +309,7 @@ def list_worktrees(repo, main_checkout):
             branch = branch[len("refs/heads/"):]
         else:
             branch = None
-        worktrees.append((path, branch))
+        worktrees.append((path, branch, record))
     return worktrees
 
 
@@ -363,7 +336,7 @@ def branch_refs_with_no_worktree_fully_on_main(repo):
     landed = git_output.run_git(repo, ["for-each-ref", "--format=%(refname:lstrip=2)",
                                        "--merged", "origin/main", "refs/heads/"])
     return [branch for branch in os.fsdecode(landed).splitlines()
-            if branch not in attached]
+            if branch not in attached and branch != MAIN_BRANCH]
 
 
 def commit_of(repo, revision):
@@ -487,96 +460,14 @@ def worktree_vacancy_keep_reason(worktree):
     return None
 
 
-def claude_projects_directory():
-    configured = os.environ.get("CLAUDE_CONFIG_DIR")
-    base = Path(configured) if configured else Path.home() / ".claude"
-    return base / "projects"
-
-
-def agent_worktree_quiet_keep_reason(worktree, now=None):
-    """Return why a subagent worktree must be kept, or None after sufficient quiet."""
-    # The .git timestamp covers new or pruned transcripts; unreadable times cannot prove quiet.
-    if not worktree.name.startswith(AGENT_WORKTREE_NAME_PREFIX):
-        return None
-    agent_id = worktree.name[len(AGENT_WORKTREE_NAME_PREFIX):]
-    now = time.time() if now is None else now
-    written = []
-    try:
-        written.append((worktree / ".git").stat().st_mtime)
-        for transcript in claude_projects_directory().glob(
-                f"*/*/subagents/agent-{agent_id}.jsonl"):
-            written.append(transcript.stat().st_mtime)
-    except OSError as error:
-        return f"its subagent's activity could not be read ({error.strerror})"
-    quiet_seconds = now - max(written)
-    if quiet_seconds < AGENT_WORKTREE_QUIET_SECONDS:
-        return (f"its Agent-tool subagent or the worktree was written "
-                f"{int(quiet_seconds // 60)} min ago, so the subagent may still be "
-                f"working in it (quiet for {AGENT_WORKTREE_QUIET_SECONDS // 60} min "
-                f"before removal)")
-    return None
-
-
-def is_agent_home(path, branch):
-    # An agent-seat may check its agent-home out on another branch, as ned-box-helper does, so the
-    # branch alone cannot tell an agent-home from a topic-worktree.
-    return branch == path.name or (path / SEAT_BRIEF_FILE_NAME).exists()
-
-
-def topic_worktrees_beside_agent_homes(worktrees):
-    """Return the resolved paths of the topic-worktrees directly in ~/agents/ that this script judges."""
-    agents_directory = (Path.home() / "agents").resolve()
-    in_agents_directory = [(path.resolve(), branch) for path, branch in worktrees
-                           if path.resolve().parent == agents_directory]
-    agent_home_names = {path.name for path, branch in in_agents_directory
-                        if is_agent_home(path, branch)}
-    return {path for path, branch in in_agents_directory
-            if path.name not in agent_home_names and branch not in agent_home_names
-            and any(path.name.startswith(f"{home}-") for home in agent_home_names)}
-
-
-def raise_error(error):
-    raise error
-
-
-def topic_worktree_quiet_keep_reason(worktree, now=None):
-    """Return why a topic-worktree written too recently must be kept, or None after sufficient quiet."""
-    now = time.time() if now is None else now
-    try:
-        newest = worktree.lstat().st_mtime
-        # os.walk ignores unreadable directories unless told to raise, and an unread time cannot prove quiet.
-        for directory, subdirectories, files in os.walk(worktree, onerror=raise_error):
-            for name in subdirectories + files:
-                newest = max(newest, os.lstat(os.path.join(directory, name)).st_mtime)
-    except OSError as error:
-        return f"when its files were last written could not be read ({error.strerror})"
-    quiet_seconds = now - newest
-    if quiet_seconds < TOPIC_WORKTREE_QUIET_SECONDS:
-        return (f"a file in it was written {int(quiet_seconds // 60)} min ago, so an agent-seat "
-                f"may still be working in it from its agent-home, where the vacancy check cannot "
-                f"see it (quiet for {TOPIC_WORKTREE_QUIET_SECONDS // 3600} h before removal)")
-    return None
-
-
-def topic_worktree_keep_reason(worktree, branch):
-    """Return why a landed topic-worktree must be kept before the vacancy check, or None."""
-    if branch is None:
-        return "its HEAD is detached, so its owner may be partway through a rebase or a bisect"
-    return (topic_worktree_uncommitted_files_keep_reason(worktree)
-            or topic_worktree_quiet_keep_reason(worktree))
-
-
-def topic_worktree_uncommitted_files_keep_reason(worktree):
-    """Return why a topic-worktree holding uncommitted or untracked files must be kept, or None."""
+def uncommitted_or_untracked_files(worktree):
+    """Return (paths, None) for every uncommitted or untracked file, junk left out, or (None, git's
+    error) when git cannot list them. Ignored files are not among them."""
     status = run_git(worktree, "status", "--porcelain", "-z", "--untracked-files=all")
     if status.returncode != 0:
-        return f"git cannot list its uncommitted changes ({status.stderr.strip()[:80]})"
-    changed = [entry.path for entry in git_output.status_entries(status.stdout)
-               if not is_disposable_junk(entry.path)]
-    if changed:
-        return (f"{len(changed)} uncommitted or untracked file(s), which only its owner "
-                f"may discard: {discarded_files_text(changed)}")
-    return None
+        return None, status.stderr.strip()[:80]
+    return [entry.path for entry in git_output.status_entries(status.stdout)
+            if not is_disposable_junk(entry.path)], None
 
 
 def is_disposable_junk(relative_path):
@@ -684,56 +575,257 @@ def ship_log_store_records(worktree):
     return unshipped
 
 
-def classify(worktree, branch, main_checkout, topic_worktree):
-    """Return (done, reason, discarded paths) for a worktree."""
-    managed_area = (main_checkout / ".claude" / "worktrees").resolve()
-    if not topic_worktree and managed_area not in worktree.resolve().parents:
-        return False, "outside the managed area (.claude/worktrees/) — its owner decides its lifecycle", []
+class PullRequestListingFailed(Exception):
+    """gh could not list the repository's pull requests."""
+
+
+class PullRequestsByHeadBranchLazyCache:
+    """The repository's pull requests by head branch, listed once per invocation, on first need."""
+
+    def __init__(self, repo):
+        self.repo = repo
+        self._by_head_branch = None
+        self._error = None
+
+    def by_head_branch(self):
+        """Return {head branch name: [pull request]}; raise PullRequestListingFailed."""
+        if self._by_head_branch is None and self._error is None:
+            try:
+                self._by_head_branch = list_all_pull_requests_grouped_by_head_branch(self.repo)
+            except PullRequestListingFailed as error:
+                self._error = str(error)
+        if self._error is not None:
+            raise PullRequestListingFailed(self._error)
+        return self._by_head_branch
+
+
+def list_all_pull_requests_grouped_by_head_branch(repo):
+    """Return {head branch name: [{number, state, headRefName, headRefOid}]} for every pull request
+    of the repository's GitHub remote; raise PullRequestListingFailed when gh cannot list them."""
+    command = ["gh", "pr", "list", "--state", "all", "--limit", str(PULL_REQUEST_LISTING_LIMIT),
+               "--json", "number,state,headRefName,headRefOid"]
+    try:
+        listing = subprocess.run(command, cwd=repo, capture_output=True, text=True, check=False,
+                                 timeout=PULL_REQUEST_LISTING_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise PullRequestListingFailed(f"`{shlex.join(command)}` could not be run: {error}") from None
+    if listing.returncode != 0:
+        raise PullRequestListingFailed(
+            f"`{shlex.join(command)}` exited {listing.returncode}: "
+            f"{' '.join(listing.stderr.split())[:200] or 'no error text'}")
+    try:
+        by_head_branch = {}
+        for pull_request in json.loads(listing.stdout):
+            by_head_branch.setdefault(pull_request["headRefName"], []).append(pull_request)
+    except (ValueError, TypeError, KeyError) as error:
+        raise PullRequestListingFailed(
+            f"`{shlex.join(command)}` printed something other than a list of pull requests: "
+            f"{type(error).__name__}: {error}") from None
+    return by_head_branch
+
+
+# Why a worktree is kept, as the count line groups the reasons, in the order it prints them.
+KEPT_LOCKED = "locked"
+KEPT_NO_OWNER_FILE = "no owner file"
+KEPT_OWNER_RUNNING = "owner running"
+KEPT_OPEN_PULL_REQUEST = "open pull request"
+KEPT_IN_USE = "in use"
+KEPT_NOT_CHECKABLE = "could not be checked"
+KEPT_REASONS_IN_ORDER = (KEPT_LOCKED, KEPT_NO_OWNER_FILE, KEPT_OWNER_RUNNING,
+                         KEPT_OPEN_PULL_REQUEST, KEPT_IN_USE, KEPT_NOT_CHECKABLE)
+
+
+@dataclass
+class Verdict:
+    done: bool
+    reason: str
+    kept_for: str = ""
+    owner: dict | None = None
+    owner_state: str = ""
+    uncommitted: list = field(default_factory=list)
+    discarded: list = field(default_factory=list)
+    # The detached HEAD whose commits origin/main lacks, which --remove first puts on a branch.
+    detached_commit: str | None = None
+
+
+def owner_text(owner):
+    if owner["owner_kind"] == owner_file.OWNER_AGENT_SEAT:
+        return f"the agent-seat {owner['agent_seat']}"
+    return f"an agent-session of {owner['agent_seat']} (claude process {owner['owner_key']})"
+
+
+def pull_request_text(pull_request):
+    return f"pull request #{pull_request['number']} ({pull_request['state'].lower()})"
+
+
+def classify(worktree, branch, record, pull_requests):
+    """Return the Verdict for a worktree: whether its work is done, and why."""
+    if record.locked_reason is not None:
+        return Verdict(False, f"locked with git worktree lock "
+                              f"({record.locked_reason or 'no reason given'})", KEPT_LOCKED)
+    if record.prunable_reason is not None:
+        return Verdict(False, f"git would prune its registration ({record.prunable_reason}); "
+                              f"the dead registration line below names it", KEPT_NOT_CHECKABLE)
+    try:
+        owner = owner_file.worktree_owner_file_read(worktree)
+    except owner_file.WorktreeOwnerFileError as error:
+        return Verdict(False, f"its owner file could not be read: {error}", KEPT_NOT_CHECKABLE)
+    if owner is None:
+        return Verdict(False, "it has no owner file, and the cleaner removes only a worktree "
+                              "holding one", KEPT_NO_OWNER_FILE)
 
     keep_reason = in_progress_git_operation_keep_reason(worktree)
     if keep_reason is not None:
-        return False, keep_reason, []
+        return Verdict(False, keep_reason, KEPT_IN_USE, owner)
 
-    unlanded = run_git(worktree, "log", "--oneline", "origin/main..HEAD")
+    state, explanation = owner_file.worktree_owner_running_state(owner)
+    if state == owner_file.UNKNOWN:
+        return Verdict(False, f"whether its owner, {owner_text(owner)}, runs could not be read: "
+                              f"{explanation}", KEPT_NOT_CHECKABLE, owner, state)
+    running = state == owner_file.RUNNING
+
+    uncommitted, listing_error = uncommitted_or_untracked_files(worktree)
+    if uncommitted is None:
+        return Verdict(False, f"git cannot list its uncommitted changes ({listing_error})",
+                       KEPT_NOT_CHECKABLE, owner, state)
+    unlanded = run_git(worktree, "rev-list", "--count", "origin/main..HEAD")
     if unlanded.returncode != 0:
-        return False, "cannot compare against origin/main (" + unlanded.stderr.strip()[:80] + ")", []
-    if unlanded.stdout.strip():
-        commits = len(unlanded.stdout.splitlines())
-        return False, f"{commits} commit(s) not on origin/main", []
+        return Verdict(False, f"cannot compare against origin/main "
+                              f"({unlanded.stderr.strip()[:80]})", KEPT_NOT_CHECKABLE, owner, state)
+    commits_not_on_main = int(unlanded.stdout.strip() or 0)
 
-    # Before the vacancy check, which scans every process and is the slowest.
-    if topic_worktree:
-        keep_reason = topic_worktree_keep_reason(worktree, branch)
-        if keep_reason is not None:
-            return False, keep_reason, []
+    pull_requests_of_branch = []
+    if branch is not None:
+        try:
+            pull_requests_of_branch = pull_requests.by_head_branch().get(branch, [])
+        except PullRequestListingFailed as error:
+            return Verdict(False, f"the pull requests of its branch {branch} could not be read: "
+                                  f"{error}", KEPT_NOT_CHECKABLE, owner, state)
+    open_pull_requests = [pull_request for pull_request in pull_requests_of_branch
+                          if pull_request["state"] == "OPEN"]
+    # A merged or closed pull request counts only for the commit it was opened on, so a new
+    # worktree on a reused branch name is not judged by an earlier pull request.
+    finished_pull_requests = [pull_request for pull_request in pull_requests_of_branch
+                              if pull_request["state"] in ("MERGED", "CLOSED")
+                              and pull_request["headRefOid"] == record.head]
 
+    detached_commit = None
+    if running:
+        if open_pull_requests:
+            return Verdict(False, f"its owner, {owner_text(owner)}, runs, and "
+                                  f"{pull_request_text(open_pull_requests[0])} on its branch "
+                                  f"{branch} is open", KEPT_OWNER_RUNNING, owner, state)
+        if not finished_pull_requests:
+            what = (f"its branch {branch} has no merged or closed pull request whose head commit "
+                    f"is its HEAD" if branch is not None
+                    else "its HEAD is detached, so no pull request is its")
+            return Verdict(False, f"its owner, {owner_text(owner)}, runs, and {what}",
+                           KEPT_OWNER_RUNNING, owner, state)
+        if uncommitted:
+            return Verdict(False, f"its owner, {owner_text(owner)}, runs, and it holds "
+                                  f"{len(uncommitted)} uncommitted or untracked file(s): "
+                                  f"{discarded_files_text(uncommitted)}",
+                           KEPT_OWNER_RUNNING, owner, state)
+        why = (f"its owner, {owner_text(owner)}, runs, and "
+               f"{pull_request_text(finished_pull_requests[0])} on its branch {branch} is finished")
+    else:
+        if open_pull_requests:
+            return Verdict(False, f"its owner, {owner_text(owner)}, has stopped, and "
+                                  f"{pull_request_text(open_pull_requests[0])} on its branch "
+                                  f"{branch} is open", KEPT_OPEN_PULL_REQUEST, owner, state)
+        why = f"its owner, {owner_text(owner)}, has stopped ({explanation})"
+        if branch is None and commits_not_on_main:
+            detached_commit = record.head
+            why += (f"; --remove first puts its {commits_not_on_main} commit(s) on no branch on the "
+                    f"new branch {detached_commits_branch_name(worktree, detached_commit)}")
+        if uncommitted:
+            why += (f"; --remove first copies its {len(uncommitted)} uncommitted or untracked "
+                    f"file(s) to a work-snapshot")
+
+    # The slowest check, scanning every process, comes after every check that can keep the worktree.
     keep_reason = worktree_vacancy_keep_reason(worktree)
     if keep_reason is not None:
-        return False, keep_reason, []
-
-    keep_reason = agent_worktree_quiet_keep_reason(worktree)
-    if keep_reason is not None:
-        return False, keep_reason, []
+        return Verdict(False, keep_reason, KEPT_IN_USE, owner, state)
 
     # Listed last, after the slow vacancy check, so the list is as close to the removal as it can be.
     discarded, listing_error = files_a_removal_discards(worktree)
     if discarded is None:
-        return False, f"git cannot list its files ({listing_error})", []
+        return Verdict(False, f"git cannot list its files ({listing_error})",
+                       KEPT_NOT_CHECKABLE, owner, state)
     records = log_store_records_in(worktree)
-    shipped_first = (f"; --remove first ships its {len(records)} record(s) to the log-store "
-                     f"and keeps it if one does not ship: "
-                     + ", ".join(str(record.relative_to(worktree)) for _, record in records)
-                     if records else "")
+    if records:
+        why += (f"; --remove first ships its {len(records)} record(s) to the log-store "
+                f"and keeps it if one does not ship: "
+                + ", ".join(str(record_path.relative_to(worktree)) for _, record_path in records))
     if discarded:
-        return True, (f"landed and vacant; removing it discards {len(discarded)} "
-                      f"uncommitted, untracked or ignored file(s): "
-                      f"{discarded_files_text(discarded)}{shipped_first}"), discarded
-    return True, "landed and vacant" + shipped_first, []
+        why += (f"; removing it discards {len(discarded)} uncommitted, untracked or ignored "
+                f"file(s): {discarded_files_text(discarded)}")
+    return Verdict(True, why, "", owner, state, uncommitted, discarded, detached_commit)
 
 
-def remove_worktree(worktree, branch, repo, discarded, topic_worktree):
-    """Ship its log-store records, then remove a done worktree and its merged branch; return False
-    when something failed."""
+def detached_commits_branch_name(worktree, commit):
+    return DETACHED_COMMITS_BRANCH_NAME_TEMPLATE.format(worktree_name=worktree.name, commit=commit)
+
+
+def fully_on_origin_main(repo, branch):
+    """Whether every commit of the branch is on origin/main; False when git cannot say."""
+    return run_git(repo, "merge-base", "--is-ancestor", f"refs/heads/{branch}",
+                   "origin/main").returncode == 0
+
+
+def keep_what_removal_would_lose(worktree, repo, verdict):
+    """Put a stopped owner's commits on no branch on a branch, and its uncommitted and untracked
+    files in a work-snapshot; print and return False when either fails."""
+    if verdict.detached_commit:
+        name = detached_commits_branch_name(worktree, verdict.detached_commit)
+        made = run_git(repo, "branch", name, verdict.detached_commit)
+        if made.returncode != 0:
+            print(f"{worktree.name}: branch for its commits on no branch FAILED, worktree kept — "
+                  f"git branch {name} {verdict.detached_commit} exited {made.returncode}: "
+                  f"{made.stderr.strip()[:160] or 'no error text'}")
+            print(WORKTREE_KEPT_AFTER_FAILURE_NEXT_REMOVE_RUN_RETRIES_LINE_TEMPLATE.format(name=worktree.name))
+            return False
+        print(f"{worktree.name}: its commits on no branch are kept on the new branch {name}")
+    if verdict.uncommitted:
+        agent_seat = verdict.owner["agent_seat"]
+        try:
+            existing = work_snapshot_holding_worktree_state(repo, worktree, agent_seat)
+            if existing is None:
+                # Owned by this invocation's process, which has ended by the time an agent-session
+                # lists leftovers, so the agent-seat's next agent-session is told of it.
+                owner_key = work_snapshots.owner_key_of_process(os.getpid())
+                outcome = work_snapshots.refresh_work_snapshot(worktree, owner_key, agent_seat, "")
+                existing = (work_snapshots.work_snapshot_ref(owner_key, worktree)
+                            if outcome == "written" else None)
+        except Exception as error:
+            print(f"{worktree.name}: work-snapshot FAILED, worktree kept — its uncommitted and "
+                  f"untracked files could not be copied: {type(error).__name__}: {error}")
+            print(WORKTREE_KEPT_AFTER_FAILURE_NEXT_REMOVE_RUN_RETRIES_LINE_TEMPLATE.format(name=worktree.name))
+            return False
+        if existing:
+            print(f"{worktree.name}: its uncommitted and untracked files are kept in the "
+                  f"work-snapshot {existing}")
+    return True
+
+
+def work_snapshot_holding_worktree_state(repo, worktree, agent_seat):
+    """The ref of a work-snapshot of the agent-seat that already holds exactly the worktree's
+    uncommitted and untracked files on its HEAD, such as the hook's last one, or None."""
+    tree = work_snapshots.tree_of_worktree_now(worktree)
+    head = work_snapshots.head_commit_or_raise(worktree) or ""
+    cache = {}
+    for snapshot in work_snapshots.all_work_snapshots(repo):
+        if (snapshot["worktree"] and Path(snapshot["worktree"]).resolve() == worktree.resolve()
+                and snapshot["agent_seat"] == agent_seat
+                and work_snapshots.tree_and_parents(repo, snapshot["commit"], cache) == (tree, head)):
+            return snapshot["ref"]
+    return None
+
+
+def remove_worktree(worktree, branch, repo, verdict):
+    """Ship its log-store records, keep what the removal would lose, then remove a done worktree
+    and delete its branch when every commit of the branch is on origin/main; return False when
+    something failed."""
     unshipped = ship_log_store_records(worktree)
     if unshipped:
         # No next-step line may contain FAILED: the handoff-supervisor counts each such line as a failure.
@@ -756,13 +848,21 @@ def remove_worktree(worktree, branch, repo, discarded, topic_worktree):
                   f"if the record fails the same way there, fix the cause its line names")
         return False
     worktree_removal_unshippable_approval_walk_files_report(worktree)
-    # classify() judged it clean before the slow vacancy check and the shipments; an agent may have written since.
-    if topic_worktree:
-        keep_reason = topic_worktree_uncommitted_files_keep_reason(worktree)
-        if keep_reason is not None:
-            print(f"{worktree.name}: kept — {keep_reason}")
+    if verdict.owner_state == owner_file.RUNNING:
+        # classify() found it clean before the slow vacancy check and the shipments; its owner may
+        # have written since.
+        uncommitted, listing_error = uncommitted_or_untracked_files(worktree)
+        if uncommitted is None or uncommitted:
+            why = (f"git cannot list its uncommitted changes ({listing_error})" if uncommitted is None
+                   else f"its owner, {owner_text(verdict.owner)}, runs, and it now holds "
+                        f"{len(uncommitted)} uncommitted or untracked file(s): "
+                        f"{discarded_files_text(uncommitted)}")
+            print(f"{worktree.name}: kept — {why}")
             return True
+    elif not keep_what_removal_would_lose(worktree, repo, verdict):
+        return False
     # Named before the removal too: a removal that fails or is killed partway may already have deleted some.
+    discarded = verdict.discarded
     if discarded:
         print(f"{worktree.name}: removing it will discard {len(discarded)} uncommitted, "
               f"untracked or ignored file(s): {discarded_files_text(discarded)}")
@@ -774,12 +874,15 @@ def remove_worktree(worktree, branch, repo, discarded, topic_worktree):
         return False
     line = f"{worktree.name}: removed"
     branch_deleted = False
-    if branch:
-        branch_deleted = run_git(repo, "branch", "-d", branch).returncode == 0
-        if branch_deleted:
-            line += f", branch {branch} deleted"
+    if branch and branch != MAIN_BRANCH:
+        if not fully_on_origin_main(repo, branch):
+            line += f", branch {branch} kept, since it holds commits origin/main lacks"
         else:
-            line += f", branch {branch} left in place (git branch -d refused)"
+            branch_deleted = run_git(repo, "branch", "-d", branch).returncode == 0
+            if branch_deleted:
+                line += f", branch {branch} deleted"
+            else:
+                line += f", branch {branch} left in place (git branch -d refused)"
     print(line)
     if discarded:
         print(f"{worktree.name}: discarded with it {len(discarded)} uncommitted, untracked "
@@ -791,27 +894,66 @@ def remove_worktree(worktree, branch, repo, discarded, topic_worktree):
     return append_removed_worktree_or_deleted_branch_log_lines(events, repo, worktree.name)
 
 
+def local_branches_with_no_pull_request_text(repo, pull_requests):
+    """The count of local branches other than main that no pull request has as its head branch,
+    or why it could not be counted."""
+    listing = run_git(repo, "for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads/")
+    if listing.returncode != 0:
+        return f"unknown (git cannot list the branches: {listing.stderr.strip()[:80]})"
+    try:
+        by_head_branch = pull_requests.by_head_branch()
+    except PullRequestListingFailed as error:
+        return f"unknown ({error})"
+    return str(sum(1 for branch in listing.stdout.splitlines()
+                   if branch != MAIN_BRANCH and branch not in by_head_branch))
+
+
+def work_snapshots_present_text(repo):
+    try:
+        return str(len(work_snapshots.all_work_snapshots(repo)))
+    except Exception as error:
+        return f"unknown ({type(error).__name__}: {error})"
+
+
+def print_count_lines(repo, kept_verdicts, pull_requests):
+    """Print the count line, and the line naming the kept worktrees of stopped agent-seats."""
+    by_reason = Counter(verdict.kept_for for _, verdict in kept_verdicts)
+    print(f"worktree counts: {len(kept_verdicts)} kept ("
+          + ", ".join(f"{reason} {by_reason[reason]}" for reason in KEPT_REASONS_IN_ORDER)
+          + f"); worktrees with no owner file {by_reason[KEPT_NO_OWNER_FILE]}; branches with no "
+            f"pull request {local_branches_with_no_pull_request_text(repo, pull_requests)}; "
+            f"work-snapshots still present {work_snapshots_present_text(repo)}")
+    stopped_seats = [(worktree, verdict.owner["agent_seat"]) for worktree, verdict in kept_verdicts
+                     if verdict.owner is not None
+                     and verdict.owner["owner_kind"] == owner_file.OWNER_AGENT_SEAT
+                     and verdict.owner_state == owner_file.STOPPED]
+    if stopped_seats:
+        print("worktrees kept whose agent-seat's handoff-supervisor is not running: "
+              + ", ".join(f"{worktree} ({seat})" for worktree, seat in stopped_seats))
+
+
 def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
     """Report or remove the worktrees and orphaned branch refs, and report dead registrations;
     return the number of failures, or raise git_output.GitCommandFailed when git cannot list them."""
     failures = 0
-    worktrees = list_worktrees(repo, main_checkout)
-    topic_worktrees = topic_worktrees_beside_agent_homes(worktrees)
-    for worktree, branch in worktrees:
-        topic_worktree = worktree.resolve() in topic_worktrees
-        done, reason, discarded = classify(worktree, branch, main_checkout, topic_worktree)
+    pull_requests = PullRequestsByHeadBranchLazyCache(repo)
+    kept_verdicts = []
+    for worktree, branch, record in list_worktrees(repo, main_checkout):
+        verdict = classify(worktree, branch, record, pull_requests)
+        if not verdict.done:
+            kept_verdicts.append((worktree, verdict))
         if remove:
-            if done and not remove_worktree(worktree, branch, repo, discarded, topic_worktree):
+            if verdict.done and not remove_worktree(worktree, branch, repo, verdict):
                 failures += 1
-            elif not done:
-                print(f"{worktree.name}: kept — {reason}")
+            elif not verdict.done:
+                print(f"{worktree.name}: kept — {verdict.reason}")
         elif only_done:
-            if done:
-                print(f"{worktree.name}: done ({reason}) — remove with "
+            if verdict.done:
+                print(f"{worktree.name}: done ({verdict.reason}) — remove with "
                       f"scripts/clean-worktrees.py --remove")
         else:
-            state = "done" if done else "kept"
-            print(f"{worktree.name}: {state} — {reason}")
+            state = "done" if verdict.done else "kept"
+            print(f"{worktree.name}: {state} — {verdict.reason}")
 
     orphaned_refs = branch_refs_with_no_worktree_fully_on_main(repo)
     if orphaned_refs:
@@ -823,6 +965,9 @@ def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
             print("branch ref(s) with no worktree, nothing beyond origin/main: "
                   + ", ".join(orphaned_refs)
                   + " — remove with: scripts/clean-worktrees.py --remove")
+
+    if not only_done:
+        print_count_lines(repo, kept_verdicts, pull_requests)
 
     dead_registrations = dead_worktree_registrations(repo)
     if dead_registrations:

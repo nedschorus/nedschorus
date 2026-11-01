@@ -2,11 +2,13 @@
 """Tests for clean-worktrees.py.
 
 Builds a scratch repository with an origin remote and one worktree per
-classification — done, dirty, ignored-files-only, unlanded, occupied, and
-outside the managed area — then asserts the report names each correctly and
-that --remove reaps exactly the done ones. A landed, vacant worktree is done
-whatever files it holds; its uncommitted, untracked and ignored files are
-named before it is removed.
+classification, each with an owner file naming an agent-session whose
+`claude` process has stopped unless the case needs another owner, then
+asserts the report names each correctly and that --remove reaps exactly the
+done ones. A done worktree is removed whatever files it holds; its
+uncommitted, untracked and ignored files are named before it is removed, and
+a stopped owner's uncommitted and untracked files go to a work-snapshot
+first.
 
 Every way the decision can fail — origin/main missing, git unable to list a
 worktree's files, lsof missing, timing out or failing — is run under
@@ -17,30 +19,38 @@ on a healthy machine, so they run the reaper with a stub lsof first on PATH.
 Those cases guard the reaper's central promise — ambiguity keeps, never
 reaps — which a worktree holding someone's uncommitted work depends on.
 
+The cleaner lists pull requests with gh. Every run here finds this suite's
+own gh first on PATH, which prints the JSON in FAKE_GH_PULL_REQUESTS, or an
+empty list, or fails with exit FAKE_GH_EXIT_CODE, and never reaches GitHub.
+
 The classification cases run against the machine's REAL lsof, and that is the
 one way this suite can fail for a reason that is not a defect. If lsof does not
 answer within clean-worktrees.py's VACANCY_CHECK_TIMEOUT_SECONDS, every done
 worktree is kept with "the vacancy check (lsof) could not be run" — the reaper
-failing safe, correctly — and the cases that expect "done-wt: done", or a
-topic-worktree such as seat-done to be done or removed, fail with it. Seen once, 2026-09-17 ~00:44Z, in a 52-suite run concurrent with five
+failing safe, correctly — and the cases that expect "done-wt: done" fail with
+it. Seen once, 2026-09-17 ~00:44Z, in a 52-suite run concurrent with five
 subagents and another suite set, against the 30 s timeout that has since become
 120. A run that fails with that phrase in its detail is a load symptom: re-run
 this suite alone before calling anything red. It is deliberately not skipped
 automatically — a suite that hides its own cases under load is worse than one
 that needs a second run.
 
-A last section covers the branch refs whose worktree is already gone: refs
+A section covers the branch refs whose worktree is already gone: refs
 attached to nothing, refs still carrying unlanded work, refs a live worktree
-or the main checkout holds, a tag shadowing a branch name, remote-tracking
-refs, and a git branch -d refusal — the ordinary state of a checkout whose
-local main lags origin/main.
+holds, the local main, a tag shadowing a branch name, remote-tracking refs,
+and a git branch -d refusal — the ordinary state of a checkout whose local
+main lags origin/main.
 
-A closing section covers the Agent-tool subagent's worktree, which the vacancy
-check cannot see into: kept while its transcript or the worktree itself was
-written in the last hour, removable after. It runs the reaper under a scratch
-HOME so the transcripts it reads are the suite's own.
+A section covers the owner rules under a scratch HOME: an owner that runs, an
+agent-session's `claude` process standing in as a helper process, an
+agent-seat's handoff-supervisor as a helper process running a file named
+handoff-supervisor.py; a merged, a closed, an open and an earlier pull
+request on a reused branch name; an owner whose state cannot be read, an
+owner file that cannot be read, gh failing, and a work-snapshot or a branch
+for commits on no branch that cannot be written, each of which keeps the
+worktree; and the count lines.
 
-A last section covers the records whose home is the log-store: before --remove
+A section covers the records whose home is the log-store: before --remove
 removes a done worktree it ships the worktree's cold-read-records and
 sanity-check records, and keeps the worktree when a record fails to ship, is
 refused, or its shipper prints nothing. The shippers run for real, into a
@@ -51,21 +61,13 @@ A section stops a real rebase on a conflict in a worktree under
 .claude/worktrees/, with HEAD detached at origin/main, and --remove must keep
 it; so must a worktree whose git directory git cannot locate.
 
-A last section runs the reaper under a scratch HOME whose agents/ holds
-agent-homes and topic-worktrees: an agent-home, a worktree on a seat-branch,
-a worktree whose name begins with no agent-home's name or only with a
-detached directory's, a worktree one level deeper in agents/ and one outside
-it are kept; a landed,
-clean, quiet topic-worktree is removed with its branch; an uncommitted or
-untracked file, a detached HEAD, a recent write, unreadable file times and a
-failed git status each keep one; and a walk in its docs/walk/ is shipped first,
-its failure to ship or its refusal keeping the worktree.
-
 Run: python3 scripts/clean-worktrees-test.py
 """
 
 import atexit
 import importlib.util
+import io
+import json
 import os
 import select
 import shlex
@@ -102,6 +104,48 @@ _removals_log_for_every_run = tempfile.mkdtemp(prefix="clean-worktrees-test-remo
 atexit.register(shutil.rmtree, _removals_log_for_every_run, ignore_errors=True)
 os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(Path(_removals_log_for_every_run) / "log.txt")
 
+# Every run finds this gh first: it prints FAKE_GH_PULL_REQUESTS, an empty list by default, or fails
+# with exit FAKE_GH_EXIT_CODE, so no run reaches GitHub.
+_fake_gh_directory = tempfile.mkdtemp(prefix="clean-worktrees-test-fake-gh-")
+atexit.register(shutil.rmtree, _fake_gh_directory, ignore_errors=True)
+FAKE_GH = Path(_fake_gh_directory) / "gh"
+FAKE_GH.write_text(
+    "#!/bin/sh\n"
+    'if [ -n "$FAKE_GH_EXIT_CODE" ]; then echo "gh: stand-in listing failure" >&2; '
+    'exit "$FAKE_GH_EXIT_CODE"; fi\n'
+    'printf "%s\\n" "${FAKE_GH_PULL_REQUESTS:-[]}"\n', encoding="utf-8")
+FAKE_GH.chmod(0o755)
+os.environ["PATH"] = f"{_fake_gh_directory}{os.pathsep}{os.environ.get('PATH', '')}"
+os.environ.pop("FAKE_GH_PULL_REQUESTS", None)
+os.environ.pop("FAKE_GH_EXIT_CODE", None)
+
+WORKTREE_OWNER_FILE_NAME = "worktree-owner.json"
+
+
+def owner_file_path(worktree):
+    completed = subprocess.run(["git", "-C", str(worktree), "rev-parse", "--absolute-git-dir"],
+                               capture_output=True, text=True, check=True)
+    return Path(completed.stdout.strip()) / WORKTREE_OWNER_FILE_NAME
+
+
+def stopped_agent_session_owner_key():
+    """An owner key of this platform's form whose process is not running."""
+    if sys.platform.startswith("linux"):
+        # A boot id that is not this boot's.
+        return "0" * 32 + "-1-1"
+    return "999999-1"
+
+
+def give_owner(worktree, record):
+    owner_file_path(worktree).write_text(json.dumps(record) + "\n", encoding="utf-8")
+    return worktree
+
+
+def give_stopped_owner(worktree):
+    return give_owner(worktree, {"owner_kind": "agent-session", "agent_seat": "test-seat",
+                                 "owner_key": stopped_agent_session_owner_key()})
+
+
 ORPHANED_BRANCH_REF_LINE_MARKER = (
     "branch ref(s) with no worktree, nothing beyond origin/main:")
 
@@ -137,6 +181,15 @@ def check(case_name, condition, detail=""):
     else:
         print(f"FAIL  {case_name}: {detail}")
         failures.append(case_name)
+
+
+def raised_by(call):
+    """The exception the call raised, or None."""
+    try:
+        call()
+    except Exception as error:
+        return error
+    return None
 
 
 def text_or_none(path):
@@ -188,6 +241,7 @@ def run_clean_without_lsof(repo, stub_directory, *flags):
     """Run the reaper with a PATH holding git and nothing else, so lsof is missing."""
     stub_directory.mkdir(parents=True, exist_ok=True)
     (stub_directory / "git").symlink_to(shutil.which("git"))
+    (stub_directory / "gh").symlink_to(FAKE_GH)
     environment = dict(os.environ)
     environment["PATH"] = str(stub_directory)
     return subprocess.run(
@@ -266,10 +320,10 @@ with tempfile.TemporaryDirectory() as scratch:
     managed = checkout / ".claude" / "worktrees"
     managed.mkdir(parents=True)
 
-    def add_worktree(name, where=None):
+    def add_worktree(name, where=None, owner=True):
         path = (where or managed) / name
         git(checkout, "worktree", "add", "-b", f"{name}-branch", str(path), "origin/main")
-        return path
+        return give_stopped_owner(path) if owner else path
 
     done_wt = add_worktree("done-wt")
     # Regenerable junk must not keep an otherwise-done worktree.
@@ -285,7 +339,7 @@ with tempfile.TemporaryDirectory() as scratch:
     (unlanded_wt / "new.txt").write_text("work\n", encoding="utf-8")
     git(unlanded_wt, "add", "-A")
     git(unlanded_wt, "commit", "-m", "unlanded work")
-    outside_wt = add_worktree("outside-wt", where=scratch)
+    outside_wt = add_worktree("outside-wt", where=scratch, owner=False)
     # Junk listed before real files, junk nested below the top, and an
     # untracked directory, which git collapses into one entry.
     mixed_wt = add_worktree("mixed-wt")
@@ -319,14 +373,21 @@ with tempfile.TemporaryDirectory() as scratch:
         (many_files_wt / f"note-{number:02d}.txt").write_text("n\n", encoding="utf-8")
     detached_landed_wt = managed / "detached-landed-wt"
     git(checkout, "worktree", "add", "--detach", str(detached_landed_wt), "origin/main")
+    give_stopped_owner(detached_landed_wt)
     detached_unlanded_wt = managed / "detached-unlanded-wt"
     git(checkout, "worktree", "add", "--detach", str(detached_unlanded_wt), "origin/main")
+    give_stopped_owner(detached_unlanded_wt)
     (detached_unlanded_wt / "detached-work.txt").write_text("work\n", encoding="utf-8")
     git(detached_unlanded_wt, "add", "-A")
     git(detached_unlanded_wt, "commit", "-m", "unlanded detached work")
     locked_wt = add_worktree("locked-wt")
     (locked_wt / "locked-untracked.txt").write_text("held\n", encoding="utf-8")
     git(checkout, "worktree", "lock", "--reason", "test lock", str(locked_wt))
+    # A directory whose files git cannot delete, so `git worktree remove --force` fails partway.
+    stuck_wt = add_worktree("stuck-wt")
+    (stuck_wt / "scratch-state").mkdir()
+    (stuck_wt / "scratch-state" / "stuck.md").write_text("held\n", encoding="utf-8")
+    (stuck_wt / "scratch-state").chmod(0o500)
     unreadable_wt = add_worktree("unreadable-wt")
     (unreadable_wt / "unreadable-untracked.txt").write_text("held\n", encoding="utf-8")
     # A corrupt index makes `git status` fail while `git log` still works, so
@@ -406,17 +467,20 @@ with tempfile.TemporaryDirectory() as scratch:
               and " more" not in ten_line, ten_line)
         check("a detached worktree at origin/main is judged landed",
               "detached-landed-wt: done" in report, report)
-        check("a detached worktree with a commit beyond origin/main is kept",
-              "detached-unlanded-wt: kept" in report
-              and "1 commit(s) not on origin/main" in report, report)
-        check("a worktree whose files git cannot list is kept",
-              "unreadable-wt: kept" in report and "git cannot list its files" in report,
-              report)
-        check("unlanded commits keep a worktree",
-              "unlanded-wt: kept" in report and "not on origin/main" in report, report)
-        check("a worktree outside the managed area is kept",
-              "outside-wt: kept" in report and "outside the managed area" in report,
-              report)
+        check("a detached worktree with a commit beyond origin/main, whose owner has stopped, is done, "
+              "and --remove first puts the commit on a branch of its own",
+              "detached-unlanded-wt: done" in report
+              and "--remove first puts its 1 commit(s) on no branch on the new branch "
+                  "worktree-cleaner-detached-commits-detached-unlanded-wt-" in report, report)
+        check("a worktree whose uncommitted changes git cannot list is kept",
+              "unreadable-wt: kept — git cannot list its uncommitted changes" in report, report)
+        check("commits on a branch with no pull request do not keep a worktree whose owner has "
+              "stopped: the branch keeps them",
+              "unlanded-wt: done" in report and "has stopped" in report, report)
+        check("a worktree with no owner file is kept, wherever it is",
+              "outside-wt: kept — it has no owner file" in report, report)
+        check("a locked worktree is kept, naming its lock reason",
+              "locked-wt: kept — locked with git worktree lock (test lock)" in report, report)
         if occupied_wt is not None:
             check("a live process keeps a worktree",
                   "occupied-wt: kept" in report and "live process" in report, report)
@@ -427,7 +491,7 @@ with tempfile.TemporaryDirectory() as scratch:
         from_inside = run_clean(dirty_wt).stdout
         check("run from inside a worktree, classifications are unchanged",
               "done-wt: done" in from_inside and "dirty-wt: done" in from_inside
-              and "unlanded-wt: kept" in from_inside
+              and "unlanded-wt: done" in from_inside
               and "outside-wt: kept" in from_inside, from_inside)
 
         # --- --only-done prints done worktrees and nothing else -------------
@@ -437,9 +501,9 @@ with tempfile.TemporaryDirectory() as scratch:
         check("--only-done names a done worktree holding files, and the files",
               "dirty-wt: done" in only_done and "uncommitted.txt" in only_done,
               only_done)
-        check("--only-done stays silent about kept worktrees",
-              "unlanded-wt" not in only_done and "outside-wt" not in only_done,
-              only_done)
+        check("--only-done stays silent about kept worktrees, and prints no count line",
+              "locked-wt" not in only_done and "outside-wt" not in only_done
+              and "worktree counts:" not in only_done, only_done)
         # Every branch here is still attached to a worktree, so there is
         # nothing to name; the line must be absent rather than empty.
         check("--only-done says nothing about branch refs when none is orphaned",
@@ -509,13 +573,15 @@ with tempfile.TemporaryDirectory() as scratch:
         os.environ["PATH"] = f"{slow_stub}{os.pathsep}{saved_path}"
         try:
             timed_out_reason = clean_module.worktree_vacancy_keep_reason(dirty_wt)
+            listed = {path.resolve(): (branch, record)
+                      for path, branch, record in clean_module.list_worktrees(checkout, checkout)}
             timed_out_classification = clean_module.classify(
-                dirty_wt, "dirty-wt-branch", checkout, False)
+                dirty_wt, *listed[dirty_wt.resolve()], clean_module.PullRequestsByHeadBranchLazyCache(checkout))
         finally:
             os.environ["PATH"] = saved_path
         check("an lsof that times out keeps the worktree",
               timed_out_reason == "the vacancy check (lsof) could not be run"
-              and timed_out_classification[0] is False,
+              and timed_out_classification.done is False,
               f"{timed_out_reason} {timed_out_classification}")
 
         killed_status_removal = run_clean_with_git_status_killed(
@@ -523,7 +589,8 @@ with tempfile.TemporaryDirectory() as scratch:
         check("--remove with git status killed by a signal removes nothing, and says why",
               dirty_wt.exists() and done_wt.exists()
               and ": removed" not in killed_status_removal.stdout
-              and "dirty-wt: kept — git cannot list its files" in killed_status_removal.stdout,
+              and "dirty-wt: kept — git cannot list its uncommitted changes"
+              in killed_status_removal.stdout,
               killed_status_removal.stdout + killed_status_removal.stderr)
 
         git(checkout, "update-ref", "-d", "refs/remotes/origin/main")
@@ -554,7 +621,7 @@ with tempfile.TemporaryDirectory() as scratch:
         # when the temp area clears (R25, ruled 2026-08-18). Simulate the
         # clearing: delete the directory behind git's back, so the
         # registration outlives it.
-        dead_wt = add_worktree("dead-registration-wt", where=scratch)
+        dead_wt = add_worktree("dead-registration-wt", where=scratch, owner=False)
         shutil.rmtree(dead_wt)
         dead_report = run_clean(checkout).stdout
         dead_line = next((line for line in dead_report.splitlines()
@@ -579,7 +646,7 @@ with tempfile.TemporaryDirectory() as scratch:
         # never checked. Pruning here discards the registration for a
         # directory still holding uncommitted work, which is why the reason
         # the human reads has to be git's own.
-        surviving_wt = add_worktree("dotgit-deleted-wt", where=scratch)
+        surviving_wt = add_worktree("dotgit-deleted-wt", where=scratch, owner=False)
         (surviving_wt / "recoverable-file.txt").write_text("work\n", encoding="utf-8")
         (surviving_wt / ".git").unlink()
         surviving_report = run_clean(checkout).stdout
@@ -619,18 +686,43 @@ with tempfile.TemporaryDirectory() as scratch:
         check("--remove prints no discard line for a worktree holding only junk",
               "done-wt: discarded" not in removal.stdout, removal.stdout)
         check("--remove keeps every not-done worktree",
-              unlanded_wt.exists() and outside_wt.exists()
-              and detached_unlanded_wt.exists()
+              outside_wt.exists()
               and (unreadable_wt / "unreadable-untracked.txt").exists()
+              and (locked_wt / "locked-untracked.txt").exists()
               and (occupied_wt is None or occupied_wt.exists()),
               removal.stdout)
-        check("a locked worktree is not removed, though it is done and holds files",
-              (locked_wt / "locked-untracked.txt").exists()
-              and "locked-wt: removal FAILED" in removal.stdout
-              and "locked-wt: discarded" not in removal.stdout, removal.stdout)
-        check("a removal that fails still named its files beforehand",
-              "locked-wt: removing it will discard 1 uncommitted, untracked or ignored "
-              "file(s): locked-untracked.txt" in removal.stdout, removal.stdout)
+        check("--remove removes a worktree whose stopped owner left commits on a branch with no "
+              "pull request, and keeps the branch, which holds commits origin/main lacks",
+              not unlanded_wt.exists()
+              and "unlanded-wt: removed, branch unlanded-wt-branch kept, since it holds commits "
+                  "origin/main lacks" in removal.stdout
+              and git(checkout, "rev-list", "--count", "origin/main..unlanded-wt-branch").strip() == "1",
+              removal.stdout)
+        detached_branches = git(checkout, "branch", "--list",
+                                "worktree-cleaner-detached-commits-detached-unlanded-wt-*",
+                                "--format=%(refname:short) %(objectname)").split()
+        check("--remove puts a detached worktree's commits on no branch on a branch of their own, "
+              "then removes the worktree",
+              not detached_unlanded_wt.exists() and len(detached_branches) == 2
+              and git(checkout, "log", "-1", "--format=%s", detached_branches[1]).strip()
+                  == "unlanded detached work"
+              and "detached-unlanded-wt: its commits on no branch are kept on the new branch "
+                  in removal.stdout, removal.stdout)
+        dirty_snapshots = git(checkout, "for-each-ref", "--format=%(refname)",
+                              "refs/work-snapshots/").split()
+        check("--remove copies a stopped owner's untracked file to a work-snapshot before the "
+              "removal",
+              any("uncommitted.txt" in git(checkout, "ls-tree", "-r", "--name-only", ref)
+                  for ref in dirty_snapshots)
+              and -1 < removal.stdout.find("dirty-wt: its uncommitted and untracked files are kept "
+                                           "in the work-snapshot refs/work-snapshots/")
+              < removal.stdout.find("dirty-wt: removed"), removal.stdout)
+        check("a removal that fails is reported, and named its files beforehand",
+              stuck_wt.exists() and "stuck-wt: removal FAILED" in removal.stdout
+              and "stuck-wt: removing it will discard 1 uncommitted, untracked or ignored "
+              "file(s): scratch-state/stuck.md" in removal.stdout
+              and "stuck-wt: discarded" not in removal.stdout, removal.stdout)
+        (stuck_wt / "scratch-state").chmod(0o755)
         check("--remove exits 1 when a removal failed", removal.returncode == 1,
               str(removal.returncode))
         check("--remove ends a run with failures on the line saying it finished",
@@ -664,6 +756,9 @@ with tempfile.TemporaryDirectory() as scratch:
         # Attached to nothing, but carrying a commit origin/main lacks.
         git(checkout, "branch", "--no-track", "unlanded-orphan-branch",
             "unlanded-wt-branch")
+        # The local main, once no worktree has it checked out, is fully on origin/main and still
+        # never named.
+        git(checkout, "checkout", "-q", "--detach")
         # A remote-tracking ref with no worktree, trivially inside origin/main:
         # a candidate the moment the sweep looks outside refs/heads/.
         git(checkout, "push", "origin", "main:refs/heads/landed-elsewhere")
@@ -700,7 +795,8 @@ with tempfile.TemporaryDirectory() as scratch:
         check("a tag shadowing an attached branch's name does not orphan it",
               "tag-shadowed-name" not in named
               and "heads/tag-shadowed-name" not in named, orphan_report)
-        check("the branch checked out in the main checkout is not named",
+        check("the local main is not named, though no worktree has it checked out and it holds "
+              "nothing origin/main lacks",
               "main" not in named
               and git(checkout, "rev-list", "--count",
                       "origin/main..main").strip() == "0",
@@ -734,6 +830,9 @@ with tempfile.TemporaryDirectory() as scratch:
               orphan_removal.stdout)
         check("--remove exits 0 when every named ref was deletable",
               orphan_removal.returncode == 0, str(orphan_removal.returncode))
+        check("--remove never deletes the local main",
+              git(checkout, "branch", "--list", "main").strip() != "", orphan_removal.stdout)
+        git(checkout, "checkout", "-q", "main")
         check("a run with no failure prints no line saying it finished with failures",
               "clean-worktrees: finished" not in orphan_removal.stdout, orphan_removal.stdout)
 
@@ -743,7 +842,7 @@ with tempfile.TemporaryDirectory() as scratch:
         # ref's upstream, never about origin/main. The refusal is git's second
         # opinion, so the ref stays — but it is reported and counted, because a
         # sweep that silently keeps failing is a sweep nobody knows to fix.
-        advance_wt = add_worktree("advance-wt", where=scratch)
+        advance_wt = add_worktree("advance-wt", where=scratch, owner=False)
         (advance_wt / "advanced.txt").write_text("landed elsewhere\n", encoding="utf-8")
         git(advance_wt, "add", "-A")
         git(advance_wt, "commit", "-m", "work that lands on origin/main")
@@ -781,13 +880,10 @@ def run_clean_with_claude_home(repo, home, *flags, claude_config_directory=None)
     )
 
 
-# --- An Agent-tool subagent's worktree is kept while its subagent may live --
-# The subagent runs inside its parent claude process, whose working directory
-# is the seat home, so the vacancy check sees nothing inside its worktree
-# between Bash calls (measured on ned-box 2026-09-23). Its transcript is the
-# evidence of life, and the worktree's own age stands in when there is none.
+# --- The owner rules: while the owner runs, once it has stopped, and when neither can be told ---
+# HOME is a scratch directory, so the handoff-supervisor locks the cleaner reads are this suite's.
 with tempfile.TemporaryDirectory() as scratch:
-    scratch = Path(scratch)
+    scratch = Path(scratch).resolve()
     checkout = scratch / "checkout"
     origin = scratch / "origin.git"
     checkout.mkdir()
@@ -797,65 +893,275 @@ with tempfile.TemporaryDirectory() as scratch:
     (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
     git(checkout, "add", "-A")
     git(checkout, "commit", "-m", "seed")
-    subprocess.run(["git", "init", "--bare", str(origin)],
-                   capture_output=True, check=True)
+    subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
     git(checkout, "remote", "add", "origin", str(origin))
     git(checkout, "push", "-u", "origin", "main")
     managed = checkout / ".claude" / "worktrees"
     managed.mkdir(parents=True)
     fake_home = scratch / "home"
-    config_directory = scratch / "claude-config"
-    two_hours_ago = time.time() - 7200
+    handoffs = fake_home / ".claude" / "handoffs"
+    handoffs.mkdir(parents=True)
+    snapshots_module_spec = importlib.util.spec_from_file_location(
+        "uncommitted_work_snapshots_for_owner_keys",
+        CLEAN_SCRIPT.resolve().parent.parent / "nc-systems" / "handoff" / "uncommitted-work-snapshots.py")
+    snapshots_module = importlib.util.module_from_spec(snapshots_module_spec)
+    snapshots_module_spec.loader.exec_module(snapshots_module)
 
-    def add_agent_worktree(name, aged):
-        path = managed / name
-        git(checkout, "worktree", "add", "-b", f"worktree-{name}", str(path), "origin/main")
-        if aged:
-            os.utime(path / ".git", (two_hours_ago, two_hours_ago))
-        return path
+    # Stands in for a running agent-session's claude process; lives until its stdin closes.
+    running_session = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"],
+                                       stdin=subprocess.PIPE)
+    # Stands in for the running handoff-supervisor of the agent-seat seat-running: ps shows a file
+    # named handoff-supervisor.py run with --agent seat-running.
+    fake_supervisor_script = scratch / "fake-supervisor" / "handoff-supervisor.py"
+    fake_supervisor_script.parent.mkdir()
+    fake_supervisor_script.write_text("import sys\nsys.stdin.read()\n", encoding="utf-8")
+    running_supervisor = subprocess.Popen(
+        [sys.executable, str(fake_supervisor_script), "--agent", "seat-running"],
+        stdin=subprocess.PIPE)
+    (handoffs / "seat-running-supervisor.lock").write_text(f"{running_supervisor.pid}\n",
+                                                           encoding="utf-8")
+    try:
+        running_session_owner = {
+            "owner_kind": "agent-session", "agent_seat": "seat-running",
+            "owner_key": snapshots_module.owner_key_of_process(running_session.pid)}
 
-    def write_transcript(base, agent_id, aged):
-        transcript = (base / "projects" / "-home-seat" / "session-uuid" / "subagents"
-                      / f"agent-{agent_id}.jsonl")
-        transcript.parent.mkdir(parents=True, exist_ok=True)
-        transcript.write_text("{}\n", encoding="utf-8")
-        if aged:
-            os.utime(transcript, (two_hours_ago, two_hours_ago))
+        def owned_worktree(name, owner, detach=False):
+            path = managed / name
+            if detach:
+                git(checkout, "worktree", "add", "--detach", str(path), "origin/main")
+            else:
+                git(checkout, "worktree", "add", "-b", f"{name}-branch", str(path), "origin/main")
+            return give_owner(path, owner)
 
-    just_made = add_agent_worktree("agent-aaaaaaaaaaaaaaaa1", aged=False)
-    talking = add_agent_worktree("agent-aaaaaaaaaaaaaaaa2", aged=True)
-    write_transcript(fake_home / ".claude", "aaaaaaaaaaaaaaaa2", aged=False)
-    quiet = add_agent_worktree("agent-aaaaaaaaaaaaaaaa3", aged=True)
-    write_transcript(fake_home / ".claude", "aaaaaaaaaaaaaaaa3", aged=True)
-    configured = add_agent_worktree("agent-aaaaaaaaaaaaaaaa4", aged=True)
-    write_transcript(config_directory, "aaaaaaaaaaaaaaaa4", aged=False)
-    git(checkout, "worktree", "add", "-b", "fresh-session-branch",
-        str(managed / "fresh-session-wt"), "origin/main")
+        def head_of(worktree):
+            return git(worktree, "rev-parse", "HEAD").strip()
 
-    report = run_clean_with_claude_home(checkout, fake_home).stdout
-    check("an Agent-tool subagent's worktree made a moment ago is kept",
-          "agent-aaaaaaaaaaaaaaaa1: kept" in report and "subagent" in report, report)
-    check("an Agent-tool subagent's worktree whose transcript was just written is kept",
-          "agent-aaaaaaaaaaaaaaaa2: kept" in report, report)
-    check("an Agent-tool subagent's worktree quiet for over an hour is done",
-          "agent-aaaaaaaaaaaaaaaa3: done" in report, report)
-    check("a worktree not named agent-<id> is not judged by its age",
-          "fresh-session-wt: done" in report, report)
-    check("without CLAUDE_CONFIG_DIR, a transcript under it is not read",
-          "agent-aaaaaaaaaaaaaaaa4: done" in report, report)
+        def commit_in(worktree, message):
+            (worktree / f"{message}.txt").write_text(message + "\n", encoding="utf-8")
+            git(worktree, "add", "-A")
+            git(worktree, "commit", "-m", message)
 
-    configured_report = run_clean_with_claude_home(
-        checkout, fake_home, claude_config_directory=config_directory).stdout
-    check("with CLAUDE_CONFIG_DIR set, the subagent transcripts are read under it",
-          "agent-aaaaaaaaaaaaaaaa4: kept" in configured_report, configured_report)
+        fresh_wt = owned_worktree("fresh-wt", running_session_owner)
+        merged_wt = owned_worktree("merged-wt", running_session_owner)
+        closed_wt = owned_worktree("closed-wt", running_session_owner)
+        commit_in(closed_wt, "closed-work")
+        merged_untracked_wt = owned_worktree("merged-untracked-wt", running_session_owner)
+        (merged_untracked_wt / "late.txt").write_text("written after the merge\n", encoding="utf-8")
+        open_running_wt = owned_worktree("open-running-wt", running_session_owner)
+        reused_wt = owned_worktree("reused-wt", running_session_owner)
+        seat_running_wt = owned_worktree("seat-running-wt",
+                                         {"owner_kind": "agent-seat", "agent_seat": "seat-running"})
+        seat_stopped_wt = owned_worktree("seat-stopped-wt",
+                                         {"owner_kind": "agent-seat", "agent_seat": "seat-stopped"})
+        stopped_open_wt = owned_worktree("stopped-open-wt", {
+            "owner_kind": "agent-session", "agent_seat": "test-seat",
+            "owner_key": stopped_agent_session_owner_key()})
+        unknown_wt = owned_worktree("unknown-wt", {"owner_kind": "agent-session",
+                                                   "agent_seat": "test-seat",
+                                                   "owner_key": "not-an-owner-key"})
+        unreadable_owner_wt = managed / "unreadable-owner-wt"
+        git(checkout, "worktree", "add", "-b", "unreadable-owner-wt-branch",
+            str(unreadable_owner_wt), "origin/main")
+        owner_file_path(unreadable_owner_wt).write_text("{not json\n", encoding="utf-8")
+        locked_owned_wt = give_stopped_owner(owned_worktree("locked-owned-wt", running_session_owner))
+        git(checkout, "worktree", "lock", "--reason",
+            f"claude agent agent-a1 (pid {running_session.pid} start 1)", str(locked_owned_wt))
 
-    removal = run_clean_with_claude_home(checkout, fake_home, "--remove")
-    check("--remove keeps both live subagents' worktrees",
-          just_made.exists() and talking.exists(), removal.stdout)
-    check("--remove removes the quiet subagent's worktree and its branch",
-          not quiet.exists()
-          and git(checkout, "branch", "--list", "worktree-agent-aaaaaaaaaaaaaaaa3").strip() == "",
-          removal.stdout)
+        pull_requests = [
+            {"number": 1, "state": "MERGED", "headRefName": "merged-wt-branch",
+             "headRefOid": head_of(merged_wt)},
+            {"number": 2, "state": "CLOSED", "headRefName": "closed-wt-branch",
+             "headRefOid": head_of(closed_wt)},
+            {"number": 3, "state": "MERGED", "headRefName": "merged-untracked-wt-branch",
+             "headRefOid": head_of(merged_untracked_wt)},
+            {"number": 4, "state": "OPEN", "headRefName": "open-running-wt-branch",
+             "headRefOid": head_of(open_running_wt)},
+            # An earlier pull request on the same branch name, opened on another commit.
+            {"number": 5, "state": "MERGED", "headRefName": "reused-wt-branch",
+             "headRefOid": "0" * 40},
+            {"number": 6, "state": "OPEN", "headRefName": "seat-stopped-wt-branch",
+             "headRefOid": head_of(seat_stopped_wt)},
+            {"number": 7, "state": "OPEN", "headRefName": "stopped-open-wt-branch",
+             "headRefOid": head_of(stopped_open_wt)},
+        ]
+
+        def run_owner_rules(*flags, gh_exit=None):
+            environment = dict(os.environ, HOME=str(fake_home),
+                               FAKE_GH_PULL_REQUESTS=json.dumps(pull_requests))
+            if gh_exit is not None:
+                environment["FAKE_GH_EXIT_CODE"] = str(gh_exit)
+            return subprocess.run([sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), *flags],
+                                  capture_output=True, text=True, check=False, env=environment)
+
+        def line_of(output, name):
+            return next((line for line in output.splitlines() if line.startswith(f"{name}:")), "")
+
+        report = run_owner_rules().stdout
+        check("a new worktree whose owner runs is kept though its branch has no pull request and "
+              "no commit, as the topic worktrees removed 4 and 38 seconds after creation were not",
+              line_of(report, "fresh-wt").startswith("fresh-wt: kept — its owner, an agent-session of "
+                                                     "seat-running")
+              and "has no merged or closed pull request whose head commit is its HEAD"
+              in line_of(report, "fresh-wt"), report)
+        check("a worktree whose owner runs is done once its branch's pull request has merged",
+              line_of(report, "merged-wt").startswith("merged-wt: done — its owner")
+              and "pull request #1 (merged) on its branch merged-wt-branch is finished"
+              in line_of(report, "merged-wt"), report)
+        check("a worktree whose owner runs is done once its branch's pull request is closed, "
+              "commits not on origin/main included",
+              line_of(report, "closed-wt").startswith("closed-wt: done"), report)
+        check("a worktree whose owner runs is kept while it holds an untracked file, though its "
+              "pull request has merged",
+              line_of(report, "merged-untracked-wt").startswith("merged-untracked-wt: kept")
+              and "1 uncommitted or untracked file(s): late.txt"
+              in line_of(report, "merged-untracked-wt"), report)
+        check("a worktree whose owner runs is kept while its pull request is open",
+              line_of(report, "open-running-wt").startswith("open-running-wt: kept")
+              and "pull request #4 (open)" in line_of(report, "open-running-wt"), report)
+        check("an earlier merged pull request on a reused branch name, opened on another commit, "
+              "does not make a new worktree done",
+              line_of(report, "reused-wt").startswith("reused-wt: kept"), report)
+        check("an agent-seat whose handoff-supervisor runs keeps its worktree",
+              line_of(report, "seat-running-wt").startswith(
+                  "seat-running-wt: kept — its owner, the agent-seat seat-running, runs"), report)
+        check("an open pull request keeps the worktree of an agent-seat with no handoff-supervisor",
+              line_of(report, "seat-stopped-wt").startswith(
+                  "seat-stopped-wt: kept — its owner, the agent-seat seat-stopped, has stopped, and "
+                  "pull request #6 (open)"), report)
+        check("an open pull request keeps a worktree whose agent-session has stopped",
+              line_of(report, "stopped-open-wt").startswith("stopped-open-wt: kept")
+              and "has stopped" in line_of(report, "stopped-open-wt"), report)
+        check("an owner whose state cannot be read keeps the worktree",
+              line_of(report, "unknown-wt").startswith(
+                  "unknown-wt: kept — whether its owner, an agent-session of test-seat"), report)
+        check("an owner file that cannot be read keeps the worktree",
+              line_of(report, "unreadable-owner-wt").startswith(
+                  "unreadable-owner-wt: kept — its owner file could not be read:")
+              and "is not JSON" in line_of(report, "unreadable-owner-wt"), report)
+        check("a locked worktree is kept though its owner file says its owner stopped",
+              line_of(report, "locked-owned-wt").startswith(
+                  "locked-owned-wt: kept — locked with git worktree lock (claude agent agent-a1"),
+              report)
+        check("the count line gives the kept worktrees by reason, the worktrees with no owner file, "
+              "the branches with no pull request and the work-snapshots present",
+              "worktree counts: 10 kept (locked 1, no owner file 0, owner running 5, open pull "
+              "request 2, in use 0, could not be checked 2); worktrees with no owner file 0; "
+              "branches with no pull request 5; work-snapshots still present 0" in report, report)
+        check("a line names the kept worktrees of an agent-seat whose handoff-supervisor is not "
+              "running",
+              f"worktrees kept whose agent-seat's handoff-supervisor is not running: "
+              f"{seat_stopped_wt} (seat-stopped)" in report, report)
+
+        failing_gh = run_owner_rules("--remove", gh_exit=1)
+        check("when gh cannot list the pull requests, every worktree whose verdict needs one is "
+              "kept, and the count line says the branch count is unknown",
+              merged_wt.exists() and closed_wt.exists()
+              and "merged-wt: kept — the pull requests of its branch merged-wt-branch could not be "
+                  "read: `gh pr list" in failing_gh.stdout
+              and "gh: stand-in listing failure" in failing_gh.stdout
+              and "branches with no pull request unknown (" in failing_gh.stdout,
+              failing_gh.stdout + failing_gh.stderr)
+
+        removal = run_owner_rules("--remove")
+        check("--remove removes the worktrees whose owner runs and whose pull request has merged or "
+              "closed, and keeps every other",
+              not merged_wt.exists() and not closed_wt.exists()
+              and all(path.exists() for path in (
+                  fresh_wt, merged_untracked_wt, open_running_wt, reused_wt, seat_running_wt,
+                  seat_stopped_wt, stopped_open_wt, unknown_wt, unreadable_owner_wt,
+                  locked_owned_wt)),
+              removal.stdout + removal.stderr)
+        check("--remove deletes the merged worktree's branch and keeps the closed one's, which "
+              "holds commits origin/main lacks",
+              "merged-wt: removed, branch merged-wt-branch deleted" in removal.stdout
+              and "closed-wt: removed, branch closed-wt-branch kept" in removal.stdout
+              and git(checkout, "branch", "--list", "closed-wt-branch").strip() != "",
+              removal.stdout)
+
+        # Failure injection: a work-snapshot that cannot be written, and a branch for commits on no
+        # branch that cannot be made, each keep the worktree and fail the run.
+        stopped_owner = {"owner_kind": "agent-session", "agent_seat": "test-seat",
+                         "owner_key": stopped_agent_session_owner_key()}
+        snapshot_blocked_wt = owned_worktree("snapshot-blocked-wt", stopped_owner)
+        (snapshot_blocked_wt / "unsaved.txt").write_text("only here\n", encoding="utf-8")
+        common_git_directory = Path(git(checkout, "rev-parse", "--path-format=absolute",
+                                        "--git-common-dir").strip())
+        # A file where git must make the directory refs/work-snapshots/, so no work-snapshot ref
+        # can be written.
+        (common_git_directory / "refs" / "work-snapshots").write_text("", encoding="utf-8")
+        branch_blocked_wt = owned_worktree("branch-blocked-wt", stopped_owner, detach=True)
+        commit_in(branch_blocked_wt, "detached-work")
+        blocked_branch = f"worktree-cleaner-detached-commits-branch-blocked-wt-{head_of(branch_blocked_wt)[:12]}"
+        git(checkout, "branch", blocked_branch, "origin/main")
+        blocked = run_owner_rules("--remove")
+        check("a work-snapshot that cannot be written keeps a stopped owner's worktree and its file, "
+              "fails the run, and says why",
+              (snapshot_blocked_wt / "unsaved.txt").is_file()
+              and "snapshot-blocked-wt: work-snapshot FAILED, worktree kept — its uncommitted and "
+                  "untracked files could not be copied: " in blocked.stdout
+              and "snapshot-blocked-wt: removed" not in blocked.stdout
+              and blocked.returncode == 1, blocked.stdout + blocked.stderr)
+        check("a branch for commits on no branch that cannot be made keeps the worktree and its "
+              "commit, fails the run, and says why",
+              branch_blocked_wt.exists()
+              and f"branch-blocked-wt: branch for its commits on no branch FAILED, worktree kept — "
+                  f"git branch {blocked_branch} " in blocked.stdout
+              and "branch-blocked-wt: removed" not in blocked.stdout,
+              blocked.stdout + blocked.stderr)
+        check("each of those failures is followed by a line, holding no FAILED, saying the next "
+              "--remove tries again",
+              all(f"{name}: do nothing now: the worktree and everything in it are kept, and the "
+                  f"next scripts/clean-worktrees.py --remove" in blocked.stdout
+                  for name in ("snapshot-blocked-wt", "branch-blocked-wt"))
+              and not any("do nothing now" in line and "FAILED" in line
+                          for line in blocked.stdout.splitlines()),
+              blocked.stdout)
+
+        # In this process: gh that cannot be run, gh that prints no list, and a file written
+        # between the verdict and the removal.
+        module = load_clean_worktrees_module()
+        saved_path = os.environ["PATH"]
+        not_json_gh = scratch / "not-json-gh"
+        not_json_gh.mkdir()
+        (not_json_gh / "gh").write_text("#!/bin/sh\necho 'not a list'\n", encoding="utf-8")
+        (not_json_gh / "gh").chmod(0o755)
+        no_gh = scratch / "no-gh"
+        no_gh.mkdir()
+        (no_gh / "git").symlink_to(shutil.which("git"))
+        try:
+            os.environ["PATH"] = f"{not_json_gh}{os.pathsep}{saved_path}"
+            not_json = raised_by(lambda: module.list_all_pull_requests_grouped_by_head_branch(checkout))
+            os.environ["PATH"] = str(no_gh)
+            not_run = raised_by(lambda: module.list_all_pull_requests_grouped_by_head_branch(checkout))
+        finally:
+            os.environ["PATH"] = saved_path
+        check("gh printing something other than a list of pull requests is a listing failure",
+              isinstance(not_json, module.PullRequestListingFailed)
+              and "printed something other than a list of pull requests" in str(not_json),
+              repr(not_json))
+        check("gh that cannot be run is a listing failure",
+              isinstance(not_run, module.PullRequestListingFailed)
+              and "could not be run" in str(not_run), repr(not_run))
+        late_wt = owned_worktree("late-wt", running_session_owner)
+        (late_wt / "written-after-the-verdict.txt").write_text("new\n", encoding="utf-8")
+        late_output = io.StringIO()
+        real_stdout = sys.stdout
+        sys.stdout = late_output
+        try:
+            late_result = module.remove_worktree(
+                late_wt, "late-wt-branch", checkout,
+                module.Verdict(True, "", "", running_session_owner, module.owner_file.RUNNING))
+        finally:
+            sys.stdout = real_stdout
+        check("--remove keeps a worktree whose running owner wrote a file after the verdict",
+              late_result is True and late_wt.exists()
+              and "late-wt: kept — its owner, an agent-session of seat-running" in late_output.getvalue()
+              and "runs, and it now holds 1 uncommitted or untracked file(s): "
+                  "written-after-the-verdict.txt" in late_output.getvalue(), late_output.getvalue())
+    finally:
+        for helper in (running_session, running_supervisor):
+            helper.stdin.close()
+            helper.wait(timeout=30)
 
 
 # --- A run killed mid-removal has already shown what it announced ---------
@@ -881,6 +1187,7 @@ with tempfile.TemporaryDirectory() as scratch:
     for name in ("flush-first-wt", "flush-second-wt"):
         path = managed / name
         git(checkout, "worktree", "add", "-b", f"{name}-branch", str(path), "origin/main")
+        give_stopped_owner(path)
         (path / f"{name}.txt").write_text("held\n", encoding="utf-8")
 
     stub_directory = scratch / "hanging-git"
@@ -956,7 +1263,8 @@ with tempfile.TemporaryDirectory() as scratch:
     module = load_clean_worktrees_module()
     listed = module.list_worktrees(checkout, checkout)
     check("a worktree path holding a newline is listed whole, with its branch",
-          (newline_path, "newline-branch") in listed, str(listed))
+          (newline_path, "newline-branch") in [(path, branch) for path, branch, _ in listed],
+          str(listed))
     orphaned = module.branch_refs_with_no_worktree_fully_on_main(checkout)
     check("a lock reason that reads like a branch line does not attach that branch",
           "unattached-landed" in orphaned, str(orphaned))
@@ -1062,6 +1370,7 @@ with tempfile.TemporaryDirectory() as scratch:
     def worktree_holding_records(name):
         path = managed / name
         git(checkout, "worktree", "add", "-b", f"{name}-branch", str(path), "origin/main")
+        give_stopped_owner(path)
         cold_read_record = path / "cold-read-records" / cold_read_record_name
         cold_read_record.mkdir(parents=True)
         (cold_read_record / "fast-read.md").write_text("report\n", encoding="utf-8")
@@ -1217,6 +1526,7 @@ with tempfile.TemporaryDirectory() as scratch:
     def worktree_holding_a_walk(name):
         path = managed / name
         git(checkout, "worktree", "add", "-b", f"{name}-branch", str(path), "origin/main")
+        give_stopped_owner(path)
         walk_directory = path / "docs" / "walk"
         walk_directory.mkdir(parents=True)
         for suffix, text in (("", "# walk\n\n## Item 1 of 1\n"), ("-minutes", "# minutes\n\nItem 1 ruled.\n"),
@@ -1332,6 +1642,7 @@ with tempfile.TemporaryDirectory() as scratch:
     overlapping_name = "overlap-walk-2026-10-31"
     overlapping_walk_wt = managed / "overlapping-walk-wt"
     git(checkout, "worktree", "add", "-b", "overlapping-walk-wt-branch", str(overlapping_walk_wt), "origin/main")
+    give_stopped_owner(overlapping_walk_wt)
     overlapping_directory = overlapping_walk_wt / "docs" / "walk"
     overlapping_directory.mkdir(parents=True)
     for file_name, text in ((f"{overlapping_name}.md", "# walk foo\n"),
@@ -1355,6 +1666,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # would resolve it to foo, ship foo, and the removal would delete foo-draft's minutes.
     unpresented_walk_wt = managed / "unpresented-walk-wt"
     git(checkout, "worktree", "add", "-b", "unpresented-walk-wt-branch", str(unpresented_walk_wt), "origin/main")
+    give_stopped_owner(unpresented_walk_wt)
     unpresented_directory = unpresented_walk_wt / "docs" / "walk"
     unpresented_directory.mkdir(parents=True)
     for file_name, text in ((f"{walk_name}.md", "# walk\n"), (f"{walk_name}-minutes.md", "# minutes\n"),
@@ -1393,6 +1705,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     rebasing_wt = managed / "rebasing-wt"
     git(checkout, "worktree", "add", "-b", "rebasing-wt-branch", str(rebasing_wt), "origin/main")
+    give_stopped_owner(rebasing_wt)
     (rebasing_wt / "README.md").write_text("# the worktree's change\n", encoding="utf-8")
     git(rebasing_wt, "commit", "-am", "the worktree's change")
     (checkout / "README.md").write_text("# main's change\n", encoding="utf-8")
@@ -1409,6 +1722,7 @@ with tempfile.TemporaryDirectory() as scratch:
     unlocatable_wt = managed / "unlocatable-wt"
     git(checkout, "worktree", "add", "-b", "unlocatable-wt-branch", str(unlocatable_wt),
         "origin/main")
+    give_stopped_owner(unlocatable_wt)
     (unlocatable_wt / ".git").write_text(f"gitdir: {scratch / 'no-such-git-directory'}\n",
                                          encoding="utf-8")
 
@@ -1421,270 +1735,9 @@ with tempfile.TemporaryDirectory() as scratch:
           removal.stdout + removal.stderr)
     check("--remove keeps a worktree whose git directory git cannot locate",
           unlocatable_wt.exists()
-          and "unlocatable-wt: kept — git cannot locate the files that show a rebase or merge "
-              "in progress (" in removal.stdout,
+          and "unlocatable-wt: kept — its owner file could not be read: git rev-parse in "
+              in removal.stdout,
           removal.stdout + removal.stderr)
-
-# --- Topic-worktrees beside the agent-homes in ~/agents/ ---
-# HOME is a scratch directory, so ~/agents/ is the suite's own and never the machine's.
-with tempfile.TemporaryDirectory() as scratch:
-    scratch = Path(scratch).resolve()
-    checkout = scratch / "checkout"
-    origin = scratch / "origin.git"
-    checkout.mkdir()
-    git(checkout, "init", "-b", "main")
-    git(checkout, "config", "user.email", "test@test.invalid")
-    git(checkout, "config", "user.name", "clean-worktrees test")
-    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
-    (checkout / ".gitignore").write_text("docs/walk/\nscratch-state/\nCLAUDE.local.md\n",
-                                         encoding="utf-8")
-    git(checkout, "add", "-A")
-    git(checkout, "commit", "-m", "seed")
-    subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
-    git(checkout, "remote", "add", "origin", str(origin))
-    git(checkout, "push", "-u", "origin", "main")
-    home = scratch / "home"
-    agents = home / "agents"
-    agents.mkdir(parents=True)
-    walk_name = "some-walk-2026-10-30"
-    five_hours_ago = time.time() - 5 * 3600
-
-    def add_agents_worktree(name, branch=None):
-        path = agents / name
-        if branch is None:
-            git(checkout, "worktree", "add", "--detach", str(path), "origin/main")
-        else:
-            git(checkout, "worktree", "add", "-b", branch, str(path), "origin/main")
-        return path
-
-    def age_every_file_in(path):
-        for directory, subdirectories, files in os.walk(path, topdown=False):
-            for name in subdirectories + files:
-                os.utime(os.path.join(directory, name), (five_hours_ago, five_hours_ago),
-                         follow_symlinks=False)
-        os.utime(path, (five_hours_ago, five_hours_ago))
-
-    def add_walk(path):
-        walk_directory = path / "docs" / "walk"
-        walk_directory.mkdir(parents=True)
-        (walk_directory / f"{walk_name}.md").write_text("walk text\n", encoding="utf-8")
-        (walk_directory / f"{walk_name}-minutes.md").write_text("minutes\n", encoding="utf-8")
-
-    def run_clean_in_home(destination, path_prefix=None, *flags):
-        environment = dict(os.environ)
-        environment["HOME"] = str(home)
-        environment.pop("CLAUDE_CONFIG_DIR", None)
-        environment[SHIP_DESTINATION_VARIABLE] = destination
-        if path_prefix is not None:
-            environment["PATH"] = f"{path_prefix}{os.pathsep}{environment['PATH']}"
-        return subprocess.run(
-            [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), *flags],
-            capture_output=True, text=True, check=False, env=environment)
-
-    def line_for(output, name):
-        return next((line for line in output.splitlines() if line.startswith(f"{name}:")), "")
-
-    agent_home = add_agents_worktree("seat", "seat")
-    second_agent_home = add_agents_worktree("seat-two", "seat-two")
-    done_topic = add_agents_worktree("seat-done", "seat-done-topic-branch")
-    ignored_topic = add_agents_worktree("seat-ignored", "seat-ignored-topic-branch")
-    (ignored_topic / "scratch-state").mkdir()
-    (ignored_topic / "scratch-state" / "notes.md").write_text("n\n", encoding="utf-8")
-    untracked_topic = add_agents_worktree("seat-untracked", "seat-untracked-topic-branch")
-    (untracked_topic / "draft.md").write_text("work\n", encoding="utf-8")
-    modified_topic = add_agents_worktree("seat-modified", "seat-modified-topic-branch")
-    (modified_topic / "README.md").write_text("# changed\n", encoding="utf-8")
-    detached_topic = add_agents_worktree("seat-detached")
-    fresh_topic = add_agents_worktree("seat-fresh", "seat-fresh-topic-branch")
-    # Only an ignored file two directories down was written recently: the quiet check must look inside.
-    deep_write_topic = add_agents_worktree("seat-deep-write", "seat-deep-write-topic-branch")
-    (deep_write_topic / "scratch-state" / "deeper").mkdir(parents=True)
-    deep_file = deep_write_topic / "scratch-state" / "deeper" / "recent.md"
-    deep_file.write_text("recent\n", encoding="utf-8")
-    unreadable_topic = add_agents_worktree("seat-unreadable", "seat-unreadable-topic-branch")
-    (unreadable_topic / "locked-directory").mkdir()
-    status_failing_topic = add_agents_worktree("seat-status-failing",
-                                               "seat-status-failing-topic-branch")
-    Path(git(status_failing_topic, "rev-parse", "--path-format=absolute", "--git-path",
-             "index").strip()).write_bytes(b"not an index")
-    unprefixed_topic = add_agents_worktree("loose-topic", "loose-topic-topic-branch")
-    # A directory in ~/agents/ on a detached HEAD is no agent-home, so its name prefixes nothing.
-    detached_directory = add_agents_worktree("lab")
-    beside_detached_topic = add_agents_worktree("lab-topic", "lab-topic-topic-branch")
-    # Outside ~/agents/ altogether, under a name that begins with an agent-home's.
-    (scratch / "elsewhere").mkdir()
-    git(checkout, "worktree", "add", "-b", "seat-elsewhere-topic-branch",
-        str(scratch / "elsewhere" / "seat-elsewhere"), "origin/main")
-    elsewhere_topic = scratch / "elsewhere" / "seat-elsewhere"
-    # One level deeper in ~/agents/, as agent-instructions-editor keeps its topic-worktrees.
-    (agents / "seat-worktrees").mkdir()
-    nested_topic = add_agents_worktree("seat-worktrees/seat-nested", "seat-nested-topic-branch")
-    walk_topic = add_agents_worktree("seat-walk", "seat-walk-topic-branch")
-    add_walk(walk_topic)
-    # An agent-home checked out on a landed branch named unlike the directory, as ned-box-helper is.
-    briefed_agent_home = add_agents_worktree("seat-briefed", "some-landed-topic-branch")
-    (briefed_agent_home / "CLAUDE.local.md").write_text("seat-brief\n", encoding="utf-8")
-    for path in (agent_home, second_agent_home, briefed_agent_home, done_topic, ignored_topic, untracked_topic,
-                 modified_topic, detached_topic, unreadable_topic, status_failing_topic,
-                 unprefixed_topic, walk_topic, deep_write_topic, nested_topic,
-                 detached_directory, beside_detached_topic, elsewhere_topic):
-        age_every_file_in(path)
-    ninety_minutes_ago = time.time() - 90 * 60
-    os.utime(deep_file, (ninety_minutes_ago, ninety_minutes_ago))
-    (unreadable_topic / "locked-directory").chmod(0)
-    store = scratch / "store"
-    try:
-        report = run_clean_in_home(str(store / "cold-read-records"))
-        output = report.stdout
-        check("an agent-home in ~/agents/ is kept",
-              "outside the managed area" in line_for(output, "seat"), output)
-        check("a worktree in ~/agents/ on a seat-branch is kept, even when its name extends "
-              "another agent-home's",
-              "outside the managed area" in line_for(output, "seat-two"), output)
-        check("an agent-home holding a seat-brief is kept on any branch, even when its name "
-              "extends another agent-home's",
-              "outside the managed area" in line_for(output, "seat-briefed"), output)
-        check("a worktree in ~/agents/ whose name begins with no agent-home's name is kept",
-              "outside the managed area" in line_for(output, "loose-topic"), output)
-        check("a worktree in ~/agents/ whose name begins with a detached directory's name is kept",
-              "outside the managed area" in line_for(output, "lab-topic"), output)
-        check("a worktree outside ~/agents/ whose name begins with an agent-home's name is kept",
-              "outside the managed area" in line_for(output, "seat-elsewhere"), output)
-        check("a worktree deeper in ~/agents/ than its top level is kept",
-              "outside the managed area" in line_for(output, "seat-nested"), output)
-        check("the reference-checkout is not judged",
-              not line_for(output, "checkout") and report.returncode == 0,
-              output + report.stderr)
-        check("a landed, clean, quiet topic-worktree beside an agent-home is done",
-              line_for(output, "seat-done") == "seat-done: done — landed and vacant", output)
-        check("a topic-worktree holding only ignored files is done, and the report names them",
-              line_for(output, "seat-ignored").startswith("seat-ignored: done")
-              and "scratch-state/notes.md" in line_for(output, "seat-ignored"), output)
-        check("a topic-worktree with an untracked file is kept, naming the file",
-              "seat-untracked: kept — 1 uncommitted or untracked file(s), which only its owner "
-              "may discard: draft.md" == line_for(output, "seat-untracked"), output)
-        check("a topic-worktree with a modified file is kept, naming the file",
-              "seat-modified: kept — 1 uncommitted or untracked file(s), which only its owner "
-              "may discard: README.md" == line_for(output, "seat-modified"), output)
-        check("a topic-worktree whose HEAD is detached is kept",
-              "seat-detached: kept — its HEAD is detached" in output, output)
-        check("a topic-worktree written within the quiet period is kept",
-              line_for(output, "seat-fresh").startswith("seat-fresh: kept — a file in it was "
-                                                        "written 0 min ago")
-              and "(quiet for 4 h before removal)" in line_for(output, "seat-fresh"), output)
-        check("a topic-worktree with one file deep inside written within the quiet period is kept, "
-              "naming how long ago",
-              line_for(output, "seat-deep-write").startswith(
-                  "seat-deep-write: kept — a file in it was written 90 min ago"), output)
-        check("a topic-worktree whose file times cannot be read is kept",
-              "seat-unreadable: kept — when its files were last written could not be read "
-              "(Permission denied)" == line_for(output, "seat-unreadable")
-              or os.geteuid() == 0, output)
-        check("a topic-worktree whose changes git cannot list is kept",
-              line_for(output, "seat-status-failing").startswith(
-                  "seat-status-failing: kept — git cannot list its uncommitted changes ("), output)
-        check("the report names a topic-worktree's walk and says --remove ships it first",
-              line_for(output, "seat-walk").startswith("seat-walk: done")
-              and f"--remove first ships its 1 record(s)" in line_for(output, "seat-walk")
-              and f"docs/walk/{walk_name}.md" in line_for(output, "seat-walk"), output)
-        check("no keep reason of a topic-worktree reads as a failed vacancy check to the "
-              "handoff-supervisor",
-              "(lsof)" not in output and "lsof is not installed" not in output
-              and "FAILED" not in output, output)
-        check("the report ships no walk", not store.exists(), str(list(store.rglob("*"))))
-
-        # ned-box cannot be reached: the walk does not ship, so the worktree stays.
-        unreachable_stubs = scratch / "unreachable-stubs"
-        unreachable_stubs.mkdir()
-        for tool in ("ssh", "rsync"):
-            (unreachable_stubs / tool).write_text("#!/bin/sh\nexit 255\n", encoding="utf-8")
-            (unreachable_stubs / tool).chmod(0o755)
-        unreachable = run_clean_in_home(
-            "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records",
-            unreachable_stubs, "--remove")
-        walk_kept_line = line_for(unreachable.stdout, "seat-walk")
-        check("--remove keeps a topic-worktree whose walk fails to ship, as a record that did "
-              "not reach the log-store, and exits 1",
-              walk_topic.exists()
-              and walk_kept_line.startswith(
-                  "seat-walk: record shipment FAILED, worktree kept — removing it would delete "
-                  f"a record the log-store does not hold: docs/walk/{walk_name}.md (FAILED:")
-              and unreachable.returncode == 1
-              and "seat-walk: removed" not in unreachable.stdout,
-              unreachable.stdout + unreachable.stderr)
-        check("--remove tells a topic-worktree whose walk failed to ship that the next --remove "
-              "retries",
-              "seat-walk: for each record whose line does not start REFUSED:, do nothing now"
-              in unreachable.stdout and "whose line starts REFUSED:" not in unreachable.stdout,
-              unreachable.stdout)
-        check("--remove removes a done topic-worktree and deletes its branch",
-              not done_topic.exists()
-              and "seat-done: removed, branch seat-done-topic-branch deleted" in unreachable.stdout,
-              unreachable.stdout + unreachable.stderr)
-        check("--remove removes a topic-worktree holding only ignored files",
-              not ignored_topic.exists(), unreachable.stdout + unreachable.stderr)
-        check("--remove keeps every topic-worktree that a check keeps, and every agent-home",
-              all(path.exists() for path in (agent_home, second_agent_home, briefed_agent_home,
-                                             untracked_topic,
-                                             modified_topic, detached_topic, fresh_topic,
-                                             unreadable_topic, status_failing_topic,
-                                             unprefixed_topic, nested_topic,
-                                             beside_detached_topic, elsewhere_topic))
-              and (untracked_topic / "draft.md").is_file()
-              and (briefed_agent_home / "CLAUDE.local.md").is_file(),
-              unreachable.stdout + unreachable.stderr)
-
-        # The store holds the walk's draft with other bytes: an add-only file, so refused.
-        (walk_topic / "docs" / "walk" / f"{walk_name}-draft.md").write_text("draft\n", encoding="utf-8")
-        age_every_file_in(walk_topic)
-        (store / "walk").mkdir(parents=True)
-        (store / "walk" / f"{walk_name}-draft.md").write_text("another draft\n", encoding="utf-8")
-        refused = run_clean_in_home(str(store / "cold-read-records"), None, "--remove")
-        check("--remove keeps a topic-worktree whose walk the log-store refuses, and exits 1",
-              walk_topic.exists()
-              and "seat-walk: record shipment FAILED, worktree kept — " in refused.stdout
-              and "(REFUSED:" in refused.stdout and refused.returncode == 1,
-              refused.stdout + refused.stderr)
-        check("--remove tells the owner of a refused walk to settle which copy is right, and "
-              "gives no rename step",
-              "seat-walk: for each walk whose line starts REFUSED:, the log-store holds another "
-              "copy of each file that line names" in refused.stdout
-              and "rename its directory" not in refused.stdout
-              and "whose line does not start REFUSED:" not in refused.stdout,
-              refused.stdout)
-
-        (store / "walk" / f"{walk_name}-draft.md").unlink()
-        shipped = run_clean_in_home(str(store / "cold-read-records"), None, "--remove")
-        check("--remove ships a topic-worktree's walk to the log-store, then removes the worktree",
-              (store / "walk" / f"{walk_name}-minutes.md").read_text(encoding="utf-8")
-              == "minutes\n"
-              and (store / "walk" / f"{walk_name}.md").is_file()
-              and not walk_topic.exists()
-              and f"seat-walk: shipped: {walk_name}" in shipped.stdout,
-              shipped.stdout + shipped.stderr)
-
-        # An agent writes into a clean topic-worktree while the vacancy check, the slowest, runs.
-        dirtied_topic = add_agents_worktree("seat-dirtied", "seat-dirtied-topic-branch")
-        age_every_file_in(dirtied_topic)
-        writing_stubs = scratch / "lsof-writes-into-worktree-stubs"
-        writing_stubs.mkdir()
-        (writing_stubs / "lsof").write_text(
-            "#!/bin/sh\n"
-            f"echo work > {shlex.quote(str(dirtied_topic / 'late-draft.md'))}\n"
-            f'exec {shutil.which("lsof")} "$@"\n', encoding="utf-8")
-        (writing_stubs / "lsof").chmod(0o755)
-        dirtied = run_clean_in_home(str(store / "cold-read-records"), writing_stubs, "--remove")
-        check("--remove keeps a topic-worktree written into while its checks ran, naming the file, "
-              "and counts it no failure",
-              (dirtied_topic / "late-draft.md").is_file()
-              and line_for(dirtied.stdout, "seat-dirtied")
-              == "seat-dirtied: kept — 1 uncommitted or untracked file(s), which only its owner "
-                 "may discard: late-draft.md"
-              and dirtied.returncode == 0,
-              dirtied.stdout + dirtied.stderr)
-    finally:
-        if (unreadable_topic / "locked-directory").exists():
-            (unreadable_topic / "locked-directory").chmod(0o755)
 
 # --- The log of removals ---
 with tempfile.TemporaryDirectory() as scratch:
@@ -1717,6 +1770,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     logged_wt = managed / "logged-wt"
     git(checkout, "worktree", "add", "-b", "logged-wt-branch", str(logged_wt), "origin/main")
+    give_stopped_owner(logged_wt)
     (logged_wt / "notes.txt").write_text("discarded\n", encoding="utf-8")
     git(checkout, "branch", "orphaned-branch", "origin/main")
     log_file = scratch / "store" / "kind" / "ned-box.txt"
@@ -1749,6 +1803,7 @@ with tempfile.TemporaryDirectory() as scratch:
     unwritable_wt = managed / "unwritable-log-wt"
     git(checkout, "worktree", "add", "-b", "unwritable-log-wt-branch", str(unwritable_wt),
         "origin/main")
+    give_stopped_owner(unwritable_wt)
     git(checkout, "branch", "second-orphaned-branch", "origin/main")
     not_a_directory = scratch / "a-file"
     not_a_directory.write_text("", encoding="utf-8")
