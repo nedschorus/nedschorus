@@ -272,6 +272,11 @@ real_recovery_has_an_operator_terminal = recovery.recovery_has_an_operator_termi
 real_retire_seat_tmux_session = recovery.resupervise.retire_seat_tmux_session
 real_resupervise_run_tmux = recovery.resupervise.run_tmux
 real_tmux_session_alive_anywhere = recovery.tmux_session_alive_anywhere
+# No case reaches the real user systemd manager; run_user_systemd_scope_cases tests the probe.
+real_agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason = (
+    recovery.agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason)
+patch("agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason",
+      lambda name, environment: ([], None))
 
 
 def no_leftover_idle_shell(detail="no tmux server holds a session named 'x'"):
@@ -335,7 +340,7 @@ def tmux_server_answers(panes_by_socket, tmux_cannot_be_run=False,
         def __init__(self, returncode, stdout="", stderr=""):
             self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
 
-    def fake_run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
+    def fake_run_tmux(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
         if tmux_cannot_be_run:
             return None
         if arguments_after_tmux[0] == "has-session":
@@ -702,7 +707,7 @@ def run_tmux_has_session_answer_cases(root: Path):
           and detail.endswith("so seat liveness cannot be checked — refusing rather than guessing"),
           repr((alive, detail)))
     def named_socket_errs_and_default_socket_answers(default_answer):
-        def answer(*arguments, socket_name=None, environment=None):
+        def answer(*arguments, socket_name=None, environment=None, command_prefix=()):
             if socket_name == "seat-a":
                 return Answer(1, "protocol version mismatch (client 9, server 8)")
             return default_answer
@@ -766,7 +771,7 @@ def run_mac_window_cases(root: Path):
     opener_commands = []
 
     def tmux_reports_clients(client_lines, returncode=0, error_text="", cannot_answer=False):
-        def fake_run_tmux(*arguments, socket_name=None, environment=None):
+        def fake_run_tmux(*arguments, socket_name=None, environment=None, command_prefix=()):
             if arguments[:1] == ("list-clients",):
                 if cannot_answer:
                     return None
@@ -984,7 +989,7 @@ def run_claude_json_presets_cases(root: Path):
     workspace = Workspace(root / "claude-json-presets")
     tmux_calls = []
 
-    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None):
+    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
         # What the file held when tmux was asked to start the supervisor.
         tmux_calls.append(CLAUDE_JSON_SCRATCH_PATH.read_text(encoding="utf-8")
                           if CLAUDE_JSON_SCRATCH_PATH.exists() else None)
@@ -1065,6 +1070,156 @@ def run_claude_json_presets_cases(root: Path):
         CLAUDE_JSON_SCRATCH_PATH.unlink(missing_ok=True)
 
 
+def run_user_systemd_scope_cases(root: Path):
+    """Off macOS, launch_seat starts the seat's tmux server in a scope of the user's systemd
+    manager, so the test suites' low-CPU-weight slice yields to it. A stub systemd-run on PATH
+    stands in for the manager, answering or failing as each case needs; when the manager cannot
+    be reached the seat still starts, outside it, and stderr says so."""
+    real_launcher_path = recovery.launcher_path
+    real_run_tmux = recovery.run_tmux
+    real_which = recovery.shutil.which
+    directory = root / "user-systemd-scope"
+    stub_directory = directory / "bin"
+    stub_directory.mkdir(parents=True)
+    probe_record = directory / "probe-record.json"
+    stub = stub_directory / "systemd-run"
+    stub.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        f"open({str(probe_record)!r}, 'w').write(json.dumps("
+        "{'argv': sys.argv[1:], 'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR')}))\n"
+        "failure = os.environ.get('NEDSCHORUS_TEST_SYSTEMD_RUN_FAILURE')\n"
+        "if failure:\n"
+        "    sys.stderr.write(failure + '\\n')\n"
+        "    sys.exit(1)\n",
+        encoding="utf-8")
+    stub.chmod(0o755)
+    workspace = Workspace(directory / "seat", name="seat-a")
+    tmux_calls = []
+
+    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
+        tmux_calls.append((arguments_after_tmux, socket_name, list(command_prefix)))
+
+        class Done:
+            returncode = 0
+        return Done()
+
+    def launch(failure=None, runtime_directory=None, systemd_run_installed=True):
+        tmux_calls.clear()
+        probe_record.unlink(missing_ok=True)
+        for name, value in (("NEDSCHORUS_TEST_SYSTEMD_RUN_FAILURE", failure),
+                            ("XDG_RUNTIME_DIR", runtime_directory)):
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        recovery.shutil.which = (real_which if systemd_run_installed else
+                                 lambda program: None if program == "systemd-run"
+                                 else real_which(program))
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            exit_code = real_launch_seat(workspace.name, workspace.seat_directory,
+                                         workspace.handoffs, "")
+        probe = (json.loads(probe_record.read_text(encoding="utf-8"))
+                 if probe_record.is_file() else None)
+        return exit_code, stderr.getvalue(), probe
+
+    saved = {name: os.environ.get(name) for name in
+             ("PATH", "XDG_RUNTIME_DIR", "NEDSCHORUS_TEST_SYSTEMD_RUN_FAILURE")}
+    os.environ["PATH"] = f"{stub_directory}{os.pathsep}{os.environ.get('PATH', '')}"
+    patch("agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason",
+          real_agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason)
+    recovery.launcher_path = lambda: None
+    recovery.run_tmux = capture_tmux
+    marker = recovery.AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER
+    try:
+        exit_code, stderr, probe = launch()
+        prefix = tmux_calls[0][2] if tmux_calls else []
+        check("USER SCOPE: with the manager answering, the seat's tmux server is started by "
+              "systemd-run in a user scope, which leaves the pane command's $HOME unexpanded",
+              exit_code == 0 and prefix[:3] == ["systemd-run", "--user", "--scope"]
+              and "--expand-environment=no" in prefix and prefix[-1] == "--"
+              and tmux_calls[0][0][:2] == ("new-session", "-d") and marker not in stderr,
+              (exit_code, tmux_calls, stderr))
+        check("USER SCOPE: the probe runs only `true`, so a failed tmux is never read as an "
+              "unreachable manager",
+              probe is not None and probe["argv"][-1] == "true", probe)
+        check("USER SCOPE: cron gives no XDG_RUNTIME_DIR, so the launch sets /run/user/<uid>",
+              probe is not None and probe["XDG_RUNTIME_DIR"] == f"/run/user/{os.getuid()}",
+              probe)
+
+        exit_code, stderr, probe = launch(runtime_directory="/run/user/elsewhere")
+        check("USER SCOPE: an XDG_RUNTIME_DIR the caller has is kept",
+              probe is not None and probe["XDG_RUNTIME_DIR"] == "/run/user/elsewhere", probe)
+
+        bus_failure = ("Failed to connect to user scope bus via local transport: "
+                       "No such file or directory")
+        exit_code, stderr, probe = launch(failure=bus_failure)
+        check("USER SCOPE: with the manager unreachable, the seat is still started, by "
+              "tmux alone",
+              exit_code == 0 and len(tmux_calls) == 1 and tmux_calls[0][2] == []
+              and tmux_calls[0][0][:2] == ("new-session", "-d"),
+              (exit_code, tmux_calls))
+        check("USER SCOPE: and stderr carries the marker the crash watcher reads, the seat's "
+              "name and systemd-run's own words",
+              f"recover-crashed-seats: seat-a: {marker}" in stderr and bus_failure in stderr,
+              stderr)
+
+        exit_code, stderr, probe = launch(systemd_run_installed=False)
+        check("USER SCOPE: with no systemd-run on the machine, the seat is still started, and "
+              "stderr says why it is outside the manager",
+              exit_code == 0 and len(tmux_calls) == 1 and tmux_calls[0][2] == []
+              and marker in stderr and "systemd-run is not installed" in stderr,
+              (exit_code, tmux_calls, stderr))
+
+        # A systemd-run that cannot be executed: PATH holds only the stub, made not executable.
+        stub.chmod(0o644)
+        os.environ["PATH"] = str(stub_directory)
+        recovery.shutil.which = lambda program: str(stub_directory / program)
+        tmux_calls.clear()
+        captured = io.StringIO()
+        with redirect_stderr(captured):
+            exit_code = real_launch_seat(workspace.name, workspace.seat_directory,
+                                         workspace.handoffs, "")
+        stderr = captured.getvalue()
+        check("USER SCOPE: a systemd-run that cannot run still lets the seat start, and stderr "
+              "says it could not run",
+              exit_code == 0 and len(tmux_calls) == 1 and tmux_calls[0][2] == []
+              and marker in stderr and "could not run" in stderr,
+              (exit_code, tmux_calls, stderr))
+        stub.chmod(0o755)
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        recovery.shutil.which = real_which
+        recovery.launcher_path = real_launcher_path
+        recovery.run_tmux = real_run_tmux
+        patch("agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason",
+              lambda name, environment: ([], None))
+
+    # run_tmux puts the prefix before tmux itself.
+    commands_run = []
+
+    def recording_subprocess_run(command, **keywords):
+        commands_run.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+    real_subprocess_run = recovery.subprocess.run
+    recovery.subprocess.run = recording_subprocess_run
+    recovery.shutil.which = lambda program: f"/usr/bin/{program}"
+    try:
+        real_run_tmux("new-session", "-d", socket_name="seat-a",
+                      command_prefix=["systemd-run", "--user", "--scope", "--"])
+    finally:
+        recovery.subprocess.run = real_subprocess_run
+        recovery.shutil.which = real_which
+    check("USER SCOPE: run_tmux runs the prefix with tmux and its words after it",
+          commands_run == [["systemd-run", "--user", "--scope", "--", "tmux", "-L", "seat-a",
+                            "new-session", "-d"]], commands_run)
+
+
 def run_github_token_cases(root: Path):
     """A seat recovery brings up, after a crash or at login, acts on GitHub as its own
     account: the supervisor its pane command starts sets GH_TOKEN for the agent-sessions,
@@ -1084,7 +1239,7 @@ def run_github_token_cases(root: Path):
     stub_agent.chmod(0o755)
     tmux_calls = []
 
-    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None):
+    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
         tmux_calls.append((arguments_after_tmux, environment))
 
         class Done:
@@ -2633,7 +2788,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # supervisor command.
     workspace = Workspace(root / "r18")
     tmux_commands = []
-    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None):
+    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
         tmux_commands.append((arguments_after_tmux, socket_name))
         class Done:
             returncode = 0
@@ -2685,7 +2840,7 @@ with tempfile.TemporaryDirectory() as temporary:
     os.environ.update(CALLING_AGENT_SESSION_TEST_VARIABLES)
     os.environ["NEDSCHORUS_TEST_SEAT_KEEPS_THIS"] = "kept"
     environments_handed_on = {}
-    def capture_tmux_environment(*arguments_after_tmux, socket_name=None, environment=None):
+    def capture_tmux_environment(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
         # No environment means tmux inherits this process's own.
         environments_handed_on["box"] = dict(os.environ) if environment is None else environment
         class Done:
@@ -3120,7 +3275,7 @@ with tempfile.TemporaryDirectory() as temporary:
         all_dead()
         box_tmux_commands = []
 
-        def capture_box_tmux(*arguments_after_tmux, socket_name=None, environment=None):
+        def capture_box_tmux(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
             box_tmux_commands.append(arguments_after_tmux)
             return subprocess.CompletedProcess(arguments_after_tmux, 0)
         patch("launcher_path", lambda: None)
@@ -3243,6 +3398,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("shell_words keeps a word with an unquoted # inside it, and the words after it",
           shell_words("echo a#b c") == ["echo", "a#b", "c"], shell_words("echo a#b c"))
     run_claude_json_presets_cases(root)
+    run_user_systemd_scope_cases(root)
     run_github_token_cases(root)
     run_came_up_cases(root)
     run_reach_clause_cases(root)
@@ -5112,7 +5268,7 @@ with tempfile.TemporaryDirectory() as temporary:
             def __init__(self, returncode, stdout="", stderr=""):
                 self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
 
-        def fake_run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
+        def fake_run_tmux(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
             asked = "question" in events
             if asked and after_the_question == "unanswerable":
                 return None

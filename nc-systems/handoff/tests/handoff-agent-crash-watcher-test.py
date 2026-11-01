@@ -303,6 +303,26 @@ def run_decision_cases(root: Path):
           and not harness.state["seats"]["merge-lane-2"].get("recovery_attempts"),
           repr(harness.state))
 
+    check("the watcher's started-outside-the-user-systemd-manager marker is recovery's",
+          watcher_module.AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER
+          == recovery_module.AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER)
+    outside_line = ("recover-crashed-seats: merge-lane-2: "
+                    f"{recovery_module.AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER}"
+                    ": its tmux server could not be put in a scope, because systemd-run exited 1")
+    harness = Harness(root / "started-outside-user-systemd-manager",
+                      recovery_result=(0, f"{outside_line}\nThe seat is being started anyway.\n"
+                                          "merge-lane-2: relaunched resuming x"))
+    crash_after_running(harness)
+    outside = [path for path in harness.notices()
+               if "started-outside-user-systemd-manager" in path.name]
+    text = outside[0].read_text(encoding="utf-8") if outside else ""
+    check("a restart recovery started outside the user's systemd manager tells the user, "
+          "quoting recovery's line, and still counts as a restart",
+          len(harness.notices()) == 1 and f"  {outside_line}\n" in text
+          and "merge-lane-2 is running again" in text
+          and harness.state["seats"]["merge-lane-2"]["recovery_attempts"][-1]["outcome"]
+          == "restarted", (harness.notices(), text))
+
     check("the watcher's window-not-opened exit status is recovery's",
           watcher_module.RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS
           == recovery_module.ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS)
