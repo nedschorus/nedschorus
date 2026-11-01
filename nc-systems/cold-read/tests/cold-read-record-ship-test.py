@@ -1498,7 +1498,77 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-local-failure-tes
             ["sub/x"]))
     check("a local link_staged_files_never_over_existing whose mkdir raises OSError "
           "returns exit 1 and None, and removes the staging directory",
-          failed_as_ssh_fails(placed) and not link_staging.exists(), repr(placed))
+          failed_as_ssh_fails(placed) and len(placed) == 3 and placed[2] is None
+          and not link_staging.exists(),
+          repr(placed))
+
+    unremoved_store = failing_scratch / "unremoved-link-store"
+    unremoved_staging = unremoved_store / ".ship-staging-u-0123456789ab"
+    unremoved_staging.mkdir(parents=True)
+    (unremoved_staging / "x.md").write_text("x\n", encoding="utf-8")
+    with os_error_from(shutil, "rmtree", lambda path, *a, **k: pathlib.Path(path) == unremoved_staging):
+        placed = returned_or_raised(lambda: failing_shipper.link_staged_files_never_over_existing(
+            None, pathlib.PurePosixPath(unremoved_staging), pathlib.PurePosixPath(unremoved_store),
+            ["x.md"]))
+    check("a local link_staged_files_never_over_existing whose staging directory cannot be "
+          "removed still returns the store's digests, and says why the removal failed",
+          isinstance(placed, tuple) and len(placed) == 3 and placed[0].returncode == 0
+          and placed[1] == {"x.md": hashlib.sha256(b"x\n").hexdigest()}
+          and "No space left on device (injected)" in placed[2], repr(placed))
+    linked = failing_shipper.link_staged_files_never_over_existing(
+        None, pathlib.PurePosixPath(unremoved_staging), pathlib.PurePosixPath(unremoved_store),
+        ["x.md"])
+    check("a local link_staged_files_never_over_existing whose staging directory is "
+          "removed returns None as the reason",
+          len(linked) == 3 and linked[1] == {"x.md": hashlib.sha256(b"x\n").hexdigest()} and linked[2] is None
+          and not unremoved_staging.exists(), repr(linked))
+
+    # The remote linking script, run by a real sh in place of ssh, with an
+    # `rm` that fails: sh -c gets the host as $1 and the script as $2.
+    failing_rm_bin = failing_scratch / "failing-rm-bin"
+    failing_rm_bin.mkdir()
+    (failing_rm_bin / "rm").write_text(
+        "#!/bin/sh\necho \"rm: cannot remove 'locked':  Permission denied (injected)\" >&2\n"
+        "exit 1\n", encoding="utf-8")
+    (failing_rm_bin / "rm").chmod(0o755)
+    remote_store = failing_scratch / "remote-link-store"
+    remote_staging = remote_store / ".ship-staging-r-0123456789ab"
+    remote_staging.mkdir(parents=True)
+    (remote_staging / "y.md").write_text("y\n", encoding="utf-8")
+    real_failing_ssh_command = failing_shipper.SSH_COMMAND
+    failing_shipper.SSH_COMMAND = [
+        "sh", "-c", f'PATH={shlex.quote(str(failing_rm_bin))}:"$PATH"; eval "$2"', "ssh-replay"]
+    try:
+        remote_placed = failing_shipper.link_staged_files_never_over_existing(
+            "nobody@ned-box", pathlib.PurePosixPath(remote_staging),
+            pathlib.PurePosixPath(remote_store), ["y.md"])
+        staging_kept_after_failed_rm = remote_staging.exists()
+        failing_shipper.SSH_COMMAND = ["sh", "-c", 'eval "$2"', "ssh-replay"]
+        (remote_staging / "z.md").write_text("z\n", encoding="utf-8")
+        remote_removed = failing_shipper.link_staged_files_never_over_existing(
+            "nobody@ned-box", pathlib.PurePosixPath(remote_staging),
+            pathlib.PurePosixPath(remote_store), ["z.md"])
+        failing_shipper.SSH_COMMAND = [
+            "sh", "-c", "echo 'ssh: connect: No route to host' >&2; exit 255", "ssh-replay"]
+        remote_unreached = failing_shipper.link_staged_files_never_over_existing(
+            "nobody@ned-box", pathlib.PurePosixPath(remote_staging),
+            pathlib.PurePosixPath(remote_store), ["z.md"])
+    finally:
+        failing_shipper.SSH_COMMAND = real_failing_ssh_command
+    check("remotely, a staging directory `rm -rf` cannot remove is returned with rm's "
+          "error as the reason, and the store's digests are still read",
+          len(remote_placed) == 3 and remote_placed[0].returncode == 0
+          and remote_placed[1] == {"y.md": hashlib.sha256(b"y\n").hexdigest()}
+          and remote_placed[2] == "rm: cannot remove 'locked': Permission denied (injected)"
+          and staging_kept_after_failed_rm, repr(remote_placed))
+    check("remotely, a staging directory that is removed returns None as the reason",
+          len(remote_removed) == 3 and remote_removed[1] == {"z.md": hashlib.sha256(b"z\n").hexdigest()}
+          and remote_removed[2] is None and not remote_staging.exists(), repr(remote_removed))
+    check("remotely, a link step ssh could not run returns ssh's exit, no digests and "
+          "no reason, so the caller removes the directory itself",
+          len(remote_unreached) == 3 and remote_unreached[0].returncode == 255
+          and remote_unreached[1] is None and remote_unreached[2] is None,
+          repr(remote_unreached))
 
     replace_store = failing_scratch / "replace-store"
     replace_staging = replace_store / ".ship-staging-r-0123456789ab"
