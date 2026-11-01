@@ -136,18 +136,24 @@ class World:
         return any(line.startswith("seen\t") and f"\t{key}\t" in line
                    for line in self.store_file(path, "log").splitlines())
 
-    def failing_git(self, arguments):
+    def failing_git(self, arguments, first_only=False):
         """Make every git whose command line holds arguments fail as a broken repository does,
-        for the hook's runs and commands until failing_git(None)."""
+        for the hook's runs and commands until failing_git(None); with first_only, only the
+        first such git fails."""
         if arguments is None:
             self.extra_environment.pop("PATH", None)
             return
         directory = self.scratch / "failing-git"
         directory.mkdir(exist_ok=True)
+        failed = directory / "failed-once"
+        failed.unlink(missing_ok=True)
+        once = f"[ -e '{failed}' ] && exec {shutil.which('git')} \"$@\"; : > '{failed}'; " \
+            if first_only else ""
         wrapper = directory / "git"
         wrapper.write_text(
             "#!/bin/sh\n"
-            f"case \" $* \" in *\"{arguments}\"*) echo 'fatal: injected failure' >&2; exit 128;; esac\n"
+            f"case \" $* \" in *\"{arguments}\"*) {once}echo 'fatal: injected failure' >&2; "
+            "exit 128;; esac\n"
             f"exec {shutil.which('git')} \"$@\"\n")
         wrapper.chmod(0o755)
         self.extra_environment["PATH"] = f"{directory}:{os.environ['PATH']}"
@@ -185,8 +191,9 @@ def cases(scratch):
     claude.write_text("project v2\n")
     key = world.key(claude)
     message = world.run()
-    check("the first change copies and approves the file's version at the commit the "
-          "checkout started from", base in world.versions(claude)
+    check("the first change approves the file's version at the commit the checkout started "
+          "from, and does not copy it, since the branch HEAD holds it",
+          base not in world.versions(claude)
           and base in world.store_file(claude, "approved")
           and f"\t{base}\t{base}\tstock\t" in world.store_file(claude, "log"),
           (world.versions(claude), world.store_file(claude, "log")))
@@ -596,6 +603,20 @@ def cases(scratch):
           "rev-parse -q --verify" in message and "exited 128" in message
           and "injected failure" in message, message)
 
+    # The failure hits only the first-run read of HEAD, before the checkout has any state.
+    directory = Path(scratch) / "first-run-head-commit-unreadable"
+    directory.mkdir()
+    world = World(directory, "ned-box")
+    git_directory = Path(world.git("rev-parse", "--absolute-git-dir").stdout.strip())
+    world.failing_git("rev-parse -q --verify HEAD^{commit}", first_only=True)
+    message = world.run()
+    world.failing_git(None)
+    check("a checkout's first run whose git rev-parse --verify exits 128 reports it, with git's "
+          "stderr, and writes no checkout state",
+          "rev-parse -q --verify" in message and "exited 128" in message
+          and "injected failure" in message
+          and not (git_directory / (HOOK.stem + "-state.json")).exists(), message)
+
     world = fresh(scratch, "git-read-back-fails")
     claude = world.repo / "CLAUDE.md"
     claude.write_text("project v2\n")
@@ -606,9 +627,9 @@ def cases(scratch):
     world.failing_git(None)
     world.run()
     key = world.key(claude)
-    # As after the daily prune, the approved version is left only in git.
-    (world.store / str(claude).lstrip("/") / world.git(
-        "rev-parse", "HEAD:CLAUDE.md").stdout.strip()).unlink()
+    approved = world.git("rev-parse", "HEAD:CLAUDE.md").stdout.strip()
+    check("the approved version the branch HEAD holds is left only in git, with no copy",
+          approved not in world.versions(claude), world.versions(claude))
     world.failing_git("cat-file blob")
     result = world.command("--restore", claude, key)
     check("--restore whose git fails to read the approved version fails and changes nothing",
@@ -1585,6 +1606,21 @@ def cases(scratch):
     check("a run that finds one changed file whose store directory is there opens one directory "
           "and one file per store access",
           len(texts) == 1 and 0 < store["open"] <= 2 * store["access"], (store, texts))
+    # One run that makes several store directories under a shared prefix, as a shell edit across
+    # several guarded files does: each walk starts from the deepest directory an earlier walk
+    # made, so the opens stay bounded by the store accesses and the directories made.
+    state = json.loads((Path(git_directory) / hook.STATE_FILE_NAME).read_text())["files"]
+    several = sorted(path for path in state if Path(path).name != "CLAUDE.md"
+                     and Path(path).is_file())[:4]
+    for path in several:
+        Path(path).write_text(Path(path).read_text() + "changed\n")
+    texts = counted_run(worktree)
+    print(f"INFO  one run changing {len(several)} files with no store directory: {store}")
+    check("one run that makes several store directories under a shared prefix walks each from "
+          "the deepest directory already there",
+          len(several) > 1 and texts and store["make"] > len(several)
+          and store["open"] <= 2 * store["access"] + 2 * store["make"] + len(several),
+          (several, store, texts))
 
 
 def load_hook_in_this_process():

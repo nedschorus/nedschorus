@@ -16,11 +16,13 @@ in place while he is asked. A version with no copy is read
 back from git; a file outside every checkout, such as ~/.claude/CLAUDE.md, is always copied.
 
 A checkout's first run records the commit HEAD names, in the checkout's state, and counts every
-file that matches that commit, and that the store has no directory for, as approved without
-writing to the store; a file the store has a directory for is checked as any first run checks
-it, so a version a run saw and the user never approved is still asked about after the state is
-lost; a file that differs from the commit is stored and approved as it is. When such a file first changes, its version at the
-recorded commit is read from git, copied and approved, before the change is checked.
+file that matches that commit as approved without writing to the store, when the store has no
+directory for the file or holds that version approved. A matching file whose store directory
+holds the version unapproved is checked as any first run checks it, so a version a run saw and
+the user never approved is still asked about after the state is lost. A file that differs from
+the commit is stored and approved as it is. When such a file first changes, its version at the
+recorded commit is approved, and copied unless the branch HEAD holds it, before the change is
+checked.
 
     python3 <this file> --approve <path> <hash> [<path> <hash> ...]
     python3 <this file> --restore <path> <hash> [<path> <hash> ...]
@@ -547,8 +549,9 @@ def versions_commit_holds(checkout, commit, versions):
     for path, blob_id in versions:
         if blob_id == DELETED:
             continue
-        relative[os.path.relpath(Path(path).parent.resolve() / Path(path).name, checkout)] = (
-            path, blob_id)
+        relative.setdefault(
+            os.path.relpath(Path(path).parent.resolve() / Path(path).name, checkout), set()).add(
+            (path, blob_id))
     if not relative:
         return set()
     output = git_text(checkout, "--literal-pathspecs", "ls-tree", "-r", "-z", "--full-tree",
@@ -557,9 +560,8 @@ def versions_commit_holds(checkout, commit, versions):
     for entry in output.split("\0"):
         header, _, name = entry.partition("\t")
         fields = header.split()
-        if len(fields) == 3 and fields[1] == "blob" and name in relative \
-                and relative[name][1] == fields[2]:
-            held.add(relative[name])
+        if len(fields) == 3 and fields[1] == "blob":
+            held.update(pair for pair in relative.get(name, ()) if pair[1] == fields[2])
     return held
 
 
@@ -1144,7 +1146,9 @@ def run_hook(payload):
                     if state["files"][path][4] == blob:
                         base_versions[path] = (blob, version_from_git(path, blob))
             held = versions_head_holds(checkout, [(path, value[3]) for path, value
-                                                  in {**changed, **base_matched}.items()])
+                                                  in {**changed, **base_matched}.items()]
+                                       + [(path, blob) for path, (blob, _)
+                                          in base_versions.items()])
             entries = reflog_entries(git_directory)
             new_position = entries[-1][:2] if entries else None
             window = [] if stocking else entries_after(entries, state.get("reflog"))
@@ -1199,7 +1203,8 @@ def run_hook(payload):
                 if data is None or blob in store.approved(path) \
                         or seen_lines(store.log(path), blob):
                     continue
-                store.copy(path, blob, data)
+                if (path, blob) not in held:
+                    store.copy(path, blob, data)
                 store.approve(path, blob)
                 log_seen(store, path, session, owner(), blob, blob, HOW_STOCK)
             checks = []
