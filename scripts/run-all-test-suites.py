@@ -301,7 +301,7 @@ from, so there a run still cleans up after the lock's last holder.
 ADMISSION, on Linux in nc-test-sandboxes.
 Every run on the machine shares one admission, kept in the directory beside
 --lock-file. A suite starts only while the machine's CPU use averaged over the
-last 5 s is under 55% and its available memory is above 10 GB, read with
+last 5 s is under 90% and its available memory is above 10 GB, read with
 psutil; at most 4 suites start per second and at most 64 run at once on the
 machine, each holding an flock on one of 64 slot files, so the kernel frees
 the slot of a killed run. A suite run without any sandbox first takes the
@@ -311,7 +311,17 @@ reports what its suites wait for. A failure to decide, such as a machine
 reading that fails or a slot file that cannot be opened, stops the run with
 exit 2. Every suite runs at nice 10, in a cgroup scope of its own
 (`systemd-run --user --scope`), whose counters give the suite's CPU seconds
-and peak memory, every process it starts included.
+and peak memory, every process it starts included. Every scope is in one
+slice of the user's systemd, TEST_SUITE_CGROUP_SLICE, at CPU weight 10, a
+sibling of app.slice and of the tmux-spawn scopes tmux puts agent-seats in,
+whose weight is 100: while an agent-seat in such a scope wants the CPU, the
+suites together get a tenth of its share. Nice orders a process only against
+processes in the same cgroup, here the suite's own scope, so nice 10 gives an
+agent-seat no priority over any suite: only the slice's weight does. That
+weight counts only within user@1000.service, so an agent-seat whose tmux
+server runs in system.slice, such as one cron started, competes with the
+suites at the weight of user.slice against system.slice, which only root can
+change.
 
 MEMORY CEILING, where suites run in cgroup scopes. A suite's scope may hold
 TEST_SUITE_MEMORY_CEILING_BYTES, 4 GB, or what
@@ -820,7 +830,7 @@ SUITE_SANDBOX_LISTS_OF_THIS_PROGRAM = {
 # Admission, shared by every run on this machine: a suite starts only while the
 # machine has room for it. The run records the machine's readings every second
 # (MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME), so these thresholds can be moved from evidence.
-TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 55
+TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 90
 TEST_SUITE_ADMISSION_CPU_AVERAGE_SECONDS = 5
 TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE = 10 * 10**9
 TEST_SUITE_ADMISSION_STARTS_PER_SECOND = 4
@@ -876,6 +886,12 @@ TEST_SUITE_CGROUP_STATISTICS_WRAPPER = (
 # Each well above the largest peak memory its suites' scopes record, and no higher, since
 # a runaway holds the machine's memory until it reaches its ceiling.
 TEST_SUITE_MEMORY_CEILING_BYTES = 4 * 10**9
+# Directly under user@1000.service, beside the agent-seats' tmux-spawn scopes, since a
+# weight competes only with its siblings. A dash in a slice's name makes a parent slice of
+# each prefix, so the dashes are escaped. A weight, not idle, so busy agent-seats slow the
+# suites without stalling them into their timeouts.
+TEST_SUITE_CGROUP_SLICE = r"nc\x2dtest\x2dsuites.slice"
+TEST_SUITE_CGROUP_SLICE_CPU_WEIGHT = 10
 TEST_SUITE_MEMORY_CEILING_BYTES_OF_SUITES_THAT_NEED_MORE = {
     "scripts/daily-full-test-run-of-main-test.py": 24 * 10**9,
 }
@@ -892,6 +908,7 @@ def test_suite_cgroup_scope_command(memory_ceiling_bytes=TEST_SUITE_MEMORY_CEILI
     OOMPolicy=continue, because systemd's default stops the whole scope at the first kill,
     the counting shell included, so the suite's counters and the reason it failed are lost."""
     return ("systemd-run", "--user", "--scope", "--quiet", "--expand-environment=no",
+            f"--slice={TEST_SUITE_CGROUP_SLICE}",
             "-p", f"MemoryMax={memory_ceiling_bytes}", "-p", "MemorySwapMax=0",
             "-p", "OOMPolicy=continue", "--")
 
@@ -2049,10 +2066,23 @@ def psutil_imported_or_why_not():
 
 def why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(which=shutil.which,
                                                                         runner=subprocess.run):
-    """None when each suite can run in a cgroup scope of its own, or why it cannot."""
-    for program in ("systemd-run", "setpriv", "bash"):
+    """None when each suite can run in a cgroup scope of its own, or why it cannot.
+
+    It first sets TEST_SUITE_CGROUP_SLICE's CPU weight, which lasts until the user's
+    systemd restarts, so every run sets it again."""
+    for program in ("systemd-run", "systemctl", "setpriv", "bash"):
         if which(program) is None:
             return f"{program} is not on PATH"
+    weight_command = ("systemctl", "--user", "set-property", "--runtime", TEST_SUITE_CGROUP_SLICE,
+                      f"CPUWeight={TEST_SUITE_CGROUP_SLICE_CPU_WEIGHT}")
+    try:
+        weight = runner(list(weight_command), stdin=subprocess.DEVNULL, capture_output=True,
+                        text=True, timeout=SIGNAL_SANDBOX_START_TIMEOUT_SECONDS, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return f"{' '.join(weight_command)}: {error}"
+    if weight.returncode != 0:
+        return (f"{' '.join(weight_command)} exited {weight.returncode}: "
+                f"{(weight.stderr or weight.stdout).strip()}")
     trial_line = " ".join((*test_suite_cgroup_scope_command(),
                            *TEST_SUITE_COUNTER_SHELL_DIES_WITH_THIS_PROGRAM))
     try:
@@ -3838,7 +3868,8 @@ def main(argv=None, platform=None):
                 f"{TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE / 10**9:g} GB, at most "
                 f"{TEST_SUITE_ADMISSION_STARTS_PER_SECOND} starts a second and "
                 f"{TEST_SUITE_ADMISSION_SUITES_RUNNING_AT_ONCE_CEILING} suites at once on this "
-                f"machine, at nice {TEST_SUITE_NICE_INCREMENT}; readings every "
+                f"machine, at nice {TEST_SUITE_NICE_INCREMENT} in {TEST_SUITE_CGROUP_SLICE} at CPU "
+                f"weight {TEST_SUITE_CGROUP_SLICE_CPU_WEIGHT}; readings every "
                 f"{MACHINE_READINGS_INTERVAL_SECONDS} s in "
                 f"{log_dir / MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME}")
             cgroup_unavailable_because = why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none()

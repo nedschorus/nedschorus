@@ -115,9 +115,9 @@ with tempfile.TemporaryDirectory() as scratch_name:
 
     # --- The thresholds -------------------------------------------------------
     for cpu, available, admitted_expected, label in (
-            (54.9, 10 * GB + 1, True, "CPU just under 55% and memory just above 10 GB"),
-            (55.0, 40 * GB, False, "CPU at 55%"),
-            (80.0, 40 * GB, False, "CPU above 55%"),
+            (89.9, 10 * GB + 1, True, "CPU just under 90% and memory just above 10 GB"),
+            (90.0, 40 * GB, False, "CPU at 90%"),
+            (95.0, 40 * GB, False, "CPU above 90%"),
             (10.0, 10 * GB, False, "available memory at 10 GB"),
             (10.0, 2 * GB, False, "available memory below 10 GB")):
         directory = scratch / f"thresholds-{cpu}-{available}"
@@ -137,6 +137,52 @@ with tempfile.TemporaryDirectory() as scratch_name:
         if not admitted_expected:
             check(f"the run says what its suite waits for at {label}",
                   said and ("CPU" in said[0] if cpu >= 55 else "memory" in said[0]), said)
+
+    # --- The thresholds, read through the machine readings from a stubbed psutil -----
+    class PsutilReadingCpuAndMemory:
+        def __init__(self, cpu, available):
+            self.cpu, self.available = cpu, available
+
+        def cpu_percent(self, interval=None):
+            return self.cpu
+
+        def virtual_memory(self):
+            class Memory:
+                pass
+            memory = Memory()
+            memory.available = self.available
+            return memory
+
+    def read_until_the_average_is_only_new_readings(sampler):
+        for _ in range(sampler.cpu.maxlen):
+            sampler.read_once()
+
+    for cpu, available, admitted_expected, label, reason_words in (
+            (89.0, 40 * GB, True, "89% CPU", ()),
+            (91.0, 40 * GB, False, "91% CPU", ("91%", "under 90%")),
+            (89.0, 10 * GB, False, "89% CPU and 10 GB available memory",
+             ("memory", "10.0 GB", "above 10 GB"))):
+        psutil_stub = PsutilReadingCpuAndMemory(cpu, available)
+        sampler = runner.TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler(psutil_stub)
+        read_until_the_average_is_only_new_readings(sampler)
+        said = []
+        admission, clock = admission_in(scratch / f"psutil-thresholds-{cpu}-{available}",
+                                        sampler, said)
+
+        def give_room(psutil_stub=psutil_stub, sampler=sampler):
+            psutil_stub.cpu, psutil_stub.available = 10.0, 40 * GB
+            read_until_the_average_is_only_new_readings(sampler)
+
+        clock.on_sleep = give_room
+        with admission.admitted("a-test.py") as waited:
+            pass
+        check(f"with psutil reading {label}, admission "
+              f"{'starts the suite at once' if admitted_expected else 'holds the suite back'}",
+              (waited == 0) == admitted_expected, (waited, said))
+        if reason_words:
+            check(f"with psutil reading {label}, the run says what its suite waits for, "
+                  f"naming {', '.join(reason_words)}",
+                  said and all(word in said[0] for word in reason_words), said)
 
     # --- The ceiling of suites at once --------------------------------------
     directory = scratch / "ceiling"
@@ -554,18 +600,61 @@ with tempfile.TemporaryDirectory() as scratch_name:
     class Failed:
         returncode, stdout, stderr = 1, "", "Failed to connect to bus: No medium found"
 
-    why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
-        which=lambda name: "/usr/bin/systemd-run", runner=lambda *a, **k: Failed())
-    check("a systemd-run that cannot start a scope gives its own error as the reason",
-          why is not None and "No medium found" in why, why)
+    class Succeeded:
+        returncode, stdout, stderr = 0, "", ""
 
-    def os_error(*arguments, **options):
+    def failing_only(program, failure):
+        def run(command, *arguments, **options):
+            if command[0] == program:
+                return failure(command)
+            return Succeeded()
+        return run
+
+    def os_error(command):
         raise OSError("Permission denied")
 
     why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
-        which=lambda name: "/usr/bin/systemd-run", runner=os_error)
+        which=lambda name: f"/usr/bin/{name}", runner=failing_only("systemd-run", lambda c: Failed()))
+    check("a systemd-run that cannot start a scope gives its own error as the reason",
+          why is not None and "No medium found" in why and "systemd-run" in why, why)
+
+    why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
+        which=lambda name: f"/usr/bin/{name}", runner=failing_only("systemd-run", os_error))
     check("a systemd-run that cannot be started at all gives the error as the reason",
-          why is not None and "Permission denied" in why, why)
+          why is not None and "Permission denied" in why and "systemd-run" in why, why)
+
+    why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
+        which=lambda name: f"/usr/bin/{name}", runner=failing_only("systemctl", lambda c: Failed()))
+    check("a systemctl that cannot set the suites' slice's CPU weight gives its own error, "
+          "naming the command, as the reason",
+          why is not None and "No medium found" in why and "set-property" in why, why)
+
+    why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
+        which=lambda name: f"/usr/bin/{name}", runner=failing_only("systemctl", os_error))
+    check("a systemctl that cannot be started at all gives the error as the reason",
+          why is not None and "Permission denied" in why and "set-property" in why, why)
+
+    why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
+        which=lambda name: None if name == "systemctl" else f"/usr/bin/{name}")
+    check("without systemctl, which sets the suites' slice's CPU weight, the reason names it",
+          why is not None and "systemctl" in why and "not on PATH" in why, why)
+
+    ran = []
+    why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
+        which=lambda name: f"/usr/bin/{name}",
+        runner=lambda command, *a, **k: ran.append(list(command)) or Succeeded())
+    check("before its trial scope, the check sets the CPU weight of the slice every suite's "
+          "scope goes in, for this boot of the user's systemd only",
+          why is None and len(ran) == 2
+          and ran[0] == ["systemctl", "--user", "set-property", "--runtime",
+                         runner.TEST_SUITE_CGROUP_SLICE,
+                         f"CPUWeight={runner.TEST_SUITE_CGROUP_SLICE_CPU_WEIGHT}"]
+          and ran[1][0] == "systemd-run", (why, ran))
+    check("the suites' slice sits directly under the user's systemd, beside the agent-seats' "
+          "tmux-spawn scopes, at a CPU weight under their 100",
+          runner.TEST_SUITE_CGROUP_SLICE.endswith(".slice")
+          and "-" not in runner.TEST_SUITE_CGROUP_SLICE
+          and 0 < runner.TEST_SUITE_CGROUP_SLICE_CPU_WEIGHT < 100, runner.TEST_SUITE_CGROUP_SLICE)
 
     check("the cgroup counters give the suite's CPU seconds and peak memory",
           runner.cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(
@@ -592,6 +681,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
               ((setting, scope.index(setting) - 1) for setting in
                ("MemoryMax=123456789", "MemorySwapMax=0", "OOMPolicy=continue")))
           and scope[-1] == "--", scope)
+    check("every suite's cgroup scope goes in the suites' one slice",
+          f"--slice={runner.TEST_SUITE_CGROUP_SLICE}" in scope, scope)
     check("the cgroup scope trial and every suite not named otherwise get the default ceiling",
           runner.test_suite_cgroup_scope_command()
           == runner.test_suite_cgroup_scope_command(runner.TEST_SUITE_MEMORY_CEILING_BYTES)
