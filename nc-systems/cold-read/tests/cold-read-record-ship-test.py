@@ -657,13 +657,54 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
         (renamed / stored_name).rename(renamed / local_name)
         (renamed / local_name).write_text("# triage\n\nafter the walk\n", encoding="utf-8")
         result = ship(local_destination, str(renamed))
-        check(f"{case_label}: REFUSED as the store holding a file the record lacks, "
-              "and nothing is copied",
+        rename_triage_file = (f"`mv {shlex.quote(str(renamed / local_name))} "
+                              f"{shlex.quote(str(renamed / stored_name))}`")
+        check(f"{case_label}: REFUSED, nothing is copied, and the line gives the mv of the "
+              "local triage file to the store's name instead of a directory rename",
               result.returncode == 2 and result.stdout.startswith("REFUSED:")
-              and f"does not, so the store's record is another read's: {stored_name}." in result.stdout
+              and f"holds its triage file as {stored_name}" in result.stdout
+              and rename_triage_file in result.stdout
+              and "Rename this directory" not in result.stdout
+              and "another read's" not in result.stdout
               and not (stored_dir / local_name).exists()
               and (stored_dir / stored_name).read_text(encoding="utf-8") == "# triage\n\nfirst\n",
               f"exit {result.returncode}: {result.stdout}{result.stderr}")
+        (renamed / local_name).rename(renamed / stored_name)
+        result = ship(local_destination, str(renamed))
+        check(f"{case_label}: after the printed mv, the next ship replaces the store's triage file",
+              result.returncode == 0
+              and (stored_dir / stored_name).read_text(encoding="utf-8") == "# triage\n\nafter the walk\n",
+              f"exit {result.returncode}: {result.stdout}{result.stderr}")
+
+    # The store holds another file the record lacks besides the triage file under
+    # its other name, z.md sorting after it: that store record is another read's,
+    # and a directory rename is the remedy.
+    other_read = make_record(records, "2026-10-31-other-read-and-renamed-triage",
+                             {"a.md": REPORT_A, "triage.md": "# triage\n\nfirst\n",
+                              "z.md": "# z\n"})
+    ship(local_destination, str(other_read))
+    (other_read / "triage.md").rename(other_read / "cold-read-triage.md")
+    (other_read / "z.md").unlink()
+    result = ship(local_destination, str(other_read))
+    check("store holding the triage file under its other name and another file the record "
+          "lacks: REFUSED as another read's, with the directory rename",
+          result.returncode == 2 and "another read's: triage.md, z.md." in result.stdout
+          and "Rename this directory" in result.stdout,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    # The store holds the triage file under both names and the record only under
+    # cold-read-triage.md: renaming it to triage.md would leave the store holding
+    # cold-read-triage.md that the record lacks, so no mv is offered.
+    both_names = make_record(records, "2026-10-31-store-holds-both-triage-names",
+                             {"a.md": REPORT_A, "triage.md": "# triage\n\nold\n",
+                              "cold-read-triage.md": "# triage\n\nfirst\n"})
+    ship(local_destination, str(both_names))
+    (both_names / "triage.md").unlink()
+    result = ship(local_destination, str(both_names))
+    check("store holding both triage names, record only cold-read-triage.md: REFUSED as "
+          "another read's, with no mv of the triage file",
+          result.returncode == 2 and "another read's: triage.md." in result.stdout
+          and "Rename the local triage file" not in result.stdout,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
 
     # --- Rule 3, fail loudly -------------------------------------------------
     result = ship("nobody@no-such-host.invalid:/tmp/no-store", str(demo))

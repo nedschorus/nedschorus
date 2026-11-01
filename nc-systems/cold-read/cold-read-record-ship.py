@@ -67,10 +67,8 @@ with the design:
      record holds it only under the other, rule 2's check for a store file
      the record lacks runs before this rule's replacement, on the inventory
      taken before anything is copied, so the whole record is refused and the
-     store is left as it was. The refusal's message offers to rename the
-     directory, but the record is the same read as the store's, and a new
-     name would file it as another: rename the local record's triage file to
-     the name the store holds it under, then ship again. It is the one file in a
+     store is left as it was; the refusal prints the `mv` that renames the
+     local record's triage file to the store's name. It is the one file in a
      cold-read-record written twice on purpose: the agent triages the
      reviewers' findings into it, and it is written again with the user's
      rulings once the approval-walk closes. Rules 1 and 2 refused that second
@@ -1129,6 +1127,22 @@ def staging_directory_host_colon_path_and_local_or_ssh_rm_command(host, staging_
     return shown, command
 
 
+def triage_file_name_held_only_locally_when_store_holds_it_only_under_the_other(
+        held_only_in_store, local, in_store):
+    """Return the local triage file's name when the only file the store holds and the
+    record lacks is the triage file under its other name, and the record holds it
+    only under this one; otherwise None, and the store's record is another read's."""
+    names = {TRIAGE_FILE_REPLACED_IN_THE_STORE,
+             record_names.COLD_READ_RECORD_FILE_NAME_TO_ITS_NAME_BEFORE_COLD_READ_PREFIX[
+                 TRIAGE_FILE_REPLACED_IN_THE_STORE]}
+    if len(held_only_in_store) != 1 or held_only_in_store[0] not in names:
+        return None
+    (other_name,) = names - {held_only_in_store[0]}
+    if other_name in local and other_name not in in_store:
+        return other_name
+    return None
+
+
 def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path,
              rerun_program: pathlib.Path = pathlib.Path(__file__).resolve()) -> int:
     """One directory, one stdout line, one exit code. `rerun_program` is the
@@ -1220,6 +1234,17 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     # this directory lacks is another read that took the same name.
     held_only_in_store = sorted(set(in_store) - set(local))
     if held_only_in_store:
+        local_triage_name = triage_file_name_held_only_locally_when_store_holds_it_only_under_the_other(
+            held_only_in_store, local, in_store)
+        if local_triage_name is not None:
+            store_triage_name = held_only_in_store[0]
+            print(f"REFUSED: {name} — nothing was copied: the store's record {citation} holds "
+                  f"its triage file as {store_triage_name}, and this directory {record_dir} "
+                  f"holds it only as {local_triage_name}. Rename the local triage file with "
+                  f"`mv {shlex.quote(str(record_dir / local_triage_name))} "
+                  f"{shlex.quote(str(record_dir / store_triage_name))}`, then ship again with "
+                  f"`{shlex.join([sys.argv[0], str(record_dir)])}`.")
+            return EXIT_REFUSED
         print(f"REFUSED: {name} — nothing was copied: the store's record {citation} holds "
               f"files this directory {record_dir} does not, so the store's record is "
               f"another read's: {', '.join(held_only_in_store)}. "
