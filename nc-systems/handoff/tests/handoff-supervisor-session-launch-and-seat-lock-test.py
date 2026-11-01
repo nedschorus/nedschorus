@@ -928,6 +928,37 @@ def run_launched_session_github_token_cases(workspace: Path):
         if token_file.exists():
             token_file.chmod(0o600)
 
+    # A launcher runs the check outside the agent-seat's pane, where the task list is not
+    # pinned yet, so the check must not stop at the pin.
+    def check_token_file_only(agent, home=None):
+        record_path.unlink(missing_ok=True)
+        environment = {key: value for key, value in os.environ.items()
+                       if key != "CLAUDE_CODE_TASK_LIST_ID"}
+        if home is not None:
+            environment["HOME"] = str(home)
+        completed = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--agent", agent,
+             "--agent-command", str(stub_agent),
+             "--agent-seat-github-token-file-readable-check-only"],
+            capture_output=True, text=True, check=False,
+            stdin=subprocess.DEVNULL, timeout=60, env=environment)
+        return completed, "a session" if record_path.is_file() else "no session"
+
+    completed, recorded = check_token_file_only("merge-lane-2")
+    check("--agent-seat-github-token-file-readable-check-only with a token file: exits 0, "
+          "prints nothing and starts no session, though the task list is not pinned",
+          completed.returncode == 0 and recorded == "no session"
+          and completed.stdout == "" and completed.stderr == "",
+          f"{recorded}; exit {completed.returncode}: {completed.stderr[-600:]}")
+    completed, recorded = check_token_file_only(
+        "merge-lane-2", home=directory / "home-with-missing-token-file")
+    check("--agent-seat-github-token-file-readable-check-only with no token file: exits 5 "
+          "with the refusal a start prints, and starts no session",
+          completed.returncode == supervisor.AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS
+          and recorded == "no session"
+          and "handoff-supervisor: the agent-seat merge-lane-2 was not started" in completed.stderr,
+          f"{recorded}; exit {completed.returncode}: {completed.stderr[-600:]}")
+
 
 def run_launched_session_claude_code_tmpdir_cases(workspace: Path):
     """On ned-box a launched session gets CLAUDE_CODE_TMPDIR, the main-disk directory the daily

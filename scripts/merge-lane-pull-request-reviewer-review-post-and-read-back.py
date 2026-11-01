@@ -20,8 +20,9 @@ not finish.
 GitHub refuses a whole review when one inline comment is on a line outside the
 pull request's diff, so each comment whose path and line are not on the new
 side of the diff GitHub reports for the pull request is moved into the body,
-under a heading, as `path:line: comment`. A file whose diff GitHub does not
-show, such as a binary file, takes no inline comments.
+under a heading, as `path:line: comment`, and the success line ends with how
+many were moved. A file whose diff GitHub does not show, such as a binary
+file, takes no inline comments.
 
 The review is posted as mac-claude, with the token in
 ~/.config/nedschorus/mac-claude.token, on the nc-head-commit given. Its body
@@ -249,7 +250,9 @@ def main(argv=None):
         print(NOT_POSTED.format(reason=f"reading the pull request's diff failed: {reason_of(error)}"),
               file=sys.stderr)
         return EXIT_NOT_POSTED
-    body, comments = with_outside_comments_in_body(body, comments, lines)
+    body, inline_comments = with_outside_comments_in_body(body, comments, lines)
+    moved_count = len(comments) - len(inline_comments)
+    comments = inline_comments
     event = verdict if author == MERGE_LANE_ACCOUNT else "COMMENT"
     review_id = None
     try:
@@ -282,8 +285,10 @@ def main(argv=None):
                                            repository=REPOSITORY),
                   file=sys.stderr)
             return EXIT_NOT_POSTED
+        moved = f"; {moved_count} comment(s) moved into the body" if moved_count else ""
         print(f"review {review_id} posted on pull request {number} as {event}, verdict "
-              f"{verdict}, on commit {head}; GitHub's copy reads back as {EVENT_STATES[event]}")
+              f"{verdict}, on commit {head}; GitHub's copy reads back as {EVENT_STATES[event]}"
+              f"{moved}")
         return EXIT_POSTED
     except (KeyboardInterrupt, SystemExit):
         # gh_json's subprocess.run has killed gh before this runs, so nothing more is sent.

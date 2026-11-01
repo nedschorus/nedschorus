@@ -56,6 +56,7 @@ Run: python3 scripts/sanity-check-adversarial-prompts-test.py
 """
 
 import contextlib
+import datetime
 import importlib.util
 import inspect
 import io
@@ -429,7 +430,12 @@ def main():
     # directory. A look-then-create claim passes both when neither has written
     # its first report yet, and the second run overwrites the first.
     records_root = getattr(runner, "RECORDS_ROOT", None)
+    destination_variable = runner.record_ship.shipper.DESTINATION_ENVIRONMENT_VARIABLE
+    saved_destination = os.environ.get(destination_variable)
     with tempfile.TemporaryDirectory() as scratch:
+        # The store is a local directory here, so no case lists the real log-store.
+        os.environ[destination_variable] = str(pathlib.Path(scratch) / "store" / "cold-read-records")
+        store_records = pathlib.Path(scratch) / "store" / "sanity-check-records"
         runner.RECORDS_ROOT = pathlib.Path(scratch) / "sanity-check-records"
         first = runner.fresh_record_dir("same-target")
         second = runner.fresh_record_dir("same-target")
@@ -437,6 +443,34 @@ def main():
               first != second, f"both runs got {first}")
         check("the second directory is suffixed", second.name.endswith("-2"),
               f"second directory was {second}")
+
+        # Case 17b: another checkout's record of the same target and day is
+        # already in the store; this checkout has none, yet must not take its name.
+        today = datetime.date.today().isoformat()
+        (store_records / f"{today}-stored-target").mkdir(parents=True)
+        claimed = runner.fresh_record_dir("stored-target")
+        check("a name the log-store already holds is skipped",
+              claimed.name == f"{today}-stored-target-2", f"claimed {claimed}")
+
+        # Case 17c: the store cannot be listed; the name is checked against
+        # this checkout alone, and stderr says so.
+        store_records.chmod(0)
+        try:
+            caught = io.StringIO()
+            with contextlib.redirect_stderr(caught):
+                unchecked = runner.fresh_record_dir("unlisted-target")
+        finally:
+            store_records.chmod(0o755)
+        check("an unlistable store still yields a record directory",
+              unchecked.name == f"{today}-unlisted-target" and unchecked.is_dir(),
+              f"claimed {unchecked}")
+        check("an unlistable store is reported on stderr",
+              "could not be read" in caught.getvalue() and unchecked.name in caught.getvalue(),
+              f"stderr was {caught.getvalue()!r}")
+    if saved_destination is None:
+        os.environ.pop(destination_variable, None)
+    else:
+        os.environ[destination_variable] = saved_destination
     if records_root is not None:
         runner.RECORDS_ROOT = records_root
 
@@ -463,8 +497,6 @@ def main():
               found == [f"{records_name}/elsewhere.md"], f"stray list was {found}")
 
     # The worktree check must run for either runtime.
-    import contextlib
-    import io
 
     runner_gate = load_runner()
     stray_name = "stray-file-a-claude-cell-should-not-write.md"
@@ -842,8 +874,6 @@ def main():
 
         def split_fails(name, text):
             prompt_file(name, text)
-            import contextlib
-            import io
             try:
                 with contextlib.redirect_stderr(io.StringIO()):
                     runner.prompt_body("cut")
@@ -896,8 +926,6 @@ def main():
               f"body began {body[:60]!r}")
 
     # The quote scan: a verbatim quote is silent, words in no tracked file warn.
-    import contextlib
-    import io
     runner_scan = load_runner()
     corpus = (runner_scan.normalized_for_quote_match(
         "the gate records every legacy import cleanly"),)

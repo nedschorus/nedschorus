@@ -55,6 +55,7 @@ SCRIPT_PATH = fixture.SCRIPT_PATH
 git_in = fixture.git_in
 StubLaunchedSession = fixture.StubLaunchedSession
 supervisor_names_replaced = fixture.supervisor_names_replaced
+REMOVALS_LOG_OVERRIDE_VARIABLE = "CLEAN_WORKTREES_REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE"
 
 
 def stub_process(poll_result):
@@ -563,9 +564,12 @@ def run_handoff_worktree_cleanup_cases(workspace: Path):
     redirecting = {name: os.environ.pop(name)
                    for name in _git_environment_fixture.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
                    if name in os.environ}
+    # The real cleaner's --remove would otherwise append to the real log-store's log of removals.
+    os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(workspace / "clean-worktrees-removals-log.txt")
     try:
         run_handoff_worktree_cleanup_cases_without_git_redirection(workspace)
     finally:
+        del os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE]
         os.environ.update(redirecting)
 
 
@@ -728,7 +732,8 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           "record-holding-worktree: record shipment FAILED, worktree kept — removing it would "
           "delete a record the log-store does not hold: cold-read-records/foo-2026-10-19 "
           "(REFUSED:" in refused_report
-          and refused_report.count("record-holding-worktree") == 1
+          # The shipper's line names the record's path, which holds the worktree's name.
+          and refused_report.count("record-holding-worktree: ") == 1
           and "exited 1" not in refused_report and "failed:" not in refused_report,
           refused_report)
     git_in(["worktree", "remove", "--force", str(holding_record)], home)
@@ -815,6 +820,40 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           "redirect the cleanup to another repository",
           not second_finished.exists() and "other-landed-branch" in other_branches,
           f"{report} {other_branches}")
+
+    # A log-of-removals line the cleaner cannot write: the report must keep the command that
+    # writes it, because the worktree and its branch are gone by then.
+    unlogged = home / ".claude" / "worktrees" / "unlogged-finished-worktree"
+    git_in(["worktree", "add", "--quiet", "-b", "unlogged-finished-branch", str(unlogged)], home)
+    os.utime(unlogged / ".git", (long_ago, long_ago))
+    not_a_directory = root / "removals-log-parent-is-a-file"
+    not_a_directory.write_text("", encoding="utf-8")
+    saved_log_file = os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE]
+    os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(not_a_directory / "ned-box.txt")
+    try:
+        unlogged_report = supervisor.remove_finished_worktrees_at_handoff(home)
+    finally:
+        os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = saved_log_file
+    record_by_hand = unlogged_report.partition(
+        "unlogged-finished-worktree: to record it, run this once: ")[2].partition(
+        "; unlogged-finished-worktree: if that printf command fails too")[0]
+    check("WORKTREE CLEANUP: when the log of removals cannot be written, the report keeps the "
+          "FAILED line, the command that writes the unwritten line and what to do if it fails",
+          not unlogged.exists() and "1 failed: unlogged-finished-worktree: log of removals "
+          "line(s) FAILED" in unlogged_report and record_by_hand
+          and "; to record by hand what the log of removals is missing: "
+          "unlogged-finished-worktree: to record it, run this once: " in unlogged_report
+          and "unlogged-finished-worktree: if that printf command fails too, do not run "
+          "scripts/clean-worktrees.py again; tell the user" in unlogged_report, unlogged_report)
+    if record_by_hand:
+        not_a_directory.unlink()
+        subprocess.run(["/bin/sh", "-c", record_by_hand], capture_output=True, check=False)
+        written = ((not_a_directory / "ned-box.txt").read_text(encoding="utf-8")
+                   if (not_a_directory / "ned-box.txt").is_file() else "")
+        check("WORKTREE CLEANUP: the command the report keeps writes the removal's line",
+              "\tremoved-worktree\t" in written
+              and f"/{unlogged.name}\tbranch=unlogged-finished-branch\t" in written,
+              record_by_hand + "\n" + written)
 
     not_a_checkout = root / "not-a-checkout"
     not_a_checkout.mkdir()
@@ -1457,6 +1496,36 @@ def run_by_hand_resume_cases(workspace: Path):
           launched and launched[0][2] is not True
           and launched[0][0] != "failed-successor",
           str(launched))
+
+    # 3a. A transcript folder that cannot be listed is not "nothing worth resuming": a fresh
+    # session's transcript would become the newest and bury the crashed one.
+    if os.geteuid() == 0:
+        print("SKIP  BY HAND: a transcript folder that cannot be listed stops startup: "
+              "root can list any folder")
+    else:
+        unreadable_projects = workspace / "by-hand-resume-projects-unreadable"
+        unreadable_projects.mkdir(parents=True, exist_ok=True)
+        (unreadable_projects / crashed.name).write_bytes(crashed.read_bytes())
+        settings = settings_for("transcript-folder-unreadable")
+        supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
+        launched, errors = [], io.StringIO()
+        unreadable_projects.chmod(0o000)
+        try:
+            with supervisor_names_replaced(
+                    launch_agent_session=launch_empty,
+                    project_directory_for_working_directory=lambda _: unreadable_projects,
+                    launch_time_git_sync=no_launch_time_git_sync), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+                exit_status = supervisor.supervise_sessions(settings)
+        finally:
+            unreadable_projects.chmod(0o755)
+        check("BY HAND: a transcript folder that cannot be listed stops startup with exit 5 "
+              "and launches nothing",
+              exit_status == 5 and not launched, (exit_status, launched))
+        check("BY HAND: and the stop is printed to stderr, naming the folder and the error",
+              "startup stopped" in errors.getvalue()
+              and str(unreadable_projects) in errors.getvalue()
+              and "Permission denied" in errors.getvalue(), errors.getvalue())
 
     # 4. An unconsumed handoff is the fresher truth and boot-ignition takes it,
     # exactly as before: the by-hand resume must not steal a waiting handoff.

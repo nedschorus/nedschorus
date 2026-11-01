@@ -115,9 +115,13 @@ SHORT_CHAT_REMARK = "I have written the report to the path you gave me.\n"
 # to record what the stub was launched with, "dump_key" is a path to record
 # GEMINI_API_KEY as agy received it, "hang_writing_child_pid_to" is a path
 # to append the pid of a child the stub starts before both sleep past any
-# deadline a case sets, "stderr" is text for stderr, and "exit" is the code
-# to exit with. The report path arrives by environment, as in the other cell tests,
-# so a reworded template cannot unhook the stub.
+# deadline a case sets, "exit_leaving_child_writing_pid_to" is a path to
+# append the pid of a child the stub starts, which keeps the stub's stdout
+# and stderr open and sleeps on after the stub exits, with the stub's own pid
+# appended to the same path plus ".stub" just before it exits, "stderr" is text for
+# stderr, and "exit" is the code to exit with. The report path arrives by
+# environment, as in the other cell tests, so a reworded template cannot
+# unhook the stub.
 STUB_AGY = """#!/usr/bin/env python3
 import json, os, pathlib, sys
 argv = sys.argv
@@ -159,6 +163,13 @@ if "hang_writing_child_pid_to" in step:
     with open(step["hang_writing_child_pid_to"], "a", encoding="utf-8") as handle:
         handle.write("%d\\n" % child.pid)
     time.sleep(300)
+if "exit_leaving_child_writing_pid_to" in step:
+    import subprocess
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
+    with open(step["exit_leaving_child_writing_pid_to"], "a", encoding="utf-8") as handle:
+        handle.write("%d\\n" % child.pid)
+    with open(step["exit_leaving_child_writing_pid_to"] + ".stub", "a", encoding="utf-8") as handle:
+        handle.write("%d\\n" % os.getpid())
 sys.exit(step.get("exit", 0))
 """
 
@@ -236,6 +247,43 @@ def run_agy_cell(repository, stub_directory, plan, report_path, *arguments,
          *arguments],
         capture_output=True, text=True, check=False, env=environment, cwd=repository,
     )
+
+
+def start_agy_cell_in_own_session(repository, stub_directory, plan, report_path):
+    """Start the agy cell in a session of its own, as the grid starts a
+    cell, and return its Popen."""
+    install_stub_agy(stub_directory)
+    environment = dict(os.environ)
+    environment.pop("GEMINI_API_KEY", None)
+    environment["HOME"] = str(scratch_home_for(stub_directory))
+    environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
+    environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
+    environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
+    return subprocess.Popen(
+        [sys.executable, str(repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"),
+         "--cell", "fast-clarify", "--tier", "fast",
+         "--target", TARGET_RELATIVE_PATH, "--report", str(report_path)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+        env=environment, cwd=repository, start_new_session=True)
+
+
+def wait_for_pids_written_to(pid_file, seconds):
+    deadline = time.monotonic() + seconds
+    while not pids_written_to(pid_file) and time.monotonic() < deadline:
+        time.sleep(0.1)
+
+
+def process_exited_within(pid, seconds):
+    """Whether `pid` has exited, reaped or not, within `seconds`: a zombie
+    counts, because the cell reaps agy only once agy's pipes close."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
+                               capture_output=True, text=True, check=False).stdout.strip()
+        if not state or state.startswith("Z"):
+            return True
+        time.sleep(0.1)
+    return False
 
 
 def agy_cell_copy_killing_agy_after_seconds(repository, timeout_seconds, margin_seconds):
@@ -623,29 +671,38 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "stopped-cell")
     pid_file = scratch / "stopped-cell-child-pids"
-    install_stub_agy(stubs)
-    environment = dict(os.environ)
-    environment.pop("GEMINI_API_KEY", None)
-    environment["HOME"] = str(scratch_home_for(stubs))
-    environment["PATH"] = f"{stubs}{os.pathsep}{environment.get('PATH', '')}"
-    environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(
-        {"*": {"hang_writing_child_pid_to": str(pid_file)}})
-    environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(report)
-    launcher = subprocess.Popen(
-        [sys.executable, str(repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"),
-         "--cell", "fast-clarify", "--tier", "fast",
-         "--target", TARGET_RELATIVE_PATH, "--report", str(report)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
-        env=environment, cwd=repository, start_new_session=True)
-    waited_until = time.monotonic() + 60
-    while not pids_written_to(pid_file) and time.monotonic() < waited_until:
-        time.sleep(0.1)
+    launcher = start_agy_cell_in_own_session(
+        repository, stubs, {"*": {"hang_writing_child_pid_to": str(pid_file)}}, report)
+    wait_for_pids_written_to(pid_file, 60)
     cell_common.stop_process_tree(launcher)
     child_pids = pids_written_to(pid_file)
     check("stopping a cell as the grid does kills the process agy started",
           len(child_pids) == 1 and all(process_gone_within(pid, 10) for pid in child_pids),
           repr(child_pids))
     check("a cell stopped by SIGTERM exits 128 plus SIGTERM's number, not by SIGKILL",
+          launcher.returncode == 128 + signal.SIGTERM, repr(launcher.returncode))
+    kill_left_over_processes(child_pids)
+
+    # --- A stopped cell stops agy's children after agy itself exited -------
+    # agy has exited, but its child holds agy's stdout and stderr, so the
+    # cell still waits on them when SIGTERM arrives.
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "stopped-cell-after-agy-exited")
+    pid_file = scratch / "stopped-cell-after-agy-exited-child-pids"
+    launcher = start_agy_cell_in_own_session(
+        repository, stubs, {"*": {"exit_leaving_child_writing_pid_to": str(pid_file)}}, report)
+    stub_pid_file = pid_file.with_name(pid_file.name + ".stub")
+    wait_for_pids_written_to(stub_pid_file, 60)
+    stub_pids = pids_written_to(stub_pid_file)
+    # A SIGTERM that lands while agy still runs would test the case above instead.
+    stub_exited = len(stub_pids) == 1 and process_exited_within(stub_pids[0], 10)
+    cell_common.stop_process_tree(launcher)
+    child_pids = pids_written_to(pid_file)
+    check("the stub agy exited before the cell was stopped", stub_exited, repr(stub_pids))
+    check("stopping a cell after agy exited kills the child still holding agy's output",
+          len(child_pids) == 1 and all(process_gone_within(pid, 10) for pid in child_pids),
+          repr(child_pids))
+    check("a cell stopped after agy exited exits 128 plus SIGTERM's number",
           launcher.returncode == 128 + signal.SIGTERM, repr(launcher.returncode))
     kill_left_over_processes(child_pids)
 

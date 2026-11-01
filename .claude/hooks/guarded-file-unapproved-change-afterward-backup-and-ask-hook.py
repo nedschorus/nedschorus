@@ -327,18 +327,32 @@ class Store:
             self.fd = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY)
         except OSError as error:
             raise StoreUnreachable(f"{self.directory} could not be opened: {error.strerror}")
+        # What this run learnt about the store's directories, relative to the store: on the
+        # Mac's SMB mount every open is a network round trip, and a path has about a dozen parts.
+        self.present = set()
+        self.missing = set()
 
     def path_directory(self, path: str, create: bool):
         """An open descriptor of the directory of path's versions, or None when there is none.
         The directory mirrors the path as this machine sees it, without its leading slash."""
-        fd = os.dup(self.fd)
-        for part in [part for part in path.split("/") if part]:
+        parts = [part for part in path.split("/") if part]
+        prefixes = ["/".join(parts[:depth]) for depth in range(len(parts) + 1)]
+        if not self.missing.intersection(prefixes):
+            try:
+                return os.open(prefixes[-1] or ".", os.O_RDONLY | os.O_DIRECTORY, dir_fd=self.fd)
+            except FileNotFoundError:
+                self.missing.add(prefixes[-1])
+        if not create:
+            return None
+        # Walked from the deepest directory known to be there.
+        depth = max(depth for depth, prefix in enumerate(prefixes)
+                    if not prefix or prefix in self.present)
+        fd = os.open(prefixes[depth] or ".", os.O_RDONLY | os.O_DIRECTORY, dir_fd=self.fd)
+        for depth in range(depth + 1, len(parts) + 1):
+            part = parts[depth - 1]
             try:
                 child = os.open(part, os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
             except FileNotFoundError:
-                if not create:
-                    os.close(fd)
-                    return None
                 try:
                     os.mkdir(part, 0o700, dir_fd=fd)
                 except FileExistsError:
@@ -346,6 +360,8 @@ class Store:
                 child = os.open(part, os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
             os.close(fd)
             fd = child
+            self.present.add(prefixes[depth])
+        self.missing.difference_update(prefixes)
         return fd
 
     def read(self, path: str, name: str) -> bytes:

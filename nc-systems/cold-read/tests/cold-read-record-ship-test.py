@@ -128,7 +128,8 @@ REPORT_A = "<!-- provenance: runtime=claude model=opus -->\n# A\n\nfinding one\n
 REPORT_B = "<!-- provenance: runtime=codex model=gpt -->\n# B\n\nfinding two\n"
 
 with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratch_name:
-    scratch = pathlib.Path(scratch_name)
+    # Resolved: the shipper resolves the record path, and the suite runner's TMPDIR is a symlink.
+    scratch = pathlib.Path(scratch_name).resolve()
     store_root = scratch / "store"
     local_destination = str(store_root / "cold-read-records")
     records = scratch / "records"
@@ -435,8 +436,10 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     check("the refusal names the file and prints both provenance comments",
           "a.md" in result.stdout and "model=opus " in result.stdout
           and "model=opus-rerun" in result.stdout, result.stdout)
-    check("the refusal tells the person what to do: rename the local directory -2",
-          "-2 suffix" in result.stdout, result.stdout)
+    check("the refusal tells the person what to do: the mv to a free name and the ship command",
+          f"`mv {demo} {records / '2026-09-07-demo-2'}`, a name free in this checkout and "
+          f"in the store when this ran, then ship the renamed directory with "
+          f"`{SHIP} {records / '2026-09-07-demo-2'}`." in result.stdout, result.stdout)
     check("nothing was copied on a refused run, not even the new file",
           not (store_root / "cold-read-records" / demo.name / "late.md").exists()
           and stored_a.read_text(encoding="utf-8") == REPORT_A)
@@ -492,10 +495,9 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     # been refused (user-ruled 2026-09-20, item 4 of the walk
     # md-skills-seat-open-decisions-2026-09-20).
     #
-    # late.md, which the refusal cases left on disk unshipped to prove that a
-    # refused run copies nothing, is removed first so these cases count adds
-    # and replacements and nothing else.
-    (demo / "late.md").unlink()
+    # late.md, which the refusal cases left on disk, reached the store with
+    # the notes above and stays in the local directory: a store record holding
+    # a file the local one lacks is refused as another read's.
     stored_triage = store_root / "cold-read-records" / demo.name / "triage.md"
     triage_as_first_shipped = stored_triage.read_text(encoding="utf-8")
     displaced_digest = hashlib.sha256(
@@ -605,6 +607,40 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           == "# the reviewed document\n\nas read\n",
           f"exit {result.returncode}: {result.stdout}")
     frozen_triage.write_text("# the reviewed document\n\nas read\n", encoding="utf-8")
+
+    # --- Rule 4 under the triage file's cold-read- name ----------------------
+    # The record above holds triage.md, as a record written before the
+    # cold-read- prefix does; a new record holds cold-read-triage.md, and the
+    # shipper replaces whichever of the two the record holds.
+    prefixed = make_record(records, "2026-10-31-prefixed",
+                           {"a.md": REPORT_A, "cold-read-triage.md": "# triage\n\nfirst\n"})
+    result = ship(local_destination, str(prefixed))
+    stored_prefixed_triage = store_root / "cold-read-records" / prefixed.name / "cold-read-triage.md"
+    check("a record holding cold-read-triage.md ships it",
+          result.returncode == 0 and stored_prefixed_triage.is_file(),
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    (prefixed / "cold-read-triage.md").write_text("# triage\n\nafter the walk\n", encoding="utf-8")
+    result = ship(local_destination, str(prefixed))
+    check("a rewritten cold-read-triage.md replaces the store's copy and is named as replaced",
+          result.returncode == 0 and "cold-read-triage.md replaced" in result.stdout
+          and stored_prefixed_triage.read_text(encoding="utf-8") == "# triage\n\nafter the walk\n"
+          and "REPLACED cold-read-triage.md" in result.stderr,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    # A record holding both names: only the cold-read- one is replaceable.
+    (prefixed / "triage.md").write_text("# old-name triage\n", encoding="utf-8")
+    result = ship(local_destination, str(prefixed))
+    check("a record holding both triage names ships the bare one as an ordinary add",
+          result.returncode == 0 and "1 file(s) added" in result.stdout,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    (prefixed / "triage.md").write_text("# old-name triage, rewritten\n", encoding="utf-8")
+    (prefixed / "cold-read-triage.md").write_text("# triage\n\nthird\n", encoding="utf-8")
+    result = ship(local_destination, str(prefixed))
+    check("beside cold-read-triage.md, a rewritten triage.md is add-only and REFUSED, "
+          "and the store's cold-read-triage.md is not replaced",
+          result.returncode == 2 and result.stdout.startswith("REFUSED:")
+          and "triage.md (store" in result.stdout
+          and stored_prefixed_triage.read_text(encoding="utf-8") == "# triage\n\nafter the walk\n",
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
 
     # --- Rule 3, fail loudly -------------------------------------------------
     result = ship("nobody@no-such-host.invalid:/tmp/no-store", str(demo))
@@ -833,15 +869,21 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     removal_calls = [json.loads(line) for line in left_log.read_text().splitlines()
                      if '"rm -rf ' in line]
     staging_named = (shlex.split(removal_calls[0][-1])[-1] if removal_calls else "")
-    check("a failed copy whose staging directory ssh could not remove names that "
-          "directory and why on the FAILED line",
-          result.returncode == 1 and result.stdout.startswith("FAILED:")
-          and "rsync exit 23 during the copy" in result.stdout
+    check("a failed copy whose staging directory ssh could not remove is one FAILED "
+          "line: why the removal failed, that deleting the directory is safe and a "
+          "rerun does not need it gone, the ssh command that deletes it, and the "
+          "command that reruns the shipment",
+          result.returncode == 1
           and ".ship-staging-2026-09-21-staging-left-" in staging_named
-          and f"the staging directory nedlern@ned-box:{staging_named}, if the copy made it, "
-              f"could not be removed (ssh exit 255: Connection closed by remote host)"
-          in result.stdout
-          and f"if {staging_named} is there, delete it" in result.stderr,
+          and result.stdout == (
+              f"FAILED: 2026-09-21-staging-left — rsync exit 23 during the copy; "
+              f"removing the staging directory then failed (ssh exit 255: "
+              f"Connection closed by remote host). This run's staging directory "
+              f"nedlern@ned-box:{staging_named} may still be there. A rerun does not "
+              f"need it gone; deleting it is optional and loses nothing, because the "
+              f"record stays in {left_record.resolve()} and every shipment copies it "
+              f"again into a new staging directory of its own: `ssh nedlern@ned-box "
+              f"'rm -rf -- {staging_named}'`. Rerun: `{SHIP} {left_record.resolve()}`\n"),
           f"exit {result.returncode}: {result.stdout}{result.stderr}; removals={removal_calls}")
 
     # The local legs, in process: a first line that cannot be read, and a
@@ -1270,10 +1312,11 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
         code, out, err = ship_in_process(unplaced_store, unplaced_record)
     finally:
         os.link = saved_link
-    check("a new file the placing could not link is FAILED, exit 1, naming it, "
-          "and never shipped:",
-          code == 1 and out.startswith("FAILED:")
-          and "not in the store after the copy: b.md" in out, f"exit {code}: {out}{err}")
+    check("a new file the placing could not link is FAILED, exit 1, naming it and "
+          "the command that reruns the shipment, and never shipped:",
+          code == 1 and out == (f"FAILED: unplaced-2026-10-01 — not in the store after "
+                                f"the copy: b.md. Rerun: `{SHIP} {unplaced_record}`\n"),
+          f"exit {code}: {out}{err}")
 
     # --- A copy into staging that fails leaves no staging directory ----------
     failing_store = scratch / "failing-copy-store" / "cold-read-records"
@@ -1291,9 +1334,10 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
         code, out, err = ship_in_process(failing_store, failing_record)
     finally:
         subprocess.run = saved_subprocess_run
-    check("a copy into staging that exits 23 is FAILED, and the staging directory "
-          "it filled is removed",
-          code == 1 and out.startswith("FAILED:") and "rsync exit 23" in out
+    check("a copy into staging that exits 23 is FAILED with the command that reruns "
+          "the shipment, and the staging directory it filled is removed",
+          code == 1 and out == (f"FAILED: failing-copy-2026-10-01 — rsync exit 23 during "
+                                f"the copy. Rerun: `{SHIP} {failing_record}`\n")
           and sorted(p.name for p in failing_store.iterdir()) == [],
           f"exit {code}: {out}; left: {sorted(p.name for p in failing_store.iterdir())}")
 
@@ -1311,11 +1355,20 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
         code, out, err = ship_in_process(denied_store, denied_record)
     finally:
         racing.place_staged_files_and_read_them_back = saved_place
+    staging_pattern = re.escape(f"{denied_store}/.ship-staging-denied-2026-10-01-") + "[0-9a-f]{12}"
     check("a local placing step that hits an OS error prints that error as the "
-          "reason, not an ssh exit",
-          code == 1 and out.startswith("FAILED: denied-2026-10-01 — Permission denied "
-                                       "while placing the copied files; a later run finishes it.")
-          and "ssh" not in out,
+          "reason, not an ssh exit, says deleting the staging directory is safe "
+          "with the command, and ends with the command that reruns the shipment",
+          code == 1 and re.fullmatch(
+              re.escape("FAILED: denied-2026-10-01 — Permission denied while placing the "
+                        "copied files. This run's staging directory ")
+              + f"(?P<shown>{staging_pattern})"
+              + re.escape(f" may still be there. A rerun does not need it gone; deleting "
+                          f"it is optional and loses nothing, because the record stays in "
+                          f"{denied_record} and every shipment copies it again into a new "
+                          f"staging directory of its own: `rm -rf -- ")
+              + "(?P=shown)"
+              + re.escape(f"`. Rerun: `{SHIP} {denied_record}`\n"), out) is not None,
           f"exit {code}: {out}")
 
 # --- The replace step renames nothing beside another shipment's staging ----
@@ -1432,7 +1485,7 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-local-failure-tes
           failed_as_ssh_fails(listed) and code == 1
           and printed.getvalue().startswith(
               "FAILED: inventory-2026-10-25 — No space left on device (injected);")
-          and "ssh" not in printed.getvalue(),
+          and "ssh exit" not in printed.getvalue(),
           f"{listed!r}; exit {code}: {printed.getvalue()}")
 
     link_staging = failing_scratch / "link-store" / ".ship-staging-l-0123456789ab"
@@ -1503,6 +1556,235 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-relative-test-") 
           and (relative_store / relative_record.name / "a.md").read_text(encoding="utf-8")
           == REPORT_A,
           result.stdout + result.stderr)
+
+# --- A record name free in the store, and a store record of another read ----
+# A fast read named its record from its own checkout's cold-read-records/
+# alone, while another worktree's cold-read-full-run already held that name in
+# the store; the fast read's files all had names the full run's lacked, so
+# shipping added them to the full run's record. Another fast read took a name
+# another seat's read held in the store, and shipping refused it only because
+# both had a fast-read.md.
+with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-") as names_name:
+    # Resolved: the shipper resolves the record path, and the suite runner's TMPDIR is a symlink.
+    names_scratch = pathlib.Path(names_name).resolve()
+    _names_shipper_spec = importlib.util.spec_from_file_location(
+        "cold_read_record_ship_store_names", SHIP)
+    names_shipper = importlib.util.module_from_spec(_names_shipper_spec)
+    _names_shipper_spec.loader.exec_module(names_shipper)
+    names_store = names_scratch / "store" / "cold-read-records"
+    (names_store / "a-2026-10-25").mkdir(parents=True)
+    (names_store / "b-2026-10-25").mkdir()
+    (names_store / "not-a-record.md").write_text("x\n", encoding="utf-8")
+
+    names, unlisted = names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason(None, names_store)
+    check("locally, the store's names are its directories, not its files",
+          names == {"a-2026-10-25", "b-2026-10-25"} and unlisted is None, f"{names} {unlisted}")
+    names, unlisted = names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason(
+        None, names_scratch / "no-store-yet")
+    check("a store not yet made holds no names", names == set() and unlisted is None,
+          f"{names} {unlisted}")
+    if os.geteuid() != 0:
+        unreadable_store = names_scratch / "unreadable-store"
+        unreadable_store.mkdir()
+        unreadable_store.chmod(0)
+        try:
+            names, unlisted = names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason(None, unreadable_store)
+        finally:
+            unreadable_store.chmod(0o755)
+        check("a local store that cannot be listed gives no names and says why",
+              names is None and unlisted is not None and str(unreadable_store) in unlisted,
+              f"{names} {unlisted}")
+
+    # The remote listing's shell, run by a real sh in place of ssh: sh -c gets
+    # the host as $1 and the script as $2.
+    real_ssh_command = names_shipper.SSH_COMMAND
+    unreachable_ssh_command = ["sh", "-c", "echo 'ssh: connect: No route to host' >&2; exit 255",
+                               "ssh-replay"]
+    names_shipper.SSH_COMMAND = ["sh", "-c", 'eval "$2"', "ssh-replay"]
+    try:
+        remote_names, remote_unlisted = names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason(
+            "nobody@ned-box", names_store)
+        absent_names, absent_unlisted = names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason(
+            "nobody@ned-box", names_scratch / "no store yet")
+        names_shipper.SSH_COMMAND = unreachable_ssh_command
+        failed_names, failed_unlisted = names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason(
+            "nobody@ned-box", names_store)
+        names_shipper.SSH_COMMAND = ["sh", "-c", "kill -TERM $$", "ssh-replay"]
+        killed_names, killed_unlisted = names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason(
+            "nobody@ned-box", names_store)
+    finally:
+        names_shipper.SSH_COMMAND = real_ssh_command
+    check("remotely, the store's names are its directories, one per line",
+          remote_names == {"a-2026-10-25", "b-2026-10-25"} and remote_unlisted is None,
+          f"{remote_names} {remote_unlisted}")
+    check("remotely, a store not yet made holds no names", absent_names == set()
+          and absent_unlisted is None, f"{absent_names} {absent_unlisted}")
+    check("remotely, a listing ssh could not make gives no names, with ssh's exit and error",
+          failed_names is None and "exited 255" in failed_unlisted
+          and "No route to host" in failed_unlisted, f"{failed_names} {failed_unlisted}")
+    check("remotely, a listing whose ssh a signal ended gives no names, not an empty store",
+          killed_names is None and "exited -15" in killed_unlisted,
+          f"{killed_names} {killed_unlisted}")
+
+    names_records = names_scratch / "records"
+    (names_records / "SKILL-handoff-2026-10-25").mkdir(parents=True)
+    (names_store / "SKILL-handoff-2026-10-25").mkdir()
+    (names_store / "SKILL-handoff-2026-10-25-2").mkdir()
+    (names_store / "item-19-1-2026-10-25").mkdir()
+    real_destination = os.environ.get(DESTINATION_VARIABLE)
+    os.environ[DESTINATION_VARIABLE] = str(names_store)
+    try:
+        handoff_record, handoff_unlisted = (
+            names_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
+                names_records / "SKILL-handoff-2026-10-25"))
+        item_record, item_unlisted = (
+            names_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
+                names_records / "item-19-1-2026-10-25"))
+        free_record, _ = names_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
+            names_records / "c-2026-10-25")
+        os.environ[DESTINATION_VARIABLE] = "nobody@ned-box:" + str(names_store)
+        names_shipper.SSH_COMMAND = unreachable_ssh_command
+        try:
+            unlisted_record, unlisted_reason = (
+                names_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
+                    names_records / "SKILL-handoff-2026-10-25"))
+        finally:
+            names_shipper.SSH_COMMAND = real_ssh_command
+    finally:
+        if real_destination is None:
+            os.environ.pop(DESTINATION_VARIABLE, None)
+        else:
+            os.environ[DESTINATION_VARIABLE] = real_destination
+    check("the SKILL-handoff case: a name the checkout holds and the -2 the store "
+          "holds are both passed over, giving -3",
+          handoff_record == names_records / "SKILL-handoff-2026-10-25-3"
+          and handoff_unlisted is None, f"{handoff_record} {handoff_unlisted}")
+    check("the item-19-1 case: a name only the store holds is passed over, giving -2",
+          item_record == names_records / "item-19-1-2026-10-25-2" and item_unlisted is None,
+          f"{item_record} {item_unlisted}")
+    check("a name free in both is used as it is, and no directory is made",
+          free_record == names_records / "c-2026-10-25" and not free_record.exists(),
+          str(free_record))
+    check("when the store cannot be listed, the name free in the checkout is given "
+          "with the reason, for the caller to print",
+          unlisted_record == names_records / "SKILL-handoff-2026-10-25-2"
+          and "No route to host" in unlisted_reason, f"{unlisted_record} {unlisted_reason}")
+    line = names_shipper.log_store_listing_failed_record_name_may_collide_warning_line(
+        "some-program", unlisted_record, unlisted_reason)
+    check("the line a caller prints names the program, the record name and the reason",
+          line.startswith("some-program: ") and "SKILL-handoff-2026-10-25-2" in line
+          and unlisted_reason in line, line)
+
+    # The SKILL-handoff shipment itself: the store's record holds a full run's
+    # files, and the local directory of that name holds a fast read's.
+    full_run_files = {"claude-hunt-deep.md": REPORT_A, "codex-hunt-deep.md": REPORT_B,
+                      "reference-check.md": "# references\n",
+                      "target/.claude/skills/handoff/SKILL.md": "# handoff\n"}
+    make_record(names_store, "SKILL-handoff-2026-10-25-2", full_run_files)
+    store_files_before = sorted(
+        p.relative_to(names_store).as_posix() for p in names_store.rglob("*") if p.is_file())
+    fast_read_record = make_record(names_records, "SKILL-handoff-2026-10-25-2", {
+        "fast-read.md": REPORT_A, "fast-read.md.agent-session.json": "{}\n",
+        "SKILL-with-sentence-ids.md": "# handoff [S1]\n",
+        "target/home/nedlern/elsewhere/.claude/skills/handoff/SKILL.md": "# handoff, edited\n"})
+    result = ship(str(names_store), str(fast_read_record))
+    store_files_after = sorted(
+        p.relative_to(names_store).as_posix() for p in names_store.rglob("*") if p.is_file())
+    check("a store record holding files the local directory lacks is REFUSED with exit 2, "
+          "though no file name is in both",
+          result.returncode == 2 and result.stdout.startswith("REFUSED:")
+          and result.stdout.count("\n") == 1, result.stdout + result.stderr)
+    rename = (f"`mv {fast_read_record} {names_records / 'SKILL-handoff-2026-10-25-3'}`, a name "
+              f"free in this checkout and in the store when this ran")
+    check("the refusal names the store's files the local directory lacks, and gives the "
+          "rename to the first -N after the date free here and in the store",
+          all(relative in result.stdout for relative in full_run_files)
+          and "fast-read.md" not in result.stdout
+          and str(names_store / "SKILL-handoff-2026-10-25-2") in result.stdout
+          and rename in result.stdout
+          and f"then ship the renamed directory with `{SHIP} "
+              f"{names_records / 'SKILL-handoff-2026-10-25-3'}`." in result.stdout,
+          result.stdout)
+    check("nothing was copied into the other read's record",
+          store_files_after == store_files_before,
+          str(sorted(set(store_files_after) - set(store_files_before))))
+
+    # The same refusal when the store's names cannot be read after its
+    # inventory: the rename is free in this checkout only, and says so.
+    real_listing = names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason
+    names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason = (
+        lambda host, records_path: (None, "listing failed: injected"))
+    unlisted_stdout = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(unlisted_stdout):
+            unlisted_code = names_shipper.ship_one(None, names_store, fast_read_record)
+    finally:
+        names_shipper.log_store_listed_record_directory_names_or_listing_failure_reason = real_listing
+    check("when the store's names cannot be read, the refusal's rename is to the first -N "
+          "free in this checkout, and it says the store may hold that name",
+          unlisted_code == 2
+          and f"`mv {fast_read_record} {names_records / 'SKILL-handoff-2026-10-25-3'}`, a name "
+              f"free in this checkout; the store's names could not be read (listing failed: "
+              f"injected), so the store may hold it" in unlisted_stdout.getvalue(),
+          unlisted_stdout.getvalue())
+
+    # A directory named by its date alone is offered -2; one not ending in a
+    # date keeps its whole name and gains the -N.
+    (names_store / "plain-2026-10-26").mkdir()
+    (names_store / "plain-2026-10-26" / "other.md").write_text("other read\n", encoding="utf-8")
+    plain_record = make_record(names_records, "plain-2026-10-26", {"mine.md": "mine\n"})
+    plain = ship(str(names_store), str(plain_record))
+    (names_store / "2026-10-26-dated-first").mkdir()
+    (names_store / "2026-10-26-dated-first" / "other.md").write_text("x\n", encoding="utf-8")
+    dated_first_record = make_record(names_records, "2026-10-26-dated-first", {"mine.md": "m\n"})
+    dated_first = ship(str(names_store), str(dated_first_record))
+    check("the rename of a date-named directory is its name with -2",
+          f"{names_records / 'plain-2026-10-26-2'}`" in plain.stdout, plain.stdout)
+    check("the rename of a directory not ending in a date is its whole name with -2",
+          f"{names_records / '2026-10-26-dated-first-2'}`" in dated_first.stdout,
+          dated_first.stdout)
+    # A date-first name may end in digits of its own, so its -2 is kept and
+    # the rename gains another -N.
+    (names_store / "2026-10-26-dated-first-2").mkdir()
+    (names_store / "2026-10-26-dated-first-2" / "other.md").write_text("x\n", encoding="utf-8")
+    dated_first_2_record = make_record(names_records, "2026-10-26-dated-first-2",
+                                       {"mine.md": "m\n"})
+    dated_first_2 = ship(str(names_store), str(dated_first_2_record))
+    check("the rename of a date-first directory ending in -2 is its whole name with -2",
+          f"`mv {dated_first_2_record} {names_records / '2026-10-26-dated-first-2-2'}`"
+          in dated_first_2.stdout, dated_first_2.stdout)
+
+    # The ship command the refusal gives runs from a path with a space in it.
+    spaced_program = "/home/someone/checkout with space/cold-read-record-ship.py"
+    real_program = sys.argv[0]
+    sys.argv[0] = spaced_program
+    spaced_stdout = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(spaced_stdout):
+            spaced_code = names_shipper.ship_one(None, names_store, plain_record)
+    finally:
+        sys.argv[0] = real_program
+    check("the refusal's ship command quotes a program path holding a space",
+          spaced_code == 2
+          and f"`'{spaced_program}' {names_records / 'plain-2026-10-26-2'}`."
+              in spaced_stdout.getvalue(),
+          spaced_stdout.getvalue())
+
+    # A file in both copies with other bytes: the rename passes over the -2
+    # the store already holds, as the refusal of another read's files does.
+    make_record(names_store, "differing-2026-10-26", {"a.md": REPORT_A})
+    (names_store / "differing-2026-10-26-2").mkdir()
+    differing_record = make_record(names_records, "differing-2026-10-26", {"a.md": REPORT_B})
+    differing = ship(str(names_store), str(differing_record))
+    check("a differing file's refusal gives the rename to the first -N free in the checkout "
+          "and in the store, passing over a -2 only the store holds, and the ship command",
+          differing.returncode == 2
+          and "already in the store with different content" in differing.stdout
+          and f"`mv {differing_record} {names_records / 'differing-2026-10-26-3'}`, a name "
+              f"free in this checkout and in the store when this ran, then ship the renamed "
+              f"directory with `{SHIP} {names_records / 'differing-2026-10-26-3'}`."
+              in differing.stdout,
+          differing.stdout)
 
 print()
 if failures:

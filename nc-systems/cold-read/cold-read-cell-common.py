@@ -442,9 +442,10 @@ def recover_report_from_runtime_stdout(
 
 
 def instrument_built_record_directory(directory: pathlib.Path) -> bool:
-    """Return whether target/ or reference-check.md marks an instrument-built record directory."""
+    """Return whether target/ or the reference-check file, under either of its names, marks an instrument-built record directory."""
     return ((directory / record_names.FROZEN_TARGET_DIRECTORY_NAME).is_dir()
-            or (directory / "reference-check.md").is_file())
+            or record_names.cold_read_record_file_path_prefixed_name_else_name_before_prefix(
+                directory, record_names.COLD_READ_REFERENCE_CHECK_REPORT_FILE_NAME).is_file())
 
 
 def recover_near_miss_report(
@@ -632,7 +633,8 @@ def run_reviewer_program_in_own_process_group_until_timeout(
     result whose returncode is None. The group is also killed when this
     process is interrupted or sent SIGTERM while waiting."""
     # The reviewer's own session puts it outside the group the grid stops, so
-    # SIGTERM must reach the finally below that stops the reviewer's group.
+    # SIGTERM must reach the except BaseException handler below that stops
+    # the reviewer's group.
     signal.signal(signal.SIGTERM, exit_on_sigterm)
     process = subprocess.Popen(
         command,
@@ -647,9 +649,11 @@ def run_reviewer_program_in_own_process_group_until_timeout(
             stop_process_tree(process, REVIEWER_PROCESS_GROUP_STOP_GRACE_SECONDS)
             stdout, stderr = process.communicate()
             return subprocess.CompletedProcess(command, None, stdout, stderr)
-    finally:
-        if process.poll() is None:
-            stop_process_tree(process, REVIEWER_PROCESS_GROUP_STOP_GRACE_SECONDS)
+    except BaseException:
+        # Not gated on the leader running: it may have exited while a
+        # descendant still holds its pipes, which keeps communicate waiting.
+        stop_process_tree(process, REVIEWER_PROCESS_GROUP_STOP_GRACE_SECONDS)
+        raise
 
 
 def run_model_chain(

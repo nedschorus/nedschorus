@@ -5,6 +5,7 @@ Shared by recovery and the handoff supervisor to avoid circular imports and
 keep their definitions of an empty successor aligned."""
 
 import json
+import os
 from pathlib import Path
 
 FIRST_PROMPT_AFTER_RECORDED_EXIT_MARKER = "as it does when a session is stopped on purpose"
@@ -74,15 +75,19 @@ def substantive_turn_count(transcript_path: Path) -> int:
 
 
 def newest_real_transcript(project_directory: Path):
-    """Return (session id, path) for the newest real transcript, or (None, reason)."""
-    if not project_directory.is_dir():
+    """Return (session id, path) for the newest real transcript, or (None, reason).
+
+    A missing directory is a reason. Raise OSError when the directory exists but cannot be
+    listed, or a transcript in it cannot be stat'ed, because answering "no transcripts" then
+    would read a seat whose transcripts are unreadable as having nothing worth resuming."""
+    # Path.glob and Path.is_dir return nothing for a folder they cannot read; os.scandir raises.
+    try:
+        with os.scandir(project_directory) as entries:
+            transcripts = [Path(entry.path) for entry in entries if entry.name.endswith(".jsonl")]
+    except (FileNotFoundError, NotADirectoryError):
         return None, f"no harness project directory at {project_directory}"
     # UUID order is not chronological; modification time identifies the session last worked in.
-    candidates = sorted(
-        project_directory.glob("*.jsonl"),
-        key=lambda item: item.stat().st_mtime,
-        reverse=True,
-    )
+    candidates = sorted(transcripts, key=lambda item: item.stat().st_mtime, reverse=True)
     if not candidates:
         return None, f"no transcripts under {project_directory}"
     for transcript in candidates:

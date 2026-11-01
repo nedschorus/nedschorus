@@ -73,7 +73,7 @@ Operating rules:
   the copy; a path that resolves outside the checkout is refused.
 - Reports land in `sanity-check-records/<date>-<target-stem>/` (suffixed -2,
   -3, ... claimed by creation, so a same-day second pass never overwrites
-  earlier reports; for a skill, whose file is always `SKILL.md`, the stem is
+  earlier reports, and skipping a name the log-store already holds; for a skill, whose file is always `SKILL.md`, the stem is
   `<skill directory>-SKILL`). Beside them the runner saves everything it
   printed, as `sanity-check-run.log`, and the request the fresh-eyes agents
   were given, as `sanity-check-request.md`. The record is gitignored, and
@@ -227,9 +227,8 @@ Running a sanity-check, and reading its output:
   the printed instruction, and a timeout. The classification is read from the
   CLI's own output, matched only at the start of a line and only on a launch
   that failed; a launch whose text misleads it is told to the user, who can
-  see the line. The cold-read-grid relaunches whatever the cause and uses the
-  class for its report alone; here the class decides, because a relaunch of a
-  logged-out CLI is a wasted launch and its failure sends the audit to triage
+  see the line. The class decides whether the runner relaunches, because a
+  relaunch of a logged-out CLI is a wasted launch and its failure sends the audit to triage
   with one report. The instructions do not depend on which agent finished
   first, or on whether this run launched the other runtime: a rerun of one
   agent is a run that launched one runtime, and the other runtime's report is
@@ -306,6 +305,10 @@ _common_spec = importlib.util.spec_from_file_location(
     "cold_read_cell_common", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-cell-common.py")
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
+_record_ship_spec = importlib.util.spec_from_file_location(
+    "sanity_check_record_ship", RECORD_SHIPPER)
+record_ship = importlib.util.module_from_spec(_record_ship_spec)
+_record_ship_spec.loader.exec_module(record_ship)
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
     REPO_ROOT / "nc-systems" / "general-tools"
@@ -1449,16 +1452,31 @@ def fresh_record_dir(target_stem: str) -> pathlib.Path:
     The directory is claimed by creating it, not by testing first and creating
     after: two runs starting together on the same target and date both pass a
     look-then-create test and return the same path, and the second overwrites
-    the first."""
+    the first.
+
+    A name the log-store's sanity-check-records already hold is skipped too:
+    another checkout's record of the same target and day ships to the same
+    store, and shipping this one under its name is refused. When the store
+    cannot be listed, the name is checked against this checkout alone and a
+    warning on stderr says so."""
     base = RECORDS_ROOT / f"{datetime.date.today().isoformat()}-{target_stem}"
+    names_in_store, unlisted = record_ship.shipper.log_store_listed_record_directory_names_or_listing_failure_reason(
+        *record_ship.destination_for_this_machine())
+    names_in_store = names_in_store or set()
     counter = 1
     while True:
         out_dir = base if counter == 1 else pathlib.Path(f"{base}-{counter}")
+        counter += 1
+        if out_dir.name in names_in_store:
+            continue
         try:
             out_dir.mkdir(parents=True)
-            return out_dir
         except FileExistsError:
-            counter += 1
+            continue
+        if unlisted:
+            print(record_ship.shipper.log_store_listing_failed_record_name_may_collide_warning_line(
+                "sanity-check-adversarial-prompts.py", out_dir, unlisted), file=sys.stderr)
+        return out_dir
 
 
 def cell_scratch_dir(out_dir: pathlib.Path, cell: str) -> pathlib.Path:

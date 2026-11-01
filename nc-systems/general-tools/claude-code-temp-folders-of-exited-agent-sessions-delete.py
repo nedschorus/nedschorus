@@ -188,13 +188,6 @@ def claude_code_temp_folders_of_exited_agent_sessions_delete(temp_parents, sessi
                 continue
             transcripts = projects_directory / project.name
             try:
-                # Path.glob in the chooser returns nothing for a folder it cannot read, which
-                # would look like a project with no transcripts; listing it here raises instead.
-                try:
-                    with os.scandir(transcripts):
-                        pass
-                except FileNotFoundError:
-                    pass
                 resumable, _ = worth_resuming.newest_real_transcript(transcripts)
             except OSError as error:
                 result["failures"].append(

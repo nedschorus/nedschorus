@@ -109,7 +109,6 @@ check("literal_text leaves out every {...} placeholder",
 NOT_RECOGNIZED_FORMS = (
     ("a systemMessage, which the user sees and the agent does not",
      'output = {"systemMessage": "user text"}\n'),
-    ("a string held in a local variable", 'def main():\n    text = "local text"\n    return {"additionalContext": text}\n'),
     ("a name assigned twice at module level",
      'TEXT = "first"\nTEXT = "second"\noutput = {"additionalContext": TEXT}\n'),
     ("a string assigned to a name with no message suffix", 'GREETING = "plain text"\n'),
@@ -122,6 +121,196 @@ for case_name, source in NOT_RECOGNIZED_FORMS:
     check(f"not recognized: {case_name}", found == [], found)
 
 SAY = 'def say(stream, text):\n    stream.write(text + "\\n")\n'
+
+# Modelled on IgnitionPlanWithoutConversationTail.compose() in nc-systems/handoff/handoff-supervisor.py,
+# whose recovery note reaches the agent only through a second local name and a return.
+COMPOSE_SOURCE = """ITEMS_INSTRUCTION = "Show the user every waiting item in one approval-walk."
+
+
+class IgnitionPlan:
+    def compose(self, report, lines=()):
+        if self.transcript_path is not None:
+            recovery_note = (
+                "the conversation-tail is unavailable; "
+                f"that session's transcript is {self.transcript_path}.")
+        elif self.transcript_paths:
+            paths = [str(path) for path in self.transcript_paths]
+            recovery_note = (
+                "the conversation-tail is unavailable; that session's transcript is in "
+                f"more than one folder, at {', '.join(paths[:-1])} and {paths[-1]}.")
+        else:
+            recovery_note = "the conversation-tail is unavailable; this next-step is your whole context."
+        prompt = (
+            f"{self.next_step}\\n\\n(Recovered at {self.occasion}: {recovery_note}) "
+            + ITEMS_INSTRUCTION
+        )
+        if report:
+            prompt += " " + report
+        for line in lines:
+            prompt += " " + line
+        return prompt
+"""
+found = [(entry["line"], entry["end_line"], entry["label"], entry["text"]) for entry in entries(COMPOSE_SOURCE)]
+check("a recovery note built in a local name and returned through another is found, each branch at its own lines",
+      [entry for entry in found if entry[2] == "recovery_note = in IgnitionPlan.compose()"] == [
+          (8, 9, "recovery_note = in IgnitionPlan.compose()",
+           "f\"the conversation-tail is unavailable; that session's transcript is {self.transcript_path}.\""),
+          (13, 14, "recovery_note = in IgnitionPlan.compose()",
+           "f\"the conversation-tail is unavailable; that session's transcript is in more than one folder, "
+           "at {', '.join(paths[:-1])} and {paths[-1]}.\""),
+          (16, 16, "recovery_note = in IgnitionPlan.compose()",
+           "the conversation-tail is unavailable; this next-step is your whole context.")], found)
+check("the returned local that holds the recovery note is found too, with each += at its own line",
+      [entry[0] for entry in found if entry[2] == "prompt = in IgnitionPlan.compose()"] == [18, 22, 24], found)
+check("a list the recovery note's f-string reads through a join call is not text", not any(
+    entry[2].startswith("paths =") for entry in found), found)
+compose_kinds = {(entry["label"].split(" ")[0], entry["kind"]) for entry in entries(COMPOSE_SOURCE)}
+check("the recovery note and the prompt it is returned in are prompts, and the module instruction is a message",
+      compose_kinds == {("recovery_note", "prompt"), ("prompt", "prompt"), ("ITEMS_INSTRUCTION", "message")},
+      compose_kinds)
+
+KINDS = (
+    ("a printed local", 'def main(n):\n    text = f"{n} failed"\n    print(text)\n', ["message"]),
+    ("a local returned by a function with no prompt in its name",
+     'def line(n):\n    text = f"{n} failed"\n    return text\n', ["message"]),
+    ("a local returned by a function whose name holds prompt",
+     'def build_ignition_prompt(n):\n    text = f"Start at step {n}."\n    return text\n', ["prompt"]),
+    ("a local returned by a method whose name holds Prompt",
+     'class Plan:\n    def handoffPrompt(self):\n        text = "Start here."\n        return text\n', ["prompt"]),
+    ("a local named in capitals with PROMPT, printed",
+     'def main():\n    SYSTEM_PROMPT_TEXT = "Answer in one line."\n    print(SYSTEM_PROMPT_TEXT)\n', ["prompt"]),
+    ("a local printed first and then folded into a returned prompt",
+     'def compose():\n    note = "Read the transcript."\n    print(note)\n    prompt = "Resume. " + note\n    return prompt\n',
+     ["prompt", "prompt"]),
+    ("a local printed twice, which stays a message",
+     'def main():\n    text = "Twice."\n    print(text)\n    print(text)\n', ["message"]),
+    ("a local returned through a string literal's join from a function whose name holds prompt",
+     'def build_prompt():\n    note = "Read the transcript."\n    return "\\n".join([note])\n', ["prompt"]),
+    ("a string printed directly in a function whose name holds prompt",
+     'def prompt_failure():\n    print("the prompt could not be built")\n', ["message"]),
+)
+for case_name, source, expected in KINDS:
+    found = [entry["kind"] for entry in entries(source)]
+    check(f"kind: {case_name}", found == expected, entries(source))
+
+LOCAL_NAME_FORMS = (
+    ("a local f-string that is printed", 'def main(n):\n    text = f"{n} failed"\n    print(text)\n',
+     [("f'{n} failed'", "text = in main()")]),
+    ("a local string a raise hands to the exception it builds",
+     'def main():\n    detail = "no branch"\n    raise SystemExit(detail)\n', [("no branch", "detail = in main()")]),
+    ("a local string as a hook output value",
+     'def main():\n    text = "local text"\n    return {"additionalContext": text}\n',
+     [("local text", "text = in main()")]),
+    ("a local string inside a hook output f-string",
+     'def main():\n    text = "local text"\n    return {"additionalContext": f"see {text}"}\n',
+     [("f'see {text}'", '"additionalContext" value in main()'), ("local text", "text = in main()")]),
+    ("a local string a helper printer is handed",
+     SAY + 'def main():\n    text = "said later"\n    say(sys.stderr, text)\n',
+     [("said later", "text = in main()")]),
+    ("a local string assigned to a name with a message suffix",
+     'def main(n):\n    count = f"{n} files"\n    STOP_MESSAGE = "stopped after " + count\n',
+     [("f'{n} files'", "count = in main()"), ("stopped after {count}", "STOP_MESSAGE = in main()")]),
+    ("a local string % something that is printed", 'def main(n):\n    text = "%d failed" % n\n    print(text)\n',
+     [("%d failed", "text = in main()")]),
+    ("a local join whose pieces are listed",
+     'def main(items):\n    text = "\\n".join(["Fix these:", *items])\n    print(text)\n',
+     [("\n", "text = in main()"), ("Fix these:", "text = in main()")]),
+    ("a local joined from another local",
+     'def main():\n    head = "Fix these"\n    text = " ".join([head])\n    print(text)\n',
+     [("Fix these", "head = in main()"), (" ", "text = in main()")]),
+    ("a local chosen by a condition, its condition left out",
+     'def main(row):\n    verb = "resuming" if row["kind"] == "known" else "launching"\n    print(f"{verb} now")\n',
+     [("resuming", "verb = in main()"), ("launching", "verb = in main()"), ("f'{verb} now'", "print in main()")]),
+    ("a local returned as part of a built string",
+     'def line(n):\n    count = f"{n} files"\n    return "checked " + count\n', [("f'{n} files'", "count = in line()")]),
+    ("a local annotated with its type", 'def line():\n    text: str = "annotated text"\n    return text\n',
+     [("annotated text", "text = in line()")]),
+    ("a local of a nested function as a hook output value, its enclosing function binding nothing",
+     'def outer():\n    def inner():\n        text = "inner text"\n        return {"additionalContext": text}\n'
+     '    return inner()\n', [("inner text", "text = in outer.inner()")]),
+    ("a local printed after a nested function's definition",
+     'def outer():\n    text = "outer text"\n    def inner():\n        pass\n    print(text)\n',
+     [("outer text", "text = in outer()")]),
+    ("a local returned through a string literal's join",
+     'def build_prompt():\n    note = "Read the transcript."\n    return "\\n".join([note])\n',
+     [("Read the transcript.", "note = in build_prompt()")]),
+    ("a local printed through a string literal's join",
+     'def main():\n    note = "Read the transcript."\n    print(" ".join([note]))\n',
+     [(" ", "print in main()"), ("Read the transcript.", "note = in main()")]),
+    ("a local in a + chain as a hook output value",
+     'def main():\n    note = "Read the transcript."\n    return {"additionalContext": "Instructions: " + note}\n',
+     [("Instructions: {note}", '"additionalContext" value in main()'), ("Read the transcript.", "note = in main()")]),
+    ("a printed conditional's branches, its condition left out",
+     'def main(mode):\n    state = "internal data"\n    print("Resume" if state == "known" else "Stop")\n',
+     [("Resume", "print in main()"), ("Stop", "print in main()")]),
+    ("a local of an enclosing function printed by a lambda nested in it",
+     'def main():\n    text = "outer text"\n    callback = lambda: print(text)\n',
+     [("outer text", "text = in main()")]),
+    ("a local of an enclosing function printed in the body of a class nested in it",
+     'def main():\n    text = "outer text"\n    class Holder:\n        print(text)\n',
+     [("outer text", "text = in main.Holder()")]),
+    ("a local printed in a lambda's default, which the enclosing function evaluates",
+     'def main():\n    text = "Visible message"\n    callback = lambda value=print(text): None\n',
+     [("Visible message", "text = in main()")]),
+    ("a local printed in a class decorator, which the enclosing function evaluates",
+     'def main():\n    text = "Decorated message"\n    @register(print(text))\n    class Holder:\n        pass\n',
+     [("Decorated message", "text = in main()")]),
+    ("a local printed in a class base, which the enclosing function evaluates",
+     'def main():\n    text = "Base message"\n    class Holder(make_base(print(text))):\n        pass\n',
+     [("Base message", "text = in main()")]),
+    ("a local printed in a nested function's default, which the enclosing function evaluates",
+     'def main():\n    text = "Default message"\n    def inner(value=print(text)):\n        pass\n',
+     [("Default message", "text = in main()")]),
+    ("a local printed in a lambda's default whose parameter has the local's name",
+     'def main():\n    text = "Shadowed default"\n    callback = lambda text=print(text): None\n',
+     [("Shadowed default", "text = in main()")]),
+)
+for case_name, source, expected in LOCAL_NAME_FORMS:
+    found = [(entry["text"], entry["label"]) for entry in entries(source)]
+    check(f"recognized: {case_name}", sorted(found) == sorted(expected), found)
+
+LOCAL_NAME_FORMS_NOT_RECOGNIZED = (
+    ("a local path handed to open and Path",
+     'from pathlib import Path\ndef save(root):\n    path = f"{root}/notes.json"\n'
+     '    with open(path, "w") as handle:\n        handle.write("{}")\n    Path(path).touch()\n'),
+    ("a local path returned through a call",
+     'from pathlib import Path\ndef where(root):\n    path = f"{root}/notes.json"\n    return Path(path)\n'),
+    ("a local subprocess argument, run and returned in a list",
+     'import subprocess\ndef fetch(branch):\n    ref = f"origin/{branch}"\n'
+     '    subprocess.run(["git", "fetch", ref])\n    return ["git", "log", ref]\n'),
+    ("a local log key", 'def record(log, agent):\n    key = f"{agent}-last-run"\n    log[key] = 1\n    print(len(log))\n'),
+    ("a local printed only through a call",
+     'import json\ndef main(n):\n    text = f"{n}"\n    print(json.dumps(text))\n'),
+    ("a local of an enclosing function printed by a function nested in it",
+     'def outer():\n    text = "outer text"\n    def inner():\n        print(text)\n    inner()\n'),
+    ("a local of a nested function, when the enclosing function prints its own name of that spelling",
+     'def outer(text):\n    def inner():\n        text = "inner text"\n        store(text)\n    print(text)\n'),
+    ("a local of an enclosing function, when a lambda prints its own parameter of that spelling",
+     'def main():\n    prompt = "unused"\n    callback = lambda prompt: print(prompt)\n'),
+    ("a local of an enclosing function, when a class body nested in it binds that name itself",
+     'def main():\n    text = "outer text"\n    class Holder:\n        text = 3\n        print(text)\n'),
+    ("a string bound in a class body and printed there, as at module level",
+     'def main():\n    class Holder:\n        text = "class text"\n        print(text)\n'),
+    ("a local in a returned conditional's condition",
+     'def build_prompt():\n    state = "internal data"\n    return "Resume" if state else "Stop"\n'),
+    ("an empty local string that is printed", 'def main():\n    text = ""\n    print(text)\n'),
+    ("a local string returned in a tuple", 'def main():\n    text = "tuple text"\n    return text, 1\n'),
+    ("a local string returned only when a condition holds, as a name",
+     'def main(flag):\n    text = "chosen text"\n    return text if flag else None\n'),
+    ("a string printed by name outside any function", 'text = "module text"\nprint(text)\n'),
+    ("a local built with a string method other than join, such as format",
+     'def main(n):\n    text = "{} failed".format(n)\n    print(text)\n'),
+    ("a local built with a string method other than join, such as strip",
+     'def main():\n    text = " padded ".strip()\n    print(text)\n'),
+    ("an attribute assigned a string, which is not a local name",
+     'def main(self):\n    self.note = "attribute text"\n    print(self.note)\n'),
+    ("a local printed by a lambda in a class body that rebinds the name, which the class hides",
+     'def main():\n    text = "outer lambda"\n    class Holder:\n        text = 3\n        f = lambda: print(text)\n'),
+)
+for case_name, source in LOCAL_NAME_FORMS_NOT_RECOGNIZED:
+    found = texts(source)
+    check(f"not recognized: {case_name}", found == [], found)
+
 HELPER_PRINTER_FORMS = (
     ("a string passed to a helper that writes its parameter to a stream parameter",
      SAY + 'say(sys.stderr, "said text")\n', [("said text", "say()")]),
@@ -140,6 +329,9 @@ HELPER_PRINTER_FORMS = (
      SAY + 'def refuse(stream, cause):\n    say(stream, cause + ", so refused")\n'
      'refuse(sys.stderr, "cause text")\n',
      [("{cause}, so refused", "say() in refuse()"), ("cause text", "refuse()")]),
+    ("a string passed to a helper whose lambda prints the helper's parameter",
+     'def sink(text):\n    run(lambda: print(text))\nsink("closure text")\n',
+     [("closure text", "sink()")]),
     ("a string passed to a helper that hands its parameter to a helper printer defined after it",
      'def refuse(stream, cause):\n    say(stream, cause + ", so refused")\n' + SAY
      + 'refuse(sys.stderr, "cause text")\n',
@@ -147,6 +339,9 @@ HELPER_PRINTER_FORMS = (
     ("a string built with % for a helper printer, inside a function",
      SAY + 'def main():\n    say(sys.stderr, "branch %s failed" % name)\n',
      [("branch %s failed", "say() in main()")]),
+    ("a string passed to a helper whose lambda's default prints the parameter",
+     'def sink(text):\n    callback = lambda value=print(text): None\nsink("default helper")\n',
+     [("default helper", "sink()")]),
 )
 for case_name, source, expected in HELPER_PRINTER_FORMS:
     found = [(entry["text"], entry["label"]) for entry in entries(source)]
@@ -168,8 +363,28 @@ HELPER_PRINTER_FORMS_NOT_RECOGNIZED = (
     ("a string passed to a function whose parameter hides a helper printer's name",
      'def say(text):\n    print(text)\ndef route(say, payload):\n    say(payload)\n'
      'route(lambda p: None, {"key": "value"})\n'),
+    ("a string passed to a lambda's parameter that hides a helper printer's name",
+     SAY + 'route = lambda say: say(sys.stderr, "hidden text")\n'),
+    ("a string a helper prints only in a conditional's condition, handed through a join",
+     'def status(mode):\n    print("Resume" if mode else "Stop")\n'
+     'def main():\n    prompt = "condition text"\n    status("".join([prompt]))\n'),
+    ("a string a helper's lambda prints only through the lambda's own parameter of that spelling",
+     'def sink(text):\n    callback = lambda text: print(text)\n'
+     'def main():\n    prompt = "shadowed text"\n    sink("".join([prompt]))\n'),
     ("a print keyword that names where to print, not what",
      'def show(text, out):\n    print(text, file=out)\nshow(None, out="file text")\n'),
+    ("a string passed to a helper whose class body rebinds the parameter before printing it",
+     'def sink(text):\n    class Holder:\n        text = 3\n        print(text)\nsink("class rebound")\n'),
+    ("a string passed to a helper whose nested function rebinds the parameter before printing it",
+     'def sink(text):\n    def inner():\n        text = 3\n        print(text)\nsink("inner rebound")\n'),
+    ("a string passed to a helper whose method prints the parameter its class body rebinds, which the class hides",
+     'def sink(text):\n    class Holder:\n        text = 3\n        def show(self):\n            print(text)\n'
+     '    Holder().show()\nsink("method sees outer")\n'),
+    ("a string passed to a helper whose class body rebinds the parameter and a lambda there prints it",
+     'def sink(text):\n    class Holder:\n        text = 3\n        f = lambda: print(text)\nsink("lambda in class")\n'),
+    ("a string passed to a helper whose class rebinds the parameter and a method's default lambda prints it",
+     'def sink(text):\n    class Holder:\n        text = 3\n        def show(self, v=(lambda: print(text))):\n            pass\n'
+     'sink("lambda in default")\n'),
 )
 for case_name, source in HELPER_PRINTER_FORMS_NOT_RECOGNIZED:
     found = [entry["text"] for entry in entries(source)
@@ -184,6 +399,50 @@ for line in ("Once the merge is committed, push again.",
              "Follow the report, then check %s again by hand from your worktree: %s"):
     check(f"the pre-push conflict check's helper-printed line {line!r} is found", line in found,
           found)
+
+# Modelled on ship_one_file() in scripts/seat-shared-file-ship.py at pull request 2309's head, whose
+# FAILED lines are built in a nested function and only its what_failed arguments stood in print().
+STOPPED_LINE_SOURCE = """def ship_one_file(seat, stored_name, rerun):
+    def stopped_line(what_failed, why):
+        if not why:
+            return f"FAILED: {seat}/{stored_name} — {what_failed}. Rerun: {rerun}"
+        return (f"FAILED: {seat}/{stored_name} — {what_failed}. This run's staging "
+                f"directory could not be removed ({why}). Then rerun: {rerun}")
+    why = remove_staging_directory()
+    print(stopped_line(f"rsync exited {code} during the copy", why), flush=True)
+"""
+found = [(entry["line"], entry["label"], entry["literal_text"]) for entry in entries(STOPPED_LINE_SOURCE)]
+check("a string a nested function returns is a message when the function's call is printed",
+      (4, "return in ship_one_file.stopped_line()", "FAILED: / — . Rerun: ") in found
+      and (5, "return in ship_one_file.stopped_line()",
+           "FAILED: / — . This run's staging directory could not be removed (). Then rerun: ") in found
+      and (8, "print in ship_one_file()", "rsync exited  during the copy") in found, found)
+
+found = texts('def outer():\n    return f"outer {inner()}"\ndef inner():\n    return "inner text"\n'
+              'def data():\n    return "data text"\nname = data()\nraise SystemExit(outer())\n')
+check("a string returned by a function whose call another followed function returns is a message, "
+      "and one whose call is not text is not",
+      "f'outer {inner()}'" in found and "inner text" in found and "data text" not in found, found)
+
+found = texts('def line(x):\n    return f"line {x}"\nprint("\\n".join(line(x) for x in xs))\n')
+check("a string returned by a function whose calls a printed string literal's join carries is a message",
+      "f'line {x}'" in found, found)
+
+found = texts('def chosen():\n    return "chosen text"\ndef ready():\n    return "ready text"\n'
+              'print(chosen() if ready() else "fallback")\n')
+check("a string returned by a function called in a conditional expression's branch is a message, "
+      "and one called in its condition is not",
+      "chosen text" in found and "ready text" not in found, found)
+
+# Modelled on parse_event() in nc-systems/agent-seat-database/agent-seat-database-service.py at pull
+# request 2310's head, whose dict key "error" was listed as a second message on the same line.
+found = texts('def parse_event(event):\n'
+              '    raise Answer(400, {"error": "the event\'s event_id holds a lone surrogate, "\n'
+              '                                "so SQLite cannot store it"})\n')
+check("a dict literal's key in a raise is not a message, so the line holds one message",
+      found == ["the event's event_id holds a lone surrogate, so SQLite cannot store it"], found)
+found = texts('print(MESSAGES["refusal"])\n')
+check("a subscript's index in a print is not a message", found == [], found)
 
 check("source that does not parse yields no entries", texts('print("unclosed\n') == [])
 check("no source yields no entries", texts(None) == [])

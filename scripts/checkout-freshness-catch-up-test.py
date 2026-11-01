@@ -1079,6 +1079,28 @@ with tempfile.TemporaryDirectory() as reference_pull_scratch:
     check("a successful pull clears the reference's reason key",
           "last_reference_blockers" not in stamp_of(reference), str(stamp_of(reference)))
 
+    # Git exits 0 after a fast-forward whatever post-merge returns, so the
+    # hook's FAILED line reaches nobody unless the catch-up relays it.
+    hooks = tmp / "hooks"
+    hooks.mkdir()
+    (hooks / "post-merge").write_text(
+        "#!/bin/sh\necho 'restart-program: FAILED — the restart did not happen' >&2\nexit 1\n",
+        encoding="utf-8")
+    (hooks / "post-merge").chmod(0o755)
+    git(["config", "core.hooksPath", str(hooks)], reference)
+    commit_file(origin, "advance-again.txt", "two\n", "advance again")
+    pulled = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    check("a post-merge hook's FAILED line after a fast-forward of the reference is relayed",
+          (reference / "advance-again.txt").exists()
+          and "post-merge hook reported a failure" in pulled.stdout
+          and "restart-program: FAILED — the restart did not happen" in pulled.stdout,
+          pulled.stdout + pulled.stderr)
+    (hooks / "post-merge").write_text("#!/bin/sh\necho 'all went well' >&2\n", encoding="utf-8")
+    commit_file(origin, "advance-third.txt", "three\n", "advance a third time")
+    pulled = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    check("(control) a post-merge hook that reports no failure adds no line",
+          "post-merge hook" not in pulled.stdout, pulled.stdout)
+
 
 # ---------------------------------------------------------------------------
 # A reference whose fetch failed must not read as up to date. It computed
