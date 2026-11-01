@@ -106,8 +106,9 @@ that mutant; and "files_with_no_suite", a list of paths. A file that cannot be
 written exits 2.
 
 THE RECORDED MUTANT KILLED CHECK, --recorded-mutant-killed-check DIFF_FILE,
-judges one mutant a full mutation pass recorded: DIFF_FILE holds the mutant's
-"diff" as the JSON file above gives it, the file
+judges one mutant a full mutation pass recorded: DIFF_FILE holds only that
+mutant's "diff" text, as the JSON file above gives it, not the JSON file; it is
+the file
 scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py
 writes for each surviving mutant. In a detached scratch worktree at --head, by
 default the HEAD of --checkout, so a change not yet committed is left out, it
@@ -779,7 +780,8 @@ def recorded_mutant_killed_check(arguments, checkout, environment, runner):
         raise CouldNotRun(
             f"{PROGRAM}: not run — at head {head[:12]} no recorded suite reads {path} and it has "
             f"no sibling suite, so no suite can kill the mutant.\n"
-            f"If your new test is in a suite of its own, run it once with python3 "
+            f"If your new test is in a suite whose recording does not yet read {path}, such as "
+            f"a new suite, run that suite once with python3 "
             f"scripts/run-all-test-suites.py --only-suites-named <the suite's path>, which "
             f"records what it reads, so this program finds it.\n"
             + rerun)
@@ -812,7 +814,8 @@ def recorded_mutant_killed_check(arguments, checkout, environment, runner):
                     f"{PROGRAM}: not run — the mutant in {diff_file} does not apply to {path} at "
                     f"head {head[:12]}: {why_not_applied}.\n"
                     f"If the line the diff changes is no longer at your head as the diff shows "
-                    f"it, there is no mutant to kill: say so instead of running this.\n"
+                    f"it, there is no mutant to kill: mark the survivor task completed instead "
+                    f"of running this.\n"
                     f"Otherwise, make sure your branch's head has {path} as main has it, and "
                     f"commit your test in another file.\n" + rerun)
             (worktree / path).write_text(mutated_source, encoding="utf-8")
@@ -837,12 +840,12 @@ def recorded_mutant_killed_check(arguments, checkout, environment, runner):
         raise CouldNotRun(
             f"{PROGRAM}: not run to a verdict — with the mutant in {diff_file} applied at head "
             f"{head[:12]}, {why}, so the mutant was not judged.\n"
-            f"Run this again once. If it ends the same way again, put this message in the pull "
-            f"request's description instead of a MUTANT KILLED line.")
+            f"Run this again once. If the second run also ends without a verdict, put its first "
+            f"line in the pull request's description instead of a MUTANT KILLED line.")
     print(mutated.stdout, end="")
-    print(f"{MUTANT_KILLED_LINE_PREFIX}: at head {head[:12]}, the suites for {path} pass "
-          f"without the mutant in {diff_file} and a suite fails with it applied: "
-          f"{' '.join(suites)}")
+    print(f"{MUTANT_KILLED_LINE_PREFIX}: at head {head[:12]}, the suites for {path} "
+          f"({' '.join(suites)}) pass without the mutant in {diff_file}, and one of them fails "
+          f"with it applied.")
     return EXIT_EVERY_MUTANT_KILLED
 
 

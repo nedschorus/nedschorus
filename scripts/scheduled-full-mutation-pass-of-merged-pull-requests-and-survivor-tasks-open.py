@@ -61,7 +61,7 @@ mutant, shown killed by the mutation testing program's
 --recorded-mutant-killed-check, or to end the line with a `# pragma: no
 mutate` comment saying why no test can, which every mutation pass then skips.
 Before the task is opened, the mutant's diff is written for that check to
-SURVIVING_MUTANT_DIFFS_DIRECTORY_NAME/<mutant key>.diff beside the records.
+SURVIVING_MUTANT_DIFFS_DIRECTORY_NAME/<mutant key>.diff in the records directory.
 
 THE RECORD is one text file per run in the log-store:
 
