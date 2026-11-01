@@ -38,9 +38,20 @@ The user, 2026-10-28 at 21:56Z, approving the item (transcript `nedlern@ned-box:
 
 So each copy shows, in its header, a date and time in Pacific time. ned-box-helper has since added such a header by hand to the two copies on item 5.2.1's page.
 
-## Open questions (added by ned-box-helper's subagent that filed this GHI, not from the user)
+## Copy only files the user reads; link a file he edits at its canonical location
 
-Everything in this section is the filing subagent's, not the user's; the item and the user's words above do not settle any of it.
+The user, 2026-10-27 at 23:48Z, at item 2.2 of the approval-walk `cold-read-research-carried-items-and-memory-review-2026-10-27` (transcript `nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/projects/-Users-el-agents-cold-read-research/ce4ea772-d6e8-4afa-b667-5fa25c6ae513.jsonl`; walk-minutes `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/cold-read-research-carried-items-and-memory-review-2026-10-27-minutes.md`, line 35, where the walk-minutes record it as a side point, not an item he approved): "So the walk items are artifacts. The artifacts are read-only. Making a copy of them is safe because I don't edit them. There are files, some empty files I edit, so I don't want to edit a copy. I usually want to edit the master. Though I guess we could rig something up in case I edited a copy."
+
+For the program, this means:
+
+- It copies into the item page only a file the user reads.
+- It never copies a file the user edits. It links that file at its canonical location, the one place the file is kept, with the `file:///Volumes/nedhome/...` link that `~/.claude/CLAUDE.md` asks for, so that an edit he makes reaches the file itself and not a frozen copy. Such a link opens only on the Mac.
+
+Open questions 10 to 12 below ask what happens when he edits a copy by mistake, how the program tells a file he edits from one he reads, and what such a link does on the iPad.
+
+## Open questions (added by agents, not from the user)
+
+Everything in this section is an agent's, not the user's; the items and the user's words above do not settle any of it. Questions 1 to 9 were added by ned-box-helper's subagent that filed this GHI; questions 10 to 12 were added on 2026-11-01 by agent-instructions-editor's subagent.
 
 1. **Which time the header shows.** The user's words name two times: "the time that the original file was created" and "when it was frozen". Should the header show the time the copy was made, the time the original file last changed, or both?
 2. **Which version of a repository file is copied.** The copy of `nc-systems/handoff/handoff-design.md` on item 5.2.1's page was taken from a branch, not main. Should the program copy a repository file from the publishing agent-seat's checkout, or from main?
@@ -51,3 +62,6 @@ Everything in this section is the filing subagent's, not the user's; the item an
 7. **The walk-runner.** The walk-minutes say the program is a step the walk-runner could later run. Should the walk-runner run it at every publish and republish, so no agent has to remember to?
 8. **Other questions for the build.** How does the program get the item's text: from the walk-document's path and the item number? Where does it run, and where does it put the page and copies before they are published? How does the header look, so that it does not break the copied file? What happens when two linked files share a file name in different directories? What does the agent do when publishing to claude.ai fails? Should the header also name the branch and commit a repository file was copied from, and say when the file differs from main? Should a hook on the Artifact tool refuse an item page the program did not build?
 9. **A neighbouring design, not yet filed.** On 2026-10-29 another agent-session on ned-box was writing the GHI-MD `docs/issues/markdown-files-served-as-web-pages-from-ned-box-to-the-lan.md`, on the branch `ghi-markdown-files-served-as-web-pages-from-ned-box-to-the-lan-topic-branch` in the worktree `/home/nedlern/Projects/nedschorus/.claude/worktrees/agent-aa70bcd8200280656`. Its title: "A read-only web server on ned-box renders Markdown files as web pages on the LAN, for approval-walk item pages and other pages agents now publish to claude.ai". That branch had no pull request (`gh pr list --head` found none) and was not on origin (`git ls-remote --heads origin` found nothing); once filed, it can be found by searching the GHIs for that title. If that server is built, does it replace this program, or does this program stay for pages the server cannot reach, such as on an iPad away from home or from an agent-seat on the Mac?
+10. **A copy the user edits by mistake.** The user, on the rule above: "Though I guess we could rig something up in case I edited a copy". Should anything catch an edit he makes to a copy, and if so, what?
+11. **How the program tells a file the user edits from one he reads.** The rule above copies one and links the other, but nothing yet says which files he edits. Does the agent mark each such file in the walk-document, does the program hold a list of the files he edits, or is it done some other way? What does the program do with a file he both reads and edits, and with a file nothing says he edits?
+12. **A file the user edits, linked on the iPad.** Its `file:///Volumes/nedhome/...` link opens only on the Mac. What should the item page show for that file when he reads the page on the iPad?
