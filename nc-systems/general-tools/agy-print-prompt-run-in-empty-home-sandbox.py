@@ -39,6 +39,8 @@ import tempfile
 
 PROGRAM = "agy-print-prompt-run-in-empty-home-sandbox"
 AGY_PATH_INSIDE_SANDBOX = "/run/agy-bin/agy"
+GEMINI_LAUNCHER_PATH = (pathlib.Path(__file__).resolve().parents[1]
+                        / "cold-read" / "cold-read-agy-cell.py")
 
 
 def empty_home_sandbox_prefix(home: pathlib.Path, agy_path: str) -> list:
@@ -60,9 +62,7 @@ def empty_home_sandbox_prefix(home: pathlib.Path, agy_path: str) -> list:
 
 def launcher_credential_sandbox_prefix() -> list:
     """Return the Gemini launcher's macOS sandbox-exec prefix."""
-    spec = importlib.util.spec_from_file_location(
-        "cold_read_agy_cell",
-        pathlib.Path(__file__).resolve().parents[1] / "cold-read" / "cold-read-agy-cell.py")
+    spec = importlib.util.spec_from_file_location("cold_read_agy_cell", GEMINI_LAUNCHER_PATH)
     launcher = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(launcher)
     return launcher.credential_sandbox_prefix()

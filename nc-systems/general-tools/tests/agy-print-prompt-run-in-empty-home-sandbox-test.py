@@ -12,8 +12,11 @@ and a stub agy stands in for the real one.
   - With agy missing from PATH the program refuses, exit 1, naming agy.
   - A stub agy that fails exits the program with the stub's code, its stderr
     passed through and a line naming the failure; a stub that succeeds has
-    its stdout passed through and its arguments as the program built them,
-    and a GEMINI_API_KEY the caller set does not reach it.
+    its stdout passed through and its arguments as the program built them;
+    it runs as the sandbox's agy with only .gemini in its home, and a
+    GEMINI_API_KEY the caller set does not reach it, while other variables do.
+  - Without --model the program refuses, exit 2.
+  - The Gemini launcher path the macOS branch loads names an existing file.
 
 Linux only, with bwrap on PATH: elsewhere every case is skipped, with a line
 saying why. Prints one line per case and exits non-zero if any case fails.
@@ -62,7 +65,8 @@ def stub_agy(bin_directory: pathlib.Path, body: str) -> None:
 
 def run_program(home, path, *arguments):
     environment = {**os.environ, "HOME": str(home), "PATH": path,
-                   "GEMINI_API_KEY": "caller-key"}
+                   "GEMINI_API_KEY": "caller-key", "AAA_CALLER_VARIABLE": "kept-a",
+                   "ZZZ_CALLER_VARIABLE": "kept-z"}
     return subprocess.run([sys.executable, str(SCRIPT_PATH), *arguments],
                           capture_output=True, text=True, env=environment)
 
@@ -105,15 +109,29 @@ def main() -> int:
               repr((result.returncode, result.stderr)))
 
         echoing = root / "echoing-agy"
-        stub_agy(echoing, 'printf "%s|" "$@" "key=${GEMINI_API_KEY-unset}"\n')
+        stub_agy(echoing, 'printf "%s|" "$@" "key=${GEMINI_API_KEY-unset}" '
+                 '"${AAA_CALLER_VARIABLE-unset}" "${ZZZ_CALLER_VARIABLE-unset}" "$0" '
+                 '"$(ls -A "$HOME" | tr "\\n" " ")"\n')
         result = run_program(home, f"{echoing}:{bwrap_directory}",
                              "--model", "gemini-x", "say hi")
         check("agy succeeding: stdout passed through, arguments as built, no "
-              "GEMINI_API_KEY, exit 0",
+              "GEMINI_API_KEY but every other variable, run as the sandbox's agy with "
+              "only .gemini in its home, exit 0",
               result.returncode == 0 and result.stdout
               == "--model|gemini-x|--output-format|text|--print|say hi|key=unset|"
+              f"kept-a|kept-z|{program.AGY_PATH_INSIDE_SANDBOX}|.gemini |"
               and result.stderr == "",
               repr((result.returncode, result.stdout, result.stderr)))
+
+        result = run_program(home, f"{echoing}:{bwrap_directory}", "say hi")
+        check("--model missing: refused by argument parsing, exit 2, agy not run",
+              result.returncode == 2 and "--model" in result.stderr and result.stdout == "",
+              repr((result.returncode, result.stdout, result.stderr)))
+
+    check("the macOS branch's Gemini launcher path names the launcher file",
+          program.GEMINI_LAUNCHER_PATH.is_file()
+          and program.GEMINI_LAUNCHER_PATH.name == "cold-read-agy-cell.py",
+          str(program.GEMINI_LAUNCHER_PATH))
     print(f"\n{len(failures)} failure(s)" if failures else "\nall passed")
     return 1 if failures else 0
 
