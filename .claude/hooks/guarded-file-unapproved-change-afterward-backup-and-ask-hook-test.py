@@ -847,6 +847,23 @@ def cases(scratch):
     check("after the checkout's state is lost, the committed version the user never approved "
           "is still asked about", str(claude) in message, message)
 
+    # -- a lost checkout state with an approved store: on the Mac a write per file passes the
+    # deadline, after which no state is saved and every run repeats the writes
+    world = fresh(scratch, "lost-state-approved-store-writes-nothing")
+    claude = world.repo / "CLAUDE.md"
+    base = world.key(claude)
+    directory = world.store / str(claude).lstrip("/")
+    directory.mkdir(parents=True)
+    (directory / "approved").write_bytes(
+        f"{base}\t{hashlib.sha256(base.encode()).hexdigest()[:16]}\n".encode())
+    next((world.repo / ".git").glob("*-state.json")).unlink()
+    before = store_listing(world.store)
+    message = world.run()
+    check("after the checkout's state is lost, a run that finds every file at an approved "
+          "version writes nothing to the store and asks nothing",
+          message == "" and store_listing(world.store) == before,
+          (message, [entry for entry in store_listing(world.store) if entry not in before]))
+
     # -- a store directory a timed-out run left part-written
     world = fresh(scratch, "part-written-store-directory")
     claude = world.repo / "CLAUDE.md"
@@ -1482,18 +1499,20 @@ def cases(scratch):
                                    capture_output=True, text=True, check=True).stdout.strip()
     guarded = len(json.loads((Path(git_directory) / hook.STATE_FILE_NAME).read_text())["files"])
     print(f"INFO  the first run in a new worktree with {guarded} guarded files: {store}")
-    check("the first run in a new worktree opens each store directory with one open, not one per "
-          "part of its path",
-          texts == [] and guarded and store["open"] <= 2 * store["access"] + store["make"],
+    check("the first run in a new worktree makes one failed open, to find the store has no "
+          "directory for the checkout, and reads, writes and makes nothing",
+          texts == [] and guarded and store == {"open": 1, "not found": 1, "make": 0, "access": 0},
           (texts, guarded, store))
-    # Each file has its own store directory, missing until the run makes it: one failed open of
-    # the whole path, then one failed open before each mkdir of the walk that makes it.
-    check("the first run in a new worktree looks each file's missing directory up once, though it "
-          "reads each file's log and approved set twice",
-          store["not found"] <= guarded + store["make"], (guarded, store))
+    # The first change makes the file's store directory, walking from the store root: one open
+    # per part that is there and two per part it makes, beyond the opens of its store accesses.
     (worktree / "CLAUDE.md").write_text((worktree / "CLAUDE.md").read_text() + "changed\n")
     texts = counted_run(worktree)
-    check("a run that finds one changed file opens one directory and one file per store access",
+    check("the first change to a file in a new worktree makes its store directory and asks",
+          len(texts) == 1 and store["make"] > 0, (store, texts))
+    (worktree / "CLAUDE.md").write_text((worktree / "CLAUDE.md").read_text() + "again\n")
+    texts = counted_run(worktree)
+    check("a run that finds one changed file whose store directory is there opens one directory "
+          "and one file per store access",
           len(texts) == 1 and 0 < store["open"] <= 2 * store["access"], (store, texts))
 
 

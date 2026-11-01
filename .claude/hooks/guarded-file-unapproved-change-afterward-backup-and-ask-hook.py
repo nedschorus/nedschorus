@@ -1175,6 +1175,8 @@ def run_hook(payload):
                                     previous and previous[4]))
             # A path the store has a directory for may have a version a run saw and the user
             # never approved, as after a lost checkout state, so it is checked as stocking is.
+            # An approved version is settled without writing: on the Mac, a write per file after
+            # a lost state passes the deadline, so no state is saved and every run repeats it.
             base_quiet = []
             root = store.path_directory(checkout_root, create=False) if base_matched else None
             if root is not None:
@@ -1185,8 +1187,10 @@ def run_hook(payload):
                     base_quiet.append(path)
                     continue
                 os.close(directory)
-                how = "" if key not in store.approved(path) and seen_lines(store.log(path), key) \
-                    else HOW_STOCK
+                if key in store.approved(path):
+                    base_quiet.append(path)
+                    continue
+                how = "" if seen_lines(store.log(path), key) else HOW_STOCK
                 checks.append(Check(path, data, key, copy_hash, how, (path, copy_hash) in held))
             approvals = approvals + renames(store, changed, state["files"])
             results.append(store_phase(store, session, owner(), checks, unsettled, approvals,
