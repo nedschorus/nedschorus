@@ -30,9 +30,10 @@ the tree skips those three rounds.
 
 WHAT IT FAILS, in a cold-read program:
 
-  * a path join whose string operand holds `cold-read-records` anywhere, or
-    is exactly the frozen target's `target`. For `cold-read-records` only, a
-    name this program bound to such a string is followed one hop, so
+  * a path join written with `/` whose string operand holds
+    `cold-read-records` anywhere, or is exactly the frozen target's `target`.
+    For `cold-read-records` only, a name this program bound to such a string
+    with a plain `=` is followed one hop, so
     `MY_RECORDS = "cold-read-records"` and then `REPO_ROOT / MY_RECORDS`
     fails. The frozen target is matched on the operand itself and is not
     followed through a name -- see the list below;
@@ -91,6 +92,13 @@ WHAT IT DOES NOT FAIL, said plainly so no one reads cover into it:
     refused.
   * an owned name that arrives as a function parameter, a class attribute or
     an `import ... as`, rather than as a binding of its own.
+  * a path join written as a call: `REPO_ROOT.joinpath("cold-read-records")`
+    or `os.path.join(REPO_ROOT, "cold-read-records")`. Only `/` is read as a
+    join. No cold-read program joins either way.
+  * the value bound to a name other than by a plain `=`:
+    `MY_RECORDS: str = "cold-read-records"`, or the walrus form, and then
+    `REPO_ROOT / MY_RECORDS`. Only a plain `=` binding is followed. No
+    cold-read program binds the value either way.
   * a copy of the value written out at a second remove: a name bound to a
     name bound to the string. Only the first hop is followed.
 
