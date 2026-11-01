@@ -12,8 +12,9 @@ free both in this checkout and in the log-store), progress and next-step
 instructions printed for the reviewing agent as reviews land. A report is
 named `<runtime>-<hunt|terminology>-<cold-read-tier>.md`, or for a cell the grid
 gives a model, `<runtime>-<hunt|terminology>-<model>.md`. The Argon cell runs on
-agy's one cold-read-tier, `fast`, with the model and effort the grid gives it, so
-its report is `agy-hunt-gemini-4-argon-high.md`; its stamp says tier=fast beside
+agy's one cold-read-tier, `fast`, with the model the grid gives it,
+`gemini-4-argon-high`, and the effort `high`, so its report is
+`agy-hunt-gemini-4-argon-high.md`; its stamp says tier=fast beside
 the model and effort it ran with.
 
 Usage:
