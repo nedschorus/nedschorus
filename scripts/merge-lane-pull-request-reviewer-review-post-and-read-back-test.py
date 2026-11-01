@@ -169,6 +169,8 @@ def main():
               "review 42 posted on pull request 7 as APPROVE" in result.stdout
               and HEAD in result.stdout and TOKEN not in result.stdout + result.stderr,
               result.detail)
+        check("when no comment moved into the body, the success line says nothing of moving",
+              "moved" not in result.stdout, result.detail)
 
         result = run_program(scratch, review("REQUEST_CHANGES"))
         check("a request for changes on a pull request another account opened is posted with "
@@ -279,6 +281,9 @@ def main():
                   "- `scripts/thing.py:9`: Below the hunk.\n"
                   "- `scripts/other.py:1`: In a file the diff lacks.\n"
                   "- `image.png:1`: On a binary file."), result.detail)
+        check("the success line says how many comments moved into the body",
+              result.stdout.rstrip("\n").endswith("; 3 comment(s) moved into the body"),
+              result.detail)
         removed = {"path": "scripts/thing.py", "line": 2, "body": "On the old side only."}
         result = run_program(
             scratch, review("APPROVE", comments=[removed]),

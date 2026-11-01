@@ -128,7 +128,7 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/install-restart-live-seats-at-login-systemd-unit.py": 4,
     "scripts/launch-claude-mac-test.py": 18,
     "scripts/launch-claude-pre-trust-step-test.py": 5,
-    "scripts/launch-claude-ubuntu-test.py": 20,
+    "scripts/launch-claude-ubuntu-test.py": 12,
     "scripts/locate-file-copies-across-machines-test.py": 19,
     "scripts/md-drift-lint-test.py": 21,
     "scripts/md-drift-lint.py": 1,

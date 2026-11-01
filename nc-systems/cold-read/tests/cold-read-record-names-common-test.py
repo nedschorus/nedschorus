@@ -30,9 +30,10 @@ the tree skips those three rounds.
 
 WHAT IT FAILS, in a cold-read program:
 
-  * a path join whose string operand holds `cold-read-records` anywhere, or
-    is exactly the frozen target's `target`. For `cold-read-records` only, a
-    name this program bound to such a string is followed one hop, so
+  * a path join written with `/` whose string operand holds
+    `cold-read-records` anywhere, or is exactly the frozen target's `target`.
+    For `cold-read-records` only, a name this program bound to such a string
+    with a plain `=` is followed one hop, so
     `MY_RECORDS = "cold-read-records"` and then `REPO_ROOT / MY_RECORDS`
     fails. The frozen target is matched on the operand itself and is not
     followed through a name -- see the list below;
@@ -91,6 +92,13 @@ WHAT IT DOES NOT FAIL, said plainly so no one reads cover into it:
     refused.
   * an owned name that arrives as a function parameter, a class attribute or
     an `import ... as`, rather than as a binding of its own.
+  * a path join written as a call: `REPO_ROOT.joinpath("cold-read-records")`
+    or `os.path.join(REPO_ROOT, "cold-read-records")`. Only `/` is read as a
+    join. No cold-read program joins either way.
+  * the value bound to a name other than by a plain `=`:
+    `MY_RECORDS: str = "cold-read-records"`, or the walrus form, and then
+    `REPO_ROOT / MY_RECORDS`. Only a plain `=` binding is followed. No
+    cold-read program binds the value either way.
   * a copy of the value written out at a second remove: a name bound to a
     name bound to the string. Only the first hop is followed.
 
@@ -106,6 +114,8 @@ Prints one line per case and exits non-zero if any case fails.
 import ast
 import importlib.util
 import sys
+import pathlib
+import tempfile
 from pathlib import Path
 
 # This suite sits in nc-systems/cold-read/tests/, three directories below the root.
@@ -142,7 +152,11 @@ OWNED_NAMES = frozenset({
     "frozen_target_path", "RECORDS_DIRECTORY_NAME", "RECORD_DATE_PATTERN",
     "COMPLETED_REPORT_NAME_PATTERN", "record_directory_name_pattern_for_target",
     "frozen_target_candidate_paths", "record_holds_completed_report",
-    "SENTENCE_ID_MARKED_COPY_SUFFIX", "GENERATED_INPUT_COPY_SUFFIXES"})
+    "SENTENCE_ID_MARKED_COPY_SUFFIX", "GENERATED_INPUT_COPY_SUFFIXES",
+    "COLD_READ_FAST_READ_REPORT_FILE_NAME", "COLD_READ_TRIAGE_FILE_NAME",
+    "COLD_READ_REFERENCE_CHECK_REPORT_FILE_NAME", "COLD_READ_RECORD_FILE_NAME_TO_ITS_NAME_BEFORE_COLD_READ_PREFIX",
+    "cold_read_record_file_name_prefixed_name_else_name_before_prefix",
+    "cold_read_record_file_path_prefixed_name_else_name_before_prefix"})
 # The constant whose join says a path is being built inside the frozen copy's
 # directory. Matched as an identifier, exactly: a program reaches it as
 # `FROZEN_TARGET_DIRECTORY_NAME` or as `<module>.FROZEN_TARGET_DIRECTORY_NAME`,
@@ -479,6 +493,41 @@ check("the entry-point failure says what was found, why the module stays import-
           'If "__main__" appears only in a comment or a docstring, reword that text.',
           RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
       COMMAND_LINE_ENTRY_POINT_FAILURE_DETAIL)
+
+# A record written before the cold-read- prefix still holds its files under
+# their old names, and every reader finds them through the one lookup.
+_names_spec = importlib.util.spec_from_file_location("cold_read_record_names", NAMES_MODULE)
+names = importlib.util.module_from_spec(_names_spec)
+_names_spec.loader.exec_module(names)
+with tempfile.TemporaryDirectory() as scratch:
+    record = pathlib.Path(scratch)
+    for name, old_name in names.COLD_READ_RECORD_FILE_NAME_TO_ITS_NAME_BEFORE_COLD_READ_PREFIX.items():
+        check(f"a record holding neither name of {name} is given {name}",
+              names.cold_read_record_file_path_prefixed_name_else_name_before_prefix(record, name)
+              == record / name)
+        (record / old_name).write_text("old\n", encoding="utf-8")
+        check(f"a record holding only {old_name} is given {old_name}",
+              names.cold_read_record_file_name_prefixed_name_else_name_before_prefix(record, name)
+              == old_name)
+        (record / name).write_text("new\n", encoding="utf-8")
+        check(f"a record holding both {name} and {old_name} is given {name}",
+              names.cold_read_record_file_name_prefixed_name_else_name_before_prefix(record, name)
+              == name)
+        (record / old_name).unlink()
+        check(f"a record holding only {name} is given {name}",
+              names.cold_read_record_file_name_prefixed_name_else_name_before_prefix(record, name)
+              == name)
+    (record / "fast-read.md").mkdir()
+    check("a directory under the old name is not taken for the file",
+          names.cold_read_record_file_name_prefixed_name_else_name_before_prefix(
+              record / "fast-read.md", names.COLD_READ_FAST_READ_REPORT_FILE_NAME)
+          == names.COLD_READ_FAST_READ_REPORT_FILE_NAME
+          and names.cold_read_record_file_name_prefixed_name_else_name_before_prefix(
+              record, names.COLD_READ_FAST_READ_REPORT_FILE_NAME)
+          == names.COLD_READ_FAST_READ_REPORT_FILE_NAME)
+check("a fast read's report under its new name counts as a finished read",
+      names.COMPLETED_REPORT_NAME_PATTERN.match(names.COLD_READ_FAST_READ_REPORT_FILE_NAME)
+      is not None)
 
 print()
 if failures:
