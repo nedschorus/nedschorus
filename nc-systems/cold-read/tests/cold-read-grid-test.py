@@ -1041,10 +1041,10 @@ with tempfile.TemporaryDirectory() as scratch:
           and "saved:" in result.stdout
           and result.stdout.index("Tell the user:") < result.stdout.index("saved:"),
           repr(result.stdout))
-    check("the closing text still ends by telling the user, and five land, exit 1",
+    check("the closing text still ends by telling the user, and six land, exit 1",
           result.stdout.rstrip().splitlines()[-1].startswith(
               f"Tell the user: claude logged-out — {LOGGED_OUT_LINE} (log: ")
-          and result.returncode == 1 and len(lines_opening(result, "saved:")) == 5,
+          and result.returncode == 1 and len(lines_opening(result, "saved:")) == 6,
           f"exit {result.returncode}; stdout={result.stdout!r}")
     record_directory = record_directory_of(repository)
     check("the one attempt's log is kept under the report's own name",
@@ -1076,7 +1076,7 @@ with tempfile.TemporaryDirectory() as scratch:
     elapsed = time.monotonic() - started
     failed_lines = lines_opening(result, "FAILED")
     check("every attempt past the limit is FAILED as timed out, with no RETRYING line",
-          lines_opening(result, "RETRYING:") == [] and len(failed_lines) == 6
+          lines_opening(result, "RETRYING:") == [] and len(failed_lines) == 7
           and all(" — timed-out — timed out after 4 hours (stderr kept: " in line
                   for line in failed_lines),
           repr(result.stdout))
@@ -1085,7 +1085,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and lines_opening(result, "saved:") == [] and "No report landed in" in result.stdout,
           f"elapsed {elapsed:.1f}s, exit {result.returncode}; stdout={result.stdout!r}")
     check("a timed-out cell says its write check did not run, and no Tell the user line",
-          len(lines_opening(result, "WRITE CHECK DID NOT RUN:")) == 6
+          len(lines_opening(result, "WRITE CHECK DID NOT RUN:")) == 7
           and "Tell the user:" not in result.stdout, repr(result.stdout))
     time.sleep(stub_reading_seconds + 1 - elapsed if elapsed < stub_reading_seconds else 0)
     record_directory = record_directory_of(repository)
@@ -1104,7 +1104,7 @@ with tempfile.TemporaryDirectory() as scratch:
     failed_lines = lines_opening(result, "FAILED")
     check("a timed-out cell that had written its report: FAILED says the unfinished report is deleted",
           elapsed < hang_seconds and lines_opening(result, "saved:") == []
-          and len(failed_lines) == 6
+          and len(failed_lines) == 7
           and all(" — timed-out — timed out after 4 hours (stderr kept: " in line
                   and line.endswith(".stderr.log); the unfinished report it had written is deleted")
                   for line in failed_lines),
@@ -1826,9 +1826,9 @@ with tempfile.TemporaryDirectory() as scratch:
     result = run_grid(repository, stubs, {
         RECORD_SHIP_DESTINATION_VARIABLE: "nobody@no-such-host.invalid:/tmp/no-store"})
     record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
-    check("an unreachable store prints record: FAILED, the run finishes all six, and exits 1",
+    check("an unreachable store prints record: FAILED, the run finishes all seven, and exits 1",
           len(record_lines) == 1 and record_lines[0].startswith("record: FAILED:")
-          and result.returncode == 1 and "All six reports landed" in result.stdout,
+          and result.returncode == 1 and "All seven reports landed" in result.stdout,
           f"exit {result.returncode}; {record_lines!r}")
     record_directory = record_directory_of(repository)
     check("the record, frozen target included, stays on disk for a later ship",
@@ -1852,9 +1852,9 @@ with tempfile.TemporaryDirectory() as scratch:
         store_root.chmod(0o755)
     record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
     check("a store holding the record's name with other bytes prints record: REFUSED, "
-          "the run finishes all six, and exits 1",
+          "the run finishes all seven, and exits 1",
           len(record_lines) == 1 and record_lines[0].startswith("record: REFUSED:")
-          and result.returncode == 1 and "All six reports landed" in result.stdout,
+          and result.returncode == 1 and "All seven reports landed" in result.stdout,
           f"exit {result.returncode}; {record_lines!r}; stderr={result.stderr[-400:]!r}")
 
     # --- A changed target is still shipped: it is evidence -------------------
