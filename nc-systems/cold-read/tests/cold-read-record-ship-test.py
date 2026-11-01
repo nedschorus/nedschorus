@@ -608,6 +608,40 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           f"exit {result.returncode}: {result.stdout}")
     frozen_triage.write_text("# the reviewed document\n\nas read\n", encoding="utf-8")
 
+    # --- Rule 4 under the triage file's cold-read- name ----------------------
+    # The record above holds triage.md, as a record written before the
+    # cold-read- prefix does; a new record holds cold-read-triage.md, and the
+    # shipper replaces whichever of the two the record holds.
+    prefixed = make_record(records, "2026-10-31-prefixed",
+                           {"a.md": REPORT_A, "cold-read-triage.md": "# triage\n\nfirst\n"})
+    result = ship(local_destination, str(prefixed))
+    stored_prefixed_triage = store_root / "cold-read-records" / prefixed.name / "cold-read-triage.md"
+    check("a record holding cold-read-triage.md ships it",
+          result.returncode == 0 and stored_prefixed_triage.is_file(),
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    (prefixed / "cold-read-triage.md").write_text("# triage\n\nafter the walk\n", encoding="utf-8")
+    result = ship(local_destination, str(prefixed))
+    check("a rewritten cold-read-triage.md replaces the store's copy and is named as replaced",
+          result.returncode == 0 and "cold-read-triage.md replaced" in result.stdout
+          and stored_prefixed_triage.read_text(encoding="utf-8") == "# triage\n\nafter the walk\n"
+          and "REPLACED cold-read-triage.md" in result.stderr,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    # A record holding both names: only the cold-read- one is replaceable.
+    (prefixed / "triage.md").write_text("# old-name triage\n", encoding="utf-8")
+    result = ship(local_destination, str(prefixed))
+    check("a record holding both triage names ships the bare one as an ordinary add",
+          result.returncode == 0 and "1 file(s) added" in result.stdout,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    (prefixed / "triage.md").write_text("# old-name triage, rewritten\n", encoding="utf-8")
+    (prefixed / "cold-read-triage.md").write_text("# triage\n\nthird\n", encoding="utf-8")
+    result = ship(local_destination, str(prefixed))
+    check("beside cold-read-triage.md, a rewritten triage.md is add-only and REFUSED, "
+          "and the store's cold-read-triage.md is not replaced",
+          result.returncode == 2 and result.stdout.startswith("REFUSED:")
+          and "triage.md (store" in result.stdout
+          and stored_prefixed_triage.read_text(encoding="utf-8") == "# triage\n\nafter the walk\n",
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+
     # --- Rule 3, fail loudly -------------------------------------------------
     result = ship("nobody@no-such-host.invalid:/tmp/no-store", str(demo))
     check("an unreachable host is FAILED with exit 1 and one stdout line",

@@ -51,7 +51,7 @@ FAILURE_PREFIX = "walk-me-through-answer-added-texts-cold-read-fast-read-check-a
 failures = []
 
 # Behaves as cold-read-fast-read.py does on the records route: writes a
-# cold-read-record with fast-read.md and target/, prints the report's path.
+# cold-read-record with cold-read-fast-read.md and target/, prints the report's path.
 STAND_IN = r'''
 import os, signal, sys, time
 from pathlib import Path
@@ -77,8 +77,8 @@ if mode == "silent-exit":
 record = Path(os.environ["STAND_IN_RECORDS"]) / (target.stem + "-2026-10-17")
 (record / "target").mkdir(parents=True)
 (record / "target" / target.name).write_text(target.read_text())
-(record / "fast-read.md").write_text("findings\n")
-print(record / "fast-read.md")
+(record / "cold-read-fast-read.md").write_text("findings\n")
+print(record / "cold-read-fast-read.md")
 if mode == "path-then-exit":
     sys.exit(4)
 if mode == "path-then-exit-1":
@@ -201,11 +201,11 @@ class Case:
     def left_in_temporary_directory(self):
         return sorted(path.name for path in self.temporary_directory.iterdir())
 
-    def record_holding(self, text):
+    def record_holding(self, text, report_name="cold-read-fast-read.md"):
         record = self.records / "earlier-read-2026-10-15"
         (record / "target" / "docs" / "walk").mkdir(parents=True)
         (record / "target" / "docs" / "walk" / "item.md").write_text(f"Item 3 of 9\n\n#new \"{text}\"\n")
-        (record / "fast-read.md").write_text("findings\n")
+        (record / report_name).write_text("findings\n")
         return record
 
     def run(self, step, *flags, mode="", counts_log=None, fast_read_program=None, environment=None,
@@ -320,6 +320,26 @@ def test_a_fast_read_already_done_is_not_run_again():
           and f'"The page lists one poem per job an agent does.": fast read already done ({record}).'
           in result.stdout
           and case.calls.read_text() == "Each row names the mistake it prevents.\n",
+          described(result))
+
+
+def test_a_fast_read_already_done_before_the_cold_read_prefix_is_not_run_again():
+    case = Case()
+    record = case.record_holding("The page lists one poem\n per job an agent does.", report_name="fast-read.md")
+    result = case.run("check")
+    check("a record written before the cold-read- prefix, holding fast-read.md, counts as done",
+          result.returncode == 0
+          and f'"The page lists one poem per job an agent does.": fast read already done ({record}).'
+          in result.stdout,
+          described(result))
+
+
+def test_a_record_holding_no_report_is_not_a_fast_read_done():
+    case = Case()
+    case.record_holding("The page lists one poem\n per job an agent does.", report_name="notes-of-a-read.md")
+    result = case.run("check")
+    check("a record whose target holds the text but which holds no report under either name is not done",
+          "The page lists one poem per job an agent does.\": fast read already done" not in result.stdout,
           described(result))
 
 
@@ -590,7 +610,7 @@ def test_the_real_fast_read_whose_record_did_not_ship_is_used():
           and result.stdout.count(f"fast read had to be run ({records}/") == 2
           and result.stdout.count("did not ship its record: cold-read-fast-read: record: FAILED: ") == 2
           and "the user answered approved" in case.minutes.read_text()
-          and len(list(records.glob("*/fast-read.md"))) == 2, described(result))
+          and len(list(records.glob("*/cold-read-fast-read.md"))) == 2, described(result))
 
 
 def test_a_fast_read_whose_record_was_not_shipped_is_reported():

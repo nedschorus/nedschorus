@@ -74,7 +74,7 @@ checkout or in any other git worktree, gets its suggestions file beside it:
 Anything else -- a design, a skill, a record copy, a file in no git
 worktree -- gets a cold-read-record of its own under the
 gitignored records tree:
-`cold-read-records/<name>-<YYYY-MM-DD>/fast-read.md`, where <name> is the
+`cold-read-records/<name>-<YYYY-MM-DD>/cold-read-fast-read.md`, where <name> is the
 cold-read-target's file name without its extension -- `SKILL-<skill name>`
 for a skill, whose file is always SKILL.md -- the date is local, and the
 directory takes a -2, -3 suffix when the day's name is taken in this
@@ -492,7 +492,7 @@ def cold_read_fast_read_report_location_seen_from_mac_for_target_sent_over_ssh(n
                    if checkout_root is not None else None)
     if suggestions is not None:
         return str(suggestions)
-    return (f"fast-read.md in the newest directory whose name starts "
+    return (f"{record_names.COLD_READ_FAST_READ_REPORT_FILE_NAME} in the newest directory whose name starts "
             f"{record_names.record_name_for_target(mac_target)}- in "
             f"{record_shipper.LOG_STORE_RECORDS_DESTINATION}/")
 
@@ -748,7 +748,7 @@ def fast_read_report_path_for_target(
     if store_unlisted is not None:
         print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(PROGRAM, record_dir, store_unlisted),
               file=sys.stderr)
-    return record_dir / "fast-read.md"
+    return record_dir / record_names.COLD_READ_FAST_READ_REPORT_FILE_NAME
 
 
 def walk_draft_suggestions_file_path_for_target_in_worktree_or_none(
@@ -782,7 +782,7 @@ def walk_draft_suggestions_file_path_for_target_in_worktree_or_none(
 # holds it, and this program and nc-systems/cold-read/cold-read-grid.py both import it, so
 # the two cannot drift apart. nc-systems/cold-read/tests/cold-read-record-names-common-test.py fails a
 # program that writes its own copy back. The report inside the record is
-# bare `fast-read.md`: the directory says which read, the file says what it is.
+# `cold-read-fast-read.md`: the directory says which read, the file says what it is.
 RECORD_CLOCK_OVERRIDE_VARIABLE = "COLD_READ_RECORD_CLOCK_OVERRIDE"
 RECORD_CLOCK_OVERRIDE_FORMAT = "%Y-%m-%dT%H:%M"
 

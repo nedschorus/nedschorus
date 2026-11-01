@@ -12,10 +12,22 @@ RECORDS_DIRECTORY_NAME = "cold-read-records"
 RECORDS_DIR = REPO_ROOT / RECORDS_DIRECTORY_NAME
 FROZEN_TARGET_DIRECTORY_NAME = "target"
 RECORD_DATE_PATTERN = r"\d{4}-\d{2}-\d{2}"
+# The files a cold-read-record holds under these names. A record written
+# before they took the cold-read- prefix holds them under the name each maps
+# to in COLD_READ_RECORD_FILE_NAME_TO_ITS_NAME_BEFORE_COLD_READ_PREFIX; readers find either with
+# cold_read_record_file_path_prefixed_name_else_name_before_prefix.
+COLD_READ_FAST_READ_REPORT_FILE_NAME = "cold-read-fast-read.md"
+COLD_READ_TRIAGE_FILE_NAME = "cold-read-triage.md"
+COLD_READ_REFERENCE_CHECK_REPORT_FILE_NAME = "cold-read-reference-check.md"
+COLD_READ_RECORD_FILE_NAME_TO_ITS_NAME_BEFORE_COLD_READ_PREFIX = {
+    COLD_READ_FAST_READ_REPORT_FILE_NAME: "fast-read.md",
+    COLD_READ_TRIAGE_FILE_NAME: "triage.md",
+    COLD_READ_REFERENCE_CHECK_REPORT_FILE_NAME: "reference-check.md",
+}
 # A finished read leaves one of these at the top of its record; a read that
 # failed after freezing its target leaves target/ and no report. Older records
 # prefix each report with "<record name>--", and older fast reads named the
-# report "<name>-fast-read.md".
+# report "<name>-fast-read.md" or "fast-read.md".
 COMPLETED_REPORT_NAME_PATTERN = re.compile(
     r"^(?:.*--)?(?:(?:claude|codex|agy|gemini)-.*|(?:.*-)?fast-read)\.md$")
 # The marked copy of the cold-read-target that a fast read writes into its
@@ -29,6 +41,24 @@ GENERATED_INPUT_COPY_SUFFIXES = (SENTENCE_ID_MARKED_COPY_SUFFIX,)
 # Bash environment; a subagent's Bash sees its parent's ID.
 COLD_READ_FAST_READ_REPORT_AGENT_SESSION_ID_FILE_SUFFIX = ".agent-session.json"
 AGENT_SESSION_ID_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_SESSION_ID"
+
+
+def cold_read_record_file_name_prefixed_name_else_name_before_prefix(
+    record_dir: pathlib.Path, name: str,
+) -> str:
+    """The name record_dir holds the file called name under: name itself, or
+    its name before the cold-read- prefix when only that file is there."""
+    old_name = COLD_READ_RECORD_FILE_NAME_TO_ITS_NAME_BEFORE_COLD_READ_PREFIX[name]
+    if not (record_dir / name).is_file() and (record_dir / old_name).is_file():
+        return old_name
+    return name
+
+
+def cold_read_record_file_path_prefixed_name_else_name_before_prefix(
+    record_dir: pathlib.Path, name: str,
+) -> pathlib.Path:
+    """record_dir's file called name, under whichever of its two names it holds; name when it holds neither."""
+    return record_dir / cold_read_record_file_name_prefixed_name_else_name_before_prefix(record_dir, name)
 
 
 def frozen_target_path(

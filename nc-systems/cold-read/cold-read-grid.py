@@ -240,7 +240,7 @@ NONE_LANDED_OPENING = "No report landed in {record_dir}, so there is nothing to 
 NONE_LANDED_CLOSING = (
     "Start a new cold-read-full-run once the causes above that the user can "
     "clear are cleared, or at once if none of them is.")
-RECORD_ABSENCES_SENTENCE = "Record each absent report and its cause in triage.md."
+RECORD_ABSENCES_SENTENCE = "Record each absent report and its cause in cold-read-triage.md."
 
 COMPLETION_BODY = """\
 Read every report in full. The defect-hunt reports flag defects with each
@@ -258,7 +258,7 @@ take to the user only what step 9 of the /cold-read skill sends to the
 user.{record_absences}
 
 This record was shipped to the log-store on ned-box when the run ended (the
-`record:` line above says whether it arrived); once triage.md is written,
+`record:` line above says whether it arrived); once cold-read-triage.md is written,
 run `nc-systems/cold-read/cold-read-record-ship.py {record_dir}` so it joins the reports
 there. cold-read-records/ stays gitignored: never commit it. Leave {record_dir}
 in place once the work it served has landed — these records are kept, not
@@ -305,7 +305,7 @@ COUNT_SKIPPED_INSIDE_DESIGN_TO_MAIN_MARKER_NAME = (
 FROZEN_COPY_CHANGED_STOP_MARKER_NAME = "frozen-copy-changed-during-run-stop-marker.txt"
 FROZEN_COPY_CHANGED_STOPS_IN_A_ROW_LIMIT = 3
 # A grid report's name. Older records prefix each report with "<record name>--".
-# A fast read's record holds fast-read.md and, beside it, a copy of the target
+# A fast read's record holds cold-read-fast-read.md and, beside it, a copy of the target
 # marked with sentence ids, whose name matches this pattern too when the
 # target's stem starts claude- or codex-, so that copy is excluded by suffix.
 FULL_RUN_REPORT_NAME_PATTERN = re.compile(r"^(?:.*--)?(?:claude|codex)-.*\.md$")
@@ -519,7 +519,7 @@ def reference_integrity_pre_pass(target: pathlib.Path, record_dir: pathlib.Path)
         lines.append(f"- {'ok' if resolved or sharing == 1 else 'UNRESOLVED'}: `{clean}`{note}")
     if not candidates and not file_link_paths:
         lines.append("- no path-like references found")
-    (record_dir / "reference-check.md").write_text(
+    (record_dir / record_names.COLD_READ_REFERENCE_CHECK_REPORT_FILE_NAME).write_text(
         "\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -1042,8 +1042,9 @@ def main() -> int:
               f"were made since origin/main last took a change to it: "
               f"{', '.join(earlier_runs)}. No reviewer was "
               f"launched and no record directory was created.\n"
-              f"Bring the user the number of findings each of those runs' triage.md "
-              f"in the log-store lists, and ask whether to stop, run again, or change "
+              f"Bring the user the number of findings each of those runs' "
+              f"{record_names.COLD_READ_TRIAGE_FILE_NAME} (an older record names it "
+              f"triage.md) in the log-store lists, and ask whether to stop, run again, or change "
               f"the document's design.\n"
               f"If the user rules to run again, run again with "
               f"{USER_RULED_COUNT_RESTART_FLAG}.\n"

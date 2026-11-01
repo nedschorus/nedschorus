@@ -101,7 +101,7 @@ as that hook reads them.
 CHECK finds the texts the answer adds: the item's lines whose first word,
 after any list or quotation marker, outside fenced code, is a mark the answer adds;
 the text is the rest of the line, without one pair of surrounding quotation
-marks. For each text it looks for a cold-read-record holding a fast-read.md and
+marks. For each text it looks for a cold-read-record holding a fast read's report and
 a file under target/ that contains the text, whitespace aside, in the
 checkout's cold-read-records/ and in the log-store's. The log-store's
 cold-read-records directory is the path in cold-read-record-ship.py's
@@ -199,6 +199,7 @@ REPOSITORY_TOP = HERE.parents[2]
 WALK_FINDER_FILE = HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
 FAST_READ_PROGRAM = REPOSITORY_TOP / "nc-systems" / "cold-read" / "cold-read-fast-read.py"
 RECORD_SHIPPER_FILE = REPOSITORY_TOP / "nc-systems" / "cold-read" / "cold-read-record-ship.py"
+RECORD_NAMES_FILE = REPOSITORY_TOP / "nc-systems" / "cold-read" / "cold-read-record-names-common.py"
 PATH_CONSTANTS_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
                        / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 COUNTS_LOG_FILE_NAME = "walk-me-through-answer-added-texts-cold-read-fast-read-already-done-or-had-to-run-counts-per-check.tsv"
@@ -542,11 +543,14 @@ def squeezed(text):
 def fast_read_record_holding(text, record_directories):
     """Return the cold-read-record directory whose fast read read the text, or None."""
     wanted = squeezed(text)
+    record_names = load_module("cold_read_record_names", RECORD_NAMES_FILE)
     for directory in record_directories:
         if not directory.is_dir():
             continue
         for record in sorted(directory.iterdir()):
-            if not (record / "fast-read.md").is_file() or not (record / "target").is_dir():
+            report = record_names.cold_read_record_file_path_prefixed_name_else_name_before_prefix(
+                record, record_names.COLD_READ_FAST_READ_REPORT_FILE_NAME)
+            if not report.is_file() or not (record / "target").is_dir():
                 continue
             for target in (record / "target").rglob("*"):
                 if target.is_file() and wanted in squeezed(target.read_text(encoding="utf-8", errors="replace")):
