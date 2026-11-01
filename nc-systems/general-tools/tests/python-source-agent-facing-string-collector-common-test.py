@@ -434,7 +434,7 @@ check("a string returned by a function called in a conditional expression's bran
       "and one called in its condition is not",
       "chosen text" in found and "ready text" not in found, found)
 
-# Modelled on parse_event() in nc-systems/agent-seat-database/agent-seat-database-service.py at pull
+# Modelled on parse_event() in nc-systems/nc-shared-database/nc-shared-database-service.py at pull
 # request 2310's head, whose dict key "error" was listed as a second message on the same line.
 found = texts('def parse_event(event):\n'
               '    raise Answer(400, {"error": "the event\'s event_id holds a lone surrogate, "\n'

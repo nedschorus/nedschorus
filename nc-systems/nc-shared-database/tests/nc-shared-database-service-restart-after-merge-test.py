@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for nc-systems/agent-seat-database/agent-seat-database-service-restart-after-merge.py
+"""Tests for nc-systems/nc-shared-database/nc-shared-database-service-restart-after-merge.py
 and scripts/git-client-side-hooks/post-merge, which runs it.
 
 Each case fast-forwards a temporary repository and runs the program in it, with
@@ -7,10 +7,11 @@ a fake `systemctl` on PATH that records its arguments and succeeds or fails on
 request: a merge that changes the service restarts the unit, one that does not
 leaves it, a failed restart prints systemctl's error and exits 1, a checkout
 that is not the reference-checkout is left alone, and git failing to list the
-merge's changes is reported. A last case merges through the real post-merge
-hook in a checkout that is not ned-box's reference-checkout.
+merge's changes is reported. One case checks that the trigger files name the
+service file and exist. A last case merges through the real post-merge hook in
+a checkout that is not ned-box's reference-checkout, with nothing on stderr.
 
-Run: python3 nc-systems/agent-seat-database/tests/agent-seat-database-service-restart-after-merge-test.py
+Run: python3 nc-systems/nc-shared-database/tests/nc-shared-database-service-restart-after-merge-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -23,10 +24,10 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-PROGRAM_PATH = (REPOSITORY_ROOT / "nc-systems" / "agent-seat-database"
-                / "agent-seat-database-service-restart-after-merge.py")
+PROGRAM_PATH = (REPOSITORY_ROOT / "nc-systems" / "nc-shared-database"
+                / "nc-shared-database-service-restart-after-merge.py")
 HOOKS_DIRECTORY = REPOSITORY_ROOT / "scripts" / "git-client-side-hooks"
-_spec = importlib.util.spec_from_file_location("agent_seat_database_service_restart_after_merge",
+_spec = importlib.util.spec_from_file_location("nc_shared_database_service_restart_after_merge",
                                                PROGRAM_PATH)
 restarter = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(restarter)
@@ -58,7 +59,7 @@ fi
 echo "$@" >> "$FAKE_SYSTEMCTL_LOG"
 echo "$XDG_RUNTIME_DIR" >> "$FAKE_SYSTEMCTL_LOG.runtime"
 if [ -n "$FAKE_SYSTEMCTL_FAIL" ]; then
-  echo "Failed to restart agent-seat-database-service.service: Unit agent-seat-database-service.service not found." >&2
+  echo "Failed to restart nc-shared-database-service.service: Unit nc-shared-database-service.service not found." >&2
   exit 5
 fi
 """
@@ -113,11 +114,11 @@ with tempfile.TemporaryDirectory() as scratch:
           "and nothing restarted",
           code == 1 and calls == [] and "git diff --name-only ORIG_HEAD HEAD" in errors
           and f"Restart the service: `XDG_RUNTIME_DIR=/run/user/{os.getuid()} systemctl --user "
-              "restart agent-seat-database-service.service`." in errors
+              "restart nc-shared-database-service.service`." in errors
           and f"`XDG_RUNTIME_DIR=/run/user/{os.getuid()} journalctl --user" in errors
           and "$(id -u)" not in errors
           and "If the restart succeeds, you are done; report nothing." in errors
-          and "Unit agent-seat-database-service.service not found." in errors
+          and "Unit nc-shared-database-service.service not found." in errors
           and "If the merge changed" not in errors
           and "service was not restarted: fatal:" in errors,
           (code, errors))
@@ -128,14 +129,14 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a merge that does not change the service restarts nothing",
           code == 0 and calls == [] and errors == "", (code, calls, errors))
 
-    commit_on_branch("service", restarter.SERVICE_FILES[0], "print('new')")
+    commit_on_branch("service", restarter.NC_SHARED_DATABASE_SERVICE_RESTART_AFTER_MERGE_TRIGGER_FILES[0], "print('new')")
     git("merge", "-q", "--ff-only", "service")
     code, calls, printed, errors = run(reference=scratch / "elsewhere")
     check("in a checkout that is not the reference-checkout nothing is restarted",
           code == 0 and calls == [] and printed == "", (code, calls))
     code, calls, printed, errors = run()
     check("a fast-forward that changes the service restarts the unit",
-          code == 0 and calls == ["--user restart agent-seat-database-service.service"]
+          code == 0 and calls == ["--user restart nc-shared-database-service.service"]
           and "restarted" in printed, (code, calls, errors))
     saved_runtime_directory = os.environ.pop("XDG_RUNTIME_DIR", None)
     runtime_log = Path(f"{systemctl_log}.runtime")
@@ -146,7 +147,7 @@ with tempfile.TemporaryDirectory() as scratch:
             os.environ["XDG_RUNTIME_DIR"] = saved_runtime_directory
     check("a caller without XDG_RUNTIME_DIR, as an agent's Stop hook can be, still restarts "
           "the unit, with systemctl given /run/user/<uid>",
-          code == 0 and calls == ["--user restart agent-seat-database-service.service"]
+          code == 0 and calls == ["--user restart nc-shared-database-service.service"]
           and runtime_log.read_text().splitlines()[-1] == f"/run/user/{os.getuid()}",
           (code, calls, errors))
     os.environ["XDG_RUNTIME_DIR"] = str(scratch / "runtime")
@@ -162,8 +163,8 @@ with tempfile.TemporaryDirectory() as scratch:
           (code, errors))
     code, calls, printed, errors = run(fail=True)
     check("a failed restart prints systemctl's error and exits 1",
-          code == 1 and "systemctl said: Failed to restart agent-seat-database-service."
-          "service: Unit agent-seat-database-service.service not found" in errors
+          code == 1 and "systemctl said: Failed to restart nc-shared-database-service."
+          "service: Unit nc-shared-database-service.service not found" in errors
           and "exited 5" in errors, (code, errors))
 
     outside = scratch / "not-a-repository"
@@ -179,13 +180,22 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the reference-checkout by default is ned-box's",
           restarter.NED_BOX_REFERENCE_CHECKOUT == "/home/nedlern/Projects/nedschorus")
 
-    commit_on_branch("service-again", restarter.SERVICE_FILES[0], "print('newer')")
+    # The cases above commit to the tuple's own path, so they pass whatever path it names.
+    service_path = "nc-systems/nc-shared-database/nc-shared-database-service.py"
+    trigger_files = restarter.NC_SHARED_DATABASE_SERVICE_RESTART_AFTER_MERGE_TRIGGER_FILES
+    check("the merge restarts the service when the service file changes: the trigger files "
+          "name it, and each is a file of the repository",
+          service_path in trigger_files
+          and all((REPOSITORY_ROOT / f).is_file() for f in trigger_files),
+          trigger_files)
+
+    commit_on_branch("service-again", restarter.NC_SHARED_DATABASE_SERVICE_RESTART_AFTER_MERGE_TRIGGER_FILES[0], "print('newer')")
     if systemctl_log.exists():
         systemctl_log.unlink()
     merged = git("merge", "--ff-only", "service-again", hooks=str(HOOKS_DIRECTORY))
     check("through the real post-merge hook, a merge in a checkout that is not ned-box's "
           "reference-checkout succeeds and restarts nothing",
-          merged.returncode == 0 and not systemctl_log.exists()
+          merged.returncode == 0 and merged.stderr == "" and not systemctl_log.exists()
           and git("rev-parse", "HEAD").stdout == git("rev-parse", "service-again").stdout,
           (merged.returncode, merged.stdout, merged.stderr))
 
