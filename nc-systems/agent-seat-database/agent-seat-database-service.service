@@ -1,0 +1,11 @@
+[Unit]
+Description=Agent-seat database service: one record of every agent-seat on both machines
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/agent-seat-database/agent-seat-database-service.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

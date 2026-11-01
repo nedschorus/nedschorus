@@ -187,12 +187,12 @@ _records_reader_spec = importlib.util.spec_from_file_location(
 records_reader = importlib.util.module_from_spec(_records_reader_spec)
 _records_reader_spec.loader.exec_module(records_reader)
 
-_project_directory_spec = importlib.util.spec_from_file_location(
-    "claude_code_session_transcript_project_directory_for_agent_seat_common",
-    Path(__file__).with_name("claude-code-session-transcript-project-directory-for-agent-seat-common.py")
+_claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_lookup_and_text_search_common",
+    Path(__file__).with_name("claude-code-session-transcript-lookup-and-text-search-common.py")
 )
-project_directory_module = importlib.util.module_from_spec(_project_directory_spec)
-_project_directory_spec.loader.exec_module(project_directory_module)
+claude_code_session_transcript_lookup_and_text_search_common = importlib.util.module_from_spec(_claude_code_session_transcript_lookup_and_text_search_common_spec)
+_claude_code_session_transcript_lookup_and_text_search_common_spec.loader.exec_module(claude_code_session_transcript_lookup_and_text_search_common)
 
 # Reuse retirement rules so every socket holding the seat’s name is cleared consistently.
 _resupervise_spec = importlib.util.spec_from_file_location(
@@ -247,7 +247,7 @@ def default_handoff_directory() -> Path:
 
 def harness_project_directory(seat_directory: Path, projects_root: Path) -> Path:
     # The harness replaces every non-ASCII-alphanumeric character, including underscores.
-    return project_directory_module.project_directory_for_seat(seat_directory, projects_root)
+    return claude_code_session_transcript_lookup_and_text_search_common.project_directory_for_seat(seat_directory, projects_root)
 
 
 def run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
@@ -711,6 +711,14 @@ def by_hand_launch_command_for_seat(name: str, seat_directory: Path, handoff_dir
 def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
                 extra_supervisor_arguments: str, first_prompt_file: Path = None):
     """Start the seat detached under its supervisor on its own tmux server."""
+    # The supervisor refuses to start without the agent-seat's GitHub token, but its refusal goes
+    # to a detached pane that closes; reading the token here first puts the cause in this report.
+    try:
+        supervisor.agent_seat_github_account_lookup_and_token_file_read(name)
+    except supervisor.AgentSeatGithubTokenUnreadableError as error:
+        print(supervisor.agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build(
+            "recover-crashed-seats", error, "run this recovery again."), file=sys.stderr)
+        return 1
     # Pin the assessed agents root and handoff directory so launch defaults cannot select another seat.
     launcher = launcher_path()
     # Recovery often runs from another agent-session's shell, whose variables must not reach the seat.
@@ -903,8 +911,14 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     if waiting_handoff is not None:
         return waiting_handoff
 
-    session_id, found = newest_real_transcript(
-        harness_project_directory(seat_directory, projects_root))
+    project_directory = harness_project_directory(seat_directory, projects_root)
+    try:
+        session_id, found = newest_real_transcript(project_directory)
+    except OSError as error:
+        # Refused even with a recorded exit, whose restart offer names the transcript to resume.
+        return "refuse", (
+            f"the transcript crash recovery would resume could not be chosen from "
+            f"{project_directory}: {error.filename}: {error.strerror}")
 
     # A waiting handoff takes precedence; otherwise a recorded exit requires an operator restart.
     exit_record = supervisor.agent_exit_record_from_supervisor_state(

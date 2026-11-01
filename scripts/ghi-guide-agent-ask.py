@@ -57,11 +57,14 @@ Seat and machine: ghi-guide-agent lives ONLY on the Ubuntu box, at ~/agents/ghi-
 there — its mirror, session id, and reincarnation counters all live in that
 one checkout, per the design's "wrapper state ... lives there." This script is the SAME file on
 both machines (it is checked into the repo, so every checkout — Mac or box
-— carries an identical copy): on the Mac it notices no seat directory
-locally and re-execs itself over `ssh ned`, one hop, so every step below
-(refresh, session state, the claude call, the post-check) runs box-side
-where the mirror and state actually live. On the box, inside a bootstrapped
-seat, it just runs.
+— carries an identical copy). It tells which machine it is on by the
+hostname, never by whether the seat directory exists: on any machine whose
+hostname is not NED_BOX_HOSTNAME it re-execs itself over `ssh ned` (the
+Mac's ssh alias for the box), one hop, so every step below (refresh, session
+state, the claude call, the post-check) runs box-side where the mirror and
+state actually live. On the box it runs locally, and a missing seat
+directory there is a failed ask that names the directory and how to create
+it, not a hop to a host the box cannot resolve.
 
 Where the box's seat is, is resolved BY THE BOX — its own shell expands
 $HOME/agents/ghi-guide-agent, the fixed box root launch-claude-ubuntu seats every
@@ -135,6 +138,7 @@ import os
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -148,11 +152,11 @@ _mirror_spec = importlib.util.spec_from_file_location(
 mirror_refresh = importlib.util.module_from_spec(_mirror_spec)
 _mirror_spec.loader.exec_module(mirror_refresh)
 
-_project_directory_spec = importlib.util.spec_from_file_location(
-    "claude_code_session_transcript_project_directory_for_agent_seat_common",
-    SCRIPT_DIRECTORY / "claude-code-session-transcript-project-directory-for-agent-seat-common.py")
-project_directory_module = importlib.util.module_from_spec(_project_directory_spec)
-_project_directory_spec.loader.exec_module(project_directory_module)
+_claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_lookup_and_text_search_common",
+    SCRIPT_DIRECTORY / "claude-code-session-transcript-lookup-and-text-search-common.py")
+claude_code_session_transcript_lookup_and_text_search_common = importlib.util.module_from_spec(_claude_code_session_transcript_lookup_and_text_search_common_spec)
+_claude_code_session_transcript_lookup_and_text_search_common_spec.loader.exec_module(claude_code_session_transcript_lookup_and_text_search_common)
 
 _threshold_hook_spec = importlib.util.spec_from_file_location(
     "handoff_context_threshold_hook", SCRIPT_DIRECTORY / "handoff-context-threshold-hook.py")
@@ -167,6 +171,8 @@ git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 AGENT_BOX = os.environ.get("NEDSCHORUS_AGENT_BOX", "ned")
+# AGENT_BOX is the Mac's ssh alias for the box, which the box itself cannot resolve.
+NED_BOX_HOSTNAME = "ned-box"
 DEFAULT_AGENTS_ROOT = Path(os.environ.get("NEDSCHORUS_AGENTS_ROOT", "~/agents")).expanduser()
 DEFAULT_SEAT_DIR = DEFAULT_AGENTS_ROOT / "ghi-guide-agent"
 DEFAULT_REPO = "nedschorus/nedschorus"
@@ -504,7 +510,7 @@ def state_lock(lock_path: Path):
 def transcript_path_for(seat_dir: Path, session_id: str, projects_root: Path):
     if not session_id:
         return None
-    project_directory = project_directory_module.project_directory_for_seat(seat_dir, projects_root)
+    project_directory = claude_code_session_transcript_lookup_and_text_search_common.project_directory_for_seat(seat_dir, projects_root)
     return project_directory / f"{session_id}.jsonl"
 
 
@@ -881,9 +887,8 @@ def build_remote_command(question: str, include_closed: bool, repo: str,
 
     Two further properties this shape buys:
       - `--seat-dir "$PWD"` after a successful cd means the box-side run
-        takes the local branch unconditionally. Without it, a box whose
-        seat directory is missing would ssh to itself — an infinite
-        delegation loop rather than an error.
+        runs in the directory the shell entered, which is the seat by
+        construction, whatever DEFAULT_SEAT_DIR resolves to there.
       - a failed cd keeps the shell's OWN diagnostic (which names the real
         cause — missing, not a directory, unreadable) and adds the remedy
         beside it. Suppressing the shell's line would make a permissions
@@ -907,6 +912,10 @@ def build_remote_command(question: str, include_closed: bool, repo: str,
         '}',
         invocation,
     ])
+
+
+def running_on_ned_box() -> bool:
+    return socket.gethostname().split(".")[0] == NED_BOX_HOSTNAME
 
 
 def main(argv=None) -> int:
@@ -942,7 +951,7 @@ def main(argv=None) -> int:
         seat_dir = Path(arguments.seat_dir).expanduser()
     else:
         seat_dir = DEFAULT_SEAT_DIR
-        if not seat_dir.is_dir():
+        if not running_on_ned_box():
             question_on_stdin = arguments.question_file is not None
             remote_command = build_remote_command(question,
                                                   arguments.include_closed,
@@ -968,8 +977,19 @@ def main(argv=None) -> int:
             return completed.returncode
 
     if not seat_dir.is_dir():
-        print(f"ghi-guide-agent-ask: no seat at {seat_dir} — bootstrap it first "
-              f"(a checkout of this repository at that path on {AGENT_BOX}), then retry",
+        # One line, because scripts/ghi-issue-write.py reports only the last stderr line.
+        print(f"ghi-guide-agent-ask: the ask failed: ghi-guide-agent's agent-home "
+              f"{seat_dir} does not exist on {NED_BOX_HOSTNAME}, and the ask runs inside it. "
+              f"Create it, from either machine, with `ssh nedlern@{NED_BOX_HOSTNAME} "
+              f"'git -C ~/Projects/nedschorus worktree add {seat_dir} ghi-guide-agent'`, "
+              f"or, when git says that branch does not exist, with `ssh "
+              f"nedlern@{NED_BOX_HOSTNAME} 'git -C ~/Projects/nedschorus worktree add -b "
+              f"ghi-guide-agent {seat_dir} origin/main'`; then run the command that "
+              f"printed this message again, unchanged, once. If the agent-home cannot be "
+              f"created, or the second ask fails too: when you are filing or editing a GHI, "
+              f"go on down the ask's fallback ladder in .claude/skills/ghi-write/SKILL.md; "
+              f"otherwise go on without ghi-guide-agent's answer, and tell the user that "
+              f"ghi-guide-agent cannot answer until its agent-home exists on ned-box.",
               file=sys.stderr)
         return 1
 

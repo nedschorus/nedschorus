@@ -99,12 +99,19 @@ Starting a supervisor requires a nonempty CLAUDE_CODE_TASK_LIST_ID from
 scripts/launch-claude-mac or scripts/launch-claude-ubuntu.
 
 Exit codes: 0 clean stop, 2 bad invocation, 3 the agent command is missing,
-4 the supervisor lock could not be claimed.
+4 the supervisor lock could not be claimed, 5 the agent-seat's GitHub token could not be read.
+
+GitHub identity: at startup the supervisor sets GH_TOKEN, in its own environment and so in
+every agent-session it starts, to the token of the GitHub account the agent-seat acts as
+(agent_seat_github_account_lookup_and_token_file_read), replacing any GH_TOKEN it inherited. Every way
+an agent-seat is started runs this program, so this is the one place that decides the
+account.
 """
 
 import argparse
 import ctypes
 import fcntl
+import getpass
 import importlib.util
 import json
 import os
@@ -215,13 +222,17 @@ CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET = 1
 
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
 
-_transcript_project_directory_spec = importlib.util.spec_from_file_location(
-    "claude_code_session_transcript_project_directory_for_agent_seat_common",
-    SCRIPTS_DIRECTORY / "claude-code-session-transcript-project-directory-for-agent-seat-common.py")
-transcript_project_directory = importlib.util.module_from_spec(_transcript_project_directory_spec)
-_transcript_project_directory_spec.loader.exec_module(transcript_project_directory)
+_claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_lookup_and_text_search_common",
+    SCRIPTS_DIRECTORY / "claude-code-session-transcript-lookup-and-text-search-common.py")
+claude_code_session_transcript_lookup_and_text_search_common = importlib.util.module_from_spec(_claude_code_session_transcript_lookup_and_text_search_common_spec)
+_claude_code_session_transcript_lookup_and_text_search_common_spec.loader.exec_module(claude_code_session_transcript_lookup_and_text_search_common)
 # Live supervisors resolve this path at import; moving the extractor would break those processes.
 EXTRACTOR_PATH = SCRIPTS_DIRECTORY / "handoff-extract-conversation.py"
+_handoff_extract_conversation_spec = importlib.util.spec_from_file_location(
+    "handoff_extract_conversation", EXTRACTOR_PATH)
+handoff_extract_conversation = importlib.util.module_from_spec(_handoff_extract_conversation_spec)
+_handoff_extract_conversation_spec.loader.exec_module(handoff_extract_conversation)
 CLEAN_WORKTREES_PATH = SCRIPTS_DIRECTORY / "clean-worktrees.py"
 FINISHED_WORKTREE_REMOVAL_TIMEOUT_SECONDS = 180
 WORKTREE_CLEANER_STOP_GRACE_SECONDS = 5
@@ -273,8 +284,10 @@ def agent_seat_launch_environment_without_calling_agent_session_tmux_and_supervi
     # A new tmux server copies its starter's environment into every window, the after-exit shell
     # included, so the caller's tmux and supervisor variables are dropped here too. IS_DEMO is
     # dropped because launch_agent_session sets it for the agent-sessions it starts; a claude
-    # typed in the after-exit shell would otherwise start in Claude Code's demo mode.
-    caller_only = {"TMUX", "TMUX_PANE", "IS_DEMO",
+    # typed in the after-exit shell would otherwise start in Claude Code's demo mode. GH_TOKEN is
+    # dropped because the supervisor sets it for its own agent-sessions; a gh typed in the after-exit
+    # shell would otherwise act as the caller's GitHub account.
+    caller_only = {"TMUX", "TMUX_PANE", "IS_DEMO", "GH_TOKEN",
                    HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE,
                    HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE,
                    HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE}
@@ -816,9 +829,92 @@ def pinned_task_list_id() -> str:
     return os.environ.get("CLAUDE_CODE_TASK_LIST_ID", "").strip()
 
 
+# Every other agent-seat acts as its machine's account: ubuntu-claude on ned-box, mac-claude on the Mac.
+AGENT_SEAT_GITHUB_ACCOUNTS_OTHER_THAN_THE_MACHINE_DEFAULT = {
+    # GitHub refuses an approving review from a pull request's author, so the merge-lane must not
+    # open its own pull requests as the account the other agent-seats use.
+    "merge-lane-2": "ned-review-merge",
+}
+
+
+AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS = 5
+
+
+class AgentSeatGithubTokenUnreadableError(Exception):
+    def __init__(self, agent_seat_name: str, account: str, token_file: Path, why: str,
+                 file_is_there: bool):
+        super().__init__(f"the token file {token_file} of the GitHub account {account}, which the "
+                         f"agent-seat {agent_seat_name} acts as, {why}")
+        self.agent_seat_name = agent_seat_name
+        self.account = account
+        self.token_file = token_file
+        self.file_is_there = file_is_there
+
+
+def agent_seat_github_account_lookup_and_token_file_read(agent_seat_name: str):
+    """Return (account, token): the GitHub account the agent-seat acts as, and its token.
+
+    Raises AgentSeatGithubTokenUnreadableError when ~/.config/nedschorus/<account>.token
+    is missing, unreadable or empty.
+    """
+    account = AGENT_SEAT_GITHUB_ACCOUNTS_OTHER_THAN_THE_MACHINE_DEFAULT.get(agent_seat_name)
+    if account is None:
+        account = ("ubuntu-claude"
+                   if handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
+                   else "mac-claude")
+    token_file = Path.home() / ".config" / "nedschorus" / f"{account}.token"
+    try:
+        lines = token_file.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError as error:
+        raise AgentSeatGithubTokenUnreadableError(
+            agent_seat_name, account, token_file, "does not exist", False) from error
+    except (OSError, UnicodeDecodeError) as error:
+        raise AgentSeatGithubTokenUnreadableError(
+            agent_seat_name, account, token_file, f"could not be read: {error}", True) from error
+    token = lines[0].strip() if lines else ""
+    if not token:
+        raise AgentSeatGithubTokenUnreadableError(
+            agent_seat_name, account, token_file, "is empty or its first line is blank", False)
+    return account, token
+
+
+def agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build(program_name: str,
+                                              error: AgentSeatGithubTokenUnreadableError,
+                                              start_again_instruction: str) -> str:
+    """Return the report of an agent-seat not started for want of its GitHub token.
+
+    start_again_instruction says how to start the agent-seat again once the file is fixed;
+    it depends on the program that refused.
+    """
+    # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md
+    machine = ("ned-box" if handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
+               else "the Mac")
+    unix_user = getpass.getuser()
+    if error.file_is_there:
+        what_the_user_does = (
+            f"make {error.token_file} on {machine} readable by the Unix user {unix_user}, "
+            f"for example with `chmod 600 {error.token_file}` when {unix_user} owns it")
+    else:
+        what_the_user_does = (
+            f"write the GitHub token of {error.account} to {error.token_file} on {machine}, as one "
+            "line, mode 600; docs/nedschorus-wiki/nedschorus-github-identities-and-token-policy.md "
+            "says where each token comes from")
+    return (f"{program_name}: the agent-seat {error.agent_seat_name} was not started, because "
+            f"{error}.\n"
+            f"Every agent-session of {error.agent_seat_name} acts on GitHub through that token; "
+            "without it, gh and git would act as the account gh's own login holds, which is the "
+            "wrong account for this agent-seat.\n"
+            "Only the user handles token files. If you are an agent, do not open, write or change "
+            f"the file; tell the user: \"The agent-seat {error.agent_seat_name} on {machine} did not "
+            f"start. To start it, {what_the_user_does}.\" A subagent tells the agent that "
+            "dispatched it instead.\n"
+            f"Once the file is fixed: {start_again_instruction}\n"
+            "Do not start the agent-seat any other way: it would act on GitHub as the wrong account.")
+
+
 def project_directory_for_working_directory(working_directory: Path) -> Path:
     """Return the harness project directory holding the worktree's sessions."""
-    return transcript_project_directory.project_directory_for_seat(working_directory, PROJECTS_ROOT)
+    return claude_code_session_transcript_lookup_and_text_search_common.project_directory_for_seat(working_directory, PROJECTS_ROOT)
 
 
 def substantive_turn_count_of_session_transcript(session_id: str, working_directory: Path) -> int:
@@ -942,27 +1038,40 @@ class IgnitionPlanWithoutConversationTail:
     # Set when an extraction was tried and failed; the successor can still read the transcript.
     unextracted_session_id: str = ""
     unextracted_transcript_path: Optional[Path] = None
+    # Set instead of the path when no project folder holds the transcript: where it was expected.
+    unextracted_transcript_expected_path: Optional[Path] = None
+    # Set instead of the path when two or more project folders hold the transcript.
+    unextracted_transcript_paths_in_several_folders: tuple = ()
 
     def compose(self, launch_time_git_sync_report: str,
                 overview_refresh_due: tuple = (),
                 memory_review_due: tuple = ()) -> str:
-        if self.unextracted_transcript_path is None:
-            recovery_note = ("the previous session's conversation-tail is unavailable; "
-                             "this next-step and the repository are your whole context.")
-        elif self.unextracted_transcript_path.is_file():
+        if self.unextracted_transcript_path is not None:
             recovery_note = (
                 "the previous session's conversation-tail is unavailable, because the "
                 f"handoff-supervisor could not extract session {self.unextracted_session_id}'s "
                 "session-dialog; this next-step and the repository are your context, and "
                 f"that session's transcript is {self.unextracted_transcript_path}, which you "
                 "can read when the next-step leaves out something you need.")
-        else:
+        elif self.unextracted_transcript_paths_in_several_folders:
+            paths = [str(path) for path in self.unextracted_transcript_paths_in_several_folders]
+            recovery_note = (
+                "the previous session's conversation-tail is unavailable, because the "
+                f"handoff-supervisor could not extract session {self.unextracted_session_id}'s "
+                "session-dialog; this next-step and the repository are your context, and "
+                "that session's transcript is in more than one folder, at "
+                f"{', '.join(paths[:-1])} and {paths[-1]}, which you can read when the "
+                "next-step leaves out something you need.")
+        elif self.unextracted_transcript_expected_path is not None:
             recovery_note = (
                 "the previous session's conversation-tail is unavailable, because the "
                 f"handoff-supervisor could not extract session {self.unextracted_session_id}'s "
                 "session-dialog, and that session's transcript is not at "
-                f"{self.unextracted_transcript_path}; this next-step and the repository are "
-                "your whole context.")
+                f"{self.unextracted_transcript_expected_path} or in any other folder under "
+                f"{PROJECTS_ROOT}/; this next-step and the repository are your whole context.")
+        else:
+            recovery_note = ("the previous session's conversation-tail is unavailable; "
+                             "this next-step and the repository are your whole context.")
         prompt = (
             f"{self.next_step}\n\n(Recovered at {self.occasion}: {recovery_note}) "
             + ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION
@@ -1419,6 +1528,11 @@ CLEANER_STOPPED_LINE_START = "clean-worktrees: stopped, because "
 # clean-worktrees.py prints this for each record that did not ship; the line ends with the shipper's own line.
 KEPT_FOR_RECORDS_MARKER = (": record shipment FAILED, worktree kept — removing it would delete "
                            "a record the log-store does not hold: ")
+# clean-worktrees.py prints these two lines after a log-of-removals FAILED line: the command that
+# writes the unwritten line, and what to do if it fails; without them the report loses that line.
+LOG_OF_REMOVALS_RECORD_BY_HAND_PHRASES = (
+    ": to record it, run this once: ",
+    ": if that printf command fails too, do not run scripts/clean-worktrees.py again; ")
 
 
 def summarize_worktree_cleanup_output(lines) -> str:
@@ -1466,7 +1580,11 @@ def summarize_worktree_cleanup_output(lines) -> str:
         report += (f"; {len(unconfirmed)} removal(s) started but not confirmed, so these "
                    f"files may be partly gone: " + "; ".join(unconfirmed))
     if failed:
+        record_by_hand = [line for line in lines
+                          if any(phrase in line for phrase in LOG_OF_REMOVALS_RECORD_BY_HAND_PHRASES)]
         report += f"; {len(failed)} failed: " + "; ".join(failed)
+        if record_by_hand:
+            report += "; to record by hand what the log of removals is missing: " + "; ".join(record_by_hand)
     if kept_for_records:
         kept_worktrees = {line.partition(KEPT_FOR_RECORDS_MARKER)[0] for line in kept_for_records}
         report += (f"; {len(kept_worktrees)} worktree(s) kept because a record did not "
@@ -1957,11 +2075,15 @@ def successor_session_id_and_ignition_plan_without_conversation_tail(
     retiring_session_id is the session whose extraction failed, or None when no
     earlier session was recorded; occasion names when the supervisor started it.
     """
-    transcript_path = (
+    transcript_paths = (claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcript_paths_for_session_id_in_working_directory_project_directory_if_present_else_in_every_project_directory(
+        retiring_session_id, settings.working_directory, PROJECTS_ROOT) if retiring_session_id else [])
+    expected_path = (
         project_directory_for_working_directory(settings.working_directory)
-        / f"{retiring_session_id}.jsonl" if retiring_session_id else None)
+        / f"{retiring_session_id}.jsonl" if retiring_session_id and not transcript_paths else None)
     plan = IgnitionPlanWithoutConversationTail(
-        next_step_from(handoff_fields), occasion, retiring_session_id or "", transcript_path)
+        next_step_from(handoff_fields), occasion, retiring_session_id or "",
+        transcript_paths[0] if len(transcript_paths) == 1 else None, expected_path,
+        tuple(transcript_paths) if len(transcript_paths) > 1 else ())
     why_no_conversation_tail = (
         f"session {retiring_session_id}'s dialog could not be extracted"
         if retiring_session_id else "no earlier session was recorded")
@@ -2067,8 +2189,17 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             and not settings.first_prompt_wins_over_crashed_transcript
             and adopted is None and ignition_plan is None
             and agent_exit_record_from_supervisor_state(state) is None):
-        by_hand_session_id, by_hand_detail = worth_resuming.newest_real_transcript(
-            project_directory_for_working_directory(settings.working_directory))
+        project_directory = project_directory_for_working_directory(settings.working_directory)
+        try:
+            by_hand_session_id, by_hand_detail = worth_resuming.newest_real_transcript(project_directory)
+        except OSError as error:
+            # A fresh session's transcript would become the newest and bury the crashed one.
+            print(f"handoff-supervisor: startup stopped: whether this seat has a transcript "
+                  f"worth resuming could not be decided, because {project_directory} could not "
+                  f"be read: {error.filename}: {error.strerror}.\n"
+                  f"When that folder's permissions are fixed, start the seat again.",
+                  file=sys.stderr)
+            return 5
         if by_hand_session_id is not None:
             print("handoff-supervisor: no waiting handoff and no recorded exit — "
                   f"resuming this seat's last transcript {by_hand_session_id} "
@@ -2276,6 +2407,13 @@ def main(argv=None) -> int:
         help="report whether a supervisor is watching this agent, then exit (0 alive, 1 not)",
     )
     parser.add_argument(
+        "--agent-seat-github-token-file-readable-check-only", action="store_true",
+        help="read the GitHub token file of the --agent agent-seat, then exit, starting "
+             "nothing: 0, printing nothing, when the file's first line holds a token; "
+             f"{AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS}, with the refusal a start "
+             "prints on stderr, when the file is missing, unreadable or empty",
+    )
+    parser.add_argument(
         "--resume-session-id", default="",
         help="crash recovery (nedschorus#120): the first launch resumes this "
              "session's transcript (claude --resume) instead of starting fresh; "
@@ -2312,7 +2450,8 @@ def main(argv=None) -> int:
         print(explanation)
         return 0 if alive else 1
 
-    if not pinned_task_list_id():
+    # A launcher runs --agent-seat-github-token-file-readable-check-only before it pins the task list.
+    if not pinned_task_list_id() and not arguments.agent_seat_github_token_file_readable_check_only:
         print(
             "handoff-supervisor: startup stopped because the agent-seat was not started "
             "by a launcher that pins its task list; CLAUDE_CODE_TASK_LIST_ID is unset or empty.\n"
@@ -2322,6 +2461,21 @@ def main(argv=None) -> int:
             file=sys.stderr,
         )
         return 2
+
+    try:
+        _, github_token = agent_seat_github_account_lookup_and_token_file_read(arguments.agent)
+    except AgentSeatGithubTokenUnreadableError as error:
+        print(agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build(
+            "handoff-supervisor", error,
+            "start the agent-seat again with its launcher, from the Mac: "
+            f"`launch-claude-ubuntu {arguments.agent}` for an agent-seat on ned-box, "
+            f"`launch-claude-mac {arguments.agent}` for one on the Mac. If the launcher left a "
+            "shell open in the agent-seat's tmux session, exit that shell first."),
+            file=sys.stderr)
+        return AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS
+    if arguments.agent_seat_github_token_file_readable_check_only:
+        return 0
+    os.environ["GH_TOKEN"] = github_token
 
     if bool(arguments.adopt_session_id) != bool(arguments.adopt_process_id):
         parser.error("--adopt-session-id and --adopt-process-id must be given together")
