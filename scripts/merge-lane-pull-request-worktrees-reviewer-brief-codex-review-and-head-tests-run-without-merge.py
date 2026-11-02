@@ -243,27 +243,31 @@ def run_step(position, step, arguments, step_arguments):
 def run_steps_at_the_same_time(positioned_steps, arguments):
     """Run each (position, step, step arguments) at once; return {position: exit code}.
 
-    When this program's own output cannot be written, every step's output is still
-    read to its end, so no step blocks on a full pipe, and the first such error is
-    raised, as OutputCouldNotBeWritten, once every step has ended.
+    When this program's own output cannot be written, a start line included, every
+    step still starts and its output is still read to its end, so no step blocks on a
+    full pipe; nothing more is printed, and the first such error is raised, as
+    OutputCouldNotBeWritten, once every step has ended.
     """
     print_lock = threading.Lock()
     output_failures = []
 
-    def pass_output_through(position, stream):
-        for line in stream:
+    def print_unless_output_failed(text):
+        with print_lock:
+            if output_failures:
+                return
             try:
-                with print_lock:
-                    print(f"step {position} of {len(STEPS)} | {line.rstrip(NEWLINE)}",
-                          flush=True)
+                print(text, flush=True)
             except (OSError, ValueError) as failure:
                 output_failures.append(failure)
+
+    def pass_output_through(position, stream):
+        for line in stream:
+            print_unless_output_failed(f"step {position} of {len(STEPS)} | {line.rstrip(NEWLINE)}")
 
     processes, readers = {}, []
     try:
         for position, step, step_arguments in positioned_steps:
-            with print_lock:
-                print(f"step {position} of {len(STEPS)}: {step}", flush=True)
+            print_unless_output_failed(f"step {position} of {len(STEPS)}: {step}")
             # errors= opens the pipe as text.
             process = subprocess.Popen(
                 step_command(step, arguments, step_arguments), stdin=subprocess.DEVNULL,

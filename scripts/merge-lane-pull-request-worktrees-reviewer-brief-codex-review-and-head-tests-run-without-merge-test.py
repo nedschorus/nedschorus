@@ -193,6 +193,57 @@ def argv_of(calls, step):
     return next((call["argv"] for call in calls if call["step"] == step), None)
 
 
+class StdoutFailingFromSecondWrite:
+    """A stdout whose first print succeeds and whose every later one raises BrokenPipeError."""
+
+    def __init__(self):
+        self.writes = 0
+
+    def write(self, text):
+        self.writes += 1
+        if self.writes > 1:
+            raise BrokenPipeError(32, "Broken pipe")
+        return len(text)
+
+    def flush(self):
+        pass
+
+
+def check_start_line_failure_still_runs_every_step(scratch):
+    """Steps 3 to 5 run in-process, so the failure lands on step 4's start line."""
+    spec = importlib.util.spec_from_file_location("run_without_merge_under_test", PROGRAM)
+    program = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(program)
+    ended = scratch / "start-line-failure-ended"
+    ended.mkdir()
+
+    def step_command(step, arguments, step_arguments):
+        return [sys.executable, "-c",
+                "import pathlib, sys; print('a line'); print('another line'); "
+                "pathlib.Path(sys.argv[1]).touch()", str(ended / step)]
+
+    program.step_command = step_command
+    stdout, real_stdout = StdoutFailingFromSecondWrite(), sys.stdout
+    sys.stdout = stdout
+    try:
+        program.run_steps_at_the_same_time(
+            [(position, STEPS[position - 1], []) for position in (3, 4, 5)], None)
+        outcome = "returned"
+    except program.OutputCouldNotBeWritten as failure:
+        outcome = f"OutputCouldNotBeWritten {failure} {failure.exit_codes}"
+    except BaseException as failure:
+        outcome = f"{type(failure).__name__} {failure}"
+    finally:
+        sys.stdout = real_stdout
+    check("when stdout fails on a step's start line, every step still starts and ends, the "
+          "failure is raised as OutputCouldNotBeWritten, and nothing more is written",
+          outcome.startswith("OutputCouldNotBeWritten") and "{3: 0, 4: 0, 5: 0}" in outcome
+          and sorted(path.name for path in ended.iterdir()) == sorted(STEPS[2:])
+          and stdout.writes == 2,
+          f"{outcome}; ended {sorted(path.name for path in ended.iterdir())}; "
+          f"writes {stdout.writes}")
+
+
 def main():
     scratch = Path(tempfile.mkdtemp(prefix="merge-lane-run-without-merge-test-")).resolve()
     try:
@@ -201,6 +252,7 @@ def main():
         helpers = scratch / "merge-helpers"
         filled_in_file = (helpers / "briefs"
                           / "reviewer-brief-specifications-pr7-with-head-and-main-commits-from-origin.json")
+        check_start_line_failure_still_runs_every_step(scratch)
         directory_options = ["--merge-lane-worktrees-and-outputs-directory", str(helpers),
                              "--merge-lane-review-worktrees-directory", str(helpers / "wt"),
                              "--review-tools-worktree-at-main", str(checkout)]
