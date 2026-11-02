@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -93,8 +94,50 @@ def credential_directories_present() -> list:
 CREDENTIAL_FILE_SCAN_ROOTS = (pathlib.Path.home(), REPO_ROOT)
 
 
+# One find over ned-box's home took 6-8 s per cell launch, most of it in the
+# log-store's 900,000 entries; several finds over parts of the tree at once
+# take a third of that.
+CREDENTIAL_FILE_SCAN_SPLIT_DEPTH = 3
+CREDENTIAL_FILE_SCAN_FIND_COMMANDS = 64
+CREDENTIAL_FILE_SCAN_PARALLEL_FINDS = 16
+
+
+def credential_file_scan_parts(root: pathlib.Path) -> tuple:
+    """Split root into directories to list one level deep and subtrees to walk whole.
+
+    The two together reach every directory find -xdev would reach from root:
+    the first CREDENTIAL_FILE_SCAN_SPLIT_DEPTH levels are listed here, and
+    each directory below them is a subtree root. A symlink is never entered,
+    and a directory on another filesystem than root is left out, as -xdev does.
+    """
+    device = root.stat().st_dev
+    shallow, frontier = [], [str(root)]
+    for _level in range(CREDENTIAL_FILE_SCAN_SPLIT_DEPTH):
+        shallow += frontier
+        below = []
+        for directory in frontier:
+            try:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        try:
+                            if (entry.is_dir(follow_symlinks=False)
+                                    and entry.stat(follow_symlinks=False).st_dev == device):
+                                below.append(entry.path)
+                        except OSError:
+                            pass
+            except OSError:
+                pass
+        frontier = below
+    return shallow, frontier
+
+
 def credential_files_found_now() -> list:
-    """Return credential-named files outside directories already withheld whole."""
+    """Return credential-named files outside directories already withheld whole.
+
+    Finds the same files one `find <roots> -xdev` would, by running several
+    finds at once over parts of each root's tree, which credential_file_scan_parts
+    splits off. Unreadable directories are skipped, as find skips them.
+    """
     # find is faster over large homes; unreadable directories are expected, so errors are ignored.
     name_tests = []
     for pattern in CREDENTIAL_FILE_NAME_PATTERNS:
@@ -104,11 +147,22 @@ def credential_files_found_now() -> list:
         if root.is_dir() and not any(root == kept or kept in root.parents
                                      for kept in roots):
             roots.append(root)
-    completed = subprocess.run(
-        ["find", *map(str, roots), "-xdev", "(", *name_tests, ")", "-type", "f"],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False)
+    match = ["(", *name_tests, ")", "-type", "f"]
+    commands = []
+    for root in roots:
+        shallow, subtrees = credential_file_scan_parts(root)
+        commands.append(["find", *shallow, "-maxdepth", "1", *match])
+        commands += [["find", *subtrees[start::CREDENTIAL_FILE_SCAN_FIND_COMMANDS], "-xdev", *match]
+                     for start in range(min(len(subtrees), CREDENTIAL_FILE_SCAN_FIND_COMMANDS))]
+
+    def run(command):
+        return subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              text=True, check=False).stdout.splitlines()
+
+    with concurrent.futures.ThreadPoolExecutor(CREDENTIAL_FILE_SCAN_PARALLEL_FINDS) as pool:
+        found = {path for lines in pool.map(run, commands) for path in lines}
     return sorted(
-        path for path in set(completed.stdout.splitlines())
+        path for path in found
         if path and not any(directory == pathlib.Path(path)
                             or directory in pathlib.Path(path).parents
                             for directory in CREDENTIAL_DIRECTORIES))
