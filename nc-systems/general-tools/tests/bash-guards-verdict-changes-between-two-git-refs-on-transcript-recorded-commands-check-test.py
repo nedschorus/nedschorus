@@ -992,6 +992,12 @@ try:
               stopped.returncode == 2 and not worktrees_registered_under(stopped_scratch) and not still_running,
               f"exit {stopped.returncode}; registered {worktrees_registered_under(stopped_scratch)}; "
               f"running {still_running}\n{stopped_output}")
+        records = sorted(stopped_scratch.glob("multiprocessing-directory-*"))
+        recorded = [Path(record.read_text()) for record in records]
+        check(f"a replay stopped by {stop_signal.name} in the middle of a step: the killed step's multiprocessing "
+              f"directory is removed",
+              bool(recorded) and not any(directory.exists() for directory in recorded),
+              f"records {records}; recorded {recorded}")
 
     # SystemExit raised by the stop handler between Popen._wait()'s lock acquire and its try used to leave
     # the lock held, so the next wait() on that process blocked forever. The signal is delivered at exactly
@@ -1424,6 +1430,66 @@ try:
     check("the end-of-run cleanup fails the suite when the scratch directory cannot be removed, naming the path",
           len(recorded) == 1 and recorded[0][1] is False and str(left_behind / "locked" / "file") in recorded[0][2],
           recorded)
+
+    # A killed step's record of its multiprocessing directory: only an absolute pymp- path is ever removed.
+    record_cases = Path(scratch) / "multiprocessing-records"
+    working = record_cases / "working-directory"
+    (working / "pymp-relative").mkdir(parents=True)
+    (working / "kept").write_text("x")
+    previous_directory = os.getcwd()
+    os.chdir(working)
+    try:
+        for recorded_text, case in (("", "an empty record"), ("pymp-relative", "a relative record"),
+                                    (str(working), "a record naming a directory that is not pymp-")):
+            record = record_cases / "record"
+            record.write_text(recorded_text)
+            try:
+                replay.remove_recorded_multiprocessing_directory(record)
+                outcome = "returned"
+            except replay.ReplayFailed as error:
+                outcome = f"ReplayFailed: {error}"
+            check(f"{case} of a step's multiprocessing directory removes nothing and fails the replay",
+                  outcome.startswith("ReplayFailed") and (working / "kept").exists()
+                  and (working / "pymp-relative").is_dir(), outcome)
+    finally:
+        os.chdir(previous_directory)
+    recorded_directory = record_cases / "pymp-recorded"
+    (recorded_directory / "socket").mkdir(parents=True)
+    record.write_text(str(recorded_directory))
+    replay.remove_recorded_multiprocessing_directory(record)
+    check("a record of an absolute pymp- directory removes that directory", not recorded_directory.exists())
+    (recorded_directory / "locked").mkdir(parents=True)
+    (recorded_directory / "locked" / "file").write_text("x")
+    (recorded_directory / "locked").chmod(0o500)
+    try:
+        try:
+            replay.remove_recorded_multiprocessing_directory(record)
+            outcome = "returned"
+        except replay.ReplayFailed as error:
+            outcome = f"ReplayFailed: {error}"
+    finally:
+        (recorded_directory / "locked").chmod(0o700)
+    check("a multiprocessing directory that cannot be removed fails the replay, naming the directory",
+          outcome.startswith("ReplayFailed") and str(recorded_directory) in outcome, outcome)
+
+    # A stop signal during a failing step: stop_deferred() replaces the failure with SystemExit(2), so it
+    # prints the failure first.
+    printed = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(printed):
+            with replay.stop_deferred():
+                replay.STOP_STATE["stop_requested"] = True
+                raise replay.ReplayFailed("the test's leftover directory /tmp/pymp-test")
+        outcome = "no exception"
+    except SystemExit as stopped:
+        outcome = f"SystemExit({stopped.code})"
+    except replay.ReplayFailed:
+        outcome = "ReplayFailed"
+    finally:
+        replay.STOP_STATE["stop_requested"] = False
+    check("a failure that a stop signal replaces with exit 2 is printed first",
+          outcome == "SystemExit(2)" and "REPLAY FAILED: the test's leftover directory /tmp/pymp-test"
+          in printed.getvalue(), f"{outcome}; stderr {printed.getvalue()!r}")
 finally:
     # The test's checkouts are registered only in its own clone, which goes with the scratch directory.
     check_scratch_directory_removed(scratch)

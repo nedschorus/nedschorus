@@ -4119,6 +4119,14 @@ with tempfile.TemporaryDirectory() as tmp:
           recovery.returncode != 2 and "usage:" not in recovery.stderr,
           "exit %s\n%s" % (recovery.returncode, recovery.stderr))
 
+# Removed here, before the exit status is decided, so a failed removal fails the suite; an atexit
+# callback that raises leaves the exit status 0.
+try:
+    shutil.rmtree(FOUND_COPIES_SCRATCH)
+except OSError as error:
+    check("the found-copies scratch folder %s is removed" % FOUND_COPIES_SCRATCH, False,
+          "%s: %s" % (type(error).__name__, error))
+
 print()
 if failures:
     print("%d case(s) failed: %s" % (len(failures), ", ".join(failures)))
