@@ -949,7 +949,18 @@ def test_only_a_line_the_program_writes_records_a_decision_or_a_deferral():
             ("item 3 of 9: part 1 approved <accepted>; every text the change adds has had a fast read.(later revised)\n",
              (set(), {}), "close's parts line with words after its end records nothing"),
             ("item 3 of 9: moved on; the item asked for no decision. <moved on, no decision> but he asked again\n",
-             (set(), {}), "close's moved-on line with words after its end records nothing")):
+             (set(), {}), "close's moved-on line with words after its end records nothing"),
+            ("item 3 of 9: revised; every text the change adds has had a fast read. Awaiting his ruling.\n",
+             (set(), {}), "a line in close's took-effect form with an answer and an outcome close never writes "
+                          "records nothing"),
+            ("item 3 of 9: approved; every text the change adds has had a fast read. <open>\n",
+             (set(), {}), "close's took-effect form with an outcome close never writes records nothing"),
+            ("item 3 of 9: part 1 revised, part 2 approved <accepted>; every text the change adds has had a fast "
+             "read.\n", (set(), {}), "close's parts form with a part word close never writes records nothing"),
+            ("item 3 of 9: already decided by walk x, item 3; the walk does not come back to it. <awaiting>\n",
+             (set(), {}), "close's already-decided form with an outcome close never writes records nothing"),
+            ("item 3 of 9: approved option 2; every text the change adds has had a fast read. <accepted>\n",
+             ({"3"}, {}), "close's line for an option approval decides its item")):
         decided, deferrals = program.minutes_record(walk_finder, line, parser)
         check(case_name, (decided, dict(deferrals)) == expected, repr((decided, deferrals)))
 
@@ -2025,6 +2036,29 @@ def test_closing_the_new_item_records_its_outcome_for_the_held_item():
             check("deferring the new item leaves the held item waiting, so the walk names it next",
                   closed.returncode == 0 and "already decided by the user's answer" not in case.minutes.read_text()
                   and marker(case) == f"#next_to_present {expected_next}", described(closed) + case.minutes.read_text())
+
+
+def test_closing_the_new_item_records_its_outcome_for_every_item_in_a_chain_of_held_items():
+    case = Case()
+    with open(case.minutes, "a") as minutes:
+        minutes.write("item 4 of 9: answer held: item 3 of 9, raised by a fast-read finding, waits for the user's "
+                      "answer. <open>\n#next_to_present item 3 of 9\n")
+    case.run("check")
+    with open(case.minutes, "a") as minutes:
+        minutes.write("#next_to_present item 5 of 9\n")
+    case.run("close")
+    case.run("check")
+    closed = case.run("close")
+    text = case.minutes.read_text()
+    check("closing item 5, for which item 3 was held, for which item 4 was held, records item 5's outcome for item 3 "
+          "and for item 4, each citing the item it was held for, and the walk goes on past all three",
+          closed.returncode == 0
+          and "item 3 of 9: already decided by the user's answer to item 5 of 9, for which its answer was held; the "
+          "walk does not come back to it. <accepted>" in text
+          and "item 4 of 9: already decided by the user's answer to item 3 of 9, for which its answer was held; the "
+          "walk does not come back to it. <accepted>" in text
+          and "item 4 of 9, whose answer was held for item 5 of 9, is recorded with item 5 of 9's outcome."
+          in closed.stdout and marker(case) == "#next_to_present item 6 of 9", described(closed) + text)
 
 
 def test_the_check_rerun_a_failed_fast_read_names_repeats_the_already_decided_citation():
