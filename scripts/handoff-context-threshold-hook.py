@@ -454,6 +454,9 @@ def main(argv=None) -> int:
         # A failed marker write would repeat the handoff request every turn.
         HANDOFF_DIRECTORY.mkdir(parents=True, exist_ok=True)
         fired_marker.write_text(f"{used:.1f}\n", encoding="utf-8")
+        # The deferral's promise is kept; left in place, it would refire the instruction
+        # below the threshold after every later compaction.
+        (HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred").unlink(missing_ok=True)
     except OSError:
         pass
 

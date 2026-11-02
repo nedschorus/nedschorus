@@ -894,10 +894,10 @@ with tempfile.TemporaryDirectory() as workspace:
               f"code {result.returncode}, stderr {result.stderr[:200]}")
         check("firing after a deferral writes the fired marker",
               deferral_marker_file.exists(), str(deferral_marker_file))
-        # Left in place: the fired marker is what governs repeats, and
-        # clearing this one at the fire would tell nobody anything.
-        check("firing leaves the deferral marker where it was",
-              deferred_marker_file.exists(), str(deferred_marker_file))
+        # Left in place, it would hold the session past the below-threshold
+        # return after every later compaction, refiring the instruction.
+        check("firing deletes the deferral marker",
+              not deferred_marker_file.exists(), str(deferred_marker_file))
         deferral_marker_file.unlink(missing_ok=True)
         deferred_marker_file.unlink(missing_ok=True)
 
@@ -1086,6 +1086,17 @@ with tempfile.TemporaryDirectory() as workspace:
             result = run_hook({**compacted_payload, "transcript_path": str(compacted_finished)})
             check("the fired marker still stops a repeat below the threshold",
                   result.returncode == 0 and not result.stderr.strip(),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+            check("firing after a deferral deletes the deferred marker",
+                  not compacted_deferred_marker_file.exists(), str(compacted_deferred_marker_file))
+
+            # A later compaction deletes the fired marker, as the post-compaction hook does.
+            compacted_marker_file.unlink(missing_ok=True)
+            result = run_hook({**compacted_payload, "transcript_path": str(compacted_finished)})
+            check("after the deferral's handoff fired and a later compaction, a Stop below "
+                  "the threshold is silent",
+                  result.returncode == 0 and not result.stderr.strip()
+                  and not compacted_marker_file.exists(),
                   f"code {result.returncode}, stderr {result.stderr[:200]}")
             compacted_marker_file.unlink(missing_ok=True)
             compacted_deferred_marker_file.unlink(missing_ok=True)
