@@ -932,22 +932,25 @@ def substantive_turn_count_of_session_transcript(session_id: str, working_direct
         return 0
 
 
-RECOVER_CRASHED_SEATS_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "recover-crashed-seats.py"
+RECOVER_CRASHED_SEATS_SCRIPT = SCRIPTS_DIRECTORY / "recover-crashed-seats.py"
 
 
-def unreadable_path_restart_instruction(agent: str, unreadable_path) -> str:
+def unreadable_path_restart_instruction(agent: str, handoff_directory: Path, unreadable_path) -> str:
     # OSError covers more than permissions (EIO, ENOTDIR), so the instruction names no cause.
+    recovery_command = shlex.join(["python3", str(RECOVER_CRASHED_SEATS_SCRIPT),
+                                   "--handoff-dir", str(handoff_directory), agent])
     return (f"When {unreadable_path} can be read again, start the agent-seat {agent} by running, "
             f"at a terminal on {socket.gethostname()}: "
-            f"python3 {RECOVER_CRASHED_SEATS_SCRIPT} {agent}\n"
+            f"{recovery_command}\n"
             f"If recover-crashed-seats.py asks whether to restart {agent}, answer y.")
 
 
-def transcript_unreadable_stop_message(agent: str, session_id: str, error: OSError) -> str:
+def transcript_unreadable_stop_message(agent: str, handoff_directory: Path, session_id: str,
+                                       error: OSError) -> str:
     return (f"handoff-supervisor: stopped: whether session {session_id} did new work could not "
             f"be decided, because its transcript could not be read: "
             f"{error.filename}: {error.strerror}.\n"
-            + unreadable_path_restart_instruction(agent, error.filename))
+            + unreadable_path_restart_instruction(agent, handoff_directory, error.filename))
 
 
 def queue_status_line(working_directory: Path) -> str:
@@ -2222,7 +2225,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             print(f"handoff-supervisor: startup stopped: whether agent-seat {settings.agent} has a transcript "
                   f"worth resuming could not be decided, because {error.filename} "
                   f"could not be read: {error.strerror}.\n"
-                  + unreadable_path_restart_instruction(settings.agent, error.filename),
+                  + unreadable_path_restart_instruction(
+                      settings.agent, settings.handoff_directory, error.filename),
                   file=sys.stderr)
             return 5
         if by_hand_session_id is not None:
@@ -2286,7 +2290,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                         substantive_turn_count_of_session_transcript(
                             session_id, settings.working_directory))
                 except OSError as error:
-                    print(transcript_unreadable_stop_message(settings.agent, session_id, error), file=sys.stderr)
+                    print(transcript_unreadable_stop_message(settings.agent, settings.handoff_directory,
+                                                             session_id, error), file=sys.stderr)
                     return 5
             else:
                 consecutive_resumes_without_new_work = 0
@@ -2321,7 +2326,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 except OSError as error:
                     record_agent_exit_in_supervisor_state(settings.state_path, state,
                                                           process.returncode)
-                    print(transcript_unreadable_stop_message(settings.agent, session_id, error), file=sys.stderr)
+                    print(transcript_unreadable_stop_message(settings.agent, settings.handoff_directory,
+                                                             session_id, error), file=sys.stderr)
                     return 5
                 if (substantive_turns_at_the_last_resume is None
                         or substantive_turns > substantive_turns_at_the_last_resume):
