@@ -948,6 +948,9 @@ with tempfile.TemporaryDirectory() as scratch:
         merged_untracked_wt = owned_worktree("merged-untracked-wt", running_session_owner)
         (merged_untracked_wt / "late.txt").write_text("written after the merge\n", encoding="utf-8")
         open_running_wt = owned_worktree("open-running-wt", running_session_owner)
+        # A same-named tag makes git's --short form of the branch heads/<name>.
+        tag_merged_wt = owned_worktree("tag-merged-wt", running_session_owner)
+        git(checkout, "tag", "tag-merged-wt-branch", head_of(tag_merged_wt))
         reused_wt = owned_worktree("reused-wt", running_session_owner)
         seat_running_wt = owned_worktree("seat-running-wt",
                                          {"owner_kind": "agent-seat", "agent_seat": "seat-running"})
@@ -974,6 +977,8 @@ with tempfile.TemporaryDirectory() as scratch:
              "headRefOid": head_of(closed_wt)},
             {"number": 3, "state": "MERGED", "headRefName": "merged-untracked-wt-branch",
              "headRefOid": head_of(merged_untracked_wt)},
+            {"number": 8, "state": "MERGED", "headRefName": "tag-merged-wt-branch",
+             "headRefOid": head_of(tag_merged_wt)},
             {"number": 4, "state": "OPEN", "headRefName": "open-running-wt-branch",
              "headRefOid": head_of(open_running_wt)},
             # An earlier pull request on the same branch name, opened on another commit.
@@ -1077,6 +1082,11 @@ with tempfile.TemporaryDirectory() as scratch:
               and "closed-wt: removed, branch closed-wt-branch kept" in removal.stdout
               and git(checkout, "branch", "--list", "closed-wt-branch").strip() != "",
               removal.stdout)
+        check("--remove removes a worktree whose owner runs and whose pull request has merged, "
+              "though a tag shares its branch's name",
+              not tag_merged_wt.exists()
+              and "tag-merged-wt: removed, branch tag-merged-wt-branch deleted" in removal.stdout,
+              removal.stdout + removal.stderr)
 
         # Failure injection: a work-snapshot that cannot be written, and a branch for commits on no
         # branch that cannot be made, each keep the worktree and fail the run.
