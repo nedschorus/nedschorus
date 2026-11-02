@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for nc-systems/general-tools/stop-signal-sigterm-or-sighup-raises-system-exit-so-cleanup-runs-common.py.
 
-scripts/pull-request-mutation-testing-survivors.py and scripts/ghi-issue-write.py reach this module
+scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py and scripts/ghi-issue-write.py reach this module
 through their own suites. These cases pin the module directly: a child process that holds a directory
 inside the context manager is sent each stop signal, and must remove the directory in its finally and
 exit 128 plus the signal number; a child started with SIGHUP ignored, as under nohup, keeps running
