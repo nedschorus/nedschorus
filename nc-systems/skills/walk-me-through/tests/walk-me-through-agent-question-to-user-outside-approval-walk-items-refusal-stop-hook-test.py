@@ -465,13 +465,14 @@ def test_a_failed_model_check_blocks():
         check("a model call past its time limit is a failure",
               line is None and "no answer within 1 seconds" in (failure or ""), failure)
         for mode, expected in (("yes:3", "c"), ("yes:2", "b"), ("no", None), ("waiting", None),
-                               (f'labels:["{hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING}", "{hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION}", '
+                               (f'labels:["{hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION}", "{hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION}", '
                                 f'"{hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE}"]', "c")):
             os.environ["FAKE_CLAUDE_MODE"] = mode
             line, failure = hook.model_judgement(["a", "b", "c"], ["a", "b", "c"], "10", "2", "## Item 2 of 10")
             check(f"the model's answer {mode} picks unclear line {expected}", (line, failure) == (expected, None),
                   (line, failure))
-        concerns, asks_else = hook.MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION, hook.MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE
+        concerns = hook.AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER
+        asks_else = hook.AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER
 
         def entry(number, concerns_answer, asks_else_answer):
             return {"line_number": number, concerns: concerns_answer, asks_else: asks_else_answer}
@@ -488,10 +489,10 @@ def test_a_failed_model_check_blocks():
             line, failure = hook.model_judgement(["a", "b"], ["a", "b"], "10", "2", "## Item 2 of 10")
             check(case_name, (line, failure) == (expected, None), (line, failure))
         check("code turns the two answers into the three labels",
-              hook.line_labels([entry(1, True, True), entry(2, True, False), entry(3, False, False)], 3)
+              hook.agent_reply_line_model_labels_from_true_or_false_model_answers([entry(1, True, True), entry(2, True, False), entry(3, False, False)], 3)
               == [hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE,
                   hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION,
-                  hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING])
+                  hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION])
         for case_name, verdict in (
                 ("a verdict with no lines is a failure", {"asks_user": False}),
                 ("a verdict whose lines are not a list is a failure", {"lines": "asks_nothing"}),
@@ -1053,6 +1054,18 @@ def test_a_hyphenated_word_after_yes_or_no_is_not_an_ask():
     check_blocked("`on a yes` still blocks", case.run(model="no"), "approval-walk question check")
 
 
+def test_an_answer_cue_followed_by_another_hyphenated_word_goes_to_the_model():
+    for case_name, text in (("`Type A-D`", "Type A-D to answer."),
+                            ("`Say yes-or-no`", "Say yes-or-no and I will merge it."),
+                            ("`on a yes-or-no`", "I will merge it on a yes-or-no from you.")):
+        case = Case()
+        case.reply(text)
+        check_blocked(case_name + " blocks when the model says it asks the user something", case.run(model="yes:1"),
+                      "the model judged that it asks him something")
+        check(case_name + " went to the model", len(case.model_calls()) == 1, case.model_calls())
+        check_silent(case_name + " passes when the model says it asks nothing", case.run(model="no"))
+
+
 PUBLISH_FAILED_LINE = "#item_page item {number} of {total} publish failed: the Artifact tool timed out"
 RECOMMENDED_ITEM_2_DOCUMENT = WALK_DOCUMENT.replace("## Item 2 of 10: where the poem page lives",
                                                     "## Item 2 of 10: the poem page is recommended for the wiki")
@@ -1134,7 +1147,7 @@ def print_live_model_labels():
                 lines = dict(line.split(". ", 1) for line in numbered_lines(call).split("\n") if ". " in line)
                 try:
                     entries = json.loads(call["stdout"])["structured_output"]["lines"]
-                    labels = hook.line_labels(entries, len(entries)) or ["?"] * len(entries)
+                    labels = hook.agent_reply_line_model_labels_from_true_or_false_model_answers(entries, len(entries)) or ["?"] * len(entries)
                 except (ValueError, TypeError, KeyError):
                     print(f"model: no labels; exit {call['returncode']}: {call['stdout'][:300]}{call['stderr'][:300]}")
                     continue
@@ -1153,9 +1166,9 @@ def main():
     fake.write_text(FAKE_CLAUDE.replace("#!/usr/bin/env python3", f"#!{sys.executable}", 1)
                     .replace('"WAITING_ITEM"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION))
                     .replace('"ASKS_ELSE"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE))
-                    .replace('"ASKS_NOTHING"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING))
-                    .replace('"CONCERNS_ANSWER"', json.dumps(hook.MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION))
-                    .replace('"ASKS_ELSE_ANSWER"', json.dumps(hook.MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE)))
+                    .replace('"ASKS_NOTHING"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION))
+                    .replace('"CONCERNS_ANSWER"', json.dumps(hook.AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER))
+                    .replace('"ASKS_ELSE_ANSWER"', json.dumps(hook.AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER)))
     fake.chmod(0o755)
     try:
         for name, function in sorted(globals().items()):

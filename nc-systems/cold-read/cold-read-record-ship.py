@@ -67,8 +67,11 @@ with the design:
      record holds it only under the other, rule 2's check for a store file
      the record lacks runs before this rule's replacement, on the inventory
      taken before anything is copied, so the whole record is refused and the
-     store is left as it was; the refusal prints the `mv` that renames the
-     local record's triage file to the store's name. It is the one file in a
+     store is left as it was. When that triage file is the only file the
+     store holds and the record lacks, and the store does not also hold it
+     under the record's name, the refusal prints the `mv` that renames the local
+     record's triage file to the store's name; otherwise it refuses the store's
+     record as another read's. It is the one file in a
      cold-read-record written twice on purpose: the agent triages the
      reviewers' findings into it, and it is written again with the user's
      rulings once the approval-walk closes. Rules 1 and 2 refused that second
