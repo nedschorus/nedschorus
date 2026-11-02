@@ -3,6 +3,7 @@
 
 import datetime
 import json
+import os
 import pathlib
 import re
 
@@ -169,20 +170,21 @@ def record_directory_name_for_target(
 
 def fresh_record_directory(base: pathlib.Path, names_taken_in_log_store) -> pathlib.Path:
     """Return the first of base, base-2, base-3 ... that is neither a path on
-    disk nor one of names_taken_in_log_store, the record directory names the
+    disk, a symlink included, nor one of names_taken_in_log_store, the record directory names the
     log-store holds, without creating the directory."""
     # Each read needs its own directory so a same-day rerun cannot overwrite earlier reports.
     # A name free only on disk can be another checkout's record in the store,
     # and shipping would then put two reads in one record.
     record_directory = base
     suffix = 2
-    while record_directory.exists() or record_directory.name in names_taken_in_log_store:
+    # lexists, not exists: a dangling symlink or a symlink loop is false for exists(), and mkdir on it fails.
+    while os.path.lexists(record_directory) or record_directory.name in names_taken_in_log_store:
         record_directory = base.with_name(f"{base.name}-{suffix}")
         suffix += 1
     return record_directory
 
 
-def fresh_record_directory_created(base: pathlib.Path, names_taken_in_log_store) -> pathlib.Path:
+def cold_read_record_directory_at_first_free_name_created_atomically(base: pathlib.Path, names_taken_in_log_store) -> pathlib.Path:
     """Create and return the directory fresh_record_directory names; when
     another run creates that name first, take the next free one, so two runs
     started at once never share a record directory."""
