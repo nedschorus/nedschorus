@@ -35,8 +35,9 @@ nonzero; no report is written unless the fresh-agent produced output. The
 temporary worktree is removed on every path, including a failure; when git
 cannot remove it, the program prints git's words and the worktree's path, and
 exits 6 only when the run would otherwise exit 0; any other exit code is
-kept; the worktree then stays on disk, and git's record of it in the
-checkout, until the worktree is removed. Apart from that record, the
+kept. The worktree's folder is deleted with the temporary directory either
+way, but git's record of the worktree stays in the checkout until the
+cleanup command the program prints is run. Apart from that record, the
 program writes nothing in the checkout it is run from.
 
 Usage:
@@ -278,7 +279,9 @@ def check_overview_claims(arguments):
     writer_answers = arguments.writer_answers.resolve() if arguments.writer_answers else None
 
     with tempfile.TemporaryDirectory(prefix=PROGRAM + "-") as temporary:
-        worktree = Path(temporary) / "checkout-at-checked-against-commit"
+        # git records a worktree by its resolved path; once the folder is deleted, an unresolved path (macOS /var is a
+        # symlink) no longer matches that record, and the printed `worktree remove --force` would fail.
+        worktree = Path(temporary).resolve() / "checkout-at-checked-against-commit"
         run_git(repository, "worktree", "add", "--quiet", "--detach", str(worktree), commit)
         try:
             (worktree / overview_path).parent.mkdir(parents=True, exist_ok=True)
