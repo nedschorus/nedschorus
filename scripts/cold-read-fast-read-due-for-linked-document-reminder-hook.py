@@ -12,7 +12,7 @@ starting docs/, nc-systems/ or .claude/, which is resolved against the
 payload's cwd and then the top of that cwd's checkout. /Volumes/nedhome/<path>,
 the Mac's mount of ned-box, maps to /home/nedlern/<path> when that file exists.
 Skipped: files that do not exist, anything in the log-store or in a
-cold-read-records directory, and docs/walk/<name>-suggestions.md, which is a
+cold-read-records directory, and docs/walk/<name>-cold-read-fast-read.md, which is a
 fast read's own report.
 
 WHEN A DOCUMENT IS DUE. A document in a git checkout is due only when that
@@ -43,7 +43,7 @@ the check, and goes on without that top.
 A document that passes it is not due when a fast read of its
 current text is on record. A walk-document named docs/walk/<name>-draft.md
 in any git worktree, fast-read from that checkout or another, writes
-docs/walk/<name>-suggestions.md beside it, so a suggestions file newer than
+docs/walk/<name>-cold-read-fast-read.md beside it, so a suggestions file newer than
 the walk-document counts as that read; only a draft in no git worktree gets a
 cold-read-record like any document.
 Records are the directories in the log-store's cold-read-records/ and in a
@@ -167,7 +167,7 @@ MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOM
 NED_BOX_HOME = ned_box_home_path_constants.NED_BOX_HOME + "/"
 WALK_DIRECTORY_PARTS = ("docs", "walk")
 WALK_DRAFT_SUFFIX = "-draft.md"
-WALK_SUGGESTIONS_SUFFIX = "-suggestions.md"
+WALK_SUGGESTIONS_SUFFIX = "-cold-read-fast-read.md"
 GIT_TIMEOUT_SECONDS = 5
 MAIN_REFERENCE = "refs/remotes/origin/main"
 FAST_READ_PROGRAM = "nc-systems/cold-read/cold-read-fast-read.py"

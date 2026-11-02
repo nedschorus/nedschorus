@@ -2,13 +2,15 @@
 """The walk-me-through skill names the walk files' endings, and this test
 keeps the two programs that build those names agreeing with it.
 
-A walk's files are `<name>-draft.md`, `<name>-suggestions.md`, `<name>.md`,
+A walk's files are `<name>-draft.md`, `<name>-cold-read-fast-read.md`, `<name>.md`,
 `<name>-minutes.md` and, for a walk on a cold-read-full-run,
 `<name>-dispositions.md`. `.claude/skills/walk-me-through/SKILL.md` is where
 that list is decided, and two programs carry a copy in code:
-nc-systems/cold-read/cold-read-fast-read.py, which puts a walk draft's report beside it as
-the suggestions file, and scripts/walk-files-ship.py, which ships all five to
-the log-store.
+nc-systems/cold-read/cold-read-fast-read.py, which puts a walk draft's report beside it,
+and scripts/walk-files-ship.py, which ships all five to the log-store. The
+shipper also ships an earlier walk's report under the ending the skill named
+before, `<name>-suggestions.md`; that one ending is held to the shipper's
+own constant here instead of to the skill.
 
 Prose cannot import a constant, so the skill cannot be the single definition
 the way a module can. The tie-break is this test instead: the skill's text
@@ -106,9 +108,9 @@ def shipper_role_unnamed_failure_detail(unnamed):
 def suggestions_ending_disagrees_failure_detail(written, roles):
     return "\n".join([
         f"the fast read writes {written!r} but the shipper's roles are {roles}, so "
-        f"scripts/walk-files-ship.py would not ship a walk's suggestions file to the log-store.",
+        f"scripts/walk-files-ship.py would not ship a walk's cold-read-fast-read report to the log-store.",
         "Set back whichever of the two your change altered: WALK_SUGGESTIONS_SUFFIX in "
-        "nc-systems/cold-read/cold-read-fast-read.py, which ends in .md, or the suggestions role "
+        "nc-systems/cold-read/cold-read-fast-read.py, which ends in .md, or the cold-read-fast-read report role "
         "in WALK_FILE_ROLES in scripts/walk-files-ship.py, which does not; without its .md, the "
         "first must equal the second.",
         RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
@@ -134,11 +136,22 @@ check("every walk-files-ship.py role suffix is one the skill names",
       not unnamed, shipper_role_unnamed_failure_detail(unnamed))
 
 # The two programs must also agree with each other, or a walk draft's
-# suggestions file lands where the shipper will not look for it.
+# report lands where the shipper will not look for it.
 shipper_roles = [suffix for suffix, _role in shipper.WALK_FILE_ROLES]
-check("the fast read's suggestions ending is the shipper's suggestions role",
+check("the fast read's report ending is the shipper's cold-read-fast-read report role",
       fast_read.WALK_SUGGESTIONS_SUFFIX.removesuffix(".md") in set(shipper_roles),
       suggestions_ending_disagrees_failure_detail(fast_read.WALK_SUGGESTIONS_SUFFIX, shipper_roles))
+
+shipped_beyond_the_skill = [suffix for suffix, _role in shipper.SHIPPED_WALK_FILE_ROLES
+                            if (suffix, _role) not in shipper.WALK_FILE_ROLES]
+check("the shipper ships one ending beyond the skill's roles, an earlier walk's -suggestions report",
+      shipped_beyond_the_skill == ["-suggestions"]
+      == [shipper.EARLIER_WALK_COLD_READ_FAST_READ_REPORT_ROLE_SUFFIX],
+      f"SHIPPED_WALK_FILE_ROLES in scripts/walk-files-ship.py adds {shipped_beyond_the_skill} "
+      f"to WALK_FILE_ROLES; only '-suggestions', the ending of an earlier walk's report, may be "
+      f"shipped without the skill naming it.\n"
+      f"Put any other role in WALK_FILE_ROLES, where the checks above hold it to the skill.\n"
+      + RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE)
 
 # Each failure above, made to print from a planted input rather than the real files.
 check("too few endings in the skill fails with the rule, the fix, the guarded-file line and the "
@@ -180,9 +193,9 @@ check("a suggestions ending the shipper does not ship fails saying what is lost 
           "-suggestions.md", ["-draft", "-suggestion", ""]).split("\n") == [
           "the fast read writes '-suggestions.md' but the shipper's roles are "
           "['-draft', '-suggestion', ''], so scripts/walk-files-ship.py would not ship a walk's "
-          "suggestions file to the log-store.",
+          "cold-read-fast-read report to the log-store.",
           "Set back whichever of the two your change altered: WALK_SUGGESTIONS_SUFFIX in "
-          "nc-systems/cold-read/cold-read-fast-read.py, which ends in .md, or the suggestions role "
+          "nc-systems/cold-read/cold-read-fast-read.py, which ends in .md, or the cold-read-fast-read report role "
           "in WALK_FILE_ROLES in scripts/walk-files-ship.py, which does not; without its .md, the "
           "first must equal the second.",
           RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],

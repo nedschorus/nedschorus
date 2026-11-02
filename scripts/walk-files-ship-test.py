@@ -137,7 +137,7 @@ def one_line(text: str) -> bool:
 
 
 WALK = "demo-walk-2026-09-18"
-FILES = {"-draft": "# draft\n", "-suggestions": "# suggestions\n",
+FILES = {"-draft": "# draft\n", "-cold-read-fast-read": "# cold-read-fast-read report\n",
          "": "# walk\n\n## Item 1 of 2\n", "-minutes": "# minutes\n\nItem 1 ruled.\n"}
 
 with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name:
@@ -383,8 +383,8 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
     order_walk_text = write_walk(walks, order_walk, FILES)
     (store_walk / f"{order_walk}.md").write_text("# an older walk text\n", encoding="utf-8")
     result = ship(local_destination, str(order_walk_text))
-    check("files added with a new revised copy are listed draft, suggestions, revised copy, minutes",
-          f"4 file(s) added ({order_walk}-draft.md, {order_walk}-suggestions.md, "
+    check("files added with a new revised copy are listed draft, cold-read-fast-read report, revised copy, minutes",
+          f"4 file(s) added ({order_walk}-draft.md, {order_walk}-cold-read-fast-read.md, "
           f"{order_walk}-revised-1.md, {order_walk}-minutes.md)" in result.stdout,
           result.stdout + result.stderr)
 
@@ -392,7 +392,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
     (walks / f"{WALK}.md").write_text(FILES[""] + "\n## Item 2 of 2\n", encoding="utf-8")
 
     # --- Argument forms -------------------------------------------------------
-    result = ship(local_destination, str(walks / f"{WALK}-suggestions.md"))
+    result = ship(local_destination, str(walks / f"{WALK}-cold-read-fast-read.md"))
     check("a path to any of the walk's files names the walk (role suffix stripped)",
           result.returncode == 0 and result.stdout.startswith(f"shipped: {WALK} "),
           result.stdout)
@@ -432,10 +432,31 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           and f"{partial}-minutes.md" in result.stdout, result.stdout)
     write_walk(walks, partial, {"": "# walk\n", "-minutes": "# minutes\n"})
     result = ship(local_destination, str(walks / f"{partial}.md"))
-    check("a walk without draft or suggestions ships, and stderr notes each missing file",
+    check("a walk without draft or cold-read-fast-read report ships, and stderr notes each missing file",
           result.returncode == 0 and "2 file(s) added" in result.stdout
           and f"{partial}-draft.md" in result.stderr
-          and f"{partial}-suggestions.md" in result.stderr, result.stdout + result.stderr)
+          and f"{partial}-cold-read-fast-read.md" in result.stderr, result.stdout + result.stderr)
+
+    # --- A walk started before the report was named -cold-read-fast-read.md ---
+    earlier = "earlier-walk-2026-10-01"
+    earlier_files = {"-draft": "# draft\n", "-suggestions": "# fast read's report\n",
+                     "": "# walk\n", "-minutes": "# minutes\n"}
+    write_walk(walks, earlier, earlier_files)
+    result = ship(local_destination, str(walks / f"{earlier}.md"))
+    check("an earlier walk's <name>-suggestions.md ships under its own name, in the report's place, "
+          "and stderr notes no missing report and no unshipped file",
+          result.returncode == 0
+          and f"4 file(s) added ({earlier}-draft.md, {earlier}-suggestions.md, "
+              f"{earlier}.md, {earlier}-minutes.md)" in result.stdout
+          and all(text_or_none(store_walk / f"{earlier}{suffix}.md") == text
+                  for suffix, text in earlier_files.items())
+          and not (store_walk / f"{earlier}-cold-read-fast-read.md").exists()
+          and "-cold-read-fast-read.md" not in result.stderr
+          and "not shipped" not in result.stderr, result.stdout + result.stderr)
+    result = ship(local_destination, str(walks / f"{earlier}-suggestions.md"))
+    check("a path to an earlier walk's <name>-suggestions.md names that walk",
+          result.returncode == 0 and result.stdout.startswith(f"shipped: {earlier} "),
+          result.stdout + result.stderr)
 
     # --- The store cannot be written: FAILED, exit 1 --------------------------
     result = ship(str(scratch / "no-store" / "cold-read-records"), str(walk_text),
@@ -495,7 +516,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           "existing file, and removes the staging directory",
           len(placing_calls) == 1 and "ln -- " in placing_calls[0][-1]
           and "ln -f" not in placing_calls[0][-1]
-          and all(f"{WALK}{s}.md" in placing_calls[0][-1] for s in ("-draft", "-suggestions", ""))
+          and all(f"{WALK}{s}.md" in placing_calls[0][-1] for s in ("-draft", "-cold-read-fast-read", ""))
           and f"{WALK}-minutes.md" not in placing_calls[0][-1]
           and f"rm -rf -- {RULED_WALK_PATH}/.ship-staging-{WALK}-" in placing_calls[0][-1],
           str(placing_calls))
@@ -764,7 +785,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           and "walk-me-through skill" in module.shipper.STORE_README
           and "scripts/walk-files-ship.py" in module.shipper.STORE_README
           and not any(ending in module.shipper.STORE_README
-                      for ending in ("-draft.md", "-suggestions.md",
+                      for ending in ("-draft.md", "-cold-read-fast-read.md", "-suggestions.md",
                                      "-minutes.md", "-dispositions.md")),
           module.shipper.STORE_README)
 
@@ -844,7 +865,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-race-test-") as race_sc
             subprocess.run = saved_subprocess_run
             os.replace = saved_os_replace
         kept = {suffix: (walk_store / f"{WALK}{suffix}.md").read_text(encoding="utf-8")
-                for suffix in ("-draft", "-suggestions", "", "-minutes", "-dispositions")
+                for suffix in ("-draft", "-cold-read-fast-read", "", "-minutes", "-dispositions")
                 if (walk_store / f"{WALK}{suffix}.md").is_file()}
         return (code, out.getvalue(), err.getvalue(), kept,
                 sorted(p.name for p in walk_store.iterdir()))
