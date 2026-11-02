@@ -23,7 +23,7 @@ be reached, ssh timed out, or `open` failed on the Mac); 2 refused, here or by
 the Mac, or a usage error.
 
 The environment overrides open-mac-window-from-ned-box.py reads apply here too,
-and NEDSCHORUS_NED_BOX_HOME overrides ned-box's home: the seams the test suite
+and NEDSCHORUS_NED_BOX_HOME overrides ned-box's home: the seams the nc-test-suite
 uses.
 """
 

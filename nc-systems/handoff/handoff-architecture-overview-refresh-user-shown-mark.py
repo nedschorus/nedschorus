@@ -102,7 +102,7 @@ def main(argv=None, now=None) -> int:
     if shown_on < today:
         print(f"{PROGRAM}: no mark was written for {arguments.system}, because "
               f"--shown-on-pacific-date {shown_on} is a Pacific date that has passed. A mark is the file that records that the user was shown the "
-              f"{arguments.system} architecture overview refresh. A mark withholds the reminder "
+              f"{arguments.system} nc-architecture-overview refresh. A mark withholds the reminder "
               f"to show the user that refresh only on the Pacific date the mark is dated, so a "
               f"mark dated {shown_on} would withhold no reminder.\n"
               f"No mark is needed for {shown_on}. Whether a mark is needed for today depends "
@@ -118,7 +118,7 @@ def main(argv=None, now=None) -> int:
     if shown_on > today:
         print(f"{PROGRAM}: no mark was written for {arguments.system}, because "
               f"--shown-on-pacific-date {shown_on} is after today's Pacific date, {today}.\n"
-              f"If the user was shown the {arguments.system} architecture overview refresh "
+              f"If the user was shown the {arguments.system} nc-architecture-overview refresh "
               f"today, run, in a nedschorus checkout on the Mac or on ned-box: "
               f"python3 {PROGRAM_PATH} {arguments.system}\n"
               f"If the user was shown the refresh on an earlier day, run nothing: a mark "
@@ -136,19 +136,19 @@ def main(argv=None, now=None) -> int:
         print(f"{PROGRAM}: the mark for {arguments.system} could not be confirmed as "
               f"written to {daily_overview_refresh_reminder_mark_citation(file_name)}, so the "
               f"next agent-session the handoff-supervisor starts today may show the user the "
-              f"same architecture overview refresh again: {error}\n"
+              f"same nc-architecture-overview refresh again: {error}\n"
               f"If you are a subagent, send this whole message to the agent that dispatched "
               f"you instead of acting on it; otherwise, do what the next lines say.\n"
               f"Tell the user: \"The record that you were shown the {arguments.system} "
-              f"architecture overview refresh today may not have been written on ned-box, so "
+              f"nc-architecture-overview refresh today may not have been written on ned-box, so "
               f"you may be shown it again today: {error}\"\n"
               f"When the user says the cause is fixed, run, in a nedschorus checkout on the "
               f"Mac or on ned-box, since either writes the mark on ned-box: "
               f"python3 {PROGRAM_PATH} {arguments.system} --shown-on-pacific-date {shown_on}",
               file=sys.stderr)
         return 1
-    print(f"{PROGRAM}: recorded that the user was shown the {arguments.system} architecture "
-          f"overview refresh on the Pacific date {shown_on}, in "
+    print(f"{PROGRAM}: recorded that the user was shown the {arguments.system} "
+          f"nc-architecture-overview refresh on the Pacific date {shown_on}, in "
           f"{daily_overview_refresh_reminder_mark_citation(file_name)}; the handoff-supervisor "
           f"withholds the {arguments.system} refresh reminder for the rest of {shown_on}, "
           f"Pacific time, and gives it again on a later day while the refresh is still due.")

@@ -191,8 +191,8 @@ with tempfile.TemporaryDirectory() as workspace:
           subagent_turns_of(turns))
 
     # The complete dialog's header counts the user's and the agent's words only.
-    complete = extractor.render_complete_dialog_of_transcript_as_markdown(
-        write_transcript(workspace, "sub-words.jsonl", foreground))
+    complete = extractor.render_companion(*extractor.complete_dialog_turns_and_report(
+        write_transcript(workspace, "sub-words.jsonl", foreground)))
     dialog_words = sum(len(text.split()) for text in ("check the docs", "Yes."))
     check("the complete dialog's word count leaves out the subagent's task and report",
           f"({dialog_words} words; 2 subagent turns, not counted in the words)" in complete,
@@ -442,7 +442,7 @@ with tempfile.TemporaryDirectory() as workspace:
     # The rolling session dialog renders even a transcript with no dialog in it.
     path = write_transcript(workspace, "no-dialog.jsonl", [{"type": "system", "content": "x"}])
     check("the complete dialog of a transcript with no dialog says it holds no turns",
-          "All 0 dialog turns" in extractor.render_complete_dialog_of_transcript_as_markdown(path))
+          "All 0 dialog turns" in extractor.render_companion(*extractor.complete_dialog_turns_and_report(path)))
 
 # Fix-round cases: a repeated report after a SendMessage, late copies, and the interim notice.
 with tempfile.TemporaryDirectory() as workspace:
@@ -566,7 +566,7 @@ with tempfile.TemporaryDirectory() as workspace:
             exit_code = extractor.main(["--transcript-path", str(path), "--output", str(output_path)])
         with contextlib.redirect_stderr(stdout_stderr), contextlib.redirect_stdout(stdout_text):
             stdout_exit_code = extractor.main(["--transcript-path", str(path)])
-        complete = extractor.render_complete_dialog_of_transcript_as_markdown(path)
+        complete = extractor.render_companion(*extractor.complete_dialog_turns_and_report(path))
     finally:
         extractor.subagent_tracker_module_path = original_tracker_path
         extractor._subagent_tracker_module = None

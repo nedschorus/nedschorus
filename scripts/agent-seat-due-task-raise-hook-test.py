@@ -22,6 +22,16 @@ import tempfile
 import time
 from pathlib import Path
 
+# Before anything runs git: the next-action cases `git init` scratch checkouts,
+# which a variable that redirects git would send into another repository.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().with_name(
+        "git-redirecting-environment-removal-test-fixture.py"))
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
 HOOK_SCRIPT = Path(__file__).with_name("agent-seat-due-task-raise-hook.py")
 
 # Loaded in-process only for the cache boundary, which needs an exact clock;
@@ -676,7 +686,7 @@ seat.task("68", metadata=MET)
 result = seat.run(environment_changes={"CLAUDE_CODE_SESSION_ATTENDED": "0"})
 check("unattended session (a claude -p child): silent", silent(result), result)
 result = seat.run(environment_changes={
-    "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "scripts/ghi-info-ask.py"})
+    "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "scripts/ghi-guide-agent-ask.py"})
 check("session whose caller owns its reincarnation: silent", silent(result), result)
 check("silenced sessions record nothing, so the seat's own session still raises the task",
       not seat.state_path.exists(), seat.state_path)
@@ -748,6 +758,230 @@ seat.run()
 state = json.loads(seat.state_path.read_text())
 check("state pruned of deleted tasks and conditions no open task names",
       state["raised"] == {} and state["checks"] == {}, state)
+
+# --- the next-action prompt, when no walk is open and nothing runs ----------------
+NEXT_ACTION_FIRST_LINE = ("No approval-walk is open and none of your work is running, so do not "
+                          "stop here.")
+
+
+def tool_use_record(tool_use_id):
+    return {"type": "assistant", "timestamp": "2026-11-02T00:00:00Z",
+            "message": {"content": [{"type": "text", "text": "x"},
+                                    {"type": "tool_use", "id": tool_use_id, "name": "Bash",
+                                     "input": {}}]}}
+
+
+class IdleSeat(Seat):
+    """A Seat whose session has a transcript and a checkout holding docs/walk."""
+
+    def __init__(self):
+        super().__init__()
+        self.checkout = self.home / "seat-checkout"
+        self.walk_directory = self.checkout / "docs" / "walk"
+        self.walk_directory.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(self.checkout)], check=True)
+        self.transcript = self.home / "session.jsonl"
+        self.transcript.write_text("")
+        self.append(tool_use_record("toolu_first"))
+
+    def append(self, record):
+        with self.transcript.open("a") as handle:
+            handle.write(json.dumps(record) + "\n")
+
+    def minutes(self, name, text):
+        (self.walk_directory / f"{name}-minutes.md").write_text(text)
+
+    def stop(self, session_id="idle-session"):
+        return self.run(stdin_text=json.dumps({
+            "session_id": session_id, "transcript_path": str(self.transcript),
+            "cwd": str(self.checkout), "hook_event_name": "Stop", "stop_hook_active": False}))
+
+
+seat = IdleSeat()
+seat.task("5", subject="Free task")
+seat.task("6", metadata={"prerequisites": [{"pr_merged": 150}]}, subject="Waits on a PR")
+seat.respond({"pr:150": {"state": "OPEN", "title": "Open", "url": "https://x/150"}})
+seat.minutes("old-walk", "#next_to_present none, closed\n- Item 2: deferred twice <open>\n")
+result = seat.stop()
+text = context_of(result) or ""
+check("next-action: idle seat gets the prompt, exit 0",
+      result.returncode == 0 and text.startswith(NEXT_ACTION_FIRST_LINE), result)
+check("next-action: the prompt restores the many-parts exception and names ghi-guide-agent",
+      "more than 16 only for one large thing with many parts" in text
+      and "scripts/ghi-guide-agent-ask.py" in text, text)
+check("next-action: an unheld task is listed, a held one is counted, not listed",
+      '- task 5 "Free task"' in text and "Waits on a PR" not in text
+      and "1 more open task(s) are not listed: each waits on" in text, text)
+check("next-action: a walk-minutes line marked <open> is listed with its file and line",
+      "- old-walk-minutes.md:2: - Item 2: deferred twice <open>" in text, text)
+check("next-action: the last line says a second stop without a tool ends the turn",
+      text.endswith("If you end your turn again without running a tool, this hook lets the "
+                    "turn end."), text)
+check("next-action: the prompt is recorded before it is printed",
+      json.loads(seat.state_path.read_text()).get("next_action_prompt")
+      == {"session_id": "idle-session", "newest_tool_use_id": "toolu_first"})
+check("next-action: no tool run since the prompt, so the next stop is silent",
+      silent(seat.stop()))
+seat.append(tool_use_record("toolu_second"))
+check("next-action: a tool run since the prompt lets the prompt come again",
+      (context_of(seat.stop()) or "").startswith(NEXT_ACTION_FIRST_LINE))
+check("next-action: another session in the same list gets its own prompt",
+      (context_of(seat.stop(session_id="other-session")) or "").startswith(
+          NEXT_ACTION_FIRST_LINE))
+
+seat = IdleSeat()
+seat.task("5", subject="Free task")
+check("next-action: with no prerequisite to check, the prompt is still handed",
+      (context_of(seat.stop()) or "").startswith(NEXT_ACTION_FIRST_LINE))
+check("next-action: with no prerequisite to check, the prompt is still recorded",
+      seat.state_path.exists() and json.loads(seat.state_path.read_text()).get(
+          "next_action_prompt") == {"session_id": "idle-session",
+                                    "newest_tool_use_id": "toolu_first"})
+check("next-action: with no prerequisite to check, the next stop with no tool run is silent",
+      silent(seat.stop()))
+
+seat = IdleSeat()
+seat.task("9", metadata=MET, subject="Raised already")
+first_text = context_of(seat.stop()) or ""
+state = json.loads(seat.state_path.read_text())
+for entry in state["checks"].values():
+    entry["checked_at_epoch"] = 0
+seat.state_path.write_text(json.dumps(state))
+seat.respond({f"pr:{MERGED_PR}": "fail"})
+seat.append(tool_use_record("toolu_after_raise"))
+result = seat.stop()
+text = context_of(result) or ""
+check("next-action: a raised task's expired prerequisite that GitHub cannot answer is "
+      "reported in the prompt",
+      first_text.startswith("Act on task 9 ") and result.returncode == 0
+      and text.startswith(NEXT_ACTION_FIRST_LINE)
+      and f"This hook could not ask GitHub whether PR {MERGED_PR} is merged" in text
+      and "1 more open task(s) are not listed" in text, (first_text, result))
+
+seat = IdleSeat()
+seat.minutes("live-walk", "#next_to_present item 1 of 3\n")
+check("next-action: silent while an approval-walk is open", silent(seat.stop()))
+seat.minutes("live-walk", "#next_to_present item 1 of 3\n#approval_walk_paused lunch\n")
+check("next-action: silent while the newest walk is paused", silent(seat.stop()))
+
+seat = IdleSeat()
+handoffs = seat.home / ".claude" / "handoffs"
+handoffs.mkdir(parents=True)
+(handoffs / "idle-session-handoff-asked").write_text("40.0\n")
+check("next-action: silent once a handoff is asked for", silent(seat.stop()))
+(handoffs / "idle-session-handoff-asked").unlink()
+(handoffs / "idle-session-handoff-deferred").write_text("40.0\n")
+check("next-action: silent while a handoff is deferred", silent(seat.stop()))
+
+
+def usage_record(input_tokens):
+    """An assistant record whose usage gives a model-less 200,000-token window this many tokens."""
+    return {"type": "assistant", "timestamp": "2026-11-02T00:00:02Z",
+            "message": {"usage": {"input_tokens": input_tokens},
+                        "content": [{"type": "text", "text": "x"}]}}
+
+
+seat = IdleSeat()
+seat.append(usage_record(70_000))
+result = seat.stop()
+check("next-action: silent, with no marker yet, once the context used reaches the reincarnation "
+      "threshold, because the handoff hook writes its marker in parallel at the same stop",
+      silent(result) and not seat.state_path.exists(), result)
+
+seat = IdleSeat()
+seat.append(usage_record(60_000))
+check("next-action: context used below the reincarnation threshold still gets the prompt",
+      (context_of(seat.stop()) or "").startswith(NEXT_ACTION_FIRST_LINE))
+
+seat = IdleSeat()
+shutil.rmtree(seat.task_directory)
+result = seat.stop()
+check("next-action: a task list whose directory does not exist yet still gets the prompt, "
+      "with no task listed",
+      result.returncode == 0
+      and (context_of(result) or "").startswith(NEXT_ACTION_FIRST_LINE)
+      and "- task " not in (context_of(result) or "")
+      and json.loads(seat.state_path.read_text()).get("next_action_prompt")
+      == {"session_id": "idle-session", "newest_tool_use_id": "toolu_first"}, result)
+
+# One GitHub budget bounds the whole run: tasks 1 and 2 spend it in the due-task pass, so the
+# next-action prompt's check of task 3's expired prerequisite must not get a budget of its own.
+seat = IdleSeat()
+seat.task("1", metadata={"prerequisites": [{"pr_merged": 301}]})
+seat.task("2", metadata={"prerequisites": [{"pr_merged": 302}]})
+seat.task("3", metadata={"prerequisites": [{"pr_merged": 303}]})
+seat.state_path.parent.mkdir(parents=True)
+seat.state_path.write_text(json.dumps({"raised": {"3": {"prerequisites": hook.canonical_prerequisites(
+    [{"pr_merged": 303}])}}, "checks": {}}))
+gh_calls_made = []
+
+
+def slow_timing_out_gh(command, *arguments, **keywords):
+    if command[0] != "gh":
+        return real_subprocess_run(command, *arguments, **keywords)
+    gh_calls_made.append(command[3])
+    time.sleep(0.2)
+    raise subprocess.TimeoutExpired(command, keywords.get("timeout"))
+
+
+real_budget = hook.GH_CALLS_TOTAL_BUDGET_SECONDS
+real_home = os.environ.get("HOME")
+hook.subprocess.run = slow_timing_out_gh
+hook.GH_CALLS_TOTAL_BUDGET_SECONDS = 0.3
+os.environ["HOME"] = str(seat.home)  # the handoff module finds its markers under Path.home()
+try:
+    output = hook.run(json.dumps({
+        "session_id": "idle-session", "transcript_path": str(seat.transcript),
+        "cwd": str(seat.checkout), "hook_event_name": "Stop", "stop_hook_active": False}),
+        {**seat_session_environment(), "CLAUDE_CODE_TASK_LIST_ID": TASK_LIST_ID},
+        seat.home, hook.datetime.now(hook.timezone.utc))
+finally:
+    hook.subprocess.run = real_subprocess_run
+    hook.GH_CALLS_TOTAL_BUDGET_SECONDS = real_budget
+    if real_home is None:
+        os.environ.pop("HOME", None)
+    else:
+        os.environ["HOME"] = real_home
+text = json.loads(output)["hookSpecificOutput"]["additionalContext"] if output else ""
+check("one GitHub budget for the whole run: once the due-task pass spends it, the next-action "
+      "prompt asks gh nothing more",
+      gh_calls_made == ["301", "302"], gh_calls_made)
+check("one GitHub budget for the whole run: each condition gh could not answer is reported once",
+      text.startswith(NEXT_ACTION_FIRST_LINE)
+      and text.count("could not ask GitHub whether PR 301 is merged") == 1
+      and text.count("could not ask GitHub whether PR 302 is merged") == 1
+      and "3 more open task(s) are not listed" in text, text)
+
+
+seat = IdleSeat()
+seat.append({"type": "user", "timestamp": "2026-11-02T00:00:01Z",
+             "toolUseResult": {"status": "async_launched", "agentId": "a1"}})
+check("next-action: silent while a subagent runs", silent(seat.stop()))
+
+seat = IdleSeat()
+with seat.transcript.open("a") as handle:
+    handle.write('{"toolUseResult": {"status": "async_launched", broken\n')
+result = seat.stop()
+check("next-action: silent, with no fault, when the work in flight cannot be counted",
+      silent(result) and not seat.state_path.exists(), result)
+
+seat = IdleSeat()
+seat.task("8", metadata=MET, subject="Due now")
+text = context_of(seat.stop()) or ""
+check("next-action: a due task is raised alone, with no next-action prompt",
+      text.startswith("Act on task 8 ") and NEXT_ACTION_FIRST_LINE not in text, text)
+
+seat = IdleSeat()
+(seat.walk_directory / "broken-minutes.md").mkdir()
+result = seat.stop()
+check("next-action: a walk-minutes file that cannot be read is reported, saying tasks were "
+      "checked",
+      reported(result, "every task was checked and none was due, but the check whether to "
+                       "hand the next-action prompt failed, so none was handed at this stop: ")
+      and "start your ready work and build your next approval-walk yourself whenever no "
+          "approval-walk is open" in result.stderr
+      and "Tell the user this whole message" in result.stderr
+      and not seat.state_path.exists(), result)
 
 shutil.rmtree(SUITE_ROOT, ignore_errors=True)
 print()

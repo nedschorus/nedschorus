@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 """Run a cold-read-full-run against a cold-read-target.
 
-One invocation = one review: six cold-read-cells launched in parallel -- the
-defect-hunt pass in four ({deep, second-strongest-model} x {claude, codex}, where
-second-strongest-model is the agent-binary's second-strongest model) and the
-terminology pass in two (deep x {claude, codex}) -- every report saved
-into a cold-read-record named
+One invocation = one review: eight cold-read-cells launched in parallel, seven
+for the two passes and the eighth for Question 4 (see below) -- the
+defect-hunt pass in five ({deep, second-strongest-model} x {claude, codex}, where
+second-strongest-model is the agent-binary's second-strongest model, and Gemini
+Argon at high on agy) and the terminology pass in two (deep x {claude, codex})
+-- every report saved into a cold-read-record named
 `cold-read-records/<file stem>-<YYYY-MM-DD>/`, or `SKILL-<skill name>-<YYYY-MM-DD>/` for a skill
-(a -2, -3 suffix for a second read of the document that day), progress and next-step
-instructions printed for the reviewing agent as reviews land.
+(a -2, -3 suffix for a second read of the document that day, the first
+free both in this checkout and in the log-store), progress and next-step
+instructions printed for the reviewing agent as reviews land. A report of the
+two passes is named `<runtime>-<hunt|terminology>-<cold-read-tier>.md`, or for a cell the grid
+gives a model, `<runtime>-<hunt|terminology>-<model>.md`. The Argon cell runs on
+agy's one cold-read-tier, `fast`, with the model the grid gives it,
+`gemini-4-argon-high`, and the effort `high`, so its report is
+`agy-hunt-gemini-4-argon-high.md`; its stamp says tier=fast beside
+the model and effort it ran with.
 
 Usage:
   nc-systems/cold-read/cold-read-grid.py --target docs/drafts/foo.md
@@ -22,7 +30,7 @@ it creates anything, the grid lists the cold-read-records in the log-store and
 in this checkout, counts those that froze this document, under its present
 path or an earlier one `git log --follow` shows, and hold a grid report written
 after the commit on origin/main's first-parent line that last changed the
-document -- for a merged topic branch, the merge, not the topic's own commit --
+document -- for a merged nc-topic-branch, the merge, not the topic's own commit --
 prints
 "cold-read-full-run N of 3", and refuses a fourth. A flag saying the user
 decided to run again or to change the design makes the run number 1, and the
@@ -57,8 +65,10 @@ copy's sha256 (`target_sha256=`), so the bytes a report reviewed are named in
 the report itself. At the
 end of the run the cold-read-record is shipped to the log-store on ned-box by
 nc-systems/cold-read/cold-read-record-ship.py, whatever the run's outcome, and the shipper's
-one line is printed as `record:`; a shipping failure is reported, never fatal
-(user-ruled 2026-09-07). The one run that ships nothing is the one that could
+one line is printed as `record:` (user-ruled 2026-09-07). When the shipper's
+line is anything but `shipped:`, a refusal included, the run still finishes
+and keeps its reports, and then it exits 1, because the record did not reach
+the log-store. The one run that ships nothing is the one that could
 not freeze the target: it exits 2 before any cold-read-cell launches, so its
 record holds the reference check alone and no report to keep.
 
@@ -72,18 +82,45 @@ at once, with the same model -- no cold-read-cell is special (user-ruled
 with its CAUSE, the `cause:` line the cold-read-cell program prints
 (nc-systems/cold-read/cold-read-cell-common.py, classify_failed_attempt) or, when it left
 none, one the cold-read-grid names itself: `RETRYING:` at the first failure,
-`FAILED (exit N):` at the second, after which the report is ABSENT. When
+`FAILED (exit N):` at the second, after which the report is ABSENT. Two
+first failures are not retried and go straight to `FAILED` and absence: a
+cause the user can clear (cell_common.USER_CLEARABLE_CAUSE_CLASSES), which a
+retry would only meet again, and an attempt stopped at the time limit. The
+time limit is 4 hours per attempt, counted on time.monotonic(), which leaves
+out time the machine was asleep on both Linux (CLOCK_MONOTONIC) and macOS
+(mach_absolute_time), so a Mac that sleeps overnight does not trip it; the
+attempt is stopped with its children, its cause is `timed-out — timed out
+after 4 hours`, and a report it had written is deleted as unfinished, so it
+neither ships nor counts as a review. The `FAILED` line of an attempt whose cause the user can
+clear ends with "Tell the user: ...", once per agent-binary and cause, so
+the user hears of it while the other cold-read-cells run. When
 every cold-read-cell of one agent-binary has landed or is absent for the same
 agent-binary-wide cause, one `AGENT-BINARY DOWN:` line says so. Every run closes
 with one closing text built from what landed: all landed, some landed (the
 set is valid and incomplete, and is triaged), none landed, or the
-cold-read-target changed, whatever else happened. When any report is absent
+frozen copy changed, whatever else happened. When any report is absent
 every .md file in the record is marked `<!-- INCOMPLETE SET: ... -->`, and
 when an absent report's cause is one the user can clear the closing text
-ends "Tell the user: ...". A cause changes what is reported, never what is
-decided: the retry, the absence, the closing text and the exit code turn
-only on whether a report landed. No timeout: a cold-read-cell that hangs
-holds the run (user-ruled 2026-09-17: add one if a hang is ever seen).
+ends "Tell the user: ...", which repeats each such cause as the run's
+summary. Apart from the retry, a cause changes what is reported, never what
+is decided: the absence, the closing text and the exit code turn only on
+whether a report landed.
+
+QUESTION 4, WHAT SHOULD BE CODE, IS ASKED ONCE PER RUN, beside the cells
+above, by the eighth cold-read-cell, launched at the same time as the seven: the claude launcher on the model and effort the
+cold-read-fast-read uses for it, with the cold-read-fast-read's own prompt
+for it, read from that program so the two runs cannot drift apart. It reads
+the frozen copy like the cells above and is retried and timed out by the same
+rules, but it is not one of the seven: whether its report landed changes
+neither the closing text's variant, the INCOMPLETE SET marker, the
+AGENT-BINARY DOWN line, "Tell the user: ..." nor the exit code. When one of
+the cells above is absent, its landed report gets the INCOMPLETE SET marker like
+every .md file in the record; its own absence puts no marker anywhere. Its report
+is `question-4-what-should-be-code-answer.md`, a name that starts with neither agent-binary, so a run in
+which it alone landed is not counted among the three. The grid writes the
+question's heading under the report's provenance comment, as the prompt
+tells the reviewer it will, and the closing text says where the answer is,
+or why there is none.
 
 AN EDIT TO THE ORIGINAL STOPS NOTHING.
 Every cold-read-cell reads the frozen copy, so an edit to the original leaves
@@ -99,7 +136,8 @@ read, so a reviewer still reading is spending the rest of a 10-20 minute read
 on a review nobody will triage. The copy's fingerprint is therefore taken at
 every poll, not only at the end: the first poll that sees it differ while any
 cold-read-cell is still running stops every running cold-read-cell with its
-children, marks what the set holds, and exits 3. Every poll, which is every 5
+children, deletes any report a stopped one had written, as unfinished, marks
+what the set holds, and exits 3. Every poll, which is every 5
 seconds, because hashing a Markdown file costs microseconds: a slower cadence
 would buy nothing and add a timer. The end-of-run comparison stays, for a move
 after the last cold-read-cell has finished, which stops nothing. A
@@ -116,12 +154,16 @@ since the count last started ends the attempt: its closing text says to tell
 the user instead of starting a new run, and a run launched after it is refused
 until the user rules.
 
-Exit codes: 0 all cold-read-cells ran, 1 one or more reports are absent, 2 no
-cold-read-cell was launched (a bad invocation, a cold-read-target this
-instrument refuses to review, or a cold-read-target that could not be frozen
-into the cold-read-record), 3 the frozen copy changed while the
+Exit codes: 0 all seven cold-read-cells of the two passes ran and the record
+reached the log-store, whether or not the Question 4 report landed, 1 one or
+more of their seven reports are absent or the record did not reach the
+log-store, or both, 2 no cold-read-cell was launched (a bad invocation, a cold-read-target
+this instrument refuses to review, or a cold-read-target that could not be
+frozen into the cold-read-record), 3 the frozen copy changed while the
 cold-read-cells were running, so no report in the set can say which text it
-reviewed. An edit to the original alone changes no exit code.
+reviewed. A run that exits 2 ships nothing, and 3 stands whether or not the
+record arrived; the `record:` line says which. An edit to the original alone
+changes no exit code.
 """
 
 import argparse
@@ -133,9 +175,9 @@ import os
 import pathlib
 import re
 import shlex
-import signal
 import subprocess
 import sys
+import tempfile
 import time
 import typing
 import urllib.parse
@@ -150,8 +192,12 @@ RECORDS_DIR = record_names.RECORDS_DIR
 CELL_LAUNCHERS = {
     "claude": pathlib.Path(__file__).with_name("cold-read-claude-cell.py"),
     "codex": pathlib.Path(__file__).with_name("cold-read-codex-cell.py"),
+    "agy": pathlib.Path(__file__).with_name("cold-read-agy-cell.py"),
 }
 RECORD_SHIPPER = pathlib.Path(__file__).with_name("cold-read-record-ship.py")
+# The shipper's one line opens with this only when the record reached the
+# log-store; REFUSED and FAILED both leave it on disk alone.
+RECORD_SHIPPED_LINE_PREFIX = "shipped:"
 _record_shipper_spec = importlib.util.spec_from_file_location(
     "cold_read_record_ship", RECORD_SHIPPER)
 record_shipper = importlib.util.module_from_spec(_record_shipper_spec)
@@ -180,6 +226,18 @@ _git_machine_readable_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
 _git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
+# Loaded only for the Question 4 prompt, heading, model and effort, so the
+# cold-read-full-run asks Question 4 exactly as the cold-read-fast-read does.
+_fast_read_spec = importlib.util.spec_from_file_location(
+    "cold_read_fast_read", pathlib.Path(__file__).with_name("cold-read-fast-read.py"))
+fast_read = importlib.util.module_from_spec(_fast_read_spec)
+_fast_read_spec.loader.exec_module(fast_read)
+# Starts with neither agent-binary's name, so FULL_RUN_REPORT_NAME_PATTERN
+# does not count a run in which this report alone landed, and the
+# AGENT-BINARY DOWN check, which groups cells by that name's first word,
+# never counts it among an agent-binary's cells.
+COLD_READ_FULL_RUN_WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_FILE_NAME = "question-4-what-should-be-code-answer.md"
+WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_FILE_NAME = "cold-read-grid-what-should-be-code-prompt.md"
 # The log also contains runtime and model text; only program-prefixed lines are cell status.
 CELL_PROGRAM_NAMES = tuple(path.stem for path in CELL_LAUNCHERS.values())
 # Pin terminology effort explicitly so launcher tier-map changes cannot change the pass.
@@ -188,6 +246,26 @@ GRID_CELL_ROSTER = (
     ("defect-hunt", "second-strongest-model", None),
     ("terminology", "deep", "max"),
 )
+
+
+class GridCell(typing.NamedTuple):
+    """One cold-read-cell of the run; model and effort None keep the launcher's tier pin."""
+
+    runtime: str
+    cell_pass: str
+    tier: str
+    model: typing.Optional[str]
+    effort: typing.Optional[str]
+
+
+# agy serves only the fast tier, so Argon runs on it with the model and effort given here.
+GEMINI_ARGON_DEFECT_HUNT_CELL = GridCell(
+    "agy", "defect-hunt", "fast", "gemini-4-argon-high", "high")
+GRID_CELLS = tuple(
+    GridCell(runtime, cell_pass, tier, None, effort)
+    for runtime in ("claude", "codex")
+    for cell_pass, tier, effort in GRID_CELL_ROSTER
+) + (GEMINI_ARGON_DEFECT_HUNT_CELL,)
 
 # Logs, reports and captures record observations; cold reads must not revise that evidence.
 UNREVIEWABLE_TARGET_GENRE_SUFFIXES = ("-log", "-report", "-capture")
@@ -212,15 +290,22 @@ STOPPED_CELL_WRITE_CHECK_LINE = (
     "it, such as notes about the document under review. Ask the user about any other "
     "change you did not make, and whenever you are unsure.")
 
-ALL_LANDED_OPENING = "All six reports landed in {record_dir}, one file per reviewer."
+ALL_LANDED_OPENING = "All seven reports landed in {record_dir}, one file per reviewer."
 SOME_LANDED_OPENING = (
     "{landed} of {launched} reports landed in {record_dir}. The set is valid "
     "and incomplete: triage the reports that landed.")
 NONE_LANDED_OPENING = "No report landed in {record_dir}, so there is nothing to triage."
+WHAT_SHOULD_BE_CODE_QUESTION_ANSWERED_LINE = (
+    "Question 4, What should be code, is answered in {report_path}, by one more "
+    "reviewer of the same frozen-copy. Triage its numbered items as you triage the "
+    "defect-hunt reports' findings.")
+WHAT_SHOULD_BE_CODE_QUESTION_NOT_ANSWERED_LINE = (
+    "Question 4, What should be code, was not answered: {cause} (log: {log_path}). "
+    "The other reports do not depend on it: go on without its answer.")
 NONE_LANDED_CLOSING = (
     "Start a new cold-read-full-run once the causes above that the user can "
     "clear are cleared, or at once if none of them is.")
-RECORD_ABSENCES_SENTENCE = "Record each absent report and its cause in triage.md."
+RECORD_ABSENCES_SENTENCE = "Record each absent report and its cause in cold-read-triage.md."
 
 COMPLETION_BODY = """\
 Read every report in full. The defect-hunt reports flag defects with each
@@ -238,7 +323,7 @@ take to the user only what step 9 of the /cold-read skill sends to the
 user.{record_absences}
 
 This record was shipped to the log-store on ned-box when the run ended (the
-`record:` line above says whether it arrived); once triage.md is written,
+`record:` line above says whether it arrived); once cold-read-triage.md is written,
 run `nc-systems/cold-read/cold-read-record-ship.py {record_dir}` so it joins the reports
 there. cold-read-records/ stays gitignored: never commit it. Leave {record_dir}
 in place once the work it served has landed — these records are kept, not
@@ -256,6 +341,12 @@ TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE = "COLD_READ_GRID_TARGET_CHECK_INTERVAL_
 # Tests shorten the poll so stub cells that finish at once are not waited on for seconds.
 CELL_POLL_INTERVAL_OVERRIDE_VARIABLE = "COLD_READ_GRID_CELL_POLL_INTERVAL_SECONDS"
 CELL_POLL_INTERVAL_DEFAULT_SECONDS = 5.0
+# Tests shorten the limit so a timed-out attempt is seen in seconds.
+CELL_ATTEMPT_TIMEOUT_OVERRIDE_VARIABLE = "COLD_READ_GRID_CELL_ATTEMPT_TIMEOUT_SECONDS"
+CELL_ATTEMPT_TIMEOUT_DEFAULT_SECONDS = 4 * 60 * 60
+TIMED_OUT_CAUSE_CLASS = "timed-out"
+TIMED_OUT_CAUSE_DETAIL = "timed out after 4 hours"
+STOPPED_CELL_UNFINISHED_REPORT_DELETED_PHRASE = "; the unfinished report it had written is deleted"
 
 
 def record_clock_reading() -> datetime.datetime:
@@ -279,10 +370,10 @@ COUNT_SKIPPED_INSIDE_DESIGN_TO_MAIN_MARKER_NAME = (
 FROZEN_COPY_CHANGED_STOP_MARKER_NAME = "frozen-copy-changed-during-run-stop-marker.txt"
 FROZEN_COPY_CHANGED_STOPS_IN_A_ROW_LIMIT = 3
 # A grid report's name. Older records prefix each report with "<record name>--".
-# A fast read's record holds fast-read.md and, beside it, a copy of the target
+# A fast read's record holds cold-read-fast-read.md and, beside it, a copy of the target
 # marked with sentence ids, whose name matches this pattern too when the
-# target's stem starts claude- or codex-, so that copy is excluded by suffix.
-FULL_RUN_REPORT_NAME_PATTERN = re.compile(r"^(?:.*--)?(?:claude|codex)-.*\.md$")
+# target's stem starts claude-, codex- or agy-, so that copy is excluded by suffix.
+FULL_RUN_REPORT_NAME_PATTERN = re.compile(r"^(?:.*--)?(?:claude|codex|agy)-.*\.md$")
 
 
 class FullRunCountUnavailable(Exception):
@@ -414,10 +505,13 @@ def earlier_full_runs_of(target: pathlib.Path) -> tuple:
 
 
 def make_record_dir(target: pathlib.Path, now: datetime.datetime) -> pathlib.Path:
-    """Create and return the first unused record directory for this document and day."""
-    record_dir = record_names.fresh_record_directory(
+    """Create and return the first record directory for this document and day
+    unused both here and in the log-store."""
+    record_dir, store_unlisted = record_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
         RECORDS_DIR / record_directory_name_for_target(target, now))
-    record_dir.mkdir(parents=True)
+    if store_unlisted is not None:
+        print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(
+            "cold-read-grid", record_dir, store_unlisted), file=sys.stderr)
     return record_dir
 
 
@@ -489,7 +583,7 @@ def reference_integrity_pre_pass(target: pathlib.Path, record_dir: pathlib.Path)
         lines.append(f"- {'ok' if resolved or sharing == 1 else 'UNRESOLVED'}: `{clean}`{note}")
     if not candidates and not file_link_paths:
         lines.append("- no path-like references found")
-    (record_dir / "reference-check.md").write_text(
+    (record_dir / record_names.COLD_READ_REFERENCE_CHECK_REPORT_FILE_NAME).write_text(
         "\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -648,10 +742,10 @@ def incomplete_set_marker(absent: dict, launched: int) -> str:
 
 
 def cell_report_path(
-    record_dir: pathlib.Path, runtime: str, cell_pass: str, tier: str,
+    record_dir: pathlib.Path, runtime: str, cell_pass: str, tier_or_model: str,
 ) -> pathlib.Path:
     pass_token = "hunt" if cell_pass == "defect-hunt" else cell_pass
-    return record_dir / f"{runtime}-{pass_token}-{tier}.md"
+    return record_dir / f"{runtime}-{pass_token}-{tier_or_model}.md"
 
 
 class CellAttempt(typing.NamedTuple):
@@ -663,6 +757,7 @@ class CellAttempt(typing.NamedTuple):
     process: typing.Optional[subprocess.Popen]
     stderr_path: pathlib.Path
     start_error: str
+    started_at: float
 
 
 class AbsentReport(typing.NamedTuple):
@@ -683,6 +778,8 @@ class RunOutcome(typing.NamedTuple):
     down: dict
     stopped: list
     moved_mid_run: typing.Optional[tuple]
+    # The Question 4 cell's absence, kept out of `absent`: it fails no run.
+    what_should_be_code_question_absent: dict
 
 
 def cell_name_of(report_path: pathlib.Path) -> str:
@@ -696,6 +793,9 @@ def runtime_of(cell_name: str) -> str:
 def start_attempt(command: list, report_path: pathlib.Path, attempt: int,
                   stderr_path: pathlib.Path) -> CellAttempt:
     """Launch a cell with output logged; return an attempt even if startup fails."""
+    # time.monotonic() stops while the machine sleeps, on Linux and on macOS alike;
+    # time.clock_gettime(CLOCK_MONOTONIC) would count a Mac's sleep.
+    started_at = time.monotonic()
     with open(stderr_path, "w", encoding="utf-8") as err:
         try:
             process = subprocess.Popen(  # pylint: disable=consider-using-with
@@ -704,28 +804,79 @@ def start_attempt(command: list, report_path: pathlib.Path, attempt: int,
             )
         except OSError as error:
             err.write(f"cold-read-grid: could not start {command[0]}: {error}\n")
-            return CellAttempt(report_path, command, attempt, None, stderr_path, str(error))
-    return CellAttempt(report_path, command, attempt, process, stderr_path, "")
+            return CellAttempt(report_path, command, attempt, None, stderr_path, str(error),
+                               started_at)
+    return CellAttempt(report_path, command, attempt, process, stderr_path, "", started_at)
 
 
 def launch_cells(target: pathlib.Path, record_dir: pathlib.Path,
                  target_origin: pathlib.Path) -> dict:
     """Return {report_path: CellAttempt} for reviewers of the frozen target."""
     running = {}
-    for runtime, launcher in CELL_LAUNCHERS.items():
-        for cell_pass, tier, effort in GRID_CELL_ROSTER:
-            report_path = cell_report_path(record_dir, runtime, cell_pass, tier)
-            stderr_path = record_dir / (report_path.name + ".stderr.log")
-            command = [str(launcher), "--cell", cell_pass, "--tier", tier,
-                       "--target", str(target),
-                       "--target-origin", str(target_origin),
-                       "--report", str(report_path)]
-            # An explicit effort bypasses the launcher's tier-map default.
-            if effort:
-                command += ["--effort", effort]
-            # The reviewer writes its report; captured chat can omit findings written before tool calls.
-            running[report_path] = start_attempt(command, report_path, 1, stderr_path)
+    for cell in GRID_CELLS:
+        # A model the grid gives names the report, so the name says what ran.
+        report_path = cell_report_path(record_dir, cell.runtime, cell.cell_pass,
+                                       cell.model or cell.tier)
+        stderr_path = record_dir / (report_path.name + ".stderr.log")
+        command = [str(CELL_LAUNCHERS[cell.runtime]), "--cell", cell.cell_pass,
+                   "--tier", cell.tier,
+                   "--target", str(target),
+                   "--target-origin", str(target_origin),
+                   "--report", str(report_path)]
+        # An explicit model or effort bypasses the launcher's tier-map default.
+        if cell.model:
+            command += ["--model", cell.model]
+        if cell.effort:
+            command += ["--effort", cell.effort]
+        # The reviewer writes its report; captured chat can omit findings written before tool calls.
+        running[report_path] = start_attempt(command, report_path, 1, stderr_path)
     return running
+
+
+def launch_what_should_be_code_question_cell(
+    target: pathlib.Path, record_dir: pathlib.Path, target_origin: pathlib.Path,
+    prompt_file: pathlib.Path,
+) -> dict:
+    """Return {report_path: CellAttempt} for the one cell that asks Question 4
+    of the frozen target, with the prompt the cold-read-fast-read uses."""
+    prompt_file.write_text(
+        fast_read.COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE,
+        encoding="utf-8")
+    report_path = record_dir / COLD_READ_FULL_RUN_WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_FILE_NAME
+    command = [str(CELL_LAUNCHERS["claude"]),
+               "--cell", fast_read.WHAT_SHOULD_BE_CODE_QUESTION_COLD_READ_CELL_LABEL,
+               "--tier", fast_read.WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_COLD_READ_TIER,
+               "--model", fast_read.WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID,
+               "--effort", fast_read.WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_EFFORT,
+               "--target", str(target),
+               "--target-origin", str(target_origin),
+               "--report", str(report_path),
+               "--prompt-file", str(prompt_file)]
+    stderr_path = record_dir / (report_path.name + ".stderr.log")
+    return {report_path: start_attempt(command, report_path, 1, stderr_path)}
+
+
+def what_should_be_code_question_closing_line(record_dir: pathlib.Path,
+                                              outcome: "RunOutcome") -> str:
+    """Put the question's heading under the landed report's provenance comment,
+    as the prompt promises the reviewer, and return the closing text's line
+    saying where the answer is or why there is none; empty when the run
+    stopped the cell."""
+    report_path = record_dir / COLD_READ_FULL_RUN_WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_FILE_NAME
+    name = cell_name_of(report_path)
+    absent = outcome.what_should_be_code_question_absent.get(name)
+    if absent is not None:
+        return WHAT_SHOULD_BE_CODE_QUESTION_NOT_ANSWERED_LINE.format(
+            cause=f"{absent.cause_class}{cell_common.CAUSE_SEPARATOR}{absent.detail}",
+            log_path=absent.log_path)
+    if name in outcome.stopped:
+        return ""
+    lines = report_path.read_text(encoding="utf-8").split("\n")
+    insert_at = 1 if lines and lines[0].startswith("<!-- provenance:") else 0
+    lines[insert_at:insert_at] = [
+        fast_read.WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING, ""]
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    return WHAT_SHOULD_BE_CODE_QUESTION_ANSWERED_LINE.format(report_path=report_path)
 
 
 def cell_status_line(line: str, phrase: str) -> bool:
@@ -788,33 +939,29 @@ def announce_agent_binary_down(cells_by_runtime: dict, outcome: RunOutcome) -> N
               f"{len(absences)} reports absent", flush=True)
 
 
-def stop_process_tree(process: subprocess.Popen, grace_seconds: float = 5.0) -> None:
-    """Stop a cell's process group and reap its launcher."""
-    # macOS answers EPERM, not ESRCH, for a group whose members have all exited.
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
-        pass
-    try:
-        process.wait(timeout=grace_seconds)
-    except subprocess.TimeoutExpired:
-        pass
-    # Children may remain in the group after the launcher exits.
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
-    process.wait()
+def stop_attempt_and_delete_unfinished_report(attempt: CellAttempt,
+                                              report_path: pathlib.Path) -> bool:
+    """Stop a running attempt with its children, delete any report it wrote,
+    and return whether there was one to delete."""
+    if attempt.process is not None:
+        cell_common.stop_process_tree(attempt.process)
+    # A report written before the stop is unfinished; as a .md it would ship and count as a review.
+    report_deleted = report_path.is_file()
+    report_path.unlink(missing_ok=True)
+    return report_deleted
 
 
 def wait_for_cells(running: dict,
                    target_move: typing.Callable[[], typing.Optional[tuple]],
                    target_check_interval_seconds: float = 0.0,
                    cell_poll_interval_seconds: float = CELL_POLL_INTERVAL_DEFAULT_SECONDS,
+                   cell_attempt_timeout_seconds: float = CELL_ATTEMPT_TIMEOUT_DEFAULT_SECONDS,
                    ) -> RunOutcome:
-    """Retry failed cells once and wait for reports, absences or a changed target."""
+    """Retry failed cells once, unless the cause is user-clearable or the attempt
+    timed out, and wait for reports, absences or a changed target."""
     # A successful exit alone does not prove a review exists; require a nonempty report.
-    outcome = RunOutcome([], {}, {}, [], None)
+    outcome = RunOutcome([], {}, {}, [], None, {})
+    told_the_user = set()
     last_target_check = time.monotonic()
     cells_by_runtime = {}
     for report_path in running:
@@ -825,10 +972,20 @@ def wait_for_cells(running: dict,
         for report_path in list(running):
             attempt = running[report_path]
             code = None if attempt.process is None else attempt.process.poll()
+            timed_out = (attempt.process is not None and code is None
+                         and time.monotonic() - attempt.started_at >= cell_attempt_timeout_seconds)
+            report_deleted = False
+            if timed_out:
+                report_deleted = stop_attempt_and_delete_unfinished_report(attempt, report_path)
+                code = attempt.process.returncode
+                print(f"WRITE CHECK DID NOT RUN: {report_path.name} — "
+                      f"{STOPPED_CELL_WRITE_CHECK_LINE.format(cell=cell_name_of(report_path))}",
+                      flush=True)
             if attempt.process is not None and code is None:
                 continue
             del running[report_path]
             name = cell_name_of(report_path)
+            is_question_4 = report_path.name == COLD_READ_FULL_RUN_WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_FILE_NAME
             log_lines = attempt.stderr_path.read_text(encoding="utf-8").splitlines()
             lift_cell_status_lines(report_path, log_lines)
             has_report = (
@@ -838,11 +995,15 @@ def wait_for_cells(running: dict,
             if attempt.process is not None and code == 0 and has_report:
                 attempt.stderr_path.unlink(missing_ok=True)
                 print(f"saved: {report_path}", flush=True)
-                outcome.landed.append(name)
+                if not is_question_4:
+                    outcome.landed.append(name)
             else:
-                cause_class, detail = cause_of_failed_attempt(attempt, code, log_lines)
+                # A stopped attempt's exit status is the signal, which says nothing of why.
+                cause_class, detail = ((TIMED_OUT_CAUSE_CLASS, TIMED_OUT_CAUSE_DETAIL) if timed_out
+                                       else cause_of_failed_attempt(attempt, code, log_lines))
                 cause = f"{cause_class}{cell_common.CAUSE_SEPARATOR}{detail}"
-                if attempt.attempt == 1:
+                if (attempt.attempt == 1 and not timed_out
+                        and cause_class not in cell_common.USER_CLEARABLE_CAUSE_CLASSES):
                     kept = report_path.with_name(report_path.name + ".attempt-1.stderr.log")
                     attempt.stderr_path.rename(kept)
                     print(f"{RETRYING_PREFIX} {name}{cell_common.CAUSE_SEPARATOR}{cause} "
@@ -851,25 +1012,39 @@ def wait_for_cells(running: dict,
                     running[report_path] = start_attempt(attempt.command, report_path, 2, retry_log)
                 else:
                     exit_text = "none" if attempt.process is None else str(code)
-                    print(f"FAILED (exit {exit_text}): {name}{cell_common.CAUSE_SEPARATOR}"
-                          f"{cause} (stderr kept: {attempt.stderr_path})", flush=True)
-                    outcome.absent[name] = AbsentReport(
+                    report = AbsentReport(
                         name, runtime_of(name), cause_class, detail, attempt.stderr_path)
+                    # On the FAILED line, so the Monitor that watches FAILED delivers it.
+                    # Not for Question 4: the other reports do not depend on its answer.
+                    tell = ""
+                    if (not is_question_4
+                            and cause_class in cell_common.USER_CLEARABLE_CAUSE_CLASSES
+                            and (report.runtime, cause_class) not in told_the_user):
+                        told_the_user.add((report.runtime, cause_class))
+                        tell = f". Tell the user: {user_clearable_cause_text(report)}."
+                    print(f"FAILED (exit {exit_text}): {name}{cell_common.CAUSE_SEPARATOR}"
+                          f"{cause} (stderr kept: {attempt.stderr_path})"
+                          f"{STOPPED_CELL_UNFINISHED_REPORT_DELETED_PHRASE if report_deleted else ''}{tell}",
+                          flush=True)
+                    if is_question_4:
+                        outcome.what_should_be_code_question_absent[name] = report
+                    else:
+                        outcome.absent[name] = report
             announce_agent_binary_down(cells_by_runtime, outcome)
         if running and time.monotonic() - last_target_check >= target_check_interval_seconds:
             last_target_check = time.monotonic()
             move = target_move()
             if move is not None:
                 for report_path, attempt in running.items():
-                    if attempt.process is not None:
-                        stop_process_tree(attempt.process)
+                    report_deleted = stop_attempt_and_delete_unfinished_report(attempt, report_path)
                     outcome.stopped.append(cell_name_of(report_path))
                     # Stopped cells never reach the post-model stray-write check; absence of results is not a clean check.
                     log_lines = (attempt.stderr_path.read_text(encoding="utf-8").splitlines()
                                  if attempt.stderr_path.is_file() else [])
                     lift_cell_status_lines(report_path, log_lines)
                     print(f"WRITE CHECK DID NOT RUN: {report_path.name} — "
-                          f"{STOPPED_CELL_WRITE_CHECK_LINE.format(cell=cell_name_of(report_path))}",
+                          f"{STOPPED_CELL_WRITE_CHECK_LINE.format(cell=cell_name_of(report_path))}"
+                          f"{STOPPED_CELL_UNFINISHED_REPORT_DELETED_PHRASE if report_deleted else ''}",
                           flush=True)
                 return outcome._replace(moved_mid_run=move)
     return outcome
@@ -884,9 +1059,13 @@ def tell_the_user_sentence(absent: dict) -> str:
     if not causes:
         return ""
     return "Tell the user: " + "; ".join(
-        f"{report.runtime} {report.cause_class}{cell_common.CAUSE_SEPARATOR}"
-        f"{report.detail} (log: {report.log_path})"
-        for report in causes.values()) + "."
+        user_clearable_cause_text(report) for report in causes.values()) + "."
+
+
+def user_clearable_cause_text(report: AbsentReport) -> str:
+    """One cause the user can clear, with the log that shows it."""
+    return (f"{report.runtime} {report.cause_class}{cell_common.CAUSE_SEPARATOR}"
+            f"{report.detail} (log: {report.log_path})")
 
 
 def absence_lines(outcome: RunOutcome) -> str:
@@ -986,8 +1165,9 @@ def main() -> int:
               f"were made since origin/main last took a change to it: "
               f"{', '.join(earlier_runs)}. No reviewer was "
               f"launched and no record directory was created.\n"
-              f"Bring the user the number of findings each of those runs' triage.md "
-              f"in the log-store lists, and ask whether to stop, run again, or change "
+              f"Bring the user the number of findings each of those runs' "
+              f"{record_names.COLD_READ_TRIAGE_FILE_NAME} (an older record names it "
+              f"triage.md) in the log-store lists, and ask whether to stop, run again, or change "
               f"the document's design.\n"
               f"If the user rules to run again, run again with "
               f"{USER_RULED_COUNT_RESTART_FLAG}.\n"
@@ -1031,15 +1211,27 @@ def main() -> int:
               f"counting the earlier cold-read-full-runs of {target.name}: "
               f"{count_unavailable}\n"
               f"Tell the user what this line says.")
-    print(f"Launched six reviewers against {target}. Reports appear in "
+    print(f"Launched {len(GRID_CELLS)} reviewers against {target}, and one more that answers "
+          f"Question 4, What should be code. Reports appear in "
           f"{record_dir} as each completes — read each as it arrives.")
 
-    outcome = wait_for_cells(
-        launch_cells(frozen_target, record_dir, target),
-        lambda: moved_frozen_copy(frozen_target, target_before),
-        float(os.environ.get(TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE) or 0),
-        float(os.environ.get(CELL_POLL_INTERVAL_OVERRIDE_VARIABLE)
-              or CELL_POLL_INTERVAL_DEFAULT_SECONDS))
+    # Outside the checkout, like the cold-read-fast-read's: the cell's prompt is
+    # not part of the record, and the claude launcher needs it as a file.
+    with tempfile.TemporaryDirectory(prefix="cold-read-grid-") as scratch:
+        running = launch_cells(frozen_target, record_dir, target)
+        running.update(launch_what_should_be_code_question_cell(
+            frozen_target, record_dir, target,
+            pathlib.Path(scratch) / WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_FILE_NAME))
+        outcome = wait_for_cells(
+            running,
+            lambda: moved_frozen_copy(frozen_target, target_before),
+            float(os.environ.get(TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE) or 0),
+            float(os.environ.get(CELL_POLL_INTERVAL_OVERRIDE_VARIABLE)
+                  or CELL_POLL_INTERVAL_DEFAULT_SECONDS),
+            float(os.environ.get(CELL_ATTEMPT_TIMEOUT_OVERRIDE_VARIABLE)
+                  or CELL_ATTEMPT_TIMEOUT_DEFAULT_SECONDS))
+    # Before any marker goes in and before shipping: the store refuses changed bytes.
+    question_4_line = what_should_be_code_question_closing_line(record_dir, outcome)
     # Retain the poll result if the changed bytes were restored before the final comparison.
     move = moved_frozen_copy(frozen_target, target_before) or outcome.moved_mid_run
     target_changed = move is not None
@@ -1058,12 +1250,13 @@ def main() -> int:
     if original_line:
         print(original_line, flush=True)
 
-    launched = len(CELL_LAUNCHERS) * len(GRID_CELL_ROSTER)
+    launched = len(GRID_CELLS)
     if outcome.absent:
         # Keep target-changed first, and add all markers before shipping: the store refuses changed bytes.
         mark_every_report(record_dir, incomplete_set_marker(outcome.absent, launched))
 
-    print(f"record: {ship_record(record_dir)}", flush=True)
+    record_line = ship_record(record_dir)
+    print(f"record: {record_line}", flush=True)
 
     print()
     tell = tell_the_user_sentence(outcome.absent)
@@ -1080,7 +1273,7 @@ def main() -> int:
     elif not outcome.absent:
         print(ALL_LANDED_OPENING.format(record_dir=record_dir))
         print()
-        print(COMPLETION_BODY.format(record_dir=record_dir, read_until="all six",
+        print(COMPLETION_BODY.format(record_dir=record_dir, read_until="all seven",
                                      record_absences=""))
     elif outcome.landed:
         print(SOME_LANDED_OPENING.format(landed=len(outcome.landed), launched=launched,
@@ -1094,12 +1287,15 @@ def main() -> int:
         print(NONE_LANDED_OPENING.format(record_dir=record_dir))
         print(absences)
         print(NONE_LANDED_CLOSING)
+    if question_4_line and not target_changed:
+        print()
+        print(question_4_line)
     if tell:
         print(tell)
     # A changed target invalidates the review; missing reports only make the review incomplete.
     if target_changed:
         return 3
-    return 1 if outcome.absent else 0
+    return 1 if outcome.absent or not record_line.startswith(RECORD_SHIPPED_LINE_PREFIX) else 0
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -968,10 +968,10 @@ with scratch() as directory:
     check("a cut list tells the agent to narrow the name",
           "run again with more of the name" in stdout, stdout)
 
-# --- The git surface: a file added and deleted on a merged topic branch --------
+# --- The git surface: a file added and deleted on a merged nc-topic-branch --------
 # Every pull request reaches main as a merge commit. With a pathspec and no
 # --full-history, git log follows a merge's first parent alone when the path
-# is the same there, so a file that lived only on the topic branch is never
+# is the same there, so a file that lived only on the nc-topic-branch is never
 # reached once the branch and its worktree's reflog are gone.
 with scratch() as directory:
     base = pathlib.Path(directory)
@@ -1001,7 +1001,7 @@ with scratch() as directory:
           "branch's commits, and with it does",
           simplified == "" and removal in full.split(), (simplified, full))
     code, stdout, stderr = run(base, "side-branch-draft.md")
-    check("a file that lived only on a merged topic branch is found at its "
+    check("a file that lived only on a merged nc-topic-branch is found at its "
           "deleting commit",
           code == 0
           and f'commit {removal[:12]} ("Remove the side-branch draft")' in stdout

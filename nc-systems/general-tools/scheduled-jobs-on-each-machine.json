@@ -63,10 +63,10 @@
       }
     },
     {
-      "name": "handoff-agent-seat-died-without-session-handoff-restart-watcher",
-      "program": "nc-systems/handoff/handoff-agent-seat-died-without-session-handoff-restart-watcher.py",
+      "name": "handoff-agent-crash-watcher",
+      "program": "nc-systems/handoff/handoff-agent-crash-watcher.py",
       "arguments": [],
-      "output": ".claude/handoff-agent-seat-died-without-session-handoff-restart-watcher.log",
+      "output": ".claude/handoff-agent-crash-watcher.log",
       "on": {
         "ned-box": {"scheduler": "cron", "schedule": "* * * * *"}
       }
@@ -106,6 +106,28 @@
           "launchd_keys": {"StartCalendarInterval": {"Hour": 7, "Minute": 0}}
         },
         "ned-box": {"scheduler": "cron", "schedule": "0 7 * * *"}
+      }
+    },
+    {
+      "name": "agent-seat-database-nightly-backup-with-integrity-check",
+      "program": "nc-systems/agent-seat-database/agent-seat-database-nightly-backup-with-integrity-check.py",
+      "arguments": [],
+      "output": ".claude/agent-seat-database-nightly-backup-with-integrity-check.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "15 2 * * *"}
+      }
+    },
+    {
+      "name": "agent-seat-database-newest-backup-copy-to-mac",
+      "program": "nc-systems/agent-seat-database/agent-seat-database-newest-backup-copy-to-mac.py",
+      "arguments": [],
+      "output": ".claude/agent-seat-database-newest-backup-copy-to-mac.log",
+      "on": {
+        "mac": {
+          "scheduler": "launchd",
+          "label": "com.nedschorus.agent-seat-database-newest-backup-copy-to-mac",
+          "launchd_keys": {"StartCalendarInterval": {"Hour": 4, "Minute": 15}}
+        }
       }
     },
     {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail when a tracked test suite reports a skipped test case in a form
+"""Fail when a tracked nc-test-suite reports a skipped test case in a form
 scripts/run-all-test-suites.py does not count.
 
 The test runner counts a skipped test case only as a printed line matching
@@ -9,7 +9,7 @@ report and the suite reads as a full pass.
 
 Usage: test-suites-source-scan-for-skipped-case-prints-run-all-test-suites-cannot-count-test.py
          [--checkout DIR]
-  --checkout  scan this checkout's test suites only, without the self-check
+  --checkout  scan this checkout's nc-test-suites only, without the self-check
               cases; default, the checkout this file is in, with them
 """
 import importlib.util
@@ -155,13 +155,13 @@ if not SCAN_ONLY:
 
 listed = subprocess.run(["git", "-C", str(REPOSITORY), "ls-files", "--", "*-test.py", "*-test.sh"],
                         capture_output=True, text=True)
-check("git lists the test suites", listed.returncode == 0 and listed.stdout.strip(),
+check("git lists the nc-test-suites", listed.returncode == 0 and listed.stdout.strip(),
       listed.stderr)
 offences = []
 for relative in listed.stdout.splitlines():
     offences += uncounted_skip_forms(
         relative, (REPOSITORY / relative).read_text(encoding="utf-8", errors="replace"))
-check("every tracked test suite prints skips in the form the test runner counts",
+check("every tracked nc-test-suite prints skips in the form the test runner counts",
       not offences, "\n".join(offences))
 
 if failures:

@@ -140,7 +140,7 @@ TOKEN_ONLY_MERGE_ACCOUNT="The gate reads GitHub only as the merge account, $MERG
 TOKEN_TELL_THE_USER="Tell the user this message: only the user can restore the token."
 
 if [ $# -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
-  echo "usage: scripts/merge-gate.sh <pull request number> <the head commit, all 40 characters> <reviewed-since: ISO 8601 time>"
+  echo "usage: scripts/merge-gate.sh <pull request number> <the nc-head-commit, all 40 characters> <reviewed-since: ISO 8601 time>"
   echo
   echo "Decides whether a pull request may merge: reads it from GitHub as the merge account"
   echo "$MERGE_ACCOUNT and exits 0 only when every requirement is met, printing a merge"
@@ -150,7 +150,7 @@ if [ $# -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
   exit 0
 fi
 [ $# -eq 3 ] || cannot "merge-gate.sh takes exactly three arguments and was given $#." \
-  "Call it as: scripts/merge-gate.sh <pull request number> <the head commit, all 40 characters> <reviewed-since: the submitted_at of your latest review as the merge account, or of the pin if that is later>"
+  "Call it as: scripts/merge-gate.sh <pull request number> <the nc-head-commit, all 40 characters> <reviewed-since: the submitted_at of your latest review as the merge account, or of the pin if that is later>"
 PR=$1; EXPECTED=$2; SINCE=$3
 
 command -v jq >/dev/null 2>&1 || cannot "jq is not on PATH. Put jq on PATH, then rerun the gate." \
@@ -161,7 +161,7 @@ DESCRIPTION_DEFECT_LINE_READER="$(dirname "${BASH_SOURCE[0]}")/pull-request-desc
 
 # An abbreviated or malformed EXPECTED used to refuse as "head moved", naming the
 # wrong cause: the head had not moved, the caller had passed a short sha.
-FULL_HASH_LINE="Pass the head commit's full hash in lower case, as gh pr view $PR --json headRefOid --jq .headRefOid prints it, then run the gate again."
+FULL_HASH_LINE="Pass the nc-head-commit's full hash in lower case, as gh pr view $PR --json headRefOid --jq .headRefOid prints it, then run the gate again."
 case "$EXPECTED" in
   *[!0-9a-f]*|"") cannot "expected-head-sha is not a full 40-character hex sha: $EXPECTED" "$FULL_HASH_LINE" ;;
 esac
@@ -210,9 +210,9 @@ approval=$(jq -s -c \
    | sort_by(.submitted_at) | last // empty' <<<"$reviews_raw")
 [ $? -eq 0 ] || cannot "could not parse the review channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
 [ -n "$approval" ] || fail "no APPROVED review found; the gate prints a merge command only for a commit an approving review covers." \
-  "If the head commit has not been reviewed yet, commission its review, and run the gate again once the head commit is approved." \
-  "If its review found a defect, do not merge until the defect is fixed and the new head commit is approved." \
-  "If its review found no defect, approve the head commit as an account other than the pull request's author: the merge account, or mac-claude when the merge account opened the pull request. Then run the gate again."
+  "If the nc-head-commit has not been reviewed yet, commission its review, and run the gate again once the nc-head-commit is approved." \
+  "If its review found a defect, do not merge until the defect is fixed and the new nc-head-commit is approved." \
+  "If its review found no defect, approve the nc-head-commit as an account other than the pull request's author: the merge account, or mac-claude when the merge account opened the pull request. Then run the gate again."
 
 APPROVAL_UNPARSABLE="could not parse the approving review"
 approved_sha=$(jq -r '.commit_id' <<<"$approval")    || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
@@ -236,11 +236,11 @@ since_ok=$(jq -n --arg since "$SINCE" --arg bound "$bound_at" \
   "Run the gate again with a reviewed-since no later than $bound_at." \
   "If you have read the pull request after $bound_at, post a review as the merge account saying so, then run the gate again with that review's submitted_at."
 
-[ "$head" = "$EXPECTED" ] || fail "head moved: you passed $EXPECTED, and the head commit is now $head." \
-  "If an approving review covers $head, run the gate again with $head as the expected head commit and a reviewed-since from after you read that review." \
+[ "$head" = "$EXPECTED" ] || fail "head moved: you passed $EXPECTED, and the nc-head-commit is now $head." \
+  "If an approving review covers $head, run the gate again with $head as the expected nc-head-commit and a reviewed-since from after you read that review." \
   "Otherwise, have $head reviewed and approved, then run the gate again the same way."
 # Merging past this would land code no approval covered.
-[ "$approved_sha" = "$head" ] || fail "the approval covers $approved_sha but the head commit is now $head." \
+[ "$approved_sha" = "$head" ] || fail "the approval covers $approved_sha but the nc-head-commit is now $head." \
   "Have $head reviewed, and approved by an account other than the pull request's author, then run the gate again."
 [ "$draft" = "false" ]    || fail "pull request is a draft pull request, which its author has marked as not ready to merge." \
   "Ask the pull request's author whether it is ready, through the pull request's agent-seat or on the pull request." \
@@ -264,7 +264,7 @@ case "$merge_state" in
   UNKNOWN) fail "mergeStateStatus is $merge_state" \
     "UNKNOWN: GitHub has not computed it, or the pull request is already merged or closed. If the pull request is open, run the gate again in a minute; if it still reads UNKNOWN five minutes later, tell the user this message." ;;
   DIRTY) fail "mergeStateStatus is $merge_state" \
-    "DIRTY: the branch conflicts with main. Tell the pull request's author; the author clears the conflict as CLAUDE.md says, and the new head commit then needs its own approving review." ;;
+    "DIRTY: the branch conflicts with main. Tell the pull request's author; the author clears the conflict as CLAUDE.md says, and the new nc-head-commit then needs its own approving review." ;;
   BEHIND) fail "mergeStateStatus is $merge_state" \
     "BEHIND: the branch is behind main. Tell the user this message." ;;
   BLOCKED) fail "mergeStateStatus is $merge_state" \
@@ -312,7 +312,7 @@ reviews=$(jq -s --arg since "$SINCE" --argjson approval_id "$approval_id" \
 [ $? -eq 0 ] || cannot "could not parse the review channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
 
 NEW_ACTIVITY_READ="Read everything posted or edited since $SINCE: the inline comments, the issue comments and the reviews."
-NEW_ACTIVITY_FINDING="If any raises a finding, do not merge until the finding is fixed, or answered with a reason that shows it does not hold; a fix moves the head commit, which then needs its own approving review."
+NEW_ACTIVITY_FINDING="If any raises a finding, do not merge until the finding is fixed, or answered with a reason that shows it does not hold; a fix moves the nc-head-commit, which then needs its own approving review."
 NEW_ACTIVITY_RECORD="When nothing is left open, post a review as the merge account saying what you read, check that nothing was posted between your reading and that review; if something was, read it and repeat from the first line. Then run the gate again with the review's submitted_at as reviewed-since."
 [ "$inline" -eq 0 ]  || fail "$inline inline comment(s) posted or edited since $SINCE -- read them before merging" \
   "$NEW_ACTIVITY_READ" "$NEW_ACTIVITY_FINDING" "$NEW_ACTIVITY_RECORD"

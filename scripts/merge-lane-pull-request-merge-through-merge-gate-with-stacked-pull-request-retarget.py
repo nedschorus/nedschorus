@@ -3,7 +3,7 @@
 
 Usage:
   scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py <pull request number>
-      <head commit, all 40 characters> <reviewed-since>
+      <nc-head-commit, all 40 characters> <reviewed-since>
       [--merge-lane-worktrees-and-outputs-directory DIR] [--merge-lane-review-worktrees-directory DIR] [--review-tools-worktree-at-main DIR]
 
 Runs --review-tools-worktree-at-main's scripts/merge-gate.sh, never the pull
@@ -80,7 +80,7 @@ def parse_arguments(argv):
                     "open pull requests based on its branch, then run the merge command the "
                     "gate printed.")
     parser.add_argument("pull_request", help="the pull request's number")
-    parser.add_argument("head_commit", help="the head commit, all 40 characters")
+    parser.add_argument("head_commit", help="the nc-head-commit, all 40 characters")
     parser.add_argument("reviewed_since",
                         help="the reviewed-since time merge-gate.sh takes, YYYY-MM-DDTHH:MM:SSZ")
     common.add_directory_options(parser, "nothing this program uses")

@@ -12,20 +12,20 @@ starting docs/, nc-systems/ or .claude/, which is resolved against the
 payload's cwd and then the top of that cwd's checkout. /Volumes/nedhome/<path>,
 the Mac's mount of ned-box, maps to /home/nedlern/<path> when that file exists.
 Skipped: files that do not exist, anything in the log-store or in a
-cold-read-records directory, and docs/walk/<name>-suggestions.md, which is a
+cold-read-records directory, and docs/walk/<name>-cold-read-fast-read.md, which is a
 fast read's own report.
 
 WHEN A DOCUMENT IS DUE. A document in a git checkout is due only when that
 checkout changed it from main: the document is not in the merge-base of the
 checkout's HEAD and refs/remotes/origin/main, as with a new file or a
 git-ignored walk-document, or its bytes differ from the copy there, through
-an uncommitted edit or a commit on the topic branch. The merge-base, not
+an uncommitted edit or a commit on the nc-topic-branch. The merge-base, not
 origin/main's tip, because a checkout behind main would otherwise be asked
 about every document main changed since. A document the checkout left alone
 is never due, whatever its records, because an agent should fast-read only
 what it can still change. The checkout that holds the document decides, not
 the payload's cwd: an agent-seat's cwd is its seat checkout, while the
-documents it changes sit in its topic branch's worktree. The ref is used as it
+documents it changes sit in its nc-topic-branch's worktree. The ref is used as it
 stands, without a fetch. When that checkout has no origin/main, or git fails,
 is killed or outlasts its time limit while comparing, or cannot run or
 outlasts its time limit while finding the document's checkout, or fails there
@@ -43,7 +43,7 @@ the check, and goes on without that top.
 A document that passes it is not due when a fast read of its
 current text is on record. A walk-document named docs/walk/<name>-draft.md
 in any git worktree, fast-read from that checkout or another, writes
-docs/walk/<name>-suggestions.md beside it, so a suggestions file newer than
+docs/walk/<name>-cold-read-fast-read.md beside it, so a suggestions file newer than
 the walk-document counts as that read; only a draft in no git worktree gets a
 cold-read-record like any document.
 Records are the directories in the log-store's cold-read-records/ and in a
@@ -167,7 +167,7 @@ MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOM
 NED_BOX_HOME = ned_box_home_path_constants.NED_BOX_HOME + "/"
 WALK_DIRECTORY_PARTS = ("docs", "walk")
 WALK_DRAFT_SUFFIX = "-draft.md"
-WALK_SUGGESTIONS_SUFFIX = "-suggestions.md"
+WALK_SUGGESTIONS_SUFFIX = "-cold-read-fast-read.md"
 GIT_TIMEOUT_SECONDS = 5
 MAIN_REFERENCE = "refs/remotes/origin/main"
 FAST_READ_PROGRAM = "nc-systems/cold-read/cold-read-fast-read.py"

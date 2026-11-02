@@ -1,0 +1,6 @@
+#!/bin/sh
+# Restarts the agent-seat database service when a merge into ned-box's
+# reference-checkout changes the service; in every other checkout the program
+# does nothing. Git passes one argument, whether the merge was a squash, which
+# the program does not need.
+exec python3 "$(dirname "$0")/../../nc-systems/agent-seat-database/agent-seat-database-service-restart-after-merge.py"

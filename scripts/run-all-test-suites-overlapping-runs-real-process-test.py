@@ -2,11 +2,11 @@
 """Two real test runs on one machine at once: neither waits for the other, and neither disturbs the other.
 
 Runs scripts/run-all-test-suites.py, and scripts/run-suite-in-signal-sandbox.py,
-as real processes, each suite in its own test sandbox. Admission's CPU and
+as real processes, each suite in its own nc-test-sandbox. Admission's CPU and
 memory thresholds are opened wide by a small driver; the admission directory
 is this test's own. Each run's suite waits until the other run's suite has
-started, through a directory the driver binds writable into both test
-sandboxes, so the runs overlap however far apart a busy machine starts them.
+started, through a directory the driver binds writable into both
+nc-test-sandboxes, so the runs overlap however far apart a busy machine starts them.
 
 The last case is the collision that made test runs take turns: two
 overlapping runs of scripts/resupervise-seat-test.py both exited 0 while
@@ -54,7 +54,7 @@ def check(case_name, condition, detail=""):
 
 # Loads a program as a module, opens admission's thresholds wide, and runs its main.
 # Given a meeting directory first, it binds that directory writable into every suite's
-# test sandbox, which otherwise shares nothing writable with another run's.
+# nc-test-sandbox, which otherwise shares nothing writable with another run's.
 DRIVER_SOURCE = r'''
 import importlib.util, sys
 meeting_directory, program_path, *arguments = sys.argv[1:]
@@ -107,9 +107,9 @@ time.sleep(3)
 
 def unavailable_because():
     if not sys.platform.startswith("linux"):
-        return f"{sys.platform} has no test sandbox"
+        return f"{sys.platform} has no nc-test-sandbox"
     # A runner older than this suite runs it inside its sandbox, as merge-lane-2's head test
-    # run does with main's runner; there the inner runs cannot build test sandboxes.
+    # run does with main's runner; there the inner runs cannot build nc-test-sandboxes.
     if os.environ.get("RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX"):
         return "this suite is already inside a sandbox, where bwrap cannot start again"
     if shutil.which("bwrap") is None:

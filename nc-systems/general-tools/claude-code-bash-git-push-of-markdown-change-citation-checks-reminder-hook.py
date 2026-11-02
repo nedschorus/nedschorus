@@ -12,7 +12,7 @@ refspec, or with --all, --mirror or --tags and no refspec, is taken to push
 HEAD. A push that deletes a remote branch is not reminded. A push of several
 refs gets one reminder for each ref that changes a Markdown file.
 
-The push is found as scripts/force-push-with-open-pull-request-guard-hook.py
+The push is found as .claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py
 finds it, with that guard's parser: behind the wrappers the shared shell
 module knows, with git -C, env --chdir and a literal cd earlier in the
 command line followed. Commands run by ssh, bash -c, eval or a script file
@@ -44,7 +44,7 @@ import sys
 import time
 from pathlib import Path
 
-FORCE_PUSH_GUARD_PATH = (Path(__file__).resolve().parents[2] / "scripts"
+FORCE_PUSH_GUARD_PATH = (Path(__file__).resolve().parents[2] / ".claude" / "guard-hooks"
                          / "force-push-with-open-pull-request-guard-hook.py")
 # Set when the guard's file fails to load: main() then gives the failure line for a push.
 force_push_guard_load_error = None

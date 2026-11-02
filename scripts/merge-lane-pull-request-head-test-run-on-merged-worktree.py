@@ -36,7 +36,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-SUMMARY_LINE_PREFIX = "SUMMARY:"
 HEAD_TEST_RUNNER = Path("scripts") / "pull-request-head-test-run.py"
 
 _common_spec = importlib.util.spec_from_file_location(
@@ -146,7 +145,7 @@ def main(argv=None):
             if first_failure == 0:
                 first_failure = 2
         summaries = [line for line in (outputs / "stdout").read_text().splitlines()
-                     if line.startswith(SUMMARY_LINE_PREFIX)]
+                     if line.startswith(run_all_test_suites.SUMMARY_LINE_PREFIX)]
         summary = summaries[-1] if summaries else f"no SUMMARY line; see {outputs}/stderr"
         print(f"PR {number} head test run: exit {completed.returncode}; {summary}", flush=True)
         if completed.returncode != 0 and first_failure == 0:

@@ -3,15 +3,15 @@
 
 Usage:
   scripts/merge-lane-pull-request-head-and-merged-worktrees-rebuild.py <pull request number>
-      <head commit> <main commit> [--merge-lane-worktrees-and-outputs-directory DIR] [--merge-lane-review-worktrees-directory DIR] [--review-tools-worktree-at-main DIR]
+      <nc-head-commit> <main commit> [--merge-lane-worktrees-and-outputs-directory DIR] [--merge-lane-review-worktrees-directory DIR] [--review-tools-worktree-at-main DIR]
 
 Fetches the pull request's head from origin, then makes pr<n>-head at the
-head commit and pr<n>-merged at the main commit with the head commit merged
+nc-head-commit and pr<n>-merged at the main commit with the nc-head-commit merged
 in, as merge-lane-2, always with a merge commit. A worktree already at either
 path is removed first, with any changes in it.
 
 Git runs in --review-tools-worktree-at-main. Every worktree of one repository shares its
-objects, so the fetched head commit is visible to the new worktrees.
+objects, so the fetched nc-head-commit is visible to the new worktrees.
 
 Exit codes: 0 both worktrees made; 1 a git step failed, or the head conflicts
 with main, named on stdout.
@@ -49,11 +49,11 @@ class HeadConflictsWithMain(Exception):
 
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
-        description="Make pr<n>-head at a pull request's head commit and pr<n>-merged "
+        description="Make pr<n>-head at a pull request's nc-head-commit and pr<n>-merged "
                     "at that head merged onto main, both detached.")
     parser.add_argument("pull_request", type=int, help="the pull request's number")
-    parser.add_argument("head_commit", help="the pull request's head commit")
-    parser.add_argument("main_commit", help="the main commit to merge the head commit onto")
+    parser.add_argument("head_commit", help="the pull request's nc-head-commit")
+    parser.add_argument("main_commit", help="the main commit to merge the nc-head-commit onto")
     common.add_directory_options(parser, "nothing this program uses")
     return common.resolve_path_options(parser.parse_args(argv))
 
@@ -103,7 +103,7 @@ def main(argv=None):
               f"with main {arguments.main_commit[:8]} in: {conflict}\n"
               f"The pull request's author clears a conflict with main, not merge-lane-2 and "
               f"not the user.\n"
-              f"Confirm it from {checkout}, which holds the head commit because this "
+              f"Confirm it from {checkout}, which holds the nc-head-commit because this "
               f"program just fetched it there:\n"
               f"cd {checkout} && python3 scripts/branch-conflict-check.py --head {head_full} "
               f"--pull-request {number}\n"

@@ -200,13 +200,13 @@ def compose(spec, arguments, review_tools_worktree, instructions_file, merged_pu
     scratch.mkdir(parents=True, exist_ok=True)
     facts = ["## This pull request (facts from merge-lane-2)", "",
              f"- Pull request: #{number}, \"{spec['title']}\", author `{spec['author']}`.",
-             f"- Head commit: `{head}`.",
+             f"- nc-head-commit: `{head}`.",
              f"- Merge base: `{merge_base}`.",
              f"- Main's tip when commissioned: `{main}`.",
              f"- Merged tree (head merged onto main by merge-lane-2): `{merged_tree}`.",
              f"- Your scratch directory: `{scratch}`. Use it as `<your scratchpad>`."]
     if "reviewed_before" in spec:
-        facts.append(f"- This head commit is a fix-round. Head commit reviewed before: "
+        facts.append(f"- This nc-head-commit is a fix-round. nc-head-commit reviewed before: "
                      f"`{spec['reviewed_before']}` ({spec['previous_reviews']}). "
                      f"{spec['new_commits']}")
         facts.append("- Files the new commit touches: "
@@ -220,7 +220,7 @@ def compose(spec, arguments, review_tools_worktree, instructions_file, merged_pu
                      + files_touched_text(review_tools_worktree, merge_base, head) + ".")
         facts.append("- Test files the change touches: "
                      + ", ".join(f"`{t}`" for t in spec["tests"]) + ".")
-        facts.append("- First round: no head commit was reviewed before.")
+        facts.append("- First round: no nc-head-commit was reviewed before.")
     facts.append("- Other open pull requests changing the same files: "
                  + spec.get("overlaps", "none") + ".")
     closing_issues, description = pull_request_closing_issues_and_description(

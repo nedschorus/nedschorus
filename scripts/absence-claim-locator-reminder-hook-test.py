@@ -38,6 +38,8 @@ REMINDER_FOR_B01 = (
     "log-store, a transcript or a backup.\n"
     "Before you tell anyone it does not exist, run: python3 "
     "scripts/locate-file-copies-across-machines.py <the file's name>\n"
+    "For a ruling, an approval or a past discussion, use the skill find-info "
+    "instead.\n"
     "If the locator finds it, tell whoever read your reply that it is not "
     "missing, and where it is.\n"
     "If the locator finds nothing, say where you looked, not that the file "
@@ -52,6 +54,8 @@ SUBAGENT_REMINDER_FOR_B01 = (
     "log-store, a transcript or a backup.\n"
     "Before you tell anyone it does not exist, run: python3 "
     "scripts/locate-file-copies-across-machines.py <the file's name>\n"
+    "For a ruling, an approval or a past discussion, use the skill find-info "
+    "instead.\n"
     "The agent that dispatched you receives only your last message, so what "
     "you write now replaces your report unless it contains the report.\n"
     "If the locator finds it, end with your whole report again, with that "
@@ -376,6 +380,24 @@ case = (Case().user("Where are the transcripts?")
 result = case.run()
 check("the skill invoked this turn, its loaded text in the transcript: silent",
       result.stdout == "", result.stdout)
+
+case = (Case().user("Did I approve that change?")
+        .tool_use("Skill", {"skill": "find-info"})
+        .skill_loaded("find-info")
+        .assistant_text(B01_CLAIM).write())
+result = case.run()
+check("the skill find-info invoked this turn: silent",
+      result.returncode == 0 and result.stdout == "", (result.returncode, result.stdout))
+
+for program in ("log-store-past-discussions-regex-search-newest-first.py",
+                "locate-user-approval-by-question-subject.py"):
+    case = (Case().user("Did I approve that change?")
+            .tool_use("Bash", {"command": f"python3 scripts/{program} 'cold read'"})
+            .assistant_text(B01_CLAIM).write())
+    result = case.run()
+    check(f"{program} ran this turn: silent, logged as locator_ran",
+          result.stdout == "" and [line.get("outcome") for line in case.log_lines()] == ["locator_ran"],
+          (result.stdout, case.log_lines()))
 
 case = (Case().user("Where are the transcripts?")
         .tool_use("Bash", {"command": "python3 scripts/locate-file-copies-across-machines.py 21dc3d71.jsonl"})

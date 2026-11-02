@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import os
 import pathlib
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -35,7 +37,8 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 
 
-CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify", "terminology"]
+# Built from the prompt files, so deleting a prompt also removes its --cell choice.
+CELL_CHOICES = sorted(path.name[:-len("-prompt.md")] for path in PROMPTS_DIR.glob("*-prompt.md"))
 # The judge reads four files per case and needs its own prompt and fixed tier.
 TIER_CHOICES = ["deep", "second-strongest-model", "fast"]
 
@@ -91,8 +94,50 @@ def credential_directories_present() -> list:
 CREDENTIAL_FILE_SCAN_ROOTS = (pathlib.Path.home(), REPO_ROOT)
 
 
+# One find over ned-box's home took 6-8 s per cell launch, most of it in the
+# log-store's 900,000 entries; several finds over parts of the tree at once
+# take a third of that.
+CREDENTIAL_FILE_SCAN_SPLIT_DEPTH = 3
+CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = 64
+CREDENTIAL_FILE_SCAN_PARALLEL_FINDS = 16
+
+
+def credential_file_scan_parts(root: pathlib.Path) -> tuple:
+    """Split root into directories to list one level deep and subtrees to walk whole.
+
+    The two together reach every directory find -xdev would reach from root:
+    the first CREDENTIAL_FILE_SCAN_SPLIT_DEPTH levels are listed here, and
+    each directory below them is a subtree root. A symlink is never entered,
+    and a directory on another filesystem than root is left out, as -xdev does.
+    """
+    device = root.stat().st_dev
+    shallow, frontier = [], [str(root)]
+    for _level in range(CREDENTIAL_FILE_SCAN_SPLIT_DEPTH):
+        shallow += frontier
+        below = []
+        for directory in frontier:
+            try:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        try:
+                            if (entry.is_dir(follow_symlinks=False)
+                                    and entry.stat(follow_symlinks=False).st_dev == device):
+                                below.append(entry.path)
+                        except OSError:
+                            pass
+            except OSError:
+                pass
+        frontier = below
+    return shallow, frontier
+
+
 def credential_files_found_now() -> list:
-    """Return credential-named files outside directories already withheld whole."""
+    """Return credential-named files outside directories already withheld whole.
+
+    Finds the same files one `find <roots> -xdev` would, by running several
+    finds at once over parts of each root's tree, which credential_file_scan_parts
+    splits off. Unreadable directories are skipped, as find skips them.
+    """
     # find is faster over large homes; unreadable directories are expected, so errors are ignored.
     name_tests = []
     for pattern in CREDENTIAL_FILE_NAME_PATTERNS:
@@ -102,11 +147,22 @@ def credential_files_found_now() -> list:
         if root.is_dir() and not any(root == kept or kept in root.parents
                                      for kept in roots):
             roots.append(root)
-    completed = subprocess.run(
-        ["find", *map(str, roots), "-xdev", "(", *name_tests, ")", "-type", "f"],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False)
+    match = ["(", *name_tests, ")", "-type", "f"]
+    commands = []
+    for root in roots:
+        shallow, subtrees = credential_file_scan_parts(root)
+        commands.append(["find", *shallow, "-maxdepth", "1", *match])
+        commands += [["find", *subtrees[start::CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT], "-xdev", *match]
+                     for start in range(min(len(subtrees), CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT))]
+
+    def run(command):
+        return subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              text=True, check=False).stdout.splitlines()
+
+    with concurrent.futures.ThreadPoolExecutor(CREDENTIAL_FILE_SCAN_PARALLEL_FINDS) as pool:
+        found = {path for lines in pool.map(run, commands) for path in lines}
     return sorted(
-        path for path in set(completed.stdout.splitlines())
+        path for path in found
         if path and not any(directory == pathlib.Path(path)
                             or directory in pathlib.Path(path).parents
                             for directory in CREDENTIAL_DIRECTORIES))
@@ -205,6 +261,24 @@ def build_argument_parser(
 
 def validate_cell(cell: str, prompt_file_argument) -> None:
     if not prompt_file_argument:
+        if not CELL_CHOICES:
+            raise CellRefusal(
+                f"no cold-read-cell to run: each --cell choice is the name of "
+                f"a *-prompt.md file in {PROMPTS_DIR} without -prompt.md, as "
+                "defect-hunt is the choice for defect-hunt-prompt.md, and that "
+                "directory holds no *-prompt.md file.\n"
+                "To get the *-prompt.md files back from main, run "
+                f"`git -C {REPO_ROOT} restore --source=origin/main --staged "
+                "--worktree .claude/skills/cold-read/prompts`, then rerun this "
+                "command.\n"
+                "To run a prompt template of your own instead, rerun this "
+                "command with --prompt-file <path to the template, relative to "
+                "the current directory unless absolute>; the template names the "
+                "target as {TARGET_PATH} and the report as {REPORT_PATH}, as "
+                "the *-prompt.md files do. --cell is still required then, as a "
+                "label of lowercase letters and digits joined by single "
+                "hyphens, such as terminology-v9; a --cell you already passed "
+                "in that form can stay.")
         if cell not in CELL_CHOICES:
             raise CellRefusal(
                 f"--cell must be one of {', '.join(CELL_CHOICES)} (got {cell!r}); "
@@ -441,9 +515,10 @@ def recover_report_from_runtime_stdout(
 
 
 def instrument_built_record_directory(directory: pathlib.Path) -> bool:
-    """Return whether target/ or reference-check.md marks an instrument-built record directory."""
+    """Return whether target/ or the reference-check file, under either of its names, marks an instrument-built record directory."""
     return ((directory / record_names.FROZEN_TARGET_DIRECTORY_NAME).is_dir()
-            or (directory / "reference-check.md").is_file())
+            or record_names.cold_read_record_file_path_prefixed_name_else_name_before_prefix(
+                directory, record_names.COLD_READ_REFERENCE_CHECK_REPORT_FILE_NAME).is_file())
 
 
 def recover_near_miss_report(
@@ -593,12 +668,74 @@ def stamp_provenance(
     report.write_text(stamp + report.read_text(encoding="utf-8"), encoding="utf-8")
 
 
+TIMED_OUT_CAUSE_CLASS = "timed-out"
+# The grid sends SIGKILL to a launcher 5 seconds after SIGTERM; the reviewer's
+# process group must be killed before that, or it outlives the launcher.
+REVIEWER_PROCESS_GROUP_STOP_GRACE_SECONDS = 1.0
+
+
+def stop_process_tree(process: subprocess.Popen, grace_seconds: float = 5.0) -> None:
+    """Stop the process group led by `process`, started with
+    start_new_session=True, and reap `process`."""
+    # macOS answers EPERM, not ESRCH, for a group whose members have all exited.
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        process.wait(timeout=grace_seconds)
+    except subprocess.TimeoutExpired:
+        pass
+    # Children may remain in the group after the leader exits.
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    process.wait()
+
+
+def exit_on_sigterm(signal_number, _frame):
+    raise SystemExit(128 + signal_number)
+
+
+def run_reviewer_program_in_own_process_group_until_timeout(
+    command: list, stdin_text, child_environment, timeout_seconds: float,
+) -> subprocess.CompletedProcess:
+    """Run `command` in a session of its own and return its result; when it
+    runs past `timeout_seconds`, kill its whole process group and return a
+    result whose returncode is None. The group is also killed when this
+    process is interrupted or sent SIGTERM while waiting."""
+    # The reviewer's own session puts it outside the group the grid stops, so
+    # SIGTERM must reach the except BaseException handler below that stops
+    # the reviewer's group.
+    signal.signal(signal.SIGTERM, exit_on_sigterm)
+    process = subprocess.Popen(
+        command,
+        # communicate closes stdin after writing stdin_text, or at once when it is None.
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        cwd=REPO_ROOT, env=child_environment, text=True, start_new_session=True)
+    try:
+        try:
+            stdout, stderr = process.communicate(stdin_text, timeout=timeout_seconds)
+            return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        except subprocess.TimeoutExpired:
+            stop_process_tree(process, REVIEWER_PROCESS_GROUP_STOP_GRACE_SECONDS)
+            stdout, stderr = process.communicate()
+            return subprocess.CompletedProcess(command, None, stdout, stderr)
+    except BaseException:
+        # Not gated on the leader running: it may have exited while a
+        # descendant still holds its pipes, which keeps communicate waiting.
+        stop_process_tree(process, REVIEWER_PROCESS_GROUP_STOP_GRACE_SECONDS)
+        raise
+
+
 def run_model_chain(
     *, program: str, runtime: str, chain, effort: str, build_invocation,
     prompt: str, report: pathlib.Path, cell: str, tier: str, target_argument: str,
     baseline, cell_started_at: float, prompt_file_argument: str = "",
     recover_report_from_stdout=None, model_to_effort=None,
     recognised_failure_texts_for_model=None, child_environment=None,
+    per_model_run_timeout_seconds=None,
 ) -> int:
     """Try models until one produces a report, then stamp the report."""
     # build_invocation must apply the same per-model effort mapping used by the stamp.
@@ -618,16 +755,20 @@ def run_model_chain(
         )
         # Both streams carry failure diagnostics; stderr also carries the runtime's token total.
         try:
-            completed = subprocess.run(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=REPO_ROOT,
-                env=child_environment,
-                text=True,
-                check=False,
-                **stdin_arguments,
-            )
+            if per_model_run_timeout_seconds is None:
+                completed = subprocess.run(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=REPO_ROOT,
+                    env=child_environment,
+                    text=True,
+                    check=False,
+                    **stdin_arguments,
+                )
+            else:
+                completed = run_reviewer_program_in_own_process_group_until_timeout(
+                    command, stdin_text, child_environment, per_model_run_timeout_seconds)
         except OSError as error:
             failed_attempts.append(f"{model}({type(error).__name__})")
             print(f"{program}: {model} could not be run: {error}", file=sys.stderr)
@@ -639,6 +780,17 @@ def run_model_chain(
                             if recognised_failure_texts_for_model else ())
         if completed.stderr:
             print(completed.stderr, file=sys.stderr, end="")
+        if completed.returncode is None:
+            failed_attempts.append(f"{model}(timed-out)")
+            if completed.stdout:
+                print(completed.stdout, file=sys.stderr)
+            print(f"{program}: {model} did not finish within "
+                  f"{per_model_run_timeout_seconds:g} seconds, so the cell stopped it "
+                  "and every process it started.", file=sys.stderr)
+            print(cause_line(program, TIMED_OUT_CAUSE_CLASS,
+                             f"no result within {per_model_run_timeout_seconds:g} seconds"),
+                  file=sys.stderr)
+            continue
         if completed.returncode != 0:
             failed_attempts.append(f"{model}(exit{completed.returncode})")
             if completed.stdout:
@@ -715,6 +867,7 @@ def run_cell(
     tier_to_model_chain: dict, tier_to_effort: dict, invocation_builder,
     recover_report_from_stdout=None, recognised_failure_texts_for_model=None,
     stage_report_outside_checkout: bool = False, child_environment=None,
+    per_model_run_timeout_seconds=None,
 ) -> int:
     # Include failed attempts in the cell's total cost.
     cell_started_at = time.time()
@@ -778,6 +931,7 @@ def run_cell(
             recover_report_from_stdout=recover_report_from_stdout,
             recognised_failure_texts_for_model=recognised_failure_texts_for_model,
             child_environment=child_environment,
+            per_model_run_timeout_seconds=per_model_run_timeout_seconds,
         )
         if exit_code == 0 and staging_directory is not None:
             exit_code = move_staged_report(program, reviewer_report, report)

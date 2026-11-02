@@ -92,11 +92,12 @@ class Scene:
         return folder
 
     def run(self, *extra, minimum_age="3600", parents=None):
-        arguments = [sys.executable, str(PROGRAM), "--sessions-directory", str(self.sessions),
-                     "--proc-directory", str(self.proc), "--projects-directory", str(self.projects),
+        arguments = [sys.executable, str(PROGRAM), "--session-records-directory", str(self.sessions),
+                     "--proc-filesystem-directory", str(self.proc),
+                     "--projects-directory", str(self.projects),
                      "--minimum-age-seconds", minimum_age]
         for parent in (self.parents if parents is None else parents):
-            arguments += ["--temp-parent", str(parent)]
+            arguments += ["--claude-code-temp-folder-parent", str(parent)]
         return subprocess.run(arguments + list(extra), capture_output=True, text=True, timeout=60)
 
 
@@ -301,7 +302,7 @@ def run_live_set_failure_cases():
     shutil.rmtree(s.sessions)
     s.sessions.write_text("a file where the directory should be")
     expect_nothing_deleted("the sessions directory cannot be listed", s, s.folder(0, DEAD),
-                           f"the sessions directory {s.sessions} could not be listed")
+                           f"the session records directory {s.sessions} could not be listed")
 
     s = scene()
     (s.sessions / "4200.json").write_text("{not json")

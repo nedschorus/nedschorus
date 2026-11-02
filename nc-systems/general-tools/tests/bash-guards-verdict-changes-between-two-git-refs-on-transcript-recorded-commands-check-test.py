@@ -24,9 +24,9 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py"
-TMUX_KILL_GUARD = "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py"
-ISSUE_WRITE_GUARD = ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py"
-SEARCH_FILE_GUARD = "scripts/search-file-argument-read-as-option-guard-hook.py"
+TMUX_KILL_GUARD = ".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py"
+ISSUE_WRITE_GUARD = ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py"
+SEARCH_FILE_GUARD = ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py"
 SHELL_READER = "nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py"
 
 spec = importlib.util.spec_from_file_location("bash_guards_replay", SCRIPT_PATH)
@@ -392,7 +392,7 @@ try:
     check("a guard whose own `except Exception` surrounds a timed-out read: exit 2, the timeout is not swallowed",
           status == 2 and "TIMEOUT" in out and "NO VERDICT CHANGED" not in out, f"status {status}\n{out}\n{err}")
 
-    codex_guard = "scripts/hand-typed-codex-exec-command-refusal-hook.py"
+    codex_guard = ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py"
     calls_file = Path(scratch) / "codex-guard-calls-on-tmux-kill-server"
 
     def codex_guard_on_tmux_kill_server(code_on_tmux_kill_server):
@@ -479,6 +479,18 @@ try:
           == (3 + 9) * (len(replay.GUARDS) + 1) * 7 + replay.STEP_DEADLINE_MARGIN_SECONDS,
           replay.step_deadline_seconds(9, 3, 7))
 
+    class GhiMdGuardNaming:
+        def __init__(self, replaced):
+            self.replaced = replaced
+
+        def ghi_md_replaced_by_command(self, command, working_directory):
+            return self.replaced
+
+    for replaced, expected in (("/c/docs/issues/46-a.md", ("refused", "replaces /c/docs/issues/46-a.md")),
+                               (None, ("passed", None))):
+        reading = replay.read_ghi_md_whole_file_replacement(GhiMdGuardNaming(replaced), "cp a b", "/c", None)
+        check(f"the GHI-MD soft-block's reading when its guard names {replaced}", reading == expected, reading)
+
     def add_bash_hook(worktree):
         path = worktree / ".claude" / "settings.json"
         settings = json.loads(path.read_text())
@@ -541,7 +553,7 @@ try:
     fewer_hooks = commit_with_change(drop_codex_hook, scratch)
     status, out, err = run_replay(fewer_hooks, scratch)
     check("a head whose settings.json lacks a Bash hook the replay reads: exit 2, naming the hook",
-          status == 2 and "replayed but not a Bash hook: ['scripts/hand-typed-codex-exec-command-refusal-hook.py']" in err,
+          status == 2 and "replayed but not a Bash hook: ['.claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py']" in err,
           f"status {status}\n{out}\n{err}")
 
     # In the guard's own directory, so the files it loads beside itself are still found.
@@ -898,7 +910,7 @@ try:
         subprocess.run(["pkill", "-f", str(Path(scratch) / "run-exiting")])
 
     codex_guard, _, _, _ = replay.guards_loaded(REPOSITORY_ROOT, False)
-    codex_path = "scripts/hand-typed-codex-exec-command-refusal-hook.py"
+    codex_path = ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py"
     check("the codex exec guard's reading refuses a hand-typed codex exec and passes ls",
           replay.GUARDS[codex_path](codex_guard[codex_path], 'codex exec -C /tmp/x "do the task"', "/", "/")[0] == "refused"
           and replay.GUARDS[codex_path](codex_guard[codex_path], "ls -la", "/", "/")[0] == "passed",
@@ -980,6 +992,12 @@ try:
               stopped.returncode == 2 and not worktrees_registered_under(stopped_scratch) and not still_running,
               f"exit {stopped.returncode}; registered {worktrees_registered_under(stopped_scratch)}; "
               f"running {still_running}\n{stopped_output}")
+        records = sorted(stopped_scratch.glob("multiprocessing-directory-*"))
+        recorded = [Path(record.read_text()) for record in records]
+        check(f"a replay stopped by {stop_signal.name} in the middle of a step: the killed step's multiprocessing "
+              f"directory is removed",
+              bool(recorded) and not any(directory.exists() for directory in recorded),
+              f"records {records}; recorded {recorded}")
 
     # SystemExit raised by the stop handler between Popen._wait()'s lock acquire and its try used to leave
     # the lock held, so the next wait() on that process blocked forever. The signal is delivered at exactly
@@ -1326,6 +1344,16 @@ try:
           pairs == [["ls", "/a"], ["ls", "/b"]], pairs)
     check("transcripts: a line that is not JSON is counted, not dropped silently", lines_not_json == 1, lines_not_json)
 
+    subagent_transcript = transcripts / "a" / "subagents" / "agent-1.jsonl"
+    subagent_transcript.parent.mkdir(parents=True)
+    subagent_transcript.write_text(bash_call("ls", "/e") + "\n")
+    pairs, _ = replay.recorded_command_pairs([str(Path(scratch) / "transcripts")])
+    check("transcripts: a Bash call found only in a subagent's transcript is read too",
+          sorted(pairs) == [["ls", "/a"], ["ls", "/b"], ["ls", "/e"]], pairs)
+    subagent_transcript.unlink()
+    subagent_transcript.parent.rmdir()
+    subagent_transcript.parent.parent.rmdir()
+
     unreadable = transcripts / "unreadable.jsonl"
     unreadable.write_text(bash_call("ls", "/d"))
     unreadable.chmod(0)
@@ -1402,6 +1430,66 @@ try:
     check("the end-of-run cleanup fails the suite when the scratch directory cannot be removed, naming the path",
           len(recorded) == 1 and recorded[0][1] is False and str(left_behind / "locked" / "file") in recorded[0][2],
           recorded)
+
+    # A killed step's record of its multiprocessing directory: only an absolute pymp- path is ever removed.
+    record_cases = Path(scratch) / "multiprocessing-records"
+    working = record_cases / "working-directory"
+    (working / "pymp-relative").mkdir(parents=True)
+    (working / "kept").write_text("x")
+    previous_directory = os.getcwd()
+    os.chdir(working)
+    try:
+        for recorded_text, case in (("", "an empty record"), ("pymp-relative", "a relative record"),
+                                    (str(working), "a record naming a directory that is not pymp-")):
+            record = record_cases / "record"
+            record.write_text(recorded_text)
+            try:
+                replay.remove_recorded_multiprocessing_directory(record)
+                outcome = "returned"
+            except replay.ReplayFailed as error:
+                outcome = f"ReplayFailed: {error}"
+            check(f"{case} of a step's multiprocessing directory removes nothing and fails the replay",
+                  outcome.startswith("ReplayFailed") and (working / "kept").exists()
+                  and (working / "pymp-relative").is_dir(), outcome)
+    finally:
+        os.chdir(previous_directory)
+    recorded_directory = record_cases / "pymp-recorded"
+    (recorded_directory / "socket").mkdir(parents=True)
+    record.write_text(str(recorded_directory))
+    replay.remove_recorded_multiprocessing_directory(record)
+    check("a record of an absolute pymp- directory removes that directory", not recorded_directory.exists())
+    (recorded_directory / "locked").mkdir(parents=True)
+    (recorded_directory / "locked" / "file").write_text("x")
+    (recorded_directory / "locked").chmod(0o500)
+    try:
+        try:
+            replay.remove_recorded_multiprocessing_directory(record)
+            outcome = "returned"
+        except replay.ReplayFailed as error:
+            outcome = f"ReplayFailed: {error}"
+    finally:
+        (recorded_directory / "locked").chmod(0o700)
+    check("a multiprocessing directory that cannot be removed fails the replay, naming the directory",
+          outcome.startswith("ReplayFailed") and str(recorded_directory) in outcome, outcome)
+
+    # A stop signal during a failing step: stop_deferred() replaces the failure with SystemExit(2), so it
+    # prints the failure first.
+    printed = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(printed):
+            with replay.stop_deferred():
+                replay.STOP_STATE["stop_requested"] = True
+                raise replay.ReplayFailed("the test's leftover directory /tmp/pymp-test")
+        outcome = "no exception"
+    except SystemExit as stopped:
+        outcome = f"SystemExit({stopped.code})"
+    except replay.ReplayFailed:
+        outcome = "ReplayFailed"
+    finally:
+        replay.STOP_STATE["stop_requested"] = False
+    check("a failure that a stop signal replaces with exit 2 is printed first",
+          outcome == "SystemExit(2)" and "REPLAY FAILED: the test's leftover directory /tmp/pymp-test"
+          in printed.getvalue(), f"{outcome}; stderr {printed.getvalue()!r}")
 finally:
     # The test's checkouts are registered only in its own clone, which goes with the scratch directory.
     check_scratch_directory_removed(scratch)

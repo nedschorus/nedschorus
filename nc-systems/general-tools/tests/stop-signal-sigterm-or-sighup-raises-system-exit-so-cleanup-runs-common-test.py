@@ -4,12 +4,16 @@
 scripts/pull-request-mutation-testing-survivors.py and scripts/ghi-issue-write.py reach this module
 through their own suites. These cases pin the module directly: a child process that holds a directory
 inside the context manager is sent each stop signal, and must remove the directory in its finally and
-exit 128 plus the signal number; and the handlers in place before the block are back after it.
+exit 128 plus the signal number; a child started with SIGHUP ignored, as under nohup, keeps running
+when SIGHUP reaches it and still cleans up on SIGTERM; and the handlers in place before the block are
+back after it. A child that does not exit within CHILD_EXIT_TIMEOUT_SECONDS of a signal is killed and
+its case fails, so the remaining cases still run.
 
 Run: python3 nc-systems/general-tools/tests/stop-signal-sigterm-or-sighup-raises-system-exit-so-cleanup-runs-common-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
+import contextlib
 import importlib.util
 import signal
 import subprocess
@@ -56,30 +60,85 @@ with stop_signals.stop_signals_raise_system_exit_so_cleanup_runs():
 '''
 
 
-def stopped_child(signal_number):
-    """The child's exit code and whether its directory is left, after signal_number reaches it."""
+CHILD_EXIT_TIMEOUT_SECONDS = 30
+# Long enough for an unignored SIGHUP to end the child, which takes well under a second.
+IGNORED_SIGNAL_GRACE_SECONDS = 2
+
+
+@contextlib.contextmanager
+def child_holding_directory(sighup_ignored=False):
+    """The running child, its first stdout line and its directory; the child is killed if still running."""
+    # Set explicitly: a child left to inherit would get SIG_IGN when this test runs under nohup.
+    sighup_disposition = signal.SIG_IGN if sighup_ignored else signal.SIG_DFL
     with tempfile.TemporaryDirectory() as scratch:
         directory = Path(scratch) / "held"
         child = subprocess.Popen([sys.executable, "-c", CHILD, str(MODULE_PATH), str(directory)],
-                                 stdout=subprocess.PIPE, text=True)
+                                 stdout=subprocess.PIPE, text=True,
+                                 preexec_fn=lambda: signal.signal(signal.SIGHUP, sighup_disposition))
         try:
-            ready = child.stdout.readline().strip()
-            child.send_signal(signal_number)
-            returncode = child.wait(timeout=30)
+            yield child, child.stdout.readline().strip(), directory
         finally:
             if child.poll() is None:
                 child.kill()
                 child.wait()
-        return ready, returncode, directory.exists()
+            child.stdout.close()
+
+
+def exit_code_within(child, seconds):
+    """The child's exit code, or None when it has not exited within seconds."""
+    try:
+        return child.wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        return None
+
+
+def stop_detail(ready, returncode, left):
+    if returncode is None:
+        return f"the child did not exit within {CHILD_EXIT_TIMEOUT_SECONDS} s of the signal"
+    return (ready, returncode, left)
 
 
 for signal_number in (signal.SIGTERM, signal.SIGHUP):
     name = signal.Signals(signal_number).name
-    ready, returncode, left = stopped_child(signal_number)
+    with child_holding_directory() as (child, ready, directory):
+        child.send_signal(signal_number)
+        returncode = exit_code_within(child, CHILD_EXIT_TIMEOUT_SECONDS)
+        left = directory.exists()
     check(f"{name} inside the block runs the finally that removes the directory, "
           f"and the process exits 128 plus the signal number",
           ready == "ready" and returncode == 128 + signal_number and not left,
-          (ready, returncode, left))
+          stop_detail(ready, returncode, left))
+
+suite_sighup = signal.signal(signal.SIGHUP, signal.SIG_IGN)
+try:
+    with child_holding_directory() as (child, ready, directory):
+        child.send_signal(signal.SIGHUP)
+        returncode = exit_code_within(child, CHILD_EXIT_TIMEOUT_SECONDS)
+        left = directory.exists()
+finally:
+    signal.signal(signal.SIGHUP, suite_sighup)
+check("when this suite runs with SIGHUP ignored, as under nohup, SIGHUP still ends a child "
+      "started without SIGHUP ignored, exiting 128 plus the signal number",
+      ready == "ready" and returncode == 128 + signal.SIGHUP and not left,
+      stop_detail(ready, returncode, left))
+
+with child_holding_directory(sighup_ignored=True) as (child, ready, directory):
+    child.send_signal(signal.SIGHUP)
+    after_sighup = exit_code_within(child, IGNORED_SIGNAL_GRACE_SECONDS)
+    child.send_signal(signal.SIGTERM)
+    returncode = exit_code_within(child, CHILD_EXIT_TIMEOUT_SECONDS)
+    left = directory.exists()
+check("a child started with SIGHUP ignored is still running after SIGHUP reaches it",
+      ready == "ready" and after_sighup is None, (ready, after_sighup))
+check("SIGTERM still runs the finally in a child started with SIGHUP ignored, "
+      "and the process exits 143",
+      after_sighup is None and returncode == 143 and not left,
+      stop_detail(ready, returncode, left))
+
+with child_holding_directory() as (child, ready, directory):
+    timed_out = exit_code_within(child, 0.5)
+check("a child that has not exited when the wait times out gives None and is killed afterwards",
+      timed_out is None and child.poll() is not None, (timed_out, child.poll()))
 
 
 def sentinel_handler(_signal_number, _frame):

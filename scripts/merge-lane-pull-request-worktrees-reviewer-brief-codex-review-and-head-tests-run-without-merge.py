@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the five merge-lane steps that review a pull request, and stop at the first that fails.
+"""Run the five merge-lane steps that review a pull request, the last three at the same time.
 
 Usage:
   scripts/merge-lane-pull-request-worktrees-reviewer-brief-codex-review-and-head-tests-run-without-merge.py
@@ -41,12 +41,23 @@ the pull request's, with those commits and all three directory options:
      which runs the Claude reviewer and posts its review, only when the entry's
      claude_reviewer is true; when it is false, step 5 is skipped and the output
      says so.
-Each step's own output passes straight through. The steps run one after
-another, so nothing here waits on a process. Nothing here merges: merging is
+Steps 1 and 2 run one after the other, and the run stops at the first of
+them that fails, before steps 3 to 5 start, because those read what steps 1
+and 2 made. Steps 3, 4 and 5 then start at the same time, since none reads
+what another writes, and the run waits for all of them; one failing does not
+stop the others. Each step's own output passes through: steps 1 and 2 as it
+is, and each line of steps 3 to 5 prefixed with its step's number, as in
+"step 4 of 5 | ", because their lines interleave. When one of steps 3 to 5
+fails, the output names each step that failed with its exit code, says what
+each other step did, and gives each failed step's own command, with the same
+commits, for running that step alone: running this program again would run
+the other steps again, and post a second Claude review. If this program is interrupted while steps run, it
+kills them. Nothing here merges: merging is
 merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py.
 
 Exit codes: 0 every step that ran exited 0; 1 a step exited nonzero, named on
-stdout, and no later step ran; 2 refused before any step ran: a step script
+stdout: when it was step 1 or 2, no later step ran, and when it was one of
+steps 3 to 5, the others ran to their end; 2 refused before any step ran: a step script
 is missing, git could not fetch, read or check out a commit, the brief
 specifications file is unreadable, lacks a field, has a claude_reviewer that
 is not true or false, or disagrees with the
@@ -56,8 +67,10 @@ commits, or the filled-in copy could not be written, named on stdout.
 import argparse
 import importlib.util
 import json
+import shlex
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 WORKTREES_REBUILD_STEP = "merge-lane-pull-request-head-and-merged-worktrees-rebuild.py"
@@ -84,6 +97,7 @@ FILE_OR_FLAG_INSTRUCTION = (
     "Correct whichever of the two is wrong, the file's entry or the "
     "--head-commit-reviewed-before option, which a first round leaves out, and run this "
     "again.")
+NEWLINE = "\n"
 # The words git prints when a checkout would overwrite local changes,
 # tracked or untracked.
 CHECKOUT_WOULD_OVERWRITE_CHANGES = "would be overwritten by checkout"
@@ -109,7 +123,7 @@ def parse_arguments(argv):
         description="Move the review tools worktree to main, then rebuild a pull request's "
                     "worktrees, compose its reviewer brief, run the Codex review, run the "
                     "head tests and, when the entry asks for one, run the Claude reviewer "
-                    "and post its review, stopping at the first step that fails. Does not "
+                    "and post its review; the last three run at the same time. Does not "
                     "merge. "
                     "Runs at the same time need separate --review-tools-worktree-at-main "
                     "worktrees, because moving a worktree that a running Codex cell reads "
@@ -121,7 +135,7 @@ def parse_arguments(argv):
                              "fills them in from origin; a head or main the file does name "
                              "must be origin's commit for that field")
     parser.add_argument("--head-commit-reviewed-before",
-                        help="for a fix-round, the head commit reviewed before; the Codex "
+                        help="for a fix-round, the nc-head-commit reviewed before; the Codex "
                              "review runs from it instead of from the merge base")
     common.add_directory_options(parser, "briefs/, cx/, hr/, claude-reviews/ and tripwire-bin/")
     return common.resolve_path_options(parser.parse_args(argv))
@@ -196,13 +210,50 @@ def brief_specification_disagreement(checkout, specifications, number, head, mai
     return None
 
 
+def step_command(step, arguments, step_arguments):
+    return [sys.executable, str(arguments.review_tools_worktree_at_main / "scripts" / step),
+            *step_arguments, *common.directory_options_argv(arguments)]
+
+
 def run_step(position, step, arguments, step_arguments):
-    command = [sys.executable, str(arguments.review_tools_worktree_at_main / "scripts" / step),
-               *step_arguments, *common.directory_options_argv(arguments)]
     print(f"step {position} of {len(STEPS)}: {step}", flush=True)
     return subprocess.run(
-        command, stdin=subprocess.DEVNULL,
+        step_command(step, arguments, step_arguments), stdin=subprocess.DEVNULL,
         env=run_all_test_suites.environment_without_git_redirecting_variables()).returncode
+
+
+def run_steps_at_the_same_time(positioned_steps, arguments):
+    """Run each (position, step, step arguments) at once; return {position: exit code}."""
+    print_lock = threading.Lock()
+
+    def pass_output_through(position, stream):
+        for line in stream:
+            with print_lock:
+                print(f"step {position} of {len(STEPS)} | {line.rstrip(NEWLINE)}", flush=True)
+
+    processes, readers = {}, []
+    try:
+        for position, step, step_arguments in positioned_steps:
+            print(f"step {position} of {len(STEPS)}: {step}", flush=True)
+            # errors= opens the pipe as text.
+            process = subprocess.Popen(
+                step_command(step, arguments, step_arguments), stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, errors="replace",
+                env=run_all_test_suites.environment_without_git_redirecting_variables())
+            processes[position] = process
+            reader = threading.Thread(target=pass_output_through,
+                                      args=(position, process.stdout))
+            reader.start()
+            readers.append(reader)
+        exit_codes = {position: process.wait() for position, process in processes.items()}
+    except BaseException:
+        for process in processes.values():
+            if process.poll() is None:
+                process.kill()
+        raise
+    for reader in readers:
+        reader.join()
+    return exit_codes
 
 
 def main(argv=None):
@@ -229,9 +280,9 @@ def main(argv=None):
                     instruction=f"If the commit is right, fetch it into {checkout} and run "
                                 f"this again.\n"
                                 f"If the commit is wrong, run this again with "
-                                f"--head-commit-reviewed-before set to the head commit that "
+                                f"--head-commit-reviewed-before set to the nc-head-commit that "
                                 f"was reviewed before.")
-            base, base_kind = head_reviewed_before, "head commit reviewed before"
+            base, base_kind = head_reviewed_before, "nc-head-commit reviewed before"
         else:
             base, base_kind = git(checkout, "merge-base", main_commit, head_commit), "merge base"
         try:
@@ -288,12 +339,7 @@ def main(argv=None):
              (HEAD_TEST_RUN_STEP, [str(number)]),
              (CLAUDE_REVIEWER_STEP, [str(number), str(specifications[0]["tag"]), head_commit]))
     claude_reviewer = specifications[0]["claude_reviewer"]
-    for position, (step, step_arguments) in enumerate(steps, start=1):
-        if step == CLAUDE_REVIEWER_STEP and not claude_reviewer:
-            print(f"step {position} of {len(STEPS)}: {step}: skipped, because the entry's "
-                  f"claude_reviewer is false: this pull request's review tier calls for no "
-                  f"Claude reviewer.", flush=True)
-            continue
+    for position, (step, step_arguments) in enumerate(steps[:2], start=1):
         exit_code = run_step(position, step, arguments, step_arguments)
         if exit_code != 0:
             print(f"PR {number}: stopped at step {position} of {len(STEPS)}, {step}, which "
@@ -302,6 +348,37 @@ def main(argv=None):
                   f"If that message says to run the step again, run this program again "
                   f"instead, so every step uses the same commits.", flush=True)
             return 1
+    at_the_same_time = []
+    for position, (step, step_arguments) in enumerate(steps[2:], start=3):
+        if step == CLAUDE_REVIEWER_STEP and not claude_reviewer:
+            print(f"step {position} of {len(STEPS)}: {step}: skipped, because the entry's "
+                  f"claude_reviewer is false: this pull request's review tier calls for no "
+                  f"Claude reviewer.", flush=True)
+            continue
+        at_the_same_time.append((position, step, step_arguments))
+    exit_codes = run_steps_at_the_same_time(at_the_same_time, arguments)
+    failed = [position for position, exit_code in exit_codes.items() if exit_code != 0]
+    if failed:
+        def what_it_did(position):
+            if position not in exit_codes:
+                return f"step {position} was skipped"
+            if exit_codes[position] != 0:
+                return f"step {position}, {STEPS[position - 1]}, exited {exit_codes[position]}"
+            if STEPS[position - 1] == CLAUDE_REVIEWER_STEP:
+                return f"step {position} exited 0, so its review is posted"
+            return f"step {position} exited 0"
+        rerun_commands = "\n".join(
+            f"  step {position}: {shlex.join(step_command(step, arguments, step_arguments))}"
+            for position, step, step_arguments in at_the_same_time if position in failed)
+        print(f"PR {number}: {'; '.join(what_it_did(position) for position in (3, 4, 5))}; "
+              f"nothing was merged.\n"
+              f"Act on each failed step's own message, in the lines above that start "
+              f"\"step <n> of {len(STEPS)} | \".\n"
+              f"If such a message says to run its step again, run that step alone with its "
+              f"command below, not this program: the command uses the same commits, and the "
+              f"steps that exited 0 do not run again, so no second Claude review is posted:\n"
+              f"{rerun_commands}", flush=True)
+        return 1
     outcome = (f"all {len(STEPS)} steps exited 0" if claude_reviewer else
                f"steps 1 to {len(STEPS) - 1} exited 0 and step {len(STEPS)} was skipped")
     print(f"PR {number}: {outcome}; nothing was merged.", flush=True)
