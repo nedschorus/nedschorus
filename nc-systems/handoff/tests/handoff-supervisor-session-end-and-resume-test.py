@@ -1434,6 +1434,12 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
               and "Permission denied" in resume_unreadable.errors,
               f"{resume_unreadable.exit_status} {resume_unreadable.launches} "
               f"{resume_unreadable.errors}")
+        check("UNREADABLE TRANSCRIPT: and that stop names the recovery command for this "
+              "agent-seat and its handoff directory",
+              shlex.join(["python3", str(supervisor.RECOVER_CRASHED_SEATS_SCRIPT), "--handoff-dir",
+                          str(directory / "startupresumeunreadable"),
+                          "deathstartupresumeunreadable"]) + "\n"
+              in resume_unreadable.errors, resume_unreadable.errors)
 
     # The by-hand resume: no first prompt, no handoff, no recorded exit, and a
     # real transcript on disk, so the first launch resumes it.
