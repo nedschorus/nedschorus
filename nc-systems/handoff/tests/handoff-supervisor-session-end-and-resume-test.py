@@ -1359,6 +1359,12 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
               "stopped" in died_unreadable.errors
               and f"{died_unreadable.launches[0][0]}.jsonl" in died_unreadable.errors
               and "Permission denied" in died_unreadable.errors, died_unreadable.errors)
+        check("UNREADABLE TRANSCRIPT: and the stop names the recovery command for this "
+              "agent-seat, and no cause the error does not state",
+              f"{supervisor.RECOVER_CRASHED_SEATS_SCRIPT} deathdeathunreadable\n"
+              in died_unreadable.errors
+              and supervisor.RECOVER_CRASHED_SEATS_SCRIPT.is_file()
+              and "permissions are fixed" not in died_unreadable.errors, died_unreadable.errors)
         resume_unreadable = supervise_a_seat_whose_sessions_die(
             "startupresumeunreadable", [(-15, 0)], resume_session_id="crashed-session",
             transcripts_before_the_supervisor={"crashed-session": 7},
@@ -1568,6 +1574,10 @@ def run_by_hand_resume_cases(workspace: Path):
               "startup stopped" in errors.getvalue()
               and str(unreadable_projects) in errors.getvalue()
               and "Permission denied" in errors.getvalue(), errors.getvalue())
+        check("BY HAND: and the stop names the recovery command for this agent-seat, and no "
+              "cause the error does not state",
+              f"{supervisor.RECOVER_CRASHED_SEATS_SCRIPT} {settings.agent}\n" in errors.getvalue()
+              and "permissions are fixed" not in errors.getvalue(), errors.getvalue())
 
     # 4. An unconsumed handoff is the fresher truth and boot-ignition takes it,
     # exactly as before: the by-hand resume must not steal a waiting handoff.
