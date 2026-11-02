@@ -58,6 +58,17 @@ A string the collector's kind calls a prompt, text a program hands an agent as
 its instructions, is also marked "needs the user's approval", and has
 needs_user_approval set in --json; a printed message is not.
 
+Rule 4: a pull request that adds or changes an nc-architecture-overview, a
+file at the path scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py
+gives for a directory under nc-systems/ at the head, is refused, with exit 1
+and no plan, until the newest claim-check report for the overview's text at
+the head says every claim is supported.
+nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py
+writes the reports, keyed by the overview's blob, under
+--overview-write-architecture-overview-claim-check-report-directory, the log-store's
+overview-write-architecture-overview-claim-check-reports by default. A merged pull request is
+not refused.
+
 Merged pull requests use the merge commit's first parent as the diff base:
 the current base branch already contains the head and would hide the change.
 No rename detection is used: moving a program changes behaviour for callers,
@@ -65,7 +76,8 @@ so a rename is a deletion and an addition. Markdown prose anywhere is
 no-reviewer-tier because prose outside code is outside the review scope.
 
 Reads the pull request, reviews, inline comments and live base tip through
-four read-only gh calls, and commits, refs and diffs from the local repository.
+four read-only gh calls, commits, refs and diffs from the local repository,
+and, under rule 4, the claim-check reports.
 Never fetches, pushes or writes refs. git merge-tree --write-tree may write
 tree objects. Writes no file except the cold-read-fast-read target files and
 the optional --brief-skeleton file. The program refuses, with exit 1 and no
@@ -79,6 +91,7 @@ command, so that a caller notices the missing reads.
 Usage:
   scripts/pull-request-review-plan.py --pull-request N [--repository DIR]
       [--github-repository OWNER/NAME] [--json] [--brief-skeleton PATH]
+      [--overview-write-architecture-overview-claim-check-report-directory DIR]
 """
 
 import argparse
@@ -89,6 +102,7 @@ import json
 import os
 import re
 import shlex
+import socket
 import subprocess
 import sys
 import traceback
@@ -127,6 +141,12 @@ fast_read_target_file_name = _message_reminder_hook.fast_read_target_file_name
 cold_read_fast_read_review_command_line_for_target_file = _message_reminder_hook.cold_read_fast_read_review_command_line_for_target_file
 FAST_READ_COMMAND = _message_reminder_hook.FAST_READ_COMMAND
 PLAN_PRINTED_WITH_MESSAGES_MISSING_FAST_READ_COMMAND_EXIT_STATUS = 3
+_overview_claim_check_spec = importlib.util.spec_from_file_location(
+    "overview_write_architecture_overview_claim_check_by_fresh_agent",
+    Path(__file__).resolve().parent.parent / "nc-systems" / "skills" / "overview-write"
+    / "overview-write-architecture-overview-claim-check-by-fresh-agent.py")
+overview_claim_check = importlib.util.module_from_spec(_overview_claim_check_spec)
+_overview_claim_check_spec.loader.exec_module(overview_claim_check)
 
 REVIEW_TIER_ORDER = {"no-reviewer-tier": 0, "codex-review-and-head-tests-tier": 1, "claude-and-codex-review-and-head-tests-tier": 2}
 GITHUB_PULL_REQUEST_FIELDS = "number,title,url,state,author,headRefOid,baseRefName,mergeCommit"
@@ -541,7 +561,9 @@ def json_rerun_command_line(arguments):
     the top of the checkout, which a relative --repository may not be relative to."""
     return shlex.join(["python3", "scripts/pull-request-review-plan.py",
                        "--pull-request", str(arguments.pull_request), "--repository", str(arguments.repository.resolve()),
-                       "--github-repository", arguments.github_repository, "--json"])
+                       "--github-repository", arguments.github_repository, "--json",
+                       "--overview-write-architecture-overview-claim-check-report-directory",
+                       str(arguments.overview_write_architecture_overview_claim_check_report_directory.resolve())])
 
 
 def missing_fast_read_commands_message(missing, json_rerun_command=None):
@@ -630,6 +652,47 @@ def merged_tree_against_origin_main(repository, head):
     return {"tree": None, "conflicting_paths": [], "error": first_output_line(result.stderr)}
 
 
+def architecture_overview_claim_check_shortfalls(repository, head, changed_files, report_directory):
+    """For each nc-architecture-overview the pull request adds or changes, the
+    newest claim-check report for the overview's text at head, when that report
+    does not show every claim supported; an empty list lets the plan go on."""
+    shortfalls = []
+    for entry in changed_files:
+        system = overview_claim_check.architecture_overview_system_from_path(entry["path"])
+        if entry["status"] == "D" or system is None:
+            continue
+        if not git_result_or_refuse(repository, "ls-tree", "-d", "--name-only", head, f"nc-systems/{system}").stdout.strip():
+            continue
+        blob = required_git_output(repository, "rev-parse", f"{head}:{entry['path']}")
+        newest = overview_claim_check.find_newest_architecture_overview_claim_check_report_path_and_result_for_overview_git_blob(report_directory, entry["path"], blob)
+        if newest is None or newest[1] != overview_claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED:
+            shortfalls.append({"path": entry["path"], "blob": blob, "newest_report": newest})
+    return shortfalls
+
+
+def architecture_overview_claim_check_refusal_message(number, head, shortfalls, report_directory):
+    lines = [f"pull request {number} adds or changes {len(shortfalls)} nc-architecture-overview(s), and for each one "
+             f"listed below no claim-check report on the overview's text at head {head[:12]} shows every claim "
+             "supported, so no plan was computed."]
+    for shortfall in shortfalls:
+        looked_for = overview_claim_check.overview_write_architecture_overview_claim_check_report_directory_for_overview(report_directory, shortfall["path"]) / f"{shortfall['blob']}-*.md"
+        newest = shortfall["newest_report"]
+        lines.append(f"  {shortfall['path']} (git blob {shortfall['blob'][:12]} at head): looked on {socket.gethostname()} for "
+                     f"{looked_for}; newest report found: "
+                     + (f"{newest[0]}, whose result is: {newest[1]}" if newest else "none, so the check has not run on this text"))
+    lines.append("Send this whole message to the pull request's author. The author clears it on ned-box, in a checkout "
+                 "of the pull request's branch at its head, by running for each overview listed:")
+    lines.extend(f"     python3 nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py "
+                 f"--overview {shlex.quote(shortfall['path'])}" for shortfall in shortfalls)
+    lines.append("If the command fails to run, the author does what it prints.")
+    lines.append("If its report shows a claim contradicted or unsupported, the author fixes the overview as the section "
+                 "\"Checking an overview\" of docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md "
+                 "says, commits, runs the command again, and pushes once the report shows every claim supported.")
+    lines.append(f"Once the author says each listed overview's newest report shows every claim supported: run "
+                 f"scripts/pull-request-review-plan.py --pull-request {number} again.")
+    return "\n".join(lines)
+
+
 def compute_pull_request_review_plan(arguments):
     repository = arguments.repository.resolve()
     # Git reads pathspecs relative to the -C directory, but every path here is
@@ -684,6 +747,13 @@ def compute_pull_request_review_plan(arguments):
         warning = f"local origin/{base_branch} is behind GitHub's; run `{fetch_command}` and run this again"
     changed_files = changed_files_with_classes_and_tiers(
         repository, merge_base, head, hook_registration_old_revision=diff_base)
+    # A merged pull request is past the gate; its plan is read only to see what it changed.
+    if pull_request["state"] != "MERGED":
+        shortfalls = architecture_overview_claim_check_shortfalls(
+            repository, head, changed_files, arguments.overview_write_architecture_overview_claim_check_report_directory)
+        if shortfalls:
+            raise ReviewPlanRefusal(architecture_overview_claim_check_refusal_message(
+                number, head, shortfalls, arguments.overview_write_architecture_overview_claim_check_report_directory))
     tier, tier_reason = review_tier_and_deciding_reason(changed_files)
     posted_reviews = [review for page in review_pages for review in page if review["state"] != "PENDING"]
     inline_counts = {}
@@ -883,6 +953,8 @@ def build_review_plan_argument_parser():
     parser.add_argument("--github-repository", default="nedschorus/nedschorus", metavar="OWNER/NAME")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--brief-skeleton", type=Path, metavar="PATH")
+    parser.add_argument("--overview-write-architecture-overview-claim-check-report-directory", type=Path, metavar="DIR",
+                        default=overview_claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_REPORT_DIRECTORY)
     return parser
 
 
