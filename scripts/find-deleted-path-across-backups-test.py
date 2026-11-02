@@ -14,7 +14,6 @@ looking. Each blocked surface therefore has a case asserting both the status
 AND that the output says what to do about it.
 """
 
-import atexit
 import contextlib
 import importlib.util
 import io
@@ -41,7 +40,6 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 # Every copy this suite makes lands in a scratch folder, never in the user's Downloads.
 FOUND_COPIES_SCRATCH = tempfile.mkdtemp(prefix="find-deleted-path-found-copies-test-")
-atexit.register(shutil.rmtree, FOUND_COPIES_SCRATCH)
 os.environ["FIND_DELETED_PATH_FOUND_COPIES_ROOT"] = FOUND_COPIES_SCRATCH
 
 MODULE_PATH = Path(__file__).with_name("find-deleted-path-across-backups.py")
@@ -4120,6 +4118,14 @@ with tempfile.TemporaryDirectory() as tmp:
     check("... and argparse accepts that command once <checkout> is filled in",
           recovery.returncode != 2 and "usage:" not in recovery.stderr,
           "exit %s\n%s" % (recovery.returncode, recovery.stderr))
+
+# Removed here, before the exit status is decided, so a failed removal fails the suite; an atexit
+# callback that raises leaves the exit status 0.
+try:
+    shutil.rmtree(FOUND_COPIES_SCRATCH)
+except OSError as error:
+    check("the found-copies scratch folder %s is removed" % FOUND_COPIES_SCRATCH, False,
+          "%s: %s" % (type(error).__name__, error))
 
 print()
 if failures:
