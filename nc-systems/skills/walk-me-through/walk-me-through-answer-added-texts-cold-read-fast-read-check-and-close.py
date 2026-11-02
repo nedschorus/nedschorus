@@ -360,11 +360,26 @@ CLOSED_MARKER_VALUE = "none, closed"
 PROGRAM_LINE_ITEMS = re.compile(r"^(items?\s[^:]*): ", re.I)
 
 
+_OUTCOME_VALUE = "(?:" + "|".join(re.escape(value) for value in OUTCOMES.values()) + ")"
+_PART_VALUE = rf"part \d+ (?:{APPROVED}|{DISAPPROVED}) {_OUTCOME_VALUE}"
+# The values close fills each placeholder with; {ruling} and {reason} carry the agent's own words, so any text.
+PLACEHOLDER_VALUES = {
+    "answered": rf"(?:{APPROVED}(?: option \d+)?|{DISAPPROVED}|not asked, kind \d+)",
+    "outcome": _OUTCOME_VALUE,
+    "parts": rf"{_PART_VALUE}(?:, {_PART_VALUE})*",
+    "ruling": ".+",
+    "reason": ".+",
+}
+
+
 def after_the_items_pattern(template):
     """The part of a minutes line this program writes from template after `{item}: `, as a regular
-    expression in which each other placeholder stands for any text."""
-    pieces = re.split(r"\{\w+\}", template[len("{item}: "):])
-    return re.compile("^" + ".+".join(re.escape(piece) for piece in pieces) + "$")
+    expression in which each other placeholder stands only for the values close fills it with."""
+    rest = template[len("{item}: "):]
+    pieces, placeholders = re.split(r"\{\w+\}", rest), re.findall(r"\{(\w+)\}", rest)
+    return re.compile("^" + "".join(re.escape(piece) + (PLACEHOLDER_VALUES[name] if index < len(placeholders) else "")
+                                    for index, (piece, name) in enumerate(zip(pieces, placeholders + [None])))
+                      + "$")
 
 
 DECIDING_LINES = tuple(after_the_items_pattern(template) for template in (
@@ -1073,23 +1088,32 @@ def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferr
 
 def held_items_decided_with(walk_finder, minutes, parser, answered_numbers, item, outcome):
     """Return the close lines that give outcome to each item whose answer the minutes hold for the answered
-    items and that no close line decides yet."""
+    items, directly or through a chain of held items, and that no close line decides yet."""
     text = minutes.read_text(encoding="utf-8")
     decided, _ = minutes_record(walk_finder, text, parser)
-    lines = []
+    holds = []
     for line in walk_finder.prose_lines(text, parser):
         match = HELD_ANSWER_LINE.match(line)
         if not match:
             continue
         try:
-            held_numbers, _ = walk_finder.parse_items(match[1])
-            new_numbers, _ = walk_finder.parse_items(match[2])
+            holds.append((match[1], set(walk_finder.parse_items(match[1])[0]), match[2],
+                          set(walk_finder.parse_items(match[2])[0])))
         except walk_finder.UnusableRange:
             continue
-        if set(new_numbers) <= set(answered_numbers) and not set(held_numbers) <= decided:
-            decided.update(held_numbers)
-            lines.append(CLOSE_ALREADY_DECIDED_MINUTES.format(
-                item=match[1], ruling=HELD_RULING.format(new_item=item), outcome=outcome))
+    # An item held for an item this close decides is decided too, so it releases the items held for it in turn.
+    released, lines = set(answered_numbers), []
+    progress = True
+    while progress:
+        progress = False
+        for held_text, held_numbers, new_text, new_numbers in holds:
+            if new_numbers <= released and not held_numbers <= decided:
+                decided.update(held_numbers)
+                released.update(held_numbers)
+                progress = True
+                ruled_by = item if new_numbers <= set(answered_numbers) else new_text
+                lines.append(CLOSE_ALREADY_DECIDED_MINUTES.format(
+                    item=held_text, ruling=HELD_RULING.format(new_item=ruled_by), outcome=outcome))
     return lines
 
 
