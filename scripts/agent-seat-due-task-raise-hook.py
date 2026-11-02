@@ -578,8 +578,9 @@ NEXT_ACTION_UNHELD_TASKS_HEADER = (
     "Your open tasks that no recorded prerequisite or blocker holds back; which of them are "
     "ready, and which need the user, is yours to judge:")
 NEXT_ACTION_HELD_TASKS_LINE = (
-    "{count} more open task(s) wait on a prerequisite or blocker that is not done, or that "
-    "GitHub could not answer for, so they are not listed.")
+    "{count} more open task(s) are not listed: each waits on a blocker task or a prerequisite "
+    "pull request or GHI that is not done, or on a pull request or GHI whose state this hook "
+    "could not read from GitHub at this stop.")
 NEXT_ACTION_OPEN_ITEMS_HEADER = (
     "Lines your walk-minutes mark <open>; each is a loose-end unless a task, GHI, pull request "
     "or later walk now holds it:")
@@ -712,6 +713,7 @@ def next_action_prompt_lines(payload: dict, tasks: dict, directory: Path, state:
         lines.append(NEXT_ACTION_HELD_TASKS_LINE.format(count=held))
     lines += listed_with_limit(NEXT_ACTION_OPEN_ITEMS_HEADER, open_outcome_lines(walk_directory),
                                NEXT_ACTION_LISTED_OPEN_ITEMS_LIMIT)
+    lines += [gh_failure_line(kind, number, cause) for kind, number, cause in checker.gh_failures]
     lines.append(NEXT_ACTION_STOP_AGAIN_LINE)
     return lines
 
@@ -748,7 +750,14 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
         except Exception as error:
             raise HookFault(f"every task was checked and none was due, but the check whether to "
                             f"hand the next-action prompt failed, so none was handed at this "
-                            f"stop: {type(error).__name__}: {error}") from error
+                            f"stop: {type(error).__name__}: {error}. The next-action prompt "
+                            f"tells an idle agent-seat to start its ready work and build its "
+                            f"next approval-walk. Until this hook hands that prompt again, "
+                            f"start your ready work and build your next approval-walk yourself "
+                            f"whenever no approval-walk is open and none of your work is "
+                            f"running. Tell the user this whole message, since the fault is in "
+                            f"scripts/agent-seat-due-task-raise-hook.py or in a file it "
+                            f"reads.") from error
         state_changed = state_changed or bool(next_action_lines)
     if state_changed:
         try:

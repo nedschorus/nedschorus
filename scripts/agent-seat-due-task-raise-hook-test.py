@@ -811,7 +811,7 @@ check("next-action: the prompt restores the many-parts exception and names ghi-g
       and "scripts/ghi-guide-agent-ask.py" in text, text)
 check("next-action: an unheld task is listed, a held one is counted, not listed",
       '- task 5 "Free task"' in text and "Waits on a PR" not in text
-      and "1 more open task(s) wait on" in text, text)
+      and "1 more open task(s) are not listed: each waits on" in text, text)
 check("next-action: a walk-minutes line marked <open> is listed with its file and line",
       "- old-walk-minutes.md:2: - Item 2: deferred twice <open>" in text, text)
 check("next-action: the last line says a second stop without a tool ends the turn",
@@ -828,6 +828,35 @@ check("next-action: a tool run since the prompt lets the prompt come again",
 check("next-action: another session in the same list gets its own prompt",
       (context_of(seat.stop(session_id="other-session")) or "").startswith(
           NEXT_ACTION_FIRST_LINE))
+
+seat = IdleSeat()
+seat.task("5", subject="Free task")
+check("next-action: with no prerequisite to check, the prompt is still handed",
+      (context_of(seat.stop()) or "").startswith(NEXT_ACTION_FIRST_LINE))
+check("next-action: with no prerequisite to check, the prompt is still recorded",
+      seat.state_path.exists() and json.loads(seat.state_path.read_text()).get(
+          "next_action_prompt") == {"session_id": "idle-session",
+                                    "newest_tool_use_id": "toolu_first"})
+check("next-action: with no prerequisite to check, the next stop with no tool run is silent",
+      silent(seat.stop()))
+
+seat = IdleSeat()
+seat.task("9", metadata=MET, subject="Raised already")
+first_text = context_of(seat.stop()) or ""
+state = json.loads(seat.state_path.read_text())
+for entry in state["checks"].values():
+    entry["checked_at_epoch"] = 0
+seat.state_path.write_text(json.dumps(state))
+seat.respond({f"pr:{MERGED_PR}": "fail"})
+seat.append(tool_use_record("toolu_after_raise"))
+result = seat.stop()
+text = context_of(result) or ""
+check("next-action: a raised task's expired prerequisite that GitHub cannot answer is "
+      "reported in the prompt",
+      first_text.startswith("Act on task 9 ") and result.returncode == 0
+      and text.startswith(NEXT_ACTION_FIRST_LINE)
+      and f"This hook could not ask GitHub whether PR {MERGED_PR} is merged" in text
+      and "1 more open task(s) are not listed" in text, (first_text, result))
 
 seat = IdleSeat()
 seat.minutes("live-walk", "#next_to_present item 1 of 3\n")
@@ -869,6 +898,9 @@ check("next-action: a walk-minutes file that cannot be read is reported, saying 
       "checked",
       reported(result, "every task was checked and none was due, but the check whether to "
                        "hand the next-action prompt failed, so none was handed at this stop: ")
+      and "start your ready work and build your next approval-walk yourself whenever no "
+          "approval-walk is open" in result.stderr
+      and "Tell the user this whole message" in result.stderr
       and not seat.state_path.exists(), result)
 
 shutil.rmtree(SUITE_ROOT, ignore_errors=True)
