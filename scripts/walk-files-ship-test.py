@@ -171,6 +171,22 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           and "log-store" in (store_root / "README.md").read_text(encoding="utf-8"))
     check("the sibling's files were named on stderr as not shipped",
           f"{sibling}.md" in result.stderr and "not shipped" in result.stderr, result.stderr)
+    check("the not-shipped note lists the names a file of the walk can have",
+          f"{WALK}-draft.md, {WALK}-cold-read-fast-read.md, {WALK}.md, "
+          f"{WALK}-minutes.md, {WALK}-dispositions.md; or, in a walk started before "
+          f"its fast read's report took the name {WALK}-cold-read-fast-read.md, that "
+          f"report's earlier name {WALK}-suggestions.md." in result.stderr,
+          result.stderr)
+    not_shipped_instruction_lines = [line for line in result.stderr.splitlines()
+                                     if line.startswith("For ")]
+    check("the not-shipped note gives one instruction line for another walk's file, "
+          "one for this walk's file under another name, and one for any other file",
+          len(not_shipped_instruction_lines) == 3
+          and "do nothing; it ships when that walk is shipped" in not_shipped_instruction_lines[0]
+          and "rename it to that name; once every such file is renamed, run "
+              f"`{SHIP} {walk_text}` again" in not_shipped_instruction_lines[1]
+          and f"the log-store has no copy of it; it is in {walks}" in not_shipped_instruction_lines[2],
+          result.stderr)
 
     # --- Nothing new: nothing touched ---------------------------------------
     stored_minutes = store_walk / f"{WALK}-minutes.md"
