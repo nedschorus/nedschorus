@@ -873,6 +873,86 @@ check("next-action: silent once a handoff is asked for", silent(seat.stop()))
 (handoffs / "idle-session-handoff-deferred").write_text("40.0\n")
 check("next-action: silent while a handoff is deferred", silent(seat.stop()))
 
+
+def usage_record(input_tokens):
+    """An assistant record whose usage gives a model-less 200,000-token window this many tokens."""
+    return {"type": "assistant", "timestamp": "2026-11-02T00:00:02Z",
+            "message": {"usage": {"input_tokens": input_tokens},
+                        "content": [{"type": "text", "text": "x"}]}}
+
+
+seat = IdleSeat()
+seat.append(usage_record(70_000))
+result = seat.stop()
+check("next-action: silent, with no marker yet, once the context used reaches the reincarnation "
+      "threshold, because the handoff hook writes its marker in parallel at the same stop",
+      silent(result) and not seat.state_path.exists(), result)
+
+seat = IdleSeat()
+seat.append(usage_record(60_000))
+check("next-action: context used below the reincarnation threshold still gets the prompt",
+      (context_of(seat.stop()) or "").startswith(NEXT_ACTION_FIRST_LINE))
+
+seat = IdleSeat()
+shutil.rmtree(seat.task_directory)
+result = seat.stop()
+check("next-action: a task list whose directory does not exist yet still gets the prompt, "
+      "with no task listed",
+      result.returncode == 0
+      and (context_of(result) or "").startswith(NEXT_ACTION_FIRST_LINE)
+      and "- task " not in (context_of(result) or "")
+      and json.loads(seat.state_path.read_text()).get("next_action_prompt")
+      == {"session_id": "idle-session", "newest_tool_use_id": "toolu_first"}, result)
+
+# One GitHub budget bounds the whole run: tasks 1 and 2 spend it in the due-task pass, so the
+# next-action prompt's check of task 3's expired prerequisite must not get a budget of its own.
+seat = IdleSeat()
+seat.task("1", metadata={"prerequisites": [{"pr_merged": 301}]})
+seat.task("2", metadata={"prerequisites": [{"pr_merged": 302}]})
+seat.task("3", metadata={"prerequisites": [{"pr_merged": 303}]})
+seat.state_path.parent.mkdir(parents=True)
+seat.state_path.write_text(json.dumps({"raised": {"3": {"prerequisites": hook.canonical_prerequisites(
+    [{"pr_merged": 303}])}}, "checks": {}}))
+gh_calls_made = []
+
+
+def slow_timing_out_gh(command, *arguments, **keywords):
+    if command[0] != "gh":
+        return real_subprocess_run(command, *arguments, **keywords)
+    gh_calls_made.append(command[3])
+    time.sleep(0.2)
+    raise subprocess.TimeoutExpired(command, keywords.get("timeout"))
+
+
+real_budget = hook.GH_CALLS_TOTAL_BUDGET_SECONDS
+real_home = os.environ.get("HOME")
+hook.subprocess.run = slow_timing_out_gh
+hook.GH_CALLS_TOTAL_BUDGET_SECONDS = 0.3
+os.environ["HOME"] = str(seat.home)  # the handoff module finds its markers under Path.home()
+try:
+    output = hook.run(json.dumps({
+        "session_id": "idle-session", "transcript_path": str(seat.transcript),
+        "cwd": str(seat.checkout), "hook_event_name": "Stop", "stop_hook_active": False}),
+        {**seat_session_environment(), "CLAUDE_CODE_TASK_LIST_ID": TASK_LIST_ID},
+        seat.home, hook.datetime.now(hook.timezone.utc))
+finally:
+    hook.subprocess.run = real_subprocess_run
+    hook.GH_CALLS_TOTAL_BUDGET_SECONDS = real_budget
+    if real_home is None:
+        os.environ.pop("HOME", None)
+    else:
+        os.environ["HOME"] = real_home
+text = json.loads(output)["hookSpecificOutput"]["additionalContext"] if output else ""
+check("one GitHub budget for the whole run: once the due-task pass spends it, the next-action "
+      "prompt asks gh nothing more",
+      gh_calls_made == ["301", "302"], gh_calls_made)
+check("one GitHub budget for the whole run: each condition gh could not answer is reported once",
+      text.startswith(NEXT_ACTION_FIRST_LINE)
+      and text.count("could not ask GitHub whether PR 301 is merged") == 1
+      and text.count("could not ask GitHub whether PR 302 is merged") == 1
+      and "3 more open task(s) are not listed" in text, text)
+
+
 seat = IdleSeat()
 seat.append({"type": "user", "timestamp": "2026-11-02T00:00:01Z",
              "toolUseResult": {"status": "async_launched", "agentId": "a1"}})
