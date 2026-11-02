@@ -267,8 +267,15 @@ def run_decision_cases(root: Path):
     check("a failed recovery reaches the user with its exit code and its words",
           "exited 1" in text and "REFUSED — the durable checkout is missing" in text
           and "launch-claude-ubuntu merge-lane-2" in text, text)
-    check("the failed-recovery notice gives the next step when recovery only says why it refused",
-          "If it says only why recovery refused, ask an agent on ned-box" in text, text)
+    check("the failed-recovery notice asks the user to paste it into a named ned-box agent-seat, "
+          "not to judge whether recovery's line says what to do",
+          "1. Paste this whole notice into the window of an agent-seat on ned-box, such as "
+          "fleet-restart-at-login" in text and "says what to do" not in text, text)
+    check("the failed-recovery notice gives the agent-seat its own part, which leaves the "
+          "restart from the Mac to the user",
+          text.index("2. Then restart merge-lane-2 by running in a Terminal on your Mac:")
+          < text.index("For the agent-seat on ned-box this notice is pasted into:")
+          and "Do not restart merge-lane-2 yourself" in text, text)
     check("the failed-recovery notice's restart command gives recovery a terminal with ssh -t",
           "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
           "scripts/recover-crashed-seats.py merge-lane-2'\n" in text, text)
@@ -325,6 +332,13 @@ def run_decision_cases(root: Path):
           and "merge-lane-2 is running again" in text
           and harness.state["seats"]["merge-lane-2"]["recovery_attempts"][-1]["outcome"]
           == "restarted", (harness.notices(), text))
+    pages = sorted((root / "started-outside-user-systemd-manager" / "notice-pages").glob(
+        "*started-outside-user-systemd-manager.html"))
+    page = pages[0].read_text(encoding="utf-8") if pages else ""
+    check("the started-outside notice's page carries its own title, not the crash watcher's "
+          "needs-you title",
+          "<title>merge-lane-2: started outside the user systemd manager, so its CPU priority "
+          "is normal</title>" in page and "needs you" not in page, repr(pages))
 
     check("the watcher's window-not-opened exit status is recovery's",
           watcher_module.RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS
@@ -658,6 +672,13 @@ def run_refused_cases(root: Path):
           and "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
               "scripts/recover-crashed-seats.py merge-lane-2'\n" in text
           and f"  {watcher_module.MAC_LAUNCHER} merge-lane-2\n" in text, text)
+    check("the recovery-refuses notice asks the user to paste it into a named ned-box "
+          "agent-seat, and gives that agent-seat its own part after the user's steps",
+          "1. Paste this whole notice into the window of an agent-seat on ned-box, such as "
+          "fleet-restart-at-login" in text and "says what to do" not in text
+          and text.index("2. Then restart merge-lane-2 by running in a Terminal on your Mac:")
+          < text.index("For the agent-seat on ned-box this notice is pasted into:")
+          and "Do not restart merge-lane-2 yourself" in text, text)
 
     harness = Harness(root / "leftover-shell")
     refused_after_running(harness, "ask-to-close-the-leftover-idle-shell", LEFTOVER_SHELL_DETAIL)
@@ -1177,6 +1198,14 @@ def run_notice_page_cases(root: Path):
           and sum(entry["decision"].startswith("page refused by the Mac")
                   for entry in harness.decisions()) == 1,
           repr((harness.windows, harness.decisions())))
+
+    every_notice_template = {name: value for name, value in vars(watcher_module).items()
+                             if name.endswith("_NOTICE_TEMPLATE")}
+    check("no notice tells the user to ask an agent on ned-box without naming an agent-seat "
+          "and where to reach it",
+          len(every_notice_template) == 9 and not any(
+              "an agent on ned-box" in value.lower() for value in every_notice_template.values()),
+          sorted(every_notice_template))
 
     page = watcher_module.failed_restart_notice_html_page_build("seat<b>&x", "seat<b>&x is down.", "now")
     check("the page escapes the seat's name in its title",
