@@ -198,19 +198,20 @@ def item_opening_lines(text, parser, tokens=None):
     of a top-level paragraph, a label ITEM_LABEL reads or a running count `Item N of M` after any emphasis; on
     the first line of an item of a top-level list, a label in bold. M is None when the label gives no `of M`.
     A top-level heading WITHDRAWN_HEADING reads is an opening that names no item, ([], None): it ends the item
-    it falls in. The first label or count after it, before any other heading, is the Withdrawn version's own
-    and is no opening when it names only items the Withdrawn heading names, or when that heading names none."""
+    it falls in. A label or count after it, before the next heading that is not a Withdrawn heading, is the
+    Withdrawn version's own, and no opening, when it names only items a Withdrawn heading since that heading
+    names; after a Withdrawn heading that names no item, every label and count stays an opening."""
     openings = {}
     tokens = parser.parse(text) if tokens is None else tokens
-    # The items the last Withdrawn heading names, an empty set when it names none; None outside a Withdrawn version.
-    withdrawn_items = None
+    # The items the Withdrawn headings since the last other heading name.
+    withdrawn_items = set()
     for index, token in enumerate(tokens):
         if token.type == "heading_open" and token.map is not None and token.level == 0:
-            withdrawn_items = None
             if index + 1 < len(tokens) and WITHDRAWN_HEADING.match(tokens[index + 1].content):
                 openings[token.map[0]] = ([], None)
-                withdrawn_items = withdrawn_heading_items(tokens[index + 1].content)
+                withdrawn_items |= withdrawn_heading_items(tokens[index + 1].content)
                 continue
+            withdrawn_items = set()
         if token.type != "paragraph_open" or token.map is None:
             continue
         # A paragraph at level 2 straight after an item's start is that item's first paragraph; an item of a
@@ -231,9 +232,7 @@ def item_opening_lines(text, parser, tokens=None):
                 found = (expand_numbers(count[1]), count[2])
             except UnusableRange:
                 continue
-        own_label = withdrawn_items is not None and (not withdrawn_items or set(found[0]) <= withdrawn_items)
-        withdrawn_items = None
-        if not own_label:
+        if not (withdrawn_items and set(found[0]) <= withdrawn_items):
             openings[token.map[0]] = found
     return openings
 

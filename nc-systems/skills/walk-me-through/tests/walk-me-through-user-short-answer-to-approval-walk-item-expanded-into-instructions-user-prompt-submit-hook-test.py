@@ -1210,18 +1210,33 @@ def test_a_withdrawn_version_under_a_shared_heading_ends_only_its_own_item():
     check("under a shared heading whose items have no openings, a Withdrawn heading ends the unit's text",
           lines is not None and lines[1].startswith(
               "A means approve: the user agrees with the recommendation of item 6 of 9 (do both)."), f"lines {lines!r}")
-    for heading in ("#### Withdrawn version 1 of item 6", "#### Withdrawn version 1"):
+    for heading, withdrawn_labels in (
+            ("#### Withdrawn version 1 of item 6", "**Item 6: the old sentence.** Recommendation: keep it.\n"),
+            ("#### Withdrawn version 1 of items 5 and 6",
+             "**Item 5: the old path.** Recommendation: keep it.\n\n"
+             "**Item 6: the old sentence.** Recommendation: keep it.\n")):
         document = shared_heading_document(
             "**Item 5: the path.** Recommendation: fix the path.\n\nThe sentence. Recommendation: drop it.\n\n"
-            + heading + "\n\n**Item 6: the old sentence.** Recommendation: keep it.\n")
+            + heading + "\n\n" + withdrawn_labels)
         lines = Case(next_to_present="item 6 of 9", document=document).lines("a")
-        check(f"under a shared heading, the label of a Withdrawn version below `{heading}` is not live item 6's "
-              "opening, so item 6 gets no recommendation and the line saying why, never the withdrawn one",
+        check(f"under a shared heading, every label of a Withdrawn version below `{heading}` that names an item the "
+              "heading names is no live item's opening, so item 6 gets no recommendation and the line saying why, "
+              "never the withdrawn one",
               lines is not None
               and lines[1] == "A means approve: the user agrees with the recommendation of item 6 of 9. "
                               "Do what the recommendation says."
               and not any("keep it" in line for line in lines)
               and any("because item 6 has no opening it reads" in line for line in lines),
+              f"lines {lines!r}")
+    document = shared_heading_document(
+        "**Item 5: the path.** Recommendation: fix the path.\n\n#### Withdrawn version 1\n\n"
+        "The old path. Recommendation: move it.\n\n**Item 6: the sentence.** Recommendation: drop it.\n")
+    for number, recommendation in (("5", "fix the path"), ("6", "drop it")):
+        lines = Case(next_to_present=f"item {number} of 9", document=document).lines("a")
+        check(f"under a shared heading, a Withdrawn heading that names no item drops no label, so item {number} "
+              "reads its own live recommendation",
+              lines is not None and lines[1].startswith(
+                  f"A means approve: the user agrees with the recommendation of item {number} of 9 ({recommendation})."),
               f"lines {lines!r}")
 
 
