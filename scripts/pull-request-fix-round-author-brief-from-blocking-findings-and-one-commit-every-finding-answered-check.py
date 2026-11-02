@@ -57,7 +57,8 @@ file or the description file is in the worktree, stages every change, runs PRE_P
 pushes with the pre-push hook's time limit, opens the pull request with gh pr create, switches back,
 restores the answers file, deletes the local NEW_TOPIC_BRANCH and checks that it is gone. A failure after
 the commit undoes nothing and prints the commit, the steps done and the steps still to do. A second run on
-NEW_TOPIC_BRANCH, once it holds the commit, skips the test run and the commit and resumes at the push;
+NEW_TOPIC_BRANCH, once it holds the commit, skips the test run and the commit and resumes at the push,
+but refuses when HEAD is not the commit the first run tested and recorded, such as a commit made by hand;
 once the pull request is open, the printed steps still to do are done by hand.
 
 Exit codes: 0 brief printed, round passes or move step done; 1 the review or the round breaks a rule, said on
@@ -780,8 +781,9 @@ def move_start(number, reviewer_login, new_branch, whole_file_paths):
         shutil.move(answers, set_aside)
     print(f"On {new_branch}, cut from origin/main, with {len(whole_file_paths)} whole file(s) copied from the "
           f"frozen-head {frozen_head[:12]}.\n"
-          "Make by hand the moved part of each file that is only partly moved, write the new pull request's "
-          "description in a file outside this worktree, then run:\n"
+          "Make by hand the moved part of each file that is only partly moved, and leave it uncommitted: the "
+          "finish step runs the tests and commits it. Write the new pull request's description in a file outside "
+          "this worktree, then run:\n"
           f"python3 {PROGRAM} {number} --move-change-to-own-pull-request-finish --title <title> "
           "--body-file <description file>")
 
@@ -810,6 +812,14 @@ def move_finish(number, title, body_file):
                       f"Move it to {set_aside} and run this again; it comes back when the move ends.")
     if git(["rev-list", "--count", "origin/main..HEAD"]).strip() != "0":
         # An earlier run made the commit and stopped at a later step: resume at the push.
+        head = git(["rev-parse", "HEAD"]).strip()
+        if state.get("tested_commit") != head:
+            base = git(["merge-base", "HEAD", "origin/main"]).strip()
+            raise Refused(f"{new_branch} holds commit {head[:12]}, which {PROGRAM} did not make, so the test "
+                          f"command has not run on it: {PRE_PUSH_TEST_COMMAND}\n"
+                          f"Undo the commits made by hand, keeping their changes staged, with git reset --soft "
+                          f"{base}, then run --move-change-to-own-pull-request-finish again: it runs the tests and "
+                          "commits the moved change.")
         uncommitted = git_output.nul_separated_fields(git(["status", "--porcelain", "-z", "--untracked-files=all"]))
         if uncommitted:
             raise Refused(f"{new_branch} already holds the moved change's commit, made by an earlier run, but the "
@@ -832,6 +842,8 @@ def move_finish(number, title, body_file):
             git(["commit", "-q", "-F", message.name])
         finally:
             os.unlink(message.name)
+        state["tested_commit"] = git(["rev-parse", "HEAD"]).strip()
+        state_path.write_text(json.dumps(state))
     commit = git(["rev-parse", "HEAD"]).strip()
     created = {}
 

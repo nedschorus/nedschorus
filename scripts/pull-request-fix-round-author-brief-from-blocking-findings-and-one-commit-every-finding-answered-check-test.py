@@ -1302,8 +1302,28 @@ def move_push_failure_cases(root, _repository, _base, _frozen_head):
           and "Moved to pull request https://github.com/o/r/pull/41" in out, out + err)
 
 
+def move_hand_commit_cases(root, _repository, _base, _frozen_head):
+    repository, frozen_head = move_repository(root)
+    body = root / "description.md"
+    body.write_text("Moves the timeout change.\n")
+    routes = move_routes(frozen_head, body)
+    finish = ("--move-change-to-own-pull-request-finish", "--title", "Move it", "--body-file", str(body))
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    check("move-start: says to leave the hand-made part uncommitted for the finish step",
+          code == 0 and "leave it uncommitted" in out, out + err)
+    base = git(repository, "rev-parse", "origin/main")
+    (repository / "partly.txt").write_text(PARTLY_MOVED_ONLY)
+    git(repository, "add", "-A")
+    git(repository, "commit", "-q", "-m", "committed by hand")
+    code, out, err = run(root, repository, routes, *finish)
+    pushed = git(repository, "ls-remote", "origin", NEW_BRANCH)
+    check("move-finish: refuses a commit it did not make and test, pushing nothing",
+          code == 1 and "did not make" in err and f"git reset --soft {base}" in err and not pushed, out + err)
+
+
 gh_timeout_case()
 case("move", move_cases)
+case("move hand commit", move_hand_commit_cases)
 case("move failure after push", move_failure_after_push_cases)
 case("move push failure", move_push_failure_cases)
 case("brief", brief_cases)
