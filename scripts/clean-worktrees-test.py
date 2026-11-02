@@ -1181,6 +1181,23 @@ with tempfile.TemporaryDirectory() as scratch:
                   f"committed-late-wt-branch, the head commit of a merged or closed pull request, "
                   f"and is now {head_of(committed_late_wt)} on committed-late-wt-branch"
                   in committed_late_output.getvalue(), committed_late_output.getvalue())
+        tag_shares_name_wt = owned_worktree("tag-shares-name-wt", running_session_owner)
+        git(checkout, "tag", "tag-shares-name-wt-branch", head_of(tag_shares_name_wt))
+        check("git's --short form of a branch that a same-named tag shadows is heads/<name>, "
+              "the case the branch read must not use",
+              git(tag_shares_name_wt, "symbolic-ref", "--short", "HEAD").strip()
+              == "heads/tag-shares-name-wt-branch")
+        check("the branch read of a worktree whose branch shares its name with a tag is the "
+              "branch's own name",
+              module.checked_out_branch_name(tag_shares_name_wt) == "tag-shares-name-wt-branch",
+              repr(module.checked_out_branch_name(tag_shares_name_wt)))
+        detached_read_wt = owned_worktree("detached-read-wt", running_session_owner, detach=True)
+        check("the branch read of a detached worktree is no branch",
+              module.checked_out_branch_name(detached_read_wt) is None,
+              repr(module.checked_out_branch_name(detached_read_wt)))
+        check("a ref outside refs/heads/, or no ref, names no branch",
+              module.local_branch_name_of_full_ref("refs/tags/tag-shares-name-wt-branch") is None
+              and module.local_branch_name_of_full_ref(None) is None)
         late_wt = owned_worktree("late-wt", running_session_owner)
         (late_wt / "written-after-the-verdict.txt").write_text("new\n", encoding="utf-8")
         late_output = io.StringIO()
