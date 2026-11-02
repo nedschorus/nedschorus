@@ -49,12 +49,13 @@ def check(case_name, condition, detail=""):
 
 class CommandStub:
     """Records each command; answers the dry run with dry_run_result (or raises
-    dry_run_raises), and each sudo command with exit 1 when its second word is in
-    failing_sudo_commands, else 0."""
+    dry_run_raises), and each sudo command with failing_exit_code when its second word
+    is in failing_sudo_commands, else 0. A negative exit code is how subprocess reports a
+    command killed by a signal."""
 
     def __init__(self, dry_run_result=(73, DRY_RUN_OUTPUT_AS_NON_ROOT), dry_run_raises=None,
-                 failing_sudo_commands=()):
-        self.commands = []
+                 failing_sudo_commands=(), failing_exit_code=1):
+        self.commands, self.failing_exit_code = [], failing_exit_code
         self.dry_run_result, self.dry_run_raises = dry_run_result, dry_run_raises
         self.failing_sudo_commands = set(failing_sudo_commands)
 
@@ -66,7 +67,7 @@ class CommandStub:
             code, output = self.dry_run_result
             return subprocess.CompletedProcess(command, code, stdout="", stderr=output)
         return subprocess.CompletedProcess(
-            command, 1 if command[1] in self.failing_sudo_commands else 0)
+            command, self.failing_exit_code if command[1] in self.failing_sudo_commands else 0)
 
     @property
     def sudo_commands(self):
@@ -107,7 +108,8 @@ stub = CommandStub(dry_run_result=(65, invalid_rule_line + "\n"))
 exit_code, printed, errors = run_main(["--install-and-clean-once"], stub)
 check("dry run that systemd-tmpfiles rejects: exit 1", exit_code == 1, printed + errors)
 check("rejected dry run names the exit code and passes on systemd-tmpfiles' line",
-      "dry run failed" in errors and "exited 65" in errors and invalid_rule_line in errors,
+      "dry run failed" in errors and "exited 65" in errors and invalid_rule_line in errors
+      and f"When a line above names {RULE}, correct that line of the rule file." in errors,
       errors)
 check("rejected dry run stops before any sudo command", stub.sudo_commands == [],
       stub.commands)
@@ -118,10 +120,24 @@ check("dry run exiting 73 with no unopenable directory to explain it: exit 1",
       exit_code == 1 and "Failed to open something" in errors
       and 'Would remove "/tmp/x"' not in errors, printed + errors)
 
+for code in (65, 74, -9):
+    stub = CommandStub(dry_run_result=(code, DRY_RUN_OUTPUT_AS_NON_ROOT))
+    exit_code, printed, errors = run_main([], stub)
+    check(f"dry run exiting {code}, though it also could not open a directory: exit 1",
+          exit_code == 1 and f"exited {code}" in errors, printed + errors)
+
+many_entries = "".join(f'Would remove "/tmp/entry-{number:02}"\n' for number in range(12))
+stub = CommandStub(dry_run_result=(0, many_entries))
+exit_code, printed, errors = run_main([], stub)
+check("dry run samples the first 10 of 12 entries",
+      "The first 10:" in printed and "/tmp/entry-09\n" in printed
+      and "/tmp/entry-10" not in printed, printed)
+
 stub = CommandStub(dry_run_raises=FileNotFoundError("systemd-tmpfiles"))
 exit_code, printed, errors = run_main(["--install-and-clean-once"], stub)
 check("systemd-tmpfiles missing: exit 1, says so, runs no sudo command",
-      exit_code == 1 and "not on PATH" in errors and stub.sudo_commands == [],
+      exit_code == 1 and "not on PATH" in errors and f"Run `{installer.DRY_RUN_COMMAND_LINE}` on ned-box" in errors
+      and stub.sudo_commands == [],
       printed + errors)
 
 stub = CommandStub()
@@ -137,7 +153,9 @@ check("install: installs the rule as /etc/tmpfiles.d/tmp.conf, then cleans with 
 stub = CommandStub(failing_sudo_commands={"install"})
 exit_code, printed, errors = run_main(["--install-and-clean-once"], stub)
 check("install fails: exit 1, says the file was not written, does not clean",
-      exit_code == 1 and "install failed" in errors and "was not written" in errors
+      exit_code == 1 and "install failed" in errors and "was not written" in errors and installer.SUDO_NEEDS_THE_USER_LINE in errors
+      and f"run `{installer.INSTALL_COMMAND_LINE}` again on ned-box" in errors
+      and "If that run fails the same way, stop and give the user what sudo printed." in errors
       and len(stub.sudo_commands) == 1, printed + errors + str(stub.commands))
 
 stub = CommandStub(failing_sudo_commands={"systemd-tmpfiles"})
@@ -146,6 +164,12 @@ check("clean fails: exit 1, says the rule is installed and how to clean again",
       exit_code == 1 and "clean failed" in errors and "The rule is installed" in errors
       and "`sudo systemd-tmpfiles --clean /etc/tmpfiles.d/tmp.conf` again" in errors,
       printed + errors)
+
+for step in ("install", "systemd-tmpfiles"):
+    stub = CommandStub(failing_sudo_commands={step}, failing_exit_code=-15)
+    exit_code, printed, errors = run_main(["--install-and-clean-once"], stub)
+    check(f"sudo {step} killed by a signal: exit 1", exit_code == 1 and "exited -15" in errors,
+          printed + errors)
 
 rule_lines = [line.split() for line in installer.RULE_FILE.read_text().splitlines()
               if line and not line.startswith("#")]

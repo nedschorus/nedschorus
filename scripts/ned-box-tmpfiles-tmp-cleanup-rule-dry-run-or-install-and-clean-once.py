@@ -37,6 +37,17 @@ TOP_LEVEL_REMOVAL_LINE = re.compile(r'^Would remove (?:directory )?"(/(?:var/)?t
 ANY_REMOVAL_LINE = re.compile(r'^Would remove ')
 UNOPENABLE_DIRECTORY_LINE = re.compile(r'^Opening directory ".*" failed, ignoring: Permission denied$')
 PROGRAM = "ned-box-tmpfiles-tmp-cleanup-rule-dry-run-or-install-and-clean-once"
+DRY_RUN_COMMAND_LINE = f"python3 {Path(__file__).resolve()}"
+INSTALL_COMMAND_LINE = f"{DRY_RUN_COMMAND_LINE} --install-and-clean-once"
+# sudo cannot ask for the password without a terminal, as in an agent's shell.
+# The durable checkout, not this file's path: an agent may run this from a worktree removed later.
+USER_INSTALL_COMMAND_LINE = (
+    "ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && git pull --ff-only && python3 "
+    "scripts/ned-box-tmpfiles-tmp-cleanup-rule-dry-run-or-install-and-clean-once.py "
+    "--install-and-clean-once'")
+SUDO_NEEDS_THE_USER_LINE = (
+    "When sudo said a terminal or a password is required, the user must run the install, "
+    f"from a Terminal on his Mac: {USER_INSTALL_COMMAND_LINE}")
 
 
 def dry_run(rule_file: Path, run=subprocess.run) -> int:
@@ -46,7 +57,8 @@ def dry_run(rule_file: Path, run=subprocess.run) -> int:
         result = run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     except FileNotFoundError:
         print(f"{PROGRAM}: dry run failed: systemd-tmpfiles is not on PATH, so nothing "
-              "was counted and nothing was changed.", file=sys.stderr)
+              f"was counted and nothing was changed.\nRun `{DRY_RUN_COMMAND_LINE}` on ned-box, "
+              "whose /tmp the rule is for.", file=sys.stderr)
         return 1
     lines = (result.stdout + result.stderr).splitlines()
     unopenable = [line for line in lines if UNOPENABLE_DIRECTORY_LINE.match(line)]
@@ -58,6 +70,9 @@ def dry_run(rule_file: Path, run=subprocess.run) -> int:
               "Its lines other than removals:", file=sys.stderr)
         for line in [line for line in lines if not ANY_REMOVAL_LINE.match(line)][:SAMPLE_SIZE]:
             print(f"  {line}", file=sys.stderr)
+        print(f"When a line above names {rule_file}, correct that line of the rule file.\n"
+              "Otherwise fix what the lines above name.\n"
+              f"Then run `{DRY_RUN_COMMAND_LINE}` again.", file=sys.stderr)
         return 1
     top_level = [match.group(1) for line in lines
                  if (match := TOP_LEVEL_REMOVAL_LINE.match(line))]
@@ -83,15 +98,17 @@ def install_and_clean_once(rule_file: Path, run=subprocess.run) -> int:
     if installed.returncode != 0:
         print(f"{PROGRAM}: install failed: `{' '.join(install_command)}` exited "
               f"{installed.returncode}, so {INSTALLED_RULE_PATH} was not written and nothing "
-              "was removed.\nFix what sudo printed above, then run this script again with "
-              "--install-and-clean-once.", file=sys.stderr)
+              f"was removed.\n{SUDO_NEEDS_THE_USER_LINE}\n"
+              f"Otherwise fix what sudo printed above, then run `{INSTALL_COMMAND_LINE}` again on ned-box.\n"
+              "If that run fails the same way, stop and give the user what sudo printed.",
+              file=sys.stderr)
         return 1
     print(f"Installed {INSTALLED_RULE_PATH}; the daily cleaner uses it from now on.")
     cleaned = run(clean_command)
     if cleaned.returncode != 0:
         print(f"{PROGRAM}: clean failed: `{' '.join(clean_command)}` exited "
-              f"{cleaned.returncode}. The rule is installed, but today's backlog may be "
-              "only partly removed.\nFix what systemd-tmpfiles printed above, then run "
+              f"{cleaned.returncode}. The rule is installed, and the daily cleaner uses it; "
+              "systemd-tmpfiles may have removed some old entries before it failed.\nFix what systemd-tmpfiles printed above, then run "
               f"`{' '.join(clean_command)}` again.", file=sys.stderr)
         return 1
     print("Cleaned /tmp and /var/tmp once with the installed rule.")
@@ -108,8 +125,9 @@ def main(argv=None, rule_file: Path = RULE_FILE, run=subprocess.run) -> int:
     if dry_run(rule_file, run) != 0:
         return 1
     if not arguments.install_and_clean_once:
-        print("Nothing was changed. To install the rule and remove these once, run this "
-              "script again with --install-and-clean-once; sudo asks for the password.")
+        print("Nothing was changed. To install the rule and remove the entries counted above once, "
+              f"run `{INSTALL_COMMAND_LINE}` on ned-box from a terminal; sudo asks for the "
+              "password.")
         return 0
     return install_and_clean_once(rule_file, run)
 
