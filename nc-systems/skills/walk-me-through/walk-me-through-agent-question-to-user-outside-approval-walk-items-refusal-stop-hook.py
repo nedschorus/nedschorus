@@ -112,7 +112,7 @@ quotations included; the refusal names them as written, and its step 1 tells
 the agent to copy each into the item as a line of its own, refusing until
 the item holds them so. An item's lines run from its opening,
 as the approval-walk finder reads openings, when it has one, to the next
-item's opening or its unit's end, and are otherwise its whole unit; but an
+item's opening, a Withdrawn heading or its unit's end, and are otherwise its whole unit; but an
 item without an opening under a heading shared by several items holds no
 lines. So a question the
 agent has put into an interruption item passes, however that item got there
@@ -351,8 +351,8 @@ def turn_assistant_texts(records):
 
 def interruption_item_texts(document_text, units, waiting_numbers, parser):
     """The set of normalized lines of every item numbered W.n, for W a waiting item, not itself waiting: its lines as the
-    approval-walk finder's line-range helper gives them, or nothing when they are the whole of a unit of several
-    items, because that unit's items have no openings."""
+    approval-walk finder's line-range helper gives them, or nothing when they start at the heading of a unit of
+    several items, because that unit's items have no openings."""
     document_lines = document_text.split("\n")
     openings = walk_finder.item_opening_lines(document_text, parser)
     texts = []
@@ -363,7 +363,7 @@ def interruption_item_texts(document_text, units, waiting_numbers, parser):
                 continue
             span = walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
                 openings, first, end, number, numbers, total)
-            if len(numbers) > 1 and span == (first, end):
+            if len(numbers) > 1 and span[0] == first:
                 continue
             texts.append(normalized_lines(document_lines[span[0]:span[1]]))
     return texts

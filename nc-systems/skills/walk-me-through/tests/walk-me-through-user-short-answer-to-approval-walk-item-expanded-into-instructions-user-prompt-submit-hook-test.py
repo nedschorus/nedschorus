@@ -1191,6 +1191,27 @@ def test_parts_in_an_items_opening_paragraph_under_a_shared_heading_are_that_ite
           lines is not None and lines[1].startswith("The answer gives a letter to item 1 of 9"), f"lines {lines!r}")
 
 
+def test_a_withdrawn_version_under_a_shared_heading_ends_only_its_own_item():
+    withdrawn = "#### Withdrawn version 1 of item 5\n\nThe first path.\n\nRecommendation: add the filter.\n\n"
+    layouts = {
+        "with openings": shared_heading_document("**Item 5: the path.** Recommendation: fix the path.\n\n" + withdrawn
+                                                 + "**Item 6: the sentence.** Recommendation: drop it.\n"),
+    }
+    for layout, document in layouts.items():
+        for number, recommendation in (("5", "fix the path"), ("6", "drop it")):
+            lines = Case(next_to_present=f"item {number} of 9", document=document).lines("a")
+            check(f"under a shared heading {layout}, a Withdrawn version of item 5 ends only item 5, so item {number} "
+                  "reads its own live recommendation",
+                  lines is not None and lines[1].startswith(
+                      f"A means approve: the user agrees with the recommendation of item {number} of 9 ({recommendation})."),
+                  f"lines {lines!r}")
+    document = shared_heading_document("Both items share one recommendation. Recommendation: do both.\n\n" + withdrawn)
+    lines = Case(next_to_present="item 6 of 9", document=document).lines("a")
+    check("under a shared heading whose items have no openings, a Withdrawn heading ends the unit's text",
+          lines is not None and lines[1].startswith(
+              "A means approve: the user agrees with the recommendation of item 6 of 9 (do both)."), f"lines {lines!r}")
+
+
 def test_numbered_r_whose_walk_document_or_marker_cannot_be_read_still_goes_to_the_agent():
     for case, problem in ((Case(next_to_present="item 4 of 9", document=None), "no walk-document"),
                           (Case(next_to_present="paused until rewritten"), "a marker naming no item")):

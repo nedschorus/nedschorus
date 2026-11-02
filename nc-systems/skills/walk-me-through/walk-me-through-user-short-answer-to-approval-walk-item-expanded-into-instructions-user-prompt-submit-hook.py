@@ -612,7 +612,9 @@ def recommendations_in(lines, openings, spans, total, walk_finder, starts):
                 openings, first, end, number, numbers, unit_total) for number in numbers}
             # An item with no opening of its own is given the whole unit, which starts at the heading.
             missing = [number for number in numbers if ranges[number][0] == first]
-            if missing and len(RECOMMENDATION.findall("\n".join(lines[first:end]))) > 1:
+            # Only the items' own lines, so a Withdrawn version's recommendation is not counted.
+            held = sorted({line for start, stop in ranges.values() for line in range(start, stop)})
+            if missing and len(RECOMMENDATION.findall("\n".join(lines[line] for line in held))) > 1:
                 problem = PARTS_NOT_TOLD_APART_PROBLEM.format(
                     heading=lines[first].strip(), missing=", ".join(f"item {number}" for number in missing))
                 for number in numbers:
