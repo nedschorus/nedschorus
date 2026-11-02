@@ -2,7 +2,9 @@
 """Stop hook: while an approval-walk is open, block the agent's stop when its
 reply asks the user something outside the walk's items, so that the question
 becomes an interruption item and his letter always answers the one item
-waiting.
+waiting; and block it when the agent's message ends with a walk item's
+closing line but its checkout holds no open or paused walk, as NO WALK IN THE
+CHECKOUT says.
 
 Wired as a Stop hook in .claude/settings.json, beside the current-item Stop
 hook, walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py,
@@ -64,22 +66,19 @@ THE TEXT CHECKED is the reply, line by line, without:
   questions as items, is checked.
 `**` and `__` are dropped before the tests, so a bold question is read.
 
-EACH LINE is one of three:
-- a clear ask: a sentence ending in `?`, or a phrase in CLEAR_ASK such as
-  `say yes`, `should I` or `waiting for your answer` outside quoted text; it
-  blocks, unless the line also names an item by number, which makes it
-  unclear, because a reminder of a walk item's own question asks nothing new;
-- unclear: a `?` inside the line, a phrase in CLEAR_ASK inside quoted text,
-  such as a quoted title or a quoted line of the walk-me-through skill, which
-  may only be named and not asked, or a phrase in UNCLEAR_ASK such as `I
-  recommend`, `whether to`, or an answer cue followed by a hyphen, as in
-  `type A-D` or `say yes-or-no`, apart from `no-decision` and `no-op`, which
-  are words and pass;
-- not question-like: everything else; it passes.
-When no line is a clear ask and some are unclear, the unclear lines go to
+EACH LINE is question-like when it holds a `?` or a phrase in ASK_PHRASE,
+such as `say yes`, `should I`, `needs your approval`, `I recommend`,
+`whether to`, or an answer cue followed by a hyphen, as in `type A-D` or
+`say yes-or-no`, apart from `no-decision` and `no-op`, which are words. Code
+refuses no line by itself: a `?` or an ask phrase also ends or fills lines
+that ask nothing, such as a question the agent answers itself, the
+walk-me-through skill's answer line, or `nothing here needs your answer`.
+Every other line passes, and a reply with no question-like line never waits
+for the model.
+When some lines are question-like, they go to
 the model MODEL in one headless `claude -p` call, which is shown the text of
 every waiting item, as its unit of the walk-document holds it, and answers
-two yes-or-no questions for each unclear line: whether it concerns a waiting
+two yes-or-no questions for each question-like line: whether it concerns a waiting
 item's decision, as a reworded recommendation of that item does, and whether
 it asks the user something else. Code turns the two answers into one of three
 labels, and asking something else wins:
@@ -91,7 +90,7 @@ AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE. The child runs with every
 hook cannot run inside it, no session file, no tools, and a cwd outside any
 checkout. When the call fails, runs past MODEL_TIMEOUT_SECONDS, or answers
 without giving each numbered line exactly one entry holding both answers, the hook
-blocks on the first unclear line, saying the model check failed: a missed
+blocks on the first question-like line, saying the model check failed: a missed
 question scrolls away, a false block costs one reworded line.
 
 AN INTERRUPTION ITEM'S TEXT is not checked either: a line of the text
@@ -119,18 +118,32 @@ agent has put into an interruption item passes, however that item got there
 or was later retitled, and a question in any other item does not.
 
 EACH BLOCK is logged as one JSON line, with its time, session, walk, the
-sentence flagged, and what decided, `code`, `model` or `model-check-failed`,
+sentence flagged, and what decided, `model`, `model-check-failed` or, for the
+block NO WALK IN THE CHECKOUT describes, `no-walk-in-checkout`,
 to LOG_FILE_NAME at the top of the log-store, as ned-box reaches it or as
 the Mac's mount of ned-box's home reaches it; LOG_PATH_VARIABLE overrides the
 path. When neither is reachable, or the write fails, the block's reason says
 the block was not logged.
 
+NO WALK IN THE CHECKOUT: when the cwd's checkout has no open or paused
+approval-walk in its `docs/walk/`, a missing `docs/walk/` counting as empty,
+since the folder is not in the repository and a new worktree lacks it, and the
+agent's last message, the Stop payload's `last_assistant_message` or, when
+that is empty, the turn's last assistant text, ends with a closing line, with
+or without its link, as the approval-walk finder's
+approval_walk_closing_line_read reads it, whatever items and total it names,
+the hook blocks, names the checkout it searched, and tells the agent to keep
+the walk's files in that checkout's `docs/walk/`: the walk-me-through hooks
+find a walk only there, so the user's letter to that line would answer no
+item.
+
 SILENT while the agent answers a Stop hook (stop_hook_active set), as the
 Stop-hook silence rule's module requires; in a headless `claude -p` child;
 when the transcript or the cwd's checkout is missing; when no approval-walk is
-open; when the turn wrote no text; and when the open walk's minutes line or
-walk-document cannot be read, which the current-item Stop hook reports at the
-next turn the user starts.
+open, unless NO WALK IN THE CHECKOUT applies; while the open walk is paused,
+or its minutes carry only the old marker; when the turn wrote no text; and
+when the open walk's minutes line or walk-document cannot be read, which the
+current-item Stop hook reports at the next turn the user starts.
 
 OUTPUT: {"decision": "block", "reason": <message>}. ON A FAULT, such as input
 that is not JSON or a file it cannot read, the hook prints one line naming it
@@ -170,25 +183,21 @@ LOG_FILE_NAME = "walk-me-through-agent-question-to-user-outside-approval-walk-it
 LOG_PATH_VARIABLE = "NEDSCHORUS_WALK_ME_THROUGH_AGENT_QUESTION_REFUSAL_LOG"
 
 NUMBER_LIST = r"\d+(?:\.\d+)*(?:\s*(?:,|&|\band\b|\bto\b|-|–)\s*\d+(?:\.\d+)*)*"
-ITEM_REFERENCE = re.compile(r"\bitems?\s+\d+(?:\.\d+)*", re.I)
 WAITING_REMINDER = re.compile(
     rf"^(?:the\s+)?items?\s+(?P<numbers>{NUMBER_LIST})\s+of\s+(?P<total>\d+)\s+(?:is|are)\s+(?:still\s+)?waiting"
     r"\s+for\s+your\s+answer\W*$",
     re.I)
-CLEAR_ASK = re.compile(
+# `no-decision` and `no-op` after an answer cue are words, not answers; any other hyphen after one, as in `type A-D`,
+# may still be an answer.
+HYPHENATED_ANSWER_CUE_WORDS_THAT_ASK_NOTHING = r"(?:decision|op)\b"
+ASK_PHRASE = re.compile(
     # The letter A is matched in capitals only, because a lowercase `a` there is the article, as in `answer a finding`.
-    r"\b(?:say|reply|answer|type)\s+(?:yes|no|y|n|ao|d|(?-i:A))\b(?!-)|\bon\s+(?:a|your)\s+(?:yes|no)\b(?!-)"
+    r"\b(?:say|reply|answer|type)\s+(?:yes|no|y|n|ao|d|(?-i:A))\b(?!-" + HYPHENATED_ANSWER_CUE_WORDS_THAT_ASK_NOTHING + r")"
+    r"|\bon\s+(?:a|your)\s+(?:yes|no)\b(?!-" + HYPHENATED_ANSWER_CUE_WORDS_THAT_ASK_NOTHING + r")"
     r"|\byour\s+yes\s+or\s+no\b|\bdo\s+you\s+(?:want|agree)\b|\bshould\s+I\b|\bshall\s+I\b|\bwant\s+me\s+to\b"
     r"|\bwould\s+you\s+like\b|\bwaiting\s+(?:on|for)\s+your\s+(?:answer|word|decision|ruling|approval|go-ahead|yes)\b"
     r"|\bneeds?\s+your\s+(?:answer|decision|ruling|approval|word|go-ahead|yes)\b"
-    r"|\b(?:tell\s+me|let\s+me\s+know)\s+(?:if|whether|which)\b|\bplease\s+(?:confirm|approve|decide|choose|pick|rule)\b",
-    re.I)
-# `no-decision` and `no-op` after an answer cue are words, not answers; any other hyphen after one, as in `type A-D`,
-# may still be an answer, so the model judges it.
-HYPHENATED_ANSWER_CUE_WORDS_THAT_ASK_NOTHING = r"(?:decision|op)\b"
-UNCLEAR_ASK = re.compile(
-    r"\b(?:say|reply|answer|type)\s+(?:yes|no|y|n|ao|d|(?-i:A))-(?!" + HYPHENATED_ANSWER_CUE_WORDS_THAT_ASK_NOTHING + r")"
-    r"|\bon\s+(?:a|your)\s+(?:yes|no)-(?!" + HYPHENATED_ANSWER_CUE_WORDS_THAT_ASK_NOTHING + r")"
+    r"|\b(?:tell\s+me|let\s+me\s+know)\s+(?:if|whether|which)\b|\bplease\s+(?:confirm|approve|decide|choose|pick|rule)\b"
     r"|\brecommend|^\W*recommendation:|\bI\s+suggest\b|\blet\s+me\s+know\b|\btell\s+me\b|\basking\s+you\b"
     r"|\bwaiting\s+(?:on|for)\s+(?:you|your)\b|\bstill\s+open\b|\bneeds?\s+(?:you|your)\b|\bwhether\s+(?:I|to|we)\b"
     r"|\bA\s+or\s+D\b|\bY\s+or\s+N\b|\brule\s+once\b|\byou(?:'d|\s+would|\s+must|\s+need\s+to)?\s+rule\s+on\b"
@@ -253,9 +262,8 @@ REFUSAL_OPENING_TEMPLATE = (
     "ask the user something outside an item of the open approval-walk {walk} ({decided}). The flagged text: "
     "\"{sentence}\". While a walk is open the user's answer goes to the waiting item, item {waiting}, so a "
     "question asked in prose leaves him unable to tell which question his letter answers.")
-DECIDED_BY_CODE_NOTICE = "the hook's code read it as a clear question"
 DECIDED_BY_MODEL_NOTICE = "the model judged that it asks him something other than a waiting item's decision"
-MODEL_CHECK_FAILED_NOTICE = ("the hook's `claude -p` call that has the model judge this unclear text failed, "
+MODEL_CHECK_FAILED_NOTICE = ("the hook's `claude -p` call that has the model judge this question-like text failed, "
                              "{failure}, so the hook treats the text as a question")
 REFUSAL_INSTRUCTIONS = (
     "If the flagged text asks the user to decide or answer something, do these four steps:",
@@ -289,6 +297,25 @@ NO_PAGE_TEMPLATE = (
     "\nThe minutes record no `#item_page` line for {items}. For each such item, publish its page first if it has "
     "none and add to {minutes} the line `#item_page item <N> of <M> <the page's link>`, which this hook reads back; "
     "then put the same link in place of `<page link>` in the item's closing line.")
+NO_WALK_REFUSAL_OPENING_TEMPLATE = (
+    "approval-walk closing-line check: this hook refused to end your turn on purpose, because your message ends "
+    "with an approval-walk item's closing line, \"{line}\", but the checkout you work in, {top}, has no open or "
+    "paused approval-walk in {walk_directory}{missing}. Your message has already reached the user. The "
+    "walk-me-through hooks read an approval-walk's walk-minutes and walk-document only in {walk_directory}, so the "
+    "letter he types to answer that line reaches no approval-walk item, and is read as an answer to anything else "
+    "you asked him.")
+NO_WALK_DIRECTORY_MISSING = ", which does not exist"
+NO_WALK_REFUSAL_INSTRUCTIONS = (
+    "If the walk-document and walk-minutes of your approval-walk are in another folder, such as another checkout's "
+    "`docs/walk/`, move both files into {walk_directory}, creating {walk_directory} if it is missing, and then end "
+    "your turn; {walk_directory} is not kept in the repository, so a new worktree starts without it. The hooks then "
+    "find the approval-walk, and the user's next letter answers its waiting item.",
+    "If you have no approval-walk with items still waiting for the user, tell him in your next message that the "
+    "closing line your message ended with belongs to no open approval-walk, so a letter he types answers no item, "
+    "and ask him nothing else in that message.",
+    "From now on, keep the walk-document and walk-minutes of every approval-walk you run in the `docs/walk/` of the "
+    "checkout you work in.",
+)
 NOT_LOGGED_NOTICE = ("This refusal was not logged, {problem}. If that is because ned-box cannot be reached, tell "
                      "the user that this hook could not log to the log-store on ned-box; otherwise you need not act on it.")
 
@@ -452,19 +479,14 @@ def checked_lines(reply, document_text, units, parser, waiting_numbers, total, p
             if not any(normalized_lines(as_written) <= text for text in item_texts)]
 
 
-def line_kind(line):
-    """`clear`, `unclear` or None, as the module docstring's EACH LINE says."""
-    ends_in_question = any(sentence.rstrip(TRAILING_MARKS).endswith("?") for sentence in SENTENCE_END.split(line))
-    if ends_in_question or CLEAR_ASK.search(QUOTED.sub(" ", line)):
-        return "unclear" if ITEM_REFERENCE.search(line) else "clear"
-    if "?" in line or CLEAR_ASK.search(line) or UNCLEAR_ASK.search(line):
-        return "unclear"
-    return None
+def is_question_like(line):
+    """Whether line is question-like, as the module docstring's EACH LINE says."""
+    return "?" in line or ASK_PHRASE.search(line) is not None
 
 
-def model_judgement(message_lines, unclear_lines, total, waiting, waiting_items_text,
+def model_judgement(message_lines, question_like_lines, total, waiting, waiting_items_text,
                     timeout_seconds=MODEL_TIMEOUT_SECONDS):
-    """Return (the first unclear line the model labels AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE, or None; None, or why the call
+    """Return (the first question-like line the model labels AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE, or None; None, or why the call
     failed), for the walk whose items have total M, whose item waiting is numbered waiting, and whose waiting items
     read waiting_items_text."""
     prompt = MODEL_PROMPT_TEMPLATE.format(
@@ -473,7 +495,7 @@ def model_judgement(message_lines, unclear_lines, total, waiting, waiting_items_
         concerns_answer=AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER,
         asks_else_answer=AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER,
         message="\n".join(message_lines),
-        lines="\n".join(f"{number}. {line}" for number, line in enumerate(unclear_lines, 1)))
+        lines="\n".join(f"{number}. {line}" for number, line in enumerate(question_like_lines, 1)))
     command = ["claude", "-p", "--model", MODEL, "--output-format", "json",
                "--json-schema", json.dumps(MODEL_SCHEMA), "--system-prompt", MODEL_SYSTEM_PROMPT,
                "--tools", "", "--settings", json.dumps({"disableAllHooks": True}),
@@ -495,11 +517,11 @@ def model_judgement(message_lines, unclear_lines, total, waiting, waiting_items_
         return None, f"claude exited {completed.returncode} without a verdict ({error!r}): {detail}"
     if completed.returncode != 0 or result.get("is_error"):
         return None, f"claude exited {completed.returncode} reporting an error: {str(result.get('result'))[:300]}"
-    labels = agent_reply_line_model_labels_from_true_or_false_model_answers(entries, len(unclear_lines))
+    labels = agent_reply_line_model_labels_from_true_or_false_model_answers(entries, len(question_like_lines))
     if labels is None:
-        return None, (f"claude's verdict does not give each of the {len(unclear_lines)} numbered lines exactly one "
+        return None, (f"claude's verdict does not give each of the {len(question_like_lines)} numbered lines exactly one "
                       f"entry with a true or false {' and '.join(MODEL_ANSWERS)}: {json.dumps(verdict)[:300]}")
-    return next((line for line, label in zip(unclear_lines, labels) if label == AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE), None), None
+    return next((line for line, label in zip(question_like_lines, labels) if label == AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE), None), None
 
 
 def agent_reply_line_model_labels_from_true_or_false_model_answers(entries, count):
@@ -571,6 +593,33 @@ def closing_lines(pages, name, document_text, units, parser, numbers, total, new
     return [f"`{answer_hook.closing_line(number, walk)}`" for number in numbers], without_page
 
 
+def no_walk_in_checkout_refusal(payload, environment, top, walk_directory):
+    """The block the module docstring's NO WALK IN THE CHECKOUT describes, or None when the agent's last message does
+    not end with a closing line."""
+    message = payload.get("last_assistant_message") or ""
+    if not message.strip():
+        texts = turn_assistant_texts(current_item_hook.transcript_records(Path(payload["transcript_path"]).expanduser()))
+        message = texts[-1] if texts else ""
+    # Every closing line holds the answer letters, so a message without them needs no parser, and most lack them.
+    if answer_hook.ANSWER_LETTERS_TEXT not in message:
+        return None
+    lines = [line for line in walk_finder.prose_lines(message, closing_line_parser()) if line.strip()]
+    if not lines or walk_finder.approval_walk_closing_line_read(
+            lines[-1], closing_line_parser(), answer_hook.ANSWER_LETTERS_TEXT) is None:
+        return None
+    values = {"line": lines[-1].strip(), "top": top, "walk_directory": walk_directory,
+              "missing": "" if walk_directory.is_dir() else NO_WALK_DIRECTORY_MISSING}
+    lines_out = [NO_WALK_REFUSAL_OPENING_TEMPLATE.format(**values)] + [
+        line.format(**values) for line in NO_WALK_REFUSAL_INSTRUCTIONS]
+    problem = log_refusal(environment, {
+        "time": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "session": payload.get("session_id"), "walk": None, "sentence": values["line"],
+        "decided_by": "no-walk-in-checkout"})
+    if problem is not None:
+        lines_out.append(NOT_LOGGED_NOTICE.format(problem=problem))
+    return json.dumps({"decision": "block", "reason": "\n".join(lines_out)}, ensure_ascii=False)
+
+
 def run(stdin_text, environment):
     """Return the text to print, or None."""
     payload = json.loads(stdin_text)
@@ -590,13 +639,18 @@ def output_for(payload, environment, model=model_judgement):
     if not transcript_path or not Path(transcript_path).expanduser().is_file() or not payload.get("cwd"):
         return None
     top = walk_finder.checkout_top(Path(payload["cwd"]))
-    if top is None or not (top / walk_finder.WALK_DIRECTORY).is_dir():
+    if top is None:
         return None
+    walk_directory = top / walk_finder.WALK_DIRECTORY
+    if not walk_directory.is_dir():
+        return no_walk_in_checkout_refusal(payload, environment, top, walk_directory)
     parser = walk_finder.markdown_parser()
-    walk = walk_finder.open_walk(top / walk_finder.WALK_DIRECTORY, parser)
-    if walk is None or walk[2]:
+    walk = walk_finder.newest_unclosed_approval_walk_including_paused(walk_directory, parser)
+    if walk is None:
+        return no_walk_in_checkout_refusal(payload, environment, top, walk_directory)
+    minutes, value, old_marker, paused = walk
+    if old_marker or paused:
         return None
-    minutes, value, _ = walk
     records = current_item_hook.transcript_records(Path(transcript_path).expanduser())
     texts = turn_assistant_texts(records)
     reply = "\n".join(texts + [payload.get("last_assistant_message") or ""])
@@ -615,25 +669,20 @@ def output_for(payload, environment, model=model_judgement):
     pages = walk_finder.newest_item_page_link_per_item_from_walk_minutes(minutes.read_text(encoding="utf-8"), parser)
     checked = checked_lines(reply, document_text, units, parser, numbers, total, pages)
     lines = [line for line, _ in checked]
-    kinds = [(line, line_kind(line)) for line in lines]
-    clear = [line for line, kind in kinds if kind == "clear"]
-    unclear = [line for line, kind in kinds if kind == "unclear"]
-    if clear:
-        sentence, decided, decided_by = clear[0], DECIDED_BY_CODE_NOTICE, "code"
-    elif unclear:
-        document_lines = document_text.split("\n")
-        waiting_items_text = "\n\n".join("\n".join(document_lines[first:end]).strip()
-                                         for _, _, _, first, end in waiting_units)
-        sentence, failure = model(lines, unclear, total, " and ".join(numbers), waiting_items_text)
-        if failure is not None:
-            sentence, decided, decided_by = unclear[0], MODEL_CHECK_FAILED_NOTICE.format(failure=failure), \
-                "model-check-failed"
-        elif sentence is None:
-            return None
-        else:
-            decided, decided_by = DECIDED_BY_MODEL_NOTICE, "model"
-    else:
+    question_like = [line for line in lines if is_question_like(line)]
+    if not question_like:
         return None
+    document_lines = document_text.split("\n")
+    waiting_items_text = "\n\n".join("\n".join(document_lines[first:end]).strip()
+                                     for _, _, _, first, end in waiting_units)
+    sentence, failure = model(lines, question_like, total, " and ".join(numbers), waiting_items_text)
+    if failure is not None:
+        sentence, decided, decided_by = question_like[0], MODEL_CHECK_FAILED_NOTICE.format(failure=failure), \
+            "model-check-failed"
+    elif sentence is None:
+        return None
+    else:
+        decided, decided_by = DECIDED_BY_MODEL_NOTICE, "model"
     # The agent copies the flagged text into the item, so it is named as written, not as checked.
     sentence = "\n".join(next(written for line, written in checked if line == sentence))
     held = {number for unit in units for number in unit[0]}
