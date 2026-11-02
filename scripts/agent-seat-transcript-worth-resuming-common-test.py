@@ -49,6 +49,15 @@ def assistant(content, model="claude-opus-5-5"):
                                              "content": content}}
 
 
+def raises(call, error_type, filename=None):
+    """Return whether call raises error_type, naming filename when one is given."""
+    try:
+        call()
+    except error_type as error:
+        return filename is None or error.filename == filename
+    return False
+
+
 def write_transcript(path, records, extra_lines=(), modified_at=None):
     lines = [json.dumps(record) for record in records] + list(extra_lines)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -79,8 +88,9 @@ with tempfile.TemporaryDirectory() as scratch:
     path = write_transcript(scratch / "odd.jsonl", [user(None), user("later")])
     check("first user turn: content neither text nor list gives empty text",
           resuming.first_user_turn_text(path) == "")
-    check("first user turn: an unreadable file gives empty text",
-          resuming.first_user_turn_text(scratch / "missing.jsonl") == "")
+    check("first user turn: a missing file raises FileNotFoundError, not empty text",
+          raises(lambda: resuming.first_user_turn_text(scratch / "missing.jsonl"),
+                 FileNotFoundError))
     path = scratch / "bad-bytes.jsonl"
     path.write_bytes(json.dumps(user("café"), ensure_ascii=False).encode("utf-8").replace(
         "é".encode("utf-8"), b"\xff") + b"\n")
@@ -105,8 +115,42 @@ with tempfile.TemporaryDirectory() as scratch:
     check("work turns: text, list text, tool use and a list with stray items count; "
           "blank text, thinking only, synthetic and empty turns do not",
           count == 4, count)
-    check("work turns: an unreadable file counts zero",
-          resuming.substantive_turn_count(scratch / "missing.jsonl") == 0)
+    check("work turns: a missing file raises FileNotFoundError, not zero",
+          raises(lambda: resuming.substantive_turn_count(scratch / "missing.jsonl"),
+                 FileNotFoundError))
+
+    if os.geteuid() == 0:
+        print("SKIP  unreadable transcript cases: root can read any file")
+    else:
+        unreadable_transcript = write_transcript(
+            scratch / "unreadable-transcript.jsonl",
+            [user("real work"), assistant("one"), assistant("two")])
+        unreadable_transcript.chmod(0o000)
+        try:
+            check("first user turn: an unreadable transcript raises PermissionError naming it",
+                  raises(lambda: resuming.first_user_turn_text(unreadable_transcript),
+                         PermissionError, str(unreadable_transcript)))
+            check("work turns: an unreadable transcript raises PermissionError naming it",
+                  raises(lambda: resuming.substantive_turn_count(unreadable_transcript),
+                         PermissionError, str(unreadable_transcript)))
+        finally:
+            unreadable_transcript.chmod(0o644)
+
+        # The newest transcript is unreadable and an older readable one would otherwise win.
+        hidden_newest = scratch / "project-with-an-unreadable-newest-transcript"
+        hidden_newest.mkdir()
+        write_transcript(hidden_newest / "older-real.jsonl",
+                         [user("older work"), assistant("done")], modified_at=1_000)
+        newest = write_transcript(hidden_newest / "newest-real.jsonl",
+                                  [user("newest work"), assistant("done")], modified_at=2_000)
+        newest.chmod(0o000)
+        try:
+            check("newest: an unreadable newest transcript raises PermissionError naming it, "
+                  "rather than being skipped for an older one",
+                  raises(lambda: resuming.newest_real_transcript(hidden_newest),
+                         PermissionError, str(newest)))
+        finally:
+            newest.chmod(0o644)
 
     # newest_real_transcript
     check("newest: no project directory is reported, not raised",

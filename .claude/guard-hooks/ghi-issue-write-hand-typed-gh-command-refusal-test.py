@@ -7,7 +7,7 @@ in-process through `main` with a payload, the way the harness does. One case
 runs the file end to end as a subprocess, so the shared shell reader's import
 is exercised as the harness loads it.
 
-Run: python3 .claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal-test.py
+Run: python3 .claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 

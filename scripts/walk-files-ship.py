@@ -792,7 +792,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                     local_digest, planned.ruling))
         after = {}
         if to_place:
-            placed, after = shipper.link_staged_files_never_over_existing(
+            placed, after, why = shipper.link_staged_files_never_over_existing(
                 destination.copy_host, staging_dir, destination.walk_path,
                 [source.name for source in to_place])
             if after is None:
@@ -806,9 +806,9 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                 return EXIT_FAILED
         else:
             why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
-            if why:
-                staging_left_behind = staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(
-                    destination.copy_host, staging_dir, why)
+        if why:
+            staging_left_behind = staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(
+                destination.copy_host, staging_dir, why)
         for source in to_place:
             in_store_now = after.get(source.name)
             if in_store_now == local_digests[source.name]:

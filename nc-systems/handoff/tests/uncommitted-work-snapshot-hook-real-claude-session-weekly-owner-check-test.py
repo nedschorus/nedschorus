@@ -365,6 +365,17 @@ def test_a_scratch_clone_that_cannot_be_made_fails():
               name, record or completed.stderr)
 
 
+def test_the_scratch_clone_holds_the_owner_file_module_the_hook_loads():
+    clone = SCRATCH / "scratch-clone-module-check"
+    weekly_owner_check.make_scratch_clone(clone)
+    hook_text = (REPOSITORY_ROOT / weekly_owner_check.HOOK_RELATIVE).read_text()
+    check("worktree-owner-file-read-and-write.py" in hook_text
+          and (clone / "scripts" / "worktree-owner-file-read-and-write.py").is_file(),
+          "the scratch clone holds scripts/worktree-owner-file-read-and-write.py, which the hook "
+          "loads, so the weekly check does not pass over a FileNotFoundError",
+          str(sorted(path.relative_to(clone).as_posix() for path in clone.rglob("*.py"))))
+
+
 def test_a_check_that_cannot_run_fails():
     completed, record = run_check("breaks-clone")
     check(completed.returncode == 1 and "FAIL the check could not run: " in record,
@@ -416,6 +427,7 @@ def main():
                      test_an_interruption_after_claude_was_reaped_still_propagates,
                      test_the_record_goes_to_the_log_store_by_default,
                      test_a_scratch_clone_that_cannot_be_made_fails,
+                     test_the_scratch_clone_holds_the_owner_file_module_the_hook_loads,
                      test_a_check_that_cannot_run_fails,
                      test_an_error_after_claude_started_is_not_reported_as_a_failed_start,
                      test_a_record_that_cannot_be_written_is_reported):

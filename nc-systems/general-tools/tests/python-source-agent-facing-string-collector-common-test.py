@@ -444,6 +444,96 @@ check("a dict literal's key in a raise is not a message, so the line holds one m
 found = texts('print(MESSAGES["refusal"])\n')
 check("a subscript's index in a print is not a message", found == [], found)
 
+found = texts('def key():\n    return "refusal"\nprint(MESSAGES[key()])\n')
+check("a string returned by a function called for a subscript's index is not a message", found == [], found)
+found = texts('def key():\n    return "refusal"\nraise SystemExit({key(): "shown"})\n')
+check("a string returned by a function called for a dict literal's key is not a message",
+      found == ["shown"], found)
+found = texts('def main(messages):\n    key = "refusal"\n    print(messages[key])\n')
+check("a local used as a subscript's index is not followed", found == [], found)
+found = texts('def key():\n    return "key text"\ndef value():\n    return "value text"\n'
+              'print({key(): value() for item in items})\n')
+check("a string returned by a function a dict comprehension calls for its value is a message, "
+      "and one it calls for its key is not",
+      "value text" in found and "key text" not in found, found)
+
+# Modelled on parser_unavailable_hook_output() in
+# nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py, whose message local holds
+# report_to_user_or_dispatching_agent_instruction_build()'s returned instruction.
+found = texts('def instruction():\n    return "Tell the user in these words."\n'
+              'def parser_unavailable_hook_output():\n'
+              '    message = f"The parser is unavailable. {instruction()}"\n'
+              '    return {"additionalContext": message}\n')
+check("a string returned by a function whose call a followed local's binding carries is a message",
+      "Tell the user in these words." in found, found)
+
+COMPREHENSION_AND_BINDING_FORMS = (
+    ("a local a generator loops over, through a string literal's join",
+     'def main():\n    lines = "line text"\n    print("\\n".join(line for line in lines))\n', ["line text"]),
+    ("a string literal in the iterable a generator loops over",
+     'print(" ".join(w for w in ("alpha", "beta")))\n', ["alpha", "beta"]),
+    ("a string returned by a function called for the iterable a generator loops over",
+     'def words():\n    return "from words"\nprint(" ".join(w for w in words()))\n', ["from words"]),
+    ("a type parameter's bound, which is evaluated where the class stands",
+     'class Holder[T: print("bound text")]:\n    pass\n', ["bound text"]),
+    ("a type parameter's default", 'def pick[T = print("default text")]():\n    pass\n', ["default text"]),
+)
+for case_name, source, expected in COMPREHENSION_AND_BINDING_FORMS:
+    found = texts(source)
+    check(f"recognized: {case_name}", all(text in found for text in expected), found)
+
+COMPREHENSION_AND_BINDING_FORMS_NOT_RECOGNIZED = (
+    ("a local a generator's target shadows, through a string literal's join",
+     'def build_prompt(items):\n    note = "unused"\n    return "\\n".join(note for note in items)\n'),
+    ("a string in a comprehension's if-condition, which is compared, not shown",
+     'print([line for line in lines if line != "skipped text"])\n'),
+    ("a local a lambda rebinds with :=",
+     'def main():\n    prompt = "unused"\n    g = lambda: ((prompt := 3), print(prompt))\n'),
+    ("a local a class body rebinds with import ... as",
+     'def main():\n    prompt = "unused"\n    class Holder:\n        import sys as prompt\n        print(prompt)\n'),
+    ("a local a class body rebinds with from ... import ... as",
+     'def main():\n    prompt = "unused"\n    class Holder:\n        from os import sep as prompt\n        print(prompt)\n'),
+    ("a local a class body rebinds with a dotted import",
+     'def main():\n    os = "unused"\n    class Holder:\n        import os.path\n        print(os)\n'),
+    ("a local a class body rebinds with except ... as",
+     'def main():\n    prompt = "unused"\n    class Holder:\n        try:\n            pass\n'
+     '        except Exception as prompt:\n            print(prompt)\n'),
+    ("a local a class body rebinds with a match capture",
+     'def main(x):\n    prompt = "unused"\n    class Holder:\n        match x:\n            case prompt:\n'
+     '                print(prompt)\n'),
+    ("a local a class body rebinds with a starred match capture",
+     'def main(x):\n    prompt = "unused"\n    class Holder:\n        match x:\n            case [*prompt]:\n'
+     '                print(prompt)\n'),
+    ("a local a class body rebinds with a match mapping's rest",
+     'def main(x):\n    prompt = "unused"\n    class Holder:\n        match x:\n            case {**prompt}:\n'
+     '                print(prompt)\n'),
+)
+for case_name, source in COMPREHENSION_AND_BINDING_FORMS_NOT_RECOGNIZED:
+    found = texts(source)
+    check(f"not recognized: {case_name}", found == [], found)
+
+HELPER_PARAMETER_SCOPE_FORMS = (
+    ("a nested function's comprehension target, which does not hide the helper's parameter",
+     'def emit(text):\n    def inner():\n        values = [text for text in range(3)]\n        print(text)\n'
+     '    inner()\nemit("comprehension visible")\n', "comprehension visible"),
+    ("a nested function's nonlocal parameter, which is the helper's own",
+     'def emit(text):\n    def inner():\n        nonlocal text\n        text += "!"\n        print(text)\n'
+     '    inner()\nemit("nonlocal visible")\n', "nonlocal visible"),
+)
+for case_name, source, expected in HELPER_PARAMETER_SCOPE_FORMS:
+    found = [(entry["text"], entry["label"]) for entry in entries(source)]
+    check(f"recognized: {case_name}", (expected, "emit()") in found, found)
+
+HELPER_PARAMETER_SCOPE_FORMS_NOT_RECOGNIZED = (
+    ("a string a helper prints only through a generator's own target of the parameter's name",
+     'def emit(text):\n    print(" ".join(text for text in ["actual"]))\nemit("generator hidden")\n'),
+    ("a string a helper's lambda prints only after rebinding the parameter's name with :=",
+     'def sink(text):\n    f = lambda: ((text := 3), print(text))\nsink("walrus hidden")\n'),
+)
+for case_name, source in HELPER_PARAMETER_SCOPE_FORMS_NOT_RECOGNIZED:
+    found = [entry["text"] for entry in entries(source) if entry["label"] in ("emit()", "sink()")]
+    check(f"not recognized: {case_name}", found == [], found)
+
 check("source that does not parse yields no entries", texts('print("unclosed\n') == [])
 check("no source yields no entries", texts(None) == [])
 

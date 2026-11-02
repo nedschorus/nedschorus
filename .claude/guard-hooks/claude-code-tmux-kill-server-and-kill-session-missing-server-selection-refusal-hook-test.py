@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py.
+"""Tests for .claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py.
 
 The first case runs REAL tmux on a throwaway server, so the refusal is shown to
 answer a real behavior: with $TMUX pointing at a server, `tmux kill-server`
@@ -7,7 +7,7 @@ kills that server even when TMUX_TMPDIR names another directory. If a later
 tmux stopped doing that, the case would fail and say the guard's premise had
 gone. It is skipped where tmux is not installed.
 
-Run: python3 nc-systems/general-tools/tests/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook-test.py
+Run: python3 .claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -22,7 +22,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-HOOK_SCRIPT = (Path(__file__).resolve().parents[1]
+HOOK_SCRIPT = (Path(__file__).resolve().parent
                / "claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py")
 
 _spec = importlib.util.spec_from_file_location("tmux_kill_guard", HOOK_SCRIPT)

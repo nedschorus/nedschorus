@@ -119,6 +119,7 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -918,11 +919,35 @@ def project_directory_for_working_directory(working_directory: Path) -> Path:
 
 
 def substantive_turn_count_of_session_transcript(session_id: str, working_directory: Path) -> int:
-    """Return the session's substantive turn count, or zero if unreadable."""
+    """Return the session's substantive turn count, or zero when the session wrote no transcript.
+
+    Raise OSError when the transcript exists but cannot be read."""
     # Launch prompts and synthetic error records grow the transcript without work and must not reset the budget.
     transcript_path = (project_directory_for_working_directory(working_directory)
                        / f"{session_id}.jsonl")
-    return worth_resuming.substantive_turn_count(transcript_path)
+    try:
+        return worth_resuming.substantive_turn_count(transcript_path)
+    except FileNotFoundError:
+        # A session that died before writing anything did no work.
+        return 0
+
+
+RECOVER_CRASHED_SEATS_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "recover-crashed-seats.py"
+
+
+def unreadable_path_restart_instruction(agent: str, unreadable_path) -> str:
+    # OSError covers more than permissions (EIO, ENOTDIR), so the instruction names no cause.
+    return (f"When {unreadable_path} can be read again, start the agent-seat {agent} by running, "
+            f"at a terminal on {socket.gethostname()}: "
+            f"python3 {RECOVER_CRASHED_SEATS_SCRIPT} {agent}\n"
+            f"If recover-crashed-seats.py asks whether to restart {agent}, answer y.")
+
+
+def transcript_unreadable_stop_message(agent: str, session_id: str, error: OSError) -> str:
+    return (f"handoff-supervisor: stopped: whether session {session_id} did new work could not "
+            f"be decided, because its transcript could not be read: "
+            f"{error.filename}: {error.strerror}.\n"
+            + unreadable_path_restart_instruction(agent, error.filename))
 
 
 def queue_status_line(working_directory: Path) -> str:
@@ -2194,10 +2219,10 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             by_hand_session_id, by_hand_detail = worth_resuming.newest_real_transcript(project_directory)
         except OSError as error:
             # A fresh session's transcript would become the newest and bury the crashed one.
-            print(f"handoff-supervisor: startup stopped: whether this seat has a transcript "
-                  f"worth resuming could not be decided, because {project_directory} could not "
-                  f"be read: {error.filename}: {error.strerror}.\n"
-                  f"When that folder's permissions are fixed, start the seat again.",
+            print(f"handoff-supervisor: startup stopped: whether agent-seat {settings.agent} has a transcript "
+                  f"worth resuming could not be decided, because {error.filename} "
+                  f"could not be read: {error.strerror}.\n"
+                  + unreadable_path_restart_instruction(settings.agent, error.filename),
                   file=sys.stderr)
             return 5
         if by_hand_session_id is not None:
@@ -2256,9 +2281,13 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             )
             if next_launch_resumes_the_session:
                 consecutive_resumes_without_new_work += 1
-                substantive_turns_at_the_last_resume = (
-                    substantive_turn_count_of_session_transcript(
-                        session_id, settings.working_directory))
+                try:
+                    substantive_turns_at_the_last_resume = (
+                        substantive_turn_count_of_session_transcript(
+                            session_id, settings.working_directory))
+                except OSError as error:
+                    print(transcript_unreadable_stop_message(settings.agent, session_id, error), file=sys.stderr)
+                    return 5
             else:
                 consecutive_resumes_without_new_work = 0
                 substantive_turns_at_the_last_resume = None
@@ -2286,8 +2315,14 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             print(f"handoff-supervisor: {death.reason}")
             if death.resume:
                 # Only substantive work restores the resume budget; launch bookkeeping must not sustain a loop.
-                substantive_turns = substantive_turn_count_of_session_transcript(
-                    session_id, settings.working_directory)
+                try:
+                    substantive_turns = substantive_turn_count_of_session_transcript(
+                        session_id, settings.working_directory)
+                except OSError as error:
+                    record_agent_exit_in_supervisor_state(settings.state_path, state,
+                                                          process.returncode)
+                    print(transcript_unreadable_stop_message(settings.agent, session_id, error), file=sys.stderr)
+                    return 5
                 if (substantive_turns_at_the_last_resume is None
                         or substantive_turns > substantive_turns_at_the_last_resume):
                     consecutive_resumes_without_new_work = 0
