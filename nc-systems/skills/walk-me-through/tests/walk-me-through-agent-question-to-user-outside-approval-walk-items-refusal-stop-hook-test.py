@@ -1205,6 +1205,11 @@ def test_a_message_ending_with_a_closing_line_blocks_when_the_checkout_holds_no_
     paused = Case(minutes="#next_to_present item 2 of 10\n#approval_walk_paused")
     paused.reply(ending)
     check_silent("a closing line while the walk is paused passes", paused.run())
+    paused.reply("The tests passed.\n\nShould I merge the pull request now?")
+    check_silent("a question-like line while the walk is paused passes, though the model would say it asks",
+                 paused.run(model="yes"))
+    check("a question-like line while the walk is paused never reaches the model",
+          paused.model_calls() == [], paused.model_calls())
     outside = Case()
     outside.reply(ending)
     shutil.rmtree(outside.checkout / ".git")
