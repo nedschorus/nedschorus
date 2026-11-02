@@ -24,8 +24,10 @@ paths but leaves the rest of the home readable; the working directory is a
 fresh empty temporary directory, removed afterwards.
 
 Fails, with a line on stderr and exit 1, when agy is not on PATH or the
-sandbox program is not; exits with agy's own code, after a line on stderr,
-when agy or bwrap fails. Nothing is retried.
+sandbox program is not. When the sandboxed run fails, this program prints a
+line on stderr and exits with the sandbox program's code, which is agy's own code
+when agy ran; when bwrap or sandbox-exec fails before agy starts, it is
+that program's code. Nothing is retried.
 """
 
 import argparse
