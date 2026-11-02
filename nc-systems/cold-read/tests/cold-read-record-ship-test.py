@@ -705,6 +705,16 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           result.returncode == 2 and "another read's: triage.md." in result.stdout
           and "Rename the local triage file" not in result.stdout,
           f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    # A record path with a space: an unquoted mv would split into extra words.
+    spaced = make_record(scratch / "records with space", "2026-10-31-renamed-under-spaced-path",
+                         {"a.md": REPORT_A, "triage.md": "# triage\n\nfirst\n"})
+    ship(local_destination, str(spaced))
+    (spaced / "triage.md").rename(spaced / "cold-read-triage.md")
+    result = ship(local_destination, str(spaced))
+    check("a record path with a space: the printed mv quotes both paths",
+          result.returncode == 2
+          and f"`mv '{spaced / 'cold-read-triage.md'}' '{spaced / 'triage.md'}'`" in result.stdout,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
 
     # --- Rule 3, fail loudly -------------------------------------------------
     result = ship("nobody@no-such-host.invalid:/tmp/no-store", str(demo))
