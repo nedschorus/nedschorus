@@ -295,6 +295,20 @@ def main_checkout_of(repo):
     return Path(common.stdout.strip()).parent
 
 
+def local_branch_name_of_full_ref(ref):
+    """Return the branch name of a full `refs/heads/<name>` ref, or None for any other ref or None."""
+    # Never git's --short form: it gives heads/<name> when a tag has the same name as the branch.
+    if ref is not None and ref.startswith("refs/heads/"):
+        return ref[len("refs/heads/"):]
+    return None
+
+
+def checked_out_branch_name(worktree):
+    """Return the branch the worktree's HEAD names, or None when HEAD is detached."""
+    read = run_git(worktree, "symbolic-ref", "--quiet", "HEAD")
+    return local_branch_name_of_full_ref(read.stdout.strip()) if read.returncode == 0 else None
+
+
 def list_worktrees(repo, main_checkout):
     """Return (path, branch-or-None, git's record) for each worktree but the primary checkout;
     raise git_output.GitCommandFailed when git cannot list them."""
@@ -304,12 +318,7 @@ def list_worktrees(repo, main_checkout):
         path = Path(record.path)
         if path.resolve() == main_checkout.resolve():
             continue
-        branch = record.branch
-        if branch is not None and branch.startswith("refs/heads/"):
-            branch = branch[len("refs/heads/"):]
-        else:
-            branch = None
-        worktrees.append((path, branch, record))
+        worktrees.append((path, local_branch_name_of_full_ref(record.branch), record))
     return worktrees
 
 
@@ -327,11 +336,8 @@ def branch_refs_with_no_worktree_fully_on_main(repo):
     """Return the local branches no worktree holds that carry nothing beyond origin/main;
     raise git_output.GitCommandFailed when git cannot list either."""
     listing = git_output.run_git(repo, ["worktree", "list", "--porcelain", "-z"])
-    attached = {
-        record.branch[len("refs/heads/"):]
-        for record in git_output.worktree_records(listing)
-        if record.branch is not None and record.branch.startswith("refs/heads/")
-    }
+    attached = {local_branch_name_of_full_ref(record.branch)
+                for record in git_output.worktree_records(listing)}
     # Use lstrip=2: :short can return heads/<name> when a same-named tag shadows a branch.
     landed = git_output.run_git(repo, ["for-each-ref", "--format=%(refname:lstrip=2)",
                                        "--merged", "origin/main", "refs/heads/"])
@@ -876,8 +882,7 @@ def remove_worktree(worktree, branch, repo, verdict):
         # The owner may have committed, or switched branch, since classify() matched the finished
         # pull request to the HEAD it read; that pull request does not cover new commits.
         head_now = commit_of(worktree, "HEAD")
-        branch_read = run_git(worktree, "symbolic-ref", "--quiet", "--short", "HEAD")
-        branch_now = branch_read.stdout.strip() if branch_read.returncode == 0 else None
+        branch_now = checked_out_branch_name(worktree)
         if head_now != verdict.judged_head or branch_now != verdict.judged_branch:
             print(f"{worktree.name}: kept — its owner, {owner_text(verdict.owner)}, runs, and the "
                   f"worktree's HEAD or branch changed during this run: it was {verdict.judged_head} "
