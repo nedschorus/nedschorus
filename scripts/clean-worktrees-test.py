@@ -1569,7 +1569,7 @@ with tempfile.TemporaryDirectory() as scratch:
         walk_directory = path / "docs" / "walk"
         walk_directory.mkdir(parents=True)
         for suffix, text in (("", "# walk\n\n## Item 1 of 1\n"), ("-minutes", "# minutes\n\nItem 1 ruled.\n"),
-                             ("-draft", "# draft\n")):
+                             ("-draft", "# draft\n"), ("-suggestions", "# an earlier walk's fast read report\n")):
             (walk_directory / f"{walk_name}{suffix}.md").write_text(text, encoding="utf-8")
         (walk_directory / "never-presented-2026-10-31-draft.md").write_text("# draft\n", encoding="utf-8")
         (walk_directory / f"{walk_name}-round-1-draft.md").write_text("# round 1\n", encoding="utf-8")
@@ -1599,6 +1599,11 @@ with tempfile.TemporaryDirectory() as scratch:
           and "docs/walk/never-presented-2026-10-31-draft.md" in shipped.stdout
           and f"docs/walk/{walk_name}-round-1-draft.md" in shipped.stdout
           and not (walk_store / "walk" / "never-presented-2026-10-31-draft.md").exists(),
+          shipped.stdout)
+    check("--remove counts an earlier walk's <name>-suggestions.md as shipped, not as a file no walk ships",
+          (walk_store / "walk" / f"{walk_name}-suggestions.md").is_file()
+          and not any(f"docs/walk/{walk_name}-suggestions.md" in line
+                      for line in shipped.stdout.splitlines() if "no walk ships" in line),
           shipped.stdout)
     remove_worktree_for_next_case(walk_wt)
 
