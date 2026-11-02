@@ -137,7 +137,7 @@ REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
 WITHDRAWN_HEADING = re.compile(r"^[*_\s(]*withdrawn\b", re.I)
 # The close step of the answer program puts this right after a deferred item's running count. It holds a colon, so
 # every pattern that reads a heading past its count reads approval_walk_item_heading_with_deferred_note_removed's line.
-APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT = "(deferred: moved to the end of the walk)"
+APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT = "(deferred: moved to just before the summary item)"
 NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
 # A link is one run of non-space characters, so `publish failed: <reason>` can never be read as a link. Spaces
 # only, never a newline, so a line that ends short is not completed by the line below it.

@@ -54,7 +54,7 @@ agent each waiting item's closing line to print, word for word: the item's
 link, from the newest `#item_page` line for that item number in the minutes,
 as WALK_FINDER_FILE's docstring says, with the item's running count and point
 from its walk-document heading, any link in the point cut to its text and a
-deferred item's note `(deferred: moved to the end of the walk)` left out, then
+deferred item's note `(deferred: moved to just before the summary item)` left out, then
 ANSWER_LETTERS_TEXT, as the walk-me-through skill writes it. The link opens
 the item's page, which shows the item in full on every screen the user reads.
 When the newest line records a failed publish, the closing line has no link,

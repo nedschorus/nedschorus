@@ -1181,7 +1181,7 @@ def test_an_item_deferred_a_second_time_leaves_the_walk():
           marker(case) == "#next_to_present none, closed", case.minutes.read_text())
 
 
-DEFERRED_NOTE = "(deferred: moved to the end of the walk)"
+DEFERRED_NOTE = "(deferred: moved to just before the summary item)"
 
 
 def walk_document(case):

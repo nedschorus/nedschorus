@@ -157,11 +157,12 @@ no decision, or, for a deferral, that the item moves to just before the summary 
 whose heading's point opens with "summary"; an item deferred a second time
 leaves the walk and stays open; for --already-decided or --moved-on, that the
 walk does not come back to the item, with the ruling or the reason. For a
-deferral it also puts `(deferred: moved to the end of the walk)` right after the
-running count of the item's walk-document heading, before it writes the minutes,
-so the heading says why the item comes late; a heading that holds the note
-already is left as it is, and so is one that names other items too, which CLOSE
-says. It then writes a `#next_to_present` line as the
+deferral it also puts `(deferred: moved to just before the summary item)` right
+after the running count of the item's walk-document heading, before it writes
+the minutes, so the heading says why the item comes late. CLOSE leaves the
+heading as it is when it holds the note already, or when it names more items
+than the deferred ones, such as `Items 3 to 5 of 9`; for the second, CLOSE
+prints that it gave the heading no note. It then writes a `#next_to_present` line as the
 minutes' last line, naming the next item: walking the walk-document's items in
 order, a once-deferred item placed just before the summary item, from the item
 after the answered one, and round again from the first, the first item the
@@ -402,7 +403,7 @@ DEFERRING_LINES = tuple(after_the_items_pattern(template)
 # A one-item count as it stands in the heading's own line, after its heading or bold marks.
 HEADING_COUNT_IN_LINE = re.compile(r"items?\s+\d+(?:\.\d+)*\s+of\s+\d+\b", re.I)
 CLOSE_DEFERRED_HEADING_NOT_NOTED = ("Its heading in {document} names other items too, so it is not given the "
-                                    "note (deferred: moved to the end of the walk).")
+                                    "note {note}.")
 SUMMARY_HEADING = re.compile(r"\bof\s+\d+\b[*_\s:.\-\u2013\u2014]*summary\b", re.I)
 CLOSE_HELD_NEXT = ("Then present {new_item}. When the close step records the user's approval or disapproval of "
                    "{new_item}, it records the same outcome for {item}; after a deferral, a move on or answers to "
@@ -1071,7 +1072,7 @@ def deferred_item_heading_noted(walk_finder, minutes, numbers, total, parser):
             lines[first] = f"{lines[first][:end]} {note}{lines[first][end:]}"
             document.write_text("\n".join(lines), encoding="utf-8")
         return []
-    return [CLOSE_DEFERRED_HEADING_NOT_NOTED.format(document=document)]
+    return [CLOSE_DEFERRED_HEADING_NOT_NOTED.format(document=document, note=note)]
 
 
 def minutes_record(walk_finder, minutes_text, parser):

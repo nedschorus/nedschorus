@@ -668,7 +668,7 @@ def test_r_closing_line_label_keeps_the_text_of_a_link_in_the_heading_and_drops_
           lines is not None and lines[1] == page_line("R", "item 4 of 9", closing), f"lines {lines!r}")
 
 
-DEFERRED_NOTE = "(deferred: moved to the end of the walk)"
+DEFERRED_NOTE = "(deferred: moved to just before the summary item)"
 
 
 def test_r_closing_line_point_leaves_out_a_deferred_items_heading_note():
