@@ -481,8 +481,8 @@ with tempfile.TemporaryDirectory() as scratch:
          "--target", str(target)],
         capture_output=True, text=True, check=False, env=environment)
     check("a missing prompt template refuses the cell",
-          result.returncode == 64 and "prompt templates missing" in result.stderr
-          and "holds no *-prompt.md file" in result.stderr,
+          result.returncode == 64 and "no cold-read-cell to run" in result.stderr
+          and "that directory holds none" in result.stderr,
           f"exit {result.returncode}; stderr={result.stderr[-600:]!r}")
     leftover = sorted(path.name for path in copied_temporary_directory.iterdir())
     check("a refusal leaves no staging directory behind", leftover == [], repr(leftover))

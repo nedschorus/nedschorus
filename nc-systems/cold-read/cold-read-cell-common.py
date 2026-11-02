@@ -209,14 +209,21 @@ def validate_cell(cell: str, prompt_file_argument) -> None:
     if not prompt_file_argument:
         if not CELL_CHOICES:
             raise CellRefusal(
-                f"prompt templates missing: {PROMPTS_DIR} holds no *-prompt.md "
-                "file, so this launcher has no --cell to run.\n"
-                "If `git status .claude/skills/cold-read/prompts` shows those "
-                "files deleted, restore them with `git restore "
-                ".claude/skills/cold-read/prompts`, then rerun this command.\n"
-                "To run a template of your own instead, rerun this command with "
-                "--prompt-file <path to the template>; --cell is still required "
-                "and then only names the report.")
+                f"no cold-read-cell to run: the --cell choices are the names of "
+                f"the *-prompt.md files in {PROMPTS_DIR}, and that directory "
+                "holds none.\n"
+                "To get the *-prompt.md files back from main, run "
+                f"`git -C {REPO_ROOT} restore --source=origin/main --staged "
+                "--worktree .claude/skills/cold-read/prompts`, then rerun this "
+                "command.\n"
+                "To run a prompt template of your own instead, rerun this "
+                "command with --prompt-file <path to the template, relative to "
+                "the current directory unless absolute>; the template names the "
+                "target as {TARGET_PATH} and the report as {REPORT_PATH}, as "
+                "the *-prompt.md files do. --cell is still required then, as a "
+                "label of lowercase letters and digits joined by single "
+                "hyphens, such as terminology-v9; a --cell you already passed "
+                "in that form can stay.")
         if cell not in CELL_CHOICES:
             raise CellRefusal(
                 f"--cell must be one of {', '.join(CELL_CHOICES)} (got {cell!r}); "
