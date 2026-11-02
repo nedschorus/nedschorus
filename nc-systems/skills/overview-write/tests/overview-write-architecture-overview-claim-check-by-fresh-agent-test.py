@@ -224,6 +224,8 @@ def run_program_cases(fixture):
 
     def run_git_whose_worktree_remove_fails(repository, *arguments, check=True):
         if arguments[:2] == ("worktree", "remove"):
+            if check:
+                raise claim_check.ClaimCheckRefusal("`git worktree remove` failed with exit 128: fatal: injected removal failure")
             return subprocess.CompletedProcess(["git", *arguments], 128, "", "fatal: injected removal failure")
         return real_run_git(repository, *arguments, check=check)
 

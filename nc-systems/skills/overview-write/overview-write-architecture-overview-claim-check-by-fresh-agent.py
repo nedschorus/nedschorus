@@ -34,8 +34,9 @@ Failures: every failure is printed to stderr with what to do and exits
 nonzero; no report is written unless the fresh-agent produced output. The
 temporary worktree is removed on every path, including a failure; when git
 cannot remove it, the program prints git's words and the worktree's path, and
-exits 6 even after writing a report, leaving git's record of the worktree in
-the checkout until `git worktree prune` runs. Apart from that record, the
+exits 6 even after writing a report, unless an earlier failure already set its
+exit code, which it keeps; git's record of the worktree stays in the checkout
+until `git worktree prune` runs. Apart from that record, the
 program writes nothing in the checkout it is run from.
 
 Usage:
@@ -265,7 +266,6 @@ def check_overview_claims(arguments):
     with tempfile.TemporaryDirectory(prefix=PROGRAM + "-") as temporary:
         worktree = Path(temporary) / "checkout-at-checked-against-commit"
         run_git(repository, "worktree", "add", "--quiet", "--detach", str(worktree), commit)
-        worktree_removal = None
         try:
             (worktree / overview_path).parent.mkdir(parents=True, exist_ok=True)
             (worktree / overview_path).write_text(text, encoding="utf-8")
