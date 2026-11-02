@@ -423,6 +423,14 @@ def test_a_withdrawn_version_below_the_item_is_not_read_for_its_recommendation()
           lines is not None and lines[1].startswith(
               "A means approve: the user agrees with the recommendation of item 4 of 9 (leave the filter out)."),
           f"lines {lines!r}")
+    document = WALK_DOCUMENT.replace(
+        "**Recommendation: leave the filter out.**",
+        "Withdrawn rows stay hidden either way.\n\n**Recommendation: leave the filter out.**")
+    lines = Case(next_to_present="item 4 of 9", document=document).lines("a")
+    check("a paragraph, not a heading, that opens with Withdrawn does not end the item",
+          lines is not None and lines[1].startswith(
+              "A means approve: the user agrees with the recommendation of item 4 of 9 (leave the filter out)."),
+          f"lines {lines!r}")
 
 
 def test_a_quoted_count_is_not_an_items_start_for_the_recommendation():
