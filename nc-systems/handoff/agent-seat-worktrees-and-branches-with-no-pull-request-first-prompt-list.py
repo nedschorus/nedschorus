@@ -104,15 +104,16 @@ def pull_request_for(branch, tip, by_head_branch, by_head_commit):
     return by_head_commit.get(tip)
 
 
-def owned_worktree_entries(repo, agent_seat, skip_worktree, by_head_branch, by_head_commit):
-    """Return the entry text of each worktree this agent-seat's owner file names."""
+def owned_worktrees(repo, agent_seat, skip_worktree):
+    """Return (path, branch or None, head commit) of each worktree this agent-seat's owner file
+    names, other than skip_worktree and those whose owning agent-session still runs."""
     cleaner = clean_worktrees_module()
     owner_file = cleaner.owner_file
     main_checkout = cleaner.main_checkout_of(repo)
     if main_checkout is None:
         raise ListingFailed(f"git cannot find the primary checkout of {repo}")
     skipped = Path(skip_worktree).resolve() if skip_worktree else None
-    entries = []
+    worktrees = []
     for worktree, branch, record in cleaner.list_worktrees(repo, main_checkout):
         if skipped is not None and worktree.resolve() == skipped:
             continue
@@ -126,16 +127,18 @@ def owned_worktree_entries(repo, agent_seat, skip_worktree, by_head_branch, by_h
             state, _ = owner_file.worktree_owner_running_state(owner)
             if state == owner_file.RUNNING:
                 continue
-        tip = record.head or ""
-        if by_head_branch is None:
-            pull_request_text = "pull request state unknown"
-        else:
-            pull_request = pull_request_for(branch, tip, by_head_branch, by_head_commit)
-            pull_request_text = (cleaner.pull_request_text(pull_request) if pull_request
-                                 else "no pull request")
-        entries.append(f"worktree {worktree}; branch {branch or 'none (detached HEAD)'}; "
-                       f"{pull_request_text}")
-    return entries
+        worktrees.append((worktree, branch, record.head or ""))
+    return worktrees
+
+
+def worktree_entry(worktree, branch, tip, by_head_branch, by_head_commit):
+    if by_head_branch is None:
+        pull_request_text = "pull request state unknown"
+    else:
+        pull_request = pull_request_for(branch, tip, by_head_branch, by_head_commit)
+        pull_request_text = (clean_worktrees_module().pull_request_text(pull_request)
+                             if pull_request else "no pull request")
+    return f"worktree {worktree}; branch {branch or 'none (detached HEAD)'}; {pull_request_text}"
 
 
 def checked_out_branches(repo):
@@ -163,18 +166,26 @@ def pushed_text(branch, tip, origin_tips):
     return "on origin at a different commit"
 
 
-def owned_branch_entries(repo, agent_seat, by_head_branch, by_head_commit):
-    """Return the entry text of each branch with no pull request whose tip this agent-seat wrote."""
+def authored_branches(repo, agent_seat):
+    """Return (branch, tip, date) of each local branch no worktree has checked out whose tip is
+    not on origin/main and was written by this agent-seat."""
     attached = checked_out_branches(repo)
-    origin_tips = origin_branch_tips(repo)
-    entries = []
+    branches = []
     # lstrip=2, not :short, which reads heads/<name> when a tag has the branch's name.
     for line in git_lines(repo, "for-each-ref", f"--no-merged={ORIGIN_MAIN}",
                           "--format=%(refname:lstrip=2)%00%(objectname)%00%(authorname)"
                           "%00%(authordate:short)", "refs/heads/"):
         branch, tip, author, date = line.split("\0")
-        if branch == MAIN_BRANCH or branch in attached or author != agent_seat:
-            continue
+        if branch != MAIN_BRANCH and branch not in attached and author == agent_seat:
+            branches.append((branch, tip, date))
+    return branches
+
+
+def branch_entries(repo, branches, by_head_branch, by_head_commit):
+    """Return the entry text of each branch that no pull request has as its head."""
+    origin_tips = origin_branch_tips(repo)
+    entries = []
+    for branch, tip, date in branches:
         if pull_request_for(branch, tip, by_head_branch, by_head_commit) is not None:
             continue
         count = git_lines(repo, "rev-list", "--count", f"{ORIGIN_MAIN}..{tip}")[0]
@@ -210,11 +221,16 @@ def list_text_and_failure(repo, agent_seat, skip_worktree=None):
         if inside is None:
             # Worktrees and branches live in a clone; a directory outside any has none.
             return "", False
+        owned = owned_worktrees(repo, agent_seat, skip_worktree)
+        authored = authored_branches(repo, agent_seat)
+        if not owned and not authored:
+            # gh is asked only when something could be listed: it takes seconds at every launch.
+            return "", False
         by_head_branch, by_head_commit, pull_request_failure = pull_requests_or_failure(repo)
-        worktrees = owned_worktree_entries(repo, agent_seat, skip_worktree,
-                                           by_head_branch, by_head_commit)
+        worktrees = [worktree_entry(worktree, branch, tip, by_head_branch, by_head_commit)
+                     for worktree, branch, tip in owned]
         branches = ([] if pull_request_failure else
-                    owned_branch_entries(repo, agent_seat, by_head_branch, by_head_commit))
+                    branch_entries(repo, authored, by_head_branch, by_head_commit))
     except Exception as error:
         return (f"This agent-seat's worktrees and branches with no pull request could not be "
                 f"listed ({type(error).__name__}: {error}). Work an earlier agent-session left "
