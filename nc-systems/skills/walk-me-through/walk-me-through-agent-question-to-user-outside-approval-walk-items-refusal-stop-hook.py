@@ -27,7 +27,8 @@ THE TEXT CHECKED is the reply, line by line, without:
   one matching the answer line's first sentence, the walk-me-through skill's
   answer line without what the item adds after it, such as ` D: <the
   alternative>`; lines match when they are equal once markdown emphasis,
-  heading and list marks, link targets, spacing and case are dropped;
+  heading and list marks, a hashtag marker opening the line, such as `#new `
+  or `#new_if_d `, link targets, spacing and case are dropped;
 - fenced and indented code and code spans;
 - quoted text, `"..."`, `“...”` or a `>` line, that the walk-document holds;
 - a waiting item's closing line, the line the walk-me-through skill ends
@@ -68,13 +69,22 @@ EACH LINE is one of three:
   recommend` or `whether to`;
 - not question-like: everything else; it passes.
 When no line is a clear ask and some are unclear, the unclear lines go to
-the model MODEL in one headless `claude -p` call, which says whether one of
-them asks the user to decide or answer something. The child runs with every
-hook disabled, so this hook cannot run inside it, no session file, no tools,
-and a cwd outside any checkout. When the call fails or runs past
-MODEL_TIMEOUT_SECONDS, the hook blocks on the first unclear line, saying the
-model check failed: a missed question scrolls away, a false block costs one
-reworded line.
+the model MODEL in one headless `claude -p` call, which is shown the text of
+every waiting item, as its unit of the walk-document holds it, and answers
+two yes-or-no questions for each unclear line: whether it concerns a waiting
+item's decision, as a reworded recommendation of that item does, and whether
+it asks the user something else. Code turns the two answers into one of three
+labels, and asking something else wins:
+AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE when the second answer is
+yes, else AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION when
+the first is, else AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING. The hook
+blocks on the first line labelled
+AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE. The child runs with every hook disabled, so this
+hook cannot run inside it, no session file, no tools, and a cwd outside any
+checkout. When the call fails, runs past MODEL_TIMEOUT_SECONDS, or answers
+without giving each numbered line exactly one entry holding both answers, the hook
+blocks on the first unclear line, saying the model check failed: a missed
+question scrolls away, a false block costs one reworded line.
 
 AN INTERRUPTION ITEM'S TEXT is not checked either: a line of the text
 checked, a list joined to its lead-in included, is left out when the
@@ -82,7 +92,8 @@ walk-document, as it stands when the hook runs, holds each line of it, as
 the agent wrote it, as a whole line of one interruption item, one numbered
 `W.n` after a waiting item W and not itself waiting, whatever its total.
 Lines are compared whole and equal once `normalized` has dropped their marks,
-so a leading `>` or list mark, bold, italic and code-span marks, link targets,
+so a leading `>` or list mark, a hashtag marker opening the line, bold,
+italic and code-span marks, link targets,
 spacing and case do not count, and a line left empty once they are dropped,
 such as a list line holding only `*` in code marks, is not compared on either
 side: a line that
@@ -179,21 +190,39 @@ QUOTED = re.compile(r"\"[^\"\n]+\"|“[^”\n]+”")
 LINK = re.compile(r"\[([^\]\n]*)\]\([^)\n]*\)")
 LIST_ITEM = re.compile(r"^(?:[-+*]|\d+[.)])\s")
 LINE_MARKS = re.compile(r"^\s*(?:(?:[-+*>]|\d+[.)])\s+)+")
+HASHTAG_MARKER = re.compile(r"^#\w+\s+")
 EMPHASIS_AND_SPACING = re.compile(r"[\s*_#>`]+")
 ANSWER_LINE_START = "answer a to approve"
 
+AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION = "concerns_only_a_waiting_item_decision"
+AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE = "asks_something_else"
+AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING = "asks_nothing"
+MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION = "concerns_a_waiting_item_decision"
+MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE = "asks_something_else"
+MODEL_ANSWERS = (MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION, MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE)
 MODEL_SCHEMA = {"type": "object",
-                "properties": {"asks_user": {"type": "boolean"}, "line_number": {"type": "integer"}},
-                "required": ["asks_user", "line_number"], "additionalProperties": False}
+                "properties": {"lines": {"type": "array", "items": {
+                    "type": "object",
+                    "properties": {"line_number": {"type": "integer"},
+                                   **{answer: {"type": "boolean"} for answer in MODEL_ANSWERS}},
+                    "required": ["line_number", *MODEL_ANSWERS], "additionalProperties": False}}},
+                "required": ["lines"], "additionalProperties": False}
 MODEL_SYSTEM_PROMPT = "You classify text. Answer only through the structured output."
-MODEL_PROMPT_TEMPLATE = """An agent is taking the user through an approval-walk: numbered items, each of which he answers with a letter. While the walk is open, the agent must ask him nothing outside a walk item, because his next letter could then answer either question. This walk's items are named `Item N of {total}`, or `item N` for short, and item {waiting} waits for his answer; an item numbered some other way, such as a "side item" or an item with another total, is not one of the walk's items.
+MODEL_PROMPT_TEMPLATE = """An agent is taking the user through an approval-walk: numbered items, each of which he answers with a letter. While the walk is open, the agent must ask him nothing outside the items waiting for his answer, because his next letter could then answer either question. This walk's items are named `Item N of {total}`, or `item N` for short, and {waiting_phrase} for his answer; an item numbered some other way, such as a "side item" or an item with another total, is not one of the walk's items.
 
-Below is one of the agent's messages, with any walk item it shows removed, and then the lines of it that the agent's code could not judge, numbered. Use the message as context, and judge only the numbered lines. Does any numbered line ask the user to decide, approve, choose or answer something?
+The text of each waiting item, as the walk-document holds it:
+<waiting_items>
+{waiting_items}
+</waiting_items>
 
-Count as asking: a question to him; a recommendation he is expected to approve or reject, rather than advice that needs no answer; a question from another agent passed on to him; a reminder that a question that is not one of the walk's items still waits for him; a request for him to report something back, such as what a command printed.
-Do not count: a line that only reminds him that one of the walk's items waits for his answer; a question the agent answers itself; a report of what someone asked someone else, not passed to him; a request only to run a command or open a file.
+Below is one of the agent's messages, with every walk item it shows word for word taken out, and then the lines of it that the agent's code could not judge, numbered from 1. Use the message and the waiting items' text as context, and answer two questions about each numbered line, true or false:
 
-Set asks_user to true when a numbered line asks him something and to false otherwise, and set line_number to the number of the first such line, or to 0 when none does.
+- {concerns_answer}: does the line concern the decision a waiting item puts to him, in any words? True when the line restates, explains or argues for that item's recommendation, alternative or question, recommends an answer, reminds him that the item waits for his answer, or asks what he meant by his answer to the item, such as whether "dark" meant D. A line about a walk item that is not waiting, such as one still to come, concerns no waiting item.
+- {asks_else_answer}: does the line ask him to decide, approve, choose or answer anything other than a waiting item's decision? True for a question to him; a recommendation on another matter that he is expected to approve or reject; a question from another agent passed on to him; a reminder that a question that is not one of the walk's items still waits for him; a question about running the walk, such as whether to pause it or skip an item; a request for him to report something back, such as what a command printed. False when the line asks him nothing, such as a report, advice that needs no answer, a question the agent answers itself, a report of what someone asked someone else that is not passed to him, or a request to do something with nothing to report back, such as opening a file or a page.
+
+A line can be true for both, or false for both.
+
+Give one entry per numbered line, with its number in the list of numbered lines as line_number, and both answers.
 
 The message:
 <message>
@@ -209,7 +238,7 @@ REFUSAL_OPENING_TEMPLATE = (
     "\"{sentence}\". While a walk is open the user's answer goes to the waiting item, item {waiting}, so a "
     "question asked in prose leaves him unable to tell which question his letter answers.")
 DECIDED_BY_CODE_NOTICE = "the hook's code read it as a clear question"
-DECIDED_BY_MODEL_NOTICE = "the model judged that it asks him something"
+DECIDED_BY_MODEL_NOTICE = "the model judged that it asks him something other than a waiting item's decision"
 MODEL_CHECK_FAILED_NOTICE = ("the hook's `claude -p` call that has the model judge this unclear text failed, "
                              "{failure}, so the hook treats the text as a question")
 REFUSAL_INSTRUCTIONS = (
@@ -265,8 +294,9 @@ answer_hook = load_module(
 
 
 def normalized(line):
-    """The line with link targets, list, quotation and heading marks, emphasis, spacing and case dropped."""
-    line = LINE_MARKS.sub("", LINK.sub(r"\1", line))
+    """The line with link targets, list, quotation and heading marks, a hashtag marker opening it, emphasis,
+    spacing and case dropped."""
+    line = HASHTAG_MARKER.sub("", LINE_MARKS.sub("", LINK.sub(r"\1", line)))
     return EMPHASIS_AND_SPACING.sub(" ", line).strip().lower()
 
 
@@ -419,11 +449,15 @@ def line_kind(line):
     return None
 
 
-def model_judgement(message_lines, unclear_lines, total, waiting, timeout_seconds=MODEL_TIMEOUT_SECONDS):
-    """Return (the unclear line the model says asks the user something, or None; None, or why the call failed),
-    for the walk whose items have total M and whose item waiting is numbered waiting."""
+def model_judgement(message_lines, unclear_lines, total, waiting, waiting_items_text,
+                    timeout_seconds=MODEL_TIMEOUT_SECONDS):
+    """Return (the first unclear line the model labels AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE, or None; None, or why the call
+    failed), for the walk whose items have total M, whose item waiting is numbered waiting, and whose waiting items
+    read waiting_items_text."""
     prompt = MODEL_PROMPT_TEMPLATE.format(
-        total=total, waiting=waiting,
+        total=total, waiting_items=waiting_items_text,
+        waiting_phrase=f"items {waiting} wait" if " and " in waiting else f"item {waiting} waits",
+        concerns_answer=MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION, asks_else_answer=MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE,
         message="\n".join(message_lines),
         lines="\n".join(f"{number}. {line}" for number, line in enumerate(unclear_lines, 1)))
     command = ["claude", "-p", "--model", MODEL, "--output-format", "json",
@@ -441,15 +475,37 @@ def model_judgement(message_lines, unclear_lines, total, waiting, timeout_second
     try:
         result = json.loads(completed.stdout)
         verdict = result["structured_output"]
-        asks, number = verdict["asks_user"], verdict["line_number"]
+        entries = verdict["lines"]
     except (ValueError, TypeError, KeyError) as error:
         detail = (completed.stderr or completed.stdout or "no output").strip()[:300]
         return None, f"claude exited {completed.returncode} without a verdict ({error!r}): {detail}"
     if completed.returncode != 0 or result.get("is_error"):
         return None, f"claude exited {completed.returncode} reporting an error: {str(result.get('result'))[:300]}"
-    if not asks:
-        return None, None
-    return unclear_lines[number - 1] if 1 <= number <= len(unclear_lines) else unclear_lines[0], None
+    labels = line_labels(entries, len(unclear_lines))
+    if labels is None:
+        return None, (f"claude's verdict does not give each of the {len(unclear_lines)} numbered lines exactly one "
+                      f"entry with a true or false {' and '.join(MODEL_ANSWERS)}: {json.dumps(verdict)[:300]}")
+    return next((line for line, label in zip(unclear_lines, labels) if label == AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE), None), None
+
+
+def line_labels(entries, count):
+    """The labels of lines 1 to count, in order, or None unless entries give each of those lines exactly one entry
+    with a boolean for each of MODEL_ANSWERS and name no other line. Asking something else wins over concerning a
+    waiting item's decision."""
+    if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
+        return None
+    labels = {}
+    for entry in entries:
+        number = entry.get("line_number")
+        concerns, asks_else = (entry.get(answer) for answer in MODEL_ANSWERS)
+        if type(number) is not int or type(concerns) is not bool or type(asks_else) is not bool or number in labels:
+            return None
+        labels[number] = (AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE if asks_else else
+                          AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION if concerns else
+                          AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING)
+    if sorted(labels) != list(range(1, count + 1)):
+        return None
+    return [labels[number] for number in range(1, count + 1)]
 
 
 def log_path(environment, log_store_homes=None):
@@ -538,7 +594,8 @@ def output_for(payload, environment, model=model_judgement):
         numbers, total = walk_finder.parse_items(value)
         document_text = document.read_text(encoding="utf-8") if document.is_file() else ""
         units = walk_finder.item_unit_spans(document_text, parser)
-        total, _ = walk_finder.waiting_item_units(document, value, numbers, total, parser, all_units=units)
+        total, waiting_units = walk_finder.waiting_item_units(document, value, numbers, total, parser,
+                                                              all_units=units)
     except walk_finder.UnusableRange:
         return None
     pages = walk_finder.newest_item_page_link_per_item_from_walk_minutes(minutes.read_text(encoding="utf-8"), parser)
@@ -550,7 +607,10 @@ def output_for(payload, environment, model=model_judgement):
     if clear:
         sentence, decided, decided_by = clear[0], DECIDED_BY_CODE_NOTICE, "code"
     elif unclear:
-        sentence, failure = model(lines, unclear, total, " and ".join(numbers))
+        document_lines = document_text.split("\n")
+        waiting_items_text = "\n\n".join("\n".join(document_lines[first:end]).strip()
+                                         for _, _, _, first, end in waiting_units)
+        sentence, failure = model(lines, unclear, total, " and ".join(numbers), waiting_items_text)
         if failure is not None:
             sentence, decided, decided_by = unclear[0], MODEL_CHECK_FAILED_NOTICE.format(failure=failure), \
                 "model-check-failed"
