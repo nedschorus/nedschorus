@@ -341,6 +341,8 @@ CLOSE_MOVED_ON_LINES = (
 CLOSE_DEFERRED_AGAIN_LINES = (
     "{item} is deferred a second time, so the minutes record it as open and it leaves the walk.",
     "Add it to your task list if it is not already a task.",
+    "If a commit on your branch already makes the change this item asks about, undo that change in a new commit "
+    "before the pull request, and say in the task that it was undone.",
     "Your next message must include these lines, as they are:",
 )
 CLOSE_HELD_LINES = (

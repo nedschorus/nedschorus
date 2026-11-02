@@ -1121,6 +1121,10 @@ def approved_line(item):
     return f"{item}: approved; every text the change adds has had a fast read. <accepted>\n"
 
 
+UNDO_COMMITTED_CHANGE_LINE = ("If a commit on your branch already makes the change this item asks about, undo that "
+                              "change in a new commit before the pull request, and say in the task that it was undone.")
+
+
 def test_a_deferral_is_recorded_and_the_item_comes_back_before_the_summary_item():
     case = summary_case(next_to_present="item 2 of 5", recorded=approved_line("item 1 of 5"))
     checked = case.run("check", "--deferred")
@@ -1131,10 +1135,11 @@ def test_a_deferral_is_recorded_and_the_item_comes_back_before_the_summary_item(
           and checked.stdout.rstrip().endswith(f"close --cwd {shlex.quote(str(case.checkout.resolve()))}` and do what "
                                                "it prints."), described(checked))
     closed = case.run("close")
-    check("close records a deferral as open and names the item after it",
+    check("close records a deferral as open and names the item after it, with no line about undoing a committed change",
           closed.returncode == 0
           and closed.stdout.split("\n")[0] == ("item 2 of 5 is deferred, and the minutes record it; it comes back "
                                               "just before the summary item.")
+          and UNDO_COMMITTED_CHANGE_LINE not in closed.stdout
           and "item 2 of 5: deferred; it moves to just before the summary item. <open>\n" in case.minutes.read_text()
           and marker(case) == "#next_to_present item 3 of 5", described(closed) + case.minutes.read_text())
     for _ in range(2):
@@ -1161,11 +1166,12 @@ def test_an_item_deferred_a_second_time_leaves_the_walk():
                                  + "".join(approved_line(f"item {n} of 5") for n in (1, 4, 5)))
     case.run("check", "--deferred")
     closed = case.run("close")
-    check("a second deferral is recorded as open, the agent is told to keep it as a task, and it is not named again",
+    check("a second deferral is recorded as open, the agent is told to keep it as a task and to undo any change already committed for it, and it is not named again",
           closed.returncode == 0
-          and closed.stdout.split("\n")[:2] == [
+          and closed.stdout.split("\n")[:3] == [
               "item 2 of 5 is deferred a second time, so the minutes record it as open and it leaves the walk.",
-              "Add it to your task list if it is not already a task."]
+              "Add it to your task list if it is not already a task.",
+              UNDO_COMMITTED_CHANGE_LINE]
           and "item 2 of 5: deferred a second time, so it leaves the walk and stays open. <open>\n"
           in case.minutes.read_text()
           and marker(case) == "#next_to_present item 3 of 5", described(closed) + case.minutes.read_text())
