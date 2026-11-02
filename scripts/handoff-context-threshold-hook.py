@@ -42,9 +42,16 @@ HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
 FIRED_MARKER_SUFFIX = "-handoff-asked"
 
 
+DEFERRED_MARKER_SUFFIX = "-handoff-deferred"
+
+
 def fired_marker_path(session_id: str) -> Path:
     # Read HANDOFF_DIRECTORY at call time so tests can redirect marker writes.
     return HANDOFF_DIRECTORY / f"{session_id}{FIRED_MARKER_SUFFIX}"
+
+
+def deferred_marker_path(session_id: str) -> Path:
+    return HANDOFF_DIRECTORY / f"{session_id}{DEFERRED_MARKER_SUFFIX}"
 
 # Caller-owned reincarnation must not replace the caller's answer with a handoff.
 REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
@@ -423,7 +430,7 @@ def main(argv=None) -> int:
             count_is_known = False
 
         if not count_is_known or flight:
-            deferred_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred"
+            deferred_marker = deferred_marker_path(session_id)
             if deferred_marker.exists():
                 return 0  # Repeating the refusal would drive idle sessions into a loop; completion notifications wake them.
 

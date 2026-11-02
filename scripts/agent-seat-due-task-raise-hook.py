@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Raise an agent-seat's own tasks when what they wait on is done, at the end of each turn.
+"""Raise an agent-seat's own tasks when what they wait on is done, at the end of each turn,
+and keep an idle agent-seat from stopping with nothing for the user to answer.
 
 Wired as a Stop hook in .claude/settings.json.
 
@@ -83,15 +84,44 @@ an agent-seat whose tasks have no prerequisites makes no network call. The same 
 fetches the title and URL the raise line cites; a condition gh never
 answered is cited by its number alone.
 
-OUTPUT. Something to raise or a task to name: one JSON object,
+THE NEXT-ACTION PROMPT. At a stop that raises no task and names no old key,
+the hook hands the agent NEXT_ACTION_INSTRUCTIONS, which tell it to start
+subagents on ready work and build an approval-walk, when every one of these
+holds; otherwise it says nothing about it:
+  - the payload names a session, a transcript that exists, and a cwd inside
+    a git checkout that has docs/walk/;
+  - no walk-minutes there has an unclosed `#next_to_present` line, paused
+    or not, as the walk-me-through finder module reads it;
+  - neither the handoff hook's asked marker nor its deferred marker exists
+    for the session;
+  - the handoff hook's work_in_flight finds no subagent or background task
+    running; a transcript it cannot fully read counts as work running;
+  - the session has run a tool since this hook last handed it the prompt.
+    The state file's `next_action_prompt` entry holds the session id and the
+    id of the newest tool call the transcript held when the prompt was
+    handed; a stop that finds both unchanged is silent, so an agent that
+    stops again without running a tool is let stop, and the hook never
+    loops.
+Code gathers what it can for the agent: the open tasks no blockedBy or
+unmet prerequisite holds back (prerequisites are answered by the same gh
+checker, and one gh could not answer holds its task), the count of the
+held ones, and every walk-minutes line marked `<open>`, each list cut at a
+limit with a count of the rest. Which listed task is ready, which needs the
+user, and what the walk holds is the agent's judgment. The entry is written
+with the rest of the state, before the prompt is printed. A fault while
+deciding, such as a walk-minutes file that cannot be read, is reported on
+stderr with exit 1, saying the tasks were checked, and writes no state.
+
+OUTPUT. Something to raise, a task to name, or the next-action prompt: one JSON object,
 {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": ...}},
 which Claude Code delivers to the model as non-error feedback while the
 conversation continues. No `decision` field and no `systemMessage`: the text
 is for the agent. The text is one instruction per due task, then, when any
 task was raised, the instruction for a task that cannot be acted on yet,
-then the lines for each task still carrying an old key, then one line per
-condition gh could not answer at this stop. Nothing to raise and no task to
-name for an old key: nothing printed, exit 0. A fault, such as a payload
+then the lines for each task still carrying an old key, then the
+next-action prompt's lines, then one line per condition gh could not answer
+at this stop. Nothing to raise, no task to name for an old key and no
+next-action prompt: nothing printed, exit 0. A fault, such as a payload
 that is not a JSON object, a state file that cannot be written, a condition
 gh could not answer at a stop with nothing else to print, or any exception:
 one line on stderr naming the hook and the fault, nothing on stdout, exit 1.
@@ -143,6 +173,16 @@ _stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_locat
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
 stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
 _stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
+
+_HOOK_DIRECTORY = Path(__file__).resolve().parent
+
+
+def _load_module_by_path(module_name: str, path: Path):
+    specification = importlib.util.spec_from_file_location(module_name, path)
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
 
 TASK_LIST_ID_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
 REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
@@ -276,10 +316,13 @@ def read_state(path: Path) -> dict:
         state = {}
     raised = state.get("raised")
     checks = state.get("checks")
-    return {
+    result = {
         "raised": raised if isinstance(raised, dict) else {},
         "checks": checks if isinstance(checks, dict) else {},
     }
+    if isinstance(state.get(NEXT_ACTION_STATE_KEY), dict):
+        result[NEXT_ACTION_STATE_KEY] = state[NEXT_ACTION_STATE_KEY]
+    return result
 
 
 def write_state_atomically(path: Path, state: dict) -> None:
@@ -507,6 +550,172 @@ def due_task_lines(tasks: dict, directory: Path, state: dict, now: datetime) -> 
         gh_failure_line(kind, number, cause) for kind, number, cause in checker.gh_failures]
 
 
+WALK_FINDER_FILE = (_HOOK_DIRECTORY.parent / "nc-systems" / "skills" / "walk-me-through"
+                    / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py")
+HANDOFF_THRESHOLD_HOOK_FILE = _HOOK_DIRECTORY / "handoff-context-threshold-hook.py"
+TRANSCRIPT_RECORDS_FILE = _HOOK_DIRECTORY / "claude-code-session-transcript-records-read-backward-common.py"
+NEXT_ACTION_STATE_KEY = "next_action_prompt"
+OPEN_OUTCOME_MARK = "<open>"
+NEXT_ACTION_LISTED_TASKS_LIMIT = 40
+NEXT_ACTION_LISTED_OPEN_ITEMS_LIMIT = 15
+NEXT_ACTION_LISTED_LINE_CHARACTERS = 160
+
+NEXT_ACTION_INSTRUCTIONS = (
+    "No approval-walk is open and none of your work is running, so do not stop here.",
+    "Tell the user in one line that you are building a new approval-walk.",
+    "Start subagents now on every ready task that needs no review or approval from the user.",
+    "Build an approval-walk of 8 to 16 items, more than 16 only for one large thing with many "
+    "parts, from your loose-ends, open questions, concerns, suggestions and tasks that need the "
+    "user; put first what makes the user's interaction easier and what makes agents or the "
+    "process faster or cheaper.",
+    "If you have none of these at all, ask ghi-guide-agent for 3 to 5 GHIs to work on, with "
+    "`python3 scripts/ghi-guide-agent-ask.py \"Which 3 to 5 open GHIs would most improve how "
+    "easy the user's interaction with agents is, or how fast or cheap agents and the "
+    "development process are?\"`, choose among them the same way, and make them the walk's "
+    "items.",
+)
+NEXT_ACTION_UNHELD_TASKS_HEADER = (
+    "Your open tasks that no recorded prerequisite or blocker holds back; which of them are "
+    "ready, and which need the user, is yours to judge:")
+NEXT_ACTION_HELD_TASKS_LINE = (
+    "{count} more open task(s) wait on a prerequisite or blocker that is not done, or that "
+    "GitHub could not answer for, so they are not listed.")
+NEXT_ACTION_OPEN_ITEMS_HEADER = (
+    "Lines your walk-minutes mark <open>; each is a loose-end unless a task, GHI, pull request "
+    "or later walk now holds it:")
+NEXT_ACTION_MORE_LINE = "and {count} more."
+NEXT_ACTION_STOP_AGAIN_LINE = (
+    "If you end your turn again without running a tool, this hook lets the turn end.")
+
+
+def shortened(text: str) -> str:
+    text = single_line(text)
+    if len(text) <= NEXT_ACTION_LISTED_LINE_CHARACTERS:
+        return text
+    return text[:NEXT_ACTION_LISTED_LINE_CHARACTERS - 3] + "..."
+
+
+def newest_tool_use_id(records) -> "str | None":
+    """The id of the newest tool call the transcript records, or None when it records none."""
+    for record in records:
+        message = record.get("message")
+        if record.get("type") != "assistant" or not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in reversed(content):
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                return str(block.get("id"))
+    return None
+
+
+def open_outcome_lines(walk_directory: Path) -> list:
+    """`<file>:<line>: <text>` for each walk-minutes line marked <open>, oldest file first."""
+    found = []
+    minutes_files = sorted(walk_directory.glob("*-minutes.md"),
+                           key=lambda path: (path.stat().st_mtime, path.name))
+    for minutes in minutes_files:
+        for number, line in enumerate(minutes.read_text(encoding="utf-8").splitlines(), 1):
+            if OPEN_OUTCOME_MARK in line:
+                found.append(f"{minutes.name}:{number}: {shortened(line)}")
+    return found
+
+
+def unheld_and_held_tasks(tasks: dict, directory: Path, checker) -> "tuple[list, int]":
+    """Open tasks nothing recorded holds back, oldest first, and the count of those held."""
+    unheld = []
+    held = 0
+    for task_id in sorted(tasks, key=lambda text: (len(text), text)):
+        task = tasks[task_id]
+        if task.get("status") not in OPEN_TASK_STATUSES:
+            continue
+        if is_held_by_blockers(task, tasks, directory):
+            held += 1
+            continue
+        metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+        prerequisites_value = metadata.get(PREREQUISITES_KEY)
+        if prerequisites_value is None:
+            prerequisites_value = metadata.get(PREREQUISITES_OLD_KEY)
+        if prerequisites_value is not None:
+            conditions = parse_prerequisites(prerequisites_value)
+            if conditions is None or not all(
+                    checker.answer(kind, number).get("met") is True for kind, number in conditions):
+                held += 1
+                continue
+        unheld.append(f'task {task_id} "{shortened(task.get("subject", ""))}"')
+    return unheld, held
+
+
+def listed_with_limit(header: str, entries: list, limit: int) -> list:
+    if not entries:
+        return []
+    lines = [header] + [f"- {entry}" for entry in entries[:limit]]
+    if len(entries) > limit:
+        lines.append(NEXT_ACTION_MORE_LINE.format(count=len(entries) - limit))
+    return lines
+
+
+def next_action_prompt_lines(payload: dict, tasks: dict, directory: Path, state: dict,
+                             now: datetime) -> "list | None":
+    """The next-action prompt's lines, or None when the hook stays silent about it.
+
+    Silent when the session cannot be told idle: no readable transcript, no
+    checkout with a walk directory, an approval-walk open or paused, a
+    handoff asked or deferred, work in flight or work that cannot be counted,
+    or no tool run since this hook last gave the prompt in this session.
+    Records the prompt in `state` when it returns lines.
+    """
+    session_id = payload.get("session_id")
+    transcript_path = payload.get("transcript_path")
+    cwd = payload.get("cwd")
+    if not session_id or not transcript_path or not cwd:
+        return None
+    transcript = Path(transcript_path).expanduser()
+    if not transcript.is_file():
+        return None
+    walk_finder = _load_module_by_path(
+        "walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
+        WALK_FINDER_FILE)
+    top = walk_finder.checkout_top(Path(cwd))
+    if top is None or not (top / walk_finder.WALK_DIRECTORY).is_dir():
+        return None
+    walk_directory = top / walk_finder.WALK_DIRECTORY
+    if walk_finder.newest_unclosed_approval_walk_including_paused(
+            walk_directory, walk_finder.markdown_parser()) is not None:
+        return None
+    handoff = _load_module_by_path("handoff_context_threshold_hook", HANDOFF_THRESHOLD_HOOK_FILE)
+    if (handoff.fired_marker_path(session_id).exists()
+            or handoff.deferred_marker_path(session_id).exists()):
+        return None
+    try:
+        if handoff.work_in_flight(str(transcript),
+                                  handoff.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60, now=now):
+            return None
+    except handoff.TranscriptCouldNotBeFullyRead:
+        return None  # running work that cannot be counted is not idleness
+    records = _load_module_by_path("claude_code_session_transcript_records_read_backward_common",
+                                   TRANSCRIPT_RECORDS_FILE).records_newest_first(transcript)
+    tool_use_id = newest_tool_use_id(records)
+    recorded = state.get(NEXT_ACTION_STATE_KEY)
+    this_prompt = {"session_id": session_id, "newest_tool_use_id": tool_use_id}
+    if recorded == this_prompt:
+        return None
+    state[NEXT_ACTION_STATE_KEY] = this_prompt
+
+    checker = GitHubConditionChecker(state["checks"], now.timestamp())
+    unheld, held = unheld_and_held_tasks(tasks, directory, checker)
+    lines = list(NEXT_ACTION_INSTRUCTIONS)
+    lines += listed_with_limit(NEXT_ACTION_UNHELD_TASKS_HEADER, unheld,
+                               NEXT_ACTION_LISTED_TASKS_LIMIT)
+    if held:
+        lines.append(NEXT_ACTION_HELD_TASKS_LINE.format(count=held))
+    lines += listed_with_limit(NEXT_ACTION_OPEN_ITEMS_HEADER, open_outcome_lines(walk_directory),
+                               NEXT_ACTION_LISTED_OPEN_ITEMS_LIMIT)
+    lines.append(NEXT_ACTION_STOP_AGAIN_LINE)
+    return lines
+
+
 class HookFault(Exception):
     """A fault the hook reports on stderr instead of raising anything."""
 
@@ -531,6 +740,16 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
     state = read_state(state_path)
     lines, old_key_lines, state_changed, gh_failure_lines = due_task_lines(
         tasks, directory, state, now)
+    next_action_lines = []
+    if not lines and not old_key_lines:
+        try:
+            next_action_lines = next_action_prompt_lines(payload, tasks, directory, state,
+                                                         now) or []
+        except Exception as error:
+            raise HookFault(f"every task was checked and none was due, but the check whether to "
+                            f"hand the next-action prompt failed, so none was handed at this "
+                            f"stop: {type(error).__name__}: {error}") from error
+        state_changed = state_changed or bool(next_action_lines)
     if state_changed:
         try:
             write_state_atomically(state_path, state)
@@ -546,7 +765,7 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
             raise HookFault(f"the state file {state_path} could not be written, and {outcome}. "
                             f"Make {state_path.parent} a directory this user can write to: "
                             f"{error}") from error
-    if not lines and not old_key_lines:
+    if not lines and not old_key_lines and not next_action_lines:
         if gh_failure_lines:
             raise HookFault(" ".join(gh_failure_lines))
         return None
@@ -555,7 +774,7 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
         "hookSpecificOutput": {
             "hookEventName": "Stop",
             "additionalContext": "\n".join(lines + defer_lines + old_key_lines
-                                           + gh_failure_lines),
+                                           + next_action_lines + gh_failure_lines),
         }
     }, ensure_ascii=False)
 
