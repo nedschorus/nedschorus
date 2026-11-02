@@ -2675,12 +2675,19 @@ _docstring_grid = importlib.util.module_from_spec(_docstring_grid_spec)
 _docstring_grid_spec.loader.exec_module(_docstring_grid)
 _number_words = {7: "seven", 8: "eight", 9: "nine"}
 _expected_count_word = _number_words.get(len(_docstring_grid.GRID_CELLS) + 1, "")
+_expected_pass_count_word = _number_words.get(len(_docstring_grid.GRID_CELLS), "")
+_docstring_words = " ".join(_docstring_grid.__doc__.split())
 check("the module docstring counts the grid's cells and the Question 4 cell together, and names the Question 4 report file",
       f"One invocation = one review: {_expected_count_word} cold-read-cells launched in parallel"
-      in " ".join(_docstring_grid.__doc__.split())
+      in _docstring_words
       and _docstring_grid.COLD_READ_FULL_RUN_WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_FILE_NAME
       in _docstring_grid.__doc__,
       f"expected count word {_expected_count_word!r}")
+check("the module docstring counts the pass cells the same way where it sets the Question 4 cell apart and in the exit codes",
+      f"it is not one of the {_expected_pass_count_word}:" in _docstring_words
+      and f"Exit codes: 0 all {_expected_pass_count_word} cold-read-cells of the two passes ran" in _docstring_words
+      and f"of their {_expected_pass_count_word} reports are absent" in _docstring_words,
+      f"expected pass count word {_expected_pass_count_word!r}")
 
 print()
 if failures:

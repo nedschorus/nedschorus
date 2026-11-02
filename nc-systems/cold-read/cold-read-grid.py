@@ -111,7 +111,7 @@ above, by the eighth cold-read-cell, launched at the same time as the seven: the
 cold-read-fast-read uses for it, with the cold-read-fast-read's own prompt
 for it, read from that program so the two runs cannot drift apart. It reads
 the frozen copy like the cells above and is retried and timed out by the same
-rules, but it is not one of them: whether its report landed changes
+rules, but it is not one of the seven: whether its report landed changes
 neither the closing text's variant, the INCOMPLETE SET marker, the
 AGENT-BINARY DOWN line, "Tell the user: ..." nor the exit code. When one of
 the cells above is absent, its landed report gets the INCOMPLETE SET marker like
@@ -154,9 +154,10 @@ since the count last started ends the attempt: its closing text says to tell
 the user instead of starting a new run, and a run launched after it is refused
 until the user rules.
 
-Exit codes: 0 all cold-read-cells ran and the record reached the log-store,
-1 one or more reports are absent or the record did not reach the log-store, or
-both, 2 no cold-read-cell was launched (a bad invocation, a cold-read-target
+Exit codes: 0 all seven cold-read-cells of the two passes ran and the record
+reached the log-store, whether or not the Question 4 report landed, 1 one or
+more of their seven reports are absent or the record did not reach the
+log-store, or both, 2 no cold-read-cell was launched (a bad invocation, a cold-read-target
 this instrument refuses to review, or a cold-read-target that could not be
 frozen into the cold-read-record), 3 the frozen copy changed while the
 cold-read-cells were running, so no report in the set can say which text it
