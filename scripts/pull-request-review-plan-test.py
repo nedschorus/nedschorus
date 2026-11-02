@@ -93,7 +93,7 @@ BASELINE_FILE_CONTENTS = {
     "scripts/example-program-test.py": 'EXPECTED = "old"\nassert EXPECTED\n',
     ".claude/hooks/example-hook.py": 'print("old")\n',
     ".claude/hooks/example-hook-test.py": 'print("old")\n',
-    "scripts/synthetic-keystroke-guard-hook.py": 'print("old")\n',
+    ".claude/guard-hooks/synthetic-keystroke-guard-hook.py": 'print("old")\n',
     "scripts/registered-example-hook.py": 'print("old")\n',
     ".claude/settings.json": json.dumps({"hooks": {"PreToolUse": [{"hooks": [
         {"command": 'python3 "$CLAUDE_PROJECT_DIR"/scripts/registered-example-hook.py'}]}]}}) + "\n",
@@ -264,7 +264,7 @@ def run_classification_cases(fixture):
         ("Python logic changes get claude-and-codex-review-and-head-tests-tier", "scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace("return 1", "return 2")),
         ("every hook directory file gets claude-and-codex-review-and-head-tests-tier", ".claude/hooks/example-hook.py", 'print("new")\n'),
         ("settings gets claude-and-codex-review-and-head-tests-tier", ".claude/settings.json", '{"hooks": {}}\n'),
-        ("a Bash guard string-only change gets claude-and-codex-review-and-head-tests-tier", "scripts/synthetic-keystroke-guard-hook.py", 'print("new")\n'),
+        ("a Bash guard string-only change gets claude-and-codex-review-and-head-tests-tier", ".claude/guard-hooks/synthetic-keystroke-guard-hook.py", 'print("new")\n'),
         ("a registered hook string-only change gets claude-and-codex-review-and-head-tests-tier", "scripts/registered-example-hook.py", 'print("new")\n'),
         ("a new Python program gets claude-and-codex-review-and-head-tests-tier", "scripts/new-example-program.py", 'print("new")\n'),
         ("a test under the hook directory gets claude-and-codex-review-and-head-tests-tier", ".claude/hooks/example-hook-test.py", 'print("new")\n'),

@@ -16,7 +16,7 @@ from pathlib import Path
 
 _shell_reader_spec = importlib.util.spec_from_file_location(
     "shell_command_tree_sitter_bash_reader_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
     / "shell-command-tree-sitter-bash-reader-common.py")
 shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
 _shell_reader_spec.loader.exec_module(shell_reader)
@@ -24,7 +24,7 @@ is_program = shell_reader.is_program
 
 _tmux_error_pattern_spec = importlib.util.spec_from_file_location(
     "tmux_target_or_server_does_not_exist_error_pattern_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
     / "tmux-target-or-server-does-not-exist-error-pattern-common.py")
 tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)
 _tmux_error_pattern_spec.loader.exec_module(tmux_error_pattern)
@@ -272,7 +272,7 @@ def probe_argv(target, server_flags, ssh_context):
 
 def check_command(target, server_flags, ssh_context):
     """Return the command line that runs this guard's own probe in its check mode."""
-    words = ["python3", "scripts/synthetic-keystroke-guard-hook.py", CHECK_MODE_FLAG, target]
+    words = ["python3", ".claude/guard-hooks/synthetic-keystroke-guard-hook.py", CHECK_MODE_FLAG, target]
     if server_flags:
         words += ["--tmux-server-flag", server_flags[0], server_flags[1]]
     if ssh_context is not None:

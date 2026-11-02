@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Tests for scripts/hand-typed-codex-exec-command-refusal-hook.py.
+"""Tests for .claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py.
 
 Each case drives main() with the JSON payload the harness sends, and one case
 pipes a payload into the hook as a real process.
 
-Run: python3 scripts/hand-typed-codex-exec-command-refusal-hook-test.py
+Run: python3 .claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -245,7 +245,7 @@ check("without the shell parser the next step names the program by its absolute 
       and "pgrep" not in output.get("additionalContext", ""), repr(output))
 
 program_help = subprocess.run(
-    [sys.executable, str(HOOK_SCRIPT.with_name("run-codex-task-from-brief.py")), "--help"],
+    [sys.executable, str(HOOK_SCRIPT.resolve().parents[2] / "scripts" / "run-codex-task-from-brief.py"), "--help"],
     capture_output=True, text=True, check=False)
 for flag in ("-C", "--brief", "-o", "--sandbox", "-m", "--effort", "--network",
              "--writable-root", "--outside-git-checkout", "--web-search",

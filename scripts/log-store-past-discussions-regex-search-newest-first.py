@@ -690,6 +690,18 @@ def left_out_sections(lines, extractor):
                if line == heading and lines[number + 2].startswith(opening))
 
 
+def earlier_occurrences(lines, hits):
+    """{line number of each hit: how often the line it numbers comes before it in lines}, from one pass over lines."""
+    wanted = {hit["line"] for hit in hits}
+    seen = collections.Counter()
+    found = {}
+    for number, line in enumerate(lines, 1):
+        if number in wanted:
+            found[number] = seen[line]
+        seen[line] += 1
+    return found
+
+
 def session_dialog_hits_checked_against_one_read(hits, extractor_sha256, failures):
     """The session-dialog hits less each that is its dialog's own last line, all judged from one read of each dialog.
 
@@ -718,6 +730,7 @@ def session_dialog_hits_checked_against_one_read(hits, extractor_sha256, failure
         written_by = refresh_common.session_dialog_extractor_sha256_read_from_last_line(lines)
         last = max((number for number, line in enumerate(lines, 1) if line.strip()), default=0)
         left_out = left_out_sections(lines, extractor_in_this_process()) if written_by == extractor_sha256 else 0
+        occurrences = earlier_occurrences(lines, its_hits)
         for hit in its_hits:
             number = hit["line"]
             if number > len(lines) or lines[number - 1] != hit["text"]:
@@ -727,7 +740,7 @@ def session_dialog_hits_checked_against_one_read(hits, extractor_sha256, failure
             elif written_by != extractor_sha256:
                 hit["undated_note"] = OTHER_EXTRACTOR_NOTE
             else:
-                hit["occurrence"] = lines[:number - 1].count(hit["text"])
+                hit["occurrence"] = occurrences[number]
                 hit["left_out_sections"] = left_out
             kept.append(hit)
     return kept

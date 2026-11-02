@@ -16,7 +16,7 @@ operation and there will be none: what would have been a comment goes into
 the GHI-MD, through `edit` (user-ruled 2026-09-24, item 4 of the meta-walk
 reboot-test-meta-walk-2026-09-23: "But I don't want comments as agents
 forget to read them. Better to update the ghi-Md"). The PreToolUse hook
-.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py refuses a hand-typed
+.claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py refuses a hand-typed
 `gh issue comment`, `gh issue create` or body edit on this repository and
 sends the author here.
 

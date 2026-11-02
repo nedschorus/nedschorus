@@ -248,6 +248,10 @@ PLACE_STAGED_FILES_MARKER = "# cold-read-record-ship: place staged files"
 # Marks the one ssh call that links a walk's add-only files into the store,
 # for the same reason; see link_staged_files_never_over_existing.
 LINK_STAGED_FILES_MARKER = "# cold-read-record-ship: link staged files"
+# Begins the line the linking script prints when it cannot remove its staging
+# directory; no sha256sum line begins with it, since those begin with a digest
+# or, for an escaped name, a backslash.
+STAGING_DIRECTORY_NOT_REMOVED_LINE_PREFIX = "staging directory not removed: "
 # Marks the one ssh call that replaces store files with staged ones, for the
 # same reason; see replace_with_staged_files.
 REPLACE_WITH_STAGED_FILES_MARKER = "# cold-read-record-ship: replace with staged files"
@@ -382,10 +386,9 @@ def log_store_listed_record_directory_names_or_listing_failure_reason(host, reco
             return {entry.name for entry in directory.iterdir() if entry.is_dir()}, None
         except OSError as error:
             return None, f"listing {directory} failed: {error}"
-    # The store a remote host holds is on ned-box, whose find is GNU find.
     script = (f"if [ -d {shlex.quote(str(records_path))} ]; then find "
               f"{shlex.quote(str(records_path))} -mindepth 1 -maxdepth 1 -type d "
-              f"-printf '%f\\n'; fi")
+              f"-exec basename {{}} \\; ; fi")
     listed = subprocess.run(SSH_COMMAND + [host, script],
                             capture_output=True, text=True, check=False)
     if listed.returncode != 0:
@@ -801,10 +804,13 @@ def link_staged_files_never_over_existing(host, staging_dir: pathlib.PurePosixPa
                                           store_dir: pathlib.PurePosixPath,
                                           relatives: list):
     """Hard-link each staged file into the store directory, in the order
-    given, then remove the staging directory and return the process and the
+    given, then remove the staging directory and return the process, the
     store's {relative path: sha256} of `relatives` -- the files the store now
-    holds under those names, whoever put them there. An unreachable host, or
-    a local step that fails, is an inventory of None, as in store_inventory.
+    holds under those names, whoever put them there -- and why removing the
+    staging directory failed, or None when it was removed. An unreachable
+    host, or a local step that fails, is an inventory of None, as in
+    store_inventory, and a reason of None: the caller removes the directory
+    itself then.
 
     A link is never made over an existing file: a name already taken is left
     as it is, and placing goes on past it, so the caller judges each file by
@@ -830,23 +836,29 @@ def link_staged_files_never_over_existing(host, staging_dir: pathlib.PurePosixPa
                     except OSError:
                         break
             finally:
-                shutil.rmtree(staging, ignore_errors=True)
-            return {relative: hashlib.sha256((store / relative).read_bytes()).hexdigest()
-                    for relative in relatives if (store / relative).is_file()}
+                not_removed = remove_staging_directory(None, staging_dir)
+            return ({relative: hashlib.sha256((store / relative).read_bytes()).hexdigest()
+                     for relative in relatives if (store / relative).is_file()}, not_removed)
 
-        return local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
+        completed, linked = local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
             link_and_read_back)
+        if linked is None:
+            return completed, None, None
+        return (completed, *linked)
     script = link_staged_files_never_over_existing_script(staging_dir, store_dir, relatives)
     completed = subprocess.run(SSH_COMMAND + [host, script],
                                capture_output=True, text=True, check=False)
     if completed.returncode != 0:
-        return completed, None
-    after = {}
+        return completed, None, None
+    after, not_removed = {}, None
     for line in completed.stdout.splitlines():
+        if line.startswith(STAGING_DIRECTORY_NOT_REMOVED_LINE_PREFIX):
+            not_removed = one_line(line[len(STAGING_DIRECTORY_NOT_REMOVED_LINE_PREFIX):])
+            continue
         digest, _, relative = line.partition("  ")
         if digest and relative:
             after[relative] = digest
-    return completed, after
+    return completed, after, not_removed
 
 
 def link_staged_files_never_over_existing_script(staging_dir: pathlib.PurePosixPath,
@@ -856,7 +868,9 @@ def link_staged_files_never_over_existing_script(staging_dir: pathlib.PurePosixP
     ned-box: link each file, leaving a name already taken as it is, remove
     the staging directory, print `sha256sum`'s line for each of `relatives`
     the store holds. `ln` without -f fails when the name exists, and makes
-    the link in the same step when it does not."""
+    the link in the same step when it does not. When `rm -rf` fails, its
+    error is printed on one line after STAGING_DIRECTORY_NOT_REMOVED_LINE_PREFIX
+    and the script goes on, so the digests are still read."""
     quoted_relatives = " ".join(shlex.quote(relative) for relative in relatives)
     staging = shlex.quote(str(staging_dir))
     store = shlex.quote(str(store_dir))
@@ -866,7 +880,10 @@ def link_staged_files_never_over_existing_script(staging_dir: pathlib.PurePosixP
         f"  mkdir -p -- \"$(dirname -- {store}/\"$relative\")\" || break\n"
         f"  ln -- {staging}/\"$relative\" {store}/\"$relative\" 2>/dev/null || :\n"
         f"done\n"
-        f"rm -rf -- {staging}\n"
+        f"if ! not_removed=$(rm -rf -- {staging} 2>&1); then\n"
+        f"  printf '%s%s\\n' {shlex.quote(STAGING_DIRECTORY_NOT_REMOVED_LINE_PREFIX)} "
+        f"\"$(printf '%s' \"$not_removed\" | tr '\\n' ' ')\"\n"
+        f"fi\n"
         f"cd -- {store} || exit 0\n"
         f"for relative in {quoted_relatives}; do\n"
         f"  if [ -f \"$relative\" ]; then sha256sum -- \"$relative\"; fi\n"

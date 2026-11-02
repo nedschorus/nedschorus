@@ -33,7 +33,7 @@ When the program finds a problem after the agent has acted, as a PostToolUse or 
 - The work is still in place and nobody else has it yet, such as an uncommitted edit: point 3 says how the agent fixes the work in place.
 - Someone else already has the work, such as a reply the user has read or a commit pushed for review: point 3 says what new work corrects it, such as a correction in the agent's next message or a new commit on top.
 
-An example. `scripts/search-file-argument-read-as-option-guard-hook.py` refused `grep -r pattern *.md` in a directory holding a file named `-v.md`, because grep would read that file name as an option. A message that covers only points 1 to 3 tells the agent to add `--` before `*.md` in this command. A message that covers point 5 too adds: "In every grep or rg command whose file names come from a glob, put `--` before them."
+An example. `.claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py` refused `grep -r pattern *.md` in a directory holding a file named `-v.md`, because grep would read that file name as an option. A message that covers only points 1 to 3 tells the agent to add `--` before `*.md` in this command. A message that covers point 5 too adds: "In every grep or rg command whose file names come from a glob, put `--` before them."
 
 ## Who acts, and whether anyone needs to
 
