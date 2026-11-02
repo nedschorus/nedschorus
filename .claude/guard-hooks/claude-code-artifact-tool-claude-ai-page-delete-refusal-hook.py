@@ -19,13 +19,14 @@ import sys
 NO_LINK_TEXT = "(no link in the call)"
 
 REFUSAL_TEMPLATE = (
-    'REFUSED: an Artifact tool call with action "delete". This project keeps its claude.ai '
-    "pages, and a delete waits for the user to confirm it, so a confirmation he does not see "
-    "stops your turn.\n"
-    "If a step, a session-handoff or a skill tells you to delete an artifact or an item page: "
-    "skip that step and go on.\n"
-    "If the user asked you to delete an artifact: give him its link, {link}, and tell him to "
-    "delete it himself on claude.ai."
+    'REFUSED: an Artifact tool call with action "delete". This call was not sent, so nothing '
+    "waits for the user. Agents in this project do not delete claude.ai pages, because each "
+    "delete waits for the user to confirm it, and the agent's turn would stop until the user "
+    "confirmed it.\n"
+    "If a step, a session-handoff, a skill or your own plan tells you to delete a claude.ai "
+    "page, such as a walk's item page: skip that step and go on.\n"
+    "If the user asked you to delete a page or an artifact: give him its link, {link}, and "
+    "tell him he can delete it himself on claude.ai."
 )
 
 

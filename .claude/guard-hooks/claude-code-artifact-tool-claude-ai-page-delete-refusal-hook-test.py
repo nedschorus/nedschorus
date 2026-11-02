@@ -58,8 +58,11 @@ def refusal(tool_input, tool_name="Artifact"):
 reason = refusal({"action": "delete", "url": PAGE_LINK})
 check("a delete is refused", reason is not None and reason.startswith(
     'REFUSED: an Artifact tool call with action "delete".'), reason)
+check("the refusal says the call was not sent, so nothing waits", reason is not None
+      and "This call was not sent, so nothing waits for the user." in reason, reason)
 check("the refusal names the page's link", reason is not None
-      and f"give him its link, {PAGE_LINK}, and tell him" in reason, reason)
+      and f"give him its link, {PAGE_LINK}, and tell him he can delete it himself" in reason,
+      reason)
 check("the refusal has its three lines", reason is not None and len(reason.splitlines()) == 3, reason)
 
 for case_name, tool_input in [
