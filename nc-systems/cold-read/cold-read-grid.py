@@ -105,15 +105,15 @@ summary. Apart from the retry, a cause changes what is reported, never what
 is decided: the absence, the closing text and the exit code turn only on
 whether a report landed.
 
-QUESTION 4, WHAT SHOULD BE CODE, IS ASKED ONCE PER RUN, beside the six,
-by a seventh cold-read-cell: the claude launcher on the model and effort the
+QUESTION 4, WHAT SHOULD BE CODE, IS ASKED ONCE PER RUN, beside the cells
+above, by one more cold-read-cell: the claude launcher on the model and effort the
 cold-read-fast-read uses for it, with the cold-read-fast-read's own prompt
 for it, read from that program so the two runs cannot drift apart. It reads
-the frozen copy like the six and is retried and timed out by the same
-rules, but it is not one of the six: whether its report landed changes
+the frozen copy like the cells above and is retried and timed out by the same
+rules, but it is not one of them: whether its report landed changes
 neither the closing text's variant, the INCOMPLETE SET marker, the
 AGENT-BINARY DOWN line, "Tell the user: ..." nor the exit code. When one of
-the six is absent, its landed report gets the INCOMPLETE SET marker like
+the cells above is absent, its landed report gets the INCOMPLETE SET marker like
 every .md file in the record; its own absence puts no marker anywhere. Its report file's name starts with neither agent-binary, so a run in
 which it alone landed is not counted among the three. The grid writes the
 question's heading under the report's provenance comment, as the prompt
@@ -298,7 +298,7 @@ WHAT_SHOULD_BE_CODE_QUESTION_ANSWERED_LINE = (
     "defect-hunt reports' findings.")
 WHAT_SHOULD_BE_CODE_QUESTION_NOT_ANSWERED_LINE = (
     "Question 4, What should be code, was not answered: {cause} (log: {log_path}). "
-    "The six reports do not depend on it: go on without its answer.")
+    "The other reports do not depend on it: go on without its answer.")
 NONE_LANDED_CLOSING = (
     "Start a new cold-read-full-run once the causes above that the user can "
     "clear are cleared, or at once if none of them is.")
@@ -1013,7 +1013,7 @@ def wait_for_cells(running: dict,
                         name, runtime_of(name), cause_class, detail, attempt.stderr_path)
                     is_question_4 = report_path.name == COLD_READ_FULL_RUN_WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_FILE_NAME
                     # On the FAILED line, so the Monitor that watches FAILED delivers it.
-                    # Not for Question 4: the six do not depend on its answer.
+                    # Not for Question 4: the other reports do not depend on its answer.
                     tell = ""
                     if (not is_question_4
                             and cause_class in cell_common.USER_CLEARABLE_CAUSE_CLASSES

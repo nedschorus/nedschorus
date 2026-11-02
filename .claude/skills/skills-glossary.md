@@ -2,7 +2,7 @@
 
 This page defines the system-terms of this project's skills: the terms they alone use. Every project-term is defined in the project glossary, `docs/nedschorus-wiki/nedschorus-glossary.md`, and this page uses it as defined there.
 
-- **cold-read-cell** — one fresh-agent reviewing one cold-read-target under one reviewer prompt; a cold-read-full-run is seven of them.
+- **cold-read-cell** — one fresh-agent reviewing one cold-read-target under one reviewer prompt; a cold-read-full-run launches several of them.
 - **cold-read-fast-read** — one fast-clarify cold-read-cell on the fast cold-read-tier, then one cold-read-cell that asks "What should be code", run by `nc-systems/cold-read/cold-read-fast-read.py`; it is either the whole review or the step before a cold-read-full-run.
 - **cold-read-full-run** — the /cold-read skill's run of cold-read-cells on the defect-hunt prompt and the terminology prompt, launched by `nc-systems/cold-read/cold-read-grid.py`, with one more cold-read-cell that answers Question 4, What should be code.
 - **cold-read-record** — the directory holding the reports of one cold-read-full-run or cold-read-fast-read, a copy of its cold-read-target taken at launch, and, once its findings are triaged, `cold-read-triage.md`; shipped to the log-store.
