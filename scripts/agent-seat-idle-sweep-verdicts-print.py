@@ -553,7 +553,6 @@ def verdict_for_seat(seat, paths, now, since, checker):
             verdict.update(fallback)
     except ReadFailure as error:
         verdict["errors"].append(str(error))
-        verdict["rule"] = None
     return verdict
 
 

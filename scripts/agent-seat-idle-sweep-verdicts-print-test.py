@@ -294,6 +294,11 @@ machine.seat("alpha", [user("go"), usage_limit(1793620800 + 3600)])
 _, verdicts, _ = machine.run()
 check("usage limit not yet reset", verdicts["alpha"]["usage_limit"]["reset_time_passed"] is False,
       verdicts["alpha"])
+machine.claude_json.unlink()
+code, verdicts, _ = machine.run()
+check("usage limit with no ~/.claude.json: rule 1, no account logged in, exit 0",
+      code == 0 and verdicts["alpha"]["rule"] == 1
+      and verdicts["alpha"]["usage_limit"]["account_now_logged_in"] is None, verdicts)
 machine.claude_json.write_text("{not json")
 code, verdicts, _ = machine.run()
 check("usage limit with an unreadable ~/.claude.json: an error and exit 1",
@@ -391,6 +396,10 @@ check("an exited agent-session, named under the old key: not checked",
 code, verdicts, _ = machine.run("--agent-seat", "gamma")
 check("an unreadable supervisor state file: an error and exit 1",
       code == 1 and verdicts["gamma"]["errors"], verdicts)
+(machine.handoffs / "gamma-supervisor-state.json").write_text("[]")
+code, verdicts, _ = machine.run("--agent-seat", "gamma")
+check("a supervisor state file that holds no JSON object: an error and exit 1",
+      code == 1 and "does not hold a JSON object" in verdicts["gamma"]["errors"][0], verdicts)
 
 # --- more read failures, and lines a reader must step over ----------------------------------
 machine = Machine()
