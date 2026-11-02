@@ -195,11 +195,12 @@ def branch_entries(repo, branches, by_head_branch, by_head_commit):
 
 
 INSTRUCTIONS = """\
-Each is listed because it belongs to this agent-seat: a worktree because its owner file names this agent-seat, a branch because this agent-seat wrote its newest commit not on origin/main and no pull request has it as its head. An earlier agent-session left each one. Before your other work, decide for each whether you will carry it on:
-- If you will, carry it on, or say in your session-handoff who will.
+Each is listed because it belongs to this agent-seat: a worktree because its owner file names this agent-seat, a branch because this agent-seat wrote its newest commit not on origin/main and no pull request has it as its head. An earlier agent-session left each one. Before your other work, decide for each whether you will carry it on, and if not, delete it:
+- To carry one on, work on it, or say in your session-handoff which agent-seat will.
 - A worktree whose branch has an open pull request is still in use: keep it; scripts/clean-worktrees.py removes it after the pull request closes.
-- If you will not, read what it holds first: `git -C <worktree> status` and `git log origin/main..<branch>`. Then remove a worktree with `git worktree remove <worktree>` and delete a branch with `git branch -D <branch>`. A branch "not on origin" loses its commits when deleted.
-Tell the user in your next message which you kept and which you removed."""
+- A worktree you will not carry on: run `git -C <worktree path> status --ignored` first; files under cold-read-records/ or docs/walk/ belong in the log-store, so ship them before you remove it. Then run `git worktree remove <worktree path>`, using the path as listed, and delete its branch as below.
+- A branch you will not carry on: run `git log origin/main..<branch>` first, then `git branch -D <branch>`. A branch "not on origin" loses its commits when deleted.
+Tell the user in your next message which you kept and which you deleted."""
 
 
 def section(heading, entries, agent_seat):
