@@ -49,7 +49,10 @@ or a line inside a quotation, a nested list or an HTML block. When an item of th
 has no opening, its items are not told apart, and the UserPromptSubmit hook
 says it cannot read their recommendations. A heading that says `revised` right after its
 count replaces the earlier units it names. A running count that names no
-item still ends the unit before it. Every search of a walk file for its
+item still ends the unit before it. A top-level heading that opens with
+`Withdrawn`, as in `#### Withdrawn version 1 of item 4.1`, ends the unit it
+falls in, so a version the walk-document keeps after replacing it is never
+read for the item's recommendation, its `#new` lines or its parts. Every search of a walk file for its
 structure, here and in the programs that load this module, reads the lines
 prose_lines returns, in which fenced and indented code and HTML comment blocks
 are empty, or the parser's own tokens, as item starts are, so a line in code or
@@ -129,6 +132,7 @@ SUB_STEP_NO_DECISION_CLOSING_LINE = re.compile(
 CLOSING_LINE_LABEL = re.compile(rf"Items?\s+({NUMBER_LIST})\s+of\s+(\d+)(?:,\s.*)?", re.S)
 # Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
 REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
+WITHDRAWN_HEADING = re.compile(r"^[*_\s(]*withdrawn\b", re.I)
 NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
 # A link is one run of non-space characters, so `publish failed: <reason>` can never be read as a link. Spaces
 # only, never a newline, so a line that ends short is not completed by the line below it.
@@ -366,7 +370,8 @@ def item_unit_spans(document_text, parser):
     """Return [(item numbers, M, problem, first line, end line)] for each running count that starts an item.
 
     The lines are 0-based; a unit runs from its first line up to, not including, its end
-    line, which is where the next running count starts, or the document's line count.
+    line, which is where the next running count or the next heading WITHDRAWN_HEADING reads starts, or the
+    document's line count.
 
     A count starts an item on a top-level heading, or on a top-level paragraph opening with `**`, outside
     any list or quotation, except a
@@ -378,10 +383,15 @@ def item_unit_spans(document_text, parser):
     """
     lines = document_text.split("\n")
     starts = []
+    withdrawn = []
     group = None
     tokens = parser.parse(document_text)
     for index, token in enumerate(tokens):
         if token.map is None or token.level != 0 or token.type not in ("heading_open", "paragraph_open"):
+            continue
+        if (token.type == "heading_open" and index + 1 < len(tokens)
+                and WITHDRAWN_HEADING.match(tokens[index + 1].content)):
+            withdrawn.append(token.map[0])
             continue
         if token.type == "paragraph_open" and not lines[token.map[0]].lstrip().startswith("**"):
             continue
@@ -401,7 +411,9 @@ def item_unit_spans(document_text, parser):
             group = None
         revised = bool(REVISED.match(content[match.end():]))
         starts.append((numbers, match[2], problem, revised, token.map[0]))
-    ends = [start[4] for start in starts[1:]] + [len(lines)]
+    ends = [min([start[4] for start in starts[position + 1:position + 2]] + [len(lines)]
+                + [line for line in withdrawn if line > first])
+            for position, (_, _, _, _, first) in enumerate(starts)]
     return [(numbers, total, problem, first, ends[index])
             for index, (numbers, total, problem, _, first) in enumerate(starts)
             if not (numbers and any(revised and later_total == total and set(numbers) <= set(later_numbers)

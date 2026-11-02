@@ -145,6 +145,12 @@ RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS = 3
 # recover-crashed-seats.py's AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER.
 AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER = "STARTED OUTSIDE THE USER'S SYSTEMD MANAGER"
 
+# How a notice hands its problem on: the user sits at his Mac, whose windows onto
+# ned-box's agent-seats are where he types to them.
+PASTE_THIS_NOTICE_INTO_A_NED_BOX_AGENT_SEAT = (
+    "Paste this whole notice into the window of an agent-seat on ned-box, such as "
+    "fleet-restart-at-login, which built the crash watcher, and ask it to ")
+
 SECOND_CRASH_NOTICE_TEMPLATE = (
     "{seat} is down. Its agent-session stopped again at about {died_at} without writing "
     "a handoff. The crash watcher {earlier_attempt}.\n"
@@ -168,23 +174,29 @@ RECOVERY_FAILED_NOTICE_TEMPLATE = (
     "  {recovery_last_line}\n"
     "Its whole output is in the record named below.\n"
     "The watcher does not try again for this crash.\n"
-    "If recovery's last line, quoted above, says what to do, do it first. If it says only "
-    "why recovery refused, "
-    "ask an agent on ned-box to find out why and fix it, giving it this notice.\n"
-    "Then restart {seat} by running in a Terminal on your Mac:\n"
+    "What to do, at your Mac:\n"
+    "1. " + PASTE_THIS_NOTICE_INTO_A_NED_BOX_AGENT_SEAT + "fix what stopped recovery. "
+    "Wait until it says the cause is fixed.\n"
+    "2. Then restart {seat} by running in a Terminal on your Mac:\n"
     "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n"
     "When recovery restarts {seat}, it opens {seat}'s window on your Mac itself. If "
     "instead the last line recovery prints in your Terminal says WINDOW NOT OPENED, open "
     "the window, also in a Terminal on your Mac, with:\n"
     "  {mac_launcher} {seat}\n"
+    "For the agent-seat on ned-box this notice is pasted into: recovery's last line, quoted "
+    "above, is what recovery said when it did not restart {seat}. When that line names a "
+    "step to take, take it on ned-box; otherwise find the cause in recovery's whole output, "
+    "in the record named below, and in scripts/recover-crashed-seats.py, and fix it. Do not "
+    "restart {seat} yourself: tell the user when the cause is fixed, and he restarts it "
+    "from his Mac with the steps above.\n"
     "Record: {record}\n"
 )
 
 ASSESSMENT_FAILED_NOTICE_TEMPLATE = (
     "The crash watcher could not check {seat}: {error}\n"
     "Until this is fixed the watcher cannot restart {seat} if it crashes. It tells you "
-    "again only if the error changes; until then each run writes it to the record. Ask "
-    "an agent on ned-box to fix it, giving it this notice.\n"
+    "again only if the error changes; until then each run writes it to the record.\n"
+    + PASTE_THIS_NOTICE_INTO_A_NED_BOX_AGENT_SEAT + "fix the error.\n"
     "Record: {record}\n"
 )
 
@@ -192,7 +204,8 @@ RUN_FAILED_NOTICE_TEMPLATE = (
     "The crash watcher on ned-box failed and is watching no agent-seat: {error}\n"
     "Until this is fixed, an agent-seat that crashes is not restarted. The watcher tells "
     "you again only if the error changes; until then each failed run writes it to the "
-    "record. Ask an agent on ned-box to fix it, giving it this notice.\n"
+    "record.\n"
+    + PASTE_THIS_NOTICE_INTO_A_NED_BOX_AGENT_SEAT + "fix the error.\n"
     "Record: {record}\n"
 )
 
@@ -250,15 +263,20 @@ RECOVERY_REFUSES_NOTICE_TEMPLATE = (
     "  {refusal}\n"
     "The watcher saw {seat} running earlier; its supervisor last checked in at about "
     "{died_at}.\n"
-    "If recovery's refusal, quoted above, says what to do, do it first. Otherwise ask an "
-    "agent on ned-box to find "
-    "out why recovery refuses {seat} and fix it, giving it this notice.\n"
-    "Then restart {seat} by running in a Terminal on your Mac:\n"
+    "What to do, at your Mac:\n"
+    "1. " + PASTE_THIS_NOTICE_INTO_A_NED_BOX_AGENT_SEAT + "clear what makes recovery "
+    "refuse {seat}. Wait until it says the cause is cleared.\n"
+    "2. Then restart {seat} by running in a Terminal on your Mac:\n"
     "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n"
     "When recovery restarts {seat}, it opens {seat}'s window on your Mac itself. If "
     "instead the last line recovery prints in your Terminal says WINDOW NOT OPENED, open "
     "the window, also in a Terminal on your Mac, with:\n"
     "  {mac_launcher} {seat}\n"
+    "For the agent-seat on ned-box this notice is pasted into: recovery's refusal, quoted "
+    "above, is why recovery will not restart {seat}. When the refusal names a step to take, "
+    "take it on ned-box; otherwise find the cause in scripts/recover-crashed-seats.py, which "
+    "wrote the refusal, and clear it. Do not restart {seat} yourself: tell the user when "
+    "the cause is cleared, and he restarts it from his Mac with the steps above.\n"
     "The watcher tells you again only after {seat} has run again.\n"
     "Record: {record}\n"
 )
@@ -270,12 +288,14 @@ STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_NOTICE_TEMPLATE = (
     "{seat} gets no more CPU than they do, instead of most of it. Recovery said:\n"
     "  {reason_line}\n"
     "{seat} works; only its CPU priority is affected, so do not restart it for this alone. "
-    "Ask an agent on ned-box to find out why the user manager could not be reached, giving "
-    "it this notice: recovery's whole output, in the record named below, gives the commands "
+    + PASTE_THIS_NOTICE_INTO_A_NED_BOX_AGENT_SEAT + "find out why the user manager could not "
+    "be reached: recovery's whole output, in the record named below, gives the commands "
     "that check it. Once the user manager answers, {seat}'s next start, at its next crash "
     "recovery or launch, puts it inside the user manager.\n"
     "Record: {record}\n"
 )
+STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_NOTICE_TITLE_TEMPLATE = (
+    "{seat}: started outside the user systemd manager, so its CPU priority is normal")
 
 SHOW_NOTICE_CLOSE_PROMPT = "Press Enter to close this window."
 
@@ -332,11 +352,12 @@ for (const button of document.querySelectorAll("button[data-copy]")) {{
 """
 
 
-def failed_restart_notice_html_page_build(seat, text, written_at) -> str:
+def failed_restart_notice_html_page_build(seat, text, written_at, title=None) -> str:
     """The HTML page of one notice: each line a paragraph, each indented line a block.
 
     An indented line that starts like a command gets a label naming the Mac, where all of
-    them run, and a Copy button; any other indented line is quoted output.
+    them run, and a Copy button; any other indented line is quoted output. The page's
+    title is title when given, else the seat's name and "the crash watcher needs you".
     """
     parts = []
     for number, line in enumerate(text.splitlines()):
@@ -354,8 +375,9 @@ def failed_restart_notice_html_page_build(seat, text, written_at) -> str:
             label = "<span>Output, quoted</span>"
         parts.append(f'<div class="block"><div class="label">{label}</div>'
                      f'<pre id="{identifier}">{html.escape(content)}</pre></div>')
-    title = ("The crash watcher needs you" if seat == "watcher"
-             else f"{seat}: the crash watcher needs you")
+    if title is None:
+        title = ("The crash watcher needs you" if seat == "watcher"
+                 else f"{seat}: the crash watcher needs you")
     return NOTICE_PAGE_TEMPLATE.format(title=html.escape(title), written_at=html.escape(written_at),
                                        body="\n".join(parts))
 
@@ -467,7 +489,7 @@ class Watcher:
         stamp = self.now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         return self.log_directory / "notices" / f"{stamp}-{seat}-{kind}.txt"
 
-    def write_notice(self, seat, kind, template, **fields) -> dict:
+    def write_notice(self, seat, kind, template, title_template=None, **fields) -> dict:
         path = self.notice_path(seat, kind)
         path.parent.mkdir(parents=True, exist_ok=True)
         # The user may hand a notice to an agent on ned-box, which needs the ned-box path.
@@ -476,20 +498,22 @@ class Watcher:
         text = template.format(seat=seat, record=record, mac_launcher=MAC_LAUNCHER, **fields)
         path.write_text(text, encoding="utf-8")
         notice = {"path": str(path)}
-        page = self.write_notice_page(seat, path, text)
+        title = None if title_template is None else title_template.format(seat=seat)
+        page = self.write_notice_page(seat, path, text, title)
         if page is not None:
             notice["page"] = str(page)
         self.show(notice)
         return notice
 
-    def write_notice_page(self, seat, notice_path: Path, text):
+    def write_notice_page(self, seat, notice_path: Path, text, title=None):
         """Write the notice's HTML page; return its path, or None to show the text instead."""
         if self.open_page is None:
             return None
         page = self.log_directory / "notice-pages" / f"{notice_path.stem}.html"
         try:
             page.parent.mkdir(parents=True, exist_ok=True)
-            page.write_text(failed_restart_notice_html_page_build(seat, text, clock_text(self.now)),
+            page.write_text(failed_restart_notice_html_page_build(seat, text, clock_text(self.now),
+                                                                  title),
                             encoding="utf-8")
         except OSError as error:
             self.log(seat, "notice page not written; the notice opens in a terminal window instead",
@@ -759,6 +783,7 @@ class Watcher:
             if outside_lines:
                 self.write_notice(seat, "started-outside-user-systemd-manager",
                                   STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_NOTICE_TEMPLATE,
+                                  title_template=STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_NOTICE_TITLE_TEMPLATE,
                                   died_at=clock_text(died_at), reason_line=outside_lines[0])
             return
         if exit_code == 0:

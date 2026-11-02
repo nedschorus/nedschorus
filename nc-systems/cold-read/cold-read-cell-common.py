@@ -36,7 +36,8 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 
 
-CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify", "terminology"]
+# Built from the prompt files, so deleting a prompt also removes its --cell choice.
+CELL_CHOICES = sorted(path.name[:-len("-prompt.md")] for path in PROMPTS_DIR.glob("*-prompt.md"))
 # The judge reads four files per case and needs its own prompt and fixed tier.
 TIER_CHOICES = ["deep", "second-strongest-model", "fast"]
 
@@ -206,6 +207,24 @@ def build_argument_parser(
 
 def validate_cell(cell: str, prompt_file_argument) -> None:
     if not prompt_file_argument:
+        if not CELL_CHOICES:
+            raise CellRefusal(
+                f"no cold-read-cell to run: each --cell choice is the name of "
+                f"a *-prompt.md file in {PROMPTS_DIR} without -prompt.md, as "
+                "defect-hunt is the choice for defect-hunt-prompt.md, and that "
+                "directory holds no *-prompt.md file.\n"
+                "To get the *-prompt.md files back from main, run "
+                f"`git -C {REPO_ROOT} restore --source=origin/main --staged "
+                "--worktree .claude/skills/cold-read/prompts`, then rerun this "
+                "command.\n"
+                "To run a prompt template of your own instead, rerun this "
+                "command with --prompt-file <path to the template, relative to "
+                "the current directory unless absolute>; the template names the "
+                "target as {TARGET_PATH} and the report as {REPORT_PATH}, as "
+                "the *-prompt.md files do. --cell is still required then, as a "
+                "label of lowercase letters and digits joined by single "
+                "hyphens, such as terminology-v9; a --cell you already passed "
+                "in that form can stay.")
         if cell not in CELL_CHOICES:
             raise CellRefusal(
                 f"--cell must be one of {', '.join(CELL_CHOICES)} (got {cell!r}); "

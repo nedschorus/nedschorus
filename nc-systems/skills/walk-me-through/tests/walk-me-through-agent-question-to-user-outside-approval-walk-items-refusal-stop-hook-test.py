@@ -751,7 +751,13 @@ def test_a_new_text_line_shown_as_if_you_approve_the_new_text_is_the_items_own_t
              "If you approve, the new text: the threshold-hook bullet becomes: \"The hook waits.\""),
             ("a `#new_if_d` line passes shown after `If you disapprove, the new text:`",
              "#new_if_d The new text: the hook waits unless you stop it.",
-             "If you disapprove, the new text: the hook waits unless you stop it.")):
+             "If you disapprove, the new text: the hook waits unless you stop it."),
+            ("a `#new` line that opens with a list mark passes shown after `If you approve, the new text:`",
+             "- #new The new text: the hook waits for the list.",
+             "If you approve, the new text: the hook waits for the list."),
+            ("a `#new` line that opens with a quote mark passes shown after `If you approve, the new text:`",
+             "> #new The new text: the hook waits for the quote.",
+             "If you approve, the new text: the hook waits for the quote.")):
         varied = Case(minutes="#next_to_present item 1.2 of 6",
                       document=document.replace(HANDOFF_WALK_ITEM_1_2_LINES[2], document_line))
         varied.reply(HANDOFF_WALK_ITEM_1_2_REPLY.replace(HANDOFF_WALK_ITEM_1_2_REPLY.split("\n\n")[4], shown_line))
@@ -1052,6 +1058,18 @@ def test_a_hyphenated_word_after_yes_or_no_is_not_an_ask():
     check("a hyphenated word after yes or no never reaches the model", case.model_calls() == [], case.model_calls())
     case.reply("The fix is ready; on a yes I will push it.")
     check_blocked("`on a yes` still blocks", case.run(model="no"), "approval-walk question check")
+
+
+def test_an_answer_cue_followed_by_another_hyphenated_word_goes_to_the_model():
+    for case_name, text in (("`Type A-D`", "Type A-D to answer."),
+                            ("`Say yes-or-no`", "Say yes-or-no and I will merge it."),
+                            ("`on a yes-or-no`", "I will merge it on a yes-or-no from you.")):
+        case = Case()
+        case.reply(text)
+        check_blocked(case_name + " blocks when the model says it asks the user something", case.run(model="yes:1"),
+                      "the model judged that it asks him something")
+        check(case_name + " went to the model", len(case.model_calls()) == 1, case.model_calls())
+        check_silent(case_name + " passes when the model says it asks nothing", case.run(model="no"))
 
 
 PUBLISH_FAILED_LINE = "#item_page item {number} of {total} publish failed: the Artifact tool timed out"
