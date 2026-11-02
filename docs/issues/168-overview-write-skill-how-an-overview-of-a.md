@@ -40,6 +40,8 @@ The evidence: on 2026-10-30 two pull requests each fixed a claim in `docs/nedsch
 
 The constraint: the check stays cheap. It runs one fresh-agent per overview a pull request changes, and runs only on pull requests that change an overview. The user said, approving it: "I'm getting a little nervous that we're going to slow down the system with all these checks, but it seems like the alternative is worse".
 
+The user decided on 2026-11-02 at 10:30, Pacific time, at item 8.1.2 of the same approval-walk, in his words "Item 8.1.2 approved.", that a pull request that changes a system's code may also bring that system's nc-architecture-overview up to date in the same pull request. The why: `docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md` says the `**Checked against:**` line names a commit of main, so a pull request that brought code and overview together was refused, because main did not yet hold the code. What he approved has two parts. First, the page's two sentences that say the checked commit is on main also allow, in a pull request that changes the code the overview describes, a commit of that pull request that holds the code and is earlier in its history than the overview edit; a pull request that changes only an overview still names a commit of main. Second, rule 4 of the review plan, `scripts/pull-request-review-plan.py`, refuses such a pull request when the named commit is not an ancestor of its head commit, or when code the overview names changed after the named commit. Neither part is on main yet.
+
 ## Next action
 
 Make the claim check print the next action as its last line, and merge the overview-write skill with the step 3 the user approved at item 1.3.4, "Do what the program's last line says.", in one pull request.
