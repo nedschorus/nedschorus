@@ -13,7 +13,8 @@ Usage:
       [--merge-lane-worktrees-and-outputs-directory DIR] [--merge-lane-review-worktrees-directory DIR] [--review-tools-worktree-at-main DIR]
       [--time-limit-seconds N]
 
-The review program runs this as its fifth step, after the head test run. The
+The review program runs this as its fifth step, at the same time as the Codex
+review and the head test run. The
 reviewer's prompt is the brief step 2 wrote, briefs/brief-<tag>-mac-claude.md
 under the worktrees and outputs directory, given on stdin, because
 --allowedTools takes several values and would swallow a prompt after it. The
