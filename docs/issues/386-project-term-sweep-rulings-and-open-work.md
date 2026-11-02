@@ -121,10 +121,10 @@ Not yet put to him. Under his ruling these go as one message from the MD-skills 
 
 - `cold-read-cell`: one reviewer model reading one target under one prompt. Already 41 uses in the tree.
 - `cold-read-record`: the directory holding one run's reports, its frozen target and its dispositions. 24 uses.
-- `cold-read-grid`: the program that launches the six cold-read-cells, `nc-systems/cold-read/cold-read-grid.py`.
+- `cold-read-grid`: the program that launches the cold-read-cells, `nc-systems/cold-read/cold-read-grid.py`.
 - `cold-read-tier`: which model a cold-read-cell runs, and at what effort. 5 uses.
 - `cold-read-fast-read`: the one-reviewer pass that precedes the full run, matching `nc-systems/cold-read/cold-read-fast-read.py`.
-- `cold-read-full-run`: the six-cold-read-cell run.
+- `cold-read-full-run`: the run of every cold-read-cell.
 - `cold-read-target`: the document under review, frozen at launch.
 
 `cold-read-fast-read` and `cold-read-full-run` were `fast-cold-read` and `full-cold-read` until 2026-09-15, when he renamed the sanity-check seat's `review-request` to `sanity-check-request`, "instrument first like the rest".
