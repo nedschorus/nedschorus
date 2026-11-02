@@ -149,7 +149,7 @@ JOINED_SEGMENT_VALUES = ("target",)
 OWNED_NAMES = frozenset({
     "RECORDS_DIR", "FROZEN_TARGET_DIRECTORY_NAME", "record_name_for_target",
     "record_directory_name_for_target", "fresh_record_directory",
-    "fresh_record_directory_created",
+    "cold_read_record_directory_at_first_free_name_created_atomically",
     "frozen_target_path", "RECORDS_DIRECTORY_NAME", "RECORD_DATE_PATTERN",
     "COMPLETED_REPORT_NAME_PATTERN", "record_directory_name_pattern_for_target",
     "frozen_target_candidate_paths", "record_holds_completed_report",
@@ -547,7 +547,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     names.fresh_record_directory = free_name_then_another_run_claims_it
     try:
-        claimed = names.fresh_record_directory_created(base, set())
+        claimed = names.cold_read_record_directory_at_first_free_name_created_atomically(base, set())
     finally:
         names.fresh_record_directory = choose_free_name
     check("a name another run creates between the choice and the claim is passed over",
@@ -561,7 +561,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     def claim_at_the_barrier():
         start.wait()
-        claimed_by_racers.append(names.fresh_record_directory_created(
+        claimed_by_racers.append(names.cold_read_record_directory_at_first_free_name_created_atomically(
             pathlib.Path(scratch) / "racing" / "b-2026-11-02", set()))
 
     threads = [threading.Thread(target=claim_at_the_barrier) for _ in range(racers)]
@@ -574,9 +574,35 @@ with tempfile.TemporaryDirectory() as scratch:
           str(sorted(claimed_by_racers)))
     names_in_the_store = {"c-2026-11-02", "c-2026-11-02-2"}
     check("a claim passes over the names the log-store holds",
-          names.fresh_record_directory_created(
+          names.cold_read_record_directory_at_first_free_name_created_atomically(
               pathlib.Path(scratch) / "stored" / "c-2026-11-02", names_in_the_store).name
           == "c-2026-11-02-3")
+
+    # Before the fix a claim on these looped forever, so a timer stops the case
+    # instead of hanging the suite.
+    import signal
+
+    def claim_loops(signal_number, frame):
+        raise TimeoutError("the claim did not return within 10 s")
+
+    previous_handler = signal.signal(signal.SIGALRM, claim_loops)
+    for kind, make_link in (
+            ("a dangling symlink", lambda link: link.symlink_to(link.with_name("nowhere"))),
+            ("a symlink loop", lambda link: link.symlink_to(link))):
+        base = pathlib.Path(scratch) / "linked" / kind.replace(" ", "-") / "d-2026-11-02"
+        base.parent.mkdir(parents=True)
+        make_link(base)
+        signal.alarm(10)
+        try:
+            claimed = names.cold_read_record_directory_at_first_free_name_created_atomically(base, set())
+        except TimeoutError as error:
+            claimed = error
+        finally:
+            signal.alarm(0)
+        check(f"a claim passes over {kind} at the chosen name",
+              isinstance(claimed, pathlib.Path) and claimed == base.with_name("d-2026-11-02-2")
+              and claimed.is_dir() and base.is_symlink(), str(claimed))
+    signal.signal(signal.SIGALRM, previous_handler)
 
 print()
 if failures:
