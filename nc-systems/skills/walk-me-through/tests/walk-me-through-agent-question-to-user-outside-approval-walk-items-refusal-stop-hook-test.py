@@ -465,13 +465,14 @@ def test_a_failed_model_check_blocks():
         check("a model call past its time limit is a failure",
               line is None and "no answer within 1 seconds" in (failure or ""), failure)
         for mode, expected in (("yes:3", "c"), ("yes:2", "b"), ("no", None), ("waiting", None),
-                               (f'labels:["{hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING}", "{hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION}", '
+                               (f'labels:["{hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION}", "{hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION}", '
                                 f'"{hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE}"]', "c")):
             os.environ["FAKE_CLAUDE_MODE"] = mode
             line, failure = hook.model_judgement(["a", "b", "c"], ["a", "b", "c"], "10", "2", "## Item 2 of 10")
             check(f"the model's answer {mode} picks unclear line {expected}", (line, failure) == (expected, None),
                   (line, failure))
-        concerns, asks_else = hook.MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION, hook.MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE
+        concerns = hook.AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER
+        asks_else = hook.AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER
 
         def entry(number, concerns_answer, asks_else_answer):
             return {"line_number": number, concerns: concerns_answer, asks_else: asks_else_answer}
@@ -488,10 +489,10 @@ def test_a_failed_model_check_blocks():
             line, failure = hook.model_judgement(["a", "b"], ["a", "b"], "10", "2", "## Item 2 of 10")
             check(case_name, (line, failure) == (expected, None), (line, failure))
         check("code turns the two answers into the three labels",
-              hook.line_labels([entry(1, True, True), entry(2, True, False), entry(3, False, False)], 3)
+              hook.agent_reply_line_model_labels_from_true_or_false_model_answers([entry(1, True, True), entry(2, True, False), entry(3, False, False)], 3)
               == [hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE,
                   hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION,
-                  hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING])
+                  hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION])
         for case_name, verdict in (
                 ("a verdict with no lines is a failure", {"asks_user": False}),
                 ("a verdict whose lines are not a list is a failure", {"lines": "asks_nothing"}),
@@ -1083,7 +1084,7 @@ def print_live_model_labels():
                 lines = dict(line.split(". ", 1) for line in numbered_lines(call).split("\n") if ". " in line)
                 try:
                     entries = json.loads(call["stdout"])["structured_output"]["lines"]
-                    labels = hook.line_labels(entries, len(entries)) or ["?"] * len(entries)
+                    labels = hook.agent_reply_line_model_labels_from_true_or_false_model_answers(entries, len(entries)) or ["?"] * len(entries)
                 except (ValueError, TypeError, KeyError):
                     print(f"model: no labels; exit {call['returncode']}: {call['stdout'][:300]}{call['stderr'][:300]}")
                     continue
@@ -1102,9 +1103,9 @@ def main():
     fake.write_text(FAKE_CLAUDE.replace("#!/usr/bin/env python3", f"#!{sys.executable}", 1)
                     .replace('"WAITING_ITEM"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION))
                     .replace('"ASKS_ELSE"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE))
-                    .replace('"ASKS_NOTHING"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING))
-                    .replace('"CONCERNS_ANSWER"', json.dumps(hook.MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION))
-                    .replace('"ASKS_ELSE_ANSWER"', json.dumps(hook.MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE)))
+                    .replace('"ASKS_NOTHING"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION))
+                    .replace('"CONCERNS_ANSWER"', json.dumps(hook.AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER))
+                    .replace('"ASKS_ELSE_ANSWER"', json.dumps(hook.AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER)))
     fake.chmod(0o755)
     try:
         for name, function in sorted(globals().items()):

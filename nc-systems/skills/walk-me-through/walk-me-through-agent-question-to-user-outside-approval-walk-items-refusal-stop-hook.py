@@ -79,7 +79,7 @@ it asks the user something else. Code turns the two answers into one of three
 labels, and asking something else wins:
 AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE when the second answer is
 yes, else AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION when
-the first is, else AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING. The hook
+the first is, else AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION. The hook
 blocks on the first line labelled
 AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE. The child runs with every hook disabled, so this
 hook cannot run inside it, no session file, no tools, and a cwd outside any
@@ -198,10 +198,11 @@ ANSWER_LINE_START = "answer a to approve"
 
 AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION = "concerns_only_a_waiting_item_decision"
 AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE = "asks_something_else"
-AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING = "asks_nothing"
-MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION = "concerns_a_waiting_item_decision"
-MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE = "asks_something_else"
-MODEL_ANSWERS = (MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION, MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE)
+AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION = "asks_nothing"
+AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER = "concerns_a_waiting_item_decision"
+AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER = "asks_something_else"
+MODEL_ANSWERS = (AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER,
+                 AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER)
 MODEL_SCHEMA = {"type": "object",
                 "properties": {"lines": {"type": "array", "items": {
                     "type": "object",
@@ -450,7 +451,8 @@ def model_judgement(message_lines, unclear_lines, total, waiting, waiting_items_
     prompt = MODEL_PROMPT_TEMPLATE.format(
         total=total, waiting_items=waiting_items_text,
         waiting_phrase=f"items {waiting} wait" if " and " in waiting else f"item {waiting} waits",
-        concerns_answer=MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION, asks_else_answer=MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE,
+        concerns_answer=AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER,
+        asks_else_answer=AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER,
         message="\n".join(message_lines),
         lines="\n".join(f"{number}. {line}" for number, line in enumerate(unclear_lines, 1)))
     command = ["claude", "-p", "--model", MODEL, "--output-format", "json",
@@ -474,14 +476,14 @@ def model_judgement(message_lines, unclear_lines, total, waiting, waiting_items_
         return None, f"claude exited {completed.returncode} without a verdict ({error!r}): {detail}"
     if completed.returncode != 0 or result.get("is_error"):
         return None, f"claude exited {completed.returncode} reporting an error: {str(result.get('result'))[:300]}"
-    labels = line_labels(entries, len(unclear_lines))
+    labels = agent_reply_line_model_labels_from_true_or_false_model_answers(entries, len(unclear_lines))
     if labels is None:
         return None, (f"claude's verdict does not give each of the {len(unclear_lines)} numbered lines exactly one "
                       f"entry with a true or false {' and '.join(MODEL_ANSWERS)}: {json.dumps(verdict)[:300]}")
     return next((line for line, label in zip(unclear_lines, labels) if label == AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE), None), None
 
 
-def line_labels(entries, count):
+def agent_reply_line_model_labels_from_true_or_false_model_answers(entries, count):
     """The labels of lines 1 to count, in order, or None unless entries give each of those lines exactly one entry
     with a boolean for each of MODEL_ANSWERS and name no other line. Asking something else wins over concerning a
     waiting item's decision."""
@@ -495,7 +497,7 @@ def line_labels(entries, count):
             return None
         labels[number] = (AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE if asks_else else
                           AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION if concerns else
-                          AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING)
+                          AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION)
     if sorted(labels) != list(range(1, count + 1)):
         return None
     return [labels[number] for number in range(1, count + 1)]
