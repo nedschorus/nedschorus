@@ -65,9 +65,9 @@ what code can from the item's evidence lines, each opening with its marker:
 `#not_asked_source` cites the ruling, merged code or command; `#not_asked_unused`
 names a thing removed; `#not_asked_rename` gives the old name, then the new one,
 separated by a space, each in backquotes when it holds a space itself, as in
-#not_asked_rename `instruction guard` `instruction-file guard`; `#not_asked_term`
+#not_asked_rename `instruction guard` `instruction-file guard`; `#not_asked_glossary_term`
 names each glossary term the change puts in, in backquotes when it holds a space;
-`#not_asked_marker` names each hashtag marker the change adds. Every kind needs a case against rated none or weak. Kind 1, text caught up,
+`#not_asked_hashtag_marker` names each hashtag marker the change adds. Every kind needs a case against rated none or weak. Kind 1, text caught up,
 needs touches, a source and a `#new` text; kind 2, a code fix, needs touches
 and a test, and every touched file must exist except that test; kind 3, a
 removal, needs touches, and each unused name must appear, by `git grep`, in no
@@ -226,10 +226,10 @@ CASE_AGAINST_RATING = re.compile(r"(very strong|none|weak|medium|strong)\b", re.
 CASE_AGAINST_HASHTAG = " #case_against_{rating}"
 NOT_ASKED_RATINGS = ("none", "weak")
 NOT_ASKED_KINDS = (1, 2, 3, 4, 5, 6)
-EVIDENCE_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*(#not_asked_(?:touches|test|source|unused|rename|term|marker))"
+EVIDENCE_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*(#not_asked_(?:touches|test|source|unused|rename|glossary_term|hashtag_marker))"
                            rf"{MARKER_END}[*_`]*[:\s]*(.*)$")
-TOUCHES, TEST, SOURCE, UNUSED, RENAME, TERM, MARKER = (
-    f"#not_asked_{name}" for name in ("touches", "test", "source", "unused", "rename", "term", "marker"))
+TOUCHES, TEST, SOURCE, UNUSED, RENAME, GLOSSARY_TERM, ADDED_HASHTAG_MARKER = (
+    f"#not_asked_{name}" for name in ("touches", "test", "source", "unused", "rename", "glossary_term", "hashtag_marker"))
 HASHTAG_MARKER = re.compile(r"#[A-Za-z0-9_-]+")
 NOT_MARKDOWN_FILES = ":(exclude)*.md"
 GLOSSARY_FILES = "*-glossary.md"
@@ -875,10 +875,10 @@ def not_asked_problems(kind, rating, lines, top, item):
 def glossary_term_or_marker_problems(found, touched, top, item):
     """Return why a kind 6 item, a glossary term put in or a hashtag marker added to Markdown prose, cannot settle."""
     problems = []
-    terms = [name for value in found[TERM] for name in rename_names(value)]
-    markers = words(found[MARKER])
+    terms = [name for value in found[GLOSSARY_TERM] for name in rename_names(value)]
+    markers = words(found[ADDED_HASHTAG_MARKER])
     if not terms and not markers:
-        problems.append(NOT_ASKED_NO_TERM_OR_MARKER_PROBLEM.format(term=TERM, marker=MARKER))
+        problems.append(NOT_ASKED_NO_TERM_OR_MARKER_PROBLEM.format(term=GLOSSARY_TERM, marker=ADDED_HASHTAG_MARKER))
     for path in touched:
         if not path.endswith(".md") or fnmatch.fnmatch(Path(path).name, GLOSSARY_FILES):
             problems.append(NOT_ASKED_GLOSSARY_OR_NOT_MARKDOWN_PROBLEM.format(touches=TOUCHES, path=path))
@@ -887,7 +887,7 @@ def glossary_term_or_marker_problems(found, touched, top, item):
             problems.append(NOT_ASKED_TERM_NOT_IN_GLOSSARY_PROBLEM.format(term=term, pattern=GLOSSARY_FILES))
     for value in markers:
         if not HASHTAG_MARKER.fullmatch(value):
-            problems.append(NOT_ASKED_MARKER_SHAPE_PROBLEM.format(value=value, marker=MARKER))
+            problems.append(NOT_ASKED_MARKER_SHAPE_PROBLEM.format(value=value, marker=ADDED_HASHTAG_MARKER))
             continue
         # A marker is found only whole: `#new` is not `#new_if_d`, nor `#newer`.
         readers = sorted(files_matching(top, ["-E"], rf"{value}([^A-Za-z0-9_-]|$)", item, 6, NOT_MARKDOWN_FILES))

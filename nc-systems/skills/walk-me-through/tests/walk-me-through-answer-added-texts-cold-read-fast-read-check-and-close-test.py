@@ -1861,18 +1861,18 @@ def kind_6_case(evidence, files=None, touches=None):
 
 
 def test_a_glossary_term_put_in_or_a_marker_no_program_reads_settles_as_kind_6_and_close_records_it():
-    for evidence, files in (("#not_asked_term poem-index", None),
-                            ("#not_asked_term `poem index page`",
+    for evidence, files in (("#not_asked_glossary_term poem-index", None),
+                            ("#not_asked_glossary_term `poem index page`",
                              {"docs/poems-glossary.md": "- **poem index page** — the page that lists poems.\n"}),
-                            ("#not_asked_marker #poem_date", {"docs/about.md": "Mark a dated poem #poem_date.\n"}),
-                            ("#not_asked_marker #poem_date", {"tools/poems.py": "TAG = '#poem_date_old'\n"}),
-                            ("#not_asked_term poem-index\n\n#not_asked_marker #poem_date", None)):
+                            ("#not_asked_hashtag_marker #poem_date", {"docs/about.md": "Mark a dated poem #poem_date.\n"}),
+                            ("#not_asked_hashtag_marker #poem_date", {"tools/poems.py": "TAG = '#poem_date_old'\n"}),
+                            ("#not_asked_glossary_term poem-index\n\n#not_asked_hashtag_marker #poem_date", None)):
         case = kind_6_case(evidence, files)
         result = case.run("check", "--not-asked", "6")
         check(f"kind 6 settles with {evidence!r} and files {files}",
               result.returncode == 0 and "settled without asking the user, not asked, kind 6 " in case.minutes.read_text(),
               described(result))
-    case = kind_6_case("#not_asked_term poem-index")
+    case = kind_6_case("#not_asked_glossary_term poem-index")
     case.run("check", "--not-asked", "6")
     closed = case.run("close")
     check("close records a settled kind 6 item as accepted",
@@ -1882,34 +1882,34 @@ def test_a_glossary_term_put_in_or_a_marker_no_program_reads_settles_as_kind_6_a
 
 def test_kind_6_is_refused_unless_markdown_prose_outside_a_glossary_gets_a_listed_term_or_an_unread_marker():
     check("kind 6 is refused when the item names neither a term nor a marker",
-          *refused(kind_6_case(""), 6, "it has neither a `#not_asked_term` line nor a `#not_asked_marker` line"))
+          *refused(kind_6_case(""), 6, "it has neither a `#not_asked_glossary_term` line nor a `#not_asked_hashtag_marker` line"))
     check("kind 6 is refused when the item lists no file it touches",
-          *refused(kind_6_case("#not_asked_term poem-index", touches=""), 6, "it has no `#not_asked_touches` line"))
+          *refused(kind_6_case("#not_asked_glossary_term poem-index", touches=""), 6, "it has no `#not_asked_touches` line"))
     check("kind 6 is refused when it touches a file that is not Markdown",
-          *refused(kind_6_case("#not_asked_term poem-index", touches="tools/main.py"), 6,
+          *refused(kind_6_case("#not_asked_glossary_term poem-index", touches="tools/main.py"), 6,
                    "`#not_asked_touches` names tools/main.py, which is not Markdown prose outside a glossary"))
     check("kind 6 is refused when it touches a glossary",
-          *refused(kind_6_case("#not_asked_term poem-index", touches="docs/poems-glossary.md"), 6,
+          *refused(kind_6_case("#not_asked_glossary_term poem-index", touches="docs/poems-glossary.md"), 6,
                    "`#not_asked_touches` names docs/poems-glossary.md, which is not Markdown prose outside a glossary"))
     check("kind 6 is refused when it touches a file not in the checkout",
-          *refused(kind_6_case("#not_asked_term poem-index", touches="docs/missing.md"), 6,
+          *refused(kind_6_case("#not_asked_glossary_term poem-index", touches="docs/missing.md"), 6,
                    "`#not_asked_touches` names docs/missing.md, which is not in the checkout"))
     check("kind 6 is refused when no glossary lists its term as an entry's term",
-          *refused(kind_6_case("#not_asked_term poem-index",
+          *refused(kind_6_case("#not_asked_glossary_term poem-index",
                                {"docs/poems-glossary.md": "- **other** — not poem-index.\n"}), 6,
                    "the term `poem-index` is the term of no entry"))
     for reader in ("tools/poems.py", ".claude/settings.json", "tools/poems-test.py"):
         check(f"kind 6 is refused when the marker is in {reader}, which a program runs or reads",
-              *refused(kind_6_case("#not_asked_marker #poem_date", {reader: 'if "#poem_date" in line: pass\n'}), 6,
+              *refused(kind_6_case("#not_asked_hashtag_marker #poem_date", {reader: 'if "#poem_date" in line: pass\n'}), 6,
                        f"the marker `#poem_date` is in {reader}, which are not Markdown"))
     check("kind 6 is refused when its marker line holds no hashtag marker",
-          *refused(kind_6_case("#not_asked_marker poem_date"), 6,
-                   "`poem_date` on its `#not_asked_marker` line is not a hashtag marker"))
+          *refused(kind_6_case("#not_asked_hashtag_marker poem_date"), 6,
+                   "`poem_date` on its `#not_asked_hashtag_marker` line is not a hashtag marker"))
     check("kind 6 refuses a marker line holding a regular expression's brackets as no hashtag marker, searching nothing",
-          *refused(kind_6_case("#not_asked_marker (poem"), 6,
-                   "`(poem` on its `#not_asked_marker` line is not a hashtag marker"))
+          *refused(kind_6_case("#not_asked_hashtag_marker (poem"), 6,
+                   "`(poem` on its `#not_asked_hashtag_marker` line is not a hashtag marker"))
     check("kind 6 is refused when its case against is rated above weak",
-          *refused(kind_6_case("#not_asked_term poem-index\n\n#case_against medium: misread meaning."), 6,
+          *refused(kind_6_case("#not_asked_glossary_term poem-index\n\n#case_against medium: misread meaning."), 6,
                    "rates the case against medium"))
 
 
