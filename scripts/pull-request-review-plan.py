@@ -658,7 +658,7 @@ def architecture_overview_claim_check_shortfalls(repository, head, changed_files
     does not show every claim supported; an empty list lets the plan go on."""
     shortfalls = []
     for entry in changed_files:
-        system = overview_claim_check.architecture_overview_system_from_path(entry["path"])
+        system = overview_claim_check.nc_architecture_overview_described_system_name_from_page_path(entry["path"])
         if entry["status"] == "D" or system is None:
             continue
         if not git_result_or_refuse(repository, "ls-tree", "-d", "--name-only", head, f"nc-systems/{system}").stdout.strip():

@@ -174,11 +174,20 @@ def run_unit_cases():
     check("no VERDICT line is malformed", result("I could not check it.\n") == "malformed: no VERDICT line")
     check("a missing COUNTS line is malformed", result("VERDICT 1 supported: a\n") == "malformed: 0 COUNTS lines, not one")
     check("the how-to page matches the template, so callers must check nc-systems/<system>",
-          claim_check.architecture_overview_system_from_path(
+          claim_check.nc_architecture_overview_described_system_name_from_page_path(
               "docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md") == "how-to-write-an")
     check("a proposed-improvements file beside an overview is not an overview path",
-          claim_check.architecture_overview_system_from_path(
+          claim_check.nc_architecture_overview_described_system_name_from_page_path(
               "docs/nedschorus-wiki/nedschorus-handoff-architecture-overview-proposed-improvements-or-changes-x.md") is None)
+
+
+def last_stdout_line(result):
+    lines = result.stdout.strip().splitlines()
+    return lines[-1] if lines else ""
+
+
+def next_action_line(action):
+    return claim_check.NEXT_ACTION_LINE_PREFIX + action
 
 
 def run_program_cases(fixture):
@@ -206,12 +215,16 @@ def run_program_cases(fixture):
           len(calls) == 1 and calls[0]["argv"][calls[0]["argv"].index("--tools") + 1] == "Read,Grep,Glob"
           and '"disableAllHooks": true' in calls[0]["argv"][calls[0]["argv"].index("--settings") + 1], calls)
     check("the temporary worktree is removed after a run", fixture.worktrees() == worktrees_before)
+    check("every claim supported ends with the next action: push",
+          last_stdout_line(result) == next_action_line(claim_check.NEXT_ACTION_BY_EXIT_CODE[0]), result.stdout)
 
     fixture.answer(claude_stdout="VERDICT 1 contradicted: the program exists\nCOUNTS supported=0 contradicted=1 unsupported=0\n")
     result = fixture.run()
     newest = claim_check.find_newest_architecture_overview_claim_check_report_path_and_result_for_overview_git_blob(fixture.reports, OVERVIEW, blob)
     check("a contradicted claim exits 5, and the newest report says so",
           result.returncode == 5 and newest[1].startswith("not all claims supported: 1 contradicted"), (result, newest))
+    check("a contradicted claim ends with the next action: correct the statements and run again",
+          last_stdout_line(result) == next_action_line(claim_check.NEXT_ACTION_WHEN_NOT_EVERY_ASSERTION_IS_SUPPORTED), result.stdout)
 
     fixture.answer(claude_stdout=UNSUPPORTED_REPORT)
     result = fixture.run()
@@ -275,6 +288,24 @@ def run_program_cases(fixture):
     newest = claim_check.find_newest_architecture_overview_claim_check_report_path_and_result_for_overview_git_blob(fixture.reports, OVERVIEW, blob)
     check("a malformed report exits 5 and is kept with a malformed result",
           result.returncode == 5 and newest[1] == "malformed: no VERDICT line", (result, newest))
+    check("a first malformed report for this overview text ends with the next action: run again",
+          last_stdout_line(result) == next_action_line(claim_check.NEXT_ACTION_WHEN_FRESH_AGENT_REPORT_IS_MALFORMED_FIRST_TIME), result.stdout)
+    result = fixture.run()
+    check("a second malformed report for the same overview text ends with the next action: tell the user",
+          result.returncode == 5 and last_stdout_line(result) == next_action_line(
+              claim_check.NEXT_ACTION_WHEN_FRESH_AGENT_REPORT_IS_MALFORMED_AGAIN.format(
+                  directory=claim_check.overview_write_architecture_overview_claim_check_report_directory_for_overview(
+                      fixture.reports, OVERVIEW), blob=blob)), result.stdout)
+
+    undecodable_report = claim_check.overview_write_architecture_overview_claim_check_report_directory_for_overview(
+        fixture.reports, OVERVIEW) / f"{blob}-x.md"
+    undecodable_report.write_bytes(b"\xff\xfe not UTF-8\n")
+    result = fixture.run()
+    undecodable_report.unlink()
+    check("a program defect, here an earlier report that is not UTF-8, exits 2 and ends with the next action for exit 2",
+          result.returncode == 2 and "program defect" in result.stderr
+          and last_stdout_line(result) == next_action_line(claim_check.NEXT_ACTION_BY_EXIT_CODE[2]),
+          (result.returncode, result.stdout, result.stderr))
 
     count = len(fixture.reports_written())
     fixture.answer(claude_stdout="", claude_exit=1)
@@ -282,6 +313,8 @@ def run_program_cases(fixture):
     result = fixture.run()
     check("a fresh-agent that fails exits 4, quotes its stderr and writes no report",
           result.returncode == 4 and "Not logged in" in result.stderr and len(fixture.reports_written()) == count, result.stderr)
+    check("a failed fresh-agent ends with the next action for exit 4",
+          last_stdout_line(result) == next_action_line(claim_check.NEXT_ACTION_BY_EXIT_CODE[4]), result.stdout)
     check("the temporary worktree is removed after a failed run", fixture.worktrees() == worktrees_before)
     (fixture.control / "claude.json").write_text(json.dumps({"stdout": GOOD_REPORT, "exit_code": 1}))
     result = fixture.run()
@@ -362,6 +395,8 @@ def run_program_cases(fixture):
     result = fixture.run("--no-such-flag")
     check("a malformed argument is refused with exit 1, not the program-defect exit",
           result.returncode == 1 and "--help" in result.stderr, result.stderr)
+    check("a refusal's last line tells the agent to do what the refusal says",
+          last_stdout_line(result) == next_action_line(claim_check.NEXT_ACTION_BY_EXIT_CODE[1]), result.stdout)
 
 
 def main():
