@@ -414,10 +414,18 @@ def main(argv=None):
         def what_to_do(position, step, step_arguments):
             """One step's line: its exit code, and its records or its command."""
             exit_code = failure.exit_codes[position]
+            command = shlex.join(step_command(step, arguments, step_arguments))
+            if exit_code != 0 and step == CLAUDE_REVIEWER_STEP:
+                # The posting script can exit nonzero after a successful post, when its
+                # read-back fails, so a nonzero exit does not show that nothing was posted.
+                return (f"step {position} exited {exit_code}, and may have posted its Claude "
+                        f"review even so: if {records[step]} holds a posted.txt, read it, and "
+                        f"if it shows a posted review or cannot tell, check the pull request's "
+                        f"reviews on GitHub; run the step alone, with the same commits, only "
+                        f"when no review of it is posted: {command}")
             if exit_code != 0:
                 return (f"step {position} exited {exit_code}: run it alone, with the same "
-                        f"commits, to see its message: "
-                        f"{shlex.join(step_command(step, arguments, step_arguments))}")
+                        f"commits, to see its message: {command}")
             why = (", because it has posted its Claude review" if step == CLAUDE_REVIEWER_STEP
                    else "")
             return (f"step {position} exited 0: read its records in {records[step]}, and do "
@@ -434,7 +442,7 @@ def main(argv=None):
               f"Each of steps 3 to 5, with what to do for it:\n{steps_to_do}\n"
               f"For this head commit, act on each line above as for any run of this program, "
               f"and do not run this program again for it: it would run every step again.\n"
-              f"Before you next run this program, find why its stdout closed, such as a pipe "
+              f"Before you next run this program, find why its stdout failed, such as a pipe "
               f"into a command that exited early.", file=sys.stderr, flush=True)
         return 1
     failed = [position for position, exit_code in exit_codes.items() if exit_code != 0]
