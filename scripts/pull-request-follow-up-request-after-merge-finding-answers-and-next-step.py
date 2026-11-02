@@ -230,7 +230,7 @@ def build_follow_up_request_forked_subagent_brief(request):
         "Dispatch one subagent with the Agent tool: subagent_type \"fork\", isolation \"worktree\", "
         "run_in_background true. Give it this whole text unchanged; it skips the lines under "
         "\"For you, the author\".",
-        "When it has ended, ask the user its report's questions, then Program: remove-topic-branches-and-worktrees",
+        "When it has ended, do what the lines that end its report say for the agent that dispatched it, if it has such lines, then Program: remove-topic-branches-and-worktrees",
         "",
         "For the subagent, in your own worktree: Program: next-step. Do what it prints, then run Program: next-step "
         "again, until it prints \"Done\".",

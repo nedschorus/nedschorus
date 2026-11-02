@@ -251,7 +251,7 @@ def test_brief_text():
     for line in (f'Each "Program:" below means: run {command} followed by the words after it.',
                  'Dispatch one subagent with the Agent tool: subagent_type "fork", isolation "worktree", '
                  'run_in_background true. Give it this whole text unchanged; it skips the lines under "For you, the author".',
-                 "When it has ended, ask the user its report's questions, then Program: remove-topic-branches-and-worktrees"):
+                 "When it has ended, do what the lines that end its report say for the agent that dispatched it, if it has such lines, then Program: remove-topic-branches-and-worktrees"):
         check(f"the brief holds: {line}", line in brief, brief)
     check("the brief ends with the subagent's one line, after a blank line, and what to do when a command refuses "
           "or fails",
@@ -259,7 +259,7 @@ def test_brief_text():
                          "Program: next-step again, until it prints \"Done\".\nIf a command refuses or fails, do what "
                          "it prints."), brief)
     words = len(brief.replace(BLOCK.rstrip("\n"), "").split())
-    check("the brief, findings aside, is at most 105 words", words <= 105, str(words))
+    check("the brief, findings aside, is at most 120 words", words <= 120, str(words))
 
 
 def test_no_saved_block():
