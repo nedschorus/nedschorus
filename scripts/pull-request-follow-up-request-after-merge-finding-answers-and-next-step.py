@@ -56,7 +56,8 @@ next topic branch's pull request cannot take this one's title and description. A
 by gh not starting, is tried once more, and a second try that passes is printed as a notice; when a try refuses
 because a pull request for the branch is already open, as after a first try that opened it but failed, that pull
 request's link is recorded; when gh pr create exits 0 printing no link, the link gh pr list --head <branch> prints is
-recorded. A push that fails is not tried again.
+recorded. A push that fails is not tried again. What a push that succeeds prints on stderr, such as the pre-push
+hook saying it let the push through without one of its checks, is printed on stderr.
 
 record-finding-leave-out-reason: record the reason against the finding; refuse a finding that does
 not exist or already has an answer other than waiting for the user's decision, and an empty reason.
@@ -365,8 +366,9 @@ def save_follow_up_request_and_clear_answers_when_its_findings_changed(request, 
     saved = state_file(states, SAVED_FINDINGS_FILE_NAME_FORMAT, request.number)
     if read_text_if_present(saved) == request.text:
         return saved
-    write_text(saved, request.text)
+    # Answers first: a removal that fails after the new block is saved would leave the old answers on it for good.
     remove_file(state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, request.number))
+    write_text(saved, request.text)
     return saved
 
 
@@ -562,7 +564,9 @@ def open_pull_request(number, findings):
     description_file = Path(worktree) / FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME
     title, description = read_title_and_description(description_file)
     try:
-        git_output.run_git(".", ["push", "-u", "origin", branch], timeout_seconds=push_time_limit_seconds(os.environ))
+        # --quiet leaves on stderr only errors and what the hooks and the remote print.
+        _, push_warnings = git_output.run_git(".", ["push", "--quiet", "-u", "origin", branch], return_stderr=True,
+                                              timeout_seconds=push_time_limit_seconds(os.environ))
     except git_output.GitCommandFailed as failure:
         if failure.returncode is None:
             raise StepFailed(f"git push -u origin {branch} failed ({failure.stderr}), so no pull request "
@@ -576,6 +580,9 @@ def open_pull_request(number, findings):
                                   f"{build_followed_up_pull_request_citation_with_title_and_link(number)} is stopped until it works.",
                                   "Otherwise pass")
             + f"\n{SUBAGENT_LINE}") from None
+    # The pre-push hook lets a push through when one of its checks fails, and says so only on stderr.
+    if push_warnings.strip():
+        print(f"git push -u origin {branch} succeeded, and printed:\n{push_warnings.rstrip()}", file=sys.stderr)
     output, opened = gh_pr_create_tried_twice(
         ["pr", "create", "--base", "main", "--head", branch, "--title", title, "--body", description])
     links = PULL_REQUEST_LINK_PATTERN.findall(output)

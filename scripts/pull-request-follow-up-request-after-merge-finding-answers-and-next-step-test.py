@@ -805,6 +805,25 @@ def test_push_time_limit_is_the_pre_push_hooks_budgets_plus_120_seconds():
               f"{program.push_time_limit_seconds(environment)} != {expected}")
 
 
+def test_open_passes_on_what_a_push_that_succeeds_prints():
+    case = Case()
+    try:
+        worktree = started(case)
+        case.commit_change()
+        case.write_description()
+        hook = case.repository / ".git" / "hooks" / "pre-push"
+        hook.write_text("#!/bin/sh\necho 'pre-push: the conflict check exited with status 1, so x went unchecked' >&2\n"
+                        "exit 0\n")
+        hook.chmod(0o755)
+        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1")
+        check("open prints on stderr what the pre-push hook said on a push it let through",
+              code == 0 and "git push -u origin topic-one succeeded, and printed:\n" in err
+              and "pre-push: the conflict check exited with status 1, so x went unchecked" in err
+              and f"Opened {LINK}" in out, out + err)
+    finally:
+        case.close()
+
+
 def test_open_title_and_description_file_removal_failure():
     case = Case()
     try:
@@ -953,6 +972,10 @@ def test_state_failures():
         else:
             check("an answers file that cannot be removed is reported", False)
         shutil.rmtree(answers)
+        answers.write_text('{"answers": {"1": {"reason": "the old request\'s answer"}}}\n')
+        case.save(BLOCK + "3. c\n")
+        check("the new block, saved again after its answers file could not be removed, removes the old answers",
+              case.answers() is None, str(case.answers()))
         case.save()
         case.states().chmod(0o500)
         code, out, err = case.run(case.repository, "record-finding-leave-out-reason", "1", "--reason", "x")
@@ -1301,7 +1324,8 @@ def test_waiting_for_user_ruling():
 
 for test in (test_help, test_block_parsing, test_brief_text, test_no_saved_block, test_start,
              test_open_refusals, test_open, test_open_pushes_the_checked_out_recorded_branch_not_the_last,
-             test_open_failures, test_open_gh_pr_create_second_try_and_gh_pr_list,
+             test_open_failures, test_open_passes_on_what_a_push_that_succeeds_prints,
+             test_open_gh_pr_create_second_try_and_gh_pr_list,
              test_push_time_limit_is_the_pre_push_hooks_budgets_plus_120_seconds,
              test_open_title_and_description_file_removal_failure,
              test_leave_out_and_finish, test_three_findings, test_waiting_for_user_ruling,
