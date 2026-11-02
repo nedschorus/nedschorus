@@ -665,12 +665,16 @@ def push_branch(worktree, branch, runner, environment=None):
             "with this message.", 1) from None
 
 
+def ghi_md_text_sha256_prefix(file_text: str) -> str:
+    """The first 16 hex digits of the SHA-256 of a GHI-MD's text."""
+    return hashlib.sha256(file_text.encode("utf-8")).hexdigest()[:16]
+
+
 def pairing_key(file_text: str) -> str:
     """This file's identity, and the only thing tying a half-finished run to
     the issue it already created. Content rather than path, because step 4
     moves the file."""
-    digest = hashlib.sha256(file_text.encode("utf-8")).hexdigest()[:16]
-    return f"{PAIRING_KEY_PREFIX}{digest}"
+    return f"{PAIRING_KEY_PREFIX}{ghi_md_text_sha256_prefix(file_text)}"
 
 
 def first_heading(file_text: str) -> str:
@@ -2460,8 +2464,10 @@ def edit_landing_branch_name(number: int, staged: str) -> str:
     """The branch this edit lands on. Named for the content and not for the
     issue alone, so a rerun of the same edit names the same branch — which
     is what lets `edit_landing_state` recognise this tool's own earlier
-    push — and an edit that changed since names another."""
-    return f"ghi-{number}-edit-{pairing_key(staged)}"
+    push — and an edit that changed since names another. The
+    `ghi-<number>-edit-` prefix is what `refuse_on_an_earlier_edit_still_open`
+    lists an issue's edit branches by."""
+    return f"ghi-{number}-edit-ghi-md-sha256-{ghi_md_text_sha256_prefix(staged)}"
 
 
 def edit_landing_state(number: int, staged: str, on_main,
