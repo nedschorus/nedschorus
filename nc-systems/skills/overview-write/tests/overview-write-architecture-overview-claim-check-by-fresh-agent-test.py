@@ -224,6 +224,8 @@ def run_program_cases(fixture):
 
     def run_git_whose_worktree_remove_fails(repository, *arguments, check=True):
         if arguments[:2] == ("worktree", "remove"):
+            if check:
+                raise claim_check.ClaimCheckRefusal("`git worktree remove` failed with exit 128: fatal: injected removal failure")
             return subprocess.CompletedProcess(["git", *arguments], 128, "", "fatal: injected removal failure")
         return real_run_git(repository, *arguments, check=check)
 
@@ -238,6 +240,12 @@ def run_program_cases(fixture):
     code, stderr = fixture.run_in_process_with_timeouts(run_git=run_git_whose_worktree_remove_fails)
     check("a worktree that git cannot remove after a failed fresh-agent keeps exit 4 and still reports the removal",
           code == 4 and "injected removal failure" in stderr and len(fixture.reports_written()) == count + 1, stderr)
+    fixture.git("worktree", "prune")
+    fixture.answer(claude_stdout=UNSUPPORTED_REPORT)
+    code, stderr = fixture.run_in_process_with_timeouts(run_git=run_git_whose_worktree_remove_fails)
+    check("a worktree that git cannot remove after an unsupported claim keeps exit 5, writes the report and still "
+          "reports the removal",
+          code == 5 and "injected removal failure" in stderr and len(fixture.reports_written()) == count + 2, stderr)
     fixture.git("worktree", "prune")
 
     fixture.answer(claude_stdout="I ran out of time.\n")
