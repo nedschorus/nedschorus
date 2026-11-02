@@ -594,6 +594,19 @@ def staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_
             f"of its own; delete it with `{command}`.")
 
 
+def walk_files_ship_rerun_command(name: str, directory: pathlib.Path) -> str:
+    """The command that ships walk `name` in `directory` again: this
+    program by its resolved path, and the walk by its name or its minutes'
+    resolved path, so it runs from any working directory, however the
+    program was started."""
+    # A name that begins with a dash would be read by argparse as an option,
+    # so such a walk is rerun by its minutes' path, as a walk elsewhere is.
+    walk_argument = (name if directory == WALK_DIRECTORY and not name.startswith("-")
+                     else str(directory / walk_file_name(name, MINUTES_ROLE_SUFFIX)))
+    return (f"{shlex.quote(str(REPO_ROOT / 'scripts' / 'walk-files-ship.py'))} "
+            f"{shlex.quote(walk_argument)}")
+
+
 def walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
         copy_host, name: str, directory: pathlib.Path, staging_dir,
         what_failed: str, why: typing.Optional[str]) -> str:
@@ -601,12 +614,7 @@ def walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_b
     command that reruns this shipment, after the deletion of this run's
     staging directory when that could not be removed, since the rerun's
     replace step would stop on it."""
-    # A name that begins with a dash would be read by argparse as an option,
-    # so such a walk is rerun by its minutes' path, as a walk elsewhere is.
-    walk_argument = (name if directory == WALK_DIRECTORY and not name.startswith("-")
-                     else str(directory / walk_file_name(name, MINUTES_ROLE_SUFFIX)))
-    rerun = (f"{shlex.quote(str(REPO_ROOT / 'scripts' / 'walk-files-ship.py'))} "
-             f"{shlex.quote(walk_argument)}")
+    rerun = walk_files_ship_rerun_command(name, directory)
     if why:
         return (f"FAILED: {name} — {what_failed}. "
                 f"{staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(copy_host, staging_dir, why)} "
@@ -641,12 +649,37 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
         if not any(suffix in present for suffix in group):
             print(f"{PROGRAM}: no {walk_file_name(name, group[0])} in {directory}; "
                   f"shipping the walk without it", file=sys.stderr)
-    role_names = {walk_file_name(name, suffix) for suffix, _ in APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX}
+    role_names = [walk_file_name(name, suffix) for suffix, _ in APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX]
     others = sorted(p.name for p in directory.glob(f"{name}-*.md")
                     if p.name not in role_names)
     if others:
-        print(f"{PROGRAM}: not shipped, not one of the walk's roles (another "
-              f"walk's, or a shape the ruling did not name): {', '.join(others)}",
+        # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md
+        print(f"{PROGRAM}: not shipped: {', '.join(others)}. Each of these names "
+              f"begins with \"{name}-\", but none is a name a file of walk {name} "
+              f"can have, so this run does not ship them and leaves them in "
+              f"{directory}; the stdout line reports what it did with the walk's "
+              f"own files. A file of walk {name} has one of the names "
+              f".claude/skills/walk-me-through/SKILL.md gives a walk's files: "
+              f"{', '.join(walk_file_name(name, suffix) for suffix, _ in WALK_FILE_ROLES)}; "
+              f"or, in a walk started before its fast read's report took the name "
+              f"{walk_file_name(name, '-cold-read-fast-read')}, that report's earlier name "
+              f"{walk_file_name(name, APPROVAL_WALK_COLD_READ_FAST_READ_REPORT_FILE_SUFFIX_IN_WALKS_STARTED_BEFORE_ITS_RENAME)}.\n"
+              f"For a file of another walk, which it is when {directory} holds that "
+              f"walk's minutes, such as {name}-x-minutes.md for {name}-x-draft.md "
+              f"or for {name}-x.md: do nothing; it "
+              f"ships when that walk is shipped.\n"
+              f"For a file of walk {name} that fills one of those roles under "
+              f"another name, when {directory} has no file of that role's name: "
+              f"rename it to that name; once every such file is renamed, run "
+              f"`{walk_files_ship_rerun_command(name, directory)}` again, because the log-store keeps no copy "
+              f"of a file this program does not ship.\n"
+              f"For any other file, one whose role's name is already taken included: "
+              f"tell the user, in one sentence for each such "
+              f"file, with its name in place of <file name>: \"<file name> is "
+              f"not named as a walk's file is, so scripts/walk-files-ship.py did not ship it; the "
+              f"log-store has no copy of it; it is in {directory} on "
+              f"{os.uname().nodename}.\" A subagent passes those sentences to the "
+              f"agent that dispatched it instead.",
               file=sys.stderr)
 
     minutes_target = destination.walk_path / walk_file_name(name, MINUTES_ROLE_SUFFIX)
