@@ -235,6 +235,13 @@ def test_a_hand_written_move_on_that_a_later_revision_undid_is_proposed_as_a_mov
           result.returncode == 0
           and proposed == ["item 3.1 of 29: deferred; it moves to just before the summary item. <open>"],
           described(result))
+    path = minutes_file("revised-then-deferred-skipped", text)
+    result = run("--minutes", str(path), "--skip", f"{path}:5")
+    proposed = [line[len("  append: "):] for line in result.stdout.split("\n") if line.startswith("  append: ")]
+    check("--skip on the deferral after the rewrite leaves it no evidence, so the undone move on is proposed again",
+          result.returncode == 0 and len(proposed) == 1
+          and proposed[0].startswith("item 3.1 of 29: moved on, no decision: the hand-written minutes line 3"),
+          described(result))
 
 
 def test_a_skipped_line_proposes_nothing():

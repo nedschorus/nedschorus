@@ -228,6 +228,7 @@ CASE_AGAINST_RATING = re.compile(r"(very strong|none|weak|medium|strong)\b", re.
 CASE_AGAINST_HASHTAG = " #case_against_{rating}"
 NOT_ASKED_RATINGS = ("none", "weak")
 NOT_ASKED_KINDS = (1, 2, 3, 4, 5)
+OPTION_NUMBERS = (2, 3)
 EVIDENCE_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*(#not_asked_(?:touches|test|source|unused|rename))"
                            rf"{MARKER_END}[*_`]*[:\s]*(.*)$")
 TOUCHES, TEST, SOURCE, UNUSED, RENAME = (f"#not_asked_{name}" for name in ("touches", "test", "source", "unused",
@@ -360,12 +361,16 @@ CLOSED_MARKER_VALUE = "none, closed"
 PROGRAM_LINE_ITEMS = re.compile(r"^(items?\s[^:]*): ", re.I)
 
 
-_OUTCOME_VALUE = "(?:" + "|".join(re.escape(value) for value in OUTCOMES.values()) + ")"
-_PART_VALUE = rf"part \d+ (?:{APPROVED}|{DISAPPROVED}) {_OUTCOME_VALUE}"
+def _one_of(values):
+    return "(?:" + "|".join(re.escape(str(value)) for value in values) + ")"
+
+
+_PART_VALUE = r"part \d+ " + _one_of(f"{word} {outcome}" for word, outcome in OUTCOMES.items())
 # The values close fills each placeholder with; {ruling} and {reason} carry the agent's own words, so any text.
 PLACEHOLDER_VALUES = {
-    "answered": rf"(?:{APPROVED}(?: option \d+)?|{DISAPPROVED}|not asked, kind \d+)",
-    "outcome": _OUTCOME_VALUE,
+    "answered": _one_of([APPROVED, DISAPPROVED] + [f"{APPROVED} option {number}" for number in OPTION_NUMBERS]
+                        + [f"not asked, kind {kind}" for kind in NOT_ASKED_KINDS]),
+    "outcome": _one_of(OUTCOMES.values()),
     "parts": rf"{_PART_VALUE}(?:, {_PART_VALUE})*",
     "ruling": ".+",
     "reason": ".+",
@@ -375,10 +380,10 @@ PLACEHOLDER_VALUES = {
 def after_the_items_pattern(template):
     """The part of a minutes line this program writes from template after `{item}: `, as a regular
     expression in which each other placeholder stands only for the values close fills it with."""
-    rest = template[len("{item}: "):]
-    pieces, placeholders = re.split(r"\{\w+\}", rest), re.findall(r"\{(\w+)\}", rest)
-    return re.compile("^" + "".join(re.escape(piece) + (PLACEHOLDER_VALUES[name] if index < len(placeholders) else "")
-                                    for index, (piece, name) in enumerate(zip(pieces, placeholders + [None])))
+    # re.split with a group alternates literal text (even indexes) and placeholder names (odd indexes).
+    return re.compile("^" + "".join(PLACEHOLDER_VALUES[piece] if index % 2 else re.escape(piece)
+                                    for index, piece in enumerate(re.split(r"\{(\w+)\}",
+                                                                           template[len("{item}: "):])))
                       + "$")
 
 
@@ -1192,7 +1197,7 @@ def main(argv=None):
     answer.add_argument("--moved-on-no-decision", action="store_true",
                         help="check: the user's reply moved on from an item that asks no decision, such as a "
                              "summary item; records no decision")
-    answer.add_argument("--option", type=int, choices=(2, 3),
+    answer.add_argument("--option", type=int, choices=OPTION_NUMBERS,
                         help="check: the answer was O2 or O3, approving the item's \"Option N\" paragraph")
     answer.add_argument("--already-decided", metavar="USER_RULING",
                         help="check: not shown, since an earlier user-ruling decides the item as it recommends; "
