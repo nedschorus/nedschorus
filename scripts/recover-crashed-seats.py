@@ -232,7 +232,7 @@ REINCARNATION_OPENER_PATTERN = re.compile(
     r"Read .+? — (?:it is )?" + re.escape(REINCARNATION_OPENER_MARKER))
 # An ignition without a conversation-tail, at boot or at a handoff, also consumes the handoff and retires the parent.
 IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER = "the previous session's conversation-tail is unavailable"
-CONVERSATION_TAIL_IGNITION_MARKER = "it is the dialog from this seat's last recorded session"
+FRESH_SESSION_FROM_CONVERSATION_TAIL_PROMPT_PHRASE = "it is the dialog from this seat's last recorded session"
 
 
 def default_agents_root() -> Path:
@@ -578,9 +578,9 @@ def write_first_prompt_after_recorded_exit(handoff_directory: Path, name: str,
     return prompt_path
 
 
-def conversation_tail_ignition_prompt(conversation_tail) -> str:
+def fresh_session_from_conversation_tail_prompt(conversation_tail) -> str:
     return (
-        f"Read {conversation_tail} — {CONVERSATION_TAIL_IGNITION_MARKER}; "
+        f"Read {conversation_tail} — {FRESH_SESSION_FROM_CONVERSATION_TAIL_PROMPT_PHRASE}; "
         "the session that followed it ended without writing a handoff "
         "(crash recovery, nedschorus#120). Continue from where that dialog ends, "
         "checking the repository's current state before trusting any of the "
@@ -1287,7 +1287,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             return did_not_come_up
         return (f"{name}: relaunched fresh{in_window} (nothing to resume, no conversation-tail to read)"
                 f"{reach_clause_for_a_running_seat(name)}")
-    prompt = conversation_tail_ignition_prompt(conversation_tail)
+    prompt = fresh_session_from_conversation_tail_prompt(conversation_tail)
     prompt_path = handoff_directory / f"{name}-recovery-ignition-prompt.md"
     if dry_run:
         return (f"{name}: would launch and start a fresh agent-session from the conversation-tail {conversation_tail.name}"

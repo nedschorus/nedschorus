@@ -45,10 +45,10 @@ DEFAULT_PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 WRAPPED_BLOCK = re.compile(r"\A\s*<[a-z-]+>.*</[a-z-]+>\s*\Z", re.DOTALL)
 PROGRAM_PROMPT_ENTRYPOINT = "sdk-cli"
 COMPACTION_SUMMARY_OPENING = "This session is being continued from a previous conversation"
-NO_HANDOFF_YET_PROMPT_PATTERN = re.compile(
-    re.escape(handoff_supervisor.NO_HANDOFF_YET_PROMPT_TEMPLATE).replace(re.escape("{agent}"), ".+?"))
-CONVERSATION_TAIL_IGNITION_PATTERN = re.compile(
-    r"Read .+? — " + re.escape(crash_recovery.CONVERSATION_TAIL_IGNITION_MARKER))
+FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_PATTERN = re.compile(
+    re.escape(handoff_supervisor.FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_TEMPLATE).replace(re.escape("{agent}"), ".+?"))
+FRESH_SESSION_FROM_CONVERSATION_TAIL_PROMPT_PATTERN = re.compile(
+    r"Read .+? — " + re.escape(crash_recovery.FRESH_SESSION_FROM_CONVERSATION_TAIL_PROMPT_PHRASE))
 # Each phrase is inside every prompt of one kind, wherever it falls in that prompt.
 LAUNCH_PROMPT_PHRASES = (
     crash_recovery.IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER,
@@ -56,13 +56,13 @@ LAUNCH_PROMPT_PHRASES = (
 )
 
 
-def text_written_by_a_program(text):
+def user_turn_text_is_compaction_summary_or_launch_prompt(text):
     """Whether a user turn's text is a compaction summary or a prompt the handoff-supervisor or crash recovery wrote."""
     return (text.startswith(COMPACTION_SUMMARY_OPENING)
             or text.startswith(handoff_supervisor.CRASH_RECOVERY_RESUME_PROMPT_OPENING)
-            or NO_HANDOFF_YET_PROMPT_PATTERN.match(text) is not None
+            or FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_PATTERN.match(text) is not None
             or crash_recovery.REINCARNATION_OPENER_PATTERN.match(text) is not None
-            or CONVERSATION_TAIL_IGNITION_PATTERN.match(text) is not None
+            or FRESH_SESSION_FROM_CONVERSATION_TAIL_PROMPT_PATTERN.match(text) is not None
             or any(phrase in text for phrase in LAUNCH_PROMPT_PHRASES))
 
 
@@ -73,7 +73,7 @@ def written_by_a_program(record, text):
     origin = record.get("origin")
     if "origin" in record and (not isinstance(origin, dict) or origin.get("kind") != "human"):
         return True
-    return text_written_by_a_program(text)
+    return user_turn_text_is_compaction_summary_or_launch_prompt(text)
 
 
 def typed_by_user(record):

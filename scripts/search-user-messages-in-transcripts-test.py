@@ -203,14 +203,14 @@ recover_module = search_module.crash_recovery
 supervisor_module = search_module.handoff_supervisor
 with tempfile.TemporaryDirectory() as directory:
     handoffs = Path(directory)
-    no_handoff_yet = supervisor_module.NO_HANDOFF_YET_PROMPT_TEMPLATE.format(agent="MD-skills")
+    no_handoff_yet = supervisor_module.FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_TEMPLATE.format(agent="MD-skills")
     launch_prompts = [
         recover_module.write_resume_prompt(handoffs, "alpha").read_text(),
         recover_module.write_resume_prompt(handoffs, "alpha", unreplied_successor=True).read_text(),
         recover_module.write_first_prompt_after_recorded_exit(handoffs, "alpha", by_hand=True, resuming=True).read_text(),
         recover_module.write_first_prompt_after_recorded_exit(handoffs, "alpha", by_hand=False, resuming=True).read_text(),
         recover_module.write_first_prompt_after_recorded_exit(handoffs, "alpha", by_hand=False, resuming=False).read_text(),
-        recover_module.conversation_tail_ignition_prompt(handoffs / "alpha-conversation-tail.md"),
+        recover_module.fresh_session_from_conversation_tail_prompt(handoffs / "alpha-conversation-tail.md"),
         supervisor_module.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF,
         no_handoff_yet,
         no_handoff_yet + "\n\nLeftover work-snapshots: 1 copy(ies) of uncommitted work left by an agent of this "

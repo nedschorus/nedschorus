@@ -40,9 +40,12 @@ WHAT IT STORES. One entry per message of his, kind user-words, with its UTC time
 text of the agent's messages since his previous message (the agent message he was answering), at most
 AGENT_MESSAGE_ANSWERED_KEPT_CHARACTERS of its end, and its link, the transcript's path in the log-store and
 the line number. One entry per walk-minutes user-ruling line, kind walk-minutes-user-ruling, linked to its
-walk-minutes file and line. Every entry is added as standing, and its text is never edited. Each run deletes, with its
-tags, every user-words entry whose text the transcript reader now tells is a program's prompt, so a
-prompt stored before the reader knew it leaves the store once the reader learns it. Pairs are not
+walk-minutes file and line. Every entry is added as standing, and no entry is deleted or has its text edited.
+Each run checks every stored user-words entry again: one whose text the transcript reader now tells is a
+program's prompt goes from standing to the status not-the-user's-words, which the index file and the anchor list
+leave out, and one marked so whose text the reader no longer tells is a prompt goes back to standing. So a prompt
+stored before the reader knew it drops out once the reader learns it, and fixing a reader that recognized too
+much clears the wrong marks at the next run. Pairs are not
 made: the design links two entries as a pair only when ruling-agent's prompt judges that they conflict, and
 that prompt is part 2, so entry_pairs stays empty, ready, with its unreviewed state.
 
@@ -69,7 +72,7 @@ from being added twice.
 
 THE INDEX FILE AND THE ANCHOR LIST, written from the store after every run. The index file is JSON Lines:
 its first line {"index_built_at_utc": ..., "standing_entry_count": ...}; then one line per standing entry,
-newest first, with its id ("entry-<number>", not reused unless the newest entry is the one deleted), kind,
+newest first, with its id ("entry-<number>", never reused, since no entry is deleted), kind,
 said_at_utc, link, tags, anchors and
 text, the text cut to its first INDEX_FILE_TEXT_WORDS words with "…" appended when cut (the full text is in
 the store). The anchor list holds one anchor per line, sorted, every anchor of an entry in the index file.
@@ -84,12 +87,16 @@ failure prints a line on stderr starting FAILED. Exit 0 when nothing failed; 1 w
 walk-minutes file could not be read (the others are still added, and the next run tries it again) or the
 index file or the anchor list could not be written (the store keeps what was added); 2 when it could not
 run at all: the store cannot be opened, or origin/main cannot be read in the repository checkout, since
-tags are fixed when an entry is added and would be lost; 3 when another run holds the lock, which is
-expected when a run outlasts the minute between two runs.
+tags are fixed when an entry is added and would be lost, or a store of schema version 1 cannot be moved to
+version 2 (the move is one transaction, so the store is left at version 1 as it was); 3 when another run holds
+the lock, which is expected when a run outlasts the minute between two runs.
 
 WHAT IT DOES NOT HANDLE. A prompt an agent wrote and passed with --first-prompt-file, such as a new
 agent-seat's founding prompt, is stored as his words: TurnReader knows only the prompts the handoff-supervisor
-and crash recovery write. Words he typed only on the Mac reach the store once mirrored. A tag is only as
+and crash recovery write. A user turn that TurnReader already tells is a program's prompt when the transcript is
+read is not stored at all, so a message of his that the reader wrongly takes for a prompt is never stored, and a
+later fix to the reader does not bring it back: the stored byte offset is past it. Only standing and
+not-the-user's-words entries are checked again; a superseded or lapsed entry keeps its state. Words he typed only on the Mac reach the store once mirrored. A tag is only as
 good as the name matched: a GHI named without "GHI", "issue" or a link, or a system named without its
 path, is missed.
 """
@@ -138,14 +145,16 @@ ADDED_BY = "standing-user-rulings index program"
 KIND_USER_WORDS = "user-words"
 KIND_WALK_MINUTES_USER_RULING = "walk-minutes-user-ruling"
 STATE_STANDING = "standing"
+STATE_NOT_THE_USERS_WORDS = "not-the-user's-words"
 EXIT_OK, EXIT_SOURCE_OR_OUTPUT_FAILED, EXIT_COULD_NOT_RUN, EXIT_LOCK_HELD = 0, 1, 2, 3
 
-SCHEMA_VERSION = 1
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS entries (
+SCHEMA_VERSION = 2
+ENTRIES_TABLE = """
+CREATE TABLE IF NOT EXISTS {name} (
     entry_id INTEGER PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN ('user-words', 'walk-minutes-user-ruling', 'approved-note')),
-    state TEXT NOT NULL DEFAULT 'standing' CHECK (state IN ('standing', 'superseded', 'lapsed')),
+    state TEXT NOT NULL DEFAULT 'standing'
+        CHECK (state IN ('standing', 'superseded', 'lapsed', 'not-the-user''s-words')),
     said_at_utc TEXT NOT NULL,
     text TEXT NOT NULL,
     agent_message_answered TEXT,
@@ -160,6 +169,11 @@ CREATE TABLE IF NOT EXISTS entries (
     added_by TEXT NOT NULL,
     duplicate_key TEXT NOT NULL UNIQUE
 );
+"""
+ENTRIES_COLUMNS = ("entry_id, kind, state, said_at_utc, text, agent_message_answered, source_machine, source_path, "
+                   "source_line, agent_seat, session_id, superseded_by_entry_id, state_changed_at_utc, added_at_utc, "
+                   "added_by, duplicate_key")
+SCHEMA = ENTRIES_TABLE.format(name="entries") + """
 CREATE INDEX IF NOT EXISTS entries_by_state_and_time ON entries (state, said_at_utc);
 CREATE TABLE IF NOT EXISTS entry_tags (
     entry_id INTEGER NOT NULL REFERENCES entries (entry_id),
@@ -203,10 +217,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS entries_full_text USING fts5 (
 CREATE TRIGGER IF NOT EXISTS entries_full_text_after_insert AFTER INSERT ON entries BEGIN
     INSERT INTO entries_full_text (rowid, text, agent_message_answered)
     VALUES (new.entry_id, new.text, new.agent_message_answered);
-END;
-CREATE TRIGGER IF NOT EXISTS entries_full_text_after_delete AFTER DELETE ON entries BEGIN
-    INSERT INTO entries_full_text (entries_full_text, rowid, text, agent_message_answered)
-    VALUES ('delete', old.entry_id, old.text, old.agent_message_answered);
 END;
 CREATE TRIGGER IF NOT EXISTS entries_full_text_after_text_update
 AFTER UPDATE OF text, agent_message_answered ON entries BEGIN
@@ -279,8 +289,9 @@ LOCK_HELD_LINE = ("standing-user-rulings index program: another run holds {lock}
                   "the next run reads what this one would have. No action is needed: the lock ends with the run that "
                   "holds it, even a run that is killed.")
 SUMMARY_LINE = ("standing-user-rulings index program: added {user_words} user-words and {walk} "
-                "walk-minutes-user-ruling entries; deleted {deleted} user-words entries that were a program's "
-                "prompt; index file {index} holds {entries} standing entries "
+                "walk-minutes-user-ruling entries; set the status not-the-user's-words on {set_count} user-words "
+                "entries that are a program's prompt, and set {cleared_count} back to standing; "
+                "index file {index} holds {entries} standing entries "
                 "({index_bytes} bytes); anchor list {anchors_path} holds {anchors} anchors ({anchor_bytes} bytes)")
 
 
@@ -413,9 +424,15 @@ def open_store(store_path):
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA foreign_keys=ON")
         (version,) = connection.execute("PRAGMA user_version").fetchone()
-        if version not in (0, SCHEMA_VERSION):
+        if version > SCHEMA_VERSION:
             raise CouldNotRun(f"the store {store_path} has schema version {version}, and this program "
                               f"knows version {SCHEMA_VERSION}", NEWER_STORE_INSTRUCTIONS)
+        if version == 1:
+            try:
+                store_schema_version_1_to_2_move(connection)
+            except sqlite3.Error as error:
+                raise CouldNotRun(f"the store {store_path} could not be moved from schema version 1 to 2, and is "
+                                  f"left at version 1 as it was: {error}", STORE_UNOPENABLE_INSTRUCTIONS) from error
         connection.executescript(SCHEMA)
         connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         connection.commit()
@@ -429,14 +446,40 @@ def duplicate_key(*parts):
     return hashlib.sha256("\0".join(parts).encode()).hexdigest()
 
 
-def delete_entries_written_by_a_program(connection):
-    """Delete the user-words entries whose text the reader tells is a program's prompt; return how many."""
-    entry_ids = [(entry_id,) for entry_id, text in connection.execute(
-        "SELECT entry_id, text FROM entries WHERE kind = ?", (KIND_USER_WORDS,))
-        if transcript_reader.text_written_by_a_program(text)]
-    connection.executemany("DELETE FROM entry_tags WHERE entry_id = ?", entry_ids)
-    connection.executemany("DELETE FROM entries WHERE entry_id = ?", entry_ids)
-    return len(entry_ids)
+def store_schema_version_1_to_2_move(connection):
+    """Rebuild entries so that its state CHECK allows not-the-user's-words, in one transaction, keeping every
+    entry_id so that tags, pairs and full-text rows still point at their entries."""
+    # SQLite cannot change a CHECK in place. foreign_keys can be switched only outside a transaction, and
+    # executescript would commit part way, so each step is its own execute. entry_id is copied, so the full-text
+    # rows still match. On a failure open_store drops the connection, and closing it rolls the move back.
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys=OFF")
+    connection.execute("BEGIN")
+    connection.execute(ENTRIES_TABLE.format(name="entries_schema_version_2"))
+    connection.execute(f"INSERT INTO entries_schema_version_2 ({ENTRIES_COLUMNS}) SELECT {ENTRIES_COLUMNS} FROM entries")
+    connection.execute("DROP TABLE entries")
+    connection.execute("ALTER TABLE entries_schema_version_2 RENAME TO entries")
+    connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys=ON")
+
+
+def user_words_entries_not_the_users_words_status_set_and_clear(connection):
+    """Set not-the-user's-words on each standing user-words entry whose text the reader tells is a program's
+    prompt, and set back to standing each such entry whose text it no longer tells is one; return both counts."""
+    to_set, to_clear = [], []
+    for entry_id, state, text in connection.execute(
+            "SELECT entry_id, state, text FROM entries WHERE kind = ?", (KIND_USER_WORDS,)).fetchall():
+        is_prompt = transcript_reader.user_turn_text_is_compaction_summary_or_launch_prompt(text)
+        if is_prompt and state == STATE_STANDING:
+            to_set.append(entry_id)
+        elif not is_prompt and state == STATE_NOT_THE_USERS_WORDS:
+            to_clear.append(entry_id)
+    changed_at = utc_now_text()
+    connection.executemany("UPDATE entries SET state = ?, state_changed_at_utc = ? WHERE entry_id = ?",
+                           [(STATE_NOT_THE_USERS_WORDS, changed_at, entry_id) for entry_id in to_set]
+                           + [(STATE_STANDING, changed_at, entry_id) for entry_id in to_clear])
+    return len(to_set), len(to_clear)
 
 
 def add_entry(connection, entry, tags_by_source):
@@ -664,13 +707,13 @@ def run(log_store, agents_directory, repository_checkout):
                     user_words_added += read_transcript(connection, machine, path, repository, known_seats)
             except (OSError, sqlite3.Error) as error:
                 source_failures.append(FAILED_LINE.format(what=f"transcript {path}", error=error))
-    deleted = 0
+    set_count = cleared_count = 0
     try:
         with connection:
-            deleted = delete_entries_written_by_a_program(connection)
+            set_count, cleared_count = user_words_entries_not_the_users_words_status_set_and_clear(connection)
     except sqlite3.Error as error:
-        source_failures.append(FAILED_LINE.format(what="deleting the entries that were a program's prompt",
-                                                  error=error))
+        source_failures.append(FAILED_LINE.format(
+            what="checking again which user-words entries are a program's prompt", error=error))
     minutes_paths = (sorted(agents_directory.glob(f"*/docs/walk/{WALK_MINUTES_GLOB}"))
                      + sorted((log_store / SHIPPED_WALK_DIRECTORY_NAME).glob(WALK_MINUTES_GLOB)))
     for path in minutes_paths:
@@ -702,7 +745,8 @@ def run(log_store, agents_directory, repository_checkout):
         print(line, file=sys.stderr)
     if output_failures:
         print("\n".join(OUTPUT_FAILED_INSTRUCTIONS), file=sys.stderr)
-    print(SUMMARY_LINE.format(user_words=user_words_added, walk=walk_added, deleted=deleted, index=index_path,
+    print(SUMMARY_LINE.format(user_words=user_words_added, walk=walk_added, set_count=set_count,
+                              cleared_count=cleared_count, index=index_path,
                               entries=len(lines) - 1, index_bytes=index_bytes, anchors_path=anchor_path,
                               anchors=len(anchors), anchor_bytes=anchor_bytes))
     return EXIT_SOURCE_OR_OUTPUT_FAILED if failures else EXIT_OK

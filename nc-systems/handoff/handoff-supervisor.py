@@ -214,7 +214,7 @@ RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF = (
     "previous session ended without writing a handoff. Re-verify in-flight "
     "state before trusting it, then continue the work underway."
 )
-NO_HANDOFF_YET_PROMPT_TEMPLATE = "You are {agent}. No handoff exists yet; ask what to work on."
+FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_TEMPLATE = "You are {agent}. No handoff exists yet; ask what to work on."
 
 # subprocess reports signals as negative return codes; shell wrappers report 128 + signal.
 SIGTERM_SESSION_EXIT_CODES = (143, -15)
@@ -2108,7 +2108,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         # A resumed session retains its context and must not be told to ask for work it already has.
         prompt = RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF
     else:
-        prompt = NO_HANDOFF_YET_PROMPT_TEMPLATE.format(agent=settings.agent)
+        prompt = FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_TEMPLATE.format(agent=settings.agent)
 
     adopted = settings.adopted_session
     # Compose at launch so the branch-state line reports the sync performed for that launch.

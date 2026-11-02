@@ -197,7 +197,7 @@ with tempfile.TemporaryDirectory() as directory:
           case.query("SELECT DISTINCT session_id FROM entries") == [("session-one",)],
           case.query("SELECT DISTINCT session_id FROM entries"))
     check("the store records its schema version",
-          case.query("PRAGMA user_version") == [(1,)], case.query("PRAGMA user_version"))
+          case.query("PRAGMA user_version") == [(2,)], case.query("PRAGMA user_version"))
     approve = entries[1][1]
     check("GHIs, pull requests, tasks and systems in the agent message, and files in his words, become tags; "
           "a path's shorter trailing parts, such as SKILL.md, do not",
@@ -632,60 +632,200 @@ with tempfile.TemporaryDirectory() as directory:
           [entry[1] for entry in case.entries()] == ["my own words"], case.entries())
 
 # A prompt stored before the reader knew it: the handoff-supervisor's own no-handoff prompt, put in the store as
-# an earlier run did, with a tag, is deleted, tag and full-text row included; the user's words stay.
+# an earlier run did, with a tag, gets the status not-the-user's-words; it stays in the store, tag and full-text row
+# included, and the index file and the anchor list leave it out.
 supervisor = program.transcript_reader.handoff_supervisor
 
 
-def store_with_an_earlier_runs_entries(case, texts):
+def store_with_an_earlier_runs_entries(case, texts, kind="user-words", state="standing"):
     case.transcript("ned-box", [human("kept words", "2026-10-28T00:00:00Z")])
     case.run()
     connection = sqlite3.connect(str(case.store_directory / program.STORE_FILE_NAME))
     with connection:
         for number, text in enumerate(texts):
             cursor = connection.execute(
-                "INSERT INTO entries (kind, said_at_utc, text, source_path, source_line, added_at_utc, added_by, "
-                "duplicate_key) VALUES ('user-words', ?, ?, 'p', 1, 'a', 'b', ?)",
-                (f"2026-08-24T23:5{number}:58Z", text, f"key-{number}"))
-            connection.execute("INSERT INTO entry_tags (entry_id, tag, tag_source) VALUES (?, 'GHI 1', 'user-words')",
+                "INSERT INTO entries (kind, state, said_at_utc, text, source_path, source_line, added_at_utc, "
+                "added_by, duplicate_key) VALUES (?, ?, ?, ?, 'p', 1, 'a', 'b', ?)",
+                (kind, state, f"2026-08-24T23:5{number}:58Z", text, f"key-{kind}-{state}-{number}"))
+            connection.execute("INSERT INTO entry_tags (entry_id, tag, tag_source) VALUES (?, 'GHI 2118', 'user-words')",
                                (cursor.lastrowid,))
     connection.close()
 
 
+def states(case):
+    return case.query("SELECT text, state FROM entries ORDER BY entry_id")
+
+
 with tempfile.TemporaryDirectory() as directory:
     case = Case(directory)
-    prompt = (supervisor.NO_HANDOFF_YET_PROMPT_TEMPLATE.format(agent="MD-skills")
+    prompt = (supervisor.FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_TEMPLATE.format(agent="MD-skills")
               + "\n\nLeftover work-snapshots: 1 copy(ies) of uncommitted work")
     store_with_an_earlier_runs_entries(case, [prompt])
     result = case.run()
-    check("a stored entry the reader now tells is the handoff-supervisor's prompt is deleted with its tags and its "
-          "full-text row, and the run says how many it deleted",
-          result.returncode == 0 and [entry[1] for entry in case.entries()] == ["kept words"]
-          and case.query("SELECT count(*) FROM entry_tags") == [(0,)]
-          and case.query("SELECT rowid FROM entries_full_text WHERE entries_full_text MATCH 'handoff'") == []
-          and "deleted 1 user-words entries that were a program's prompt" in result.stdout, described(result))
+    header, index = case.index()
+    check("a stored entry the reader now tells is the handoff-supervisor's prompt gets the status "
+          "not-the-user's-words and stays in the store with its tag and its full-text row",
+          result.returncode == 0 and states(case) == [("kept words", "standing"), (prompt, "not-the-user's-words")]
+          and case.query("SELECT count(*) FROM entry_tags") == [(1,)]
+          and len(case.query("SELECT rowid FROM entries_full_text WHERE entries_full_text MATCH 'handoff'")) == 1
+          and case.query("SELECT state_changed_at_utc IS NOT NULL FROM entries WHERE text = ?", (prompt,)) == [(1,)],
+          described(result) + f" {states(case)}")
+    check("the index file and the anchor list leave out an entry with the status not-the-user's-words, and the "
+          "run says how many it set",
+          [line["text"] for line in index] == ["kept words"] and header["standing_entry_count"] == 1
+          and case.anchors() == []
+          and "set the status not-the-user's-words on 1 user-words entries that are a program's prompt, and set 0 "
+              "back to standing" in result.stdout, (header, index, case.anchors(), result.stdout))
+    again = case.run()
+    check("a later run leaves a marked entry marked and counts nothing new",
+          states(case)[1] == (prompt, "not-the-user's-words")
+          and "set the status not-the-user's-words on 0 user-words entries" in again.stdout, again.stdout)
 
-# The delete fails inside run(): the run reports it and exits 1, and the store keeps every entry.
+# A reader that recognized too much: an entry marked by an earlier run whose text the reader no longer tells is a
+# program's prompt goes back to standing, and the index file holds it again.
 with tempfile.TemporaryDirectory() as directory:
     case = Case(directory)
-    prompt = supervisor.NO_HANDOFF_YET_PROMPT_TEMPLATE.format(agent="MD-skills")
-    store_with_an_earlier_runs_entries(case, [prompt])
-    real_delete = program.delete_entries_written_by_a_program
+    store_with_an_earlier_runs_entries(case, ["my words, wrongly marked"], state="not-the-user's-words")
+    result = case.run()
+    header, index = case.index()
+    check("an entry marked not-the-user's-words that the reader no longer tells is a prompt goes back to standing",
+          result.returncode == 0 and states(case)[1] == ("my words, wrongly marked", "standing")
+          and "my words, wrongly marked" in [line["text"] for line in index]
+          and "and set 1 back to standing" in result.stdout, described(result) + f" {states(case)}")
 
-    def delete_failing(connection_):
-        real_delete(connection_)
+# Only user-words entries are checked: a walk-minutes user-ruling that quotes a launch prompt's phrase stays
+# standing, and a superseded entry keeps its state.
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    quoting = ("item 4 of 9: the user answered approved (2026-10-30 10:00), which makes its change. Remove \""
+               + program.transcript_reader.crash_recovery.IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER + "\".")
+    store_with_an_earlier_runs_entries(case, [quoting], kind="walk-minutes-user-ruling")
+    superseded_prompt = supervisor.FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_TEMPLATE.format(agent="beta")
+    store_with_an_earlier_runs_entries(case, [superseded_prompt], state="superseded")
+    case.run()
+    check("a walk-minutes user-ruling that quotes a launch prompt's phrase stays standing",
+          (quoting, "standing") in states(case), states(case))
+    check("a superseded entry whose text is a program's prompt keeps the state superseded",
+          (superseded_prompt, "superseded") in states(case), states(case))
+
+# The check fails inside run(): the run reports it and exits 1, and rolls back, so no entry's state changes.
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    prompt = supervisor.FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_TEMPLATE.format(agent="MD-skills")
+    store_with_an_earlier_runs_entries(case, [prompt])
+    real_check = program.user_words_entries_not_the_users_words_status_set_and_clear
+
+    def check_failing(connection_):
+        real_check(connection_)
         raise sqlite3.OperationalError("disk I/O error")
 
-    program.delete_entries_written_by_a_program = delete_failing
+    program.user_words_entries_not_the_users_words_status_set_and_clear = check_failing
     stdout, stderr = io.StringIO(), io.StringIO()
     try:
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             exit_code = program.run(case.log_store, case.agents, case.checkout)
     finally:
-        program.delete_entries_written_by_a_program = real_delete
-    check("a delete that fails is reported FAILED, exit 1, and rolls back, leaving every entry in the store",
+        program.user_words_entries_not_the_users_words_status_set_and_clear = real_check
+    check("a check that fails is reported FAILED, exit 1, and rolls back, leaving every entry's state as it was",
           exit_code == 1
-          and "FAILED: deleting the entries that were a program's prompt: disk I/O error" in stderr.getvalue()
-          and [entry[1] for entry in case.entries()] == ["kept words", prompt],
+          and "FAILED: checking again which user-words entries are a program's prompt: disk I/O error"
+              in stderr.getvalue()
+          and states(case) == [("kept words", "standing"), (prompt, "standing")],
+          f"exit {exit_code}: {stderr.getvalue()} {states(case)}")
+
+# A store of schema version 1, whose state CHECK has no not-the-user's-words, is moved to version 2: every entry
+# keeps its id, tags and full-text row, and the CHECK takes the new state and still refuses an unknown one.
+SCHEMA_VERSION_1_ENTRIES = program.ENTRIES_TABLE.format(name="entries").replace(
+    "CHECK (state IN ('standing', 'superseded', 'lapsed', 'not-the-user''s-words'))",
+    "CHECK (state IN ('standing', 'superseded', 'lapsed'))")
+SCHEMA_VERSION_1 = SCHEMA_VERSION_1_ENTRIES + program.SCHEMA[len(program.ENTRIES_TABLE.format(name="entries")):] + """
+CREATE TRIGGER IF NOT EXISTS entries_full_text_after_delete AFTER DELETE ON entries BEGIN
+    INSERT INTO entries_full_text (entries_full_text, rowid, text, agent_message_answered)
+    VALUES ('delete', old.entry_id, old.text, old.agent_message_answered);
+END;
+"""
+
+
+def schema_version_1_store(case, texts):
+    case.store_directory.mkdir(parents=True)
+    connection = sqlite3.connect(str(case.store_directory / program.STORE_FILE_NAME))
+    connection.execute("PRAGMA foreign_keys=ON")
+    connection.executescript(SCHEMA_VERSION_1)
+    with connection:
+        for number, text in enumerate(texts):
+            cursor = connection.execute(
+                "INSERT INTO entries (entry_id, kind, said_at_utc, text, source_path, source_line, added_at_utc, "
+                "added_by, duplicate_key) VALUES (?, 'user-words', ?, ?, 'p', 1, 'a', 'b', ?)",
+                (40 + number, f"2026-08-24T23:5{number}:58Z", text, f"old-key-{number}"))
+            connection.execute("INSERT INTO entry_tags (entry_id, tag, tag_source) VALUES (?, 'GHI 2118', 'user-words')",
+                               (cursor.lastrowid,))
+    connection.execute("PRAGMA user_version=1")
+    connection.commit()
+    connection.close()
+
+
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    prompt = supervisor.FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_TEMPLATE.format(agent="MD-skills")
+    schema_version_1_store(case, ["older words about the handoff", prompt])
+    result = case.run()
+    connection = sqlite3.connect(str(case.store_directory / program.STORE_FILE_NAME))
+    try:
+        with connection:
+            connection.execute("UPDATE entries SET state = 'lapsed' WHERE entry_id = 40")
+        try:
+            with connection:
+                connection.execute("UPDATE entries SET state = 'unknown' WHERE entry_id = 40")
+            refuses_unknown = False
+        except sqlite3.IntegrityError:
+            refuses_unknown = True
+        triggers = sorted(row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger'"))
+    finally:
+        connection.close()
+    check("a store of schema version 1 is moved to version 2, keeping every entry's id and tags, and marks the "
+          "prompt it holds",
+          result.returncode == 0 and case.query("PRAGMA user_version") == [(2,)]
+          and case.query("SELECT entry_id, state FROM entries WHERE entry_id < 50 ORDER BY entry_id")
+              == [(40, "lapsed"), (41, "not-the-user's-words")]
+          and case.query("SELECT entry_id FROM entry_tags ORDER BY entry_id") == [(40,), (41,)],
+          described(result) + f" {case.query('SELECT entry_id, state, text FROM entries')}")
+    check("after the move the full-text search finds the old entries, the state CHECK refuses an unknown state, "
+          "and the delete trigger is gone",
+          [row[0] for row in case.query(
+              "SELECT rowid FROM entries_full_text WHERE entries_full_text MATCH 'older' ORDER BY rowid")] == [40]
+          and refuses_unknown
+          and triggers == ["entries_full_text_after_insert", "entries_full_text_after_text_update"],
+          f"{refuses_unknown} {triggers}")
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    schema_version_1_store(case, ["older words"])
+    moved = program.open_store(case.store_directory / program.STORE_FILE_NAME)
+    try:
+        foreign_keys = moved.execute("PRAGMA foreign_keys").fetchone()
+    finally:
+        moved.close()
+    check("the connection the move hands back enforces foreign keys again", foreign_keys == (1,), foreign_keys)
+
+# The move fails part way: the store stays at version 1 as it was, and the run stops, exit 2, adding nothing.
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    schema_version_1_store(case, ["older words"])
+    case.transcript("ned-box", [human("new words", "2026-10-29T00:00:00Z")])
+    real_columns = program.ENTRIES_COLUMNS
+    program.ENTRIES_COLUMNS = real_columns + ", a_column_no_store_has"
+    stdout, stderr = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = program.run(case.log_store, case.agents, case.checkout)
+    finally:
+        program.ENTRIES_COLUMNS = real_columns
+    check("a move from schema version 1 that fails stops the run, exit 2, and leaves the store at version 1 as it was",
+          exit_code == 2 and "could not be moved from schema version 1 to 2" in stderr.getvalue()
+          and "do not delete, move or replace the store" in stderr.getvalue()
+          and case.query("PRAGMA user_version") == [(1,)]
+          and [entry[1] for entry in case.entries()] == ["older words"]
+          and case.query("SELECT name FROM sqlite_master WHERE name = 'entries_schema_version_2'") == [],
           f"exit {exit_code}: {stderr.getvalue()} {case.entries()}")
 
 print(f"{'FAILED' if failures else 'all cases passed'}: {len(failures)} failure(s)")
