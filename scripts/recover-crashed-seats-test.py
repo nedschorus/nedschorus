@@ -1132,6 +1132,9 @@ def run_user_systemd_scope_cases(root: Path):
     recovery.launcher_path = lambda: None
     recovery.run_tmux = capture_tmux
     marker = recovery.AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER
+    check("USER SCOPE: --help quotes the text stderr prints, not only the constant's name, "
+          "so an agent can search recovery's output for it",
+          f"`{marker}`" in " ".join((recovery.__doc__ or "").split()), recovery.__doc__)
     try:
         exit_code, stderr, probe = launch()
         prefix = tmux_calls[0][2] if tmux_calls else []

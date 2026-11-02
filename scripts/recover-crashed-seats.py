@@ -142,8 +142,9 @@ siblings and the suites yield CPU to the seat. Cron, which runs the crash
 watcher that calls this tool, gives no XDG_RUNTIME_DIR, so it is set to
 /run/user/<uid> when missing. When the manager cannot be reached, the seat is
 still started, outside it, and a line holding
-AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER is printed to stderr
-with the reason; the crash watcher shows the user a notice for it.
+`STARTED OUTSIDE THE USER'S SYSTEMD MANAGER` (the constant
+AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER) is printed to
+stderr with the reason; the crash watcher shows the user a notice for it.
 
 Usage:
   recover-crashed-seats.py <seat-name>... [--dry-run] [--fresh-session-from-conversation-tail]

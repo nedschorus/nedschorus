@@ -306,6 +306,9 @@ def run_decision_cases(root: Path):
     check("the watcher's started-outside-the-user-systemd-manager marker is recovery's",
           watcher_module.AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER
           == recovery_module.AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER)
+    check("the watcher's docstring quotes the text recovery prints, not only the constant's name",
+          f"`{recovery_module.AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER}`"
+          in " ".join((watcher_module.__doc__ or "").split()))
     outside_line = ("recover-crashed-seats: merge-lane-2: "
                     f"{recovery_module.AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER}"
                     ": its tmux server could not be put in a scope, because systemd-run exited 1")
