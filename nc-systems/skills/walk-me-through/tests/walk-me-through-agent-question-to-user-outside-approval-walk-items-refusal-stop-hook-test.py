@@ -709,6 +709,57 @@ def test_the_shown_item_and_quotes_from_it_are_not_checked():
                  numbered.run(model="yes"))
 
 
+HANDOFF_WALK_ITEM_1_2_LINES = (
+    "## Item 1.2 of 6: a wait limit for each kind of background Bash task",
+    "Item 1.1, from about 9,000 measured runs, proposed 90 minutes for a test suite, 105 for nc-mutation-testing, 75 for every other kind, and 0 for a waiter (explained below). In [handoff-design.md](https://github.com/nedschorus/nedschorus/blob/main/nc-systems/handoff/handoff-design.md), the threshold hook's old text: \"The hook now counts a background Bash task as in flight while it is younger than `--background-task-wait-minutes` and no completion notification names it, judging each task's wait on its own;\"",
+    "#new The new text: \"The hook now counts a background Bash task as in flight while it is younger than its kind's wait limit and no completion notification names it, judging each task's wait on its own. A table the hook reads gives each kind its command patterns and its wait limit, and replaces the hook's `--background-task-wait-minutes` option: the first kind whose pattern matches the command is the task's kind, a command no pattern matches gets 75 minutes, and a kind that only waits, such as `gh pr checks --watch` or a `sleep` loop, has a limit of 0 minutes, so it is never in flight.\"",
+    "The rule for a subagent's own background work, approved 2026-10-30, reads the same table. [advisor]",
+    "A waiter, such as `gh pr checks --watch`, does no work; it only watches for an outside event. A limit of 0 means the handoff never waits for it, and the next agent-session starts the watch again.",
+    "The advisor reviewed this item, and the new text had its own fast read.",
+    "#case_against medium: the alternative needs no table kept up to date, but holds the handoff up to 30 minutes longer behind a stuck task. [advisor]",
+    "The alternative: one limit of 105 minutes for every kind, waiters at 0, and no table.",
+    "Recommendation: adopt the table and the new text.",
+)
+HANDOFF_WALK_ITEM_1_2_REPLY = "\n\n".join((
+    "Last ruled on: item 1.1.1 (the glossary terms), which you approved on 2026-11-01.",
+    "I found two work-snapshots in this seat's worktree. Both held the same four drafts in docs/drafts/ (work-with-mac skill, its proposals, the bang-prefix sentence and the objective section). Those files are still there, uncommitted, with the same contents, so there was nothing to restore. I deleted both snapshots.",
+    "## Item 1.2 of 6: a wait limit for each kind of background Bash task",
+    "Item 1.1, from about 9,000 measured runs, proposed 90 minutes for a test suite, 105 for nc-mutation-testing, 75 for every other kind, and 0 for a waiter (explained below). In [handoff-design.md](https://github.com/nedschorus/nedschorus/blob/main/nc-systems/handoff/handoff-design.md), the threshold hook's old text: \"The hook now counts a background Bash task as in flight while it is younger than `--background-task-wait-minutes` and no completion notification names it, judging each task's wait on its own;\"",
+    "If you approve, the new text: \"The hook now counts a background Bash task as in flight while it is younger than its kind's wait limit and no completion notification names it, judging each task's wait on its own. A table the hook reads gives each kind its command patterns and its wait limit, and replaces the hook's `--background-task-wait-minutes` option: the first kind whose pattern matches the command is the task's kind, a command no pattern matches gets 75 minutes, and a kind that only waits, such as `gh pr checks --watch` or a `sleep` loop, has a limit of 0 minutes, so it is never in flight.\"",
+    "The rule for a subagent's own background work, approved 2026-10-30, reads the same table. [advisor]",
+    "A waiter, such as `gh pr checks --watch`, does no work; it only watches for an outside event. A limit of 0 means the handoff never waits for it, and the next agent-session starts the watch again.",
+    "The advisor reviewed this item, and the new text had its own fast read.",
+    "#case_against medium: the alternative needs no table kept up to date, but holds the handoff up to 30 minutes longer behind a stuck task. [advisor]",
+    "The alternative: one limit of 105 minutes for every kind, waiters at 0, and no table.",
+    "Recommendation: adopt the table and the new text.",
+    "[Item 1.2 of 6, a wait limit for each kind of background Bash task](https://claude.ai/artifact/T2uhWgiK9eFspNAiZ5MEyb) · A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · E explain · O other options",
+))
+
+
+def test_a_new_text_line_shown_as_if_you_approve_the_new_text_is_the_items_own_text():
+    document = "# Handoff wait limits: approval-walk\n\n" + "\n\n".join(HANDOFF_WALK_ITEM_1_2_LINES) + "\n"
+    case = Case(minutes="#next_to_present item 1.2 of 6", document=document)
+    case.reply(HANDOFF_WALK_ITEM_1_2_REPLY)
+    check_silent("the reply that showed item 1.2's `#new` line as `If you approve, the new text:` passes",
+                 case.run(model="yes"))
+    check("that reply sends no line to the model", case.model_calls() == [], case.model_calls())
+    for case_name, document_line, shown_line in (
+            ("a `#new` line with no `The new text:` passes shown after `If you approve, the new text:`, "
+             "whatever the case of its first letter",
+             "#new The threshold-hook bullet becomes: \"The hook waits.\"",
+             "If you approve, the new text: the threshold-hook bullet becomes: \"The hook waits.\""),
+            ("a `#new_if_d` line passes shown after `If you disapprove, the new text:`",
+             "#new_if_d The new text: the hook waits unless you stop it.",
+             "If you disapprove, the new text: the hook waits unless you stop it.")):
+        varied = Case(minutes="#next_to_present item 1.2 of 6",
+                      document=document.replace(HANDOFF_WALK_ITEM_1_2_LINES[2], document_line))
+        varied.reply(HANDOFF_WALK_ITEM_1_2_REPLY.replace(HANDOFF_WALK_ITEM_1_2_REPLY.split("\n\n")[4], shown_line))
+        check_silent(case_name, varied.run(model="yes"))
+    case.reply(HANDOFF_WALK_ITEM_1_2_REPLY.replace("its kind's wait limit", "a wait limit you choose"))
+    check_blocked("a shown new text that differs from the item's `#new` line still goes to the model",
+                  case.run(model="yes"), "If you approve, the new text:")
+
+
 def test_every_turn_is_checked_whoever_started_it():
     case = Case()
     case.reply("merge-lane-2 reports PR 1922 merged. Should I start the next fix?", opening=PEER_PROMPT)

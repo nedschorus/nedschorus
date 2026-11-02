@@ -26,9 +26,13 @@ THE TEXT CHECKED is the reply, line by line, without:
   of the item, from its heading to its answer line, is left out, and so is
   one matching the answer line's first sentence, the walk-me-through skill's
   answer line without what the item adds after it, such as ` D: <the
-  alternative>`; lines match when they are equal once markdown emphasis,
-  heading and list marks, a hashtag marker opening the line, such as `#new `
-  or `#new_if_d `, link targets, spacing and case are dropped;
+  alternative>`; and one showing a line of the item that opens with the
+  mark `#new` or `#new_if_d` as the agent shows it, the mark replaced by
+  `If you approve, the new text:` or `If you disapprove, the new text:` and
+  a `The new text:` just after the mark dropped; lines match when they are
+  equal once markdown emphasis, heading and list marks, a hashtag marker
+  opening the line, such as `#new ` or `#new_if_d `, link targets, spacing
+  and case are dropped;
 - fenced and indented code and code spans;
 - quoted text, `"..."`, `“...”` or a `>` line, that the walk-document holds;
 - a waiting item's closing line, the line the walk-me-through skill ends
@@ -195,6 +199,8 @@ LINE_MARKS = re.compile(r"^\s*(?:(?:[-+*>]|\d+[.)])\s+)+")
 HASHTAG_MARKER = re.compile(r"^#\w+\s+")
 EMPHASIS_AND_SPACING = re.compile(r"[\s*_#>`]+")
 ANSWER_LINE_START = "answer a to approve"
+NEW_TEXT_LINE = re.compile(r"^(#new(?:_if_d)?)[:\s]+(?i:the\s+new\s+text:\s*)?(.*)$")
+NEW_TEXT_SHOWN_AS = {"#new": "If you approve, the new text: ", "#new_if_d": "If you disapprove, the new text: "}
 
 AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION = "concerns_only_a_waiting_item_decision"
 AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE = "asks_something_else"
@@ -355,16 +361,22 @@ def interruption_item_texts(document_text, units, waiting_numbers, parser):
     return texts
 
 
+def new_text_as_shown(line):
+    """The `#new` or `#new_if_d` line as the agent shows it to the user, or None for any other line."""
+    new_text = NEW_TEXT_LINE.match(LINE_MARKS.sub("", line.strip()))
+    return NEW_TEXT_SHOWN_AS[new_text[1]] + new_text[2] if new_text else None
+
+
 def shown_item_lines(reply_lines, document_lines, units):
-    """The normalized lines, heading to answer line, of every unit whose heading a reply line matches, and the answer
-    line's answer sentence alone."""
+    """The normalized lines, heading to answer line, of every unit whose heading a reply line matches, the answer
+    line's answer sentence alone, and each `#new` or `#new_if_d` line as the agent shows it."""
     reply_set = normalized_lines(reply_lines)
     shown = set()
     for _, _, _, first, end in units:
         if normalized(document_lines[first]) not in reply_set:
             continue
         for line in document_lines[first:end]:
-            shown |= normalized_lines([line])
+            shown |= normalized_lines([line, new_text_as_shown(line) or ""])
             if normalized(line).startswith(ANSWER_LINE_START):
                 shown |= normalized_lines([answer_sentence(line)])
                 break
