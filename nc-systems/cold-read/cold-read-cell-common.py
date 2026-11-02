@@ -209,9 +209,10 @@ def validate_cell(cell: str, prompt_file_argument) -> None:
     if not prompt_file_argument:
         if not CELL_CHOICES:
             raise CellRefusal(
-                f"no cold-read-cell to run: the --cell choices are the names of "
-                f"the *-prompt.md files in {PROMPTS_DIR}, and that directory "
-                "holds none.\n"
+                f"no cold-read-cell to run: each --cell choice is the name of "
+                f"a *-prompt.md file in {PROMPTS_DIR} without -prompt.md, as "
+                "defect-hunt is the choice for defect-hunt-prompt.md, and that "
+                "directory holds no *-prompt.md file.\n"
                 "To get the *-prompt.md files back from main, run "
                 f"`git -C {REPO_ROOT} restore --source=origin/main --staged "
                 "--worktree .claude/skills/cold-read/prompts`, then rerun this "
