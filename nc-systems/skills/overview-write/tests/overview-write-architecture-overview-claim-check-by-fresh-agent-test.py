@@ -15,6 +15,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -248,6 +249,16 @@ def run_program_cases(fixture):
     check("a worktree that git cannot remove exits 6, with git's words and the worktree's path, after writing the report",
           code == 6 and "injected removal failure" in stderr and "checkout-at-checked-against-commit" in stderr
           and len(fixture.reports_written()) == count + 1, stderr)
+    cleanup = re.search(r"To clean up, once this program has exited: run `git -C (\S+) (worktree remove --force) (\S+)`",
+                        stderr)
+    worktree_path = Path(cleanup.group(3)) if cleanup else None
+    check("after a failed removal the worktree's folder is gone and git still records the worktree",
+          worktree_path is not None and not worktree_path.exists() and str(worktree_path) in fixture.git("worktree", "list"),
+          stderr)
+    if cleanup:
+        fixture.git("worktree", "remove", "--force", str(worktree_path))
+    check("the cleanup command the program prints after a failed removal clears git's record of the worktree",
+          worktree_path is not None and str(worktree_path) not in fixture.git("worktree", "list"), stderr)
     fixture.git("worktree", "prune")
     fixture.answer(claude_stdout="", claude_exit=1)
     code, stderr = fixture.run_in_process_with_timeouts(run_git=run_git_whose_worktree_remove_fails)
@@ -282,6 +293,17 @@ def run_program_cases(fixture):
         check(f"a worktree removal that raises {kind} with every claim supported exits 6 and reports the removal",
               code == 6 and "could not run" in stderr, stderr)
         fixture.git("worktree", "prune")
+
+        def run_git_whose_worktree_prune_raises(repository, *arguments, check=True, raised=raised):
+            if arguments[:2] == ("worktree", "prune"):
+                raise raised
+            return real_run_git(repository, *arguments, check=check)
+
+        fixture.answer()
+        code, stderr = fixture.run_in_process_with_timeouts(run_git=run_git_whose_worktree_prune_raises)
+        check(f"a `git worktree prune` that would raise {kind} after a successful removal leaves an all-supported run "
+              "at exit 0", code == 0 and "could not run" not in stderr and fixture.worktrees() == worktrees_before,
+              stderr)
 
     fixture.answer(claude_stdout="I ran out of time.\n")
     result = fixture.run()
