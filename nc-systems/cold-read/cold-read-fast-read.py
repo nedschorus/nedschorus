@@ -728,7 +728,8 @@ def full_run_required_line(class_name: str) -> str:
 def fast_read_report_path_for_target(
     target: pathlib.Path, now: datetime.datetime,
 ) -> pathlib.Path:
-    """The path rule in the docstring, and nothing else.
+    """The path rule in the docstring; on the records route the record
+    directory is also created, so a concurrent run cannot take the same one.
 
     `target` is absolute and resolved; `now` is the one clock reading the
     record's name is taken from, and the walk route does not use it. A walk
@@ -743,7 +744,7 @@ def fast_read_report_path_for_target(
         target, checkout_root_holding(target))
     if suggestions is not None:
         return suggestions
-    record_dir, store_unlisted = record_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
+    record_dir, store_unlisted = record_shipper.cold_read_record_directory_created_unused_in_checkout_and_log_store_with_log_store_listing_error(
         RECORDS_DIR / record_directory_name_for_target(target, now))
     if store_unlisted is not None:
         print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(PROGRAM, record_dir, store_unlisted),

@@ -478,6 +478,10 @@ with tempfile.TemporaryDirectory() as scratch:
           skill_report == scratch / "in-process-records" / "SKILL-cold-read-2026-09-16"
           / "cold-read-fast-read.md",
           str(skill_report))
+    check("the fast read creates its record directory as it names it",
+          skill_report.parent.is_dir(), str(skill_report.parent))
+    # Removed so the next case's name is free in this checkout, as it says.
+    skill_report.parent.rmdir()
     # Another checkout's read of the document that day is in the log-store
     # alone: the name passes over it, as this checkout's own records are.
     (in_process_log_store / "SKILL-cold-read-2026-09-16").mkdir(parents=True)

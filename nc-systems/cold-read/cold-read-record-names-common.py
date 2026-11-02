@@ -180,3 +180,19 @@ def fresh_record_directory(base: pathlib.Path, names_taken_in_log_store) -> path
         record_directory = base.with_name(f"{base.name}-{suffix}")
         suffix += 1
     return record_directory
+
+
+def fresh_record_directory_created(base: pathlib.Path, names_taken_in_log_store) -> pathlib.Path:
+    """Create and return the directory fresh_record_directory names; when
+    another run creates that name first, take the next free one, so two runs
+    started at once never share a record directory."""
+    # Choosing a free name and creating it later lets two runs choose the same
+    # name; mkdir without exist_ok is the atomic claim.
+    base.parent.mkdir(parents=True, exist_ok=True)
+    while True:
+        record_directory = fresh_record_directory(base, names_taken_in_log_store)
+        try:
+            record_directory.mkdir()
+        except FileExistsError:
+            continue
+        return record_directory

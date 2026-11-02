@@ -149,6 +149,7 @@ JOINED_SEGMENT_VALUES = ("target",)
 OWNED_NAMES = frozenset({
     "RECORDS_DIR", "FROZEN_TARGET_DIRECTORY_NAME", "record_name_for_target",
     "record_directory_name_for_target", "fresh_record_directory",
+    "fresh_record_directory_created",
     "frozen_target_path", "RECORDS_DIRECTORY_NAME", "RECORD_DATE_PATTERN",
     "COMPLETED_REPORT_NAME_PATTERN", "record_directory_name_pattern_for_target",
     "frozen_target_candidate_paths", "record_holds_completed_report",
@@ -528,6 +529,54 @@ with tempfile.TemporaryDirectory() as scratch:
 check("a fast read's report under its new name counts as a finished read",
       names.COMPLETED_REPORT_NAME_PATTERN.match(names.COLD_READ_FAST_READ_REPORT_FILE_NAME)
       is not None)
+
+# Two runs started at once both see one name free; the second to create it
+# must move on to the next. The other run's claim is injected between the
+# choice and the mkdir, the window a check-then-create leaves open.
+with tempfile.TemporaryDirectory() as scratch:
+    base = pathlib.Path(scratch) / "records" / "a-2026-11-02"
+    choose_free_name = names.fresh_record_directory
+    other_runs_claims = []
+
+    def free_name_then_another_run_claims_it(chosen_base, taken):
+        chosen = choose_free_name(chosen_base, taken)
+        if not other_runs_claims:
+            chosen.mkdir(parents=True)
+            other_runs_claims.append(chosen)
+        return chosen
+
+    names.fresh_record_directory = free_name_then_another_run_claims_it
+    try:
+        claimed = names.fresh_record_directory_created(base, set())
+    finally:
+        names.fresh_record_directory = choose_free_name
+    check("a name another run creates between the choice and the claim is passed over",
+          other_runs_claims == [base] and claimed == base.with_name("a-2026-11-02-2")
+          and claimed.is_dir(), f"{other_runs_claims} {claimed}")
+
+    import threading
+    racers = 8
+    start = threading.Barrier(racers)
+    claimed_by_racers = []
+
+    def claim_at_the_barrier():
+        start.wait()
+        claimed_by_racers.append(names.fresh_record_directory_created(
+            pathlib.Path(scratch) / "racing" / "b-2026-11-02", set()))
+
+    threads = [threading.Thread(target=claim_at_the_barrier) for _ in range(racers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    check(f"{racers} claims started at once get {racers} different directories",
+          len(set(claimed_by_racers)) == racers and all(d.is_dir() for d in claimed_by_racers),
+          str(sorted(claimed_by_racers)))
+    names_in_the_store = {"c-2026-11-02", "c-2026-11-02-2"}
+    check("a claim passes over the names the log-store holds",
+          names.fresh_record_directory_created(
+              pathlib.Path(scratch) / "stored" / "c-2026-11-02", names_in_the_store).name
+          == "c-2026-11-02-3")
 
 print()
 if failures:
