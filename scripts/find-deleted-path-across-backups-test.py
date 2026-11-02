@@ -14,6 +14,7 @@ looking. Each blocked surface therefore has a case asserting both the status
 AND that the output says what to do about it.
 """
 
+import atexit
 import contextlib
 import importlib.util
 import io
@@ -40,6 +41,7 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 # Every copy this suite makes lands in a scratch folder, never in the user's Downloads.
 FOUND_COPIES_SCRATCH = tempfile.mkdtemp(prefix="find-deleted-path-found-copies-test-")
+atexit.register(shutil.rmtree, FOUND_COPIES_SCRATCH)
 os.environ["FIND_DELETED_PATH_FOUND_COPIES_ROOT"] = FOUND_COPIES_SCRATCH
 
 MODULE_PATH = Path(__file__).with_name("find-deleted-path-across-backups.py")

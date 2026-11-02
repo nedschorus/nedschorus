@@ -992,6 +992,12 @@ try:
               stopped.returncode == 2 and not worktrees_registered_under(stopped_scratch) and not still_running,
               f"exit {stopped.returncode}; registered {worktrees_registered_under(stopped_scratch)}; "
               f"running {still_running}\n{stopped_output}")
+        records = sorted(stopped_scratch.glob("multiprocessing-directory-*"))
+        recorded = [Path(record.read_text()) for record in records]
+        check(f"a replay stopped by {stop_signal.name} in the middle of a step: the killed step's multiprocessing "
+              f"directory is removed",
+              bool(recorded) and not any(directory.exists() for directory in recorded),
+              f"records {records}; recorded {recorded}")
 
     # SystemExit raised by the stop handler between Popen._wait()'s lock acquire and its try used to leave
     # the lock held, so the next wait() on that process blocked forever. The signal is delivered at exactly

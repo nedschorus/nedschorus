@@ -58,6 +58,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import multiprocessing.util
 import os
 import re
 import shutil
@@ -820,8 +821,12 @@ def step_deadline_seconds(pair_count, jobs, timeout):
     return (-(-pair_count // jobs) + pair_count) * readings_per_pair * timeout + STEP_DEADLINE_MARGIN_SECONDS
 
 
-def run_step_in_child(arguments, log_path, deadline_seconds):
-    """Run one ref's step in a fresh interpreter, so each ref's modules load from that ref alone."""
+def run_step_in_child(arguments, log_path, deadline_seconds, multiprocessing_directory_record_path=None):
+    """Run one ref's step in a fresh interpreter, so each ref's modules load from that ref alone.
+
+    The step writes the path of its multiprocessing temporary directory, the pool's forkserver socket, to
+    multiprocessing_directory_record_path. multiprocessing removes that directory only at a normal exit, so after a
+    step killed here it is removed here."""
     # In its own process group, so a step that ends, fails or is stopped takes its workers with it;
     # they would otherwise go on reading checkouts the replay is removing.
     with stop_deferred(), open(log_path, "w") as log:
@@ -840,6 +845,10 @@ def run_step_in_child(arguments, log_path, deadline_seconds):
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(step.pid, signal.SIGKILL)
             step.wait()
+            if multiprocessing_directory_record_path is not None and Path(multiprocessing_directory_record_path).exists():
+                multiprocessing_directory = Path(Path(multiprocessing_directory_record_path).read_text())
+                if multiprocessing_directory.is_dir():
+                    shutil.rmtree(multiprocessing_directory)
     if returncode is None:
         raise ReplayFailed(f"the step {arguments[1]} ran past its deadline of {deadline_seconds} s and was stopped; "
                            f"log {log_path}")
@@ -1029,15 +1038,18 @@ def replay_with_sigterm_handled(arguments):
                 if main_at_head_only and label == "base":
                     continue
                 out = scratch / f"verdicts-{mode.split()[0]}-{label}.json"
+                multiprocessing_directory_record = scratch / f"multiprocessing-directory-{mode.split()[0]}-{label}"
                 started = time.monotonic()
                 run_step_in_child(["--step", "verdicts", str(checkout), str(scratch / pairs_name), str(out),
                                    str(arguments.jobs), "1" if new_process else "0",
                                    "1" if search_file_main else "0", str(search_file_directory),
                                    str(arguments.per_pair_timeout_seconds),
-                                   json.dumps(base_guard_files if label == "base" else None)],
+                                   json.dumps(base_guard_files if label == "base" else None),
+                                   str(multiprocessing_directory_record)],
                                   run_log_directory / f"verdicts-{mode.split()[0]}-{label}.log",
                                   step_deadline_seconds(len(mode_pairs), arguments.jobs,
-                                                        arguments.per_pair_timeout_seconds))
+                                                        arguments.per_pair_timeout_seconds),
+                                  multiprocessing_directory_record)
                 written = json.loads(out.read_text())
                 rows[label] = written["rows"]
                 failed = failed_readings(mode_pairs, rows[label], label)
@@ -1118,7 +1130,8 @@ def replay_with_sigterm_handled(arguments):
 
 
 def verdicts_step(checkout, pairs_path, out_path, jobs, new_process, search_file_main, search_file_directory,
-                  timeout, bash_guard_paths_at_git_ref_by_current_path):
+                  timeout, bash_guard_paths_at_git_ref_by_current_path, multiprocessing_directory_record_path):
+    Path(multiprocessing_directory_record_path).write_text(multiprocessing.util.get_temp_dir())
     pairs = json.loads(Path(pairs_path).read_text())
     rows, switched, one_command_per_process, read_again, passed_again = ref_verdicts(
         checkout, pairs, int(jobs), new_process == "1", search_file_directory, search_file_main == "1", int(timeout),
