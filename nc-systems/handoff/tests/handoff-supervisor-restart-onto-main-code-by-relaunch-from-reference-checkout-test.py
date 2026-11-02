@@ -64,7 +64,7 @@ agent = sys.argv[sys.argv.index("--agent") + 1]
 lock = Path(os.environ["HOME"]) / ".claude" / "handoffs" / f"{agent}-supervisor.lock"
 lock.parent.mkdir(parents=True, exist_ok=True)
 lock.write_text(f"{os.getpid()}\n")
-if os.environ.get("FAKE_SUPERVISOR_STARTS_NO_CLAUDE") != "1":
+for _ in range(int(os.environ["FAKE_SUPERVISOR_CLAUDE_COUNT"])):
     # argv[0] is claude, as ps shows the real one: `claude --session-id ...`.
     subprocess.Popen(["claude", "-c", "import time; time.sleep(600)"], executable=sys.executable,
                      cwd=os.environ["FAKE_AGENT_HOME"])
@@ -167,11 +167,11 @@ def advance_origin():
     git("push", "-q", "origin", "HEAD:main", cwd=other)
 
 
-def start_fake_supervisor(under_shell=True, starts_claude=True, agent=SEAT):
+def start_fake_supervisor(under_shell=True, starts_claude=True, agent=SEAT, claude_count=1):
     """Start the fake handoff-supervisor; return (its process ID, the claude's process ID or None)."""
     lock = program.supervisor.supervisor_lock_path(program.HANDOFF_DIRECTORY, agent)
     lock.unlink(missing_ok=True)
-    environment = {**os.environ, "FAKE_SUPERVISOR_STARTS_NO_CLAUDE": "0" if starts_claude else "1"}
+    environment = {**os.environ, "FAKE_SUPERVISOR_CLAUDE_COUNT": str(claude_count if starts_claude else 0)}
     command = [sys.executable, str(FAKE_SUPERVISOR), "--agent", agent, "--cd", str(AGENT_HOME)]
     if under_shell:
         quoted = " ".join(f"'{word}'" for word in command)
@@ -331,6 +331,24 @@ def step_2_cases():
               "0 claude child processes" in str(error), str(error))
     stop_fake(lonely_id)
 
+    crowded_id, _ = start_fake_supervisor(claude_count=2)
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        crowded_children = [process_id for process_id, (parent, _) in program.process_table().items()
+                            if parent == crowded_id]
+        if len(crowded_children) == 2:
+            break
+        time.sleep(0.05)
+    try:
+        program.step_2_identify_supervisor(SEAT, program.HANDOFF_DIRECTORY)
+        check("step 2: a handoff-supervisor with two claude children fails", False, "")
+    except program.RestartFailure as error:
+        check("step 2: a handoff-supervisor with two claude children fails",
+              "2 claude child processes" in str(error), str(error))
+    for process_id in crowded_children:
+        stop_fake(process_id)
+    stop_fake(crowded_id)
+
     supervisor_id, claude_id = start_fake_supervisor()
     found = program.step_2_identify_supervisor(SEAT, program.HANDOFF_DIRECTORY)
     check("step 2: the handoff-supervisor and its claude are found",
@@ -477,7 +495,8 @@ def second_half_cases():
     time.sleep(0.2)
     check("second half: no session-handoff within the limit unfreezes the old handoff-supervisor",
           status == 1 and not program.process_is_stopped(supervisor_id) and running(supervisor_id)
-          and "unfrozen with SIGCONT" in output, output)
+          and "unfrozen with SIGCONT" in output
+          and "step 4" not in (state_path.parent / "result.txt").read_text(), output)
     check("second half: that failure is a notice for the user and a line in the result file",
           opened and (state_path.parent / "notice.txt").is_file()
           and "FAILED" in (state_path.parent / "result.txt").read_text(), opened)
