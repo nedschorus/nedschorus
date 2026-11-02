@@ -214,10 +214,10 @@ LOCAL_NAME_FORMS = (
      [("%d failed", "text = in main()")]),
     ("a local join whose pieces are listed",
      'def main(items):\n    text = "\\n".join(["Fix these:", *items])\n    print(text)\n',
-     [("\n", "text = in main()"), ("Fix these:", "text = in main()")]),
+     [("Fix these:", "text = in main()")]),
     ("a local joined from another local",
      'def main():\n    head = "Fix these"\n    text = " ".join([head])\n    print(text)\n',
-     [("Fix these", "head = in main()"), (" ", "text = in main()")]),
+     [("Fix these", "head = in main()")]),
     ("a local chosen by a condition, its condition left out",
      'def main(row):\n    verb = "resuming" if row["kind"] == "known" else "launching"\n    print(f"{verb} now")\n',
      [("resuming", "verb = in main()"), ("launching", "verb = in main()"), ("f'{verb} now'", "print in main()")]),
@@ -236,7 +236,7 @@ LOCAL_NAME_FORMS = (
      [("Read the transcript.", "note = in build_prompt()")]),
     ("a local printed through a string literal's join",
      'def main():\n    note = "Read the transcript."\n    print(" ".join([note]))\n',
-     [(" ", "print in main()"), ("Read the transcript.", "note = in main()")]),
+     [("Read the transcript.", "note = in main()")]),
     ("a local in a + chain as a hook output value",
      'def main():\n    note = "Read the transcript."\n    return {"additionalContext": "Instructions: " + note}\n',
      [("Instructions: {note}", '"additionalContext" value in main()'), ("Read the transcript.", "note = in main()")]),
@@ -554,6 +554,21 @@ SCOPE_FORMS_EACH_RULE_ONCE_MISSED = (
     ("a type parameter's name hides the helper's parameter in its own bound",
      'def emit(text):\n    class Holder[text: print(text)]:\n        pass\nemit("bound hidden")\n', []),
 )
+# Modelled on output_for() in the walk-me-through question-check Stop hook, whose "\n" separator was
+# the only text listed for a hook output value built as "\n".join(lines_out).
+found = entries('REFUSAL_TEMPLATE = "Refused: {why}."\n'
+                'def output_for(why, extra):\n'
+                '    lines_out = [REFUSAL_TEMPLATE.format(why=why)] + extra\n'
+                '    return {"reason": "\\\\n".join(lines_out)}\n'
+                'print("; ".join(["first part", "second part"]))\n')
+check("a string literal's join lists the joined parts, never the separator alone",
+      [entry["text"] for entry in found] == ["Refused: {why}.", "first part", "second part"], found)
+
+# Modelled on run_model_chain() in nc-systems/cold-read/cold-read-cell-common.py, whose stdout=""
+# argument was listed as an empty message.
+found = texts('print("")\nprint(cause_line(stdout="", detail="the run failed"))\n')
+check("an empty string literal is not a message", found == ["the run failed"], found)
+
 for case_name, source, expected in SCOPE_FORMS_EACH_RULE_ONCE_MISSED:
     found = texts(source)
     check(f"scope: {case_name}", found == expected, found)
