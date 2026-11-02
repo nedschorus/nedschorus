@@ -28,7 +28,7 @@ The tests are in `nc-systems/cold-read/tests/`: each program has a suite of its 
 
 ## Reviewer prompts
 
-A cold-read-full-run uses `defect-hunt-prompt.md` and `terminology-prompt.md`; a cold-read-fast-read uses its own copy of `fast-clarify-prompt.md`, so a change to that prompt is made in both. The fourth, `restate-prompt.md`, is still a `--cell` choice of the cold-read-cell programs, but no program runs it. The defect-hunt prompt's classes (g) and (h) check a mechanism or term that the cold-read-target itself defines, and never ask it to add one: class (g), a case the mechanism will meet that the document does not settle; class (h), a term that duplicates or conflicts with one in the checkout's root `CLAUDE.md`.
+A cold-read-full-run uses `defect-hunt-prompt.md` and `terminology-prompt.md`; a cold-read-fast-read uses its own copy of `fast-clarify-prompt.md`, so a change to that prompt is made in both. The defect-hunt prompt's classes (g) and (h) check a mechanism or term that the cold-read-target itself defines, and never ask it to add one: class (g), a case the mechanism will meet that the document does not settle; class (h), a term that duplicates or conflicts with one in the checkout's root `CLAUDE.md`.
 
 ## cold-read-records
 
