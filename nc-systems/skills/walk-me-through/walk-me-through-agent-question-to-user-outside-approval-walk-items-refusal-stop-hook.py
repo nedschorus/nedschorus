@@ -188,13 +188,13 @@ WAITING_REMINDER = re.compile(
     rf"^(?:the\s+)?items?\s+(?P<numbers>{NUMBER_LIST})\s+of\s+(?P<total>\d+)\s+(?:is|are)\s+(?:still\s+)?waiting"
     r"\s+for\s+your\s+answer\W*$",
     re.I)
-# `no-decision` and `no-op` after an answer cue are words, not answers; any other hyphen after one, as in `type A-D`,
-# may still be an answer.
-HYPHENATED_ANSWER_CUE_WORDS_THAT_ASK_NOTHING = r"(?:decision|op)\b"
+# `no-decision` and `no-op` are words, not answers; any other hyphen after an answer cue, as in `type A-D` or
+# `reply A-OP`, may still be an answer.
+NO_FOLLOWED_BY_HYPHEN_THAT_ASKS_NOTHING = r"no-(?:decision|op)\b"
 ASK_PHRASE = re.compile(
     # The letter A is matched in capitals only, because a lowercase `a` there is the article, as in `answer a finding`.
-    r"\b(?:say|reply|answer|type)\s+(?:yes|no|y|n|ao|d|(?-i:A))\b(?!-" + HYPHENATED_ANSWER_CUE_WORDS_THAT_ASK_NOTHING + r")"
-    r"|\bon\s+(?:a|your)\s+(?:yes|no)\b(?!-" + HYPHENATED_ANSWER_CUE_WORDS_THAT_ASK_NOTHING + r")"
+    r"\b(?:say|reply|answer|type)\s+(?!" + NO_FOLLOWED_BY_HYPHEN_THAT_ASKS_NOTHING + r")(?:yes|no|y|n|ao|d|(?-i:A))\b"
+    r"|\bon\s+(?:a|your)\s+(?!" + NO_FOLLOWED_BY_HYPHEN_THAT_ASKS_NOTHING + r")(?:yes|no)\b"
     r"|\byour\s+yes\s+or\s+no\b|\bdo\s+you\s+(?:want|agree)\b|\bshould\s+I\b|\bshall\s+I\b|\bwant\s+me\s+to\b"
     r"|\bwould\s+you\s+like\b|\bwaiting\s+(?:on|for)\s+your\s+(?:answer|word|decision|ruling|approval|go-ahead|yes)\b"
     r"|\bneeds?\s+your\s+(?:answer|decision|ruling|approval|word|go-ahead|yes)\b"
