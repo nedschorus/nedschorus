@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print, for each agent-seat on this machine, the idle sweep's verdict: whether the agent-seat is
+"""Print, for each agent-seat on ned-box, the idle sweep's verdict: whether the agent-seat is
 idle and, when it is, which rule of the idle sweep decides what happens next.
 
 This is the first build-slice of the idle sweep (docs/issues/940-tasks-raise-themselves-when-their-
@@ -26,15 +26,19 @@ What it does not handle: it keeps no record of earlier runs, so it cannot tell w
 messages it has already checked; by default it checks only the last one, and
 --turn-ending-messages-since widens that. It does not know whether a usage limit ended by an
 account change, since that needs the account recorded when the limit was first seen; it reports
-the account now logged in. It reads ned-box's own files only.
+the account now logged in. It runs on ned-box and reads only ned-box's files, so it does not see
+the Mac's agent-seats.
 
 How it fails: when a file it must read cannot be read, or is not UTF-8 or JSON where a whole line
 is expected, or `gh` cannot answer, the agent-seat's line carries the failure under "errors" and
 "rule" is null, every other agent-seat is still reported, and the program exits 1. A failure it
 does not expect, such as a file that changes between two reads of it, stops the program with a
-traceback and exit 1. A transcript
-that does not exist is not a failure: the line says so under "not_checked". It reads whole
-transcripts, which grow to tens of megabytes, so one run takes seconds.
+traceback and exit 1. A transcript's last line that Claude Code is still writing is skipped,
+except when it holds the key of a subagent or background-command launch: that is then a failure
+as above, under "errors" with exit 1, and the next run reads the finished line. A transcript that
+does not exist is not a failure: the line says so under "not_checked".
+
+Run time: it reads whole transcripts, which grow to tens of megabytes, so one run takes seconds.
 """
 
 import argparse
@@ -59,6 +63,9 @@ threshold_hook = _load("handoff_context_threshold_hook",
 supervisor = _load("handoff_supervisor",
                    _SCRIPTS.parent / "nc-systems" / "handoff" / "handoff-supervisor.py")
 due_task_hook = _load("agent_seat_due_task_raise_hook", _SCRIPTS / "agent-seat-due-task-raise-hook.py")
+walk_finder = _load("walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
+                    _SCRIPTS.parent / "nc-systems" / "skills" / "walk-me-through"
+                    / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py")
 fields = _load("agent_seat_idle_sweep_verdict_fields_common",
                _SCRIPTS / "agent-seat-idle-sweep-verdict-fields-common.py")
 transcript_lookup = _load("claude_code_session_transcript_lookup_and_text_search_common",
@@ -72,9 +79,6 @@ AGENT_EXIT_CODE_KEY = "agent_exit_code"
 HANDOFF_DEFERRED_SUFFIX = "-handoff-deferred"
 USAGE_LIMIT_API_ERROR = "usage_limit_reached"
 SYNTHETIC_MODEL = "<synthetic>"
-WALK_CLOSED_LINE = "#next_to_present none, closed"
-WALK_NEXT_PREFIX = "#next_to_present"
-WALK_PAUSED_PREFIX = "#approval_walk_paused"
 TASK_TOOL_NAMES = ("TaskCreate", "TaskUpdate")
 HANDOFF_PUT_OFF_TEXT = ("Your handoff was put off at {time} and nothing is running now. "
                         "Is now a good time to hand off?")
@@ -295,6 +299,15 @@ def message_text(record):
     return ""
 
 
+def is_prompt(record):
+    """A user record that is not a tool's result: the prompt that begins a turn."""
+    if record.get("type") != "user" or "toolUseResult" in record:
+        return False
+    content = (record.get("message") or {}).get("content")
+    return not (isinstance(content, list) and any(
+        isinstance(block, dict) and block.get("type") == "tool_result" for block in content))
+
+
 def tool_uses(record):
     content = (record.get("message") or {}).get("content")
     if record.get("type") != "assistant" or not isinstance(content, list):
@@ -307,7 +320,7 @@ class TranscriptFacts:
         self.last_token_spend = None
         self.last_model_turn_record = None
         self.turn_ended_after_last_model_turn_record = False
-        self.turn_ending_messages = []   # (record, time)
+        self.turn_ending_messages = []   # (record, time, time of the prompt that began its turn)
         self.task_tool_calls = []        # (time, name, input)
         self.launch_times = {}           # subagent or background task id -> time
 
@@ -315,8 +328,11 @@ class TranscriptFacts:
 def read_main_transcript(path):
     facts = TranscriptFacts()
     newest_text_record = None
+    turn_started_at = None
     for record in transcript_records(path):
         moment = parse_time(record.get("timestamp"))
+        if is_prompt(record):
+            turn_started_at = moment
         if spends_tokens(record) and moment:
             facts.last_token_spend = max(filter(None, (facts.last_token_spend, moment)))
         if is_model_turn_record(record):
@@ -328,7 +344,8 @@ def read_main_transcript(path):
             facts.turn_ended_after_last_model_turn_record = True
             if newest_text_record is not None:
                 facts.turn_ending_messages.append(
-                    (newest_text_record, parse_time(newest_text_record.get("timestamp"))))
+                    (newest_text_record, parse_time(newest_text_record.get("timestamp")),
+                     turn_started_at))
                 newest_text_record = None
         for block in tool_uses(record):
             if block.get("name") in TASK_TOOL_NAMES:
@@ -353,27 +370,24 @@ def newest_token_spend_in(path):
 
 # --- Other files ---
 
-def walk_items_waiting(seat_directory):
-    """Walk-minutes files in the agent-seat's docs/walk/ whose last #next_to_present line names an
-    item, with no pause recorded after it."""
+def walk_items_waiting(seat_directory, parser):
+    """Walk-minutes files in the agent-seat's docs/walk/ whose last #next_to_present marker, as the
+    walk-me-through hooks read it, names an item, with no pause recorded after it."""
     waiting = []
-    walk_directory = seat_directory / "docs" / "walk"
+    walk_directory = seat_directory / walk_finder.WALK_DIRECTORY
     if not walk_directory.is_dir():
         return waiting
-    for minutes in sorted(walk_directory.glob("*-minutes.md")):
+    for minutes in sorted(walk_directory.glob("*" + walk_finder.MINUTES_SUFFIX)):
         try:
-            lines = minutes.read_text(encoding="utf-8").splitlines()
+            text = minutes.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as error:
             raise ReadFailure(f"{minutes} could not be read: {error}") from error
-        state = None
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith(WALK_NEXT_PREFIX):
-                state = stripped
-            elif stripped.startswith(WALK_PAUSED_PREFIX):
-                state = None
-        if state and state != WALK_CLOSED_LINE:
-            waiting.append({"walk_minutes": str(minutes), "line": state})
+        marker = walk_finder.next_to_present(text, parser)
+        if marker is None:
+            continue
+        value, _, is_paused = marker
+        if not is_paused and not walk_finder.is_closed(value):
+            waiting.append({"walk_minutes": str(minutes), "next_to_present": value})
     return waiting
 
 
@@ -416,13 +430,15 @@ def open_tasks_nothing_holds(task_directory, checker):
 
 # --- One agent-seat's verdict ---
 
-def code_reading_of_sentence(kind, sentence_time, task_tool_calls):
-    """What code settles about one matched sentence: not_raised, unbacked, or judge."""
+def code_reading_of_sentence(kind, turn_started_at, task_tool_calls):
+    """What code settles about one matched sentence: not_raised, unbacked, or judge.
+
+    A task created or updated in the sentence's turn or after it may back the sentence."""
     if kind in NOT_RAISED_KINDS:
         return fields.NOT_RAISED
     if kind in (PROMISE_AFTER_EVENT, HOLD):
         backing_candidates = [call for call in task_tool_calls
-                              if call[0] and sentence_time and call[0] >= sentence_time.replace(
+                              if call[0] and turn_started_at and call[0] >= turn_started_at.replace(
                                   microsecond=0)
                               and ((call[2].get("metadata") or {}).get("prerequisites")
                                    or call[2].get("addBlockedBy"))]
@@ -437,15 +453,15 @@ def matched_sentences(facts, since):
     else:
         messages = [message for message in messages if message[1] and message[1] > since]
     found = []
-    for record, moment in messages:
+    for record, moment, turn_started_at in messages:
         for sentence in sentences(message_text(record)):
             kind = sentence_kind(sentence)
             if kind is None:
                 continue
             found.append({"record_uuid": record.get("uuid"), "time": iso(moment),
                           "sentence": sentence, "kind": kind,
-                          "code_reading": code_reading_of_sentence(kind, moment,
-                                                                   facts.task_tool_calls)})
+                          "code_reading": code_reading_of_sentence(
+                              kind, turn_started_at or moment, facts.task_tool_calls)})
     return found
 
 
@@ -461,7 +477,7 @@ def rules_three_to_five(verdict, put_off_at, checker, task_directory):
     return {fields.RULE: 5, fields.DECISION: fields.JUDGE}
 
 
-def verdict_for_seat(seat, paths, now, since, checker):
+def verdict_for_seat(seat, paths, now, since, checker, parser):
     verdict = {"agent_seat": seat, "session_id": None, "transcript_path": None,
                "checked_at": iso(now), "errors": [], "rule": None}
     try:
@@ -471,7 +487,8 @@ def verdict_for_seat(seat, paths, now, since, checker):
         except (OSError, ValueError) as error:
             raise ReadFailure(f"{state_path} could not be read: {error}") from error
         if not isinstance(state, dict):
-            raise ReadFailure(f"{state_path} does not hold a JSON object")
+            raise ReadFailure(f"{state_path} holds JSON that is not an object, such as a list or a "
+                              "string")
         session_id = state.get(LAUNCHED_SESSION_ID_KEY) or state.get(LEGACY_SESSION_ID_KEY)
         verdict["supervisor_last_poll_at"] = state.get("last_poll_at")
         if not isinstance(session_id, str) or not session_id:
@@ -503,13 +520,17 @@ def verdict_for_seat(seat, paths, now, since, checker):
         last = facts.last_model_turn_record or {}
         limit = is_usage_limit(last)
         turn_ended = facts.turn_ended_after_last_model_turn_record or limit
-        walk_waiting = walk_items_waiting(seat_directory)
+        walk_waiting = walk_items_waiting(seat_directory, parser)
         quiet = last_spend is None or (now - last_spend).total_seconds() >= IDLE_AFTER_SECONDS
         verdict.update(turn_ended=turn_ended, walk_items_waiting=walk_waiting)
         verdict["idle"] = quiet and turn_ended and not walk_waiting
         # Reading the transcript above already refused bytes this second read could not decode.
-        flight = threshold_hook.work_in_flight(
-            str(transcript), background_task_wait_seconds=float("inf"), now=now)
+        try:
+            flight = threshold_hook.work_in_flight(
+                str(transcript), background_task_wait_seconds=float("inf"), now=now)
+        except threshold_hook.TranscriptCouldNotBeFullyRead as error:
+            raise ReadFailure(f"{error}; it is likely the last line, still being written, which "
+                              "the next run reads") from error
         verdict["running"] = {
             "subagents": [{"id": agent_id, "started": iso(facts.launch_times.get(agent_id))}
                           for agent_id in flight.subagent_ids],
@@ -596,9 +617,10 @@ def main(argv=None):
     paths = Paths(arguments)
     seats = arguments.agent_seat or agent_seats(paths.handoff_directory)
     checker = due_task_hook.GitHubConditionChecker({}, now.timestamp())
+    parser = walk_finder.markdown_parser()
     failed = False
     for seat in seats:
-        verdict = verdict_for_seat(seat, paths, now, since, checker)
+        verdict = verdict_for_seat(seat, paths, now, since, checker, parser)
         failed = failed or bool(verdict["errors"])
         print(json.dumps(verdict, sort_keys=True), flush=True)
     return 1 if failed else 0

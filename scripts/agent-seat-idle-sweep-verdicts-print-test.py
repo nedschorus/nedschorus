@@ -194,13 +194,24 @@ check("a hold backed by addBlockedBy goes to the judge",
       [(s["kind"], s["code_reading"]) for s in verdicts["alpha"]["sentences"]]
       == [("hold", "judge")], verdicts["alpha"])
 machine = Machine()
-machine.seat("alpha", [user("go"),
+machine.seat("alpha", [user("a", at="2026-11-02T11:30:00Z"),
                        assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
-                           {"pr_merged": 927}]}}), at="2026-11-02T11:40:00Z"),
+                           {"pr_merged": 927}]}}), at="2026-11-02T11:35:00Z"),
+                       turn_end(at="2026-11-02T11:36:00Z"), user("go", at="2026-11-02T11:40:00Z"),
                        assistant(PROMISE), turn_end()])
 _, verdicts, _ = machine.run()
-check("a task created before the promise does not back it",
+check("a task created in an earlier turn does not back the promise",
       verdicts["alpha"]["sentences"][0]["code_reading"] == "unbacked", verdicts["alpha"])
+machine = Machine()
+machine.seat("alpha", [user("go", at="2026-11-02T11:49:00Z"),
+                       assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
+                           {"pr_merged": 927}]}}), at="2026-11-02T11:49:30Z"),
+                       user("", at="2026-11-02T11:49:31Z", tool_result={"task": {"id": "1"}}),
+                       assistant(PROMISE), turn_end()])
+_, verdicts, _ = machine.run()
+check("a task created earlier in the promise's own turn backs it, so the judge decides",
+      verdicts["alpha"]["sentences"][0]["code_reading"] == "judge"
+      and verdicts["alpha"]["decision"] == "judge", verdicts["alpha"])
 
 # --- sentences that are not raised; rules 3 to 5 then decide --------------------------------
 for sentence, kind in (("Say the word and I'll merge it.", "conditional_on_user"),
@@ -211,6 +222,20 @@ for sentence, kind in (("Say the word and I'll merge it.", "conditional_on_user"
     check(f"not raised: {sentence!r}",
           [(s["kind"], s["code_reading"]) for s in verdicts["alpha"]["sentences"]]
           == [(kind, "not_raised")] and verdicts["alpha"].get("rule") == 4, verdicts["alpha"])
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant("I'll merge it without pushing the tag."), turn_end()])
+_, verdicts, _ = machine.run()
+check("a negative sentence is not raised, and rules 3 to 5 decide",
+      [(s["kind"], s["code_reading"]) for s in verdicts["alpha"]["sentences"]]
+      == [("negative", "not_raised")] and verdicts["alpha"].get("rule") == 4, verdicts["alpha"])
+machine = Machine()
+machine.seat("alpha", [user("go"),
+                       assistant("Here is the diff.\n```\n-old\n+new\n```\nI'll push it now."),
+                       turn_end()])
+_, verdicts, _ = machine.run()
+check("a sentence after a closed code block is still read",
+      [s["sentence"] for s in verdicts["alpha"]["sentences"]] == ["I'll push it now."]
+      and verdicts["alpha"].get("rule") == 2, verdicts["alpha"])
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant("Noted. From now on I check the size first."),
                        turn_end()])
@@ -271,14 +296,24 @@ machine.seat("alpha", IDLE_TURN)
 machine.walk_minutes("alpha", "#next_to_present item 1 of 3\nnotes\n#next_to_present item 2 of 3\n")
 _, verdicts, _ = machine.run()
 check("a walk item waiting: not idle",
-      verdicts["alpha"]["idle"] is False and verdicts["alpha"]["walk_items_waiting"][0]["line"]
-      == "#next_to_present item 2 of 3", verdicts["alpha"])
+      verdicts["alpha"]["idle"] is False and verdicts["alpha"]["walk_items_waiting"][0]
+      ["next_to_present"] == "item 2 of 3", verdicts["alpha"])
 machine.walk_minutes("alpha", "#next_to_present item 2 of 3\n#approval_walk_paused later\n")
 _, verdicts, _ = machine.run()
 check("a paused walk has no item waiting", verdicts["alpha"]["idle"] is True, verdicts["alpha"])
 machine.walk_minutes("alpha", "#next_to_present item 3 of 3\n#next_to_present none, closed\n")
 _, verdicts, _ = machine.run()
 check("a closed walk has no item waiting", verdicts["alpha"]["idle"] is True, verdicts["alpha"])
+for minutes_text, what in (
+        ("#next_to_present item 3 of 3\n#next_to_present closed\n", "closed by the short form"),
+        ("#next_to_present item 2 of 9 #approval_walk_paused later\n", "paused on the marker's line"),
+        ("#next_to_present none, closed\nThe line `#next_to_present item 1 of 2` was earlier.\n",
+         "a marker inside a code span is not read")):
+    machine.walk_minutes("alpha", minutes_text)
+    _, verdicts, _ = machine.run()
+    check(f"no walk item waiting: {what}",
+          verdicts["alpha"]["idle"] is True and verdicts["alpha"]["walk_items_waiting"] == [],
+          verdicts["alpha"])
 
 # --- rule 1: a usage limit -------------------------------------------------------------------
 machine = Machine()
@@ -376,6 +411,16 @@ code, verdicts, _ = machine.run()
 check("a line that is not JSON before the end: an error and exit 1",
       code == 1 and "line 1 is not UTF-8 JSON" in verdicts["alpha"]["errors"][0], verdicts)
 machine = Machine()
+machine.seat("alpha", IDLE_TURN,
+             raw_tail=b'{"type":"user","toolUseResult":{"status":"async_launched","agentId":"ag')
+machine.seat("beta", IDLE_TURN)
+code, verdicts, _ = machine.run()
+check("a last line still being written that records a launch: an error for that agent-seat, "
+      "the other still reported, exit 1",
+      code == 1 and verdicts["alpha"]["rule"] is None
+      and "still being written" in verdicts["alpha"]["errors"][0]
+      and verdicts["beta"]["rule"] == 2, verdicts)
+machine = Machine()
 machine.seat("alpha", IDLE_TURN)
 machine.walk_minutes("alpha", b"#next_to_present item 1 of 2\n\xff\n")
 code, verdicts, _ = machine.run()
@@ -399,7 +444,7 @@ check("an unreadable supervisor state file: an error and exit 1",
 (machine.handoffs / "gamma-supervisor-state.json").write_text("[]")
 code, verdicts, _ = machine.run("--agent-seat", "gamma")
 check("a supervisor state file that holds no JSON object: an error and exit 1",
-      code == 1 and "does not hold a JSON object" in verdicts["gamma"]["errors"][0], verdicts)
+      code == 1 and "holds JSON that is not an object" in verdicts["gamma"]["errors"][0], verdicts)
 
 # --- more read failures, and lines a reader must step over ----------------------------------
 machine = Machine()
