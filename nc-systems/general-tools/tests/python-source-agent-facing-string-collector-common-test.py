@@ -470,6 +470,10 @@ check("a string returned by a function whose call a followed local's binding car
 COMPREHENSION_AND_BINDING_FORMS = (
     ("a local a generator loops over, through a string literal's join",
      'def main():\n    lines = "line text"\n    print("\\n".join(line for line in lines))\n', ["line text"]),
+    ("a string literal in the iterable a generator loops over",
+     'print(" ".join(w for w in ("alpha", "beta")))\n', ["alpha", "beta"]),
+    ("a string returned by a function called for the iterable a generator loops over",
+     'def words():\n    return "from words"\nprint(" ".join(w for w in words()))\n', ["from words"]),
     ("a type parameter's bound, which is evaluated where the class stands",
      'class Holder[T: print("bound text")]:\n    pass\n', ["bound text"]),
     ("a type parameter's default", 'def pick[T = print("default text")]():\n    pass\n', ["default text"]),

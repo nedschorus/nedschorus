@@ -324,7 +324,7 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
         stands, such as defaults, decorators and bases, in the enclosing scope, then its body in
         its own scope. A function's body follows only its own local names. A lambda's or a class
         body's follows the enclosing scope's, less the names the lambda takes as parameters or
-        the class body assigns; the class body's names stay hidden in the functions and lambdas
+        binds with `:=`, or the class body assigns; the class body's names stay hidden in the functions and lambdas
         nested in the class. Its own parameters hide a helper printer's name, as the enclosing
         function's still do."""
         for expression in definition_time_expressions(node):
