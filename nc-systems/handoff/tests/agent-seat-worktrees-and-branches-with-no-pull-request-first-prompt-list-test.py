@@ -10,6 +10,7 @@ Run: python3 nc-systems/handoff/tests/agent-seat-worktrees-and-branches-with-no-
 """
 
 import atexit
+import contextlib
 import importlib.util
 import io
 import json
@@ -120,6 +121,24 @@ def owned_worktree(main, name, record):
     return path.resolve()
 
 
+def worktree_order(main):
+    """The worktree paths in the order git lists them, which is the order the list reads them."""
+    return [Path(line[len("worktree "):]).resolve()
+            for line in git(main, "worktree", "list", "--porcelain").splitlines()
+            if line.startswith("worktree ")]
+
+
+def owned_worktree_listed_after(main, prefix, earlier, record):
+    """Add owned worktrees until git lists one after earlier, so a loop that stopped at earlier
+    would miss it; return that one."""
+    for number in range(20):
+        path = owned_worktree(main, f"{prefix}-{number}", record)
+        order = worktree_order(main)
+        if order.index(path) > order.index(earlier):
+            return path
+    raise RuntimeError(f"git never listed a worktree after {earlier}")
+
+
 def set_pull_requests(pull_requests):
     os.environ["FAKE_GH_PULL_REQUESTS"] = json.dumps(pull_requests)
 
@@ -143,6 +162,11 @@ def test_branches():
     git(main, "branch", "landed", "origin/main")
     branch_with_commit(main, "checked-out", "seat-a")
     git(main, "worktree", "add", "-q", str(main.parent / "holder"), "checked-out")
+    git(main, "worktree", "add", "-q", "--detach", str(main.parent / "detached"), "origin/main")
+    (main / "main-only.txt").write_text("unpushed\n")
+    git(main, "add", "-A")
+    git(main, "commit", "-q", "-m", "unpushed main commit", author="seat-a")
+    git(main, "checkout", "-q", "--detach")
     set_pull_requests([
         {"number": 7, "state": "OPEN", "headRefName": "by-head-name", "headRefOid": "0" * 40},
         {"number": 8, "state": "CLOSED", "headRefName": "renamed-on-github",
@@ -157,10 +181,11 @@ def test_branches():
     check("by-head-name" not in text, "a branch that is a pull request's head branch is not listed")
     check("by-head-commit" not in text,
           "a branch whose tip is a pull request's head commit is not listed", text)
-    check(f"branch pushed-work; 1 commit(s) not on origin/main, the newest {pushed_tip[:12]}" in text
+    check(f"branch pushed-work; 1 commit(s) not on origin/main, the newest {pushed_tip[:12]} of " in text
           and "on origin at the same commit" in text, "a pushed branch says it is on origin", text)
     check("landed" not in text, "a branch with nothing beyond origin/main is not listed")
     check("checked-out" not in text, "a branch a worktree has checked out is not listed as a branch")
+    check("branch main;" not in text, "main is never listed, even with commits origin/main lacks", text)
     check("branches with no pull request: 2:" in text and "git branch -D <branch>" in text,
           "the branch section counts its entries and the steps follow", text)
     check(listing.list_text_and_failure(main, "seat-c") == ("", False),
@@ -171,10 +196,16 @@ def test_branches():
     finally:
         os.environ.pop("FAKE_GH_EXIT_CODE")
     check(nothing == ("", False), "gh is not asked when nothing could be listed", nothing)
+    branch_with_commit(main, "seat-d-reviewed", "seat-d")
+    set_pull_requests([{"number": 9, "state": "MERGED", "headRefName": "seat-d-reviewed",
+                        "headRefOid": "0" * 40}])
+    check(listing.list_text_and_failure(main, "seat-d") == ("", False),
+          "an agent-seat whose only branch has a pull request gets no paragraph")
 
 
 def test_pushed_text():
-    check(listing.pushed_text("b", "1", {"b": "2"}) == "on origin at a different commit",
+    check(listing.pushed_text("b", "1", {"b": "2"}) == "on origin at a different commit"
+          and listing.pushed_text("b", "2", {"b": "1"}) == "on origin at a different commit",
           "a branch on origin at another commit says so")
     check(listing.pushed_text("b", "1", {}) == "not on origin", "an unpushed branch says so")
 
@@ -187,30 +218,41 @@ def test_worktrees():
     stopped = owned_worktree(main, "stopped-session", {"owner_kind": "agent-session",
                                                         "agent_seat": "seat-a",
                                                         "owner_key": dead_owner_key()})
-    home = owned_worktree(main, "agent-home", {"owner_kind": "agent-seat", "agent_seat": "seat-a"})
+    # Named to sort after the others, so a skip test that compared paths by order would show.
+    home = owned_worktree(main, "zz-agent-home", {"owner_kind": "agent-seat", "agent_seat": "seat-a"})
+    stopped_head = git(stopped, "rev-parse", "HEAD")
     set_pull_requests([{"number": 12, "state": "OPEN", "headRefName": "seat-owned",
-                        "headRefOid": "0" * 40}])
+                        "headRefOid": "0" * 40},
+                       {"number": 13, "state": "CLOSED", "headRefName": "renamed",
+                        "headRefOid": stopped_head}])
     text, failed = listing.list_text_and_failure(main, "seat-a", skip_worktree=home)
     check(not failed, "a worktree listing reports no failure", text)
     check(f"worktree {seat_owned}; branch seat-owned; pull request #12 (open)" in text,
           "a worktree whose owner file names this agent-seat is listed with its pull request", text)
-    check(f"worktree {stopped}; branch stopped-session; no pull request" in text,
-          "a worktree of a stopped agent-session of this agent-seat is listed", text)
+    check(f"worktree {stopped}; branch stopped-session; pull request #13 (closed)" in text,
+          "a worktree of a stopped agent-session is listed, its pull request found by head commit",
+          text)
     check(str(other) not in text, "another agent-seat's worktree is not listed")
     check(str(home) not in text, "the directory the agent-session starts in is not listed")
     check("worktrees: 2:" in text, "the worktree section counts its entries", text)
+    after_stopped = owned_worktree_listed_after(main, "zz-after-stopped", stopped,
+                                                {"owner_kind": "agent-seat", "agent_seat": "seat-a"})
     saved = owner_file.worktree_owner_running_state
     owner_file.worktree_owner_running_state = lambda record, *rest: (owner_file.RUNNING, "runs")
     try:
         running_text = listing.first_prompt_text(main, "seat-a", skip_worktree=home)
     finally:
         owner_file.worktree_owner_running_state = saved
-    check(str(stopped) not in running_text and str(seat_owned) in running_text,
+    check(str(stopped) not in running_text and str(after_stopped) in running_text,
           "a worktree whose owning agent-session still runs is not listed", running_text)
     (Path(git(other, "rev-parse", "--absolute-git-dir")) / owner_file.WORKTREE_OWNER_FILE_NAME
      ).write_text("not json")
     check(listing.list_text_and_failure(main, "seat-b") == ("", False),
           "a worktree whose owner file cannot be read is not listed")
+    after_unreadable = owned_worktree_listed_after(main, "zz-after-unreadable", other,
+                                                   {"owner_kind": "agent-seat", "agent_seat": "seat-b"})
+    check(str(after_unreadable) in listing.first_prompt_text(main, "seat-b"),
+          "an unreadable owner file does not stop the worktrees after it from being listed")
 
 
 def test_gh_failure():
@@ -232,6 +274,15 @@ def test_gh_failure():
           in text and "list --agent-seat seat-a" in text and "seat-a-work" not in text,
           "the branch list is replaced by why, with the list command", text)
     check(output.getvalue().strip() == text, "the list command prints the same text")
+    only_branch = new_clone()
+    branch_with_commit(only_branch, "seat-a-work", "seat-a")
+    os.environ["FAKE_GH_EXIT_CODE"] = "3"
+    try:
+        text, failed = listing.list_text_and_failure(only_branch, "seat-a")
+    finally:
+        os.environ.pop("FAKE_GH_EXIT_CODE")
+    check(failed and "could not be listed" in text and listing.INSTRUCTIONS not in text,
+          "with nothing listed, the steps for listed entries are left out", text)
 
 
 def test_other_failure_and_outside():
@@ -258,15 +309,44 @@ def test_other_failure_and_outside():
         raised = None
     except listing.ListingFailed as error:
         raised = str(error)
-    check(raised is not None and "exited 128" in raised, "a failing git command raises ListingFailed",
-          raised)
+    check(raised is not None and "exited 128" in raised and "fatal" in raised,
+          "a failing git command raises ListingFailed, with git's error text", raised)
+    set_pull_requests([])
+    branch_with_commit(main, "seat-a-work", "seat-a")
+    output = io.StringIO()
+    with redirect_stdout(output):
+        exit_code = listing.main(["list", "--agent-seat", "seat-a", "--repo", str(main)])
+    check(exit_code == 0 and "seat-a-work" in output.getvalue(),
+          "the list command exits 0 when the whole list was built", exit_code)
+    for arguments, why in ((["list", "--repo", str(main)], "without --agent-seat"),
+                           ([], "without a command")):
+        try:
+            with redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                listing.main(arguments)
+            code = None
+        except SystemExit as stop:
+            code = stop.code
+        check(code == 2, f"the list command refuses to run {why}", code)
+    script = subprocess.run([sys.executable, str(MODULE_PATH), "list", "--agent-seat", "seat-a",
+                             "--repo", str(main)], capture_output=True, text=True)
+    check(script.returncode == 0 and "seat-a-work" in script.stdout,
+          "run as a program, it prints the list", (script.returncode, script.stderr[-300:]))
 
 
 def test_more_than_the_limit():
     main = new_clone()
     set_pull_requests([])
-    for number in range(listing.ENTRIES_AT_MOST + 2):
+    for number in range(listing.ENTRIES_AT_MOST):
         branch_with_commit(main, f"many-{number:02d}", "seat-a")
+    text = listing.first_prompt_text(main, "seat-a")
+    check(f"branches with no pull request: {listing.ENTRIES_AT_MOST}:" in text
+          and "more; list them all with:" not in text,
+          "exactly the limit of entries are all listed, with no line for more", text[-400:])
+    branch_with_commit(main, f"many-{listing.ENTRIES_AT_MOST:02d}", "seat-a")
+    text = listing.first_prompt_text(main, "seat-a")
+    check("- and 1 more; list them all with:" in text, "one entry past the limit is counted",
+          text[-400:])
+    branch_with_commit(main, f"many-{listing.ENTRIES_AT_MOST + 1:02d}", "seat-a")
     text = listing.first_prompt_text(main, "seat-a")
     check(f"branches with no pull request: {listing.ENTRIES_AT_MOST + 2}:" in text
           and "- and 2 more; list them all with:" in text,
