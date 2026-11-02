@@ -1542,6 +1542,38 @@ with tempfile.TemporaryDirectory() as scratch:
               for login in login_canaries for platform in ("linux", "darwin")),
           repr(profile_tables))
 
+    # The scan splits each root into levels it lists one deep and subtrees it
+    # walks whole, so a canary at every depth, on both sides of the split, and
+    # several subtrees per find, catch a level or a subtree the split drops.
+    scan_root = scratch / "credential-scan-root"
+    outside = scratch / "credential-scan-outside"
+    scan_canaries = [scan_root / "depth-1.token"]
+    nested = scan_root
+    for depth in range(2, 8):
+        nested = nested / f"level-{depth - 1}"
+        scan_canaries.append(nested / (".env" if depth % 2 else f"depth-{depth}.token"))
+    for sibling in range(5):
+        scan_canaries.append(scan_root / "wide" / f"branch-{sibling}" / "deep" / "sibling.token")
+    for canary in (*scan_canaries, outside / "inner" / "behind-a-symlink.token"):
+        canary.parent.mkdir(parents=True, exist_ok=True)
+        canary.write_text("CANARY-NOT-A-SECRET-common-test\n", encoding="utf-8")
+    (scan_root / "wide" / "notes.txt").write_text("not a credential\n", encoding="utf-8")
+    (scan_root / "level-1" / "link-to-outside").symlink_to(outside, target_is_directory=True)
+    real_roots = codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS
+    real_find_commands = codex_module.common.CREDENTIAL_FILE_SCAN_FIND_COMMANDS
+    codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = (scan_root,)
+    codex_module.common.CREDENTIAL_DIRECTORIES = ()
+    codex_module.common.CREDENTIAL_FILE_SCAN_FIND_COMMANDS = 2
+    try:
+        split_scan_found = codex_module.common.credential_files_found_now()
+    finally:
+        codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = real_roots
+        codex_module.common.CREDENTIAL_DIRECTORIES = real_directories
+        codex_module.common.CREDENTIAL_FILE_SCAN_FIND_COMMANDS = real_find_commands
+    check("the credential scan finds a credential file at every depth and in every subtree",
+          split_scan_found == sorted(str(canary) for canary in scan_canaries),
+          f"expected {sorted(str(canary) for canary in scan_canaries)}, found {split_scan_found}")
+
     # The Codex `deep` tier. Max beat xhigh by 46 net findings measured per
     # cell, but the grid is a union and there it is worth ten findings of 331
     # and three points of worst-target recall. This is the slowest of the
