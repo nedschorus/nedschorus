@@ -4,8 +4,8 @@
 Usage:
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number>
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --check [--answers FILE] [--commit REV] [--after-conflict-merge]
-  scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --move-start NEW_TOPIC_BRANCH [PATH ...]
-  scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --move-finish --title TITLE --body-file FILE
+  scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --move-change-to-own-pull-request-cut-new-topic-branch NEW_TOPIC_BRANCH [PATH ...]
+  scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --move-change-to-own-pull-request-finish --title TITLE --body-file FILE
 
 The round is set by merge-lane-2's latest review that requests changes, as long as every later
 review of merge-lane-2's comments on the same commit, where merge-lane-2 can add or re-post
@@ -47,14 +47,18 @@ merge-lane-2, which the agent sends with SendMessage, since a program cannot. Wh
 commit, it first posts the round record, unless one already names the round's latest
 changes-requested review.
 
---move-start and --move-finish carry a change the round moves out of the pull request to a new topic branch,
-in the same worktree. --move-start runs on the round's local branch after the round's commit, with a clean
-worktree apart from the answers file: it moves the answers file into the git directory, records the move in
-MOVE_STATE_FILE_NAME there, switches to NEW_TOPIC_BRANCH cut from origin/main and copies each PATH from the
-frozen-head. --move-finish refuses while an answers file or the description file is in the worktree, stages
-every change, runs PRE_PUSH_TEST_COMMAND, commits, pushes, opens the pull request with gh pr create, switches
-back, restores the answers file, deletes the local NEW_TOPIC_BRANCH and checks that it is gone. A failure
-after the push prints the steps still to do; it undoes nothing, and a second --move-finish would commit again.
+--move-change-to-own-pull-request-cut-new-topic-branch and --move-change-to-own-pull-request-finish carry a
+change the round moves out of the pull request to a new topic branch, in the same worktree. The first runs on
+the round's local branch after the round's commit, with a clean worktree apart from the answers file: it
+switches to NEW_TOPIC_BRANCH cut from origin/main and copies each PATH from the frozen-head, and only then
+records the move in MOVE_STATE_FILE_NAME in the git directory and moves the answers file there, so a failed
+switch or copy leaves nothing recorded and the answers file in place. The second refuses while an answers
+file or the description file is in the worktree, stages every change, runs PRE_PUSH_TEST_COMMAND, commits,
+pushes with the pre-push hook's time limit, opens the pull request with gh pr create, switches back,
+restores the answers file, deletes the local NEW_TOPIC_BRANCH and checks that it is gone. A failure after
+the commit undoes nothing and prints the commit, the steps done and the steps still to do. A second run on
+NEW_TOPIC_BRANCH, once it holds the commit, skips the test run and the commit and resumes at the push;
+once the pull request is open, the printed steps still to do are done by hand.
 
 Exit codes: 0 brief printed, round passes or move step done; 1 the review or the round breaks a rule, said on
 stderr; 2 gh, git or the answers file could not be read, said on stderr.
@@ -100,17 +104,17 @@ MOVE_CHANGE_TO_OWN_PULL_REQUEST_INSTRUCTION = (
     "   If a blocking finding shows that one change in this pull request should not land with the rest, "
     "you may move that change to a pull request of its own instead of fixing it here, so that the rest "
     "can merge. Undo the change on this branch as part of step 4's one commit; never amend or rewrite a "
-    "pushed commit. Once that commit is made, run: python3 {program} {number} --move-start "
-    "<new topic branch> [<path> ...]\n"
+    "pushed commit. Once that commit is made, run: python3 {program} {number} "
+    "--move-change-to-own-pull-request-cut-new-topic-branch <new topic branch> [<path> ...]\n"
     "   naming as <path> each file whose every change belongs to the moved change, its tests included. "
     "It puts you on <new topic branch>, cut from origin/main, with those files as the frozen-head has "
     "them. Then make by hand the moved part of each file that is only partly moved, write the new pull "
     "request's description as CLAUDE.md says in a file outside this worktree, and run: python3 {program} "
-    "{number} --move-finish --title <title> --body-file <description file>\n"
-    "   --move-finish runs step 6's test command, commits, pushes and opens the new pull request, then puts "
+    "{number} --move-change-to-own-pull-request-finish --title <title> --body-file <description file>\n"
+    "   --move-change-to-own-pull-request-finish runs step 6's test command, commits, pushes and opens the new pull request, then puts "
     "you back on {local_branch}. If either command refuses or fails, it says why and what to do next; do "
     "that. Answer the finding in step 5 with an entry that starts "
-    f"\"{MOVED_TO_PULL_REQUEST_PREFIX}\" followed by the URL --move-finish prints; the check in "
+    f"\"{MOVED_TO_PULL_REQUEST_PREFIX}\" followed by the URL --move-change-to-own-pull-request-finish prints; the check in "
     "step 7 refuses the entry when no such pull request exists, or when its change is still on this "
     "branch.")
 MOVE_STATE_FILE_NAME = "fix-round-move-to-own-pull-request.json"
@@ -715,6 +719,15 @@ def current_branch():
     return branch
 
 
+def push_time_limit_seconds():
+    """The pre-push hook's own time budgets, as scripts/ghi-issue-write.py sizes its pushes."""
+    # Loaded here, not at import, so that only a move's push pays for loading that program and its hooks.
+    spec = importlib.util.spec_from_file_location("ghi_issue_write", Path(__file__).resolve().parent / "ghi-issue-write.py")
+    ghi_issue_write = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ghi_issue_write)
+    return ghi_issue_write.push_time_limit_seconds(os.environ)
+
+
 def local_branch_exists(branch):
     return bool(git(["branch", "--list", branch]).strip())
 
@@ -727,9 +740,10 @@ def move_start(number, reviewer_login, new_branch, whole_file_paths):
     if state_path.exists():
         state = json.loads(state_path.read_text())
         raise Refused(f"A move to {state['new_branch']} is already under way in this worktree.\n"
-                      f"Finish it with python3 {PROGRAM} {number} --move-finish before you start another.")
+                      f"Finish it with python3 {PROGRAM} {number} --move-change-to-own-pull-request-finish "
+                      "before you start another.")
     if current_branch() != local_branch:
-        raise Refused(f"--move-start runs on the round's local branch {local_branch}, but this worktree is on "
+        raise Refused(f"--move-change-to-own-pull-request-cut-new-topic-branch runs on the round's local branch {local_branch}, but this worktree is on "
                       f"{current_branch()}.\n"
                       f"Switch to {local_branch} and run this again.")
     if git(["rev-parse", "HEAD"]).strip() == frozen_head:
@@ -756,31 +770,34 @@ def move_start(number, reviewer_login, new_branch, whole_file_paths):
                       "branch must start with nothing but the moved change.")
     answers = root / answers_name
     set_aside = state_path.parent / ANSWERS_SET_ASIDE_DIRECTORY_NAME / answers_name
+    git(["switch", "-q", "-c", new_branch, "origin/main"])
+    if whole_file_paths:
+        git(["checkout", frozen_head, "--", *whole_file_paths])
     state_path.write_text(json.dumps({"new_branch": new_branch, "return_branch": local_branch,
                                       "answers": str(answers), "set_aside": str(set_aside)}))
     if answers.exists():
         set_aside.parent.mkdir(exist_ok=True)
         shutil.move(answers, set_aside)
-    git(["switch", "-q", "-c", new_branch, "origin/main"])
-    if whole_file_paths:
-        git(["checkout", frozen_head, "--", *whole_file_paths])
     print(f"On {new_branch}, cut from origin/main, with {len(whole_file_paths)} whole file(s) copied from the "
           f"frozen-head {frozen_head[:12]}.\n"
           "Make by hand the moved part of each file that is only partly moved, write the new pull request's "
           "description in a file outside this worktree, then run:\n"
-          f"python3 {PROGRAM} {number} --move-finish --title <title> --body-file <description file>")
+          f"python3 {PROGRAM} {number} --move-change-to-own-pull-request-finish --title <title> "
+          "--body-file <description file>")
 
 
 def move_finish(number, title, body_file):
     state_path = move_state_path()
     if not state_path.exists():
         raise Refused("No move is under way in this worktree.\n"
-                      f"Start one with python3 {PROGRAM} {number} --move-start <new topic branch> [<path> ...].")
+                      f"Start one with python3 {PROGRAM} {number} "
+                      "--move-change-to-own-pull-request-cut-new-topic-branch <new topic branch> [<path> ...].")
     state = json.loads(state_path.read_text())
     new_branch, return_branch = state["new_branch"], state["return_branch"]
     answers, set_aside = Path(state["answers"]), Path(state["set_aside"])
     if current_branch() != new_branch:
-        raise Refused(f"--move-finish runs on {new_branch}, which --move-start made, but this worktree is on "
+        raise Refused(f"--move-change-to-own-pull-request-finish runs on {new_branch}, which "
+                      "--move-change-to-own-pull-request-cut-new-topic-branch made, but this worktree is on "
                       f"{current_branch()}.\n"
                       f"Switch to {new_branch} and run this again.")
     root = worktree_root()
@@ -791,37 +808,70 @@ def move_finish(number, title, body_file):
         raise Refused(f"An answers file {answers} is in this worktree, so the commit would carry it to "
                       f"{new_branch}.\n"
                       f"Move it to {set_aside} and run this again; it comes back when the move ends.")
-    git(["add", "-A"])
-    if not git(["diff", "--cached", "--name-only"]).strip():
-        raise Refused(f"{new_branch} holds no change beside origin/main, so there is nothing to move.\n"
-                      "Bring the moved change onto it, by hand or by naming whole files to --move-start, and "
-                      "run this again.")
-    tests = subprocess.run(shlex.split(PRE_PUSH_TEST_COMMAND), cwd=root, stdin=subprocess.DEVNULL)
-    if tests.returncode:
-        raise Refused(f"The test command exited {tests.returncode} on {new_branch}: {PRE_PUSH_TEST_COMMAND}\n"
-                      f"Fix the moved change on {new_branch} and run this again; nothing is committed yet.")
-    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as message:
-        message.write(title + "\n\n" + Path(body_file).read_text())
-    try:
-        git(["commit", "-q", "-F", message.name])
-    finally:
-        os.unlink(message.name)
-    git(["push", "-q", "origin", new_branch])
-    try:
-        url = gh(["pr", "create", "--base", "main", "--head", new_branch, "--title", title,
-                  "--body-file", body_file]).strip().splitlines()[-1]
-        git(["switch", "-q", return_branch])
+    if git(["rev-list", "--count", "origin/main..HEAD"]).strip() != "0":
+        # An earlier run made the commit and stopped at a later step: resume at the push.
+        uncommitted = git_output.nul_separated_fields(git(["status", "--porcelain", "-z", "--untracked-files=all"]))
+        if uncommitted:
+            raise Refused(f"{new_branch} already holds the moved change's commit, made by an earlier run, but the "
+                          f"worktree also has changes outside it: {', '.join(uncommitted)}.\n"
+                          "Remove each of them, or, if one belongs to the moved change, amend the commit with it, "
+                          "and run this again; it resumes at the push.")
+    else:
+        git(["add", "-A"])
+        if not git(["diff", "--cached", "--name-only"]).strip():
+            raise Refused(f"{new_branch} holds no change beside origin/main, so there is nothing to move.\n"
+                          "Bring the moved change onto it, by hand or by naming whole files to "
+                          "--move-change-to-own-pull-request-cut-new-topic-branch, and run this again.")
+        tests = subprocess.run(shlex.split(PRE_PUSH_TEST_COMMAND), cwd=root, stdin=subprocess.DEVNULL)
+        if tests.returncode:
+            raise Refused(f"The test command exited {tests.returncode} on {new_branch}: {PRE_PUSH_TEST_COMMAND}\n"
+                          f"Fix the moved change on {new_branch} and run this again; nothing is committed yet.")
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as message:
+            message.write(title + "\n\n" + Path(body_file).read_text())
+        try:
+            git(["commit", "-q", "-F", message.name])
+        finally:
+            os.unlink(message.name)
+    commit = git(["rev-parse", "HEAD"]).strip()
+    created = {}
+
+    def push():
+        git(["push", "-q", "origin", new_branch], timeout_seconds=push_time_limit_seconds())
+
+    def open_pull_request():
+        created["url"] = gh(["pr", "create", "--base", "main", "--head", new_branch, "--title", title,
+                             "--body-file", body_file]).strip().splitlines()[-1]
+
+    def restore_answers():
         if set_aside.exists():
             shutil.move(set_aside, answers)
+
+    def delete_branch():
         git(["branch", "-D", new_branch])
         if local_branch_exists(new_branch):
             raise StepFailed(f"git branch -D {new_branch} left the branch in place")
-    except StepFailed as failure:
-        raise StepFailed(f"{failure}. {new_branch} is pushed. Still to do, by hand, in order: open its pull "
-                         f"request if gh pr list --head {new_branch} shows none; git switch {return_branch}; "
-                         f"move {set_aside} back to {answers} if it is there; git branch -D {new_branch}; "
-                         f"delete {state_path}") from None
-    state_path.unlink()
+
+    steps = [(f"push {new_branch} with git push origin {new_branch}", push),
+             (f"open its pull request with gh pr create --base main --head {new_branch}, if gh pr list --head "
+              f"{new_branch} shows none", open_pull_request),
+             (f"git switch {return_branch}", lambda: git(["switch", "-q", return_branch])),
+             (f"move {set_aside} back to {answers} if it is there", restore_answers),
+             (f"git branch -D {new_branch}", delete_branch),
+             (f"delete {state_path}", state_path.unlink)]
+    for index, (_description, step) in enumerate(steps):
+        try:
+            step()
+        except (StepFailed, OSError) as failure:
+            done = "".join(f"; {description}" for description, _step in steps[:index])
+            still_to_do = "; ".join(description for description, _step in steps[index:])
+            resume = (f"Or, while the push is still to do, run python3 {PROGRAM} {number} "
+                      "--move-change-to-own-pull-request-finish again with the same --title and --body-file; "
+                      "it resumes at the push." if index == 0 else
+                      "Do these by hand; running the program again would try to open the pull request a "
+                      "second time.")
+            raise StepFailed(f"{failure}. Nothing is undone. Done: the moved change is committed on {new_branch} as "
+                             f"{commit[:12]}{done}. Still to do, in order: {still_to_do}. {resume}") from None
+    url = created["url"]
     print(f"Moved to {url}; you are back on {return_branch}.\n"
           f"Answer the finding with an entry that starts: {MOVED_TO_PULL_REQUEST_PREFIX}{url}")
 
@@ -844,16 +894,19 @@ def main(argv=None):
                              "because branch-conflict-check.py reported a conflict")
     parser.add_argument("--reviewer-login", default=MERGE_LANE_2_REVIEWER_LOGIN,
                         help=f"merge-lane-2's GitHub account (default: {MERGE_LANE_2_REVIEWER_LOGIN})")
-    parser.add_argument("--move-start", nargs="+", metavar=("NEW_TOPIC_BRANCH", "PATH"),
+    parser.add_argument("--move-change-to-own-pull-request-cut-new-topic-branch", dest="move_start", nargs="+",
+                        metavar=("NEW_TOPIC_BRANCH", "PATH"),
                         help="after the round's commit: cut NEW_TOPIC_BRANCH from origin/main and copy each "
                              "PATH, a file whose every change moves, whole from the frozen-head")
-    parser.add_argument("--move-finish", action="store_true",
-                        help="test, commit, push and open the moved change's pull request, then switch back")
-    parser.add_argument("--title", help="with --move-finish: the new pull request's title")
-    parser.add_argument("--body-file", help="with --move-finish: the new pull request's description file")
+    parser.add_argument("--move-change-to-own-pull-request-finish", dest="move_finish", action="store_true",
+                        help="test, commit, push and open the moved change's pull request, then switch back; "
+                             "run again, it resumes at the push")
+    parser.add_argument("--title", help="with --move-change-to-own-pull-request-finish: the new pull request's title")
+    parser.add_argument("--body-file",
+                        help="with --move-change-to-own-pull-request-finish: the new pull request's description file")
     arguments = parser.parse_args(argv)
     if arguments.move_finish and not (arguments.title and arguments.body_file):
-        parser.error("--move-finish needs --title and --body-file")
+        parser.error("--move-change-to-own-pull-request-finish needs --title and --body-file")
     try:
         if arguments.move_start:
             move_start(arguments.number, arguments.reviewer_login, arguments.move_start[0],
