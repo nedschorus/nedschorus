@@ -549,7 +549,9 @@ def ask_operator_yes_or_no(question: str) -> bool:
 
 
 def is_unreplied_reincarnation_successor(transcript_path: Path) -> bool:
-    """Return whether a handoff successor has no substantive turns."""
+    """Return whether a handoff successor has no substantive turns.
+
+    Raise OSError when the transcript cannot be read."""
     first_turn = first_user_turn_text(transcript_path)
     return ((REINCARNATION_OPENER_PATTERN.match(first_turn) is not None
              or IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER in first_turn)
@@ -1313,7 +1315,12 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     if verdict == "resume" and not fresh_session_from_conversation_tail:
         session_id, transcript = detail
         size_kb = transcript.stat().st_size // 1024
-        unreplied_successor = is_unreplied_reincarnation_successor(transcript)
+        try:
+            unreplied_successor = is_unreplied_reincarnation_successor(transcript)
+        except OSError as error:
+            # The resume prompt depends on this answer, and the agent-binary could not resume an unreadable transcript.
+            return (f"{name}: REFUSED — the transcript crash recovery would resume could not be "
+                    f"read: {error.filename}: {error.strerror}")
         unreplied_note = ("; it is the successor its handoff started, which "
                           "never replied" if unreplied_successor else "")
         resume_arguments = f"--resume-session-id {shlex.quote(session_id)}"

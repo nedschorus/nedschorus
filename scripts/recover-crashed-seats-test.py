@@ -1529,6 +1529,30 @@ with tempfile.TemporaryDirectory() as temporary:
                   report.startswith(f"{workspace.name}: REFUSED — ") and not workspace.launches,
                   (report, workspace.launches))
 
+    if os.geteuid() == 0:
+        skip("a chosen transcript that cannot be read refuses", "root can read any file")
+    else:
+        # Over the size limit, the chooser picks a transcript without opening it.
+        workspace = Workspace(root / "w-chosen-transcript-unreadable")
+        all_dead()
+        capture_launches(workspace)
+        large = write_transcript(workspace.project_directory(), "resume-me", "real work",
+                                 records=4)
+        with large.open("a", encoding="utf-8") as stream:
+            stream.write("x" * (recovery.EMPTY_SUCCESSOR_MAX_BYTES + 1) + "\n")
+        large.chmod(0o000)
+        try:
+            verdict, detail = workspace.assess()
+            report = workspace.recover()
+        finally:
+            large.chmod(0o644)
+        check("a chosen transcript that cannot be read is reported REFUSED, naming it and the "
+              "error, and launches nothing",
+              verdict == "resume" and report.startswith(f"{workspace.name}: REFUSED — ")
+              and str(large) in report and "Permission denied" in report
+              and not workspace.launches,
+              (verdict, report, workspace.launches))
+
     # --- defer to boot-ignition when a handoff genuinely waits --------------
     workspace = Workspace(root / "w3")
     all_dead()
