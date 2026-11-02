@@ -3,14 +3,14 @@
 
 HOW A CASE RUNS. Each case builds a throwaway git repository holding a copy
 of the whole scripts/ directory and of the prompt templates, and runs the grid
-inside it with stub `claude` and `codex` executables first on PATH. Two seams
+inside it with stub `claude`, `codex` and `agy` executables first on PATH. Two seams
 make that work. The grid and the cells take their repository root from their
 own location on disk, so a copy is a grid whose record directories and whose
 `git status` are the scratch tree's and never this checkout's. And the stubs
 are the models: each finds the report path in the prompt it was handed — the
-Claude leg on stdin, the Codex leg as an argument — writes a line to it and
-exits 0, so six cells complete in seconds without a model call. A real grid
-run is six reviews and half an hour; these cases are about what the grid says,
+Claude leg on stdin, the Codex and agy legs as an argument — writes a line to it and
+exits 0, so seven cells complete in seconds without a model call. A real grid
+run is seven reviews and half an hour; these cases are about what the grid says,
 not about what a reviewer finds.
 
 WHAT IS PINNED HERE.
@@ -54,10 +54,13 @@ WHAT IS PINNED HERE.
     positive control through the grid since no pinned chain has a second
     model; the lift machinery stays.
 
-  - The read is six cells: the defect-hunt pass on both tiers of both
-    runtimes, and the terminology pass (user-ruled 2026-09-05) on the
-    `deep` tier of both. The terminology cells run at the effort the grid pins,
-    which the stub reads off its own command line.
+  - The read is seven cells: the defect-hunt pass on both tiers of both
+    runtimes, the terminology pass (user-ruled 2026-09-05) on the
+    `deep` tier of both, and the defect-hunt pass on agy, on Gemini Argon at
+    high. The terminology cells and the agy cell run
+    at the effort the grid pins, which the stub reads off its own command
+    line; the agy cell runs inside the real sandbox program, bwrap or
+    sandbox-exec, as in production.
 
   - The model's echoed words are not the cell's status. The cell re-emits its
     runtime's stderr into the log the grid lifts from, and the Codex CLI
@@ -107,7 +110,8 @@ WHAT IS PINNED HERE.
     stray write on its own is a warning and not a failure.
 
   - Every file the grid writes into a record directory is a bare role name
-    (user-ruled 2026-09-18) — `<runtime>-<pass>-<tier>.md` for a report and
+    (user-ruled 2026-09-18) — `<runtime>-<pass>-<tier>.md` for a report, the
+    model in place of the tier for a cell the grid gives a model, and
     `cold-read-reference-check.md` for the pre-pass; the directory's name says which
     read. From 2026-09-15 to 2026-09-18 every file carried the record's name
     as a prefix, added because two cold-read runs going at once in one
@@ -251,7 +255,7 @@ TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 # COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS, when set, is how long the stub waits
 # before writing its report -- a reviewer still reading -- except in a cell
 # whose report name contains COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT,
-# which does not wait. One fast cell that edits the target while five slow
+# which does not wait. One fast cell that edits the target while six slow
 # ones read is how a case moves the target mid-run.
 # COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS, when set, is how long the
 # stub hangs after writing its report: a reviewer that wrote and never exited.
@@ -416,7 +420,7 @@ def run_grid(repository, stub_directory, environment_overrides=None,
     """The grid in `repository` as a subprocess, run from `current_directory`,
     by default `repository`."""
     stub_directory.mkdir(parents=True, exist_ok=True)
-    for runtime_name in ("claude", "codex"):
+    for runtime_name in ("claude", "codex", "agy"):
         stub = stub_directory / runtime_name
         stub.write_text(STUB_MODEL_RUNTIME, encoding="utf-8")
         stub.chmod(0o755)
@@ -505,9 +509,9 @@ with tempfile.TemporaryDirectory() as scratch:
               for line in not_checked_lines),
           f"lifted lines were {not_checked_lines!r}")
     check("every cell that could not be checked is named",
-          len(not_checked_lines) == 6, f"{len(not_checked_lines)} of 6: {not_checked_lines!r}")
-    check("the six reviews still land and the grid still exits 0",
-          result.returncode == 0 and len(saved_lines) == 6,
+          len(not_checked_lines) == 7, f"{len(not_checked_lines)} of 7: {not_checked_lines!r}")
+    check("the seven reviews still land and the grid still exits 0",
+          result.returncode == 0 and len(saved_lines) == 7,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     record_directory = record_directory_of(repository)
     check("the stderr logs are still deleted once their lines have been lifted",
@@ -522,7 +526,7 @@ with tempfile.TemporaryDirectory() as scratch:
     #
     # What the reviewer edits here is the original document, which every cell
     # read through its frozen copy. The copy did not move, so the set stands:
-    # six reviews, exit 0, no report marked, and one line naming the copy the
+    # seven reviews, exit 0, no report marked, and one line naming the copy the
     # set reviewed.
     repository = build_scratch_repository(scratch, "checkout-stray-write")
     result = run_grid(
@@ -541,8 +545,8 @@ with tempfile.TemporaryDirectory() as scratch:
           f"lifted lines were {stray_lines!r}")
     check("a run whose check did run is not also reported as unchecked",
           "WRITE CHECK DID NOT RUN" not in result.stdout, repr(result.stdout))
-    check("an edited original stops nothing: six reviews land and the run exits 0",
-          result.returncode == 0 and len(saved_lines) == 6,
+    check("an edited original stops nothing: seven reviews land and the run exits 0",
+          result.returncode == 0 and len(saved_lines) == 7,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     check("an edited original is not reported as a changed target",
           "#frozen_copy_changed_during_run" not in result.stdout, repr(result.stdout))
@@ -560,7 +564,7 @@ with tempfile.TemporaryDirectory() as scratch:
           frozen.is_file() and b"reviewer's own edit" not in frozen.read_bytes()
           and b"reviewer's own edit" in (repository / TARGET_RELATIVE_PATH).read_bytes())
     check("an edited original still gets the closing instructions to triage",
-          "All six reports landed" in result.stdout
+          "All seven reports landed" in result.stdout
           and "Do not triage any finding in this set" not in result.stdout, repr(result.stdout))
     reports = sorted(record_directory.glob("*.md"))
     check("no report is marked when only the original changed",
@@ -600,13 +604,13 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a reviewer that strayed into another file is reported too",
           stray_lines != [] and all(stray_relative_path in line for line in stray_lines),
           f"lifted lines were {stray_lines!r}")
-    check("a stray write outside the target is not a failure: six reviews, exit 0",
-          result.returncode == 0 and len(saved_lines) == 6,
+    check("a stray write outside the target is not a failure: seven reviews, exit 0",
+          result.returncode == 0 and len(saved_lines) == 7,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     check("a target nobody edited is not reported as changed",
           "#frozen_copy_changed_during_run" not in result.stdout, repr(result.stdout))
     check("a settled target still gets the closing instructions to triage",
-          "All six reports landed" in result.stdout
+          "All seven reports landed" in result.stdout
           and "Stop editing the document" not in result.stdout, repr(result.stdout))
     # Line breaks collapsed first: the closing text is wrapped, and a check
     # that missed the sentence because of where its line ended would fail for
@@ -628,7 +632,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # The run stops at the first poll that sees the copy move (user-ruled
     # 2026-09-23: "n, and yes abort early"), because no report can then say
     # which text it read. One cell edits the copy it was given and exits at
-    # once; the other five would read for two minutes.
+    # once; the other six would read for two minutes.
     # A separate stub directory, so a stub left running is this case's and can
     # be found by its path.
     def processes_mentioning(*fragments):
@@ -655,14 +659,14 @@ with tempfile.TemporaryDirectory() as scratch:
           "run stopped those cells" in result.stdout
           and "the moment the last one finished" not in result.stdout, repr(result.stdout))
     # The editing cell itself lands or is stopped depending on whether a poll
-    # fell between its edit and its exit; the five still reading are stopped
+    # fell between its edit and its exit; the six still reading are stopped
     # either way, and none of them lands.
     stopped_line = next((line for line in result.stdout.splitlines()
                          if line.startswith("Stopped before finishing:")), "")
-    check("the closing text names the five cells still reading as stopped",
+    check("the closing text names the six cells still reading as stopped",
           all(name in stopped_line for name in (
               "claude-hunt-deep", "claude-hunt-second-strongest-model", "claude-terminology-deep",
-              "codex-hunt-deep", "codex-terminology-deep")), repr(stopped_line))
+              "codex-hunt-deep", "codex-terminology-deep", "agy-hunt-gemini-4-argon-high")), repr(stopped_line))
     saved_lines = [line for line in result.stdout.splitlines() if line.startswith("saved:")]
     check("no cell that was still reading lands",
           all("codex-hunt-second-strongest-model" in line for line in saved_lines), repr(saved_lines))
@@ -757,18 +761,18 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- An original that moves while reviewers are still reading ------------
     # The other side of the same rule: one cell edits the original at once
-    # while five read on; every cell reads the frozen copy,
-    # so nothing is stopped and all six land.
+    # while six read on; every cell reads the frozen copy,
+    # so nothing is stopped and all seven land.
     repository = build_scratch_repository(scratch, "checkout-original-moves-mid-run")
     still_reading_seconds = 10 * float(CELL_POLL_INTERVAL_FOR_TESTS_SECONDS)
     result = run_grid(repository, scratch / "stub-bin-original-moves-mid-run", {
         "COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": str(still_reading_seconds),
         "COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT": "codex-hunt-second-strongest-model",
         "COLD_READ_GRID_TEST_STUB_EDIT_PATH": str(repository / TARGET_RELATIVE_PATH)})
-    check("an original edited mid-run lets every cell finish: six reviews, exit 0",
+    check("an original edited mid-run lets every cell finish: seven reviews, exit 0",
           result.returncode == 0
           and len([line for line in result.stdout.splitlines()
-                   if line.startswith("saved:")]) == 6,
+                   if line.startswith("saved:")]) == 7,
           f"exit {result.returncode}; stdout={result.stdout!r}")
     check("an original edited mid-run stops no cell",
           "Stopped before finishing" not in result.stdout
@@ -784,10 +788,10 @@ with tempfile.TemporaryDirectory() as scratch:
     still_reading_seconds = 10 * float(CELL_POLL_INTERVAL_FOR_TESTS_SECONDS)
     result = run_grid(repository, scratch / "stub-bin-target-still-over-polls",
                       {"COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": str(still_reading_seconds)})
-    check("a settled target over several polls stops nothing: six reviews, exit 0",
+    check("a settled target over several polls stops nothing: seven reviews, exit 0",
           result.returncode == 0
           and len([line for line in result.stdout.splitlines()
-                   if line.startswith("saved:")]) == 6,
+                   if line.startswith("saved:")]) == 7,
           f"exit {result.returncode}; stdout={result.stdout!r}")
     check("a settled target over several polls is not reported as changed",
           "#frozen_copy_changed_during_run" not in result.stdout
@@ -822,10 +826,10 @@ with tempfile.TemporaryDirectory() as scratch:
           and retrying_lines[0].startswith("RETRYING: claude-hunt-second-strongest-model — exit-1 — ")
           and "first attempt's log kept:" in retrying_lines[0],
           f"stdout was {result.stdout!r}")
-    check("the retry lands: six saved, no FAILED line, the all-landed text, exit 0",
-          result.returncode == 0 and len(saved_lines) == 6
+    check("the retry lands: seven saved, no FAILED line, the all-landed text, exit 0",
+          result.returncode == 0 and len(saved_lines) == 7
           and lines_opening(result, "FAILED") == []
-          and "All six reports landed" in result.stdout,
+          and "All seven reports landed" in result.stdout,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     record_directory = record_directory_of(repository)
     check("the attempt-1 log is kept and the attempt-2 log is deleted with the landed cells'",
@@ -850,8 +854,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the stray line comes before the RETRYING line, from the attempt that wrote it",
           result.stdout.index("STRAY WRITE:") < result.stdout.index("RETRYING:"),
           repr(result.stdout))
-    check("that run still lands six and exits 0",
-          result.returncode == 0 and len(lines_opening(result, "saved:")) == 6,
+    check("that run still lands seven and exits 0",
+          result.returncode == 0 and len(lines_opening(result, "saved:")) == 7,
           f"exit {result.returncode}; stdout={result.stdout!r}")
 
     # --- A cell fails both attempts: absent, the some-landed text, the marker -
@@ -864,13 +868,13 @@ with tempfile.TemporaryDirectory() as scratch:
           and failed_lines[0].startswith("FAILED (exit 1): claude-terminology-deep — exit-1 — ")
           and "attempt-2.stderr.log" in failed_lines[0],
           f"stdout was {result.stdout!r}")
-    check("five land and the grid exits 1",
-          result.returncode == 1 and len(lines_opening(result, "saved:")) == 5,
+    check("six land and the grid exits 1",
+          result.returncode == 1 and len(lines_opening(result, "saved:")) == 6,
           f"exit {result.returncode}; stdout={result.stdout!r}")
     check("the some-landed text: valid and incomplete, triage what landed",
-          "5 of 6 reports landed in" in result.stdout
+          "6 of 7 reports landed in" in result.stdout
           and "The set is valid and incomplete: triage the reports that landed." in result.stdout
-          and "All six reports landed" not in result.stdout
+          and "All seven reports landed" not in result.stdout
           and "Stop here" not in result.stdout and "Wait for Opus" not in result.stdout,
           repr(result.stdout))
     check("the absent report is listed with its cause and its attempt-2 log",
@@ -882,14 +886,14 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the triage instructions read to every report that landed and record the absence",
           "until you have read every report that landed" in closing_text
           and "Record each absent report and its cause in cold-read-triage.md." in closing_text
-          and "read all six" not in closing_text, repr(result.stdout))
+          and "read all seven" not in closing_text, repr(result.stdout))
     check("an exit-N cause is not one the user can clear: no Tell the user sentence, no AGENT-BINARY DOWN",
           "Tell the user:" not in result.stdout and "AGENT-BINARY DOWN:" not in result.stdout,
           repr(result.stdout))
     record_directory = record_directory_of(repository)
-    check("the INCOMPLETE SET marker is in all six .md files of the record",
-          len(markers_in(record_directory, "<!-- INCOMPLETE SET: 1 of 6 reports absent — "
-                                            "claude-terminology-deep (exit-1 — ")) == 6,
+    check("the INCOMPLETE SET marker is in all seven .md files of the record",
+          len(markers_in(record_directory, "<!-- INCOMPLETE SET: 1 of 7 reports absent — "
+                                            "claude-terminology-deep (exit-1 — ")) == 7,
           markers_in(record_directory, "<!-- INCOMPLETE SET:"))
     stamped = (record_directory / "claude-hunt-deep.md").read_text(encoding="utf-8").split("\n")
     check("the marker goes after the provenance stamp",
@@ -931,9 +935,9 @@ with tempfile.TemporaryDirectory() as scratch:
               "Tell the user: claude account-limit — resets 8:50pm (America/Los_Angeles) (log: ")
           and result.stdout.rstrip().endswith(".md.stderr.log)."),
           repr(result.stdout.rstrip().splitlines()[-1]))
-    check("three land, the some-landed text, exit 1",
-          result.returncode == 1 and len(lines_opening(result, "saved:")) == 3
-          and "3 of 6 reports landed in" in result.stdout,
+    check("four land, the some-landed text, exit 1",
+          result.returncode == 1 and len(lines_opening(result, "saved:")) == 4
+          and "4 of 7 reports landed in" in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}")
 
     # --- The account limit printed bare: an empty detail still names the class
@@ -973,7 +977,7 @@ with tempfile.TemporaryDirectory() as scratch:
               "(America/Los_Angeles); 2 reports absent"]
           and "- claude is down: account-limit — resets 8:50pm (America/Los_Angeles); 2 reports absent"
           in result.stdout
-          and result.returncode == 1 and len(lines_opening(result, "saved:")) == 4,
+          and result.returncode == 1 and len(lines_opening(result, "saved:")) == 5,
           f"exit {result.returncode}; stdout={result.stdout!r}")
 
     # --- All three Claude cells fail with a model limit: no agent-binary is down --
@@ -1037,10 +1041,10 @@ with tempfile.TemporaryDirectory() as scratch:
           and "saved:" in result.stdout
           and result.stdout.index("Tell the user:") < result.stdout.index("saved:"),
           repr(result.stdout))
-    check("the closing text still ends by telling the user, and five land, exit 1",
+    check("the closing text still ends by telling the user, and six land, exit 1",
           result.stdout.rstrip().splitlines()[-1].startswith(
               f"Tell the user: claude logged-out — {LOGGED_OUT_LINE} (log: ")
-          and result.returncode == 1 and len(lines_opening(result, "saved:")) == 5,
+          and result.returncode == 1 and len(lines_opening(result, "saved:")) == 6,
           f"exit {result.returncode}; stdout={result.stdout!r}")
     record_directory = record_directory_of(repository)
     check("the one attempt's log is kept under the report's own name",
@@ -1072,7 +1076,7 @@ with tempfile.TemporaryDirectory() as scratch:
     elapsed = time.monotonic() - started
     failed_lines = lines_opening(result, "FAILED")
     check("every attempt past the limit is FAILED as timed out, with no RETRYING line",
-          lines_opening(result, "RETRYING:") == [] and len(failed_lines) == 6
+          lines_opening(result, "RETRYING:") == [] and len(failed_lines) == 7
           and all(" — timed-out — timed out after 4 hours (stderr kept: " in line
                   for line in failed_lines),
           repr(result.stdout))
@@ -1081,7 +1085,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and lines_opening(result, "saved:") == [] and "No report landed in" in result.stdout,
           f"elapsed {elapsed:.1f}s, exit {result.returncode}; stdout={result.stdout!r}")
     check("a timed-out cell says its write check did not run, and no Tell the user line",
-          len(lines_opening(result, "WRITE CHECK DID NOT RUN:")) == 6
+          len(lines_opening(result, "WRITE CHECK DID NOT RUN:")) == 7
           and "Tell the user:" not in result.stdout, repr(result.stdout))
     time.sleep(stub_reading_seconds + 1 - elapsed if elapsed < stub_reading_seconds else 0)
     record_directory = record_directory_of(repository)
@@ -1100,7 +1104,7 @@ with tempfile.TemporaryDirectory() as scratch:
     failed_lines = lines_opening(result, "FAILED")
     check("a timed-out cell that had written its report: FAILED says the unfinished report is deleted",
           elapsed < hang_seconds and lines_opening(result, "saved:") == []
-          and len(failed_lines) == 6
+          and len(failed_lines) == 7
           and all(" — timed-out — timed out after 4 hours (stderr kept: " in line
                   and line.endswith(".stderr.log); the unfinished report it had written is deleted")
                   for line in failed_lines),
@@ -1120,22 +1124,22 @@ with tempfile.TemporaryDirectory() as scratch:
           and "AGENT-BINARY DOWN:" not in result.stdout and "Tell the user:" not in result.stdout,
           repr(result.stdout))
 
-    # --- All six fail both attempts: the none-landed text ---------------------
+    # --- All seven fail both attempts: the none-landed text -------------------
     repository = build_scratch_repository(scratch, "checkout-none-landed")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
         [{"fragment": "-", "attempts": 2}])})
-    check("no report landed: the none-landed text, six absences, exit 1",
+    check("no report landed: the none-landed text, seven absences, exit 1",
           result.returncode == 1 and lines_opening(result, "saved:") == []
           and "No report landed in" in result.stdout
           and "so there is nothing to triage." in result.stdout
-          and len(lines_opening(result, "- ")) == 6
+          and len(lines_opening(result, "- ")) == 7
           and "Start a new cold-read-full-run once the causes above that the user can "
               "clear are cleared, or at once if none of them is." in result.stdout
           and "Read every report in full" not in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}")
     record_directory = record_directory_of(repository)
     check("the marker still goes into the reference-check file, the set's one .md",
-          markers_in(record_directory, "<!-- INCOMPLETE SET: 6 of 6 reports absent") == ["cold-read-reference-check.md"],
+          markers_in(record_directory, "<!-- INCOMPLETE SET: 7 of 7 reports absent") == ["cold-read-reference-check.md"],
           markers_in(record_directory, "<!-- INCOMPLETE SET:"))
 
     # --- A cell program the grid cannot start (user-ruled 2026-09-16) --------
@@ -1152,9 +1156,9 @@ with tempfile.TemporaryDirectory() as scratch:
           and all(line.startswith("FAILED (exit none): claude-")
                   and "program-unstartable — " in line for line in failed_lines),
           f"stdout={result.stdout!r}; stderr={result.stderr[-400:]!r}")
-    check("the three Codex cells are unaffected: three land, some-landed text, exit 1",
-          result.returncode == 1 and len(lines_opening(result, "saved:")) == 3
-          and "3 of 6 reports landed in" in result.stdout, repr(result.stdout))
+    check("the three Codex cells and the agy cell are unaffected: four land, some-landed text, exit 1",
+          result.returncode == 1 and len(lines_opening(result, "saved:")) == 4
+          and "4 of 7 reports landed in" in result.stdout, repr(result.stdout))
     check("program-unstartable says nothing about the agent-binary: no down line",
           "AGENT-BINARY DOWN:" not in result.stdout, repr(result.stdout))
     record_directory = record_directory_of(repository)
@@ -1167,7 +1171,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- The target changes during a run that has an absent report ------------
     # The two conditions are independent and land together often enough to
     # write down: the Fable cell fails both attempts (what the account's Fable
-    # limit does) while the other five land and edit the frozen copy they read.
+    # limit does) while the other six land and edit the frozen copy they read.
     repository = build_scratch_repository(scratch, "checkout-changed-and-absent")
     result = run_grid(
         repository, stubs,
@@ -1175,8 +1179,8 @@ with tempfile.TemporaryDirectory() as scratch:
          "COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-fable-5-1",
          **END_OF_RUN_COMPARISON_ONLY},
     )
-    check("a run can lose a cell and its target at once: five saved, exit 3",
-          result.returncode == 3 and len(lines_opening(result, "saved:")) == 5,
+    check("a run can lose a cell and its target at once: six saved, exit 3",
+          result.returncode == 3 and len(lines_opening(result, "saved:")) == 6,
           f"exit {result.returncode}; stdout={result.stdout!r}")
     check("the target-changed text prints, then the absent report",
           "Do not triage any finding in this set" in result.stdout
@@ -1191,7 +1195,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("both markers are written, the target-changed marker first, after the stamp",
           marked[0].startswith("<!-- provenance:")
           and marked[1].startswith("<!-- #frozen_copy_changed_during_run")
-          and marked[2].startswith("<!-- INCOMPLETE SET: 1 of 6 reports absent"),
+          and marked[2].startswith("<!-- INCOMPLETE SET: 1 of 7 reports absent"),
           repr(marked[:3]))
 
     # --- A Codex attempt's output holds the Claude limit text ----------------
@@ -1211,7 +1215,7 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(result.stdout))
     def decisions(text):
         return (text.count("RETRYING:"), text.count("FAILED (exit"), text.count("saved:"),
-                "5 of 6 reports landed in" in text, "Tell the user:" in text)
+                "6 of 7 reports landed in" in text, "Tell the user:" in text)
     check("the retry, the closing text and the exit code are the same as without the line",
           result.returncode == result_plain.returncode == 1
           and decisions(result.stdout) == decisions(result_plain.stdout),
@@ -1247,6 +1251,33 @@ with tempfile.TemporaryDirectory() as scratch:
                   for stamp in terminology_stamps),
           repr(terminology_stamps))
 
+    # --- The agy cell is a defect-hunt on Gemini Argon at high ---------------
+    # agy serves only the fast tier, so the grid gives the model and effort.
+    agy_report = record_directory / "agy-hunt-gemini-4-argon-high.md" if record_directory else None
+    agy_stamp = (agy_report.read_text(encoding="utf-8").splitlines()[0]
+                 if agy_report and agy_report.is_file() else "")
+    check("the agy cell runs defect-hunt on gemini-4-argon-high at high, tier fast",
+          agy_stamp.startswith("<!-- provenance: runtime=agy model=gemini-4-argon-high ")
+          and "effort=high cell=defect-hunt tier=fast " in agy_stamp
+          and effort_by_report.get("agy-hunt-gemini-4-argon-high.md") == "high",
+          f"stamp={agy_stamp!r}; efforts={effort_by_report!r}")
+
+    # --- The agy cell fails both attempts: the other six stand ---------------
+    repository = build_scratch_repository(scratch, "checkout-agy-cell-absent")
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "agy-hunt-gemini-4-argon-high.md", "attempts": 2}])})
+    check("an absent agy cell is RETRYING then FAILED from agy's own cause line",
+          len(lines_opening(result, "RETRYING:")) == 1
+          and any(line.startswith("FAILED (exit 1): agy-hunt-gemini-4-argon-high — exit-1 — ")
+                  for line in lines_opening(result, "FAILED")),
+          repr(result.stdout))
+    check("an absent agy cell leaves six of seven landed, exit 1",
+          result.returncode == 1 and len(lines_opening(result, "saved:")) == 6
+          and "6 of 7 reports landed in" in result.stdout
+          and any(line.startswith("- agy-hunt-gemini-4-argon-high: exit-1 — ")
+                  for line in result.stdout.splitlines()),
+          f"exit {result.returncode}; stdout={result.stdout!r}")
+
     # --- The model's echoed words are not the cell's status -----------------
     # The 2026-09-02 false positive (nedschorus#244): the Codex CLI copies the
     # model's text onto stderr, the cell re-emits that stderr into the log the
@@ -1275,8 +1306,8 @@ with tempfile.TemporaryDirectory() as scratch:
                                    "WRITE CHECK DID NOT RUN:"))
                   for line in result.stdout.splitlines()),
           f"stdout was {result.stdout!r}")
-    check("the echo costs nothing: six reviews land, grid exits 0",
-          result.returncode == 0 and len(saved_lines) == 6,
+    check("the echo costs nothing: seven reviews land, grid exits 0",
+          result.returncode == 0 and len(saved_lines) == 7,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
 
     # --- A cell that recovered a near-miss says so -------------------------
@@ -1296,10 +1327,10 @@ with tempfile.TemporaryDirectory() as scratch:
     recovered_lines = [line for line in result.stdout.splitlines()
                        if line.startswith("RECOVERED:")]
     check("a run whose cells recovered a near-miss still succeeds",
-          result.returncode == 0 and len(saved_lines) == 6,
+          result.returncode == 0 and len(saved_lines) == 7,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     check("the grid prints RECOVERED: for each cell that recovered a report",
-          len(recovered_lines) == 6, f"lifted lines were {recovered_lines!r}")
+          len(recovered_lines) == 7, f"lifted lines were {recovered_lines!r}")
     # Two directories now: the one the grid made and the one the stubs
     # invented. The grid's is the one holding the reference-integrity
     # pre-pass, which no stub ever writes — the invented one's name differs by
@@ -1318,7 +1349,7 @@ with tempfile.TemporaryDirectory() as scratch:
           f"lifted lines were {recovered_lines!r}")
     check("the recovered reports are back in the directory the grid made",
           len(grid_record_directories) == 1
-          and len(list(grid_record_directories[0].glob("*.md"))) == 7,
+          and len(list(grid_record_directories[0].glob("*.md"))) == 8,
           [directory.name for directory in record_directories])
     check("the reports are moved out of the mistyped directory, not copied",
           all(list(directory.glob("*.md")) == [] for directory in record_directories
@@ -1360,7 +1391,7 @@ with tempfile.TemporaryDirectory() as scratch:
     saved_lines = [line for line in result.stdout.splitlines()
                    if line.startswith("saved:")]
     check("a name ending in no genre suffix is not refused",
-          result.returncode == 0 and len(saved_lines) == 6,
+          result.returncode == 0 and len(saved_lines) == 7,
           f"exit {result.returncode}, {len(saved_lines)} saved; stderr={result.stderr!r}")
     check("an accepted run says nothing about a genre suffix",
           "genre suffix" not in result.stderr, repr(result.stderr))
@@ -1795,9 +1826,9 @@ with tempfile.TemporaryDirectory() as scratch:
     result = run_grid(repository, stubs, {
         RECORD_SHIP_DESTINATION_VARIABLE: "nobody@no-such-host.invalid:/tmp/no-store"})
     record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
-    check("an unreachable store prints record: FAILED, the run finishes all six, and exits 1",
+    check("an unreachable store prints record: FAILED, the run finishes all seven, and exits 1",
           len(record_lines) == 1 and record_lines[0].startswith("record: FAILED:")
-          and result.returncode == 1 and "All six reports landed" in result.stdout,
+          and result.returncode == 1 and "All seven reports landed" in result.stdout,
           f"exit {result.returncode}; {record_lines!r}")
     record_directory = record_directory_of(repository)
     check("the record, frozen target included, stays on disk for a later ship",
@@ -1821,9 +1852,9 @@ with tempfile.TemporaryDirectory() as scratch:
         store_root.chmod(0o755)
     record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
     check("a store holding the record's name with other bytes prints record: REFUSED, "
-          "the run finishes all six, and exits 1",
+          "the run finishes all seven, and exits 1",
           len(record_lines) == 1 and record_lines[0].startswith("record: REFUSED:")
-          and result.returncode == 1 and "All six reports landed" in result.stdout,
+          and result.returncode == 1 and "All seven reports landed" in result.stdout,
           f"exit {result.returncode}; {record_lines!r}; stderr={result.stderr[-400:]!r}")
 
     # --- A changed target is still shipped: it is evidence -------------------
@@ -1860,7 +1891,7 @@ with tempfile.TemporaryDirectory() as scratch:
     record_directory = record_directory_of(repository)
     frozen = frozen_target_path_in_scratch_repository(repository, record_directory)
     check("every cell was given a path, and there is one per cell",
-          len(logged) == 6, f"{len(logged)} logged: {logged!r}")
+          len(logged) == 7, f"{len(logged)} logged: {logged!r}")
     # Resolved before comparing: on macOS the scratch tree lives under /tmp,
     # which is a symbolic link to /private/tmp, and the grid resolves the
     # cold-read-target before freezing it — so the same file is spelled two
@@ -1890,7 +1921,7 @@ with tempfile.TemporaryDirectory() as scratch:
                    for path in logged}
     check("a relative --target run from another checkout hands every cell that checkout's file, "
           "not the one at the same path in the grid's checkout",
-          result.returncode == 0 and len(logged) == 6
+          result.returncode == 0 and len(logged) == 7
           and given_texts == {current_checkout_text},
           f"exit {result.returncode}; {len(logged)} logged; texts {given_texts!r}; "
           f"stderr={result.stderr[-300:]!r}")
@@ -1919,18 +1950,18 @@ with tempfile.TemporaryDirectory() as scratch:
                    for candidate in {path, Path(os.path.realpath(path))})
 
     check("every cell's prompt names the original as what the copy was frozen from",
-          len(prompts) == 6 and all(
+          len(prompts) == 7 and all(
               names_path(prompt, frozen) and names_path(prompt, original)
               and "is a frozen copy of" in prompt for prompt in prompts),
           f"{len(prompts)} prompts; first={prompts[:1]!r}")
     check("every cell's prompt says relative references resolve from the original's directory",
-          len(prompts) == 6 and all(
+          len(prompts) == 7 and all(
               f"from {original.parent}, the original's directory" in prompt
               for prompt in prompts),
           f"expected directory {original.parent}; first={prompts[:1]!r}")
     root_phrase = f"from the repository root, {repository.resolve()},"
     check("every cell's prompt resolves a path from the repository root before the original's directory",
-          len(prompts) == 6 and all(
+          len(prompts) == 7 and all(
               root_phrase in prompt
               and prompt.index(root_phrase)
               < prompt.index(f"from {original.parent}, the original's directory")
@@ -2049,8 +2080,9 @@ with tempfile.TemporaryDirectory() as scratch:
         + [f"{runtime}-{pass_token}-{tier}.md"
            for runtime in ("claude", "codex")
            for pass_token, tier in (("hunt", "deep"), ("hunt", "second-strongest-model"),
-                                    ("terminology", "deep"))])
-    check("the set holds the six cells, the reference-integrity pre-pass and the stop marker",
+                                    ("terminology", "deep"))]
+        + ["agy-hunt-gemini-4-argon-high.md"])
+    check("the set holds the seven cells, the reference-integrity pre-pass and the stop marker",
           written_names == expected_names, written_names)
 
     # --- A path under a dot directory keeps its dot --------------------------
@@ -2150,6 +2182,16 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the marked record starts the count again: the next run is 2 of 3",
           result.returncode == 0 and "cold-read-full-run 2 of 3 for" in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    # A run in which only the agy cell landed saved a report, and counts.
+    repository = build_scratch_repository(scratch, "full-run-count-agy-report-only")
+    for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
+        seed_log_store_record(repository, f"cold-read-grid-test-target-{day}",
+                              ["agy-hunt-gemini-4-argon-high.md", "reference-check.md"])
+    result = run_grid(repository, stubs / "full-run-count-agy-report-only")
+    check("runs whose only report is the agy cell's count toward the three",
+          result.returncode == 2 and "refusing cold-read-full-run 4" in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr!r}")
 
     # A renamed document keeps the runs it had under its earlier file name.
     repository = build_scratch_repository(scratch, "full-run-count-renamed")
@@ -2449,7 +2491,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an unlistable log-store is reported as EARLIER COLD-READ-FULL-RUNS NOT COUNTED and the read goes ahead",
           result.returncode == 0 and "EARLIER COLD-READ-FULL-RUNS NOT COUNTED:" in result.stdout
           and "no-such-log-store" in result.stdout and " of 3 for " not in result.stdout
-          and len([line for line in result.stdout.splitlines() if line.startswith("saved:")]) == 6,
+          and len([line for line in result.stdout.splitlines() if line.startswith("saved:")]) == 7,
           f"exit {result.returncode}; stdout={result.stdout!r}")
 
     # A git history that cannot be read is reported the same way: a

@@ -789,6 +789,8 @@ SUITES_RUN_WITHOUT_ANY_SANDBOX = {
         "it starts the agy cell's own bwrap, which cannot start inside bwrap",
     "nc-systems/cold-read/tests/cold-read-fast-read-test.py":
         "it starts the agy cell's own bwrap, which cannot start inside bwrap",
+    "nc-systems/cold-read/tests/cold-read-grid-test.py":
+        "it starts the agy cell's own bwrap, which cannot start inside bwrap",
     "nc-systems/skills/explain/tests/explain-reply-cold-read-fast-read-test.py":
         "its real fast read starts the agy cell's own bwrap, which cannot start inside bwrap",
     "nc-systems/skills/walk-me-through/tests/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close-test.py":

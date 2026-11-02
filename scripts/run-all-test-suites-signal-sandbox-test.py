@@ -611,6 +611,13 @@ for suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX:
     check(f"the suite listed to run outside the sandbox exists: {suite}",
           (SCRIPTS_DIR.parent / suite).is_file())
 
+# Each of these runs the real agy cell launcher, whose bwrap cannot start inside bwrap.
+for suite in ("nc-systems/cold-read/tests/cold-read-agy-cell-test.py",
+              "nc-systems/cold-read/tests/cold-read-fast-read-test.py",
+              "nc-systems/cold-read/tests/cold-read-grid-test.py"):
+    check(f"a suite that starts the agy cell's bwrap runs outside the sandbox: {suite}",
+          suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX)
+
 
 # --- Covers over listening sockets that vanish or cannot be reached -----------
 

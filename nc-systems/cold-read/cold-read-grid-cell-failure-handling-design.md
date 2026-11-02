@@ -11,9 +11,9 @@ The design for issue [cold-read grid: retry a failed cold-read-cell once, report
 
 Terms are the glossary's (`docs/nedschorus-wiki/nedschorus-glossary.md`), plus these:
 
-- An **agent-binary** is the installed program a cold-read-cell drives, `claude` or `codex`, recorded as `runtime=` in each report's provenance stamp. The user adopted the name on 2026-09-18, replacing agent-cli (adopted 2026-09-16); its glossary entry and the sweep of the existing files are their own changes, and the stamp field keeps its spelling.
-- A **cold-read-cell program** is the launcher script that runs one cold-read-cell: `nc-systems/cold-read/cold-read-claude-cell.py` or `nc-systems/cold-read/cold-read-codex-cell.py`, both built on `nc-systems/cold-read/cold-read-cell-common.py`.
-- An **attempt** is one launch of a cold-read-cell program. A retry is the second attempt of the same cold-read-cell, not a seventh cold-read-cell, and every count in this design is of cold-read-cells, never of attempts.
+- An **agent-binary** is the installed program a cold-read-cell drives, `claude`, `codex` or `agy`, recorded as `runtime=` in each report's provenance stamp. The user adopted the name on 2026-09-18, replacing agent-cli (adopted 2026-09-16); its glossary entry and the sweep of the existing files are their own changes, and the stamp field keeps its spelling.
+- A **cold-read-cell program** is the launcher script that runs one cold-read-cell: `nc-systems/cold-read/cold-read-claude-cell.py`, `nc-systems/cold-read/cold-read-codex-cell.py` or `nc-systems/cold-read/cold-read-agy-cell.py`, all built on `nc-systems/cold-read/cold-read-cell-common.py`.
+- An **attempt** is one launch of a cold-read-cell program. A retry is the second attempt of the same cold-read-cell, not an eighth cold-read-cell, and every count in this design is of cold-read-cells, never of attempts.
 - A report has **landed** when its cold-read-cell program exited 0 and the report file exists and is not blank. The test is the condition on the report path in the cold-read-grid's poll loop, unchanged by this design.
 - A cold-read-cell is **absent** when its retry also ended without a landed report.
 - The **set** is the reports one cold-read-full-run writes into its cold-read-record.
@@ -114,11 +114,11 @@ The user-ruling of 2026-09-11, point 3: "One closing text for every run, replaci
 Every run that finishes closes with one closing text, in one of four variants. A run whose cold-read-grid process dies never closes (section 10); a cold-read-cell that hangs holds it back for at most 4 hours of time the machine was awake (section 11).
 
 - **The frozen-copy of the cold-read-target changed:** today's `TARGET_CHANGED_INSTRUCTIONS`, whatever else happened, because a set read against a document that changed during the run is not valid. When no report landed as well, neither none-landed sentence prints, 'No report landed in …' nor 'Start a new cold-read-full-run …', because TARGET_CHANGED_INSTRUCTIONS already orders a new run. After it come the absent reports, the agent-binary-down lines and the "Tell the user now" sentence, when there are any.
-- **All six landed:** today's `COMPLETION_INSTRUCTIONS`, whose first sentence becomes "All six reports landed in {record_dir}, one file per reviewer."
-- **Some landed:** "{k} of {n} reports landed in {record_dir}. The set is valid and incomplete: triage the reports that landed." Then the absent reports and the agent-binary-down lines. Then the rest of `COMPLETION_INSTRUCTIONS` after its first sentence, with "until you have read all six" becoming "until you have read every report that landed", and one sentence added: "Record each absent report and its cause in cold-read-triage.md." The ruling of 2026-09-11 quoted above named that file dispositions.md, which is what it was called then; a cold-read-record's triage file is cold-read-triage.md, and the sentence that landed, `RECORD_ABSENCES_SENTENCE`, uses that name.
+- **All landed:** today's `COMPLETION_INSTRUCTIONS`, whose first sentence becomes "All seven reports landed in {record_dir}, one file per reviewer."
+- **Some landed:** "{k} of {n} reports landed in {record_dir}. The set is valid and incomplete: triage the reports that landed." Then the absent reports and the agent-binary-down lines. Then the rest of `COMPLETION_INSTRUCTIONS` after its first sentence, with "until you have read all seven" becoming "until you have read every report that landed", and one sentence added: "Record each absent report and its cause in cold-read-triage.md." The ruling of 2026-09-11 quoted above named that file dispositions.md, which is what it was called then; a cold-read-record's triage file is cold-read-triage.md, and the sentence that landed, `RECORD_ABSENCES_SENTENCE`, uses that name.
 - **None landed:** "No report landed in {record_dir}, so there is nothing to triage." Then the absent reports and the agent-binary-down lines, and: "Start a new cold-read-full-run once the causes above that the user can clear are cleared, or at once if none of them is."
 
-`{n}` is the number of cold-read-cells launched, six today. Valid, in the user's word, means the reports that landed are triaged as the review that was asked for. It is the opposite of today's Opus-absent text, "this is not the review that was asked for", and only a changed frozen-copy of the cold-read-target makes a set not valid.
+`{n}` is the number of cold-read-cells launched, seven today. Valid, in the user's word, means the reports that landed are triaged as the review that was asked for. It is the opposite of today's Opus-absent text, "this is not the review that was asked for", and only a changed frozen-copy of the cold-read-target makes a set not valid.
 
 Each absent report is one line: `- <cold-read-cell name>: <class> — <detail> (log: <attempt-2 log path>)`. An agent-binary-down line reads `- claude is down: account-limit — resets 8:50pm (America/Los_Angeles); 3 reports absent`.
 
@@ -126,7 +126,7 @@ When any absent report's class is `logged-out`, `agent-binary-missing`, `account
 
 Because a cause can be misread (section 2), each carries the path of the kept log it came from, so the user can check it. This carries out the user's words of 2026-09-11, "what failed and why … should be reported asap, in case it's something the user can fix", as he settled them on 2026-09-16: "the word now or immediately is the wrong word, we report when we report". The `RETRYING:` and `FAILED` lines show each cause to the agent as it happens, and the closing text carries the cause to the user when the run ends.
 
-**Exit codes do not change.** 0 means all six landed. 1 means at least one report is absent, including all six. 3 means the frozen-copy of the cold-read-target changed, whatever else happened; an edit to the original alone ends the run as it would have ended. An agent reads the closing text rather than the exit code, and anything that checks only the exit code today keeps working.
+**Exit codes do not change.** 0 means all seven landed. 1 means at least one report is absent, including all seven. 3 means the frozen-copy of the cold-read-target changed, whatever else happened; an edit to the original alone ends the run as it would have ended. An agent reads the closing text rather than the exit code, and anything that checks only the exit code today keeps working.
 
 ## 7. The marker on every report
 
@@ -134,7 +134,7 @@ The user-ruling of 2026-09-11, point 5: "a marker line naming the absent cells a
 
 When a report is absent, the cold-read-grid writes one marker line into every `.md` file in the cold-read-record: the reports that landed, and the reference-check file. It uses the mechanism that writes the target-changed marker (`mark_reports_target_changed` in `nc-systems/cold-read/cold-read-grid.py`). That mechanism puts the line after the provenance stamp when there is one, so the stamp stays the first line, and at the top otherwise; this is the top the ruling means.
 
-`<!-- INCOMPLETE SET: 2 of 6 reports absent — claude-hunt-good (account-limit — resets 8:50pm (America/Los_Angeles)), claude-terminology-good (account-limit — resets 8:50pm (America/Los_Angeles)) -->`
+`<!-- INCOMPLETE SET: 2 of 7 reports absent — claude-hunt-good (account-limit — resets 8:50pm (America/Los_Angeles)), claude-terminology-good (account-limit — resets 8:50pm (America/Los_Angeles)) -->`
 
 When the cold-read-target also changed, both markers are written, the target-changed marker first.
 
@@ -148,17 +148,17 @@ In `nc-systems/cold-read/tests/cold-read-grid-test.py`, every check on the old c
 
 The stub agent-binary the tests use (`STUB_MODEL_RUNTIME` in `nc-systems/cold-read/tests/cold-read-grid-test.py`) kept no state between launches, so it gains per-attempt behaviour. A counter file lets it fail a set number of first attempts, or print different output on each attempt, as `fail_first_attempts` does in `nc-systems/cold-read/tests/cold-read-fast-read-test.py`. New cases:
 
-- A cold-read-cell fails once and lands on retry. Expect `RETRYING:`, then `saved:`, the all-six variant, exit 0, the attempt-1 log kept and the attempt-2 log deleted.
+- A cold-read-cell fails once and lands on retry. Expect `RETRYING:`, then `saved:`, the all-landed variant, exit 0, the attempt-1 log kept and the attempt-2 log deleted.
 - A cold-read-cell's first attempt writes a file outside its report and fails, and the retry lands. Expect the `STRAY WRITE:` line.
-- A cold-read-cell fails both attempts. Expect `RETRYING:`, then `FAILED` with the cause, the some-landed variant, the marker in all six `.md` files of the cold-read-record, and exit 1.
+- A cold-read-cell fails both attempts. Expect `RETRYING:`, then `FAILED` with the cause, the some-landed variant, the marker in all seven `.md` files of the cold-read-record, and exit 1.
 - All three Claude cold-read-cells fail both attempts with `account-limit`. Expect one `AGENT-BINARY DOWN:` line with the reset text, its restatement in the closing text without that prefix, and the reset text in the "Tell the user" sentence.
 - All three Claude cold-read-cells fail both attempts with `model-limit`. Expect no `AGENT-BINARY DOWN:` line, and three absent reports listed.
 - Two Claude cold-read-cells fail with `account-limit`, and one fails both attempts with `exit-1`. Expect one `RETRYING:`, naming `exit-1`, the `FAILED` lines naming `account-limit` twice and `exit-1` once, and no `AGENT-BINARY DOWN:` line.
 - A Claude cold-read-cell fails logged-out while the others are still reading. Expect no `RETRYING:`, a `FAILED` line ending with "Tell the user: ..." before any other report is saved, and the closing text's "Tell the user" sentence.
 - Every attempt runs past a time limit shortened to seconds. Expect six `FAILED` lines naming `timed-out`, no `RETRYING:`, and no report written after the stop.
 - Three Codex cold-read-cells fail both attempts with `exit-N`. Expect no `AGENT-BINARY DOWN:` line, three absent reports listed, and no "Tell the user" sentence.
-- All six fail both attempts. Expect the none-landed variant and exit 1.
-- One copied cold-read-cell program has its execute permission removed, so the cold-read-grid cannot start it. Expect `RETRYING:` and then `FAILED` naming `program-unstartable`, the other five cold-read-cells unaffected, the some-landed variant and exit 1, rather than the run ending.
+- All seven fail both attempts. Expect the none-landed variant and exit 1.
+- One copied cold-read-cell program has its execute permission removed, so the cold-read-grid cannot start it. Expect `RETRYING:` and then `FAILED` naming `program-unstartable`, the other programs' cold-read-cells unaffected, the some-landed variant and exit 1, rather than the run ending.
 - The cold-read-target changes during a run that has an absent report. Expect the target-changed variant, then the absent report, both markers with the target-changed marker first, and exit 3.
 - **A Codex attempt's output holds "You've hit your session limit" at the start of a line, and the attempt fails with exit 1.** Expect the class `exit-1`, since no Codex text matches that phrase (the one Codex text recognised is its own logged-out line). Also expect a run otherwise the same as that failure without the line: the same retry, closing text and exit code.
 
