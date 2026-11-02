@@ -142,12 +142,12 @@ check("the fast read's report ending is the shipper's cold-read-fast-read report
       fast_read.WALK_SUGGESTIONS_SUFFIX.removesuffix(".md") in set(shipper_roles),
       suggestions_ending_disagrees_failure_detail(fast_read.WALK_SUGGESTIONS_SUFFIX, shipper_roles))
 
-shipped_beyond_the_skill = [suffix for suffix, _role in shipper.SHIPPED_WALK_FILE_ROLES
+shipped_beyond_the_skill = [suffix for suffix, _role in shipper.APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX
                             if (suffix, _role) not in shipper.WALK_FILE_ROLES]
 check("the shipper ships one ending beyond the skill's roles, an earlier walk's -suggestions report",
       shipped_beyond_the_skill == ["-suggestions"]
-      == [shipper.EARLIER_WALK_COLD_READ_FAST_READ_REPORT_ROLE_SUFFIX],
-      f"SHIPPED_WALK_FILE_ROLES in scripts/walk-files-ship.py adds {shipped_beyond_the_skill} "
+      == [shipper.APPROVAL_WALK_COLD_READ_FAST_READ_REPORT_FILE_SUFFIX_IN_WALKS_STARTED_BEFORE_ITS_RENAME],
+      f"APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX in scripts/walk-files-ship.py adds {shipped_beyond_the_skill} "
       f"to WALK_FILE_ROLES; only '-suggestions', the ending of an earlier walk's report, may be "
       f"shipped without the skill naming it.\n"
       f"Put any other role in WALK_FILE_ROLES, where the checks above hold it to the skill.\n"

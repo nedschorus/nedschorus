@@ -278,12 +278,12 @@ WALK_FILE_ROLES = (
 # <name>-cold-read-fast-read.md holds it as <name>-suggestions.md. The skill no
 # longer names this ending, so it stays out of WALK_FILE_ROLES, which
 # scripts/walk-file-endings-match-the-skill-test.py holds to the skill.
-EARLIER_WALK_COLD_READ_FAST_READ_REPORT_ROLE_SUFFIX = "-suggestions"
+APPROVAL_WALK_COLD_READ_FAST_READ_REPORT_FILE_SUFFIX_IN_WALKS_STARTED_BEFORE_ITS_RENAME = "-suggestions"
 # Every file this program ships, in the order it lists them; the suffixes are
 # also what walk_name_and_directory strips from a path.
-SHIPPED_WALK_FILE_ROLES = (
+APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX = (
     WALK_FILE_ROLES[:2]
-    + ((EARLIER_WALK_COLD_READ_FAST_READ_REPORT_ROLE_SUFFIX, "cold-read-fast-read report"),)
+    + ((APPROVAL_WALK_COLD_READ_FAST_READ_REPORT_FILE_SUFFIX_IN_WALKS_STARTED_BEFORE_ITS_RENAME, "cold-read-fast-read report"),)
     + WALK_FILE_ROLES[2:])
 MINUTES_ROLE_SUFFIX = "-minutes"
 WALK_TEXT_ROLE_SUFFIX = ""
@@ -291,7 +291,7 @@ REQUIRED_ROLE_SUFFIXES = (WALK_TEXT_ROLE_SUFFIX, MINUTES_ROLE_SUFFIX)
 # Each group is noted on stderr, by its first suffix, when none of its files is present.
 NOTED_WHEN_ABSENT_ROLE_SUFFIX_GROUPS = (
     ("-draft",),
-    ("-cold-read-fast-read", EARLIER_WALK_COLD_READ_FAST_READ_REPORT_ROLE_SUFFIX))
+    ("-cold-read-fast-read", APPROVAL_WALK_COLD_READ_FAST_READ_REPORT_FILE_SUFFIX_IN_WALKS_STARTED_BEFORE_ITS_RENAME))
 # The files a walk replaces in the store (see REPLACED in the docstring); every
 # other role is add-only.
 REPLACED_ROLE_SUFFIXES = (MINUTES_ROLE_SUFFIX, "-dispositions")
@@ -351,7 +351,7 @@ def walk_name_and_directory(argument: str):
         directory = path.parent.resolve()
         stem = path.name[:-3] if path.name.endswith(".md") else path.name
         candidates = [stem]
-        for suffix, _ in SHIPPED_WALK_FILE_ROLES:
+        for suffix, _ in APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX:
             if suffix and stem.endswith(suffix):
                 candidates.append(stem[:-len(suffix)])
         for candidate in candidates:
@@ -425,10 +425,10 @@ def store_file_role_rank(name: str, file_name: str) -> int:
     """The place of a store file of this walk in the roles' order, a revised
     copy taking the walk text's place, so the stdout line and the stderr
     announcements list files in one order."""
-    for rank, (suffix, _) in enumerate(SHIPPED_WALK_FILE_ROLES):
+    for rank, (suffix, _) in enumerate(APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX):
         if file_name == walk_file_name(name, suffix):
             return rank
-    return [suffix for suffix, _ in SHIPPED_WALK_FILE_ROLES].index(WALK_TEXT_ROLE_SUFFIX)
+    return [suffix for suffix, _ in APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX].index(WALK_TEXT_ROLE_SUFFIX)
 
 
 def sha256_of(path: pathlib.Path) -> str:
@@ -629,7 +629,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                                             name: str, directory: pathlib.Path,
                                             revised_copies: pathlib.Path) -> int:
     present = {suffix: directory / walk_file_name(name, suffix)
-               for suffix, _ in SHIPPED_WALK_FILE_ROLES
+               for suffix, _ in APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX
                if (directory / walk_file_name(name, suffix)).is_file()}
     missing_required = [walk_file_name(name, suffix)
                         for suffix in REQUIRED_ROLE_SUFFIXES if suffix not in present]
@@ -641,7 +641,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
         if not any(suffix in present for suffix in group):
             print(f"{PROGRAM}: no {walk_file_name(name, group[0])} in {directory}; "
                   f"shipping the walk without it", file=sys.stderr)
-    role_names = {walk_file_name(name, suffix) for suffix, _ in SHIPPED_WALK_FILE_ROLES}
+    role_names = {walk_file_name(name, suffix) for suffix, _ in APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX}
     others = sorted(p.name for p in directory.glob(f"{name}-*.md")
                     if p.name not in role_names)
     if others:
@@ -688,7 +688,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
     # Each file's plan is decided on the listing; its outcome on what the
     # store holds after the copy (see TWO SHIPMENTS OF ONE WALK AT ONCE).
     to_place, to_replace, unchanged, refused = [], [], [], []
-    role_name_of = dict(SHIPPED_WALK_FILE_ROLES)
+    role_name_of = dict(APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX)
     local_digests = {}
     for suffix, source in present.items():
         local_digest = sha256_of(source)
