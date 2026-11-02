@@ -540,7 +540,7 @@ def worktree_removal_unshippable_approval_walk_files_relative_paths(worktree):
                for suffix in walk_files_ship.REQUIRED_ROLE_SUFFIXES):
             walk_names.add(name)
     shipped_names = {walk_files_ship.walk_file_name(name, suffix)
-                     for name in walk_names for suffix, _ in walk_files_ship.WALK_FILE_ROLES}
+                     for name in walk_names for suffix, _ in walk_files_ship.APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX}
     return [str(path.relative_to(worktree)) for path in files if path.name not in shipped_names]
 
 

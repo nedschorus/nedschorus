@@ -70,7 +70,7 @@ walk route it is scratch.
 
 WHERE THE REPORT GOES. A walk draft, `docs/walk/<name>-draft.md` in this
 checkout or in any other git worktree, gets its suggestions file beside it:
-`docs/walk/<name>-suggestions.md`, which is what the walk reads next.
+`docs/walk/<name>-cold-read-fast-read.md`, which is what the walk reads next.
 Anything else -- a design, a skill, a record copy, a file in no git
 worktree -- gets a cold-read-record of its own under the
 gitignored records tree:
@@ -348,7 +348,7 @@ WALK_DRAFT_SUFFIX = "-draft.md"
 # Both endings are the walk-me-through skill's to name; this program only
 # follows them, and scripts/walk-file-endings-match-the-skill-test.py fails
 # if these two drift from what .claude/skills/walk-me-through/SKILL.md says.
-WALK_SUGGESTIONS_SUFFIX = "-suggestions.md"
+WALK_SUGGESTIONS_SUFFIX = "-cold-read-fast-read.md"
 
 # WHICH DOCUMENTS THIS READ DOES NOT FINISH. The /cold-read skill's step 2
 # sends a class of documents to the cold-read-full-run and gives everything
