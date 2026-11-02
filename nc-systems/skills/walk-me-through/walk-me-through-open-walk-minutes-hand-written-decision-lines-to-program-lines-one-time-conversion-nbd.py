@@ -116,10 +116,11 @@ def says_outcome(pattern, line):
     return any(not MODIFIER_BEFORE.search(line[:match.start()]) for match in pattern.finditer(line))
 
 
-def old_reading(program, walk_finder, text, parser):
+def old_reading(program, walk_finder, text, parser, skipped_lines=frozenset()):
     """Return (item -> (line index, line) of the last line that left it decided, item -> [(line index, line)] of
     each line that deferred it, item -> (line index, line) of a move-on line that a later awaiting-ruling line
-    undid), as the old reading counted them."""
+    undid), as the old reading counted them. A deferral on a line in skipped_lines (1-based) is still listed, but
+    it is no evidence that the rewritten item asks for a decision."""
     decided_by, deferred_by, undone_move_on = {}, collections.defaultdict(list), {}
     for index, line in enumerate(walk_finder.prose_lines(text, parser)):
         if program.ANSWER_LINE.match(line):
@@ -154,7 +155,8 @@ def old_reading(program, walk_finder, text, parser):
             for item in items:
                 deferred_by[item].append((index, line))
                 # A deferral after the rewrite shows the rewritten item asks for a decision.
-                undone_move_on.pop(item, None)
+                if index + 1 not in skipped_lines:
+                    undone_move_on.pop(item, None)
     return decided_by, deferred_by, undone_move_on
 
 
@@ -229,7 +231,7 @@ def unconverted(program, walk_finder, parser, text, expected):
 
 def proposals(program, walk_finder, parser, text, skipped_lines, moved_on_lines=frozenset()):
     """Return ([(line index, line, item, proposed line)], [NOTE text]) for one walk-minutes file's text."""
-    decided_by, deferred_by, undone_move_on = old_reading(program, walk_finder, text, parser)
+    decided_by, deferred_by, undone_move_on = old_reading(program, walk_finder, text, parser, skipped_lines)
     decided_by = {item: source for item, source in decided_by.items() if source[0] + 1 not in skipped_lines}
     # An item that asked for no decision awaits no ruling, so rewriting it does not reopen it.
     for item, source in undone_move_on.items():

@@ -960,7 +960,17 @@ def test_only_a_line_the_program_writes_records_a_decision_or_a_deferral():
             ("item 3 of 9: already decided by walk x, item 3; the walk does not come back to it. <awaiting>\n",
              (set(), {}), "close's already-decided form with an outcome close never writes records nothing"),
             ("item 3 of 9: approved option 2; every text the change adds has had a fast read. <accepted>\n",
-             ({"3"}, {}), "close's line for an option approval decides its item")):
+             ({"3"}, {}), "close's line for an option approval decides its item"),
+            ("item 3 of 9: approved option 9; every text the change adds has had a fast read. <accepted>\n",
+             (set(), {}), "close's took-effect form with an option --option never accepts records nothing"),
+            ("item 3 of 9: not asked, kind 6; every text the change adds has had a fast read. <accepted>\n",
+             (set(), {}), "close's took-effect form with a kind --not-asked never accepts records nothing"),
+            ("item 3 of 9: part 1 approved <rejected>; every text the change adds has had a fast read.\n",
+             (set(), {}), "close's parts form pairing a part's answer with the other answer's outcome records "
+                          "nothing"),
+            ("item 3 of 9: part 1 disapproved <rejected>, part 2 approved <accepted>; every text the change adds "
+             "has had a fast read.\n", ({"3"}, {}), "close's parts line with each answer's own outcome decides "
+                                                   "its item")):
         decided, deferrals = program.minutes_record(walk_finder, line, parser)
         check(case_name, (decided, dict(deferrals)) == expected, repr((decided, deferrals)))
 
