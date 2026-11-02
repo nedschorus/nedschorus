@@ -119,6 +119,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
             (90.0, 40 * GB, False, "CPU at 90%"),
             (95.0, 40 * GB, False, "CPU above 90%"),
             (10.0, 10 * GB, False, "available memory at 10 GB"),
+            (70.0, 10 * GB, False, "CPU at 70% and available memory at 10 GB"),
             (10.0, 2 * GB, False, "available memory below 10 GB")):
         directory = scratch / f"thresholds-{cpu}-{available}"
         readings = Readings(cpu, available)
@@ -136,7 +137,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
               (waited == 0) == admitted_expected, (waited, said))
         if not admitted_expected:
             check(f"the run says what its suite waits for at {label}",
-                  said and ("CPU" in said[0] if cpu >= 55 else "memory" in said[0]), said)
+                  said and ("CPU" in said[0] if cpu >= runner.TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW
+                              else "memory" in said[0]), said)
 
     # --- The thresholds, read through the machine readings from a stubbed psutil -----
     class PsutilReadingCpuAndMemory:
