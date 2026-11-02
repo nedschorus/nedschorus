@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import re
+import socket
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -72,10 +73,18 @@ HANDOFF_INSTRUCTION = (
 )
 
 HANDOFF_DEFERRED_MARKER_NOT_DELETED = (
-    "The threshold hook could not delete its handoff-deferral marker {path}: {error}. "
-    "While it stays, the hook asks again for the /handoff skill after every compaction.\n"
-    "Run the /handoff skill now, as asked above, and tell the user this message, so the "
-    "marker's directory can be fixed."
+    "The threshold-hook could not delete this agent-session's handoff-deferral marker "
+    "{path} on {host}: {error}. If this agent-session keeps working after a compaction "
+    "instead of handing off, the threshold-hook asks for the /handoff skill again, even "
+    "below the threshold, because the marker is still there.\n"
+    "The text for the user: \"On {host}, the threshold-hook could not delete the "
+    "handoff-deferral marker {path} ({error}). Please check why that path cannot be "
+    "deleted, and delete it.\"\n"
+    "If you are a subagent, put that text in your final report to the agent that "
+    "dispatched you, and do not run the /handoff skill.\n"
+    "Otherwise, in the same reply, give the user that text word for word, then run the "
+    "/handoff skill, as the threshold-hook's instruction just before this message says, "
+    "without waiting for an answer."
 )
 
 HANDOFF_DEFERRED_NOTICE = (
@@ -474,7 +483,8 @@ def main(argv=None) -> int:
     try:
         deferred_marker.unlink(missing_ok=True)
     except OSError as error:
-        print(HANDOFF_DEFERRED_MARKER_NOT_DELETED.format(path=deferred_marker, error=error),
+        print(HANDOFF_DEFERRED_MARKER_NOT_DELETED.format(
+                  path=deferred_marker, host=socket.gethostname(), error=error),
               file=sys.stderr)
     return 2
 
