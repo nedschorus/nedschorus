@@ -404,6 +404,27 @@ def test_lines_inside_code_are_neither_an_items_start_nor_its_recommendation():
               f"lines {lines!r}")
 
 
+def test_a_withdrawn_version_below_the_item_is_not_read_for_its_recommendation():
+    # The withdrawn version comes last, since the last recommendation of an item is the one read.
+    for level in ("###", "####"):
+        document = WALK_DOCUMENT.replace(
+            "**Recommendation: leave the filter out.**\n",
+            "**Recommendation: leave the filter out.**\n\n"
+            f"{level} Withdrawn version 1 of item 4\n\nThe filter's first draft.\n\n"
+            "Recommendation: add the filter.\n")
+        lines = Case(next_to_present="item 4 of 9", document=document).lines("a")
+        check(f"a {level} Withdrawn heading ends the item, so the live version's recommendation is read",
+              lines is not None and lines[1].startswith(
+                  "A means approve: the user agrees with the recommendation of item 4 of 9 (leave the filter out)."),
+              f"lines {lines!r}")
+    document = WALK_DOCUMENT.replace("## Item 4 of 9: a filter", "## Item 4 of 9: a withdrawn filter")
+    lines = Case(next_to_present="item 4 of 9", document=document).lines("a")
+    check("an item's heading that says withdrawn after its count is still the item's start",
+          lines is not None and lines[1].startswith(
+              "A means approve: the user agrees with the recommendation of item 4 of 9 (leave the filter out)."),
+          f"lines {lines!r}")
+
+
 def test_a_quoted_count_is_not_an_items_start_for_the_recommendation():
     document = WALK_DOCUMENT.replace(
         "Item 5 of 9 fixes a path. Recommendation: fix the path.\n",

@@ -736,6 +736,17 @@ def test_a_waiting_item_under_a_heading_shared_with_another_reads_only_its_own_l
           and "\nitem 7 of 9: the user answered approved #case_against_none (" in case.minutes.read_text(), described(result))
 
 
+def test_a_withdrawn_version_below_the_item_adds_no_text():
+    document = WALK_DOCUMENT.replace(
+        "## Item 4 of 9: no proposal here\n",
+        "#### Withdrawn version 1 of item 3\n\n#new \"The first draft's sentence.\"\n\n"
+        "Recommendation: keep the first draft.\n\n## Item 4 of 9: no proposal here\n")
+    case = Case(document=document)
+    result = case.run("check")
+    check("a #new line under a Withdrawn heading below the waiting item is not one of its proposed texts",
+          result.returncode == 0 and case.calls.read_text() == NEW_TEXTS, described(result))
+
+
 def test_check_refuses_when_more_than_one_item_waits():
     for flags in ((), ("--disapproved",), ("--deferred",)):
         case = Case(next_to_present="items 6 and 7 of 9")
