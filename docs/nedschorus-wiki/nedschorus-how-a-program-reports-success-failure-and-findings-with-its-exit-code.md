@@ -24,7 +24,7 @@ A check asks "is everything right?": a linter, a conflict check, a citation chec
 - **1**: it checked everything it was asked to, and found something; the findings are in its output.
 - **2**: it could not check everything it was asked to. A check that could not read one file, or could not reach one machine, exits 2 even when it found something elsewhere, because a caller that reads 0 or 1 takes the check as complete. It still prints what it found, and says what it could not check.
 
-A test file, a file whose name ends in `-test.py`, is a check like any other: it exits 0 when every test case passes, 1 when a test case fails, and 2 when it could not run. A file Python cannot start, such as one with a syntax error, exits 1 before any of the file's code runs, so the file's own top level never gets the chance to exit 2. So every test file prints a verdict line, as the section What every program prints with its code says, and `scripts/run-all-test-suites.py`, which runs the test files, reads an exit 1 with no verdict line as could not run, 2.
+A test file, a file whose name ends in `-test.py`, is a check like any other: it exits 0 when every test case passes, 1 when a test case fails, and 2 when it could not run. A file Python cannot start, such as one with a syntax error, exits 1 before any of the file's code runs, so the file's own top level never gets the chance to exit 2. So every test file prints a verdict line, as the section What every program prints with its code says, and `scripts/run-all-test-suites.py`, which runs the test files, reads an exit 1 with no verdict line as could not run, 2. Today the runner reads every nonzero code as a failure; reading the verdict line is work still to be done.
 
 A test file's verdict line is one exact hashtag line per outcome, as canary tests do with `#canary_pass` and `#canary_fail`. The exact form of each line is set by the wiki page on how a test reports its result, which the agent-seat MD-skills is writing.
 
@@ -38,7 +38,7 @@ A search asks "is it there?", and a query asks "is it so?": a file locator, a ba
 
 The `--help` line reads, for example: "Exits 0 if the path is found, 1 if it is found nowhere, 2 if a place could not be searched."
 
-A search prints what it found on stdout, as `grep` does, so a search that finds nothing prints nothing there. It then prints one line on stderr saying where it looked, which a person or an agent sees but a caller saving the results does not, such as "find-deleted-path-across-backups: searched git and 4 Time Machine backups; the path is in none of them."
+A search prints what it found on stdout, as `grep` does, so a search that finds nothing prints nothing there, apart from its verdict line when its `--help` says it prints one. It then prints one line on stderr saying where it looked, which a person or an agent sees but a caller saving the results does not, such as "find-deleted-path-across-backups: searched git and 4 Time Machine backups; the path is in none of them."
 
 ## A program that does work
 
