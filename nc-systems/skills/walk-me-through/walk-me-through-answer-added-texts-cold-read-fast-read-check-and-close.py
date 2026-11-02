@@ -57,7 +57,7 @@ answer but O2, O3 and --moved-on-no-decision, writing nothing. A
 `#case_against` line that opens with no rating is refused for every answer, O2,
 O3 and --moved-on-no-decision included.
 
-`--not-asked KIND` settles the item without the user, as kind KIND, 1 to 5, of
+`--not-asked KIND` settles the item without the user, as kind KIND, 1 to 6, of
 the walk-me-through skill's list of items that need no answer, after checking
 what code can from the item's evidence lines, each opening with its marker:
 `#not_asked_touches` lists the files the change edits or deletes;
@@ -65,7 +65,9 @@ what code can from the item's evidence lines, each opening with its marker:
 `#not_asked_source` cites the ruling, merged code or command; `#not_asked_unused`
 names a thing removed; `#not_asked_rename` gives the old name, then the new one,
 separated by a space, each in backquotes when it holds a space itself, as in
-#not_asked_rename `instruction guard` `instruction-file guard`. Every kind needs a case against rated none or weak. Kind 1, text caught up,
+#not_asked_rename `instruction guard` `instruction-file guard`; `#not_asked_glossary_term`
+names each glossary term the change puts in, in backquotes when it holds a space;
+`#not_asked_hashtag_marker` names each hashtag marker the change adds. Every kind needs a case against rated none or weak. Kind 1, text caught up,
 needs touches, a source and a `#new` text; kind 2, a code fix, needs touches
 and a test, and every touched file must exist except that test; kind 3, a
 removal, needs touches, and each unused name must appear, by `git grep`, in no
@@ -74,8 +76,12 @@ touched file must be Markdown; kind 4, a rename, needs touches and a rename
 line, the new name as the term of an entry, a line opening `- **<new name>**`
 or, with an alias, `- **<new name> (aka <alias>)**`, in a `*-glossary.md` file,
 and the old name in no file outside the touched ones and docs/walk/; kind 5,
-carrying out a ruling, needs a source; for kinds 1 to 4 every touched file but
-a kind 2 test must exist. An unused or old name is searched for as written and,
+carrying out a ruling, needs a source; kind 6, a glossary term put in or a
+hashtag marker added, needs touches and a term or a marker line, every touched
+file Markdown and not a `*-glossary.md` file, each term as the term of an entry
+as for kind 4, and each marker, `#` then letters, digits, `_` or `-`, in no
+file but Markdown, so that no program, test or setting reads it; for kinds 1 to 4
+and 6 every touched file but a kind 2 test must exist. An unused or old name is searched for as written and,
 when it has two or more words, with its words joined by hyphens, by underscores
 and by nothing, a run of digits both kept with the letters before it and
 split off as a word of its own; every
@@ -183,6 +189,7 @@ import argparse
 import collections
 import contextlib
 import datetime
+import fnmatch
 import importlib.util
 import os
 import re
@@ -218,11 +225,13 @@ CASE_AGAINST_LINE = re.compile(rf"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*#case_aga
 CASE_AGAINST_RATING = re.compile(r"(very strong|none|weak|medium|strong)\b", re.I)
 CASE_AGAINST_HASHTAG = " #case_against_{rating}"
 NOT_ASKED_RATINGS = ("none", "weak")
-NOT_ASKED_KINDS = (1, 2, 3, 4, 5)
-EVIDENCE_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*(#not_asked_(?:touches|test|source|unused|rename))"
+NOT_ASKED_KINDS = (1, 2, 3, 4, 5, 6)
+EVIDENCE_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*(#not_asked_(?:touches|test|source|unused|rename|glossary_term|hashtag_marker))"
                            rf"{MARKER_END}[*_`]*[:\s]*(.*)$")
-TOUCHES, TEST, SOURCE, UNUSED, RENAME = (f"#not_asked_{name}" for name in ("touches", "test", "source", "unused",
-                                                                        "rename"))
+TOUCHES, TEST, SOURCE, UNUSED, RENAME, GLOSSARY_TERM, ADDED_HASHTAG_MARKER = (
+    f"#not_asked_{name}" for name in ("touches", "test", "source", "unused", "rename", "glossary_term", "hashtag_marker"))
+HASHTAG_MARKER = re.compile(r"#[A-Za-z0-9_-]+")
+NOT_MARKDOWN_FILES = ":(exclude)*.md"
 GLOSSARY_FILES = "*-glossary.md"
 STATUS_LINE_PREFIX = "- "
 OBVIOUS_HASHTAG = " #approved_obvious"
@@ -408,6 +417,19 @@ NOT_ASKED_RENAME_SHAPE_PROBLEM = ("- its `{marker}` line `{value}` does not give
                                   "each in backquotes when it holds a space.")
 NOT_ASKED_NOT_IN_GLOSSARY_PROBLEM = ("- the new name `{new}` is the term of no entry, a line opening `- **{new}**` "
                                      "or `- **{new} (aka ...)**`, in a glossary file ({pattern}) in the checkout.")
+NOT_ASKED_NO_TERM_OR_MARKER_PROBLEM = ("- it has neither a `{term}` line nor a `{marker}` line; name on a `{term}` line "
+                                       "each glossary term the change puts in, and on a `{marker}` line each hashtag "
+                                       "marker it adds.")
+NOT_ASKED_GLOSSARY_OR_NOT_MARKDOWN_PROBLEM = (
+    "- `{touches}` names {path}, which is not Markdown prose outside a glossary; kind 6 changes no code and no "
+    "glossary, because a glossary entry decides what a term means.")
+NOT_ASKED_TERM_NOT_IN_GLOSSARY_PROBLEM = ("- the term `{term}` is the term of no entry, a line opening `- **{term}**` "
+                                          "or `- **{term} (aka ...)**`, in a glossary file ({pattern}) in the "
+                                          "checkout.")
+NOT_ASKED_MARKER_SHAPE_PROBLEM = ("- `{value}` on its `{marker}` line is not a hashtag marker, `#` then letters, "
+                                  "digits, `_` or `-`.")
+NOT_ASKED_MARKER_READ_PROBLEM = ("- the marker `{value}` is in {files}, which are not Markdown; a marker a program, "
+                                 "a test or a setting reads changes what the program does, so the user sees it.")
 NOT_ASKED_WHY = {
     TOUCHES: "list on it every file the change edits or deletes, separated by spaces.",
     TEST: "name on it the test that fails before the fix and passes after it.",
@@ -801,7 +823,8 @@ def not_asked_problems(kind, rating, lines, top, item):
     if rating not in NOT_ASKED_RATINGS:
         problems.append(NOT_ASKED_RATING_PROBLEM.format(rating=rating))
     found = evidence(lines)
-    needed = {1: (TOUCHES, SOURCE), 2: (TOUCHES, TEST), 3: (TOUCHES,), 4: (TOUCHES, RENAME), 5: (SOURCE,)}[kind]
+    needed = {1: (TOUCHES, SOURCE), 2: (TOUCHES, TEST), 3: (TOUCHES,), 4: (TOUCHES, RENAME), 5: (SOURCE,),
+              6: (TOUCHES,)}[kind]
     for marker in needed:
         if not words(found[marker]):
             problems.append(NOT_ASKED_NO_LINE_PROBLEM.format(marker=marker, why=NOT_ASKED_WHY[marker]))
@@ -844,6 +867,32 @@ def not_asked_problems(kind, rating, lines, top, item):
             if others:
                 problems.append(NOT_ASKED_STILL_USED_PROBLEM.format(word=old, marker=RENAME, files=", ".join(others),
                                                                    touches=TOUCHES))
+    if kind == 6:
+        problems += glossary_term_or_marker_problems(found, touched, top, item)
+    return problems
+
+
+def glossary_term_or_marker_problems(found, touched, top, item):
+    """Return why a kind 6 item, a glossary term put in or a hashtag marker added to Markdown prose, cannot settle."""
+    problems = []
+    terms = [name for value in found[GLOSSARY_TERM] for name in rename_names(value)]
+    markers = words(found[ADDED_HASHTAG_MARKER])
+    if not terms and not markers:
+        problems.append(NOT_ASKED_NO_TERM_OR_MARKER_PROBLEM.format(term=GLOSSARY_TERM, marker=ADDED_HASHTAG_MARKER))
+    for path in touched:
+        if not path.endswith(".md") or fnmatch.fnmatch(Path(path).name, GLOSSARY_FILES):
+            problems.append(NOT_ASKED_GLOSSARY_OR_NOT_MARKDOWN_PROBLEM.format(touches=TOUCHES, path=path))
+    for term in terms:
+        if not glossary_entry_files(top, term, item, 6):
+            problems.append(NOT_ASKED_TERM_NOT_IN_GLOSSARY_PROBLEM.format(term=term, pattern=GLOSSARY_FILES))
+    for value in markers:
+        if not HASHTAG_MARKER.fullmatch(value):
+            problems.append(NOT_ASKED_MARKER_SHAPE_PROBLEM.format(value=value, marker=ADDED_HASHTAG_MARKER))
+            continue
+        # A marker is found only whole: `#new` is not `#new_if_d`, nor `#newer`.
+        readers = sorted(files_matching(top, ["-E"], rf"{value}([^A-Za-z0-9_-]|$)", item, 6, NOT_MARKDOWN_FILES))
+        if readers:
+            problems.append(NOT_ASKED_MARKER_READ_PROBLEM.format(value=value, files=", ".join(readers)))
     return problems
 
 
@@ -1113,7 +1162,7 @@ def main(argv=None):
     answer.add_argument("--part-answer", type=part_answer, action="append", metavar="N=ANSWER",
                         help="check: part N of the item was answered ANSWER, A, AO or D; give it once for each part")
     answer.add_argument("--not-asked", type=int, choices=NOT_ASKED_KINDS, metavar="KIND",
-                        help="check: the user is not asked; settle the item as kind KIND, 1 to 5, of the "
+                        help="check: the user is not asked; settle the item as kind KIND, 1 to 6, of the "
                              "walk-me-through skill's list of items that need no answer, if its evidence lines pass")
     parser.add_argument("--user-reply-as-typed", metavar="REPLY",
                         help="check: the user's reply exactly as he typed it, written into the minutes beside the "
