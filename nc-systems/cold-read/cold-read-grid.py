@@ -10,8 +10,8 @@ Argon at high on agy) and the terminology pass in two (deep x {claude, codex})
 `cold-read-records/<file stem>-<YYYY-MM-DD>/`, or `SKILL-<skill name>-<YYYY-MM-DD>/` for a skill
 (a -2, -3 suffix for a second read of the document that day, the first
 free both in this checkout and in the log-store), progress and next-step
-instructions printed for the reviewing agent as reviews land. A report is
-named `<runtime>-<hunt|terminology>-<cold-read-tier>.md`, or for a cell the grid
+instructions printed for the reviewing agent as reviews land. A report of the
+two passes is named `<runtime>-<hunt|terminology>-<cold-read-tier>.md`, or for a cell the grid
 gives a model, `<runtime>-<hunt|terminology>-<model>.md`. The Argon cell runs on
 agy's one cold-read-tier, `fast`, with the model the grid gives it,
 `gemini-4-argon-high`, and the effort `high`, so its report is
@@ -98,7 +98,7 @@ every cold-read-cell of one agent-binary has landed or is absent for the same
 agent-binary-wide cause, one `AGENT-BINARY DOWN:` line says so. Every run closes
 with one closing text built from what landed: all landed, some landed (the
 set is valid and incomplete, and is triaged), none landed, or the
-cold-read-target changed, whatever else happened. When any report is absent
+frozen copy changed, whatever else happened. When any report is absent
 every .md file in the record is marked `<!-- INCOMPLETE SET: ... -->`, and
 when an absent report's cause is one the user can clear the closing text
 ends "Tell the user: ...", which repeats each such cause as the run's
@@ -986,6 +986,7 @@ def wait_for_cells(running: dict,
                 continue
             del running[report_path]
             name = cell_name_of(report_path)
+            is_question_4 = report_path.name == COLD_READ_FULL_RUN_WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_FILE_NAME
             log_lines = attempt.stderr_path.read_text(encoding="utf-8").splitlines()
             lift_cell_status_lines(report_path, log_lines)
             has_report = (
@@ -995,7 +996,7 @@ def wait_for_cells(running: dict,
             if attempt.process is not None and code == 0 and has_report:
                 attempt.stderr_path.unlink(missing_ok=True)
                 print(f"saved: {report_path}", flush=True)
-                if report_path.name != COLD_READ_FULL_RUN_WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_FILE_NAME:
+                if not is_question_4:
                     outcome.landed.append(name)
             else:
                 # A stopped attempt's exit status is the signal, which says nothing of why.
@@ -1014,7 +1015,6 @@ def wait_for_cells(running: dict,
                     exit_text = "none" if attempt.process is None else str(code)
                     report = AbsentReport(
                         name, runtime_of(name), cause_class, detail, attempt.stderr_path)
-                    is_question_4 = report_path.name == COLD_READ_FULL_RUN_WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_FILE_NAME
                     # On the FAILED line, so the Monitor that watches FAILED delivers it.
                     # Not for Question 4: the other reports do not depend on its answer.
                     tell = ""
