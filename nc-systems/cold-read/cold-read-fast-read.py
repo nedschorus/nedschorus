@@ -314,9 +314,7 @@ FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES = FAST_CLARIFY_PROMPT_TEMPLATE[
 COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE = (
     "Read {TARGET_PATH} in full, including any YAML frontmatter, and answer one "
     "question about it. " + FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES + " Read all of them, then answer the "
-    "question for each document. The question is numbered 4 because another "
-    "reviewer answers Questions 1 to 3 about the same text, and the program that "
-    "runs you puts your report after theirs.\n\n"
+    "question for each document.\n\n"
     + WHAT_SHOULD_BE_CODE_QUESTION + "\n\n"
     "Write your report to {REPORT_PATH}, once, when your analysis is complete. Do "
     "not write the question's heading: the program that runs you puts your report "
