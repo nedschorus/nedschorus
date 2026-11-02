@@ -16,7 +16,8 @@ The program an agent uses to hand Codex a task. It always:
   - writes Codex's whole output to a run log, by default `<report>.run.log`;
   - leaves at <report> Codex's final message, unless Codex itself wrote a
     file there during the run, as a brief may tell it to: that file is kept,
-    and the final message goes to `<report>.last-message`;
+    and the final message goes to `<report>.last-message`; either way the
+    `report:` line it prints on success names <report>;
   - stops Codex, and every process Codex started, when the deadline passes;
   - runs Codex under a permission profile that denies credential files,
     extending `:read-only`, or `:workspace` with `--sandbox workspace-write`,

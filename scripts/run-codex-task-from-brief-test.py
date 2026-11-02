@@ -8,7 +8,8 @@ fails, or sleeps.
 The fake records its arguments and, by the FAKE_CODEX_MODE environment
 variable, writes a report, writes a report file of its own with or without a final
 message, fails with or without a report, writes nothing,
-sleeps past the deadline with a child that may ignore SIGTERM, or blocks
+sleeps past the deadline with a child that may ignore SIGTERM, writes a
+final message and then sleeps past the deadline, or blocks
 reading stdin. Each case runs the real program as a process. The deadline and
 stdin cases run a second time with a fake `find` that sleeps 31 s first, so the
 credential-file scan done before Codex starts must not count against their limits.
@@ -67,6 +68,10 @@ elif mode in ("sleep", "sleep-child-ignores-sigterm"):
         open(os.environ["FAKE_CODEX_CHILD_PID_FILE"], "w").write(str(os.getpid()))
         time.sleep(600)
         os._exit(0)
+    time.sleep(600)
+elif mode == "final-message-then-sleep":
+    open(report, "w").write("a final message before the deadline\n")
+    sys.stdout.flush()
     time.sleep(600)
 elif mode == "read-stdin":
     data = sys.stdin.read()
@@ -365,6 +370,22 @@ try:
           completed.returncode == 1 and "wrote no report" in completed.stderr
           and not report.exists(),
           f"exit {completed.returncode}, stderr {completed.stderr!r}")
+
+    stale_last_message = scratch / "report-no-report.md.last-message"
+    stale_last_message.write_text("an earlier run's final message\n")
+    completed, report, _ = run("no-report")
+    check("an earlier run's final message beside the report does not pass for this run's report",
+          completed.returncode == 1 and "wrote no report" in completed.stderr
+          and not report.exists() and not stale_last_message.exists(),
+          f"exit {completed.returncode}, stderr {completed.stderr!r}")
+
+    completed, report, _ = run("final-message-then-sleep", "--deadline-minutes", "0.05")
+    check("a final message Codex wrote before the deadline stopped it is moved to the report path",
+          completed.returncode == 1 and "deadline" in completed.stderr
+          and report.is_file() and report.read_text() == "a final message before the deadline\n"
+          and not report.with_name(report.name + ".last-message").exists(),
+          f"exit {completed.returncode}, report exists {report.exists()}, "
+          f"stderr {completed.stderr!r}")
 
     def check_deadline_stops_codex(case_suffix="", path_first=None, extra=()):
         child_pid_file.unlink(missing_ok=True)
