@@ -27,7 +27,7 @@ This document covers the first of six parts, the hooks registered in `.claude/se
 
 **The project's rule for this text**, from `CLAUDE.md` as PR [CLAUDE.md: text a program hands an agent says what was stopped and why, and cites no ruling](https://github.com/nedschorus/nedschorus/pull/909) leaves it: "When you write the text a program hands an agent at the moment it must act, a hook's refusal or an error message, say what was stopped and why, then put each instruction on its own line with the condition it applies under. Give the reason wherever the reason helps the agent act well. Keep quotations of the user, rulings, dates and citations out of the text."
 
-**Where the list comes from.** The audit put the four questions to 139 messages; its report is `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/MD-skills/refusal-and-warning-message-audit-2026-10-01.md`. Every hook message below was read again from main at the commit [Merge pull request #881 from nedschorus/search-file-argument-read-as-option-guard](https://github.com/nedschorus/nedschorus/commit/dad220d463d1d1d8f650e9c6669c43926834794f), and the line numbers are main's at that commit. The guard that pull request added, `scripts/search-file-argument-read-as-option-guard-hook.py`, answers all four questions and cites nothing, so it has no row.
+**Where the list comes from.** The audit put the four questions to 139 messages; its report is `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/MD-skills/refusal-and-warning-message-audit-2026-10-01.md`. Every hook message below was read again from main at the commit [Merge pull request #881 from nedschorus/search-file-argument-read-as-option-guard](https://github.com/nedschorus/nedschorus/commit/dad220d463d1d1d8f650e9c6669c43926834794f), and the line numbers are main's at that commit. The guard that pull request added, `.claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py`, answers all four questions and cites nothing, so it has no row.
 
 ## The messages in this part
 
@@ -55,7 +55,7 @@ Thirteen messages from the registered hooks, each with at least one gap or one c
 
 **When an agent sees this.** An agent finishes the work of a GHI and runs `gh issue close 224 --comment "done in the layout pull request"`. The guard refuses the command, because agents here do not write issue comments: what an issue says lives in the issue's GHI-MD.
 
-**What the agent is told today** (`.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py:168`; the program fills `{subcommand}` with `close` or `reopen`, shown here for `close`):
+**What the agent is told today** (`.claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py:168`; the program fills `{subcommand}` with `close` or `reopen`, shown here for `close`):
 
 ```
 Run gh issue close again without --comment.
@@ -97,13 +97,13 @@ Run gh issue reopen again without --comment.
 {record_line}
 ```
 
-**What changes.** `STATE_CHANGE_COMMENT_REFUSAL` becomes two templates, one per subcommand. The hook takes the issue number from the command's first positional argument, or from an issue URL there, imports `scripts/ghi-issue-write.py` by path and calls its `ghi_md_paths_for_issue` against origin/main, the same function that builds the issue's body, so the hook's answer and the tool's cannot disagree. `COMMENT_REFUSAL`, `EDIT_BODY_REFUSAL` and `EDIT_TITLE_REFUSAL` in the same hook carry the same `docs/issues/<number>-*.md` placeholder and take the same fill. `.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal-test.py` compares each refusal against its template, and also requires every refusal line to start with one of its listed opening words and to contain neither "ruled" nor "2026"; the list gains "This" and "The", and needs a test case for each of the three record lines and for the fallback. Once `scripts/ghi-issue-write.py` gains the close command named under Related issues, the record and close lines shrink to one line naming that command; that change is its own pull request, after this one. The file is under `.claude/`, so the exact text must be approved-by-walk: the instruction-file guard refuses the edit until the user's approval words are quoted into its marker.
+**What changes.** `STATE_CHANGE_COMMENT_REFUSAL` becomes two templates, one per subcommand. The hook takes the issue number from the command's first positional argument, or from an issue URL there, imports `scripts/ghi-issue-write.py` by path and calls its `ghi_md_paths_for_issue` against origin/main, the same function that builds the issue's body, so the hook's answer and the tool's cannot disagree. `COMMENT_REFUSAL`, `EDIT_BODY_REFUSAL` and `EDIT_TITLE_REFUSAL` in the same hook carry the same `docs/issues/<number>-*.md` placeholder and take the same fill. `.claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal-test.py` compares each refusal against its template, and also requires every refusal line to start with one of its listed opening words and to contain neither "ruled" nor "2026"; the list gains "This" and "The", and needs a test case for each of the three record lines and for the fallback. Once `scripts/ghi-issue-write.py` gains the close command named under Related issues, the record and close lines shrink to one line naming that command; that change is its own pull request, after this one. The file is under `.claude/`, so the exact text must be approved-by-walk: the instruction-file guard refuses the edit until the user's approval words are quoted into its marker.
 
 ### 2. Deleting an issue
 
 **When an agent sees this.** An agent files a GHI by mistake and runs `gh issue delete 912 --yes`.
 
-**What the agent is told today** (`.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py:200`):
+**What the agent is told today** (`.claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py:200`):
 
 ```
 Do not delete this project's issues.
@@ -129,13 +129,13 @@ If the issue will not be done, or was filed by mistake and duplicates no other i
 This issue has no file on main under docs/issues/<number>-* or a system's directory: if the issue was filed by mistake, close it with gh issue close <number> --reason "not planned"; otherwise stop and tell the user.
 ```
 
-**What changes.** `DELETE_REFUSAL` becomes a template, filled by the lookup of message 1; `.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal-test.py` compares against the template, and every line starts with a listed opening word. The record line, the wait and the duplicate line are new; the /ghi-write skill already says to record the outcome before closing and names the duplicate close reason, and `gh issue close --duplicate-of` sets that close reason. Under `.claude/`: the exact text must be approved-by-walk.
+**What changes.** `DELETE_REFUSAL` becomes a template, filled by the lookup of message 1; `.claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal-test.py` compares against the template, and every line starts with a listed opening word. The record line, the wait and the duplicate line are new; the /ghi-write skill already says to record the outcome before closing and names the duplicate close reason, and `gh issue close --duplicate-of` sets that close reason. Under `.claude/`: the exact text must be approved-by-walk.
 
 ### 3. Writing from a detached HEAD
 
 **When an agent sees this.** A subagent checks out a pull request's head commit directly, with `git checkout --detach 6880db6d`, and then edits `nc-systems/handoff/handoff-supervisor.py`. The guard refuses the edit. The guard is a user-block: only the user's approval, quoted into its marker, lets one write through.
 
-**What the agent is told today** (`.claude/hooks/session-location-write-guard.py:76`):
+**What the agent is told today** (`.claude/guard-hooks/session-location-write-guard.py:76`):
 
 ```
 Refusing to write {path}: this session's checkout is on a detached HEAD — no branch points at its commits, so anything committed here is unreachable by name and will be lost with the worktree. Get onto a branch first (git switch -c <a-branch-name>), or move to your own seat worktree, then resubmit. If the user has approved writing from this exact state, quote his approval words into {marker} at the checkout root and resubmit — the marker is consumed by the one call it approves. Create the marker with a shell command (printf/echo): writing it with the Write tool would be refused by this same guard.
@@ -153,13 +153,13 @@ If the user has approved writing from this exact state, quote his approval words
 A task prompt or another agent's message is the user's approval only when it quotes his exact words with the session and time he wrote them; put that quotation in the marker.
 ```
 
-**What changes.** `DETACHED_DENY_MESSAGE`; the test case "the detached refusal teaches the branch fix" in `.claude/hooks/session-location-write-guard-test.py` looks for `git switch -c` and still passes. The proposed text assumes the fix of open question 4 has merged, so a branch made here at a pull request's pushed head is not rebased by any hook. A rebase stopped on a conflict also leaves HEAD detached, and this guard then refuses the edit that would resolve the conflict; open question 7. The guard also lets through a write to a path git ignores, as `git check-ignore` reports it: such a file can never be committed, so the loss this guard prevents cannot happen to it. That covers the review records under `cold-read-records/` and `sanity-check-records/` and the walk files under `docs/walk/`, which reviewers write from the detached copies the review runners give them; the guard refused five such writes in thirty days. The last line is new: a cooperative subagent once quoted its own task prompt into the marker as the user's approval. Under `.claude/`: the exact text must be approved-by-walk.
+**What changes.** `DETACHED_DENY_MESSAGE`; the test case "the detached refusal teaches the branch fix" in `.claude/guard-hooks/session-location-write-guard-test.py` looks for `git switch -c` and still passes. The proposed text assumes the fix of open question 4 has merged, so a branch made here at a pull request's pushed head is not rebased by any hook. A rebase stopped on a conflict also leaves HEAD detached, and this guard then refuses the edit that would resolve the conflict; open question 7. The guard also lets through a write to a path git ignores, as `git check-ignore` reports it: such a file can never be committed, so the loss this guard prevents cannot happen to it. That covers the review records under `cold-read-records/` and `sanity-check-records/` and the walk files under `docs/walk/`, which reviewers write from the detached copies the review runners give them; the guard refused five such writes in thirty days. The last line is new: a cooperative subagent once quoted its own task prompt into the marker as the user's approval. Under `.claude/`: the exact text must be approved-by-walk.
 
 ### 4. Writing to backup state
 
 **When an agent sees this.** An agent tries to edit `/etc/timeshift/timeshift.json` on ned-box. The guard is a hard-block: nobody's words clear it.
 
-**What the agent is told today** (`.claude/hooks/backup-and-snapshot-write-guard.py:50`):
+**What the agent is told today** (`.claude/guard-hooks/backup-and-snapshot-write-guard.py:50`):
 
 ```
 Refusing to modify {path}: it is backup state (Timeshift snapshots or configuration on ned-box, or Time Machine state on the Mac), and backup state is never an agent's to write — there is no approval lane for this, in this or any conversation (user-ruled 2026-08-17). If you are trying to RECOVER a file, nothing here is in your way: snapshots are ordinary readable directories, so copy the file out of the snapshot tree instead of writing anything. If backup configuration genuinely needs changing, that is the user's to do at his own keyboard — tell him what needs changing and why, and stop.
@@ -176,13 +176,13 @@ If you cannot read the snapshot or backup, tell the user and stop.
 If backup configuration needs changing, tell the user what needs changing and why, and stop: the change is the user's to make at his own keyboard.
 ```
 
-**What changes.** `DENY_MESSAGE`. `.claude/hooks/backup-and-snapshot-write-guard-test.py` looks for four phrases: "never an agent's to write", "copy the file out" and "his own keyboard" are kept; its test case "the refusal offers no approval lane" changes to look for "no override". Under `.claude/`: the exact text must be approved-by-walk.
+**What changes.** `DENY_MESSAGE`. `.claude/guard-hooks/backup-and-snapshot-write-guard-test.py` looks for four phrases: "never an agent's to write", "copy the file out" and "his own keyboard" are kept; its test case "the refusal offers no approval lane" changes to look for "no override". Under `.claude/`: the exact text must be approved-by-walk.
 
 ### 5. AppleScript typing into a window
 
 **When an agent sees this.** An agent wants to show the user a log and runs `osascript -e 'tell application "iTerm" to tell current session of current window to write text "tail -f run.log"'`. The guard refuses, because typed keystrokes mix with whatever the user is typing in that window.
 
-**What the agent is told today** (`scripts/synthetic-keystroke-guard-hook.py:129`):
+**What the agent is told today** (`.claude/guard-hooks/synthetic-keystroke-guard-hook.py:129`):
 
 ```
 Blocked: AppleScript synthetic typing — iTerm `write text`, System Events `keystroke`/`key code` — sends keystrokes that race the user's real typing and splice (this exact failure corrupted a command on 2026-08-17; rule on nedschorus#27). To open a terminal window running a command for the user, run: scripts/open-iterm-window-running-command <command...> — it passes the command as the new session's own process, no keystrokes involved.
@@ -198,13 +198,13 @@ If you want a terminal window running a command for the user, run: scripts/open-
 If you meant to type into another application, stop and tell the user what you wanted typed.
 ```
 
-**What changes.** `SYNTHETIC_TYPING_REASON`. `scripts/synthetic-keystroke-guard-hook-test.py` looks only for the name `scripts/open-iterm-window-running-command`, which is kept.
+**What changes.** `SYNTHETIC_TYPING_REASON`. `.claude/guard-hooks/synthetic-keystroke-guard-hook-test.py` looks only for the name `scripts/open-iterm-window-running-command`, which is kept.
 
 ### 6. Typing into a tmux session someone is attached to
 
 **When an agent sees this.** An agent runs `tmux send-keys -t merge-lane-2 "status" Enter` to nudge another agent-seat while the user has that seat's terminal open.
 
-**What the agent is told today** (`scripts/synthetic-keystroke-guard-hook.py:138`):
+**What the agent is told today** (`.claude/guard-hooks/synthetic-keystroke-guard-hook.py:138`):
 
 ```
 Blocked: tmux session '{target}' has an attached client, so send-keys/paste-buffer would splice into whoever is typing there (nedschorus#27; evidence on #37). Injection is permitted only into detached sessions. To show the user something, open them a window with scripts/open-iterm-window-running-command; for agent-to-agent messaging the durable path is the nedschorus#37 inbox design.
@@ -224,13 +224,13 @@ Otherwise, do not send the keystrokes: tell the user what you were trying to do.
 
 `{show_line}` is chosen by the guard from the platform it runs on, so the agent need not know which machine it is on. On the Mac: "If the purpose is to show the user something, open a window with scripts/open-iterm-window-running-command <command...>". Elsewhere: "If the purpose is to show the user something, tell the user the command to run; the window opener runs only on the Mac." Once PR [ned-box opens a window on the Mac through one forced command](https://github.com/nedschorus/nedschorus/pull/982) is merged and installed, the ned-box line can name `scripts/open-mac-window-from-ned-box.py` instead, in a change of its own.
 
-**What changes.** `ATTACHED_REASON`, and one test case per platform for `{show_line}`; the test case at line 258 of `scripts/synthetic-keystroke-guard-hook-test.py` looks for `#37` in the text and changes with it.
+**What changes.** `ATTACHED_REASON`, and one test case per platform for `{show_line}`; the test case at line 258 of `.claude/guard-hooks/synthetic-keystroke-guard-hook-test.py` looks for `#37` in the text and changes with it.
 
 ### 7. A tmux session the guard could not check
 
 **When an agent sees this.** The same `tmux send-keys`, aimed at a session on ned-box, when the guard's own probe over ssh times out.
 
-**What the agent is told today** (`scripts/synthetic-keystroke-guard-hook.py:147`):
+**What the agent is told today** (`.claude/guard-hooks/synthetic-keystroke-guard-hook.py:147`):
 
 ```
 Blocked: could not verify that tmux target '{target}' has no attached client ({error}). Verify yourself with: {probe} — 0 means detached — then re-run this command with CLAUDE_VERIFIED_DETACHED=1 prefixed. Never inject keystrokes at a session someone may be typing in (nedschorus#27).
@@ -252,13 +252,13 @@ Otherwise, tell the user what you were trying to do.
 
 `{show_line}` is filled as in message 6.
 
-**What changes.** `UNVERIFIED_REASON`. The guard gains a command-line mode, `scripts/synthetic-keystroke-guard-hook.py --is-target-detached <target>` with the ssh host, carried options and server flags the hook used, which runs the guard's own `query_session_attached` with a longer time limit than the hook can afford and prints one word, `detached` or `attached`, or `could not verify` with the error, exiting 0, 1 or 2; the hook fills `{check_command}` with that command, so the agent never reads raw tmux output. `scripts/synthetic-keystroke-guard-hook-test.py` pins "could not verify" and "CLAUDE_VERIFIED_DETACHED=1" in this text, both kept; the test case that pins "session_attached" changes to pin the check mode, and the mode needs test cases for each of its answers.
+**What changes.** `UNVERIFIED_REASON`. The guard gains a command-line mode, `.claude/guard-hooks/synthetic-keystroke-guard-hook.py --is-target-detached <target>` with the ssh host, carried options and server flags the hook used, which runs the guard's own `query_session_attached` with a longer time limit than the hook can afford and prints one word, `detached` or `attached`, or `could not verify` with the error, exiting 0, 1 or 2; the hook fills `{check_command}` with that command, so the agent never reads raw tmux output. `.claude/guard-hooks/synthetic-keystroke-guard-hook-test.py` pins "could not verify" and "CLAUDE_VERIFIED_DETACHED=1" in this text, both kept; the test case that pins "session_attached" changes to pin the check mode, and the mode needs test cases for each of its answers.
 
 ### 8. A tmux target that still holds a variable
 
 **When an agent sees this.** An agent runs `tmux send-keys -t "$SEAT" "status" Enter`. The guard reads the command before the shell fills in `$SEAT`, so the guard sees the variable and not a session's name.
 
-**What the agent is told today** (`scripts/synthetic-keystroke-guard-hook.py:155`):
+**What the agent is told today** (`.claude/guard-hooks/synthetic-keystroke-guard-hook.py:155`):
 
 ```
 Blocked: tmux target '{target}' contains an unexpanded variable or substitution placeholder, so this guard cannot verify the real target is detached — probing the literal text would misjudge it. Inline the literal session name, or verify detachment yourself with: {probe} — 0 means detached — then re-run with CLAUDE_VERIFIED_DETACHED=1 prefixed (rule: nedschorus#27).
@@ -274,13 +274,13 @@ If the target is a shell variable or command substitution, find the session's na
 If the target is xargs' or parallel's {}, list the sessions first, then send to each by name, one command per session.
 ```
 
-**What changes.** `UNRESOLVED_TARGET_REASON`; the literal `{}` is written `{{}}` in the format string. Test case F8a in `scripts/synthetic-keystroke-guard-hook-test.py` looks for "unexpanded variable", which is kept, and for "CLAUDE_VERIFIED_DETACHED=1", which this text drops; F8a changes with it.
+**What changes.** `UNRESOLVED_TARGET_REASON`; the literal `{}` is written `{{}}` in the format string. Test case F8a in `.claude/guard-hooks/synthetic-keystroke-guard-hook-test.py` looks for "unexpanded variable", which is kept, and for "CLAUDE_VERIFIED_DETACHED=1", which this text drops; F8a changes with it.
 
 ### 9. A tmux command that names no target
 
 **When an agent sees this.** An agent runs `tmux send-keys "status" Enter` with no `-t`.
 
-**What the agent is told today** (`scripts/synthetic-keystroke-guard-hook.py:164`):
+**What the agent is told today** (`.claude/guard-hooks/synthetic-keystroke-guard-hook.py:164`):
 
 ```
 Blocked: this send-keys/paste-buffer names no -t target, so the keystrokes would land in tmux's current session — possibly the very one the user is attached to — and cannot be verified detached. Name the session with -t, or use scripts/open-iterm-window-running-command / the nedschorus#37 inbox instead (rule: nedschorus#27).
@@ -300,7 +300,7 @@ Otherwise, do not send the keystrokes: tell the user what you were trying to do.
 
 `{show_line}` is filled as in message 6.
 
-**What changes.** `NO_TARGET_REASON`. Two test cases in `scripts/synthetic-keystroke-guard-hook-test.py`, at lines 290 and 347, look for "no -t target", which is kept.
+**What changes.** `NO_TARGET_REASON`. Two test cases in `.claude/guard-hooks/synthetic-keystroke-guard-hook-test.py`, at lines 290 and 347, look for "no -t target", which is kept.
 
 ### 10. The handoff instruction
 
@@ -435,9 +435,9 @@ If you wrote the file by mistake, delete the file you wrote.
 
 ### 14. Editing a file the user reviews
 
-**When an agent sees this.** An agent edits `CLAUDE.md`, a skill, a `-prompt.md` or `-instructions.md` file, or a reviewed document, and `.claude/hooks/instruction-file-guard.py` refuses until the user's exact approval words are quoted into its marker. The audit found these refusals complete, so they have no row in the table. A study of what agents did next, over thirty days of transcripts on both machines (`nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane/guard-refusal-aftermath-transcript-study-2026-10-02.md`), found three ways cooperative agents went around the refusal by accident: one moved a refused prompt into a Python script, where the guard cannot see it; one wrote the marker and then made the edit through a shell command, so the marker was never used up and would have approved the next guarded write; and twice the user's approval of a design was quoted as his approval of one exact file edit.
+**When an agent sees this.** An agent edits `CLAUDE.md`, a skill, a `-prompt.md` or `-instructions.md` file, or a reviewed document, and `.claude/guard-hooks/instruction-file-guard.py` refuses until the user's exact approval words are quoted into its marker. The audit found these refusals complete, so they have no row in the table. A study of what agents did next, over thirty days of transcripts on both machines (`nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane/guard-refusal-aftermath-transcript-study-2026-10-02.md`), found three ways cooperative agents went around the refusal by accident: one moved a refused prompt into a Python script, where the guard cannot see it; one wrote the marker and then made the edit through a shell command, so the marker was never used up and would have approved the next guarded write; and twice the user's approval of a design was quoted as his approval of one exact file edit.
 
-**What the agent is told today** (`.claude/hooks/instruction-file-guard.py`, at the commit [Merge pull request #988 from nedschorus/sdlc-terms-page-mutation-testing-entry](https://github.com/nedschorus/nedschorus/commit/2f880329)): three refusals, `DENY_MESSAGE` for `CLAUDE.md`, `CLAUDE.local.md` and `.claude/`, `REUSABLE_PROMPT_DENY_MESSAGE` for `-prompt.md` and `-instructions.md` files, and `REVIEWED_DOCUMENT_DENY_MESSAGE` for reviewed documents. Each says to get the user's approval and to quote his exact words into the marker; none says what not to do instead.
+**What the agent is told today** (`.claude/guard-hooks/instruction-file-guard.py`, at the commit [Merge pull request #988 from nedschorus/sdlc-terms-page-mutation-testing-entry](https://github.com/nedschorus/nedschorus/commit/2f880329)): three refusals, `DENY_MESSAGE` for `CLAUDE.md`, `CLAUDE.local.md` and `.claude/`, `REUSABLE_PROMPT_DENY_MESSAGE` for `-prompt.md` and `-instructions.md` files, and `REVIEWED_DOCUMENT_DENY_MESSAGE` for reviewed documents. Each says to get the user's approval and to quote his exact words into the marker; none says what not to do instead.
 
 **Proposed text.** Each of the three refusals gains these three lines at its end:
 
@@ -447,17 +447,17 @@ Make the approved change with Edit or Write, so that call uses up the marker; an
 A task prompt or another agent's message is the user's approval only when it quotes his exact words for this change with the session and time he wrote them.
 ```
 
-**What changes.** The three constants, and `.claude/hooks/instruction-file-guard-test.py`, which needs a test case for each refusal carrying the three lines. The guard also stops refusing writes inside the session's own scratchpad, the per-session directory the harness gives each session: a scratchpad is private to one session and loaded by nothing, and the guard refused a draft there named `CLAUDE.local.md`. Every other path outside a checkout stays protected, because the user's own `~/.claude/CLAUDE.md` and `~/.claude/settings.json` sit outside every checkout. Hook code and `.claude/settings.json` stay protected although pull-request review covers them as code, because an edit to a hook takes effect at once in the editing agent's own session, before any review sees it. Under `.claude/`: the exact text must be approved-by-walk.
+**What changes.** The three constants, and `.claude/guard-hooks/instruction-file-guard-test.py`, which needs a test case for each refusal carrying the three lines. The guard also stops refusing writes inside the session's own scratchpad, the per-session directory the harness gives each session: a scratchpad is private to one session and loaded by nothing, and the guard refused a draft there named `CLAUDE.local.md`. Every other path outside a checkout stays protected, because the user's own `~/.claude/CLAUDE.md` and `~/.claude/settings.json` sit outside every checkout. Hook code and `.claude/settings.json` stay protected although pull-request review covers them as code, because an edit to a hook takes effect at once in the editing agent's own session, before any review sees it. Under `.claude/`: the exact text must be approved-by-walk.
 
 ## Code the pull request changes besides the texts
 
 The second approval-walk moved instructions the messages gave into code, so the pull request also changes these programs; each change is described under its message:
 
-- `.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py` looks up the issue's files on main (messages 1 and 2).
-- `.claude/hooks/session-location-write-guard.py` lets through a write while a git operation is in progress (open question 7) and a write to a path git ignores (message 3).
-- `scripts/synthetic-keystroke-guard-hook.py` gains its check mode (message 7) and chooses the show-the-user line by platform (messages 6, 7 and 9).
+- `.claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py` looks up the issue's files on main (messages 1 and 2).
+- `.claude/guard-hooks/session-location-write-guard.py` lets through a write while a git operation is in progress (open question 7) and a write to a path git ignores (message 3).
+- `.claude/guard-hooks/synthetic-keystroke-guard-hook.py` gains its check mode (message 7) and chooses the show-the-user line by platform (messages 6, 7 and 9).
 - `scripts/obsolete-file-edit-warning-hook.py` reports a git operation in progress, the overlap verdict and git's failure text (message 12).
-- `.claude/hooks/instruction-file-guard.py` exempts the session's scratchpad (message 14).
+- `.claude/guard-hooks/instruction-file-guard.py` exempts the session's scratchpad (message 14).
 - `nc-systems/handoff/daily-overview-refresh-reminder-mark.py`, the program's name at the time, since renamed `nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py`, gains `--shown-on-pacific-date`, described below.
 
 And it adds one test suite, `scripts/registered-hook-messages-carry-no-citations-test.py`, discovered by the test runner like every `*-test.py`, which reads the hooks registered in `.claude/settings.json`, imports each, collects its module-level string constants whose names end in `_REASON`, `_MESSAGE`, `_REFUSAL`, `_ADVICE`, `_NOTICE`, `_INSTRUCTION`, `_TEMPLATE` or `_LINE`, and fails on a date, the word "ruled", an issue or pull request number in any spelling (`nedschorus#27`, `#37`, `PR 931`, `GHI 913`), or a GitHub pull or issue link. It also fails when a registered hook declares no such constant, so a message built inline cannot escape the check, and it holds an explicit list of exemptions, empty at first, for a message that needs one of those forms as data. The suite reads only registered hooks' message constants: tried on main, it flagged the six messages of this table that carry a citation and nothing else among 50 constants, while across all 152 programs and tests about 16 of its 26 hits were dates or issue numbers that are data, not citations.
@@ -565,5 +565,5 @@ The audit found gaps in four more groups, and left out of its scope three progra
 
 - MD-skills, 2026-10-14: Add the unwritten-mark message of `nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py` to this document's mark-program messages, beside the daily-overview-refresh-reminder-mark messages (MD-skills task #144).
 - MD-skills, 2026-10-14: Issue guard wording, one small pull request: the shared no-file line prints a literal `<number>` though the guard knows the number; the rerun and record lines do not say that the edit command opens a pull request; the body refusal's "--title alone afterwards" does not say after what (MD-skills task #157, from the review notes on PR [The issue guard's comment, body and title refusals name the issue's file and the rerun](https://github.com/nedschorus/nedschorus/pull/1031)).
-- Agent-seat agent-instructions-editor, 2026-10-14: add the list of the kinds of obvious error, which `CLAUDE.md` lets an agent fix in a guarded file without asking the user, to the refusals of `.claude/hooks/instruction-file-guard.py` (message 14), so that an agent meets the list at the moment the guard stops it.
+- Agent-seat agent-instructions-editor, 2026-10-14: add the list of the kinds of obvious error, which `CLAUDE.md` lets an agent fix in a guarded file without asking the user, to the refusals of `.claude/guard-hooks/instruction-file-guard.py` (message 14), so that an agent meets the list at the moment the guard stops it.
 - reboot-test, 2026-10-14: a reminder hook that names the wiki page on how to write an agent-facing message, and the command for that message's cold-read-fast-read, whenever an agent edits a message in a Python program, is built on branch `python-edit-changed-agent-facing-message-check-reminder-hook-topic-branch`, pushed with no pull request yet; it waits for that page to merge in PR [Wiki: How to write an agent-facing-message](https://github.com/nedschorus/nedschorus/pull/1363). Then the 105 messages an audit found failing are rewritten, the ones agents meet most often first, each with its fast read.

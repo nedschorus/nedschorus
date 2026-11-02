@@ -957,7 +957,7 @@ with tempfile.TemporaryDirectory() as scratch:
     runner_copy_lists = "".join(f"{name} = {{}}\n"
                                 for name in module.SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST)
     for changed in ("scripts/run-all-test-suites.py", ".claude/hooks/a-hook.py",
-                    ".claude/settings.json"):
+                    ".claude/guard-hooks/a-guard.py", ".claude/settings.json"):
         base = git(repo, "rev-parse", "HEAD").stdout.strip()
         commit_files(repo, {changed: f"# {changed}\n"
                             + (runner_copy_lists if changed.endswith("run-all-test-suites.py")

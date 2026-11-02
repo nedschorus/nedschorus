@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for instruction-file-guard.py.
 
-Run: python3 .claude/hooks/instruction-file-guard-test.py
+Run: python3 .claude/guard-hooks/instruction-file-guard-test.py
 Prints one line per case and exits non-zero if any case fails.
 
 The hook resolves its approval marker from the session's own checkout (the

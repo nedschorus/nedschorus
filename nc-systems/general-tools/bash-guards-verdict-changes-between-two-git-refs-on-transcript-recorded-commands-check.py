@@ -343,7 +343,9 @@ def check_guards_match_settings(hooks, replayed, label):
             "command through it.\n"
             "When the pull request renames a guard's file: change its path in GUARDS, and add the line "
             "\"<former path>\": \"<new path>\", to the BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH map in this script, "
-            "so the base's hook at the former path is read as the same guard.\n"
+            "so the base's hook at the former path is read as the same guard. End the former path's line with the "
+            "comment \"# in git history only\", or scripts/branch-leaves-no-citations-of-removed-paths-test.py "
+            "fails on it.\n"
             "Make the change in the pull request that adds or renames the hook, and run this check from that pull "
             "request's copy of this script, because only that copy has the change.")
 
@@ -546,25 +548,41 @@ def read_markdown_push_reminder(guard, command, working_directory, search_file_d
 # A renamed guard's former file path, which a base ref's settings.json may still run, to its path in GUARDS.
 # The line does nothing once main's settings.json no longer runs the former path, and may then be removed.
 BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {
-    ".claude/hooks/ghi-issue-write-redirect.py": ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
-    "scripts/hand-typed-codex-exec-redirect-hook.py": "scripts/hand-typed-codex-exec-command-refusal-hook.py",
+    ".claude/hooks/ghi-issue-write-redirect.py":  # in git history only
+        ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
+    "scripts/hand-typed-codex-exec-redirect-hook.py":  # in git history only
+        ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py",
+    "scripts/synthetic-keystroke-guard-hook.py":  # in git history only
+        ".claude/guard-hooks/synthetic-keystroke-guard-hook.py",
+    "scripts/force-push-with-open-pull-request-guard-hook.py":  # in git history only
+        ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py",
+    ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py":  # in git history only
+        ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
+    "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py":  # in git history only
+        ".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py",
+    "scripts/search-file-argument-read-as-option-guard-hook.py":  # in git history only
+        ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py",
+    "scripts/hand-typed-codex-exec-command-refusal-hook.py":  # in git history only
+        ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py",
+    ".claude/hooks/ghi-md-whole-file-replacement-soft-block.py":  # in git history only
+        ".claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py",
 }
 
 # Every Bash PreToolUse hook in .claude/settings.json, by the file it runs, with the function
 # that reads one command through it. check_guards_match_settings() names each hook missing here,
 # so a new guard is one line: its file and a reading function like the ones above.
 GUARDS = {
-    "scripts/synthetic-keystroke-guard-hook.py": read_synthetic_keystroke,
-    "scripts/force-push-with-open-pull-request-guard-hook.py": read_force_push,
-    ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py": read_issue_write,
-    "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py": read_tmux_kill,
-    "scripts/search-file-argument-read-as-option-guard-hook.py": read_search_file,
-    "scripts/hand-typed-codex-exec-command-refusal-hook.py": read_codex_exec,
+    ".claude/guard-hooks/synthetic-keystroke-guard-hook.py": read_synthetic_keystroke,
+    ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py": read_force_push,
+    ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py": read_issue_write,
+    ".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py": read_tmux_kill,
+    ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py": read_search_file,
+    ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py": read_codex_exec,
     "nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py":
         read_markdown_push_reminder,
-    ".claude/hooks/ghi-md-whole-file-replacement-soft-block.py": read_ghi_md_whole_file_replacement,
+    ".claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py": read_ghi_md_whole_file_replacement,
 }
-SEARCH_FILE_GUARD = "scripts/search-file-argument-read-as-option-guard-hook.py"
+SEARCH_FILE_GUARD = ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py"
 
 
 def guard_readings(guards, command, working_directory, search_file_directory):

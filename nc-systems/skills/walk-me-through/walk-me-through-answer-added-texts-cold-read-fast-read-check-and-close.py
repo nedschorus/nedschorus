@@ -3,13 +3,15 @@
 open approval-walk, or his A, AO or D answer to each part of it, or his moving on
 from an item that asks no decision: give each text
 the answer adds a cold-read-fast-read, then record the answer in the
-walk-minutes and set their `#next_to_present` line to the next item.
+walk-minutes and set their `#next_to_present` line to the next item; or record
+the waiting item as settled without showing it to him.
 
 Usage, from the agent-session's checkout:
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check
       [--obvious | --after-advisor | --disapproved | --deferred | --option N
-       | --part-answer N=ANSWER ... | --moved-on-no-decision | --not-asked KIND]
-      --user-reply-as-typed REPLY    (every answer but --not-asked, which takes none)
+       | --part-answer N=ANSWER ... | --moved-on-no-decision | --not-asked KIND
+       | --already-decided USER_RULING | --moved-on REASON]
+      --user-reply-as-typed REPLY    (every answer but --not-asked, --already-decided and --moved-on)
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py close
 
 The answer is an approval, A, unless a flag says otherwise: --obvious for AO,
@@ -19,17 +21,23 @@ recommendation. R, E and O decide nothing, so the program takes no flag for
 them. --part-answer, given once for each part of an item that holds parts, as
 in `--part-answer 1=A --part-answer 2=D`, gives that part its own answer, A, AO
 or D. Z is not taken for a part, and a part number given twice is refused,
-writing nothing. --moved-on-no-decision records that the user moved on from an
+writing nothing. Two flags record an item the user is not shown, so that no
+agent writes a deciding line by hand: --already-decided for an item an earlier
+user-ruling decides as the item recommends, USER_RULING citing that ruling,
+which adds the `#new` texts as A does; and --moved-on for an item the walk
+leaves with no decision, REASON saying why, which changes nothing.
+--moved-on-no-decision records that the user moved on from an
 item that asks for no decision, such as a summary item: it needs no
 `#case_against` line, runs no fast read, and close records the item as `<moved on, no
 decision>`.
 
-Every answer but --not-asked needs --user-reply-as-typed, the user's reply
+Every answer but --not-asked, --already-decided and --moved-on, which record an
+item the user is not shown, needs --user-reply-as-typed, the user's reply
 exactly as he typed it; check writes it, its whitespace runs squeezed to single
 spaces, into the answer line right after the date, as in `in his words "a
 trivial - a bit longer doesn't matter."`, so that the minutes keep a
 remark that rides with the answer. A check without it is refused, writing
-nothing, and so is one that gives it with --not-asked. A reply that is a
+nothing, and so is one that gives it with any of those three. A reply that is a
 navigation word alone, next, N, continue or go, whatever its case and any
 trailing period or exclamation mark, is refused for every answer but
 --moved-on-no-decision, writing nothing: it approves nothing, and the
@@ -45,7 +53,8 @@ texts when any part is A or AO, and the `#new_if_d` texts when any part is D.
 An answer that adds no marked text gets no fast read, and its status line is
 "no proposed text marked".
 
-Every answer but O2, O3 and --moved-on-no-decision needs the item's
+Every answer but O2, O3, --moved-on-no-decision, --already-decided and
+--moved-on needs the item's
 `#case_against` line, the first line of the item, outside fenced code, whose
 first word after any list, quotation or emphasis marker is `#case_against`,
 followed by a rating: none, weak, medium, strong or very strong. When the item
@@ -53,9 +62,9 @@ has that line, CHECK writes its rating into the answer line, whatever the
 answer, as a hashtag right after the answer, as in
 `approved #approved_obvious #case_against_weak`, so that one search finds every
 rating beside its answer. When the item has no such line, CHECK refuses every
-answer but O2, O3 and --moved-on-no-decision, writing nothing. A
-`#case_against` line that opens with no rating is refused for every answer, O2,
-O3 and --moved-on-no-decision included.
+answer but those five, writing nothing. A
+`#case_against` line that opens with no rating is refused for every answer,
+those five included.
 
 `--not-asked KIND` settles the item without the user, as kind KIND, 1 to 5, of
 the walk-me-through skill's list of items that need no answer, after checking
@@ -118,9 +127,9 @@ marked", into the walk-minutes, and prints the status lines, the judgement the
 agent must make on new reports, and the close step to run. It appends one line
 of counts to
 walk-me-through-answer-added-texts-cold-read-fast-read-already-done-or-had-to-run-counts-per-check.tsv
-beside the log-store's cold-read-records directory. A deferral
-changes nothing, so CHECK --deferred runs no fast read, logs no counts, and
-writes only the answer line; so does CHECK --moved-on-no-decision. When the `#next_to_present` line names more than
+beside the log-store's cold-read-records directory. A deferral and a move on
+change nothing, so CHECK --deferred, CHECK --moved-on-no-decision and CHECK
+--moved-on run no fast read, log no counts, and write only the answer line. When the `#next_to_present` line names more than
 one item, CHECK refuses, writing nothing, because a run would record its one
 answer, or its one set of part answers, for every item that line names; CHECK
 then tells the agent to add a `#next_to_present` line naming one of those items
@@ -146,30 +155,30 @@ for answers to parts, a single line for the item naming each part's outcome,
 or, for --moved-on-no-decision, that the user moved on from an item asking
 no decision, or, for a deferral, that the item moves to just before the summary item, the item
 whose heading's point opens with "summary"; an item deferred a second time
-leaves the walk and stays open. It then writes a `#next_to_present` line as the
+leaves the walk and stays open; for --already-decided or --moved-on, that the
+walk does not come back to the item, with the ruling or the reason. It then writes a `#next_to_present` line as the
 minutes' last line, naming the next item: walking the walk-document's items in
 order, a once-deferred item placed just before the summary item, from the item
 after the answered one, and round again from the first, the first item the
-minutes do not record; `none, closed` when there is none. A minutes line
-records the items it opens with, after any date or timestamp, as in `Item 4 of
-9:`, `- Item 4, <date>:` or `- <timestamp> Item 4 <rejected>`,
-when it says approved, disapproved, accepted, rejected or `<moved on, no
-decision>`; one that says deferred instead records a deferral; a word right
-after the, a or an, as in "the approved definition", says neither; CHECK's
-answer lines record nothing. A line with an outcome tag, `<accepted>`, `<rejected>`,
-`<moved on, no decision>` or `<approved as revised>`, records a decision
-whatever else it says; one with only `<open>` or `<revised, awaiting ruling>`
-records none, and records a deferral when its first word after the items is
-deferred; so does a line with no such tag whose first word is deferred. A
-`<revised, awaiting ruling>` tag also undoes an earlier line's decision of its
-items, and outweighs a deciding tag on its own line; `<open>` does neither.
+minutes do not record; `none, closed` when there is none. Only a line CLOSE
+writes records anything: a line for an answer that took effect, for answers to
+parts, for --moved-on-no-decision, for --already-decided or for --moved-on
+decides its items; a line for a
+deferral defers its items once. Every other line records nothing, whatever it
+says, an agent's note included, so that a note such as `Items 3 to 5 revised
+(item 3 is the change he approved today)` leaves items 3 to 5 waiting; CHECK's
+answer lines and CLOSE's held-answer lines record nothing either.
 CLOSE refuses, writing nothing, when a line after the
 last answer line already opens with the last answer line's item and a colon, as
 every line close writes for an answer does: that answer was closed already, and
 no check has run since. When the `#next_to_present` line names other items than
 the answer line, a new item a finding raised is waiting: the answer is recorded
 as held until the user answers the new item, and the `#next_to_present` line is
-written again, unchanged, as the minutes' last line.
+written again, unchanged, as the minutes' last line. When CLOSE later records
+the new item approved, disapproved or already decided, it also writes the
+already-decided line, with the same outcome, for each item a held-answer line
+holds for it that no close line decides yet; after a deferral, a move on or
+answers to parts, the held item stays waiting, so the walk comes back to it.
 Either way it prints the lines the agent's next message must include, the
 status lines among them.
 
@@ -228,6 +237,7 @@ STATUS_LINE_PREFIX = "- "
 OBVIOUS_HASHTAG = " #approved_obvious"
 AFTER_ADVISOR_HASHTAG = " #approved_after_advisor"
 APPROVED, DISAPPROVED, DEFERRED, MOVED_ON = "approved", "disapproved", "deferred", "moved on, no decision"
+ALREADY_DECIDED_PREFIX, MOVED_ON_PREFIX = "already decided by ", "moved on, no decision: "
 NAVIGATION_WORD_ALONE = re.compile(r"^(?:next|n|continue|go)[.!]*$", re.I)
 OUTCOMES = {APPROVED: "<accepted>", DISAPPROVED: "<rejected>"}
 PART_WORDS = {"A": APPROVED, "AO": APPROVED + OBVIOUS_HASHTAG, "D": DISAPPROVED}
@@ -290,10 +300,16 @@ CHECK_NOT_ASKED_MINUTES = ("{item}: settled without asking the user, {answered}{
 CHECK_DEFERRED_MINUTES = ("{item}: the user answered {answered}{rating} ({date_and_time}){words}, which makes no "
                           "change.")
 USER_WORDS = ' in his words "{words}"'
+CHECK_MOVED_ON_MINUTES = ("{item}: settled without asking the user, {answered}{rating} ({date_and_time}), which makes "
+                          "no change.")
 CLOSE_TOOK_EFFECT_MINUTES = "{item}: {answered}; every text the change adds has had a fast read. {outcome}"
 CLOSE_PARTS_TOOK_EFFECT_MINUTES = "{item}: {parts}; every text the change adds has had a fast read."
 CLOSE_DEFERRED_MINUTES = "{item}: deferred; it moves to just before the summary item. <open>"
-CLOSE_MOVED_ON_MINUTES = "{item}: moved on; the item asked for no decision. <moved on, no decision>"
+# No fast-read clause in these two: the one-time conversion of older walk-minutes writes them too, with no fast read.
+CLOSE_ALREADY_DECIDED_MINUTES = "{item}: already decided by {ruling}; the walk does not come back to it. {outcome}"
+CLOSE_MOVED_ON_MINUTES = ("{item}: moved on, no decision: {reason}; the walk does not come back to it. "
+                          "<moved on, no decision>")
+CLOSE_MOVED_ON_NO_DECISION_MINUTES = "{item}: moved on; the item asked for no decision. <moved on, no decision>"
 CLOSE_DEFERRED_AGAIN_MINUTES = "{item}: deferred a second time, so it leaves the walk and stays open. <open>"
 CHECK_SEVERAL_WAITING = (
     "nothing written: the `#next_to_present` line in {minutes} names more than one item waiting, {item}, "
@@ -309,6 +325,7 @@ CLOSE_ALREADY_RECORDED = (
     "Run `python3 {program} check` first, with the flag for the user's answer as `--help` lists it, then close.\n"
     "If check failed, fix what it printed before running close.")
 CLOSE_HELD_MINUTES = "{item}: answer held: {new_item}, raised by a fast-read finding, waits for the user's answer. <open>"
+HELD_ANSWER_LINE = re.compile(r"^(items?\s[^:]*): answer held: (items?\s.+?), raised by a fast-read finding", re.I)
 CLOSE_TOOK_EFFECT_LINES = (
     "{item}'s answer is recorded in the minutes, and its change may now be made.",
     "Your next message must include these lines, as they are:",
@@ -340,19 +357,27 @@ CLOSE_NO_NEXT_ITEM = ("No item is left to present, and the minutes' `#next_to_pr
                       "`none, closed`: go on to the walk-me-through skill's closing.")
 NEXT_MARKER_LINE = "#next_to_present {value}"
 CLOSED_MARKER_VALUE = "none, closed"
-RECORDED_ITEMS = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_]*(items?\s+[^:(]*)", re.I)
-DATE = re.compile(r"\d{4}-\d\d-\d\d(?:[T ]\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:?\d\d)?)?")
-DECIDED = re.compile(r"\b(?:dis)?approved\b|\baccepted\b|\brejected\b|<moved on, no decision>", re.I)
-DEFERRED_WORD = re.compile(r"\bdeferred\b", re.I)
-MODIFIER_BEFORE = re.compile(r"\b(?:the|a|an)\s+$", re.I)
-OUTCOME_TAG = re.compile(r"<([^<>]+)>")
-DECIDING_OUTCOMES = {"accepted", "rejected", "moved on, no decision", "approved as revised"}
-AWAITING_RULING = "revised, awaiting ruling"
-UNDECIDED_OUTCOMES = {"open", AWAITING_RULING}
-FIRST_WORD = re.compile(r"^[\s,:;*_.)\-\u2013\u2014]*(\w+)")
+PROGRAM_LINE_ITEMS = re.compile(r"^(items?\s[^:]*): ", re.I)
+
+
+def after_the_items_pattern(template):
+    """The part of a minutes line this program writes from template after `{item}: `, as a regular
+    expression in which each other placeholder stands for any text."""
+    pieces = re.split(r"\{\w+\}", template[len("{item}: "):])
+    return re.compile("^" + ".+".join(re.escape(piece) for piece in pieces) + "$")
+
+
+DECIDING_LINES = tuple(after_the_items_pattern(template) for template in (
+    CLOSE_TOOK_EFFECT_MINUTES, CLOSE_PARTS_TOOK_EFFECT_MINUTES, CLOSE_ALREADY_DECIDED_MINUTES, CLOSE_MOVED_ON_MINUTES,
+    CLOSE_MOVED_ON_NO_DECISION_MINUTES))
+DEFERRING_LINES = tuple(after_the_items_pattern(template)
+                        for template in (CLOSE_DEFERRED_MINUTES, CLOSE_DEFERRED_AGAIN_MINUTES))
 SUMMARY_HEADING = re.compile(r"\bof\s+\d+\b[*_\s:.\-\u2013\u2014]*summary\b", re.I)
-CLOSE_HELD_NEXT = ("Then present {new_item}, and record the user's answer to it in the minutes as "
-                   "the outcome of {item} too.")
+CLOSE_HELD_NEXT = ("Then present {new_item}. When the close step records the user's approval or disapproval of "
+                   "{new_item}, it records the same outcome for {item}; after a deferral, a move on or answers to "
+                   "parts, {item} stays waiting and the walk comes back to it.")
+CLOSE_HELD_DECIDED = "{held}, whose answer was held for {item}, is recorded with {item}'s outcome."
+HELD_RULING = "the user's answer to {new_item}, for which its answer was held"
 CASE_AGAINST_MISSING = (
     "nothing written: {item} in {document} has no `#case_against` line, and every answer records the item's "
     "case-against rating beside it in the minutes, so the ratings can later be compared with the user's answers.\n"
@@ -375,9 +400,9 @@ USER_WORDS_MISSING = (
     "Run `python3 {program} check{flags} --user-reply-as-typed <his reply>` with the user's reply exactly as he "
     "typed it, quoted for the shell, as in `--user-reply-as-typed 'a but trivial'`.")
 USER_WORDS_NOT_ASKED = (
-    "nothing written: --user-reply-as-typed was given with --not-asked, but an item settled without asking the "
+    "nothing written: --user-reply-as-typed was given with {flag}, but an item settled without asking the "
     "user has no reply of his to record.\n"
-    "If the user did answer the item, run check with the flag for his answer instead of --not-asked.\n"
+    "If the user did answer the item, run check with the flag for his answer instead of {flag}.\n"
     "Otherwise run check again without --user-reply-as-typed.")
 NAVIGATION_WORD_REFUSED = (
     "nothing written: the user's reply \"{words}\" is a navigation word alone, which does not approve, disapprove "
@@ -426,6 +451,11 @@ NOT_ASKED_JUDGEMENT_LINES = (
 GIT_GREP_FAILED = ("`git grep` failed with exit {code} in {top} while checking {item}'s evidence: {error}\n"
                    "Run `python3 {program} check --not-asked {kind}` again once; if it fails the same way, "
                    "present {item} to the user and run check with the flag for his answer, as `--help` lists it.")
+CLOSE_NOT_SHOWN_LINES = (
+    "{item} is recorded in the minutes as settled without being shown to the user.",
+    "List it, with its number, in one line of your next message to the user.",
+)
+CLOSE_ALREADY_DECIDED_CHANGE = "Its change may now be made; the fast reads of the texts it adds:"
 
 
 class Failure(Exception):
@@ -667,6 +697,10 @@ def answered_word(arguments):
         return f"{APPROVED} option {arguments.option}"
     if arguments.not_asked is not None:
         return f"not asked, kind {arguments.not_asked}"
+    if arguments.already_decided is not None:
+        return ALREADY_DECIDED_PREFIX + arguments.already_decided
+    if arguments.moved_on is not None:
+        return MOVED_ON_PREFIX + arguments.moved_on
     return APPROVED
 
 
@@ -701,10 +735,14 @@ def check_flags(arguments):
         flags += " --deferred"
     if arguments.moved_on_no_decision:
         flags += " --moved-on-no-decision"
+    if arguments.moved_on is not None:
+        flags += f" --moved-on {shlex.quote(arguments.moved_on)}"
     if arguments.option is not None:
         flags += f" --option {arguments.option}"
     if arguments.not_asked is not None:
         flags += f" --not-asked {arguments.not_asked}"
+    if arguments.already_decided is not None:
+        flags += f" --already-decided {shlex.quote(arguments.already_decided)}"
     for number, letter in arguments.part_answer or []:
         flags += f" --part-answer {number}={letter}"
     if (arguments.user_reply_as_typed or "").strip():
@@ -726,7 +764,8 @@ def case_against_rating(lines, item, document, arguments):
                                                       program=Path(__file__).resolve(),
                                                       flags=check_flags(arguments)))
         return rating[1].lower()
-    if arguments.option is not None or arguments.moved_on_no_decision:
+    if (arguments.option is not None or arguments.moved_on_no_decision or arguments.already_decided is not None
+            or arguments.moved_on is not None):
         return None
     raise Failure(CASE_AGAINST_MISSING.format(item=item, document=document, program=Path(__file__).resolve(),
                                               flags=check_flags(arguments)))
@@ -860,9 +899,12 @@ def check(arguments):
             value=f"item <number>{f' of {total}' if total else ''}")))
     words = " ".join((arguments.user_reply_as_typed or "").split())
     program = Path(__file__).resolve()
-    if arguments.not_asked is not None and words:
-        raise Failure(USER_WORDS_NOT_ASKED)
-    if arguments.not_asked is None and not words:
+    not_shown_flag = ("--not-asked" if arguments.not_asked is not None
+                      else "--already-decided" if arguments.already_decided is not None
+                      else "--moved-on" if arguments.moved_on is not None else None)
+    if not_shown_flag and words:
+        raise Failure(USER_WORDS_NOT_ASKED.format(flag=not_shown_flag))
+    if not not_shown_flag and not words:
         raise Failure(USER_WORDS_MISSING.format(program=program, flags=check_flags(arguments)))
     if NAVIGATION_WORD_ALONE.match(words) and not arguments.moved_on_no_decision:
         raise Failure(NAVIGATION_WORD_REFUSED.format(words=words, item=item, answered=answered_word(arguments),
@@ -871,11 +913,11 @@ def check(arguments):
     document, lines = item_lines(walk_finder, minutes, value, numbers, total, parser)
     rating = case_against_rating(lines, item, document, arguments)
     rated = CASE_AGAINST_HASHTAG.format(rating=rating.replace(" ", "_")) if rating else ""
-    if arguments.deferred or arguments.moved_on_no_decision:
+    if arguments.deferred or arguments.moved_on_no_decision or arguments.moved_on is not None:
         now = datetime.datetime.now().astimezone()
-        append_to_minutes(minutes, [CHECK_DEFERRED_MINUTES.format(item=item, answered=answered_word(arguments),
-                                                                  rating=rated, words=in_his_words,
-                                                                  date_and_time=f"{now:%Y-%m-%d %H:%M}")])
+        no_change = CHECK_MOVED_ON_MINUTES if arguments.moved_on is not None else CHECK_DEFERRED_MINUTES
+        append_to_minutes(minutes, [no_change.format(item=item, answered=answered_word(arguments), rating=rated,
+                                                     words=in_his_words, date_and_time=f"{now:%Y-%m-%d %H:%M}")])
         print(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve(), top=shlex.quote(str(top))))
         return 0
     if arguments.not_asked is not None:
@@ -913,7 +955,8 @@ def check(arguments):
     if not texts:
         statuses.append(NO_PROPOSED_TEXT)
     now = datetime.datetime.now().astimezone()
-    answer_minutes = CHECK_NOT_ASKED_MINUTES if arguments.not_asked is not None else CHECK_MINUTES
+    not_asked = arguments.not_asked is not None or arguments.already_decided is not None
+    answer_minutes = CHECK_NOT_ASKED_MINUTES if not_asked else CHECK_MINUTES
     append_to_minutes(minutes, [answer_minutes.format(item=item, answered=answered_word(arguments),
                                                       hashtag=answer_hashtag(arguments), rating=rated,
                                                       words=in_his_words, date_and_time=f"{now:%Y-%m-%d %H:%M}")]
@@ -981,48 +1024,26 @@ def walk_document_items(walk_finder, minutes, value, numbers, total, parser):
     return total, order, summary
 
 
-def says_outcome(pattern, line):
-    """Return whether the line holds a match of pattern that does not follow the, a or an."""
-    return any(not MODIFIER_BEFORE.search(line[:match.start()]) for match in pattern.finditer(line))
-
-
 def minutes_record(walk_finder, minutes_text, parser):
-    """Return (the item numbers whose last line that records a decision or its absence decides them, a
-    Counter of how many lines defer each item)."""
+    """Return (the item numbers a line this program wrote decides, a Counter of how many lines this program
+    wrote defer each item); every other line, an agent's note included, records nothing."""
     decided, deferrals = set(), collections.Counter()
     for line in walk_finder.prose_lines(minutes_text, parser):
-        if ANSWER_LINE.match(line):
-            continue
-        dated = DATE.sub("", line)
-        match = RECORDED_ITEMS.match(dated)
+        match = PROGRAM_LINE_ITEMS.match(line)
         if not match:
             continue
+        rest = line[match.end():]
+        decides = any(pattern.match(rest) for pattern in DECIDING_LINES)
+        if not decides and not any(pattern.match(rest) for pattern in DEFERRING_LINES):
+            continue
         try:
-            items, _ = walk_finder.parse_items(match[1].strip())
+            items, _ = walk_finder.parse_items(match[1])
         except walk_finder.UnusableRange:
             continue
-        outcomes = {tag.strip().lower() for tag in OUTCOME_TAG.findall(line)}
-        first = FIRST_WORD.match(dated[match.end():])
-        first_word = first[1].lower() if first else ""
-        # An outcome tag or a leading "deferred" says what the line records; only an untagged line is read
-        # by its keywords, since a hand-written open line may use "approved" in another sense, and even
-        # then a keyword right after the, a or an, as in "the approved definition", is not read. An
-        # awaiting-ruling tag undoes an earlier decision and beats a deciding tag on its own line; `<open>`
-        # does neither, since real minutes use it after a decision for a side point left open.
-        defers = first_word == DEFERRED
-        if AWAITING_RULING in outcomes:
-            decided.difference_update(items)
-        elif outcomes & DECIDING_OUTCOMES:
+        if decides:
             decided.update(items)
-            defers = False
-        elif not (outcomes & UNDECIDED_OUTCOMES or defers):
-            if says_outcome(DECIDED, line):
-                decided.update(items)
-            else:
-                defers = says_outcome(DEFERRED_WORD, line)
-        if defers:
-            for item in items:
-                deferrals[item] += 1
+        else:
+            deferrals.update(items)
     return decided, deferrals
 
 
@@ -1050,6 +1071,28 @@ def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferr
     return [item for item in walk[start:] + walk[:start] if item not in recorded][:1]
 
 
+def held_items_decided_with(walk_finder, minutes, parser, answered_numbers, item, outcome):
+    """Return the close lines that give outcome to each item whose answer the minutes hold for the answered
+    items and that no close line decides yet."""
+    text = minutes.read_text(encoding="utf-8")
+    decided, _ = minutes_record(walk_finder, text, parser)
+    lines = []
+    for line in walk_finder.prose_lines(text, parser):
+        match = HELD_ANSWER_LINE.match(line)
+        if not match:
+            continue
+        try:
+            held_numbers, _ = walk_finder.parse_items(match[1])
+            new_numbers, _ = walk_finder.parse_items(match[2])
+        except walk_finder.UnusableRange:
+            continue
+        if set(new_numbers) <= set(answered_numbers) and not set(held_numbers) <= decided:
+            decided.update(held_numbers)
+            lines.append(CLOSE_ALREADY_DECIDED_MINUTES.format(
+                item=match[1], ruling=HELD_RULING.format(new_item=item), outcome=outcome))
+    return lines
+
+
 def close(arguments):
     walk_finder = load_walk_finder()
     _, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
@@ -1067,8 +1110,11 @@ def close(arguments):
         print("\n".join(output))
         return 0
     total, order, summary = walk_document_items(walk_finder, minutes, value, waiting_numbers, total, parser)
+    # Only a plain decision passes to the items held for this one; after a deferral, a move on or answers to parts
+    # they stay waiting, so the walk shows them to the user.
+    held_outcome = None
     if answered == MOVED_ON:
-        recorded = CLOSE_MOVED_ON_MINUTES.format(item=item)
+        recorded = CLOSE_MOVED_ON_NO_DECISION_MINUTES.format(item=item)
         output = [line.format(item=item) for line in CLOSE_MOVED_ON_LINES]
     elif answered == DEFERRED:
         _, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
@@ -1076,17 +1122,31 @@ def close(arguments):
         recorded = (CLOSE_DEFERRED_AGAIN_MINUTES if again else CLOSE_DEFERRED_MINUTES).format(item=item)
         lines = CLOSE_DEFERRED_AGAIN_LINES if again else CLOSE_DEFERRED_LINES
         output = [line.format(item=item) for line in lines] + statuses
+    elif answered.startswith(MOVED_ON_PREFIX):
+        recorded = CLOSE_MOVED_ON_MINUTES.format(item=item, reason=answered[len(MOVED_ON_PREFIX):])
+        output = [line.format(item=item) for line in CLOSE_NOT_SHOWN_LINES]
+    elif answered.startswith(ALREADY_DECIDED_PREFIX):
+        held_outcome = OUTCOMES[APPROVED]
+        recorded = CLOSE_ALREADY_DECIDED_MINUTES.format(item=item, ruling=answered[len(ALREADY_DECIDED_PREFIX):],
+                                                      outcome=held_outcome)
+        output = ([line.format(item=item) for line in CLOSE_NOT_SHOWN_LINES] + [CLOSE_ALREADY_DECIDED_CHANGE]
+                  + statuses + list(CLOSE_TOOK_EFFECT_NEXT))
     else:
         parts = PART_IN_ANSWER.findall(answered)
         if parts:
             recorded = CLOSE_PARTS_TOOK_EFFECT_MINUTES.format(item=item, parts=", ".join(
                 f"part {number} {word} {OUTCOMES[word]}" for number, word in parts))
         else:
-            outcome = OUTCOMES[DISAPPROVED if answered == DISAPPROVED else APPROVED]
-            recorded = CLOSE_TOOK_EFFECT_MINUTES.format(item=item, answered=answered, outcome=outcome)
+            held_outcome = OUTCOMES[DISAPPROVED if answered == DISAPPROVED else APPROVED]
+            recorded = CLOSE_TOOK_EFFECT_MINUTES.format(item=item, answered=answered, outcome=held_outcome)
         output = ([line.format(item=item) for line in CLOSE_TOOK_EFFECT_LINES] + statuses
                   + list(CLOSE_TOOK_EFFECT_NEXT))
     append_to_minutes(minutes, [recorded])
+    if held_outcome:
+        held = held_items_decided_with(walk_finder, minutes, parser, answered_numbers, item, held_outcome)
+        if held:
+            append_to_minutes(minutes, held)
+        output += [CLOSE_HELD_DECIDED.format(item=item, held=line.split(": ")[0]) for line in held]
     decided, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
     numbers = next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals)
     named = f"item{'s' if numbers[1:] else ''} {' and '.join(numbers)} of {total}"
@@ -1110,6 +1170,11 @@ def main(argv=None):
                              "summary item; records no decision")
     answer.add_argument("--option", type=int, choices=(2, 3),
                         help="check: the answer was O2 or O3, approving the item's \"Option N\" paragraph")
+    answer.add_argument("--already-decided", metavar="USER_RULING",
+                        help="check: not shown, since an earlier user-ruling decides the item as it recommends; "
+                             "USER_RULING cites it")
+    answer.add_argument("--moved-on", metavar="REASON",
+                        help="check: not shown, and the walk moves on from the item with no decision, for REASON")
     answer.add_argument("--part-answer", type=part_answer, action="append", metavar="N=ANSWER",
                         help="check: part N of the item was answered ANSWER, A, AO or D; give it once for each part")
     answer.add_argument("--not-asked", type=int, choices=NOT_ASKED_KINDS, metavar="KIND",
@@ -1117,7 +1182,7 @@ def main(argv=None):
                              "walk-me-through skill's list of items that need no answer, if its evidence lines pass")
     parser.add_argument("--user-reply-as-typed", metavar="REPLY",
                         help="check: the user's reply exactly as he typed it, written into the minutes beside the "
-                             "answer; needed for every answer but --not-asked")
+                             "answer; needed for every answer but --not-asked, --already-decided and --moved-on")
     parser.add_argument("--cwd", default=os.getcwd(), help="a directory in the walk's checkout")
     parser.add_argument("--cold-read-records", type=Path, action="append",
                         help="a cold-read-records directory to search instead of the defaults; repeatable")

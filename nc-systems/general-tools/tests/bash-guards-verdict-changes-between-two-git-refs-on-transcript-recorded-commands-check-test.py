@@ -24,9 +24,9 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py"
-TMUX_KILL_GUARD = "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py"
-ISSUE_WRITE_GUARD = ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py"
-SEARCH_FILE_GUARD = "scripts/search-file-argument-read-as-option-guard-hook.py"
+TMUX_KILL_GUARD = ".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py"
+ISSUE_WRITE_GUARD = ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py"
+SEARCH_FILE_GUARD = ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py"
 SHELL_READER = "nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py"
 
 spec = importlib.util.spec_from_file_location("bash_guards_replay", SCRIPT_PATH)
@@ -392,7 +392,7 @@ try:
     check("a guard whose own `except Exception` surrounds a timed-out read: exit 2, the timeout is not swallowed",
           status == 2 and "TIMEOUT" in out and "NO VERDICT CHANGED" not in out, f"status {status}\n{out}\n{err}")
 
-    codex_guard = "scripts/hand-typed-codex-exec-command-refusal-hook.py"
+    codex_guard = ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py"
     calls_file = Path(scratch) / "codex-guard-calls-on-tmux-kill-server"
 
     def codex_guard_on_tmux_kill_server(code_on_tmux_kill_server):
@@ -553,7 +553,7 @@ try:
     fewer_hooks = commit_with_change(drop_codex_hook, scratch)
     status, out, err = run_replay(fewer_hooks, scratch)
     check("a head whose settings.json lacks a Bash hook the replay reads: exit 2, naming the hook",
-          status == 2 and "replayed but not a Bash hook: ['scripts/hand-typed-codex-exec-command-refusal-hook.py']" in err,
+          status == 2 and "replayed but not a Bash hook: ['.claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py']" in err,
           f"status {status}\n{out}\n{err}")
 
     # In the guard's own directory, so the files it loads beside itself are still found.
@@ -910,7 +910,7 @@ try:
         subprocess.run(["pkill", "-f", str(Path(scratch) / "run-exiting")])
 
     codex_guard, _, _, _ = replay.guards_loaded(REPOSITORY_ROOT, False)
-    codex_path = "scripts/hand-typed-codex-exec-command-refusal-hook.py"
+    codex_path = ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py"
     check("the codex exec guard's reading refuses a hand-typed codex exec and passes ls",
           replay.GUARDS[codex_path](codex_guard[codex_path], 'codex exec -C /tmp/x "do the task"', "/", "/")[0] == "refused"
           and replay.GUARDS[codex_path](codex_guard[codex_path], "ls -la", "/", "/")[0] == "passed",

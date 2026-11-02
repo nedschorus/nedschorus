@@ -58,7 +58,7 @@ shell_reader = _load(
     _REPOSITORY_ROOT / "nc-systems" / "general-tools"
     / "shell-command-tree-sitter-bash-reader-common.py")
 _marker_common = _load("guard_approval_marker_common",
-                       _HOOKS_DIRECTORY / "guard-approval-marker-common.py")
+                       _REPOSITORY_ROOT / ".claude" / "hooks" / "guard-approval-marker-common.py")
 # The instruction-file guard's checkout-root and marker-root lookups, so both
 # guards place their marker files at the same root.
 _instruction_file_guard = _load("instruction_file_guard",

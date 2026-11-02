@@ -27,20 +27,20 @@ docs/walk/
 # per-agent identity files: one agent, one worktree, never committed (ruled on nedschorus#45)
 CLAUDE.local.md
 
-# instruction-file-guard override marker: consumed per approved change (.claude/hooks/instruction-file-guard.py)
+# instruction-file-guard override marker: consumed per approved change (.claude/guard-hooks/instruction-file-guard.py)
 .walk-approved
 
 # session-location-write-guard override marker: same consumed-per-write contract
-# (.claude/hooks/session-location-write-guard.py)
+# (.claude/guard-hooks/session-location-write-guard.py)
 .location-write-approved
 
 # GHI-MD whole-file replacement soft-block reason marker: consumed by the one call it clears
-# (.claude/hooks/ghi-md-whole-file-replacement-soft-block.py)
+# (.claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py)
 .ghi-md-whole-file-replacement-reason
 
 # backup-write-guard override marker, LEGACY: the lane was removed 2026-08-17 —
 # backups are never agent-writable — but a stale marker from before the removal
-# must still never be committed (.claude/hooks/backup-and-snapshot-write-guard.py)
+# must still never be committed (.claude/guard-hooks/backup-and-snapshot-write-guard.py)
 .backup-write-approved
 
 # Python bytecode caches: the test scripts import modules by path, which

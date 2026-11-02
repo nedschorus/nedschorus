@@ -12,7 +12,7 @@ the guard, so the refusal is shown to answer a real misreading: the search
 `-Users-el-agents-x/a.jsonl` as options, these cases would fail and say the
 guard's premise had gone.
 
-Run: python3 scripts/search-file-argument-read-as-option-guard-hook-test.py
+Run: python3 .claude/guard-hooks/search-file-argument-read-as-option-guard-hook-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -614,7 +614,7 @@ finally:
 # so the timeout in .claude/settings.json must stay above the guard's own
 # expansion budget: the guard then always answers first.
 # ---------------------------------------------------------------------------
-SETTINGS_PATH = HOOK_SCRIPT.resolve().parent.parent / ".claude" / "settings.json"
+SETTINGS_PATH = HOOK_SCRIPT.resolve().parents[2] / ".claude" / "settings.json"
 settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
 guard_entries = [
     hook

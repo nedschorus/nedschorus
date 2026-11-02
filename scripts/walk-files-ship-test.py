@@ -1005,7 +1005,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-ssh-") as 
     real_placement = partial.shipper.link_staged_files_never_over_existing
 
     def placement_that_fails(copy_host, staging_dir, walk_path, names):
-        return subprocess.CompletedProcess([], 255, "Disk quota exceeded (injected)", "injected: ssh exit 255\n"), None
+        return subprocess.CompletedProcess([], 255, "Disk quota exceeded (injected)", "injected: ssh exit 255\n"), None, None
 
     def rerun_sentence(module, walks, walk):
         return (f"`{module.REPO_ROOT}/scripts/walk-files-ship.py "
@@ -1299,11 +1299,26 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
           code == 1 and out.startswith(f"FAILED: {LEFT_WALK} — another shipment")
           and f"{store}/{staging_marker}" in out, f"exit {code}: {out}{err}")
 
+    # A first shipment, whose add-only files are placed by the link step, then
+    # whose staging directory stays.
+    walks, store, destination = left_walk_and_store("after-linking")
+    code, out, err = ship_left(walks, destination)
+    check("a shipment whose add-only files are linked into the store but whose staging "
+          "directory cannot be removed is FAILED, exit 1, one line naming the directory, "
+          "why, the command that deletes it, and the minutes' citation",
+          code == 1 and out.startswith(f"FAILED: {LEFT_WALK} — This run's staging directory")
+          and one_line(out) and names_the_directory_and_its_deletion(out, store)
+          and "file(s) added" in out
+          and out.rstrip().endswith(f"minutes at {store}/{LEFT_WALK}-minutes.md")
+          and (store / f"{LEFT_WALK}-draft.md").is_file()
+          and len(list(store.glob(f"{staging_marker}*"))) == 1,
+          f"exit {code}: {out}{err}")
+
     # The same, with an add-only file refused: 1 wins over 2.
     walks, store, destination = left_walk_and_store("refused-too")
     first = ship_left(walks, destination, removal=real_removal)
     # The draft, not the walk text: a rewritten walk text ships as a revised
-    # copy, and placing that copy removes the staging directory itself.
+    # copy, which the link step places, and this case is the one with nothing to place.
     (walks / f"{LEFT_WALK}-draft.md").write_text("# draft, rewritten\n", encoding="utf-8")
     (walks / f"{LEFT_WALK}-minutes.md").write_text("# minutes\n\nItem 2 ruled.\n",
                                                     encoding="utf-8")
@@ -1356,7 +1371,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
     real_left_placement = left.shipper.link_staged_files_never_over_existing
 
     def placement_that_fails_left(copy_host, staging_dir, walk_path, names):
-        return subprocess.CompletedProcess([], 255, "Disk quota exceeded (injected)", "injected: ssh exit 255\n"), None
+        return subprocess.CompletedProcess([], 255, "Disk quota exceeded (injected)", "injected: ssh exit 255\n"), None, None
 
     left.shipper.link_staged_files_never_over_existing = placement_that_fails_left
     try:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for backup-and-snapshot-write-guard.py.
 
-Run: python3 .claude/hooks/backup-and-snapshot-write-guard-test.py
+Run: python3 .claude/guard-hooks/backup-and-snapshot-write-guard-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 

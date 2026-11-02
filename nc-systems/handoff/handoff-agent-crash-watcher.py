@@ -61,7 +61,11 @@ it is seen running again or restarted, however long the refusal lasts. The cases
 alone stay silent, logged only: a stop on purpose, and a seat not seen running
 since the machine booted. A restart it carries out shows no
 notice: recover-crashed-seats.py opens a window on the Mac attached to the
-restarted seat's tmux session. A page or window the Mac cannot be reached for,
+restarted seat's tmux session. The one exception is a restart whose recovery
+output holds `STARTED OUTSIDE THE USER'S SYSTEMD MANAGER` (the constant
+AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER):
+the seat runs, but outside the user's systemd manager, so the test suites' low CPU weight does
+not reach it, and that gets a notice. A page or window the Mac cannot be reached for,
 a notice's or a restarted seat's, stays pending and is tried again on every run. Every decision, each restart
 included, is appended to decisions.jsonl in LOG_DIRECTORY; the notices are
 kept beside it.
@@ -137,6 +141,9 @@ MAC_BROWSER_PAGE_REFUSED_EXIT_STATUS = 2
 # recover-crashed-seats.py's ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS:
 # the seat came up, but its window on the Mac did not open.
 RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS = 3
+
+# recover-crashed-seats.py's AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER.
+AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER = "STARTED OUTSIDE THE USER'S SYSTEMD MANAGER"
 
 SECOND_CRASH_NOTICE_TEMPLATE = (
     "{seat} is down. Its agent-session stopped again at about {died_at} without writing "
@@ -253,6 +260,20 @@ RECOVERY_REFUSES_NOTICE_TEMPLATE = (
     "the window, also in a Terminal on your Mac, with:\n"
     "  {mac_launcher} {seat}\n"
     "The watcher tells you again only after {seat} has run again.\n"
+    "Record: {record}\n"
+)
+
+STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_NOTICE_TEMPLATE = (
+    "{seat} is running again: the crash watcher restarted it after its agent-session "
+    "stopped at about {died_at} without writing a handoff. But on ned-box its tmux server "
+    "could not be started inside your systemd user manager, so while test suites run, "
+    "{seat} gets no more CPU than they do, instead of most of it. Recovery said:\n"
+    "  {reason_line}\n"
+    "{seat} works; only its CPU priority is affected, so do not restart it for this alone. "
+    "Ask an agent on ned-box to find out why the user manager could not be reached, giving "
+    "it this notice: recovery's whole output, in the record named below, gives the commands "
+    "that check it. Once the user manager answers, {seat}'s next start, at its next crash "
+    "recovery or launch, puts it inside the user manager.\n"
     "Record: {record}\n"
 )
 
@@ -732,6 +753,13 @@ class Watcher:
                      recovery_output=output)
             if exit_code == RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS:
                 self.show({"attach_seat": seat})
+            outside_lines = [
+                line.strip() for line in output.splitlines()
+                if AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER in line]
+            if outside_lines:
+                self.write_notice(seat, "started-outside-user-systemd-manager",
+                                  STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_NOTICE_TEMPLATE,
+                                  died_at=clock_text(died_at), reason_line=outside_lines[0])
             return
         if exit_code == 0:
             self.mark_seen_running(record, self.now)

@@ -160,7 +160,7 @@ def run(root, repository, routes, *arguments, path_has_gh=True):
     return completed.returncode, completed.stdout, completed.stderr
 
 
-WRITE_GUARD = Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "session-location-write-guard.py"
+WRITE_GUARD = Path(__file__).resolve().parents[1] / ".claude" / "guard-hooks" / "session-location-write-guard.py"
 PROJECT_GITIGNORE = Path(__file__).resolve().parents[1] / ".gitignore"
 ANSWERS_NAME = f"fix-round-answers-pull-request-{NUMBER}.md"
 

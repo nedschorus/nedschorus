@@ -566,11 +566,35 @@ def run_handoff_worktree_cleanup_cases(workspace: Path):
                    if name in os.environ}
     # The real cleaner's --remove would otherwise append to the real log-store's log of removals.
     os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(workspace / "clean-worktrees-removals-log.txt")
+    # The cleaner lists pull requests with gh; this one lists none and never reaches GitHub.
+    fake_gh_directory = workspace / "fake-gh-listing-no-pull-requests"
+    fake_gh_directory.mkdir()
+    (fake_gh_directory / "gh").write_text("#!/bin/sh\necho '[]'\n", encoding="utf-8")
+    (fake_gh_directory / "gh").chmod(0o755)
+    saved_path = os.environ["PATH"]
+    os.environ["PATH"] = f"{fake_gh_directory}{os.pathsep}{saved_path}"
     try:
         run_handoff_worktree_cleanup_cases_without_git_redirection(workspace)
     finally:
+        os.environ["PATH"] = saved_path
         del os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE]
         os.environ.update(redirecting)
+
+
+def give_worktree_owner_file(worktree: Path, owner_key: str) -> None:
+    """Write the owner file scripts/clean-worktrees.py reads, naming an agent-session."""
+    git_directory = git_in(["rev-parse", "--absolute-git-dir"], worktree).stdout.strip()
+    (Path(git_directory) / "worktree-owner.json").write_text(json.dumps({
+        "owner_kind": "agent-session", "agent_seat": "fixture-seat", "owner_key": owner_key}) + "\n",
+        encoding="utf-8")
+
+
+# A boot id that is not this boot's, so the agent-session counts as stopped; macOS keys have no boot id.
+STOPPED_OWNER_KEY = "0" * 32 + "-1-1" if sys.platform.startswith("linux") else "999999-1"
+
+
+def give_stopped_owner(worktree: Path) -> None:
+    give_worktree_owner_file(worktree, STOPPED_OWNER_KEY)
 
 
 def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
@@ -592,20 +616,27 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
     # and nothing beyond main.
     finished = home / ".claude" / "worktrees" / "finished-worktree"
     git_in(["worktree", "add", "--quiet", "-b", "finished-branch", str(finished)], home)
+    give_stopped_owner(finished)
     unfinished = home / ".claude" / "worktrees" / "unfinished-worktree"
     git_in(["worktree", "add", "--quiet", "-b", "unfinished-branch", str(unfinished)], home)
+    give_stopped_owner(unfinished)
     (unfinished / "notes.txt").write_text("uncommitted\n", encoding="utf-8")
     unlanded = home / ".claude" / "worktrees" / "unlanded-worktree"
     git_in(["worktree", "add", "--quiet", "-b", "unlanded-branch", str(unlanded)], home)
+    # Owned by an agent-session that runs: this test's own process.
+    give_worktree_owner_file(
+        unlanded, supervisor.uncommitted_work_snapshots.owner_key_of_process(os.getpid()))
     (unlanded / "work.txt").write_text("work\n", encoding="utf-8")
     git_in(["add", "-A"], unlanded)
     git_in(["commit", "--quiet", "-m", "unlanded work"], unlanded)
     git_in(["branch", "orphaned-branch"], home)
-    # An Agent-tool subagent's worktree, clean and landed, made a moment ago:
-    # its subagent runs inside its parent claude process, so no process has
-    # its working directory here between the subagent's Bash calls.
+    # An Agent-tool subagent's worktree, clean and landed, made a moment ago: Claude Code
+    # locks it while the subagent runs.
     live_subagent = home / ".claude" / "worktrees" / "agent-0123456789abcdef0"
     git_in(["worktree", "add", "--quiet", "-b", "worktree-agent-0123456789abcdef0",
+            str(live_subagent)], home)
+    git_in(["worktree", "lock", "--reason",
+            f"claude agent agent-0123456789abcdef0 (pid {os.getpid()} start 1)",
             str(live_subagent)], home)
     # Everything the cleaner is to remove is made an hour and a half old.
     long_ago = time.time() - 5400
@@ -619,7 +650,8 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
     check("WORKTREE CLEANUP: a landed, vacant worktree holding an untracked file is removed",
           not unfinished.exists() and "unfinished-branch" not in branches,
           f"{report} {branches}")
-    check("WORKTREE CLEANUP: a worktree with a commit beyond main is kept",
+    check("WORKTREE CLEANUP: a worktree whose owner runs, with a commit beyond main and no pull "
+          "request, is kept",
           unlanded.exists() and "unlanded-branch" in branches, f"{report} {branches}")
     check("WORKTREE CLEANUP: a branch with no worktree and nothing beyond main is deleted",
           "orphaned-branch" not in branches, f"{report} {branches}")
@@ -636,25 +668,32 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           report)
 
     # A done worktree that fails to remove keeps its files, and the summary
-    # must not say they were discarded.
+    # must not say they were discarded. A directory git cannot empty makes the removal fail.
     locked = home / ".claude" / "worktrees" / "locked-worktree"
     git_in(["worktree", "add", "--quiet", "-b", "locked-branch", str(locked)], home)
-    (locked / "held.txt").write_text("held\n", encoding="utf-8")
-    git_in(["worktree", "lock", "--reason", "fixture", str(locked)], home)
-    locked_report = supervisor.remove_finished_worktrees_at_handoff(home)
-    git_in(["worktree", "unlock", str(locked)], home)
+    give_stopped_owner(locked)
+    (locked / "held").mkdir()
+    (locked / "held" / "held.txt").write_text("held\n", encoding="utf-8")
+    (locked / "held").chmod(0o500)
+    try:
+        locked_report = supervisor.remove_finished_worktrees_at_handoff(home)
+    finally:
+        (locked / "held").chmod(0o755)
     check("WORKTREE CLEANUP: a worktree whose removal fails is reported failed, "
           "not as having discarded its files",
-          (locked / "held.txt").exists() and "1 failed" in locked_report
+          (locked / "held" / "held.txt").exists() and "1 failed" in locked_report
           and "held uncommitted" not in locked_report and "0 finished worktree(s) removed"
           in locked_report, locked_report)
     check("WORKTREE CLEANUP: a worktree whose removal fails is named once, among the "
           "failures, with the files it had announced",
           "1 failed: locked-worktree: removal FAILED" in locked_report
-          and "(it had announced: 1 uncommitted, untracked or ignored file(s): held.txt; "
+          and "(it had announced: 1 uncommitted, untracked or ignored file(s): held/held.txt; "
           "those files may be partly gone)" in locked_report
           and "started but not confirmed" not in locked_report
-          and locked_report.count("locked-worktree") == 1, locked_report)
+          and locked_report.count("locked-worktree: ") == 1, locked_report)
+    # The failed removal already dropped git's registration of the worktree; its directory stays.
+    subprocess.run(["rm", "-rf", str(locked)], check=True)
+    git_in(["worktree", "prune"], home)
 
     # A cleaner stopped by the handoff's timeout partway through a removal
     # leaves the announcement and no confirmation.
@@ -716,6 +755,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
         "another read's report\n", encoding="utf-8")
     holding_record = home / ".claude" / "worktrees" / "record-holding-worktree"
     git_in(["worktree", "add", "--quiet", "-b", "record-holding-branch", str(holding_record)], home)
+    give_stopped_owner(holding_record)
     (holding_record / "cold-read-records" / "foo-2026-10-19").mkdir(parents=True)
     (holding_record / "cold-read-records" / "foo-2026-10-19" / "fast-read.md").write_text(
         "this read's report\n", encoding="utf-8")
@@ -753,6 +793,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
     hanging_record_worktree = home / ".claude" / "worktrees" / "hanging-record-worktree"
     git_in(["worktree", "add", "--quiet", "-b", "hanging-record-branch",
             str(hanging_record_worktree)], home)
+    give_stopped_owner(hanging_record_worktree)
     for record_name in ("a-fails-2026-10-19", "b-hangs-2026-10-19"):
         (hanging_record_worktree / "cold-read-records" / record_name).mkdir(parents=True)
         (hanging_record_worktree / "cold-read-records" / record_name / "fast-read.md").write_text(
@@ -809,6 +850,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
     second_finished = home / ".claude" / "worktrees" / "second-finished-worktree"
     git_in(["worktree", "add", "--quiet", "-b", "second-finished-branch",
             str(second_finished)], home)
+    give_stopped_owner(second_finished)
     os.utime(second_finished / ".git", (long_ago, long_ago))
     os.environ["GIT_DIR"] = str(other / ".git")
     try:
@@ -825,6 +867,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
     # writes it, because the worktree and its branch are gone by then.
     unlogged = home / ".claude" / "worktrees" / "unlogged-finished-worktree"
     git_in(["worktree", "add", "--quiet", "-b", "unlogged-finished-branch", str(unlogged)], home)
+    give_stopped_owner(unlogged)
     os.utime(unlogged / ".git", (long_ago, long_ago))
     not_a_directory = root / "removals-log-parent-is-a-file"
     not_a_directory.write_text("", encoding="utf-8")
@@ -1110,7 +1153,8 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     def supervise_a_seat_whose_sessions_die(case: str, deaths, stdin_isatty=True,
                                             adopted_session=None, handoffs_after_launches=(),
                                             resume_session_id="", seat_first_prompt=None,
-                                            transcripts_before_the_supervisor=None):
+                                            transcripts_before_the_supervisor=None,
+                                            transcripts_unreadable_after_launches=()):
         """Supervise a seat whose every session ends without a handoff.
 
         `deaths` is one (exit_code, substantive_turns_written) per launch, in
@@ -1129,6 +1173,9 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
         `successor-<generation>`. `transcripts_before_the_supervisor` maps a
         session id to the substantive turns its transcript already holds when
         the supervisor starts, which is what a startup resume resumes.
+        `transcripts_unreadable_after_launches` names launches, counted from 1,
+        after which that launch's transcript loses its read permission; 0 does
+        the same to the transcripts already there when the supervisor starts.
         """
         case_projects = workspace / f"death-resume-projects-{case}"
         case_projects.mkdir(parents=True, exist_ok=True)
@@ -1148,6 +1195,8 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
                     stream.write(json.dumps(
                         {"type": "assistant",
                          "message": {"model": "claude", "content": "work"}}) + "\n")
+            if 0 in transcripts_unreadable_after_launches:
+                (case_projects / f"{earlier_session_id}.jsonl").chmod(0o000)
         real_wait_for_handoff = supervisor.wait_for_handoff
 
         def wait_for_handoff(process, *arguments):
@@ -1170,9 +1219,11 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
                     stream.write(json.dumps(
                         {"type": "assistant",
                          "message": {"model": "claude", "content": "work"}}) + "\n")
+            if len(launches) in transcripts_unreadable_after_launches:
+                (case_projects / f"{session_id}.jsonl").chmod(0o000)
             return StubLaunchedSession(exit_code)
 
-        console, overran = io.StringIO(), ""
+        console, errors, overran, exit_status = io.StringIO(), io.StringIO(), "", None
         with supervisor_names_replaced(
                 launch_agent_session=launch,
                 project_directory_for_working_directory=lambda _: case_projects,
@@ -1182,15 +1233,17 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
                 carry_over_to_successor=lambda settings, retiring, fields, generation: (
                     f"successor-{generation}", None),
                 stdin_isatty=stdin_isatty), \
-                contextlib.redirect_stdout(console):
+                contextlib.redirect_stdout(console), contextlib.redirect_stderr(errors):
             try:
-                supervisor.supervise_sessions(settings)
-            except RuntimeError as overrun:
+                exit_status = supervisor.supervise_sessions(settings)
+            # A launch onto a transcript made unreadable cannot append to it.
+            except (RuntimeError, PermissionError) as overrun:
                 overran = str(overrun)
         state = supervisor.read_supervisor_state(settings.state_path)
         return SimpleNamespace(
             launches=launches, state_at_each_launch=state_at_each_launch,
-            printed=console.getvalue(), overran=overran, state=state,
+            printed=console.getvalue(), errors=errors.getvalue(), exit_status=exit_status,
+            overran=overran, state=state,
             record=supervisor.agent_exit_record_from_supervisor_state(state))
 
     # 1. A clean exit stops. The ruling: /exit or a headless turn ending is a
@@ -1330,6 +1383,44 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
           and not startup_working.overran,
           f"{startup_working.launches} {startup_working.overran} "
           f"{startup_working.printed[-400:]}")
+    # 5c. A transcript that cannot be read is not a transcript with no work: reading it as
+    # one would spend the resume budget on a guess, or resume a session the agent-binary
+    # cannot read.
+    if os.geteuid() == 0:
+        print("SKIP  UNREADABLE TRANSCRIPT: root can read any file")
+    else:
+        died_unreadable = supervise_a_seat_whose_sessions_die(
+            "deathunreadable", [(-15, 1)], transcripts_unreadable_after_launches=(1,))
+        check("UNREADABLE TRANSCRIPT: a death whose transcript cannot be read stops the "
+              "supervisor with exit 5, records the exit, and resumes nothing",
+              died_unreadable.exit_status == 5 and len(died_unreadable.launches) == 1
+              and not died_unreadable.overran and died_unreadable.record is not None,
+              f"{died_unreadable.exit_status} {died_unreadable.launches} "
+              f"{died_unreadable.overran} {died_unreadable.record}")
+        check("UNREADABLE TRANSCRIPT: and the stop is printed to stderr, naming the "
+              "transcript and the error",
+              "stopped" in died_unreadable.errors
+              and f"{died_unreadable.launches[0][0]}.jsonl" in died_unreadable.errors
+              and "Permission denied" in died_unreadable.errors, died_unreadable.errors)
+        check("UNREADABLE TRANSCRIPT: and the stop names the recovery command for this "
+              "agent-seat, and no cause the error does not state",
+              f"{supervisor.RECOVER_CRASHED_SEATS_SCRIPT} deathdeathunreadable\n"
+              in died_unreadable.errors
+              and supervisor.RECOVER_CRASHED_SEATS_SCRIPT.is_file()
+              and "permissions are fixed" not in died_unreadable.errors, died_unreadable.errors)
+        resume_unreadable = supervise_a_seat_whose_sessions_die(
+            "startupresumeunreadable", [(-15, 0)], resume_session_id="crashed-session",
+            transcripts_before_the_supervisor={"crashed-session": 7},
+            transcripts_unreadable_after_launches=(0,))
+        check("UNREADABLE TRANSCRIPT: a --resume-session-id whose transcript cannot be read "
+              "stops the supervisor with exit 5 before launching",
+              resume_unreadable.exit_status == 5 and not resume_unreadable.launches
+              and not resume_unreadable.overran
+              and "crashed-session.jsonl" in resume_unreadable.errors
+              and "Permission denied" in resume_unreadable.errors,
+              f"{resume_unreadable.exit_status} {resume_unreadable.launches} "
+              f"{resume_unreadable.errors}")
+
     # The by-hand resume: no first prompt, no handoff, no recorded exit, and a
     # real transcript on disk, so the first launch resumes it.
     by_hand_workless = supervise_a_seat_whose_sessions_die(
@@ -1526,6 +1617,10 @@ def run_by_hand_resume_cases(workspace: Path):
               "startup stopped" in errors.getvalue()
               and str(unreadable_projects) in errors.getvalue()
               and "Permission denied" in errors.getvalue(), errors.getvalue())
+        check("BY HAND: and the stop names the recovery command for this agent-seat, and no "
+              "cause the error does not state",
+              f"{supervisor.RECOVER_CRASHED_SEATS_SCRIPT} {settings.agent}\n" in errors.getvalue()
+              and "permissions are fixed" not in errors.getvalue(), errors.getvalue())
 
     # 4. An unconsumed handoff is the fresher truth and boot-ignition takes it,
     # exactly as before: the by-hand resume must not steal a waiting handoff.
