@@ -224,7 +224,7 @@ def run_program_cases(fixture):
     check("a contradicted claim exits 5, and the newest report says so",
           result.returncode == 5 and newest[1].startswith("not all claims supported: 1 contradicted"), (result, newest))
     check("a contradicted claim ends with the next action: correct the statements and run again",
-          last_stdout_line(result) == next_action_line(claim_check.NEXT_ACTION_NOT_ALL_SUPPORTED), result.stdout)
+          last_stdout_line(result) == next_action_line(claim_check.NEXT_ACTION_WHEN_NOT_EVERY_ASSERTION_IS_SUPPORTED), result.stdout)
 
     fixture.answer(claude_stdout=UNSUPPORTED_REPORT)
     result = fixture.run()
@@ -267,13 +267,23 @@ def run_program_cases(fixture):
     check("a malformed report exits 5 and is kept with a malformed result",
           result.returncode == 5 and newest[1] == "malformed: no VERDICT line", (result, newest))
     check("a first malformed report for this overview text ends with the next action: run again",
-          last_stdout_line(result) == next_action_line(claim_check.NEXT_ACTION_MALFORMED_ONCE), result.stdout)
+          last_stdout_line(result) == next_action_line(claim_check.NEXT_ACTION_WHEN_FRESH_AGENT_REPORT_IS_MALFORMED_FIRST_TIME), result.stdout)
     result = fixture.run()
     check("a second malformed report for the same overview text ends with the next action: tell the user",
           result.returncode == 5 and last_stdout_line(result) == next_action_line(
-              claim_check.NEXT_ACTION_MALFORMED_AGAIN.format(
+              claim_check.NEXT_ACTION_WHEN_FRESH_AGENT_REPORT_IS_MALFORMED_AGAIN.format(
                   directory=claim_check.overview_write_architecture_overview_claim_check_report_directory_for_overview(
                       fixture.reports, OVERVIEW), blob=blob)), result.stdout)
+
+    undecodable_report = claim_check.overview_write_architecture_overview_claim_check_report_directory_for_overview(
+        fixture.reports, OVERVIEW) / f"{blob}-x.md"
+    undecodable_report.write_bytes(b"\xff\xfe not UTF-8\n")
+    result = fixture.run()
+    undecodable_report.unlink()
+    check("a program defect, here an earlier report that is not UTF-8, exits 2 and ends with the next action for exit 2",
+          result.returncode == 2 and "program defect" in result.stderr
+          and last_stdout_line(result) == next_action_line(claim_check.NEXT_ACTION_BY_EXIT_CODE[2]),
+          (result.returncode, result.stdout, result.stderr))
 
     count = len(fixture.reports_written())
     fixture.answer(claude_stdout="", claude_exit=1)

@@ -53,9 +53,9 @@ still written, and its result printed.
 
 The last line printed, on stdout, starts with "Next: " and says what to do for
 that exit, so the overview-write skill's step 3 is only to do what it says.
-For exit 5 it tells a malformed report apart from contradicted or unsupported
-claims, and sends the second malformed report for the same overview text to
-the user.
+For exit 5 the program tells a malformed report apart from contradicted or
+unsupported claims; on the second malformed report for the same overview text,
+its last line tells the agent to bring the report to the user.
 """
 
 import argparse
@@ -138,13 +138,13 @@ NEXT_ACTION_BY_EXIT_CODE = {
     6: "every assertion is supported, but the temporary worktree could not be removed. Push your branch, then do "
        "the clean-up the lines above give.",
 }
-NEXT_ACTION_NOT_ALL_SUPPORTED = (
+NEXT_ACTION_WHEN_NOT_EVERY_ASSERTION_IS_SUPPORTED = (
     "open the report named above. For each verdict you believe is wrong, answer it as step 4 of the overview-write "
     "skill (.claude/skills/overview-write/SKILL.md) says, and leave that statement as it is. Correct or remove each "
     "other contradicted statement in the overview; in each other unsupported statement, name the repository files "
     "that bear it out, or remove the statement. Commit, then run this program again.")
-NEXT_ACTION_MALFORMED_ONCE = "the fresh-agent's report is malformed. Run this program again."
-NEXT_ACTION_MALFORMED_AGAIN = (
+NEXT_ACTION_WHEN_FRESH_AGENT_REPORT_IS_MALFORMED_FIRST_TIME = "the fresh-agent's report is malformed. Run this program again."
+NEXT_ACTION_WHEN_FRESH_AGENT_REPORT_IS_MALFORMED_AGAIN = (
     "the fresh-agent's report for this overview text is malformed for the second time or more. Tell the user, giving "
     "the report paths in {directory} whose names start with {blob}, and stop.")
 
@@ -347,11 +347,11 @@ def check_overview_claims(arguments):
         f"writer answers: {writer_answers or 'none'}\n{RESULT_LINE_PREFIX}{result}\n\n{report}", encoding="utf-8")
     print(f"{PROGRAM}: {result}. Report: {destination}")
     if not result.startswith("malformed"):
-        next_action_when_not_all_supported = NEXT_ACTION_NOT_ALL_SUPPORTED
+        next_action_when_not_all_supported = NEXT_ACTION_WHEN_NOT_EVERY_ASSERTION_IS_SUPPORTED
     elif malformed_report_count_for_overview_git_blob(destination_directory, blob) < 2:
-        next_action_when_not_all_supported = NEXT_ACTION_MALFORMED_ONCE
+        next_action_when_not_all_supported = NEXT_ACTION_WHEN_FRESH_AGENT_REPORT_IS_MALFORMED_FIRST_TIME
     else:
-        next_action_when_not_all_supported = NEXT_ACTION_MALFORMED_AGAIN.format(directory=destination_directory,
+        next_action_when_not_all_supported = NEXT_ACTION_WHEN_FRESH_AGENT_REPORT_IS_MALFORMED_AGAIN.format(directory=destination_directory,
                                                                                blob=blob)
     arguments.next_action_when_not_all_supported = next_action_when_not_all_supported
     if result != OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED:
