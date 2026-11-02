@@ -9,9 +9,9 @@ contract, the write-detection rule, and why the reviewer writes a file rather
 than answering in chat.
 
 Usage:
-  nc-systems/cold-read/cold-read-claude-cell.py --cell restate --tier second-strongest-model \\
+  nc-systems/cold-read/cold-read-claude-cell.py --cell defect-hunt --tier second-strongest-model \\
       --target docs/drafts/foo.md \\
-      --report cold-read-records/foo-2026-01-01/claude-restate-second-strongest-model.md
+      --report cold-read-records/foo-2026-01-01/claude-defect-hunt-second-strongest-model.md
 
 The cold-read-tier `second-strongest-model` asks for the agent-binary's
 second-strongest model. The cold-read-tier `fast` runs Claude Sonnet at low

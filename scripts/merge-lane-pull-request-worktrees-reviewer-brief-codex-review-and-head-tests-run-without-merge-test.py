@@ -16,10 +16,13 @@ Run: python3 scripts/merge-lane-pull-request-worktrees-reviewer-brief-codex-revi
 import importlib.util
 import json
 import os
+import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
@@ -54,13 +57,35 @@ if sys.argv[-1] == os.environ["MERGE_LANE_RUN_WITHOUT_MERGE_TEST_GIT_TRIGGER"] +
 os.execv(os.environ["MERGE_LANE_RUN_WITHOUT_MERGE_TEST_REAL_GIT"], ["git", *sys.argv[1:]])
 '''
 
+# When MERGE_LANE_RUN_WITHOUT_MERGE_TEST_MEETING_DIRECTORY is set, each stub
+# named in MERGE_LANE_RUN_WITHOUT_MERGE_TEST_MEETING_STEPS marks there that it
+# started, and waits up to 20 seconds until all of them have, exiting 9 if they
+# never do: steps run one after another never all meet.
 STUB_STEP = r'''#!/usr/bin/env python3
-import json, os, sys
+import json, os, sys, time
 from pathlib import Path
 step = Path(__file__).name
 with open(os.environ["MERGE_LANE_RUN_WITHOUT_MERGE_TEST_STEP_LOG"], "a") as log:
     log.write(json.dumps({"step": step, "argv": sys.argv[1:],
                           "git_dir": os.environ.get("GIT_DIR")}) + "\n")
+meeting = os.environ.get("MERGE_LANE_RUN_WITHOUT_MERGE_TEST_MEETING_DIRECTORY")
+meeting_steps = os.environ.get("MERGE_LANE_RUN_WITHOUT_MERGE_TEST_MEETING_STEPS", "").split()
+if meeting and step in meeting_steps:
+    (Path(meeting) / step).touch()
+    deadline = time.monotonic() + 20
+    while not all((Path(meeting) / other).exists() for other in meeting_steps):
+        if time.monotonic() > deadline:
+            print(step + " never met the other steps")
+            sys.exit(9)
+        time.sleep(0.05)
+    if os.environ.get("MERGE_LANE_RUN_WITHOUT_MERGE_TEST_HANG"):
+        (Path(meeting) / (step + ".pid")).write_text(str(os.getpid()))
+        time.sleep(120)
+if os.environ.get("MERGE_LANE_RUN_WITHOUT_MERGE_TEST_SIGNALLED_STEP") == step:
+    import signal
+    os.kill(os.getpid(), signal.SIGKILL)
+for number in range(int(os.environ.get("MERGE_LANE_RUN_WITHOUT_MERGE_TEST_EXTRA_LINES", "0"))):
+    print(f"{step} extra line {number}")
 print(step + " stub output")
 sys.exit(int(os.environ.get("MERGE_LANE_RUN_WITHOUT_MERGE_TEST_FAILING_STEP_EXIT", "0"))
          if os.environ.get("MERGE_LANE_RUN_WITHOUT_MERGE_TEST_FAILING_STEP") == step else 0)
@@ -149,6 +174,16 @@ def head_of(checkout):
     return git(checkout, "rev-parse", "HEAD")
 
 
+def ran_in_order_then_together(calls, steps):
+    """Whether the calls are steps[:2] in order, then the rest in any order."""
+    names = [call["step"] for call in calls]
+    return names[:2] == list(steps[:2]) and sorted(names[2:]) == sorted(steps[2:])
+
+
+def argv_of(calls, step):
+    return next((call["argv"] for call in calls if call["step"] == step), None)
+
+
 def main():
     scratch = Path(tempfile.mkdtemp(prefix="merge-lane-run-without-merge-test-")).resolve()
     try:
@@ -171,12 +206,12 @@ def main():
         completed, calls, specifications_file = run_program(scratch, checkout, helpers,
                                                             [first_round])
         detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}"
-        check("a first round with no head or main runs all five steps in order and exits 0",
-              completed.returncode == 0 and [call["step"] for call in calls] == list(STEPS),
-              detail)
+        check("a first round with no head or main runs steps 1 and 2 in order, then steps 3 "
+              "to 5, and exits 0",
+              completed.returncode == 0 and ran_in_order_then_together(calls, STEPS), detail)
         check("each step gets the one head and main commit, the filled-in copy, the merge "
               "base as the Codex base, and both directory options",
-              [call["argv"] for call in calls] == [
+              [argv_of(calls, step) for step in STEPS] == [
                   ["7", head_commit, main_commit, *directory_options],
                   [str(filled_in_file), *directory_options],
                   ["7", merge_base, *directory_options],
@@ -196,7 +231,9 @@ def main():
               "nothing was merged",
               f"PR 7: head {head_commit}, main {main_commit}, Codex review base {merge_base} "
               f"(merge base)" in completed.stdout
-              and all(f"{step} stub output" in completed.stdout for step in STEPS)
+              and all(f"{step} stub output" in completed.stdout for step in STEPS[:2])
+              and all(f"step {position} of 5 | {step} stub output" in completed.stdout
+                      for position, step in enumerate(STEPS[2:], start=3))
               and completed.stdout.rstrip().endswith(
                   "PR 7: all 5 steps exited 0; nothing was merged."), detail)
 
@@ -205,7 +242,7 @@ def main():
         detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}"
         check("an entry whose claude_reviewer is false runs steps 1 to 4, skips step 5 and says "
               "why, and exits 0",
-              completed.returncode == 0 and [call["step"] for call in calls] == list(STEPS[:4])
+              completed.returncode == 0 and ran_in_order_then_together(calls, STEPS[:4])
               and f"step 5 of 5: {STEPS[4]}: skipped, because the entry's claude_reviewer is "
                   f"false" in completed.stdout
               and completed.stdout.rstrip().endswith(
@@ -221,7 +258,7 @@ def main():
         check("a fix-round's Codex base is the full nc-head-commit reviewed before, and "
               "abbreviated commits in the file and the option are accepted",
               completed.returncode == 0 and len(calls) == 5
-              and calls[2]["argv"] == ["7", head_reviewed_before, *directory_options]
+              and argv_of(calls, STEPS[2]) == ["7", head_reviewed_before, *directory_options]
               and "(nc-head-commit reviewed before)" in completed.stdout, detail)
         filled_in = json.loads(filled_in_file.read_text())
         check("a head named in the file is replaced by its full commit in the filled-in copy",
@@ -249,7 +286,7 @@ def main():
               and "exited 128: fatal: injected repository failure" in completed.stdout
               and "is not a commit in" not in completed.stdout, detail)
 
-        for position, step in enumerate(STEPS, start=1):
+        for position, step in enumerate(STEPS[:2], start=1):
             completed, calls, _ = run_program(scratch, checkout, helpers, [first_round],
                                               failing_step=step, failing_exit="5")
             detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}"
@@ -260,6 +297,109 @@ def main():
                   and f"PR 7: stopped at step {position} of 5, {step}, which exited 5; "
                       f"no later step ran, and nothing was merged." in completed.stdout,
                   detail)
+
+        meeting = scratch / "meeting"
+
+        def run_with_meeting(entry, failing_step, meeting_steps):
+            shutil.rmtree(meeting, ignore_errors=True)
+            meeting.mkdir()
+            return run_program(
+                scratch, checkout, helpers, [entry], failing_step=failing_step,
+                failing_exit="5", environment_changes={
+                    "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_MEETING_DIRECTORY": str(meeting),
+                    "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_MEETING_STEPS": " ".join(meeting_steps)})
+
+        for position, step in enumerate(STEPS[2:], start=3):
+            completed, calls, _ = run_with_meeting(first_round, step, STEPS[2:])
+            detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}"
+            others = [f"step {other} exited 0, so its review is posted;" if other == 5
+                      else f"step {other} exited 0;" for other in (3, 4, 5) if other != position]
+            check(f"step {position} failing while the other two of steps 3 to 5 run with it "
+                  f"names it, its exit code and what the other two did, and exits 1",
+                  completed.returncode == 1 and ran_in_order_then_together(calls, STEPS)
+                  and f"step {position}, {step}, exited 5" in completed.stdout
+                  and all(other in completed.stdout for other in others)
+                  and "never met the other steps" not in completed.stdout
+                  and completed.stdout.count("nothing was merged.") == 1, detail)
+            expected_arguments = {3: ["7", merge_base], 4: ["7"], 5: ["7", "7a", head_commit]}
+            rerun_line = (f"  step {position}: "
+                          + shlex.join([sys.executable, str(checkout / "scripts" / step),
+                                        *expected_arguments[position], *directory_options]))
+            check(f"step {position} failing ends with that step's own command, with the same "
+                  f"commits, and no other step's",
+                  completed.stdout.rstrip().endswith(rerun_line)
+                  and all(f"  step {other}: " not in completed.stdout
+                          for other in (3, 4, 5) if other != position),
+                  f"expected last line {rerun_line!r}\n{detail}")
+
+        completed, calls, _ = run_with_meeting({**first_round, "claude_reviewer": False},
+                                               STEPS[3], STEPS[2:4])
+        check("a failed step, with step 5 skipped, says step 5 was skipped",
+              completed.returncode == 1
+              and f"PR 7: step 3 exited 0; step 4, {STEPS[3]}, exited 5; step 5 was skipped; "
+                  f"nothing was merged." in completed.stdout,
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}")
+
+        completed, calls, _ = run_program(
+            scratch, checkout, helpers, [first_round], environment_changes={
+                "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_SIGNALLED_STEP": STEPS[3]})
+        check("a step killed by a signal, whose exit code is negative, counts as failed",
+              completed.returncode == 1
+              and f"step 4, {STEPS[3]}, exited -9" in completed.stdout,
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}")
+
+        completed, calls, _ = run_program(
+            scratch, checkout, helpers, [first_round], environment_changes={
+                "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_EXTRA_LINES": "3000"})
+        check("every line of steps 3 to 5 is passed through before the run's last line",
+              completed.returncode == 0
+              and all(f"step {position} of 5 | {step} extra line 2999" in completed.stdout
+                      for position, step in enumerate(STEPS[2:], start=3))
+              and completed.stdout.rstrip().endswith(
+                  "PR 7: all 5 steps exited 0; nothing was merged."),
+              f"exit {completed.returncode}\n{completed.stdout[-2000:]}{completed.stderr}")
+
+        shutil.rmtree(meeting, ignore_errors=True)
+        meeting.mkdir()
+        (scratch / "brief-specifications.json").write_text(json.dumps([first_round]))
+        interrupted = subprocess.Popen(
+            [sys.executable, str(PROGRAM), "7", str(scratch / "brief-specifications.json"),
+             *directory_options], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env={**{key: value for key, value in GIT_ENVIRONMENT.items()
+                    if not key.startswith(("GIT_AUTHOR_", "GIT_COMMITTER_"))},
+                 "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_STEP_LOG": str(scratch / "steps.log"),
+                 "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_MEETING_DIRECTORY": str(meeting),
+                 "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_MEETING_STEPS": " ".join(STEPS[2:]),
+                 "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_HANG": "1"})
+        pid_files = [meeting / (step + ".pid") for step in STEPS[2:]]
+        deadline = time.monotonic() + 30
+        while not all(pid_file.exists() and pid_file.read_text() for pid_file in pid_files):
+            if time.monotonic() > deadline or interrupted.poll() is not None:
+                break
+            time.sleep(0.05)
+        step_pids = [int(pid_file.read_text()) for pid_file in pid_files
+                     if pid_file.exists() and pid_file.read_text()]
+        interrupted.send_signal(signal.SIGINT)
+        try:
+            interrupted.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            interrupted.kill()
+            interrupted.communicate()
+        time.sleep(0.5)
+
+        def alive(pid):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return False
+            return True
+        still_running = [pid for pid in step_pids if alive(pid)]
+        for pid in still_running:
+            os.kill(pid, signal.SIGKILL)
+        check("an interrupt while steps 3 to 5 run kills all three steps",
+              len(step_pids) == 3 and still_running == [] and interrupted.returncode != 0,
+              f"step pids {step_pids}, still running {still_running}, exit "
+              f"{interrupted.returncode}")
 
         generic_instruction = ("If the message above names a cause you can fix, fix it and "
                                "run this again.\nOtherwise, tell the user this message.")
@@ -468,7 +608,7 @@ def main():
         completed, calls, _ = run_program(scratch, checkout, helpers, [first_round])
         check("a step script that only main has is found after the worktree is moved to main, "
               "and all five steps run",
-              completed.returncode == 0 and [call["step"] for call in calls] == list(STEPS)
+              completed.returncode == 0 and ran_in_order_then_together(calls, STEPS)
               and head_of(checkout) == main_with_step,
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}")
     finally:

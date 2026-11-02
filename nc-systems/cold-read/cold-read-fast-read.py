@@ -70,7 +70,7 @@ walk route it is scratch.
 
 WHERE THE REPORT GOES. A walk draft, `docs/walk/<name>-draft.md` in this
 checkout or in any other git worktree, gets its suggestions file beside it:
-`docs/walk/<name>-suggestions.md`, which is what the walk reads next.
+`docs/walk/<name>-cold-read-fast-read.md`, which is what the walk reads next.
 Anything else -- a design, a skill, a record copy, a file in no git
 worktree -- gets a cold-read-record of its own under the
 gitignored records tree:
@@ -314,9 +314,7 @@ FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES = FAST_CLARIFY_PROMPT_TEMPLATE[
 COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE = (
     "Read {TARGET_PATH} in full, including any YAML frontmatter, and answer one "
     "question about it. " + FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES + " Read all of them, then answer the "
-    "question for each document. The question is numbered 4 because another "
-    "reviewer answers Questions 1 to 3 about the same text, and the program that "
-    "runs you puts your report after theirs.\n\n"
+    "question for each document.\n\n"
     + WHAT_SHOULD_BE_CODE_QUESTION + "\n\n"
     "Write your report to {REPORT_PATH}, once, when your analysis is complete. Do "
     "not write the question's heading: the program that runs you puts your report "
@@ -348,7 +346,7 @@ WALK_DRAFT_SUFFIX = "-draft.md"
 # Both endings are the walk-me-through skill's to name; this program only
 # follows them, and scripts/walk-file-endings-match-the-skill-test.py fails
 # if these two drift from what .claude/skills/walk-me-through/SKILL.md says.
-WALK_SUGGESTIONS_SUFFIX = "-suggestions.md"
+WALK_SUGGESTIONS_SUFFIX = "-cold-read-fast-read.md"
 
 # WHICH DOCUMENTS THIS READ DOES NOT FINISH. The /cold-read skill's step 2
 # sends a class of documents to the cold-read-full-run and gives everything

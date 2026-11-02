@@ -26,9 +26,13 @@ THE TEXT CHECKED is the reply, line by line, without:
   of the item, from its heading to its answer line, is left out, and so is
   one matching the answer line's first sentence, the walk-me-through skill's
   answer line without what the item adds after it, such as ` D: <the
-  alternative>`; lines match when they are equal once markdown emphasis,
-  heading and list marks, a hashtag marker opening the line, such as `#new `
-  or `#new_if_d `, link targets, spacing and case are dropped;
+  alternative>`; and one showing a line of the item that opens with the
+  mark `#new` or `#new_if_d` as the agent shows it, the mark replaced by
+  `If you approve, the new text:` or `If you disapprove, the new text:` and
+  a `The new text:` just after the mark dropped; lines match when they are
+  equal once markdown emphasis, heading and list marks, a hashtag marker
+  opening the line, such as `#new ` or `#new_if_d `, link targets, spacing
+  and case are dropped;
 - fenced and indented code and code spans;
 - quoted text, `"..."`, `“...”` or a `>` line, that the walk-document holds;
 - a waiting item's closing line, the line the walk-me-through skill ends
@@ -47,11 +51,11 @@ THE TEXT CHECKED is the reply, line by line, without:
   outside the link but the answer letters, such as a list mark, bold marks or
   a sentence, or that names another item or total, is checked;
 - the line a sub-step that asks for no decision ends with, `[No decision
-  here; type N or next to continue.](<page link>)`, alone on its line, when a
-  waiting item is a sub-step, with a dotted number such as `Item 4.1 of 9`;
-  the link target is not compared, as the closing line's is not; and the
-  same line without its link when the newest `#item_page` line of a waiting
-  sub-step records a failed publish;
+  here; type N or next to continue.](<page link>)` or the same line without
+  its link, alone on its line, whatever item waits: it only tells the user
+  how to move on, and whether it may end this message is the current-item
+  Stop hook's check, which refuses it for an item without a dotted number
+  such as `Item 4.1 of 9`;
 - a sentence that only names waiting items, `Item 4 of 9 is waiting for your
   answer.`, the line the walk-me-through skill ended every message with before
   the closing line, when every item it names is waiting and its total is the
@@ -62,11 +66,15 @@ THE TEXT CHECKED is the reply, line by line, without:
 
 EACH LINE is one of three:
 - a clear ask: a sentence ending in `?`, or a phrase in CLEAR_ASK such as
-  `say yes`, `should I` or `waiting for your answer`; it blocks, unless the
-  line also names an item by number, which makes it unclear, because a
-  reminder of a walk item's own question asks nothing new;
-- unclear: a `?` inside the line, or a phrase in UNCLEAR_ASK such as `I
-  recommend` or `whether to`;
+  `say yes`, `should I` or `waiting for your answer` outside quoted text; it
+  blocks, unless the line also names an item by number, which makes it
+  unclear, because a reminder of a walk item's own question asks nothing new;
+- unclear: a `?` inside the line, a phrase in CLEAR_ASK inside quoted text,
+  such as a quoted title or a quoted line of the walk-me-through skill, which
+  may only be named and not asked, or a phrase in UNCLEAR_ASK such as `I
+  recommend`, `whether to`, or an answer cue followed by a hyphen, as in
+  `type A-D` or `say yes-or-no`, apart from `no-decision` and `no-op`, which
+  are words and pass;
 - not question-like: everything else; it passes.
 When no line is a clear ask and some are unclear, the unclear lines go to
 the model MODEL in one headless `claude -p` call, which is shown the text of
@@ -77,7 +85,7 @@ it asks the user something else. Code turns the two answers into one of three
 labels, and asking something else wins:
 AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE when the second answer is
 yes, else AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION when
-the first is, else AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING. The hook
+the first is, else AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION. The hook
 blocks on the first line labelled
 AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE. The child runs with every hook disabled, so this
 hook cannot run inside it, no session file, no tools, and a cwd outside any
@@ -169,14 +177,19 @@ WAITING_REMINDER = re.compile(
     re.I)
 CLEAR_ASK = re.compile(
     # The letter A is matched in capitals only, because a lowercase `a` there is the article, as in `answer a finding`.
-    r"\b(?:say|reply|answer|type)\s+(?:yes|no|y|n|ao|d|(?-i:A))\b|\bon\s+(?:a|your)\s+(?:yes|no)\b"
+    r"\b(?:say|reply|answer|type)\s+(?:yes|no|y|n|ao|d|(?-i:A))\b(?!-)|\bon\s+(?:a|your)\s+(?:yes|no)\b(?!-)"
     r"|\byour\s+yes\s+or\s+no\b|\bdo\s+you\s+(?:want|agree)\b|\bshould\s+I\b|\bshall\s+I\b|\bwant\s+me\s+to\b"
     r"|\bwould\s+you\s+like\b|\bwaiting\s+(?:on|for)\s+your\s+(?:answer|word|decision|ruling|approval|go-ahead|yes)\b"
     r"|\bneeds?\s+your\s+(?:answer|decision|ruling|approval|word|go-ahead|yes)\b"
     r"|\b(?:tell\s+me|let\s+me\s+know)\s+(?:if|whether|which)\b|\bplease\s+(?:confirm|approve|decide|choose|pick|rule)\b",
     re.I)
+# `no-decision` and `no-op` after an answer cue are words, not answers; any other hyphen after one, as in `type A-D`,
+# may still be an answer, so the model judges it.
+HYPHENATED_ANSWER_CUE_WORDS_THAT_ASK_NOTHING = r"(?:decision|op)\b"
 UNCLEAR_ASK = re.compile(
-    r"\brecommend|^\W*recommendation:|\bI\s+suggest\b|\blet\s+me\s+know\b|\btell\s+me\b|\basking\s+you\b"
+    r"\b(?:say|reply|answer|type)\s+(?:yes|no|y|n|ao|d|(?-i:A))-(?!" + HYPHENATED_ANSWER_CUE_WORDS_THAT_ASK_NOTHING + r")"
+    r"|\bon\s+(?:a|your)\s+(?:yes|no)-(?!" + HYPHENATED_ANSWER_CUE_WORDS_THAT_ASK_NOTHING + r")"
+    r"|\brecommend|^\W*recommendation:|\bI\s+suggest\b|\blet\s+me\s+know\b|\btell\s+me\b|\basking\s+you\b"
     r"|\bwaiting\s+(?:on|for)\s+(?:you|your)\b|\bstill\s+open\b|\bneeds?\s+(?:you|your)\b|\bwhether\s+(?:I|to|we)\b"
     r"|\bA\s+or\s+D\b|\bY\s+or\s+N\b|\brule\s+once\b|\byou(?:'d|\s+would|\s+must|\s+need\s+to)?\s+rule\s+on\b"
     r"|\byour\s+(?:yes|word|call|go-ahead|approval|decision|choice|pick|ruling)\b"
@@ -193,13 +206,16 @@ LINE_MARKS = re.compile(r"^\s*(?:(?:[-+*>]|\d+[.)])\s+)+")
 HASHTAG_MARKER = re.compile(r"^#\w+\s+")
 EMPHASIS_AND_SPACING = re.compile(r"[\s*_#>`]+")
 ANSWER_LINE_START = "answer a to approve"
+NEW_TEXT_LINE = re.compile(r"^(#new(?:_if_d)?)[:\s]+(?i:the\s+new\s+text:\s*)?(.*)$")
+NEW_TEXT_SHOWN_AS = {"#new": "If you approve, the new text: ", "#new_if_d": "If you disapprove, the new text: "}
 
 AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION = "concerns_only_a_waiting_item_decision"
 AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE = "asks_something_else"
-AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING = "asks_nothing"
-MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION = "concerns_a_waiting_item_decision"
-MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE = "asks_something_else"
-MODEL_ANSWERS = (MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION, MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE)
+AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION = "asks_nothing"
+AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER = "concerns_a_waiting_item_decision"
+AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER = "asks_something_else"
+MODEL_ANSWERS = (AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER,
+                 AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER)
 MODEL_SCHEMA = {"type": "object",
                 "properties": {"lines": {"type": "array", "items": {
                     "type": "object",
@@ -353,16 +369,22 @@ def interruption_item_texts(document_text, units, waiting_numbers, parser):
     return texts
 
 
+def new_text_as_shown(line):
+    """The `#new` or `#new_if_d` line as the agent shows it to the user, or None for any other line."""
+    new_text = NEW_TEXT_LINE.match(LINE_MARKS.sub("", line.strip()))
+    return NEW_TEXT_SHOWN_AS[new_text[1]] + new_text[2] if new_text else None
+
+
 def shown_item_lines(reply_lines, document_lines, units):
-    """The normalized lines, heading to answer line, of every unit whose heading a reply line matches, and the answer
-    line's answer sentence alone."""
+    """The normalized lines, heading to answer line, of every unit whose heading a reply line matches, the answer
+    line's answer sentence alone, and each `#new` or `#new_if_d` line as the agent shows it."""
     reply_set = normalized_lines(reply_lines)
     shown = set()
     for _, _, _, first, end in units:
         if normalized(document_lines[first]) not in reply_set:
             continue
         for line in document_lines[first:end]:
-            shown |= normalized_lines([line])
+            shown |= normalized_lines([line, new_text_as_shown(line) or ""])
             if normalized(line).startswith(ANSWER_LINE_START):
                 shown |= normalized_lines([answer_sentence(line)])
                 break
@@ -379,15 +401,6 @@ def is_closing_line(line, waiting_numbers, total, pages):
     return (line_total == total and set(numbers) <= set(waiting_numbers)
             and (link is not None or all(pages.get(number) == walk_finder.ITEM_PAGE_PUBLISH_FAILED
                                          for number in numbers)))
-
-
-def is_no_decision_line(line, waiting_numbers, pages):
-    """Whether line is the no-decision line of a waiting sub-step, as the module docstring's THE TEXT CHECKED says."""
-    link = walk_finder.approval_walk_sub_step_no_decision_closing_line_page_link_or_none(line)
-    sub_steps = [number for number in waiting_numbers if "." in number]
-    return link is not None and bool(sub_steps) and (
-        link != walk_finder.ITEM_PAGE_PUBLISH_FAILED
-        or any(pages.get(number) == walk_finder.ITEM_PAGE_PUBLISH_FAILED for number in sub_steps))
 
 
 def is_waiting_reminder(sentence, waiting_numbers, totals):
@@ -414,7 +427,7 @@ def checked_lines(reply, document_text, units, parser, waiting_numbers, total, p
     kept, written, introduced_list = [], [], False
     for line in lines:
         if (normalized(line) in shown or is_closing_line(line, waiting_numbers, total, pages)
-                or is_no_decision_line(line, waiting_numbers, pages)):
+                or walk_finder.approval_walk_sub_step_no_decision_closing_line_page_link_or_none(line) is not None):
             continue
         if line.lstrip().startswith(">") and normalized(line) in normalized_document:
             continue
@@ -442,9 +455,9 @@ def checked_lines(reply, document_text, units, parser, waiting_numbers, total, p
 def line_kind(line):
     """`clear`, `unclear` or None, as the module docstring's EACH LINE says."""
     ends_in_question = any(sentence.rstrip(TRAILING_MARKS).endswith("?") for sentence in SENTENCE_END.split(line))
-    if ends_in_question or CLEAR_ASK.search(line):
+    if ends_in_question or CLEAR_ASK.search(QUOTED.sub(" ", line)):
         return "unclear" if ITEM_REFERENCE.search(line) else "clear"
-    if "?" in line or UNCLEAR_ASK.search(line):
+    if "?" in line or CLEAR_ASK.search(line) or UNCLEAR_ASK.search(line):
         return "unclear"
     return None
 
@@ -457,7 +470,8 @@ def model_judgement(message_lines, unclear_lines, total, waiting, waiting_items_
     prompt = MODEL_PROMPT_TEMPLATE.format(
         total=total, waiting_items=waiting_items_text,
         waiting_phrase=f"items {waiting} wait" if " and " in waiting else f"item {waiting} waits",
-        concerns_answer=MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION, asks_else_answer=MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE,
+        concerns_answer=AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER,
+        asks_else_answer=AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER,
         message="\n".join(message_lines),
         lines="\n".join(f"{number}. {line}" for number, line in enumerate(unclear_lines, 1)))
     command = ["claude", "-p", "--model", MODEL, "--output-format", "json",
@@ -481,14 +495,14 @@ def model_judgement(message_lines, unclear_lines, total, waiting, waiting_items_
         return None, f"claude exited {completed.returncode} without a verdict ({error!r}): {detail}"
     if completed.returncode != 0 or result.get("is_error"):
         return None, f"claude exited {completed.returncode} reporting an error: {str(result.get('result'))[:300]}"
-    labels = line_labels(entries, len(unclear_lines))
+    labels = agent_reply_line_model_labels_from_true_or_false_model_answers(entries, len(unclear_lines))
     if labels is None:
         return None, (f"claude's verdict does not give each of the {len(unclear_lines)} numbered lines exactly one "
                       f"entry with a true or false {' and '.join(MODEL_ANSWERS)}: {json.dumps(verdict)[:300]}")
     return next((line for line, label in zip(unclear_lines, labels) if label == AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE), None), None
 
 
-def line_labels(entries, count):
+def agent_reply_line_model_labels_from_true_or_false_model_answers(entries, count):
     """The labels of lines 1 to count, in order, or None unless entries give each of those lines exactly one entry
     with a boolean for each of MODEL_ANSWERS and name no other line. Asking something else wins over concerning a
     waiting item's decision."""
@@ -502,7 +516,7 @@ def line_labels(entries, count):
             return None
         labels[number] = (AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE if asks_else else
                           AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION if concerns else
-                          AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING)
+                          AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION)
     if sorted(labels) != list(range(1, count + 1)):
         return None
     return [labels[number] for number in range(1, count + 1)]

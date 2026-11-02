@@ -465,13 +465,14 @@ def test_a_failed_model_check_blocks():
         check("a model call past its time limit is a failure",
               line is None and "no answer within 1 seconds" in (failure or ""), failure)
         for mode, expected in (("yes:3", "c"), ("yes:2", "b"), ("no", None), ("waiting", None),
-                               (f'labels:["{hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING}", "{hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION}", '
+                               (f'labels:["{hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION}", "{hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION}", '
                                 f'"{hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE}"]', "c")):
             os.environ["FAKE_CLAUDE_MODE"] = mode
             line, failure = hook.model_judgement(["a", "b", "c"], ["a", "b", "c"], "10", "2", "## Item 2 of 10")
             check(f"the model's answer {mode} picks unclear line {expected}", (line, failure) == (expected, None),
                   (line, failure))
-        concerns, asks_else = hook.MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION, hook.MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE
+        concerns = hook.AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER
+        asks_else = hook.AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER
 
         def entry(number, concerns_answer, asks_else_answer):
             return {"line_number": number, concerns: concerns_answer, asks_else: asks_else_answer}
@@ -488,10 +489,10 @@ def test_a_failed_model_check_blocks():
             line, failure = hook.model_judgement(["a", "b"], ["a", "b"], "10", "2", "## Item 2 of 10")
             check(case_name, (line, failure) == (expected, None), (line, failure))
         check("code turns the two answers into the three labels",
-              hook.line_labels([entry(1, True, True), entry(2, True, False), entry(3, False, False)], 3)
+              hook.agent_reply_line_model_labels_from_true_or_false_model_answers([entry(1, True, True), entry(2, True, False), entry(3, False, False)], 3)
               == [hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE,
                   hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION,
-                  hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING])
+                  hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION])
         for case_name, verdict in (
                 ("a verdict with no lines is a failure", {"asks_user": False}),
                 ("a verdict whose lines are not a list is a failure", {"lines": "asks_nothing"}),
@@ -707,6 +708,63 @@ def test_the_shown_item_and_quotes_from_it_are_not_checked():
     numbered.reply(ITEM_2_SHOWN)
     check_silent("the shown item's answer line passes without the number and the alternative the walk-document adds",
                  numbered.run(model="yes"))
+
+
+HANDOFF_WALK_ITEM_1_2_LINES = (
+    "## Item 1.2 of 6: a wait limit for each kind of background Bash task",
+    "Item 1.1, from about 9,000 measured runs, proposed 90 minutes for a test suite, 105 for nc-mutation-testing, 75 for every other kind, and 0 for a waiter (explained below). In [handoff-design.md](https://github.com/nedschorus/nedschorus/blob/main/nc-systems/handoff/handoff-design.md), the threshold hook's old text: \"The hook now counts a background Bash task as in flight while it is younger than `--background-task-wait-minutes` and no completion notification names it, judging each task's wait on its own;\"",
+    "#new The new text: \"The hook now counts a background Bash task as in flight while it is younger than its kind's wait limit and no completion notification names it, judging each task's wait on its own. A table the hook reads gives each kind its command patterns and its wait limit, and replaces the hook's `--background-task-wait-minutes` option: the first kind whose pattern matches the command is the task's kind, a command no pattern matches gets 75 minutes, and a kind that only waits, such as `gh pr checks --watch` or a `sleep` loop, has a limit of 0 minutes, so it is never in flight.\"",
+    "The rule for a subagent's own background work, approved 2026-10-30, reads the same table. [advisor]",
+    "A waiter, such as `gh pr checks --watch`, does no work; it only watches for an outside event. A limit of 0 means the handoff never waits for it, and the next agent-session starts the watch again.",
+    "The advisor reviewed this item, and the new text had its own fast read.",
+    "#case_against medium: the alternative needs no table kept up to date, but holds the handoff up to 30 minutes longer behind a stuck task. [advisor]",
+    "The alternative: one limit of 105 minutes for every kind, waiters at 0, and no table.",
+    "Recommendation: adopt the table and the new text.",
+)
+HANDOFF_WALK_ITEM_1_2_REPLY = "\n\n".join((
+    "Last ruled on: item 1.1.1 (the glossary terms), which you approved on 2026-11-01.",
+    "I found two work-snapshots in this seat's worktree. Both held the same four drafts in docs/drafts/ (work-with-mac skill, its proposals, the bang-prefix sentence and the objective section). Those files are still there, uncommitted, with the same contents, so there was nothing to restore. I deleted both snapshots.",
+    "## Item 1.2 of 6: a wait limit for each kind of background Bash task",
+    "Item 1.1, from about 9,000 measured runs, proposed 90 minutes for a test suite, 105 for nc-mutation-testing, 75 for every other kind, and 0 for a waiter (explained below). In [handoff-design.md](https://github.com/nedschorus/nedschorus/blob/main/nc-systems/handoff/handoff-design.md), the threshold hook's old text: \"The hook now counts a background Bash task as in flight while it is younger than `--background-task-wait-minutes` and no completion notification names it, judging each task's wait on its own;\"",
+    "If you approve, the new text: \"The hook now counts a background Bash task as in flight while it is younger than its kind's wait limit and no completion notification names it, judging each task's wait on its own. A table the hook reads gives each kind its command patterns and its wait limit, and replaces the hook's `--background-task-wait-minutes` option: the first kind whose pattern matches the command is the task's kind, a command no pattern matches gets 75 minutes, and a kind that only waits, such as `gh pr checks --watch` or a `sleep` loop, has a limit of 0 minutes, so it is never in flight.\"",
+    "The rule for a subagent's own background work, approved 2026-10-30, reads the same table. [advisor]",
+    "A waiter, such as `gh pr checks --watch`, does no work; it only watches for an outside event. A limit of 0 means the handoff never waits for it, and the next agent-session starts the watch again.",
+    "The advisor reviewed this item, and the new text had its own fast read.",
+    "#case_against medium: the alternative needs no table kept up to date, but holds the handoff up to 30 minutes longer behind a stuck task. [advisor]",
+    "The alternative: one limit of 105 minutes for every kind, waiters at 0, and no table.",
+    "Recommendation: adopt the table and the new text.",
+    "[Item 1.2 of 6, a wait limit for each kind of background Bash task](https://claude.ai/artifact/T2uhWgiK9eFspNAiZ5MEyb) · A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · E explain · O other options",
+))
+
+
+def test_a_new_text_line_shown_as_if_you_approve_the_new_text_is_the_items_own_text():
+    document = "# Handoff wait limits: approval-walk\n\n" + "\n\n".join(HANDOFF_WALK_ITEM_1_2_LINES) + "\n"
+    case = Case(minutes="#next_to_present item 1.2 of 6", document=document)
+    case.reply(HANDOFF_WALK_ITEM_1_2_REPLY)
+    check_silent("the reply that showed item 1.2's `#new` line as `If you approve, the new text:` passes",
+                 case.run(model="yes"))
+    check("that reply sends no line to the model", case.model_calls() == [], case.model_calls())
+    for case_name, document_line, shown_line in (
+            ("a `#new` line with no `The new text:` passes shown after `If you approve, the new text:`, "
+             "whatever the case of its first letter",
+             "#new The threshold-hook bullet becomes: \"The hook waits.\"",
+             "If you approve, the new text: the threshold-hook bullet becomes: \"The hook waits.\""),
+            ("a `#new_if_d` line passes shown after `If you disapprove, the new text:`",
+             "#new_if_d The new text: the hook waits unless you stop it.",
+             "If you disapprove, the new text: the hook waits unless you stop it."),
+            ("a `#new` line that opens with a list mark passes shown after `If you approve, the new text:`",
+             "- #new The new text: the hook waits for the list.",
+             "If you approve, the new text: the hook waits for the list."),
+            ("a `#new` line that opens with a quote mark passes shown after `If you approve, the new text:`",
+             "> #new The new text: the hook waits for the quote.",
+             "If you approve, the new text: the hook waits for the quote.")):
+        varied = Case(minutes="#next_to_present item 1.2 of 6",
+                      document=document.replace(HANDOFF_WALK_ITEM_1_2_LINES[2], document_line))
+        varied.reply(HANDOFF_WALK_ITEM_1_2_REPLY.replace(HANDOFF_WALK_ITEM_1_2_REPLY.split("\n\n")[4], shown_line))
+        check_silent(case_name, varied.run(model="yes"))
+    case.reply(HANDOFF_WALK_ITEM_1_2_REPLY.replace("its kind's wait limit", "a wait limit you choose"))
+    check_blocked("a shown new text that differs from the item's `#new` line still goes to the model",
+                  case.run(model="yes"), "If you approve, the new text:")
 
 
 def test_every_turn_is_checked_whoever_started_it():
@@ -952,7 +1010,7 @@ def test_the_closing_line_and_the_item_ending_are_the_walk_skills():
 SUB_STEP_2_1_NO_DECISION_CLOSING_LINE = "[No decision here; type N or next to continue.](https://claude.ai/artifact/p21)"
 
 
-def test_a_no_decision_sub_steps_line_is_skipped_only_while_a_sub_step_waits():
+def test_the_no_decision_line_is_skipped_whatever_item_waits():
     sub_step = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + INTERRUPTION_ITEM,
                     minutes="#next_to_present item 2.1 of 11")
     sub_step.reply("PR 1922 merged.\n\n" + SUB_STEP_2_1_NO_DECISION_CLOSING_LINE)
@@ -962,9 +1020,56 @@ def test_a_no_decision_sub_steps_line_is_skipped_only_while_a_sub_step_waits():
     check_blocked("the no-decision line with text after it is checked", sub_step.run(model="yes"),
                   "approval-walk question check")
     whole_item = Case()
-    whole_item.reply("PR 1922 merged.\n\n" + SUB_STEP_2_1_NO_DECISION_CLOSING_LINE)
-    check_blocked("the no-decision line is checked while a whole item waits", whole_item.run(model="yes"),
-                  "approval-walk question check")
+    for case_name, line in (
+            ("the no-decision line a whole item's summary ended with passes, since it asks nothing",
+             "[No decision here; type N or next to continue.](https://claude.ai/artifact/EfeHPme4RgDpPRFiVaXegU)"),
+            ("the no-decision line without its link passes", "No decision here; type N or next to continue.")):
+        whole_item.reply("No decision here.\n\n" + line)
+        check_silent(case_name, whole_item.run(model="yes"))
+    check("the no-decision line of a whole item never reaches the model", whole_item.model_calls() == [],
+          whole_item.model_calls())
+
+
+def test_an_ask_phrase_only_inside_quoted_text_goes_to_the_model():
+    case = Case()
+    explanation = ('The walk skill says an item that asks no decision, like the summary, ends with the line "No '
+                   'decision here; type N or next to continue." I wrote exactly that line, and two hooks refused it:')
+    case.reply(explanation)
+    check_silent("an ask phrase quoted in an explanation passes when the model says it asks nothing",
+                 case.run(model="no"))
+    check("the line with the quoted ask phrase went to the model", len(case.model_calls()) == 1, case.model_calls())
+    check_blocked("the same line blocks when the model says it asks the user something", case.run(model="yes:1"),
+                  "the model judged that it asks him something")
+    case.reply('merge-lane-2 says: "Answer A and I will merge it."')
+    check_blocked("an ask relayed in quotes from another agent still blocks once the model says so",
+                  case.run(model="yes:1"), "approval-walk question check")
+
+
+def test_a_hyphenated_word_after_yes_or_no_is_not_an_ask():
+    case = Case()
+    for case_name, text in (
+            ("a quoted task title with `a no-decision` passes without the model",
+             'I started a background subagent on task #392, "Walk hooks contradict SKILL.md on a no-decision '
+             'item\'s closing line".'),
+            ("`on a no-decision item` outside quotes passes", "The hook now passes the line on a no-decision item."),
+            ("`type no-op` passes", "Then type no-op lines into the test file.")):
+        case.reply(text)
+        check_silent(case_name, case.run(model="yes"))
+    check("a hyphenated word after yes or no never reaches the model", case.model_calls() == [], case.model_calls())
+    case.reply("The fix is ready; on a yes I will push it.")
+    check_blocked("`on a yes` still blocks", case.run(model="no"), "approval-walk question check")
+
+
+def test_an_answer_cue_followed_by_another_hyphenated_word_goes_to_the_model():
+    for case_name, text in (("`Type A-D`", "Type A-D to answer."),
+                            ("`Say yes-or-no`", "Say yes-or-no and I will merge it."),
+                            ("`on a yes-or-no`", "I will merge it on a yes-or-no from you.")):
+        case = Case()
+        case.reply(text)
+        check_blocked(case_name + " blocks when the model says it asks the user something", case.run(model="yes:1"),
+                      "the model judged that it asks him something")
+        check(case_name + " went to the model", len(case.model_calls()) == 1, case.model_calls())
+        check_silent(case_name + " passes when the model says it asks nothing", case.run(model="no"))
 
 
 PUBLISH_FAILED_LINE = "#item_page item {number} of {total} publish failed: the Artifact tool timed out"
@@ -995,25 +1100,6 @@ def test_the_closing_line_without_its_link_is_skipped_only_for_an_item_whose_pub
                       + f"Item 3 of 10, the hook is recommended · {CLOSING_LINE_ANSWER_LETTERS}")
     check_blocked("the closing line without its link is checked for a waiting item whose publish did not fail",
                   two_waiting.run(model="yes"), "approval-walk question check", "Item 3 of 10, the hook")
-
-
-def test_the_no_decision_line_without_its_link_is_skipped_only_for_a_sub_step_whose_publish_failed():
-    bare = "No decision here; type N or next to continue."
-    document = WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + INTERRUPTION_ITEM
-    failed = Case(document=document,
-                  minutes=PUBLISH_FAILED_LINE.format(number="2.1", total=11) + "\n#next_to_present item 2.1 of 11")
-    failed.reply("PR 1922 merged.\n\n" + bare)
-    check_silent("the no-decision line without its link passes for a sub-step whose newest publish failed",
-                 failed.run(model="yes"))
-    published = Case(document=document,
-                     minutes="#item_page item 2.1 of 11 https://claude.ai/artifact/p21\n#next_to_present item 2.1 of 11")
-    published.reply("PR 1922 merged.\n\n" + bare)
-    check_blocked("the no-decision line without its link is checked for a sub-step that has a page",
-                  published.run(model="yes"), "approval-walk question check")
-    whole_item = Case(minutes=PUBLISH_FAILED_LINE.format(number=2, total=10) + "\n#next_to_present item 2 of 10")
-    whole_item.reply("PR 1922 merged.\n\n" + bare)
-    check_blocked("the no-decision line without its link is checked while a whole item whose publish failed waits",
-                  whole_item.run(model="yes"), "approval-walk question check")
 
 
 def test_a_fault_exits_1_and_names_it():
@@ -1067,7 +1153,7 @@ def print_live_model_labels():
                 lines = dict(line.split(". ", 1) for line in numbered_lines(call).split("\n") if ". " in line)
                 try:
                     entries = json.loads(call["stdout"])["structured_output"]["lines"]
-                    labels = hook.line_labels(entries, len(entries)) or ["?"] * len(entries)
+                    labels = hook.agent_reply_line_model_labels_from_true_or_false_model_answers(entries, len(entries)) or ["?"] * len(entries)
                 except (ValueError, TypeError, KeyError):
                     print(f"model: no labels; exit {call['returncode']}: {call['stdout'][:300]}{call['stderr'][:300]}")
                     continue
@@ -1086,9 +1172,9 @@ def main():
     fake.write_text(FAKE_CLAUDE.replace("#!/usr/bin/env python3", f"#!{sys.executable}", 1)
                     .replace('"WAITING_ITEM"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION))
                     .replace('"ASKS_ELSE"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE))
-                    .replace('"ASKS_NOTHING"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NOTHING))
-                    .replace('"CONCERNS_ANSWER"', json.dumps(hook.MODEL_ANSWER_CONCERNS_WAITING_ITEM_DECISION))
-                    .replace('"ASKS_ELSE_ANSWER"', json.dumps(hook.MODEL_ANSWER_ASKS_USER_SOMETHING_ELSE)))
+                    .replace('"ASKS_NOTHING"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION))
+                    .replace('"CONCERNS_ANSWER"', json.dumps(hook.AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER))
+                    .replace('"ASKS_ELSE_ANSWER"', json.dumps(hook.AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER)))
     fake.chmod(0o755)
     try:
         for name, function in sorted(globals().items()):

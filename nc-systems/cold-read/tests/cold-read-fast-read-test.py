@@ -4,7 +4,7 @@
 WHAT IS PINNED HERE.
 
   - The report-path rule. A walk draft, docs/walk/<name>-draft.md under the
-    checkout, is read into docs/walk/<name>-suggestions.md beside it, and a
+    checkout, is read into docs/walk/<name>-cold-read-fast-read.md beside it, and a
     suggestions file left by an earlier read is replaced, whatever the clock
     says. Anything else -- another directory in the checkout, a file outside
     it -- is read into
@@ -177,7 +177,7 @@ def script_under_test_module():
 # root). One pair today, because only the fast cell has a second copy of its
 # prompt: the user's ruling that the reviewer's instructions live in the .py
 # that runs the cell was made about the fast cell. The other cold-read
-# prompts -- defect-hunt-prompt.md, restate-prompt.md, terminology-prompt.md -- are read from the
+# prompts -- defect-hunt-prompt.md, terminology-prompt.md -- are read from the
 # skill at run time and have no second copy anywhere, so nothing about them
 # belongs here. If another cell ever embeds its prompt the same way, the same
 # shape covers it: one more pair, on one more line.
@@ -509,17 +509,17 @@ with tempfile.TemporaryDirectory() as scratch:
               and str(in_process_log_store) in unlisted_stderr.getvalue(),
               unlisted_stderr.getvalue())
     walk_target = name_module.REPO_ROOT / "docs" / "walk" / "some-item-draft.md"
-    check("the walk-draft route is untouched: docs/walk/<name>-suggestions.md, whatever the clock",
+    check("the walk-draft route is untouched: docs/walk/<name>-cold-read-fast-read.md, whatever the clock",
           name_module.fast_read_report_path_for_target(walk_target, clock_at_1042)
           == name_module.fast_read_report_path_for_target(
               walk_target, datetime.datetime(2027, 1, 1, 0, 0))
-          == name_module.REPO_ROOT / "docs" / "walk" / "some-item-suggestions.md",
+          == name_module.REPO_ROOT / "docs" / "walk" / "some-item-cold-read-fast-read.md",
           str(name_module.fast_read_report_path_for_target(walk_target, clock_at_1042)))
 
     # --- The report-path rule: a walk draft ------------------------------
     repository = build_scratch_repository(scratch)
     walk_draft_relative = "docs/walk/a-walk-item-draft.md"
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     suggestions.write_text("LEFT BY AN EARLIER READ\n", encoding="utf-8")
     result = run_fast_read(
         repository, stubs, {"*": {"report": "STUB FAST READ: of the walk item\n"}},
@@ -527,7 +527,7 @@ with tempfile.TemporaryDirectory() as scratch:
     )
     check("a walk draft's read exits 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
-    check("a walk draft docs/walk/<name>-draft.md is read into docs/walk/<name>-suggestions.md",
+    check("a walk draft docs/walk/<name>-draft.md is read into docs/walk/<name>-cold-read-fast-read.md",
           result.stdout.strip() == str(suggestions) and suggestions.is_file(),
           f"stdout={result.stdout!r}")
     suggestions_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
@@ -609,7 +609,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a -draft.md outside docs/walk is read into the records tree, not into docs/walk",
           result.returncode == 0 and result.stdout.strip() == str(outside_report)
           and outside_report.is_file()
-          and not (repository / "docs" / "walk" / "some-item-suggestions.md").exists(),
+          and not (repository / "docs" / "walk" / "some-item-cold-read-fast-read.md").exists(),
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
     # --- An edit to the target while the reviewer reads is named ----------
@@ -667,7 +667,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- One retry --------------------------------------------------------
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs,
         {"*": {"fail_first_attempts": 1, "report": "STUB FAST READ: second try\n"}},
@@ -683,7 +683,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- FAILED after the second failure ----------------------------------
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs,
         {"*": {"fail_first_attempts": 99, "report": "STUB FAST READ: never\n"}},
@@ -707,7 +707,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- The Sonnet backup -----------------------------------------------
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs,
         {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
@@ -743,7 +743,7 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(result.stderr))
 
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs,
         {"*": {"fail_first_attempts": 99, "fail_exit": 3,
@@ -768,7 +768,7 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(cap_lines[:2]))
 
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs,
         {"*": {"fail_first_attempts": 99, "fail_exit": 3,
@@ -789,7 +789,7 @@ with tempfile.TemporaryDirectory() as scratch:
           f"lines={quoted_cap_lines[:2]!r}; stderr={result.stderr!r}")
 
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs,
         {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
@@ -804,7 +804,7 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}; stdout={result.stdout!r}")
 
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs,
         {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
@@ -819,7 +819,7 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}; stdout={result.stdout!r}")
 
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs,
         {"*": {"fail_first_attempts": 99, "fail_exit": 3,
@@ -855,7 +855,7 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(quota_lines[:2]))
 
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs,
         {"*": {"fail_first_attempts": 99, "fail_exit": 3,
@@ -872,7 +872,7 @@ with tempfile.TemporaryDirectory() as scratch:
           f"stderr={result.stderr!r}")
 
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs,
         {"*": {"fail_first_attempts": 99, "fail_exit": 3,
@@ -917,7 +917,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # exit 64 included, into its own exit 1, so only a launcher that refuses
     # reaches the read's no-retry path for exit 64.
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs,
         {"*": {"fail_first_attempts": 99, "fail_exit": 64}},
@@ -932,7 +932,7 @@ with tempfile.TemporaryDirectory() as scratch:
           f"stderr={result.stderr!r}")
 
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     copied_agy_cell = repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"
     launcher_entry = 'if __name__ == "__main__":\n    sys.exit(main())\n'
     copied_agy_cell_text = copied_agy_cell.read_text(encoding="utf-8")
@@ -968,7 +968,7 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(refusal_lines[:2]))
 
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs,
         {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
@@ -993,7 +993,7 @@ with tempfile.TemporaryDirectory() as scratch:
         .replace("COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS = 60\n",
                  "COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS = 1\n"),
         encoding="utf-8")
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     deadline_read_started_at = time.monotonic()
     result = run_fast_read(
         repository, stubs, {"*": {"hang": True}},
@@ -1023,7 +1023,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- Chat instead of file, through the read ---------------------------
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs, {"*": {"stdout": LONG_CHAT_REVIEW}},
         suggestions, walk_draft_relative, counter,
@@ -1043,7 +1043,7 @@ with tempfile.TemporaryDirectory() as scratch:
     question_4_heading = question_4_module.WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING
     coverage_heading = question_4_module.SENTENCE_COVERAGE_HEADING
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     question_4_prompt_dump = scratch / "received-question-4-prompt.txt"
     result = run_fast_read(
         repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n"}},
@@ -1093,7 +1093,7 @@ with tempfile.TemporaryDirectory() as scratch:
           cell_common.STRAY_WRITE_PHRASE not in result.stderr, repr(result.stderr))
 
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n"}},
         suggestions, walk_draft_relative, counter,
@@ -1125,7 +1125,7 @@ with tempfile.TemporaryDirectory() as scratch:
             "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n",
             "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 5\n"),
         encoding="utf-8")
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     hanging_stub_pid_file = scratch / "hanging-question-4-stub.pid"
     hanging_stub_pid_file.unlink(missing_ok=True)
     hanging_read_started_at = time.monotonic()
@@ -1169,7 +1169,7 @@ with tempfile.TemporaryDirectory() as scratch:
           f"pid {hanging_stub_pid}")
 
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     concurrent_answer = "STUB CONCURRENT READ: another document's Question 4 answer\n"
     concurrent_answer_path_file = scratch / "concurrent-read-question-4-answer.paths"
     concurrent_answer_path_file.unlink(missing_ok=True)
@@ -1192,7 +1192,7 @@ with tempfile.TemporaryDirectory() as scratch:
         shutil.rmtree(concurrent_paths[0], ignore_errors=True)
 
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs, {"*": {"fail_first_attempts": 99}},
         suggestions, walk_draft_relative, counter,
@@ -1229,7 +1229,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- The embedded instructions are what the model receives ------------
     repository = build_scratch_repository(scratch)
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     prompt_dump = scratch / "received-prompt.txt"
     result = run_fast_read(
         repository, stubs,
@@ -1438,7 +1438,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # reached leaves the exit 0.
     repository = build_scratch_repository(scratch)
     walk_draft_relative = "docs/walk/a-walk-item-draft.md"
-    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs, {"*": {"report": "STUB FAST READ: of the walk item\n"}},
         suggestions, walk_draft_relative, counter,
@@ -1805,7 +1805,7 @@ with tempfile.TemporaryDirectory() as worktree_scratch:
         warning_module.RECORDS_DIR = real_records
     check("a walk draft in another worktree gets its suggestions file beside it",
           walk_report_in_second
-          == second_worktree.resolve() / "docs/walk/a-walk-item-suggestions.md",
+          == second_worktree.resolve() / "docs/walk/a-walk-item-cold-read-fast-read.md",
           str(walk_report_in_second))
     check("a walk draft in no repository at all takes the records route",
           (worktree_scratch / "records") in loose_walk_report.parents,
@@ -1940,7 +1940,7 @@ with tempfile.TemporaryDirectory() as bare_scratch:
     draft.write_text("# A walk\n\nPR #466 merged.\n\n"
                      "It closes [nedschorus#418](https://example.com/418).\n",
                      encoding="utf-8")
-    draft_suggestions = repository / "docs" / "walk" / "a-bare-walk-suggestions.md"
+    draft_suggestions = repository / "docs" / "walk" / "a-bare-walk-cold-read-fast-read.md"
     result = run_fast_read(
         repository, bare_stubs, {"*": {"report": "STUB FAST READ: of the draft\n"}},
         draft_suggestions, "docs/walk/a-bare-walk-draft.md", bare_counter,
@@ -1972,7 +1972,7 @@ with tempfile.TemporaryDirectory() as bare_scratch:
     clean.write_text("# A walk\n\nThe pull request "
                      "[Fast read: say when](https://example.com/466) merged.\n",
                      encoding="utf-8")
-    clean_suggestions = repository / "docs" / "walk" / "a-clean-walk-suggestions.md"
+    clean_suggestions = repository / "docs" / "walk" / "a-clean-walk-cold-read-fast-read.md"
     result = run_fast_read(
         repository, bare_stubs, {"*": {"report": "STUB FAST READ: of a clean draft\n"}},
         clean_suggestions, "docs/walk/a-clean-walk-draft.md", bare_counter,
@@ -2014,7 +2014,7 @@ with tempfile.TemporaryDirectory() as bare_scratch:
     failing.parent.mkdir(parents=True, exist_ok=True)
     failing.write_text("# A walk\n\nPR #466 merged.\n\nSee #418/#419.\n",
                        encoding="utf-8")
-    failing_suggestions = repository / "docs" / "walk" / "a-failing-walk-suggestions.md"
+    failing_suggestions = repository / "docs" / "walk" / "a-failing-walk-cold-read-fast-read.md"
     result = run_fast_read(
         repository, bare_stubs,
         {"*": {"fail_first_attempts": 99, "report": "STUB FAST READ: never\n"}},
@@ -2235,10 +2235,10 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
     (ned_box_worktree / "nc-systems" / "cold-read" / "cold-read-fast-read.py").write_text(
         STAND_IN_REMOTE_FAST_READ, encoding="utf-8")
     ned_box_draft = ned_box_worktree / "docs" / "walk" / "a-walk-item-draft.md"
-    ned_box_suggestions = ned_box_worktree / "docs" / "walk" / "a-walk-item-suggestions.md"
+    ned_box_suggestions = ned_box_worktree / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     ned_box_draft.parent.mkdir(parents=True)
     ned_box_draft.write_text("## Item 1 of 1\n", encoding="utf-8")
-    mac_suggestions = mac_worktree / "docs" / "walk" / "a-walk-item-suggestions.md"
+    mac_suggestions = mac_worktree / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     stand_in_ssh = over_ssh_scratch / "ssh"
     stand_in_ssh.write_text(STAND_IN_SSH, encoding="utf-8")
     stand_in_ssh.chmod(0o755)
@@ -2475,7 +2475,7 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
         check("the report place of a walk draft in a worktree inside another worktree is "
               "taken from the nearer worktree",
               place == str(mac_mount / inner_relative / "docs" / "walk"
-                           / "inner-suggestions.md"),
+                           / "inner-cold-read-fast-read.md"),
               repr(place))
 
         # A walk draft in a worktree whose path holds ned-box's home again
@@ -2486,7 +2486,7 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
             f"gitdir: {ned_box_home / 'Projects' / 'gone-twice' / '.git'}\n", encoding="utf-8")
         mac_twice_draft = mac_mount / twice_relative / "docs" / "walk" / "twice-draft.md"
         mac_twice_draft.write_text("## Item 1 of 1\n", encoding="utf-8")
-        mac_twice_suggestions = mac_twice_draft.with_name("twice-suggestions.md")
+        mac_twice_suggestions = mac_twice_draft.with_name("twice-cold-read-fast-read.md")
         place = warning_module.cold_read_fast_read_report_location_seen_from_mac_for_target_sent_over_ssh(
             str(ned_box_home / twice_relative / "docs" / "walk" / "twice-draft.md"))
         check("the report place of a walk draft whose path holds ned-box's home twice "

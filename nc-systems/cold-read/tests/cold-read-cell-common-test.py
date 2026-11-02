@@ -357,7 +357,7 @@ def dirty_the_target(repository):
 
 
 def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
-                      runtime="claude", environment_overrides=None, cell="restate"):
+                      runtime="claude", environment_overrides=None, cell="defect-hunt"):
     """One cell launcher, run against a stub standing in for its runtime.
 
     The stub is installed under the runtime's own name, because that is how
@@ -391,14 +391,14 @@ def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
 
 
 def run_claude_cell(repository, stub_directory, plan, report_path, *arguments,
-                    environment_overrides=None, cell="restate"):
+                    environment_overrides=None, cell="defect-hunt"):
     return run_cell_launcher(repository, stub_directory, plan, report_path,
                              *arguments, runtime="claude",
                              environment_overrides=environment_overrides, cell=cell)
 
 
 def run_codex_cell(repository, stub_directory, plan, report_path, *arguments,
-                   environment_overrides=None, cell="restate"):
+                   environment_overrides=None, cell="defect-hunt"):
     return run_cell_launcher(repository, stub_directory, plan, report_path,
                              *arguments, runtime="codex",
                              environment_overrides=environment_overrides, cell=cell)
@@ -452,10 +452,10 @@ with tempfile.TemporaryDirectory() as scratch:
     # detector the delta is empty and nothing is printed.
     repository = build_scratch_repository(scratch)
     dirty_the_target(repository)
-    report = repository / "cold-read-records" / "run-a" / "claude-restate-second-strongest-model.md"
+    report = repository / "cold-read-records" / "run-a" / "claude-defect-hunt-second-strongest-model.md"
     result = run_claude_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one restatement\n",
+        {"*": {"report": "STUB REVIEW: one finding\n",
                "edit": [str(repository / TARGET_RELATIVE_PATH),
                         "The reviewer's own edit, which it should not have made.\n"]}},
         report,
@@ -487,11 +487,11 @@ with tempfile.TemporaryDirectory() as scratch:
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     dirty_the_target(repository)
-    report = repository / "cold-read-records" / "run-b" / "claude-restate-second-strongest-model.md"
+    report = repository / "cold-read-records" / "run-b" / "claude-defect-hunt-second-strongest-model.md"
     created_relative_path = "docs/drafts/cold-read-cell-common-test-created.md"
     result = run_claude_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one restatement\n",
+        {"*": {"report": "STUB REVIEW: one finding\n",
                "edit": [str(repository / created_relative_path),
                         "A file the reviewer created where it was not asked to.\n"]}},
         report,
@@ -506,9 +506,9 @@ with tempfile.TemporaryDirectory() as scratch:
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     dirty_the_target(repository)
-    report = repository / "cold-read-records" / "run-c" / "claude-restate-second-strongest-model.md"
+    report = repository / "cold-read-records" / "run-c" / "claude-defect-hunt-second-strongest-model.md"
     result = run_claude_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}}, report,
     )
     check("a run that changed nothing reports no stray write, though the tree is dirty",
           stray_write_warning(result.stderr) == "", repr(result.stderr))
@@ -526,7 +526,7 @@ with tempfile.TemporaryDirectory() as scratch:
     visible_report_relative_path = "docs/drafts/cold-read-cell-common-test-report.md"
     report = repository / visible_report_relative_path
     result = run_claude_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}}, report,
     )
     check("a --report git can see is not reported as the reviewer's stray write",
           stray_write_warning(result.stderr) == "", repr(result.stderr))
@@ -542,7 +542,7 @@ with tempfile.TemporaryDirectory() as scratch:
     report = repository / visible_report_relative_path
     result = run_claude_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one restatement\n",
+        {"*": {"report": "STUB REVIEW: one finding\n",
                "edit": [str(repository / TARGET_RELATIVE_PATH),
                         "The reviewer's own edit, which it should not have made.\n"]}},
         report,
@@ -560,7 +560,7 @@ with tempfile.TemporaryDirectory() as scratch:
     spaced_report_relative_path = "docs/drafts/cold read cell common test report.md"
     report = repository / spaced_report_relative_path
     result = run_claude_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}}, report,
     )
     check("a visible --report whose path has a space is not reported as a stray write",
           stray_write_warning(result.stderr) == "", repr(result.stderr))
@@ -569,10 +569,10 @@ with tempfile.TemporaryDirectory() as scratch:
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     renamed_relative_path = "docs/drafts/cold-read-cell-common-test-renamed.md"
-    report = repository / "cold-read-records" / "run-rename" / "claude-restate-second-strongest-model.md"
+    report = repository / "cold-read-records" / "run-rename" / "claude-defect-hunt-second-strongest-model.md"
     result = run_claude_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one restatement\n",
+        {"*": {"report": "STUB REVIEW: one finding\n",
                "git_mv": [str(repository / TARGET_RELATIVE_PATH),
                           str(repository / renamed_relative_path)]}},
         report,
@@ -597,7 +597,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # refused is the cell failed, with no other model tried.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-d" / "claude-restate-deep.md"
+    report = repository / "cold-read-records" / "run-d" / "claude-defect-hunt-deep.md"
     result = run_claude_cell(
         repository, stubs,
         {"claude-opus-5-5": {"exit": 1},
@@ -791,7 +791,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # in the log the grid reads, in the form the grid parses.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-cause-a" / "claude-restate-second-strongest-model.md"
+    report = repository / "cold-read-records" / "run-cause-a" / "claude-defect-hunt-second-strongest-model.md"
     result = run_claude_cell(
         repository, stubs,
         {"claude-fable-5-1": {"exit": 1, "stdout": FABLE_LIMIT_LINE + "\n"}},
@@ -809,7 +809,7 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(result.stderr))
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-cause-b" / "codex-restate-second-strongest-model.md"
+    report = repository / "cold-read-records" / "run-cause-b" / "codex-defect-hunt-second-strongest-model.md"
     result = run_codex_cell(
         repository, stubs,
         {"*": {"exit": 1, "stdout": SESSION_LIMIT_LINE + "\n"}},
@@ -820,7 +820,7 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(result.stderr))
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-cause-c" / "claude-restate-second-strongest-model.md"
+    report = repository / "cold-read-records" / "run-cause-c" / "claude-defect-hunt-second-strongest-model.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"stdout": "STUB CHAT: wrote nothing\n", "exit": 0}},
@@ -837,7 +837,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # a file that is still there and carries no provenance stamp.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-e" / "claude-restate-second-strongest-model.md"
+    report = repository / "cold-read-records" / "run-e" / "claude-defect-hunt-second-strongest-model.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"report": "FINDINGS: 1. something real\nclean sections: none\n",
@@ -862,7 +862,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # must reach the log the grid keeps on failure.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-h" / "claude-restate-second-strongest-model.md"
+    report = repository / "cold-read-records" / "run-h" / "claude-defect-hunt-second-strongest-model.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"stdout": "STUB CHAT: I read the document and then wrote nothing.\n",
@@ -914,9 +914,9 @@ with tempfile.TemporaryDirectory() as scratch:
     # nc-systems/cold-read/tests/cold-read-grid-test.py pins the other end of that contract.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-f" / "claude-restate-second-strongest-model.md"
+    report = repository / "cold-read-records" / "run-f" / "claude-defect-hunt-second-strongest-model.md"
     result = run_claude_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}}, report,
         environment_overrides={"GIT_DIR": str(scratch / "no-such-git-directory")},
     )
     check("a cell that could not take a baseline says the check did not run",
@@ -926,10 +926,10 @@ with tempfile.TemporaryDirectory() as scratch:
 
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-g" / "claude-restate-second-strongest-model.md"
+    report = repository / "cold-read-records" / "run-g" / "claude-defect-hunt-second-strongest-model.md"
     result = run_claude_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one restatement\n",
+        {"*": {"report": "STUB REVIEW: one finding\n",
                "break_git": str(repository / ".git")}},
         report,
     )
@@ -1081,7 +1081,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "duration-claude", "claude")
     result = run_claude_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}}, report,
     )
     check("a claude cell succeeds with a stub runtime",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -1102,7 +1102,7 @@ with tempfile.TemporaryDirectory() as scratch:
     report = report_path_for(repository, "tokens-codex", "codex")
     result = run_codex_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one restatement\n",
+        {"*": {"report": "STUB REVIEW: one finding\n",
                "stderr": "[2026-08-25T12:00:00] tokens used: 12,345\n"}},
         report,
     )
@@ -1124,7 +1124,7 @@ with tempfile.TemporaryDirectory() as scratch:
     report = report_path_for(repository, "tokens-in-chat-text", "codex")
     result = run_codex_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one restatement\n",
+        {"*": {"report": "STUB REVIEW: one finding\n",
                "stdout": "The draft claims tokens used: 99,999 per run, which I doubt.\n"}},
         report,
     )
@@ -1139,7 +1139,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "no-tokens-codex", "codex")
     result = run_codex_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}}, report,
     )
     check("a codex cell whose CLI printed no total succeeds",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -1167,7 +1167,7 @@ with tempfile.TemporaryDirectory() as scratch:
         repository, "rev-parse", "--short", "HEAD").strip()
     report = report_path_for(repository, "checkout-clean", "claude")
     result = run_claude_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}}, report,
     )
     stamp = provenance_stamp_of(report)
     check("a cell run in a clean checkout succeeds",
@@ -1205,7 +1205,7 @@ with tempfile.TemporaryDirectory() as scratch:
     dirty_the_target(repository)
     report = report_path_for(repository, "checkout-dirty", "codex")
     result = run_codex_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}}, report,
     )
     stamp = provenance_stamp_of(report)
     check("a cell run in a checkout with a modified tracked file succeeds",
@@ -1230,7 +1230,7 @@ with tempfile.TemporaryDirectory() as scratch:
         "A draft this seat has not committed.\n", encoding="utf-8")
     report = report_path_for(repository, "checkout-untracked-only", "claude")
     result = run_claude_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}}, report,
     )
     stamp = provenance_stamp_of(report)
     check("a cell run in a checkout carrying only untracked files succeeds",
@@ -1248,7 +1248,7 @@ with tempfile.TemporaryDirectory() as scratch:
     (repository / ".git").rename(repository / ".git-moved-aside-before-the-run")
     report = report_path_for(repository, "checkout-absent", "claude")
     result = run_claude_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}}, report,
     )
     stamp = provenance_stamp_of(report)
     check("a cell that ran where there is no checkout still writes its report",
@@ -1269,7 +1269,7 @@ with tempfile.TemporaryDirectory() as scratch:
     scratch_repository_fixture.git(repository, "init", "-q", "-b", "main")
     report = report_path_for(repository, "checkout-no-commits-yet", "claude")
     result = run_claude_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}}, report,
     )
     stamp = provenance_stamp_of(report)
     check("a cell that ran in a checkout with no commits yet still writes its report",
@@ -1303,7 +1303,7 @@ with tempfile.TemporaryDirectory() as scratch:
         failing_git.chmod(0o755)
         report = report_path_for(repository, case_slug, "claude")
         result = run_claude_cell(
-            repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+            repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}}, report,
             environment_overrides={
                 "PATH": f"{failing_git_directory}{os.pathsep}{stubs}{os.pathsep}"
                         f"{os.environ.get('PATH', '')}"},
@@ -1354,7 +1354,7 @@ with tempfile.TemporaryDirectory() as scratch:
     claude_scratch_home.mkdir(parents=True, exist_ok=True)
     result = run_claude_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one restatement\n",
+        {"*": {"report": "STUB REVIEW: one finding\n",
                "dump_argv": str(received_argv_path)}},
         report, environment_overrides={"HOME": str(claude_scratch_home)},
     )
@@ -1440,7 +1440,7 @@ with tempfile.TemporaryDirectory() as scratch:
     received_argv_path = scratch / "codex-denies-credentials-argv.json"
     result = run_codex_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one restatement\n",
+        {"*": {"report": "STUB REVIEW: one finding\n",
                "dump_argv": str(received_argv_path)}},
         report, environment_overrides={"HOME": str(scratch_home)},
     )
@@ -1542,6 +1542,102 @@ with tempfile.TemporaryDirectory() as scratch:
               for login in login_canaries for platform in ("linux", "darwin")),
           repr(profile_tables))
 
+    # The scan splits each root into levels it lists one deep and subtrees it
+    # walks whole, so a canary at every depth, on both sides of the split, and
+    # several subtrees per find, catch a level or a subtree the split drops.
+    scan_root = scratch / "credential-scan-root"
+    outside = scratch / "credential-scan-outside"
+    scan_canaries = [scan_root / "depth-1.token"]
+    nested = scan_root
+    for depth in range(2, 8):
+        nested = nested / f"level-{depth - 1}"
+        scan_canaries.append(nested / (".env" if depth % 2 else f"depth-{depth}.token"))
+    for sibling in range(5):
+        scan_canaries.append(scan_root / "wide" / f"branch-{sibling}" / "deep" / "sibling.token")
+    for canary in (*scan_canaries, outside / "inner" / "behind-a-symlink.token"):
+        canary.parent.mkdir(parents=True, exist_ok=True)
+        canary.write_text("CANARY-NOT-A-SECRET-common-test\n", encoding="utf-8")
+    (scan_root / "wide" / "notes.txt").write_text("not a credential\n", encoding="utf-8")
+    (scan_root / "level-1" / "link-to-outside").symlink_to(outside, target_is_directory=True)
+    real_roots = codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS
+    real_find_commands = codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT
+    codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = (scan_root,)
+    codex_module.common.CREDENTIAL_DIRECTORIES = ()
+    codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = 2
+    try:
+        split_scan_found = codex_module.common.credential_files_found_now()
+    finally:
+        codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = real_roots
+        codex_module.common.CREDENTIAL_DIRECTORIES = real_directories
+        codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = real_find_commands
+    check("the credential scan finds a credential file at every depth and in every subtree",
+          split_scan_found == sorted(str(canary) for canary in scan_canaries),
+          f"expected {sorted(str(canary) for canary in scan_canaries)}, found {split_scan_found}")
+
+    # A directory the split cannot list, or an entry it cannot stat, is
+    # skipped alone: a handler that caught the error around the whole loop
+    # would drop the readable siblings listed after it, and their credential
+    # files would go missing from the deny list without any error.
+    real_scandir = codex_module.common.os.scandir
+    wide = scan_root / "wide"
+
+    class EntryWhoseStatFails:
+        def __init__(self, entry):
+            self.entry, self.path = entry, entry.path
+
+        def is_dir(self, follow_symlinks=True):
+            return self.entry.is_dir(follow_symlinks=follow_symlinks)
+
+        def stat(self, follow_symlinks=True):
+            raise PermissionError(13, "injected stat failure", self.path)
+
+    class Listing:
+        def __init__(self, entries):
+            self.entries = entries
+
+        def __enter__(self):
+            return iter(self.entries)
+
+        def __exit__(self, *exc):
+            return False
+
+    for failure in ("scandir", "stat"):
+        failed = []
+
+        def scandir_failing_once(directory, failure=failure, failed=failed):
+            if failure == "scandir" and not failed and Path(directory).parent == wide:
+                failed.append(Path(directory))
+                raise PermissionError(13, "injected scandir failure", str(directory))
+            with real_scandir(directory) as entries:
+                listed = list(entries)
+            if failure == "stat" and not failed and Path(directory) == wide:
+                for index, entry in enumerate(listed):
+                    if entry.name.startswith("branch-"):
+                        failed.append(Path(entry.path))
+                        listed[index] = EntryWhoseStatFails(entry)
+                        break
+            return Listing(listed)
+
+        codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = (scan_root,)
+        codex_module.common.CREDENTIAL_DIRECTORIES = ()
+        codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = 2
+        codex_module.common.os.scandir = scandir_failing_once
+        try:
+            failed_scan_found = codex_module.common.credential_files_found_now()
+        except OSError as error:
+            failed_scan_found = [f"raised {error!r}"]
+        finally:
+            codex_module.common.os.scandir = real_scandir
+            codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = real_roots
+            codex_module.common.CREDENTIAL_DIRECTORIES = real_directories
+            codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = real_find_commands
+        expected = sorted(str(canary) for canary in scan_canaries
+                          if not (failed and failed[0] in canary.parents))
+        check(f"a {failure} failure on one subtree leaves its readable siblings' credential "
+              "files found",
+              len(failed) == 1 and failed_scan_found == expected,
+              f"failed {failed}; expected {expected}, found {failed_scan_found}")
+
     # The Codex `deep` tier. Max beat xhigh by 46 net findings measured per
     # cell, but the grid is a union and there it is worth ten findings of 331
     # and three points of worst-target recall. This is the slowest of the
@@ -1552,7 +1648,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "codex-deep-effort", "codex")
     result = run_codex_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}},
         report, "--tier", "deep",
     )
     check("the Codex `deep` tier runs at xhigh, not max",
@@ -1568,7 +1664,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "claude-deep-model-and-effort", "claude")
     result = run_claude_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}},
         report, "--tier", "deep",
     )
     check("the Claude `deep` tier runs claude-opus-5-5 at xhigh",
@@ -1592,7 +1688,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "effort-default", "claude")
     result = run_claude_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}}, report,
     )
     check("a cell given no --effort runs at the tier map's level",
           result.returncode == 0
@@ -1603,7 +1699,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "effort-override", "claude")
     result = run_claude_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}},
         report, "--effort", "low",
     )
     check("--effort overrides the tier map and is stamped as what ran",
@@ -1615,7 +1711,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "effort-unknown", "claude")
     result = run_claude_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}},
         report, "--effort", "extreme",
     )
     check("an effort level the runtimes do not accept is refused, not passed on",
@@ -1640,7 +1736,7 @@ with tempfile.TemporaryDirectory() as scratch:
     received_prompt_path = scratch / "prompt-file-received.txt"
     result = run_claude_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one restatement\n",
+        {"*": {"report": "STUB REVIEW: one finding\n",
                "dump_prompt": str(received_prompt_path)}},
         report, "--prompt-file", draft_prompt_relative_path,
     )
@@ -1680,7 +1776,7 @@ with tempfile.TemporaryDirectory() as scratch:
     origin_relative_path = "docs/elsewhere/cold-read-cell-common-test-origin.md"
     result = run_claude_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one restatement\n",
+        {"*": {"report": "STUB REVIEW: one finding\n",
                "dump_prompt": str(received_prompt_path)}},
         report, "--target-origin", origin_relative_path,
     )
@@ -1714,7 +1810,7 @@ with tempfile.TemporaryDirectory() as scratch:
     received_prompt_path = scratch / "no-target-origin-received.txt"
     result = run_claude_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one restatement\n",
+        {"*": {"report": "STUB REVIEW: one finding\n",
                "dump_prompt": str(received_prompt_path)}},
         report,
     )
@@ -1735,7 +1831,7 @@ with tempfile.TemporaryDirectory() as scratch:
     received_prompt_path = scratch / "prompt-file-absent-received.txt"
     result = run_claude_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one restatement\n",
+        {"*": {"report": "STUB REVIEW: one finding\n",
                "dump_prompt": str(received_prompt_path)}},
         report,
     )
@@ -1842,7 +1938,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "prompt-file-missing", "claude")
     result = run_claude_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}},
         report, "--prompt-file", "docs/drafts/no-such-draft-prompt.md",
     )
     check("a --prompt-file naming no file exits 64 and writes no report",
@@ -1865,7 +1961,7 @@ with tempfile.TemporaryDirectory() as scratch:
         encoding="utf-8")
     report = report_path_for(repository, "novel-cell", "claude")
     result = run_claude_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}},
         report, "--prompt-file", draft_prompt_relative_path, cell="terminology-v9",
     )
     check("a novel --cell name runs under --prompt-file",
@@ -1881,7 +1977,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "novel-cell-no-flag", "claude")
     result = run_claude_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}},
         report, cell="terminology-v9",
     )
     check("a novel --cell name without --prompt-file exits 64 and writes no report",
@@ -1893,6 +1989,24 @@ with tempfile.TemporaryDirectory() as scratch:
           and "runs only with --prompt-file" in result.stderr
           and "Traceback" not in result.stderr,
           repr(result.stderr))
+
+    # The --cell choices are the prompt files: deleting a cell's prompt
+    # removes its choice, so the cell is refused rather than left listed.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    (repository / ".claude" / "skills" / "cold-read" / "prompts"
+     / "defect-hunt-prompt.md").unlink()
+    report = report_path_for(repository, "deleted-prompt-cell", "claude")
+    result = run_claude_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}},
+        report, cell="defect-hunt",
+    )
+    check("a cell whose prompt file was deleted is no longer a --cell choice",
+          result.returncode == 64 and not report.exists()
+          and "--cell must be one of" in result.stderr
+          and "defect-hunt" not in result.stderr.split("(got")[0]
+          and "terminology" in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr!r}")
 
     # A label that cannot be a report-name token is refused, however the
     # draft is named: the label goes into the file name and `--` is that
@@ -1907,7 +2021,7 @@ with tempfile.TemporaryDirectory() as scratch:
                                 encoding="utf-8")
         report = report_path_for(repository, "unsafe-cell", "claude")
         result = run_claude_cell(
-            repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
+            repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}},
             report, "--prompt-file", draft_prompt_relative_path, cell=unsafe_label,
         )
         check(f"an unsafe --cell label {unsafe_label!r} exits 64 under --prompt-file",
@@ -1932,7 +2046,7 @@ with tempfile.TemporaryDirectory() as scratch:
     report = report_path_for(repository, "stray-codex", "codex")
     result = run_codex_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one restatement\n",
+        {"*": {"report": "STUB REVIEW: one finding\n",
                "edit": [str(repository / TARGET_RELATIVE_PATH),
                         "The reviewer's own edit, which it should not have made.\n"]}},
         report,
