@@ -1181,6 +1181,72 @@ def test_an_item_deferred_a_second_time_leaves_the_walk():
           marker(case) == "#next_to_present none, closed", case.minutes.read_text())
 
 
+DEFERRED_NOTE = "(deferred: moved to the end of the walk)"
+
+
+def walk_document(case):
+    return (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").read_text()
+
+
+def test_a_deferral_notes_it_in_the_items_heading_once():
+    case = summary_case(next_to_present="item 2 of 5", recorded=approved_line("item 1 of 5"))
+    before = walk_document(case)
+    case.run("check", "--deferred")
+    closed = case.run("close")
+    check("close on a deferral puts the note right after the item's count in its heading and changes nothing else",
+          closed.returncode == 0 and "not given the note" not in closed.stdout
+          and walk_document(case) == before.replace("## Item 2 of 5: two", f"## Item 2 of 5 {DEFERRED_NOTE}: two"),
+          described(closed) + walk_document(case))
+    for _ in range(2):
+        case.run("check")
+        case.run("close")
+    case.run("check", "--deferred")
+    closed = case.run("close")
+    check("a second deferral leaves the heading with the note once, and the walk goes on to the summary item",
+          closed.returncode == 0 and walk_document(case).count(DEFERRED_NOTE) == 1
+          and marker(case) == "#next_to_present item 5 of 5", described(closed) + walk_document(case))
+
+
+def test_a_deferral_under_a_heading_naming_other_items_too_leaves_the_heading_alone_and_says_so():
+    document = SUMMARY_DOCUMENT.replace("## Item 2 of 5: two\n\nRecommendation: leave it.\n\n## Item 3 of 5: three",
+                                        "## Items 2 and 3 of 5: two and three\n\n**Item 2:** two.\n\n"
+                                        "#case_against none.\n\nRecommendation: leave it.\n\n**Item 3:** three.")
+    case = Case(next_to_present="item 2 of 5", document=document)
+    before = walk_document(case)
+    case.run("check", "--deferred")
+    closed = case.run("close")
+    check("close on a deferral of one item of a shared heading writes no note and says the heading is left as it is",
+          closed.returncode == 0 and walk_document(case) == before
+          and f"names other items too, so it is not given the note {DEFERRED_NOTE}." in closed.stdout,
+          described(closed))
+
+
+def test_a_deferral_notes_only_the_heading_with_the_walks_current_count():
+    document = SUMMARY_DOCUMENT.replace("## Item 1 of 5: one", "## Item 2 of 4: two, as an earlier plan had it\n\n"
+                                        "## Item 1 of 5: one")
+    case = Case(next_to_present="item 2 of 5", document=document)
+    before = walk_document(case)
+    case.run("check", "--deferred")
+    closed = case.run("close")
+    check("close on a deferral notes the item's heading of the walk's count M, not an older heading of another M",
+          closed.returncode == 0
+          and walk_document(case) == before.replace("## Item 2 of 5: two", f"## Item 2 of 5 {DEFERRED_NOTE}: two"),
+          described(closed) + walk_document(case))
+
+
+def test_a_summary_heading_carrying_the_deferred_note_is_still_the_summary_item():
+    document = SUMMARY_DOCUMENT.replace("## Item 5 of 5: summary", f"## Item 5 of 5 {DEFERRED_NOTE}: summary")
+    case = Case(next_to_present="item 4 of 5", document=document)
+    case.minutes.write_text("# Minutes\n\n" + approved_line("item 1 of 5")
+                            + "item 2 of 5: deferred; it moves to just before the summary item. <open>\n"
+                            + approved_line("item 3 of 5") + "#next_to_present item 4 of 5\n")
+    case.run("check")
+    closed = case.run("close")
+    check("the deferred item comes back before a summary item whose heading carries the note",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 2 of 5",
+          described(closed) + case.minutes.read_text())
+
+
 def test_an_answer_that_changes_nothing_is_recorded():
     case = summary_case(next_to_present="item 3 of 5")
     case.run("check", "--disapproved")

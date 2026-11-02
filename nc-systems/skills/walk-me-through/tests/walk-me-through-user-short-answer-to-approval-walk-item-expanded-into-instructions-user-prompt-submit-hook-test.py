@@ -668,6 +668,44 @@ def test_r_closing_line_label_keeps_the_text_of_a_link_in_the_heading_and_drops_
           lines is not None and lines[1] == page_line("R", "item 4 of 9", closing), f"lines {lines!r}")
 
 
+DEFERRED_NOTE = "(deferred: moved to the end of the walk)"
+
+
+def test_r_closing_line_point_leaves_out_a_deferred_items_heading_note():
+    document = WALK_DOCUMENT.replace("## Item 4 of 9: a filter", f"## Item 4 of 9 {DEFERRED_NOTE}: a filter")
+    case = Case(next_to_present="item 4 of 9", document=document)
+    case.minutes(f"#item_page item 4 of 9 {PAGE_1}\n\n#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    closing = f"[Item 4 of 9, a filter]({PAGE_1}) · {LETTERS_AFTER_LINK}"
+    check("R's closing line gives a deferred item's point without the note its heading carries, whose colon "
+          "is not the count's",
+          lines is not None and lines[1] == page_line("R", "item 4 of 9", closing), f"lines {lines!r}")
+
+
+def test_the_finder_reads_a_heading_carrying_the_deferred_note_as_it_reads_one_without():
+    specification = importlib.util.spec_from_file_location("item_finder", FINDER_MODULE_FILE)
+    finder = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(finder)
+    parser = finder.markdown_parser()
+    check("the finder's note constant is the text the close step writes and these tests use",
+          finder.APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT == DEFERRED_NOTE)
+    revised = (f"## Item 4 of 9: a filter\n\nRecommendation: old.\n\n"
+               f"## Item 4 of 9 {DEFERRED_NOTE} (revised): a filter\n\nRecommendation: new.\n")
+    spans = finder.item_unit_spans(revised, parser)
+    check("a heading that says `revised` after the deferred note still replaces the earlier unit for its item",
+          [(numbers, first) for numbers, _, _, first, _ in spans] == [(["4"], 4)], f"spans {spans!r}")
+    bold = f"**Item 4 of 9 {DEFERRED_NOTE}**: a filter\n\nRecommendation: new.\n"
+    check("a count with the deferred note in a bold paragraph still starts the item and is still its opening",
+          [(numbers, total) for numbers, total, _, _, _ in finder.item_unit_spans(bold, parser)] == [(["4"], "9")]
+          and finder.item_opening_lines(bold, parser) == {0: (["4"], "9")},
+          f"{finder.item_unit_spans(bold, parser)!r} {finder.item_opening_lines(bold, parser)!r}")
+    check("only the note and the space before it are taken out of a heading line",
+          finder.approval_walk_item_heading_with_deferred_note_removed(f"## Item 4 of 9 {DEFERRED_NOTE}: a filter")
+          == "## Item 4 of 9: a filter"
+          and finder.approval_walk_item_heading_with_deferred_note_removed("## Item 4 of 9: a filter")
+          == "## Item 4 of 9: a filter")
+
+
 def shown_as(markdown, parser):
     """What the inline Markdown shows, as (type, content) pairs, with link tokens left out and the text on
     either side of a link joined."""
