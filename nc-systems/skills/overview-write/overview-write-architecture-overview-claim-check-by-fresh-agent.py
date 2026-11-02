@@ -50,13 +50,15 @@ Exit 0: report written, every claim supported. 1: refused, nothing run.
 4: the fresh-agent failed, so no report was written. 5: report written, and
 not every claim is supported, or the report is malformed. 6: every claim is
 supported, but git could not remove the temporary worktree; the report was
-still written, and its result printed.
+still written, its result printed, and scripts/pull-request-review-plan.py
+accepts it as it accepts an exit-0 report.
 
 The last line printed, on stdout, starts with "Next: " and says what to do for
 that exit, so the overview-write skill's step 3 is only to do what it says.
 For exit 5 the program tells a malformed report apart from contradicted or
-unsupported claims; on the second malformed report for the same overview text,
-its last line tells the agent to bring the report to the user.
+unsupported claims. On the first malformed report for an overview text, its
+last line tells the agent to run the program again; on the second and each
+later one, to bring the reports to the user.
 """
 
 import argparse
