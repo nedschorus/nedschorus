@@ -51,9 +51,15 @@ local of the same name inside the lambda, and a name the class body binds, by as
 except ... as or a match capture, hides the function's local of the same name
 everywhere in the class body, lambdas nested in it included. So when the class body assigns
 `text`, a lambda in the class does not follow the function's local `text`, though Python's own
-scoping would let it. A function's or lambda's defaults and decorators, a
-class's decorators, bases and keywords, and a type parameter's bound and default, are read in the
-scope the definition stands in.
+scoping would let it. A name a nested function, lambda or class body declares global hides the
+function's local of the same name there. A comprehension's target hides the function's local of
+the same name in the comprehension's later parts, though not in its first iterable, which Python
+evaluates outside; a name read inside the target, as text is in `for messages[text] in items`, is
+not bound by it. A function's or lambda's defaults and decorators, and a class's decorators, are
+read in the scope the definition stands in; so are a function's annotations and a class's bases
+and keywords, unless the definition has type parameters, as in class Holder[T]: then those, and
+each type parameter's bound and default, are read with the type parameters' names hiding the
+function's locals of the same names.
 
 A message built any other way is not found.
 
@@ -221,11 +227,19 @@ def calls_and_parameters_they_see(nodes, parameters):
     nested lambda its own parameters and the names it binds with := hide them, inside a nested
     function its parameters and the names its body binds, as scope_assigned_names says, and inside a nested class body the names that body binds, in the whole
     class, functions and lambdas nested in it included, though Python skips class scope for those.
-    A nested definition's defaults, decorators and bases see the parameters as its enclosing scope
-    does."""
+    A comprehension's target hides them in the comprehension's later parts, as
+    comprehension_parts_with_names_they_hide says. A nested definition's defaults, decorators and
+    bases see the parameters as its enclosing scope does, less its type parameters' names in the
+    parts type_parameter_scope_expressions names."""
     for node in nodes:
+        if isinstance(node, COMPREHENSION_TYPES):
+            for part, hidden in comprehension_parts_with_names_they_hide(node):
+                yield from calls_and_parameters_they_see([part], parameters - hidden)
+            continue
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
             yield from calls_and_parameters_they_see(definition_time_expressions(node), parameters)
+            yield from calls_and_parameters_they_see(type_parameter_scope_expressions(node),
+                                                     parameters - type_parameter_names(node))
             if isinstance(node, ast.Lambda):
                 hidden = function_parameter_names(node) | scope_assigned_names(node)
             elif isinstance(node, ast.ClassDef):
@@ -321,14 +335,16 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
 
     def visit_scope(self, node):
         """Visit the expressions a function, lambda or class definition evaluates where it
-        stands, such as defaults, decorators and bases, in the enclosing scope, then its body in
+        stands, such as defaults, decorators and bases, in the enclosing scope, less its type
+        parameters' names where type_parameter_scope_expressions says, then its body in
         its own scope. A function's body follows only its own local names. A lambda's or a class
         body's follows the enclosing scope's, less the names the lambda takes as parameters or
-        binds with `:=`, or the class body assigns; the class body's names stay hidden in the functions and lambdas
+        binds with `:=`, or the class body assigns or declares global; the class body's names stay hidden in the functions and lambdas
         nested in the class. Its own parameters hide a helper printer's name, as the enclosing
         function's still do."""
         for expression in definition_time_expressions(node):
             self.visit(expression)
+        self.visit_with_names_hidden(type_parameter_scope_expressions(node), type_parameter_names(node))
         outer = self.enclosing_local_string_bindings[-1] if self.enclosing_local_string_bindings else {}
         if isinstance(node, ast.Lambda):
             parameters = function_parameter_names(node)
@@ -357,6 +373,30 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
     visit_AsyncFunctionDef = visit_scope
     visit_Lambda = visit_scope
     visit_ClassDef = visit_scope
+
+    def visit_with_names_hidden(self, nodes, hidden):
+        """Visit the nodes with the innermost function's locals of the hidden names not followed."""
+        if not hidden or not self.enclosing_local_string_bindings:
+            for node in nodes:
+                self.visit(node)
+            return
+        outer = self.enclosing_local_string_bindings[-1]
+        self.enclosing_local_string_bindings.append(
+            {name: values for name, values in outer.items() if name not in hidden})
+        for node in nodes:
+            self.visit(node)
+        self.enclosing_local_string_bindings.pop()
+
+    def visit_comprehension_parts(self, node):
+        """Visit a comprehension's parts, each with the targets bound before it hiding the
+        innermost function's locals of those names."""
+        for part, hidden in comprehension_parts_with_names_they_hide(node):
+            self.visit_with_names_hidden([part], hidden)
+
+    visit_ListComp = visit_comprehension_parts
+    visit_SetComp = visit_comprehension_parts
+    visit_GeneratorExp = visit_comprehension_parts
+    visit_DictComp = visit_comprehension_parts
 
     def collect_local_strings_reaching(self, expression, is_prompt=False):
         """Collect, at its own lines, each string bound to a local name of the innermost
@@ -490,7 +530,7 @@ def names_carried_as_text(expression):
         # The first iterable is evaluated outside the comprehension, before any target is bound.
         for generator in expression.generators:
             yield from (name for name in names_carried_as_text(generator.iter) if name not in bound)
-            bound |= {node.id for node in ast.walk(generator.target) if isinstance(node, ast.Name)}
+            bound |= comprehension_target_names(generator.target)
         element = expression.value if isinstance(expression, ast.DictComp) else expression.elt
         yield from (name for name in names_carried_as_text(element) if name not in bound)
     elif not isinstance(expression, ast.Call):
@@ -514,30 +554,80 @@ def function_names_called_for_text(expression):
 
 def definition_time_expressions(definition):
     """The expressions a function, lambda or class definition evaluates in the scope it stands
-    in: decorators, parameter defaults and annotations, the return annotation, and a class's
-    bases and keywords, and a type parameter's bound and default, as in class Holder[T: bound]."""
-    type_parameter_expressions = [expression for parameter in getattr(definition, "type_params", [])
-                                  for expression in (getattr(parameter, "bound", None),
-                                                     getattr(parameter, "default_value", None))
-                                  if expression is not None]
-    if isinstance(definition, ast.ClassDef):
-        return [*definition.decorator_list, *definition.bases,
-                *(keyword.value for keyword in definition.keywords), *type_parameter_expressions]
-    arguments = definition.args
-    expressions = [*arguments.defaults, *(default for default in arguments.kw_defaults if default is not None)]
+    in, its own type parameters' names not visible: decorators and parameter defaults, and, for
+    a definition without type parameters, parameter and return annotations and a class's bases
+    and keywords."""
     if isinstance(definition, ast.Lambda):
-        return expressions
+        arguments = definition.args
+        return [*arguments.defaults, *(default for default in arguments.kw_defaults if default is not None)]
+    expressions = list(definition.decorator_list)
+    if isinstance(definition, ast.FunctionDef | ast.AsyncFunctionDef):
+        arguments = definition.args
+        expressions += [*arguments.defaults, *(default for default in arguments.kw_defaults if default is not None)]
+    if not type_parameter_names(definition):
+        expressions += annotation_and_base_expressions(definition)
+    return expressions
+
+
+def annotation_and_base_expressions(definition):
+    """A function's parameter and return annotations, or a class's bases and keywords."""
+    if isinstance(definition, ast.ClassDef):
+        return [*definition.bases, *(keyword.value for keyword in definition.keywords)]
+    arguments = definition.args
     annotations = [argument.annotation for argument in
                    [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs,
                     arguments.vararg, arguments.kwarg] if argument is not None]
-    return [*definition.decorator_list, *expressions, *type_parameter_expressions,
-            *(annotation for annotation in [*annotations, definition.returns] if annotation is not None)]
+    return [annotation for annotation in [*annotations, definition.returns] if annotation is not None]
+
+
+def type_parameter_scope_expressions(definition):
+    """The expressions of a definition with type parameters, as in class Holder[T: bound], that
+    see those parameters' names (PEP 695): each type parameter's bound and default, and the
+    annotations, bases and keywords annotation_and_base_expressions names. Empty for a
+    definition without type parameters."""
+    if not type_parameter_names(definition):
+        return []
+    bounds_and_defaults = [expression for parameter in definition.type_params
+                           for expression in (getattr(parameter, "bound", None),
+                                              getattr(parameter, "default_value", None))
+                           if expression is not None]
+    return [*bounds_and_defaults, *annotation_and_base_expressions(definition)]
+
+
+def type_parameter_names(definition):
+    """The names of a definition's type parameters, as T in class Holder[T]."""
+    return {parameter.name for parameter in getattr(definition, "type_params", [])}
+
+
+def comprehension_target_names(target):
+    """The names a comprehension's target binds: those it stores to. A name read inside the
+    target, as text is in `for messages[text] in items`, is not bound."""
+    return {node.id for node in ast.walk(target) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)}
+
+
+def comprehension_parts_with_names_they_hide(comprehension):
+    """Each part of a comprehension, in the order Python evaluates them, with the target names
+    bound before it, which refer to the comprehension's own names there: the first iterable,
+    evaluated outside before any target is bound, sees none; each later iterable, target,
+    condition and the element see the targets bound so far."""
+    bound = frozenset()
+    for generator in comprehension.generators:
+        yield generator.iter, bound
+        bound = bound | comprehension_target_names(generator.target)
+        yield generator.target, bound
+        for condition in generator.ifs:
+            yield condition, bound
+    elements = ([comprehension.key, comprehension.value] if isinstance(comprehension, ast.DictComp)
+                else [comprehension.elt])
+    for element in elements:
+        yield element, bound
 
 
 def scope_assigned_names(scope):
     """The names a function's, lambda's or class's own body binds: names it stores to, outside a
     comprehension's target, which is the comprehension's own; names it imports, catches with
-    except ... as, or captures in a match pattern; and the functions and classes it defines. A
+    except ... as, or captures in a match pattern; the functions and classes it defines; and the
+    names it declares global, which refer to the module's names, not the enclosing function's. A
     name it declares nonlocal is left out, since it binds the enclosing function's name."""
     nodes = list(nodes_in_own_scope(scope))
     comprehension_targets = {id(name) for node in nodes if isinstance(node, ast.comprehension)
@@ -555,6 +645,8 @@ def scope_assigned_names(scope):
             names.add(node.rest)
         elif isinstance(node, ast.Nonlocal):
             nonlocal_names.update(node.names)
+        elif isinstance(node, ast.Global):
+            names.update(node.names)
     return (names | {definition.name for definition in scope_direct_definitions(scope)}) - nonlocal_names
 
 
