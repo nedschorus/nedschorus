@@ -75,6 +75,7 @@ SYSTEM_DIRECTORY = Path(__file__).resolve().parent
 REPOSITORY_ROOT = SYSTEM_DIRECTORY.parent.parent
 MODULE_RELATIVE = Path("nc-systems/handoff/uncommitted-work-snapshots.py")
 HOOK_RELATIVE = Path("scripts/uncommitted-work-snapshot-hook.py")
+OWNER_FILE_MODULE_RELATIVE = Path("scripts/worktree-owner-file-read-and-write.py")
 GIT_OUTPUT_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
 LIVE_CHECK_FILE_NAME = "live-check.txt"
@@ -122,7 +123,8 @@ def default_claude_program():
 
 def make_scratch_clone(clone):
     git(clone.parent, "init", "-q", str(clone))
-    for relative in (MODULE_RELATIVE, HOOK_RELATIVE, GIT_OUTPUT_MODULE_RELATIVE):
+    for relative in (MODULE_RELATIVE, HOOK_RELATIVE, GIT_OUTPUT_MODULE_RELATIVE,
+                     OWNER_FILE_MODULE_RELATIVE):
         (clone / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPOSITORY_ROOT / relative, clone / relative)
     (clone / ".gitignore").write_text("__pycache__/\n")
