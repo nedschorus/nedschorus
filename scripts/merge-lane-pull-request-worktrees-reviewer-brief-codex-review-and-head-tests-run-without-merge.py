@@ -51,13 +51,22 @@ is, and each line of steps 3 to 5 prefixed with its step's number, as in
 fails, the output names each step that failed with its exit code, says what
 each other step did, and gives each failed step's own command, with the same
 commits, for running that step alone: running this program again would run
-the other steps again, and post a second Claude review. If this program is interrupted while steps run, it
-kills them. Nothing here merges: merging is
+the other steps again, and post a second Claude review. If this program is
+interrupted while steps run, it stops them: steps 3 and 4 get SIGKILL, and step
+5 gets SIGTERM, so that it stops the Claude reviewer before any review is
+posted, then SIGKILL if it has not ended within
+CLAUDE_REVIEWER_STEP_STOP_SECONDS. If this program cannot write its own
+output while steps 3 to 5 run, as when the reader of its stdout has gone, it
+still reads every step's output to its end, so no step blocks, and once every
+step has ended it exits 1, naming the error and each step's exit code on
+stderr. Nothing here
+merges: merging is
 merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py.
 
 Exit codes: 0 every step that ran exited 0; 1 a step exited nonzero, named on
 stdout: when it was step 1 or 2, no later step ran, and when it was one of
-steps 3 to 5, the others ran to their end; 2 refused before any step ran: a step script
+steps 3 to 5, the others ran to their end; also 1 when this program's own
+output could not be written while steps 3 to 5 ran, named on stderr; 2 refused before any step ran: a step script
 is missing, git could not fetch, read or check out a commit, the brief
 specifications file is unreadable, lacks a field, has a claude_reviewer that
 is not true or false, or disagrees with the
@@ -80,6 +89,7 @@ HEAD_TEST_RUN_STEP = "merge-lane-pull-request-head-test-run-on-merged-worktree.p
 CLAUDE_REVIEWER_STEP = "merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py"
 STEPS = (WORKTREES_REBUILD_STEP, REVIEWER_BRIEF_STEP, CODEX_REVIEW_STEP, HEAD_TEST_RUN_STEP,
          CLAUDE_REVIEWER_STEP)
+CLAUDE_REVIEWER_STEP_STOP_SECONDS = 10
 
 # The fields REVIEWER_BRIEF_STEP reads from every entry and from a fix-round
 # entry, apart from head and main, which this program fills in. Keep in step
@@ -116,6 +126,14 @@ class RefusedBeforeAnyStep(Exception):
     def __init__(self, what_stopped, instruction=GENERIC_INSTRUCTION):
         super().__init__(what_stopped)
         self.instruction = instruction
+
+
+class OutputCouldNotBeWritten(Exception):
+    """This program's stdout failed while steps ran; exit_codes holds how each step ended."""
+
+    def __init__(self, failure, exit_codes):
+        super().__init__(str(failure))
+        self.exit_codes = exit_codes
 
 
 def parse_arguments(argv):
@@ -223,18 +241,29 @@ def run_step(position, step, arguments, step_arguments):
 
 
 def run_steps_at_the_same_time(positioned_steps, arguments):
-    """Run each (position, step, step arguments) at once; return {position: exit code}."""
+    """Run each (position, step, step arguments) at once; return {position: exit code}.
+
+    When this program's own output cannot be written, every step's output is still
+    read to its end, so no step blocks on a full pipe, and the first such error is
+    raised, as OutputCouldNotBeWritten, once every step has ended.
+    """
     print_lock = threading.Lock()
+    output_failures = []
 
     def pass_output_through(position, stream):
         for line in stream:
-            with print_lock:
-                print(f"step {position} of {len(STEPS)} | {line.rstrip(NEWLINE)}", flush=True)
+            try:
+                with print_lock:
+                    print(f"step {position} of {len(STEPS)} | {line.rstrip(NEWLINE)}",
+                          flush=True)
+            except (OSError, ValueError) as failure:
+                output_failures.append(failure)
 
     processes, readers = {}, []
     try:
         for position, step, step_arguments in positioned_steps:
-            print(f"step {position} of {len(STEPS)}: {step}", flush=True)
+            with print_lock:
+                print(f"step {position} of {len(STEPS)}: {step}", flush=True)
             # errors= opens the pipe as text.
             process = subprocess.Popen(
                 step_command(step, arguments, step_arguments), stdin=subprocess.DEVNULL,
@@ -247,12 +276,25 @@ def run_steps_at_the_same_time(positioned_steps, arguments):
             readers.append(reader)
         exit_codes = {position: process.wait() for position, process in processes.items()}
     except BaseException:
-        for process in processes.values():
+        # The Claude reviewer step's SIGTERM handler stops claude before gh can post
+        # its review; SIGKILL would skip that handler.
+        for position, process in processes.items():
             if process.poll() is None:
-                process.kill()
+                if STEPS[position - 1] == CLAUDE_REVIEWER_STEP:
+                    process.terminate()
+                else:
+                    process.kill()
+        for position, process in processes.items():
+            if STEPS[position - 1] == CLAUDE_REVIEWER_STEP:
+                try:
+                    process.wait(timeout=CLAUDE_REVIEWER_STEP_STOP_SECONDS)
+                except subprocess.TimeoutExpired:
+                    process.kill()
         raise
     for reader in readers:
         reader.join()
+    if output_failures:
+        raise OutputCouldNotBeWritten(output_failures[0], exit_codes) from output_failures[0]
     return exit_codes
 
 
@@ -356,7 +398,41 @@ def main(argv=None):
                   f"Claude reviewer.", flush=True)
             continue
         at_the_same_time.append((position, step, step_arguments))
-    exit_codes = run_steps_at_the_same_time(at_the_same_time, arguments)
+    try:
+        exit_codes = run_steps_at_the_same_time(at_the_same_time, arguments)
+    except OutputCouldNotBeWritten as failure:
+        # Python's own flush of the broken stdout at exit would change the exit code to 120.
+        sys.stdout = None
+        outputs = arguments.merge_lane_worktrees_and_outputs_directory
+        records = {CODEX_REVIEW_STEP: outputs / "cx" / f"pr{number}-{base[:8]}",
+                   HEAD_TEST_RUN_STEP: outputs / "hr" / f"pr{number}",
+                   CLAUDE_REVIEWER_STEP: outputs / "claude-reviews" / f"pr{number}-{head_commit}*"}
+        def what_to_do(position, step, step_arguments):
+            """One step's line: its exit code, and its records or its command."""
+            exit_code = failure.exit_codes[position]
+            if exit_code != 0:
+                return (f"step {position} exited {exit_code}: run it alone, with the same "
+                        f"commits, to see its message: "
+                        f"{shlex.join(step_command(step, arguments, step_arguments))}")
+            why = (", because it has posted its Claude review" if step == CLAUDE_REVIEWER_STEP
+                   else "")
+            return (f"step {position} exited 0: read its records in {records[step]}, and do "
+                    f"not run it again{why}")
+        ran = {positioned[0]: positioned for positioned in at_the_same_time}
+        steps_to_do = "\n".join(
+            f"  {what_to_do(*ran[position])}" if position in ran else
+            f"  step {position} was skipped: the entry's claude_reviewer is false"
+            for position in range(3, len(STEPS) + 1))
+        print(f"PR {number}: the stdout of scripts/{Path(__file__).name} failed while its "
+              f"steps 3 to 5 ran at the same time ({failure}), so the lines they printed are "
+              f"lost, though each step that ran keeps its own records on disk; steps 1 and 2 "
+              f"had exited 0, and nothing was merged.\n"
+              f"Each of steps 3 to 5, with what to do for it:\n{steps_to_do}\n"
+              f"For this head commit, act on each line above as for any run of this program, "
+              f"and do not run this program again for it: it would run every step again.\n"
+              f"Before you next run this program, find why its stdout closed, such as a pipe "
+              f"into a command that exited early.", file=sys.stderr, flush=True)
+        return 1
     failed = [position for position, exit_code in exit_codes.items() if exit_code != 0]
     if failed:
         def what_it_did(position):

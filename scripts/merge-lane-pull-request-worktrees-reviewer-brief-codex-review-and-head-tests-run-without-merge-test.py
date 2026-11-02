@@ -79,12 +79,21 @@ if meeting and step in meeting_steps:
             sys.exit(9)
         time.sleep(0.05)
     if os.environ.get("MERGE_LANE_RUN_WITHOUT_MERGE_TEST_HANG"):
+        import signal
+        def record_sigterm(signum, frame):
+            (Path(meeting) / (step + ".sigterm")).touch()
+            if os.environ.get("MERGE_LANE_RUN_WITHOUT_MERGE_TEST_IGNORE_SIGTERM") != "1":
+                sys.exit(0)
+        signal.signal(signal.SIGTERM, record_sigterm)
         (Path(meeting) / (step + ".pid")).write_text(str(os.getpid()))
-        time.sleep(120)
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            time.sleep(0.05)
 if os.environ.get("MERGE_LANE_RUN_WITHOUT_MERGE_TEST_SIGNALLED_STEP") == step:
     import signal
     os.kill(os.getpid(), signal.SIGKILL)
-for number in range(int(os.environ.get("MERGE_LANE_RUN_WITHOUT_MERGE_TEST_EXTRA_LINES", "0"))):
+extra_lines = int(os.environ.get("MERGE_LANE_RUN_WITHOUT_MERGE_TEST_EXTRA_LINES", "0"))
+for number in range(extra_lines if not meeting or step in meeting_steps else 0):
     print(f"{step} extra line {number}")
 print(step + " stub output")
 sys.exit(int(os.environ.get("MERGE_LANE_RUN_WITHOUT_MERGE_TEST_FAILING_STEP_EXIT", "0"))
@@ -359,33 +368,12 @@ def main():
                   "PR 7: all 5 steps exited 0; nothing was merged."),
               f"exit {completed.returncode}\n{completed.stdout[-2000:]}{completed.stderr}")
 
-        shutil.rmtree(meeting, ignore_errors=True)
-        meeting.mkdir()
-        (scratch / "brief-specifications.json").write_text(json.dumps([first_round]))
-        interrupted = subprocess.Popen(
-            [sys.executable, str(PROGRAM), "7", str(scratch / "brief-specifications.json"),
-             *directory_options], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            env={**{key: value for key, value in GIT_ENVIRONMENT.items()
-                    if not key.startswith(("GIT_AUTHOR_", "GIT_COMMITTER_"))},
-                 "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_STEP_LOG": str(scratch / "steps.log"),
-                 "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_MEETING_DIRECTORY": str(meeting),
-                 "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_MEETING_STEPS": " ".join(STEPS[2:]),
-                 "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_HANG": "1"})
-        pid_files = [meeting / (step + ".pid") for step in STEPS[2:]]
-        deadline = time.monotonic() + 30
-        while not all(pid_file.exists() and pid_file.read_text() for pid_file in pid_files):
-            if time.monotonic() > deadline or interrupted.poll() is not None:
-                break
-            time.sleep(0.05)
-        step_pids = [int(pid_file.read_text()) for pid_file in pid_files
-                     if pid_file.exists() and pid_file.read_text()]
-        interrupted.send_signal(signal.SIGINT)
-        try:
-            interrupted.communicate(timeout=30)
-        except subprocess.TimeoutExpired:
-            interrupted.kill()
-            interrupted.communicate()
-        time.sleep(0.5)
+        program_environment = {
+            **{key: value for key, value in GIT_ENVIRONMENT.items()
+               if not key.startswith(("GIT_AUTHOR_", "GIT_COMMITTER_"))},
+            "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_STEP_LOG": str(scratch / "steps.log"),
+            "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_MEETING_DIRECTORY": str(meeting),
+            "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_MEETING_STEPS": " ".join(STEPS[2:])}
 
         def alive(pid):
             try:
@@ -393,13 +381,100 @@ def main():
             except ProcessLookupError:
                 return False
             return True
-        still_running = [pid for pid in step_pids if alive(pid)]
-        for pid in still_running:
-            os.kill(pid, signal.SIGKILL)
-        check("an interrupt while steps 3 to 5 run kills all three steps",
-              len(step_pids) == 3 and still_running == [] and interrupted.returncode != 0,
-              f"step pids {step_pids}, still running {still_running}, exit "
-              f"{interrupted.returncode}")
+
+        def interrupt_while_steps_run(ignore_sigterm):
+            """Return (step pids, pids still running after, the program's exit code, seconds
+            from the interrupt to its end)."""
+            shutil.rmtree(meeting, ignore_errors=True)
+            meeting.mkdir()
+            (scratch / "brief-specifications.json").write_text(json.dumps([first_round]))
+            interrupted = subprocess.Popen(
+                [sys.executable, str(PROGRAM), "7", str(scratch / "brief-specifications.json"),
+                 *directory_options], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                env={**program_environment, "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_HANG": "1",
+                     "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_IGNORE_SIGTERM": ignore_sigterm})
+            pid_files = [meeting / (step + ".pid") for step in STEPS[2:]]
+            deadline = time.monotonic() + 30
+            while not all(pid_file.exists() and pid_file.read_text() for pid_file in pid_files):
+                if time.monotonic() > deadline or interrupted.poll() is not None:
+                    break
+                time.sleep(0.05)
+            step_pids = [int(pid_file.read_text()) for pid_file in pid_files
+                         if pid_file.exists() and pid_file.read_text()]
+            interrupted_at = time.monotonic()
+            interrupted.send_signal(signal.SIGINT)
+            try:
+                interrupted.communicate(timeout=60)
+            except subprocess.TimeoutExpired:
+                interrupted.kill()
+                interrupted.communicate()
+            took = time.monotonic() - interrupted_at
+            time.sleep(0.5)
+            still_running = [pid for pid in step_pids if alive(pid)]
+            for pid in still_running:
+                os.kill(pid, signal.SIGKILL)
+            return step_pids, still_running, interrupted.returncode, took
+
+        step_pids, still_running, exit_code, _ = interrupt_while_steps_run("0")
+        sigterm_files = sorted(path.name for path in meeting.glob("*.sigterm"))
+        check("an interrupt while steps 3 to 5 run stops all three steps, sending SIGTERM to "
+              "step 5 alone",
+              len(step_pids) == 3 and still_running == [] and exit_code != 0
+              and sigterm_files == [STEPS[4] + ".sigterm"],
+              f"step pids {step_pids}, still running {still_running}, exit {exit_code}, "
+              f"SIGTERM received by {sigterm_files}")
+
+        step_pids, still_running, exit_code, took = interrupt_while_steps_run("1")
+        check("an interrupt kills step 5 when it is still running after SIGTERM, within "
+              "about 10 seconds",
+              len(step_pids) == 3 and still_running == [] and exit_code != 0
+              and (meeting / (STEPS[4] + ".sigterm")).exists() and 9 <= took < 30,
+              f"step pids {step_pids}, still running {still_running}, exit {exit_code}, "
+              f"took {took:.1f} seconds")
+
+        shutil.rmtree(meeting, ignore_errors=True)
+        meeting.mkdir()
+        (scratch / "brief-specifications.json").write_text(json.dumps([first_round]))
+        stdout_closed = subprocess.Popen(
+            [sys.executable, str(PROGRAM), "7", str(scratch / "brief-specifications.json"),
+             *directory_options], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env={**program_environment, "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_EXTRA_LINES": "10000",
+                 "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_FAILING_STEP": STEPS[3],
+                 "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_FAILING_STEP_EXIT": "3"})
+        started_files = [meeting / step for step in STEPS[2:]]
+        deadline = time.monotonic() + 30
+        while not all(started_file.exists() for started_file in started_files):
+            if time.monotonic() > deadline or stdout_closed.poll() is not None:
+                break
+            time.sleep(0.05)
+        # Nothing has read the program's stdout, so its pipe is full or filling; closing
+        # the reading end makes every later write fail.
+        stdout_closed.stdout.close()
+        try:
+            stdout_closed.wait(timeout=60)
+            ended = True
+        except subprocess.TimeoutExpired:
+            stdout_closed.kill()
+            stdout_closed.wait()
+            ended = False
+        stderr = stdout_closed.stderr.read().decode(errors="replace")
+        stdout_closed.stderr.close()
+        check("when the program's stdout closes while steps 3 to 5 print, it keeps reading "
+              "their output, so it ends, and exits 1 naming the error",
+              ended and stdout_closed.returncode == 1
+              and f"PR 7: the stdout of scripts/{PROGRAM.name} failed while its steps 3 to 5 "
+                  f"ran at the same time ([Errno 32] Broken pipe)" in stderr
+              and f"  step 3 exited 0: read its records in "
+                  f"{helpers / 'cx' / ('pr7-' + merge_base[:8])}, and do not run it again\n"
+                  in stderr
+              and f"  step 4 exited 3: run it alone, with the same commits, to see its "
+                  f"message: {shlex.join([sys.executable, str(checkout / 'scripts' / STEPS[3]), '7', *directory_options])}\n"
+                  in stderr
+              and f"  step 5 exited 0: read its records in "
+                  f"{helpers / 'claude-reviews' / ('pr7-' + head_commit)}*, and do not run it "
+                  f"again, because it has posted its Claude review\n" in stderr
+              and stderr.count(sys.executable) == 1,
+              f"ended {ended}, exit {stdout_closed.returncode}\n{stderr[-2000:]}")
 
         generic_instruction = ("If the message above names a cause you can fix, fix it and "
                                "run this again.\nOtherwise, tell the user this message.")
