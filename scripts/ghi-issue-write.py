@@ -419,7 +419,10 @@ RECONSIDERED_MARKER_NAME = ".ghi-issue-write-reconsidered"
 # What gh's stderr carries when the number names no issue, lowercased for
 # the comparison. Measured 2026-09-21; see `read_issue`.
 GH_NO_SUCH_ISSUE_STDERR_FRAGMENT = "could not resolve to an issue"
-SLUG_WORD_LIMIT = 8
+# A file name may be 255 bytes. The longest name built on a slug is the
+# log-store's `<number>-<slug>-proposed-improvements-or-changes-ghi-guide-agent-
+# <YYYY-MM-DD>-<n>.md`, whose other parts take up to 73 characters.
+SLUG_CHARACTER_LIMIT = 180
 GH_TIMEOUT_SECONDS = 120
 # Beyond the pre-push hook's own limit: the hook's mutation-testing-worktree
 # check, the selective run's search for leftover processes after its budget,
@@ -733,8 +736,21 @@ def refuse_heading_with_date(heading: str):
             "Then rerun the same command.", 64)
 
 def slug(title: str) -> str:
-    words = re.sub(r"[^a-z0-9]+", " ", title.lower()).split()
-    return "-".join(words[:SLUG_WORD_LIMIT]) or "issue"
+    """The title's words, lowercased and joined by hyphens, with a
+    possessive 's dropped, any other apostrophe closed up and a Markdown
+    link reduced to its text, so "collector's" gives "collector", "don't"
+    gives "dont" and "[GHI 5](https://...)" gives "ghi-5". Every word is
+    kept up to SLUG_CHARACTER_LIMIT characters; a longer slug is cut at the
+    last hyphen before the limit."""
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", title.lower())
+    text = re.sub(r"['\u2019]s\b", "", text)
+    text = re.sub(r"['\u2019]", "", text)
+    joined = "-".join(re.sub(r"[^a-z0-9]+", " ", text).split())
+    if len(joined) > SLUG_CHARACTER_LIMIT:
+        head = joined[:SLUG_CHARACTER_LIMIT + 1]
+        joined = (head.rsplit("-", 1)[0] if "-" in head
+                  else joined[:SLUG_CHARACTER_LIMIT])
+    return joined or "issue"
 
 
 def placeholder_body(key: str) -> str:
