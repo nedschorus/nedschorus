@@ -8,7 +8,7 @@ walk-minutes and set their `#next_to_present` line to the next item.
 Usage, from the agent-session's checkout:
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check
       [--obvious | --after-advisor | --disapproved | --deferred | --option N
-       | --part-answer N=ANSWER ... | --moved-on-no-decision | --not-asked KIND]
+       | --part-answer N=ANSWER ... | --moved-on-no-decision | --not-asked KIND|none]
       --user-reply-as-typed REPLY    (every answer but --not-asked, which takes none)
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py close
 
@@ -90,6 +90,14 @@ and judge what code cannot before running CLOSE, which records the item as
 `<accepted>`. The checks cannot tell a case against that names only cost from
 another weak one, or a fix that matches its design from one that does not;
 the agent judges those.
+
+`--not-asked none` settles an item of none of the five kinds, only when its
+`#case_against` line rates the case against none. It needs touches, and refuses
+when a touched file is one the instruction-file guard,
+.claude/guard-hooks/instruction-file-guard.py, protects, because an item that
+adds words the user has not approved to such a file is shown to him; the
+guard's own functions decide which files those are. The minutes write the
+answer as `not asked, case against none`.
 
 The open approval-walk and its waiting items are found with
 walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py,
@@ -219,6 +227,8 @@ CASE_AGAINST_RATING = re.compile(r"(very strong|none|weak|medium|strong)\b", re.
 CASE_AGAINST_HASHTAG = " #case_against_{rating}"
 NOT_ASKED_RATINGS = ("none", "weak")
 NOT_ASKED_KINDS = (1, 2, 3, 4, 5)
+NOT_ASKED_RATED_NONE = "none"
+INSTRUCTION_FILE_GUARD_FILE = REPOSITORY_TOP / ".claude" / "guard-hooks" / "instruction-file-guard.py"
 EVIDENCE_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*(#not_asked_(?:touches|test|source|unused|rename))"
                            rf"{MARKER_END}[*_`]*[:\s]*(.*)$")
 TOUCHES, TEST, SOURCE, UNUSED, RENAME = (f"#not_asked_{name}" for name in ("touches", "test", "source", "unused",
@@ -387,14 +397,20 @@ NAVIGATION_WORD_REFUSED = (
     "If {item} asks for no decision, such as a summary item, run `python3 {program} check --moved-on-no-decision "
     "--user-reply-as-typed {quoted_words}`, then close.")
 NOT_ASKED_REFUSED = (
-    "nothing written: {item} cannot be settled without asking the user as kind {kind}, because:\n{problems}\n"
-    "If the item does not fit kind {kind}, or the case against is more than cost, present {item} to the user as "
+    "nothing written: {item} cannot be settled without asking the user as {label}, because:\n{problems}\n"
+    "If the item does not fit {label}, or the case against is more than cost, present {item} to the user as "
     "usual, then run check with the flag for his answer, as `--help` lists it.\n"
     "If the item fits and only its evidence lines are missing or wrong, fix them in {document} and run "
     "`python3 {program} check --not-asked {kind}` again.")
 NOT_ASKED_RATING_PROBLEM = ("- its `#case_against` line rates the case against {rating}; only an item rated none, "
                             "or weak with a case against that names only cost, settles without the user.")
 NOT_ASKED_NO_LINE_PROBLEM = "- it has no `{marker}` line; {why}"
+NOT_ASKED_NOT_RATED_NONE_PROBLEM = ("- its `#case_against` line rates the case against {rating}; an item of none of "
+                                    "the five kinds settles without the user only when its case against is rated "
+                                    "none.")
+NOT_ASKED_GUARDED_FILE_PROBLEM = ("- `{marker}` names {path}, which the instruction-file guard protects; an item "
+                                  "that adds words the user has not approved to such a file is shown to him, and "
+                                  "one whose words a ruling of his gives settles as kind 1.")
 NOT_ASKED_MISSING_PATH_PROBLEM = "- `{marker}` names {path}, which is not in the checkout {top}."
 NOT_ASKED_NEW_FILE_PROBLEM = ("- `{marker}` names {path}, which is not in the checkout {top}; a code fix that "
                               "settles without the user adds no file but a test.")
@@ -415,7 +431,7 @@ NOT_ASKED_WHY = {
     RENAME: "give on it the old name, then the new name, each in backquotes when it holds a space.",
 }
 NOT_ASKED_JUDGEMENT_LINES = (
-    "{item} is recorded as settled without asking the user, kind {kind}; the program checked only what code can.",
+    "{item} is recorded as settled without asking the user, {label}; the program checked only what code can.",
     "Before you run close, ask the advisor whether a later ruling or another open item overtakes {item}, and judge "
     "what the program could not, such as whether the case against names only cost and whether a fix matches its "
     "design.",
@@ -652,6 +668,28 @@ def part_answer(value):
     return int(match[1]), match[2].upper()
 
 
+def not_asked_kind(value):
+    """Return the --not-asked value: a kind, 1 to 5, or `none` for an item of no kind whose case against is
+    rated none."""
+    if value.strip().lower() == NOT_ASKED_RATED_NONE:
+        return NOT_ASKED_RATED_NONE
+    if value.strip() in {str(kind) for kind in NOT_ASKED_KINDS}:
+        return int(value)
+    raise argparse.ArgumentTypeError(f"`{value}` is not a kind: give 1, 2, 3, 4, 5 or none")
+
+
+def not_asked_label(kind):
+    """How the minutes and messages name a --not-asked value: `kind 3`, or `case against none`."""
+    return "case against none" if kind == NOT_ASKED_RATED_NONE else f"kind {kind}"
+
+
+def guarded_paths(top, paths):
+    """Return the paths, relative to the checkout top, that instruction-file-guard.py protects."""
+    guard = load_module("instruction_file_guard", INSTRUCTION_FILE_GUARD_FILE)
+    return [path for path in paths if any(protects(str(top / path)) for protects in (
+        guard.is_protected, guard.is_reusable_prompt, guard.is_reviewed_document))]
+
+
 def answered_word(arguments):
     """The answer as the walk-minutes write it: approved, disapproved, approved option N, or each part's word,
     as in `part 1 approved #approved_obvious, part 2 disapproved`."""
@@ -666,7 +704,7 @@ def answered_word(arguments):
     if arguments.option is not None:
         return f"{APPROVED} option {arguments.option}"
     if arguments.not_asked is not None:
-        return f"not asked, kind {arguments.not_asked}"
+        return f"not asked, {not_asked_label(arguments.not_asked)}"
     return APPROVED
 
 
@@ -798,9 +836,17 @@ def glossary_entry_files(top, name, item, kind):
 def not_asked_problems(kind, rating, lines, top, item):
     """Return the lines saying why the item cannot be settled as the kind given, from what code can check."""
     problems = []
+    found = evidence(lines)
+    if kind == NOT_ASKED_RATED_NONE:
+        if rating != NOT_ASKED_RATED_NONE:
+            problems.append(NOT_ASKED_NOT_RATED_NONE_PROBLEM.format(rating=rating))
+        if not words(found[TOUCHES]):
+            problems.append(NOT_ASKED_NO_LINE_PROBLEM.format(marker=TOUCHES, why=NOT_ASKED_WHY[TOUCHES]))
+        for path in guarded_paths(top, words(found[TOUCHES])):
+            problems.append(NOT_ASKED_GUARDED_FILE_PROBLEM.format(marker=TOUCHES, path=path))
+        return problems
     if rating not in NOT_ASKED_RATINGS:
         problems.append(NOT_ASKED_RATING_PROBLEM.format(rating=rating))
-    found = evidence(lines)
     needed = {1: (TOUCHES, SOURCE), 2: (TOUCHES, TEST), 3: (TOUCHES,), 4: (TOUCHES, RENAME), 5: (SOURCE,)}[kind]
     for marker in needed:
         if not words(found[marker]):
@@ -881,7 +927,9 @@ def check(arguments):
     if arguments.not_asked is not None:
         problems = not_asked_problems(arguments.not_asked, rating, lines, top, item)
         if problems:
-            raise Failure(NOT_ASKED_REFUSED.format(item=item, kind=arguments.not_asked, problems="\n".join(problems),
+            raise Failure(NOT_ASKED_REFUSED.format(item=item, kind=arguments.not_asked,
+                                                   label=not_asked_label(arguments.not_asked),
+                                                   problems="\n".join(problems),
                                                    document=document, program=Path(__file__).resolve()))
     texts = proposed_texts(lines, marks_the_answer_adds(arguments))
     log_store_records, tried = (None, []) if arguments.cold_read_records and arguments.counts_log \
@@ -922,7 +970,8 @@ def check(arguments):
     if had_to_be_run:
         output += [line.format(document=document, item=item) for line in CHECK_JUDGEMENT_LINES]
     if arguments.not_asked is not None:
-        output += [line.format(item=item, kind=arguments.not_asked) for line in NOT_ASKED_JUDGEMENT_LINES]
+        output += [line.format(item=item, label=not_asked_label(arguments.not_asked))
+                   for line in NOT_ASKED_JUDGEMENT_LINES]
     output.append(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve(), top=shlex.quote(str(top))))
     log = arguments.counts_log or (log_store_records.parent / COUNTS_LOG_FILE_NAME if log_store_records else None)
     try:
@@ -1112,9 +1161,10 @@ def main(argv=None):
                         help="check: the answer was O2 or O3, approving the item's \"Option N\" paragraph")
     answer.add_argument("--part-answer", type=part_answer, action="append", metavar="N=ANSWER",
                         help="check: part N of the item was answered ANSWER, A, AO or D; give it once for each part")
-    answer.add_argument("--not-asked", type=int, choices=NOT_ASKED_KINDS, metavar="KIND",
+    answer.add_argument("--not-asked", type=not_asked_kind, metavar="KIND",
                         help="check: the user is not asked; settle the item as kind KIND, 1 to 5, of the "
-                             "walk-me-through skill's list of items that need no answer, if its evidence lines pass")
+                             "walk-me-through skill's list of items that need no answer, if its evidence lines pass, "
+                             "or, as `none`, an item of no kind whose case against is rated none")
     parser.add_argument("--user-reply-as-typed", metavar="REPLY",
                         help="check: the user's reply exactly as he typed it, written into the minutes beside the "
                              "answer; needed for every answer but --not-asked")
