@@ -117,6 +117,7 @@ NUMBER_JOINER = r"\s*(?:,|&|\band\b|\bto\b|-|\u2013)\s*"
 NUMBER_LIST = rf"{NUMBER}(?:{NUMBER_JOINER}{NUMBER})*(?![\d.]\d)"
 VALUE_COUNT = re.compile(rf"^items?\s+({NUMBER_LIST})(?:\s+of\s+(\d+)\b)?", re.I)
 HEADING_COUNT = re.compile(rf"^[*_\s]*items?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
+WITHDRAWN_HEADING_ITEMS = re.compile(rf"\bitems?\s+({NUMBER_LIST})", re.I)
 # Atomic, so a label's number is never shortened to fit what follows it: `**Item 6.2** shows` cannot be read as
 # `**Item 6` followed by `.`. Every label reads its number through this one piece.
 WHOLE_NUMBER = rf"(?>{NUMBER})"
@@ -197,14 +198,19 @@ def item_opening_lines(text, parser, tokens=None):
     of a top-level paragraph, a label ITEM_LABEL reads or a running count `Item N of M` after any emphasis; on
     the first line of an item of a top-level list, a label in bold. M is None when the label gives no `of M`.
     A top-level heading WITHDRAWN_HEADING reads is an opening that names no item, ([], None): it ends the item
-    it falls in."""
+    it falls in. The first label or count after it, before any other heading, is the Withdrawn version's own
+    and is no opening when it names only items the Withdrawn heading names, or when that heading names none."""
     openings = {}
     tokens = parser.parse(text) if tokens is None else tokens
+    # The items the last Withdrawn heading names, an empty set when it names none; None outside a Withdrawn version.
+    withdrawn_items = None
     for index, token in enumerate(tokens):
-        if token.type == "heading_open" and token.map is not None and token.level == 0 and index + 1 < len(tokens) \
-                and WITHDRAWN_HEADING.match(tokens[index + 1].content):
-            openings[token.map[0]] = ([], None)
-            continue
+        if token.type == "heading_open" and token.map is not None and token.level == 0:
+            withdrawn_items = None
+            if index + 1 < len(tokens) and WITHDRAWN_HEADING.match(tokens[index + 1].content):
+                openings[token.map[0]] = ([], None)
+                withdrawn_items = withdrawn_heading_items(tokens[index + 1].content)
+                continue
         if token.type != "paragraph_open" or token.map is None:
             continue
         # A paragraph at level 2 straight after an item's start is that item's first paragraph; an item of a
@@ -216,16 +222,32 @@ def item_opening_lines(text, parser, tokens=None):
         label = ITEM_LABEL.match(first_line)
         # In a list only in bold, since a plain list item such as `- Item 7: which follows` mentions an item.
         if label and (label["bold"] or not top_level_list_item):
-            openings[token.map[0]] = ([label["bold_number"] or label["plain_number"]], label["total"])
-            continue
-        count = None if top_level_list_item else HEADING_COUNT.match(first_line)
-        if not count:
-            continue
-        try:
-            openings[token.map[0]] = (expand_numbers(count[1]), count[2])
-        except UnusableRange:
-            continue
+            found = ([label["bold_number"] or label["plain_number"]], label["total"])
+        else:
+            count = None if top_level_list_item else HEADING_COUNT.match(first_line)
+            if not count:
+                continue
+            try:
+                found = (expand_numbers(count[1]), count[2])
+            except UnusableRange:
+                continue
+        own_label = withdrawn_items is not None and (not withdrawn_items or set(found[0]) <= withdrawn_items)
+        withdrawn_items = None
+        if not own_label:
+            openings[token.map[0]] = found
     return openings
+
+
+def withdrawn_heading_items(heading):
+    """Return the set of item numbers a Withdrawn heading names after `item` or `items`, as in `Withdrawn version 1
+    of item 6`, or an empty set when it names none that expand_numbers can read."""
+    named = WITHDRAWN_HEADING_ITEMS.search(heading)
+    if not named:
+        return set()
+    try:
+        return set(expand_numbers(named[1]))
+    except UnusableRange:
+        return set()
 
 
 def next_to_present(minutes_text, parser):

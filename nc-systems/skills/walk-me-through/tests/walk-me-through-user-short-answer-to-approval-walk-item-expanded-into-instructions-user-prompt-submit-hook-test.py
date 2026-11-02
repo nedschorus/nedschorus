@@ -1210,6 +1210,19 @@ def test_a_withdrawn_version_under_a_shared_heading_ends_only_its_own_item():
     check("under a shared heading whose items have no openings, a Withdrawn heading ends the unit's text",
           lines is not None and lines[1].startswith(
               "A means approve: the user agrees with the recommendation of item 6 of 9 (do both)."), f"lines {lines!r}")
+    for heading in ("#### Withdrawn version 1 of item 6", "#### Withdrawn version 1"):
+        document = shared_heading_document(
+            "**Item 5: the path.** Recommendation: fix the path.\n\nThe sentence. Recommendation: drop it.\n\n"
+            + heading + "\n\n**Item 6: the old sentence.** Recommendation: keep it.\n")
+        lines = Case(next_to_present="item 6 of 9", document=document).lines("a")
+        check(f"under a shared heading, the label of a Withdrawn version below `{heading}` is not live item 6's "
+              "opening, so item 6 gets no recommendation and the line saying why, never the withdrawn one",
+              lines is not None
+              and lines[1] == "A means approve: the user agrees with the recommendation of item 6 of 9. "
+                              "Do what the recommendation says."
+              and not any("keep it" in line for line in lines)
+              and any("because item 6 has no opening it reads" in line for line in lines),
+              f"lines {lines!r}")
 
 
 def test_numbered_r_whose_walk_document_or_marker_cannot_be_read_still_goes_to_the_agent():

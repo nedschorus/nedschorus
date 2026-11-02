@@ -610,7 +610,7 @@ def recommendations_in(lines, openings, spans, total, walk_finder, starts):
         if len(numbers) > 1:
             ranges = {number: walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
                 openings, first, end, number, numbers, unit_total) for number in numbers}
-            # An item with no opening of its own is given the whole unit, which starts at the heading.
+            # Only an item with no opening of its own has a range that starts at the unit's heading.
             missing = [number for number in numbers if ranges[number][0] == first]
             # Only the items' own lines, so a Withdrawn version's recommendation is not counted.
             held = sorted({line for start, stop in ranges.values() for line in range(start, stop)})
