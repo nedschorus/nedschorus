@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import re
+import socket
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -79,6 +80,21 @@ FIRST_TAIL_READ_BYTES = 256 * 1024
 HANDOFF_INSTRUCTION = (
     "This session has used {share} of its context window, which has "
     "reached the reincarnation threshold. Run the /handoff skill now."
+)
+
+HANDOFF_DEFERRED_MARKER_NOT_DELETED = (
+    "The threshold-hook could not delete this agent-session's handoff-deferral marker "
+    "{path} on {host}: {error}. If this agent-session keeps working after a compaction "
+    "instead of handing off, the threshold-hook asks for the /handoff skill again, even "
+    "below the threshold, because the marker is still there.\n"
+    "The text for the user: \"On {host}, the threshold-hook could not delete the "
+    "handoff-deferral marker {path} ({error}). Please check why that path cannot be "
+    "deleted, and delete it.\"\n"
+    "If you are a subagent, put that text in your final report to the agent that "
+    "dispatched you, and do not run the /handoff skill.\n"
+    "Otherwise, in the same reply, give the user that text word for word, then run the "
+    "/handoff skill, as the threshold-hook's instruction just before this message says, "
+    "without waiting for an answer."
 )
 
 HANDOFF_DEFERRED_NOTICE = (
@@ -465,9 +481,6 @@ def main(argv=None) -> int:
         # A failed marker write would repeat the handoff request every turn.
         HANDOFF_DIRECTORY.mkdir(parents=True, exist_ok=True)
         fired_marker.write_text(f"{used:.1f}\n", encoding="utf-8")
-        # The deferral's promise is kept; left in place, it would refire the instruction
-        # below the threshold after every later compaction.
-        (HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred").unlink(missing_ok=True)
     except OSError:
         pass
 
@@ -475,6 +488,15 @@ def main(argv=None) -> int:
         HANDOFF_INSTRUCTION.format(share=share),
         file=sys.stderr,
     )
+    # The deferral's promise is kept; left in place, the marker would refire the
+    # instruction below the threshold after every later compaction.
+    deferred_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred"
+    try:
+        deferred_marker.unlink(missing_ok=True)
+    except OSError as error:
+        print(HANDOFF_DEFERRED_MARKER_NOT_DELETED.format(
+                  path=deferred_marker, host=socket.gethostname(), error=error),
+              file=sys.stderr)
     return 2
 
 

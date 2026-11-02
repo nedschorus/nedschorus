@@ -32,6 +32,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -1100,6 +1101,32 @@ with tempfile.TemporaryDirectory() as workspace:
                   f"code {result.returncode}, stderr {result.stderr[:200]}")
             compacted_marker_file.unlink(missing_ok=True)
             compacted_deferred_marker_file.unlink(missing_ok=True)
+
+            # A deferred marker the hook cannot delete: a directory in its place makes
+            # the unlink raise, so the hook must say so and still send the instruction.
+            compacted_deferred_marker_file.mkdir()
+            try:
+                result = run_hook({**compacted_payload, "transcript_path": str(compacted_finished)})
+                instruction, _, rest = result.stderr.partition("\n")
+                check("a deferred marker the hook cannot delete still lets the instruction go",
+                      result.returncode == 2 and is_handoff_instruction(instruction),
+                      f"code {result.returncode}, stderr {result.stderr[:300]}")
+                check("a deferred marker the hook cannot delete is reported after the instruction",
+                      "could not delete this agent-session's handoff-deferral marker" in rest
+                      and str(compacted_deferred_marker_file) in rest,
+                      f"stderr {result.stderr[:300]}")
+                check("the report gives the user's text with the machine, before the handoff",
+                      "in the same reply, give the user that text word for word, then run the" in rest
+                      and f'"On {socket.gethostname()}, the threshold-hook could not delete' in rest
+                      and "Please check why that path cannot be deleted, and delete it." in rest,
+                      f"stderr {result.stderr[:600]}")
+                check("the report tells a subagent where to send the text",
+                      "If you are a subagent, put that text in your final report to the agent "
+                      "that dispatched you" in rest,
+                      f"stderr {result.stderr[:600]}")
+            finally:
+                compacted_deferred_marker_file.rmdir()
+                compacted_marker_file.unlink(missing_ok=True)
 
             # The unknown-count deferral: the transcript first could not be read,
             # then the context fell below the threshold.
