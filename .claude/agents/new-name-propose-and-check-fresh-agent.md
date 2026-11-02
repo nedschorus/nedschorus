@@ -16,7 +16,7 @@ You receive a list with one entry per line, in one of two forms:
 1. **Blind guess.** Run a separate Gemini call that is given only the name, so its reader has nothing else:
 
    ```
-   cd "$(mktemp -d)" && agy --model gemini-3.8-flash-medium --output-format text --print "This name comes from a software project you cannot see. Guess from the name alone: do not look for files and do not ask a question. In one sentence, say what kind of thing it names and what it does or holds. Name: <the name>" < /dev/null
+   d=$(mktemp -d) && (cd "$d" && agy --model gemini-3.8-flash-medium --output-format text --print "This name comes from a software project you cannot see. Guess from the name alone: do not look for files and do not ask a question. In one sentence, say what kind of thing it names and what it does or holds. Name: <the name>" < /dev/null); s=$?; rmdir "$d"; exit $s
    ```
 
    Run it from that empty folder, so that nothing from the repository reaches the reader.
