@@ -649,6 +649,97 @@ def second_half_cases():
     stop_fake(supervisor_id)
 
 
+def start_leftover_in_agent_home():
+    """Start a process working in the agent-home that step 4 does not end; return (its ID, its command)."""
+    leftover = subprocess.Popen(["sleep", "600"], cwd=str(AGENT_HOME))
+    started_process_ids.append(leftover.pid)
+    return leftover.pid, program.process_command_line(leftover.pid)
+
+
+def state_with_leftover():
+    """A frozen fake handoff-supervisor whose step-2 list also holds a leftover that outlives step 4."""
+    leftover_id, leftover_command = start_leftover_in_agent_home()
+    supervisor_id, claude_id, state_path = fresh_state()
+    state = json.loads(state_path.read_text())
+    state["agent_home_processes"][str(leftover_id)] = leftover_command
+    state_path.write_text(json.dumps(state))
+    return supervisor_id, claude_id, leftover_id, state_path
+
+
+def step_4_and_leftover_cases():
+    reset_control()
+    control("resupervise-exit-codes", "0")
+    control("recover-exit-codes", "0")
+    supervisor_id, claude_id, state_path = fresh_state(supervisor_command="python3 a command no process runs")
+    write_session_handoff()
+    status, half, output = second_half(state_path)
+    result = (state_path.parent / "result.txt").read_text()
+    check("step 4: an old handoff-supervisor whose process ID now names another command gets no SIGKILL",
+          f"the old handoff-supervisor {supervisor_id} had already ended" in result
+          and "was ended with SIGKILL" not in result, result)
+    stop_fake(claude_id)
+    stop_fake(supervisor_id)
+
+    for case, failing in (("step 4's ps check that cannot answer", "ps"),
+                          ("step 4's SIGKILL that the system refuses", "kill")):
+        reset_control()
+        supervisor_id, claude_id, state_path = fresh_state()
+        write_session_handoff()
+        real_command_line, real_send_signal = program.process_command_line, program.send_signal
+        asked = []
+
+        def command_line_failing_once(process_id):
+            if failing == "ps" and process_id == supervisor_id and not asked:
+                asked.append(process_id)
+                raise program.RestartFailure(f"ps could not tell whether process {process_id} is running")
+            return real_command_line(process_id)
+
+        def signal_refusing_kill(process_id, number):
+            if failing == "kill" and number == signal.SIGKILL:
+                raise program.RestartFailure(f"sending SIGKILL to process {process_id} failed: not permitted")
+            return real_send_signal(process_id, number)
+
+        with replaced(program, "process_command_line", command_line_failing_once), \
+                replaced(program, "send_signal", signal_refusing_kill):
+            opened = []
+            status, half, output = second_half(state_path, opened)
+        time.sleep(0.2)
+        check(f"step 4: {case} unfreezes the old handoff-supervisor and says so",
+              status == 1 and opened and "unfrozen with SIGCONT" in output and not half.step_4_started
+              and running(supervisor_id) and not program.process_is_stopped(supervisor_id)
+              and running(claude_id) and not calls("resupervise-calls"), output)
+        stop_fake(claude_id)
+        stop_fake(supervisor_id)
+
+    reset_control()
+    control("resupervise-exit-codes", "1 0")
+    control("recover-exit-codes", "0")
+    control("successor-reply", "replied")
+    supervisor_id, claude_id, leftover_id, state_path = state_with_leftover()
+    write_session_handoff()
+    status, half, output = second_half(state_path)
+    time.sleep(0.2)
+    result = (state_path.parent / "result.txt").read_text()
+    ended_line = f"step 5: process {leftover_id} (sleep 600) ended"
+    check("step 5: a failed resupervise-seat.py ends step 2's leftovers before it is run once more",
+          status == 0 and not running(leftover_id) and ended_line in result
+          and result.index(ended_line) < result.index("step 5, run once more"), result)
+
+    reset_control()
+    control("resupervise-exit-codes", "0")
+    control("recover-exit-codes", "0")
+    control("successor-reply", "replied")
+    supervisor_id, claude_id, leftover_id, state_path = state_with_leftover()
+    write_session_handoff()
+    status, half, output = second_half(state_path)
+    time.sleep(0.2)
+    result = (state_path.parent / "result.txt").read_text()
+    ended_line = f"step 5: process {leftover_id} (sleep 600) ended"
+    check("step 5: a leftover of step 2 that outlives step 4 is ended before recover-crashed-seats.py runs",
+          status == 0 and not running(leftover_id) and ended_line in result
+          and result.index(ended_line) < result.index("step 6:"), result)
+
+
 def step_5_cases():
     supervisor_id, claude_id, state_path = fresh_state()
     half = program.SecondHalf(state_path, sleep=quick_sleep, open_notice_page=lambda page: (0, ""))
@@ -670,6 +761,16 @@ def step_5_cases():
         except program.RestartFailure as error:
             check(f"step 5: {case} stops the program",
                   "processes other than those left from the old agent-session" in str(error), str(error))
+
+    tmux_command = "tmux new-session -d -s restart-test-seat"
+    half.state["agent_home_processes"][str(os.getpid())] = tmux_command
+    try:
+        half.end_leftovers_from_step_2({os.getpid(): tmux_command})
+        check("step 5: a tmux server listed with the same command in step 2 stops the program", False,
+              "no failure")
+    except program.RestartFailure as error:
+        check("step 5: a tmux server listed with the same command in step 2 stops the program",
+              "processes other than those left from the old agent-session" in str(error), str(error))
     stop_fake(supervisor_id)
 
 
@@ -852,6 +953,7 @@ foreground_supervisor_id, foreground_claude_id, _ = foreground_cases()
 stop_fake(foreground_claude_id)
 stop_fake(foreground_supervisor_id)
 second_half_cases()
+step_4_and_leftover_cases()
 step_5_cases()
 process_cases()
 notice_cases()

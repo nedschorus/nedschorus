@@ -48,12 +48,13 @@ step 7, because the successor's reading of the file is the reply step 7 waits fo
 Failures, keyed on the agent-seat's state:
 - before the freeze: the program prints why and exits 1; nothing was changed apart from the
   reference-checkout's fast-forward, which needs no undo;
-- while the handoff-supervisor is frozen (the freeze did not hold, the second half could not
-  start, no new session-handoff came within the limit, or it was written with --dont-restart,
-  which would make the new handoff-supervisor wait for an answer on a terminal nobody watches):
-  the program unfreezes it with
-  SIGCONT, and the old handoff-supervisor carries on as before, consuming a session-handoff
-  already written;
+- while the handoff-supervisor is frozen, it is unfrozen with SIGCONT, and the old
+  handoff-supervisor carries on as before, consuming a session-handoff already written. The
+  foreground sends the SIGCONT when the freeze did not hold or the second half could not start;
+  the second half sends it when no new session-handoff came within the limit, when it was
+  written with --dont-restart, which would make the new handoff-supervisor wait for an answer on
+  a terminal nobody watches, or when step 4's ps check could not answer or its SIGKILL was
+  refused;
 - after step 4, while no new handoff-supervisor runs: the program removes the processes left
   from step 2's list and runs the failed command once more, checking with ps before each signal
   that the process ID still names the same command. A second failure, or a process in the
@@ -225,7 +226,8 @@ def processes_working_in_agent_home(agent_home: Path, apart_from=()):
     process_ids, detail = recovery.processes_rooted_in_seat_directory(
         agent_home, require_a_complete_listing=True)
     if process_ids is None:
-        raise RestartFailure(f"the processes working in {agent_home} could not be listed: {detail}")
+        raise RestartFailure(f"the processes whose working directory is in {agent_home} could not "
+                             f"be listed: {detail}")
     listed = {}
     for process_id in process_ids:
         if process_id in apart_from:
@@ -404,15 +406,17 @@ def foreground(seat: str, start_second_half=start_second_half, sleep=time.sleep)
           f"successor on its old code; its claude is process {claude_id}. The program's second half, "
           f"process {second_half_id}, waits up to {SESSION_HANDOFF_WAIT_LIMIT_SECONDS // 60} minutes "
           f"for a new session-handoff, then ends this agent-session and starts a new "
-          f"handoff-supervisor from {REFERENCE_CHECKOUT}; its output goes to "
+          f"handoff-supervisor from {REFERENCE_CHECKOUT}; the second half writes what it prints to "
           f"{log_directory / 'detached-output.log'}.\n"
           f"If you are the agent-seat {seat}: write your session-handoff now with the /handoff skill, "
           f"without --dont-restart, because that flag makes the new handoff-supervisor wait for an "
-          f"answer on the terminal. Put in its next step: \"Read {result_path} and tell the user the "
-          f"restart's result it reports.\" Then stop working.\n"
-          f"If you cannot write the session-handoff: write nothing, and the program unfreezes the old "
-          f"handoff-supervisor after {SESSION_HANDOFF_WAIT_LIMIT_SECONDS // 60} minutes and shows the "
-          f"user a notice.")
+          f"answer on the terminal. Add this sentence to the session-handoff's next step, keeping "
+          f"what the next step already says: \"Read {result_path} and tell the user the restart's "
+          f"result it reports.\" Then end your turn and start no new work: the second half ends "
+          f"this agent-session.\n"
+          f"If you cannot write the session-handoff: write no session-handoff. The second half then "
+          f"unfreezes the old handoff-supervisor after {SESSION_HANDOFF_WAIT_LIMIT_SECONDS // 60} "
+          f"minutes and shows the user a notice.")
     return 0
 
 
@@ -423,7 +427,7 @@ def not_restarted_message(seat: str, reason: str, what_was_changed: str) -> str:
             f"Tell the user: \"The handoff-supervisor of {seat} on {socket.gethostname()} was not "
             f"restarted onto main's code, so {seat} keeps running on its old code. The program "
             f"said: {reason}.\"\n"
-            f"A subagent passes the same fact to the agent that dispatched it.")
+            f"A subagent gives that sentence to the agent that dispatched it, not to the user.")
 
 
 # ---------------------------------------------------------------- second half: steps 4 to 7
@@ -502,8 +506,8 @@ class SecondHalf:
                   if listed_at_step_2.get(process_id) != command or is_tmux_server(command)}
         if others:
             raise RestartFailure(
-                f"processes other than those left from the old agent-session work in "
-                f"{AGENTS_ROOT / self.seat}, so the program stopped: " + "; ".join(
+                f"processes other than those left from the old agent-session have their working "
+                f"directory in {AGENTS_ROOT / self.seat}, so the program stopped: " + "; ".join(
                     f"{process_id}: {command}" for process_id, command in others.items()))
         for process_id, command in listed_now.items():
             self.record(f"step 5: {end_process(process_id, command, sleep=self.sleep)}")
@@ -577,13 +581,18 @@ class SecondHalf:
                 f"the session-handoff {handoff_path} was written with --dont-restart, so a new "
                 f"handoff-supervisor would wait for an answer on the agent-seat's terminal. "
                 f"{unfreeze(supervisor_id, supervisor_command)}.")
-        self.step_4_started = True
         try:
             if process_command_line(supervisor_id) == supervisor_command:
                 send_signal(supervisor_id, signal.SIGKILL)
-                self.record(f"step 4: the old handoff-supervisor {supervisor_id} was ended with SIGKILL")
+                ended = f"step 4: the old handoff-supervisor {supervisor_id} was ended with SIGKILL"
             else:
-                self.record(f"step 4: the old handoff-supervisor {supervisor_id} had already ended")
+                ended = f"step 4: the old handoff-supervisor {supervisor_id} had already ended"
+        except RestartFailure as error:
+            # The old handoff-supervisor may still be frozen, so it is unfrozen as before step 4.
+            return self.fail(f"step 4: {error}. {unfreeze(supervisor_id, supervisor_command)}.")
+        self.step_4_started = True
+        self.record(ended)
+        try:
             self.record(f"step 4: {end_process(self.state['claude_id'], self.state['claude_command'], sleep=self.sleep)}")
             prepare = [sys.executable, str(REFERENCE_CHECKOUT / "scripts" / "resupervise-seat.py"),
                        self.seat, "--prepare-only"]
