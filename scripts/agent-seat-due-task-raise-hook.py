@@ -573,8 +573,9 @@ NEXT_ACTION_INSTRUCTIONS = (
     "Start subagents now on every ready task that needs no review or approval from the user.",
     "Build an approval-walk of 8 to 16 items, more than 16 only for one large thing with many "
     "parts, from your loose-ends, open questions, concerns, suggestions and tasks that need the "
-    "user; put first what makes the user's interaction easier and what makes agents or the "
-    "process faster or cheaper.",
+    "user; put first the items that block work, then what makes the user's interaction easier "
+    "and what makes agents or the process faster or cheaper, then the rest, the oldest first "
+    "among equals.",
     "If you have none of these at all, ask ghi-guide-agent for 3 to 5 GHIs to work on, with "
     "`python3 scripts/ghi-guide-agent-ask.py \"Which 3 to 5 open GHIs would most improve how "
     "easy the user's interaction with agents is, or how fast or cheap agents and the "
