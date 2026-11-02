@@ -47,11 +47,11 @@ THE TEXT CHECKED is the reply, line by line, without:
   outside the link but the answer letters, such as a list mark, bold marks or
   a sentence, or that names another item or total, is checked;
 - the line a sub-step that asks for no decision ends with, `[No decision
-  here; type N or next to continue.](<page link>)`, alone on its line, when a
-  waiting item is a sub-step, with a dotted number such as `Item 4.1 of 9`;
-  the link target is not compared, as the closing line's is not; and the
-  same line without its link when the newest `#item_page` line of a waiting
-  sub-step records a failed publish;
+  here; type N or next to continue.](<page link>)` or the same line without
+  its link, alone on its line, whatever item waits: it only tells the user
+  how to move on, and whether it may end this message is the current-item
+  Stop hook's check, which refuses it for an item without a dotted number
+  such as `Item 4.1 of 9`;
 - a sentence that only names waiting items, `Item 4 of 9 is waiting for your
   answer.`, the line the walk-me-through skill ended every message with before
   the closing line, when every item it names is waiting and its total is the
@@ -62,10 +62,12 @@ THE TEXT CHECKED is the reply, line by line, without:
 
 EACH LINE is one of three:
 - a clear ask: a sentence ending in `?`, or a phrase in CLEAR_ASK such as
-  `say yes`, `should I` or `waiting for your answer`; it blocks, unless the
-  line also names an item by number, which makes it unclear, because a
-  reminder of a walk item's own question asks nothing new;
-- unclear: a `?` inside the line, or a phrase in UNCLEAR_ASK such as `I
+  `say yes`, `should I` or `waiting for your answer` outside quoted text; it
+  blocks, unless the line also names an item by number, which makes it
+  unclear, because a reminder of a walk item's own question asks nothing new;
+- unclear: a `?` inside the line, a phrase in CLEAR_ASK inside quoted text,
+  such as a quoted title or a quoted line of the walk-me-through skill, which
+  may only be named and not asked, or a phrase in UNCLEAR_ASK such as `I
   recommend` or `whether to`;
 - not question-like: everything else; it passes.
 When no line is a clear ask and some are unclear, the unclear lines go to
@@ -169,7 +171,7 @@ WAITING_REMINDER = re.compile(
     re.I)
 CLEAR_ASK = re.compile(
     # The letter A is matched in capitals only, because a lowercase `a` there is the article, as in `answer a finding`.
-    r"\b(?:say|reply|answer|type)\s+(?:yes|no|y|n|ao|d|(?-i:A))\b|\bon\s+(?:a|your)\s+(?:yes|no)\b"
+    r"\b(?:say|reply|answer|type)\s+(?:yes|no|y|n|ao|d|(?-i:A))\b(?!-)|\bon\s+(?:a|your)\s+(?:yes|no)\b(?!-)"
     r"|\byour\s+yes\s+or\s+no\b|\bdo\s+you\s+(?:want|agree)\b|\bshould\s+I\b|\bshall\s+I\b|\bwant\s+me\s+to\b"
     r"|\bwould\s+you\s+like\b|\bwaiting\s+(?:on|for)\s+your\s+(?:answer|word|decision|ruling|approval|go-ahead|yes)\b"
     r"|\bneeds?\s+your\s+(?:answer|decision|ruling|approval|word|go-ahead|yes)\b"
@@ -381,15 +383,6 @@ def is_closing_line(line, waiting_numbers, total, pages):
                                          for number in numbers)))
 
 
-def is_no_decision_line(line, waiting_numbers, pages):
-    """Whether line is the no-decision line of a waiting sub-step, as the module docstring's THE TEXT CHECKED says."""
-    link = walk_finder.approval_walk_sub_step_no_decision_closing_line_page_link_or_none(line)
-    sub_steps = [number for number in waiting_numbers if "." in number]
-    return link is not None and bool(sub_steps) and (
-        link != walk_finder.ITEM_PAGE_PUBLISH_FAILED
-        or any(pages.get(number) == walk_finder.ITEM_PAGE_PUBLISH_FAILED for number in sub_steps))
-
-
 def is_waiting_reminder(sentence, waiting_numbers, totals):
     """Whether sentence only says that waiting items of the open walk, with one of its totals, wait for an answer."""
     reminder = WAITING_REMINDER.match(sentence.strip(TRAILING_MARKS))
@@ -414,7 +407,7 @@ def checked_lines(reply, document_text, units, parser, waiting_numbers, total, p
     kept, written, introduced_list = [], [], False
     for line in lines:
         if (normalized(line) in shown or is_closing_line(line, waiting_numbers, total, pages)
-                or is_no_decision_line(line, waiting_numbers, pages)):
+                or walk_finder.approval_walk_sub_step_no_decision_closing_line_page_link_or_none(line) is not None):
             continue
         if line.lstrip().startswith(">") and normalized(line) in normalized_document:
             continue
@@ -442,9 +435,9 @@ def checked_lines(reply, document_text, units, parser, waiting_numbers, total, p
 def line_kind(line):
     """`clear`, `unclear` or None, as the module docstring's EACH LINE says."""
     ends_in_question = any(sentence.rstrip(TRAILING_MARKS).endswith("?") for sentence in SENTENCE_END.split(line))
-    if ends_in_question or CLEAR_ASK.search(line):
+    if ends_in_question or CLEAR_ASK.search(QUOTED.sub(" ", line)):
         return "unclear" if ITEM_REFERENCE.search(line) else "clear"
-    if "?" in line or UNCLEAR_ASK.search(line):
+    if "?" in line or CLEAR_ASK.search(line) or UNCLEAR_ASK.search(line):
         return "unclear"
     return None
 
