@@ -1002,6 +1002,18 @@ def test_a_hyphenated_word_after_yes_or_no_is_not_an_ask():
     check_blocked("`on a yes` still blocks", case.run(model="no"), "approval-walk question check")
 
 
+def test_an_answer_cue_followed_by_another_hyphenated_word_goes_to_the_model():
+    for case_name, text in (("`Type A-D`", "Type A-D to answer."),
+                            ("`Say yes-or-no`", "Say yes-or-no and I will merge it."),
+                            ("`on a yes-or-no`", "I will merge it on a yes-or-no from you.")):
+        case = Case()
+        case.reply(text)
+        check_blocked(case_name + " blocks when the model says it asks the user something", case.run(model="yes:1"),
+                      "the model judged that it asks him something")
+        check(case_name + " went to the model", len(case.model_calls()) == 1, case.model_calls())
+        check_silent(case_name + " passes when the model says it asks nothing", case.run(model="no"))
+
+
 PUBLISH_FAILED_LINE = "#item_page item {number} of {total} publish failed: the Artifact tool timed out"
 RECOMMENDED_ITEM_2_DOCUMENT = WALK_DOCUMENT.replace("## Item 2 of 10: where the poem page lives",
                                                     "## Item 2 of 10: the poem page is recommended for the wiki")
