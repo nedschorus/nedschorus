@@ -1155,11 +1155,7 @@ def replay_with_sigterm_handled(arguments):
 
 def verdicts_step(checkout, pairs_path, out_path, jobs, new_process, search_file_main, search_file_directory,
                   timeout, bash_guard_paths_at_git_ref_by_current_path, multiprocessing_directory_record_path):
-    # Written whole or not at all: a step killed during a plain write_text leaves an empty record.
-    record = Path(multiprocessing_directory_record_path)
-    partial_record = record.with_name(record.name + ".partial")
-    partial_record.write_text(multiprocessing.util.get_temp_dir())
-    os.replace(partial_record, record)
+    Path(multiprocessing_directory_record_path).write_text(multiprocessing.util.get_temp_dir())
     pairs = json.loads(Path(pairs_path).read_text())
     rows, switched, one_command_per_process, read_again, passed_again = ref_verdicts(
         checkout, pairs, int(jobs), new_process == "1", search_file_directory, search_file_main == "1", int(timeout),
