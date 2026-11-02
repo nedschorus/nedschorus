@@ -359,6 +359,15 @@ def test_more_than_the_limit():
     check(f"branches with no pull request: {listing.ENTRIES_AT_MOST + 2}:" in text
           and "- and 2 more; list them all with:" in text,
           "entries past the limit are counted, with the list command", text[-400:])
+    output = io.StringIO()
+    with redirect_stdout(output):
+        exit_code = listing.main(["list", "--agent-seat", "seat-a", "--repo", str(main)])
+    printed = output.getvalue()
+    missing = [number for number in range(listing.ENTRIES_AT_MOST + 2)
+               if f"branch many-{number:02d};" not in printed]
+    check(exit_code == 0 and not missing and "more; list them all with:" not in printed,
+          "the list command the first prompt names prints every entry past the limit",
+          (exit_code, missing))
 
 
 def test_supervisor_appends_the_list():

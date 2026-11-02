@@ -32,8 +32,10 @@ an empty list. It reads only; it deletes nothing.
 Usage:
   agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py
       list --agent-seat NAME [--repo PATH] [--skip-worktree PATH]
-      prints the list, or nothing when there is nothing to list; exit 0,
-      1 when part of it could not be built
+      prints the whole list, every entry, or nothing when there is nothing
+      to list; exit 0, 1 when part of it could not be built. The first
+      prompt shows at most ENTRIES_AT_MOST entries of each kind and points
+      to this command for the rest.
 """
 
 import argparse
@@ -203,17 +205,19 @@ Each is listed because it belongs to this agent-seat: a worktree because its own
 Tell the user in your next message which you kept and which you deleted."""
 
 
-def section(heading, entries, agent_seat):
+def section(heading, entries, agent_seat, entries_at_most):
     lines = [heading]
-    lines.extend(f"- {entry}" for entry in entries[:ENTRIES_AT_MOST])
-    rest = len(entries) - ENTRIES_AT_MOST
+    shown = entries if entries_at_most is None else entries[:entries_at_most]
+    lines.extend(f"- {entry}" for entry in shown)
+    rest = len(entries) - len(shown)
     if rest > 0:
         lines.append(f"- and {rest} more; list them all with: {list_command_text(agent_seat)}")
     return lines
 
 
-def list_text_and_failure(repo, agent_seat, skip_worktree=None):
-    """Return (the list's text, or "" when there is nothing to list; whether part failed)."""
+def list_text_and_failure(repo, agent_seat, skip_worktree=None, entries_at_most=None):
+    """Return (the list's text, or "" when there is nothing to list; whether part failed).
+    entries_at_most caps the entries shown of each kind; None shows every entry."""
     cleaner = None
     try:
         cleaner = clean_worktrees_module()
@@ -240,14 +244,15 @@ def list_text_and_failure(repo, agent_seat, skip_worktree=None):
         return "", False
     lines = []
     if worktrees:
-        lines += section(f"This agent-seat's worktrees: {len(worktrees)}:", worktrees, agent_seat)
+        lines += section(f"This agent-seat's worktrees: {len(worktrees)}:", worktrees, agent_seat,
+                         entries_at_most)
     if pull_request_failure:
         lines.append(f"This agent-seat's branches with no pull request could not be listed, "
                      f"because gh could not list the pull requests ({pull_request_failure}); "
                      f"list them with: {list_command_text(agent_seat)}")
     elif branches:
         lines += section(f"This agent-seat's branches with no pull request: {len(branches)}:",
-                         branches, agent_seat)
+                         branches, agent_seat, entries_at_most)
     if worktrees or branches:
         lines.append(INSTRUCTIONS)
     return "\n".join(lines), bool(pull_request_failure)
@@ -256,7 +261,7 @@ def list_text_and_failure(repo, agent_seat, skip_worktree=None):
 def first_prompt_text(repo, agent_seat, skip_worktree=None):
     """The first prompt's paragraph on this agent-seat's worktrees and branches with no pull
     request; empty when there are none. A failure is stated, never left as an empty list."""
-    return list_text_and_failure(repo, agent_seat, skip_worktree)[0]
+    return list_text_and_failure(repo, agent_seat, skip_worktree, ENTRIES_AT_MOST)[0]
 
 
 def main(argv=None):
