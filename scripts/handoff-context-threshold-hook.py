@@ -69,6 +69,9 @@ CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX = {
 }
 DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
 
+# scripts/agent-seat-due-task-raise-hook.py reads this to tell a handoff is due at the same Stop.
+DEFAULT_THRESHOLD_USED_PERCENTAGE = 33.0
+
 FIRST_TAIL_READ_BYTES = 256 * 1024
 
 # Messages below follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
@@ -382,7 +385,8 @@ def subagent_own_transcript_shows_work_in_flight(subagent_path: Path,
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Fire the handoff skill when context runs low.")
-    parser.add_argument("--threshold-used-percentage", type=float, default=33.0)
+    parser.add_argument("--threshold-used-percentage", type=float,
+                        default=DEFAULT_THRESHOLD_USED_PERCENTAGE)
     parser.add_argument(
         "--ceiling-used-percentage", type=float, default=65.0,
         help="above this used share the handoff fires even with work in flight",
