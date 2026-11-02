@@ -184,9 +184,37 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           len(not_shipped_instruction_lines) == 3
           and "do nothing; it ships when that walk is shipped" in not_shipped_instruction_lines[0]
           and "rename it to that name; once every such file is renamed, run "
-              f"`{SHIP} {walk_text}` again" in not_shipped_instruction_lines[1]
-          and f"the log-store has no copy of it; it is in {walks}" in not_shipped_instruction_lines[2],
+              f"`{SHIP} {walks.resolve() / (WALK + '-minutes.md')}` again"
+              in not_shipped_instruction_lines[1]
+          and f"the log-store has no copy of it; it is in {walks.resolve()}"
+              in not_shipped_instruction_lines[2],
           result.stderr)
+
+    # --- The note's rerun command runs as printed ---------------------------
+    # Started by a relative program path from scripts/, with the walk reached
+    # through a symlinked directory, the printed command must still run from
+    # any other working directory.
+    import re
+    linked_walks = scratch / "linked-walks"
+    linked_walks.symlink_to(walks, target_is_directory=True)
+    relative_env = dict(os.environ)
+    relative_env[DESTINATION_VARIABLE] = local_destination
+    relative = subprocess.run(
+        [sys.executable, SHIP.name, str(linked_walks / f"{WALK}.md")],
+        capture_output=True, text=True, check=False, env=relative_env, cwd=SCRIPTS_DIR)
+    printed = re.search(r"once every such file is renamed, run `([^`]+)` again",
+                        relative.stderr)
+    # The shell runs the printed command, as an agent would, so a program path
+    # that does not resolve from this directory fails with exit 127.
+    rerun_result = (subprocess.run(printed.group(1), shell=True, capture_output=True,
+                                   text=True, check=False, env=relative_env, cwd=scratch)
+                    if printed else None)
+    check("the not-shipped note's rerun command, printed by a run started as "
+          "`python3 walk-files-ship.py` from scripts/ on a symlinked walk directory, "
+          "runs from another working directory and ships the walk",
+          printed is not None and rerun_result.returncode == 0
+          and f"minutes at {store_walk}/{WALK}-minutes.md" in rerun_result.stdout,
+          relative.stderr + (rerun_result.stdout + rerun_result.stderr if rerun_result else ""))
 
     # --- Nothing new: nothing touched ---------------------------------------
     stored_minutes = store_walk / f"{WALK}-minutes.md"

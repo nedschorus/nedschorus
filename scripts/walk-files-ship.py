@@ -594,6 +594,19 @@ def staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_
             f"of its own; delete it with `{command}`.")
 
 
+def walk_files_ship_rerun_command(name: str, directory: pathlib.Path) -> str:
+    """The command that ships walk `name` in `directory` again: this
+    program by its resolved path, and the walk by its name or its minutes'
+    resolved path, so it runs from any working directory, however the
+    program was started."""
+    # A name that begins with a dash would be read by argparse as an option,
+    # so such a walk is rerun by its minutes' path, as a walk elsewhere is.
+    walk_argument = (name if directory == WALK_DIRECTORY and not name.startswith("-")
+                     else str(directory / walk_file_name(name, MINUTES_ROLE_SUFFIX)))
+    return (f"{shlex.quote(str(REPO_ROOT / 'scripts' / 'walk-files-ship.py'))} "
+            f"{shlex.quote(walk_argument)}")
+
+
 def walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
         copy_host, name: str, directory: pathlib.Path, staging_dir,
         what_failed: str, why: typing.Optional[str]) -> str:
@@ -601,12 +614,7 @@ def walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_b
     command that reruns this shipment, after the deletion of this run's
     staging directory when that could not be removed, since the rerun's
     replace step would stop on it."""
-    # A name that begins with a dash would be read by argparse as an option,
-    # so such a walk is rerun by its minutes' path, as a walk elsewhere is.
-    walk_argument = (name if directory == WALK_DIRECTORY and not name.startswith("-")
-                     else str(directory / walk_file_name(name, MINUTES_ROLE_SUFFIX)))
-    rerun = (f"{shlex.quote(str(REPO_ROOT / 'scripts' / 'walk-files-ship.py'))} "
-             f"{shlex.quote(walk_argument)}")
+    rerun = walk_files_ship_rerun_command(name, directory)
     if why:
         return (f"FAILED: {name} — {what_failed}. "
                 f"{staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(copy_host, staging_dir, why)} "
@@ -663,7 +671,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
               f"For a file of walk {name} that fills one of those roles under "
               f"another name, when {directory} has no file of that role's name: "
               f"rename it to that name; once every such file is renamed, run "
-              f"`{shlex.join(sys.argv)}` again, because the log-store keeps no copy "
+              f"`{walk_files_ship_rerun_command(name, directory)}` again, because the log-store keeps no copy "
               f"of a file this program does not ship.\n"
               f"For any other file, one whose role's name is already taken included: "
               f"tell the user, in one sentence for each such "
