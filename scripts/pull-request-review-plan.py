@@ -66,8 +66,13 @@ the head says every claim is supported.
 nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py
 writes the reports, keyed by the overview's blob, under
 --overview-write-architecture-overview-claim-check-report-directory, the log-store's
-overview-write-architecture-overview-claim-check-reports by default. A merged pull request is
-not refused.
+overview-write-architecture-overview-claim-check-reports by default. Rule 4 also
+refuses such a pull request when the commit the overview's **Checked against:**
+line names is not on origin/main and either is not an ancestor of the head, or
+is followed by a commit that changes a path the overview's Components section
+names in backticks, or a file under nc-systems/<system>/ other than a .md file:
+the overview was then checked against code the head no longer has. A merged
+pull request is not refused.
 
 Merged pull requests use the merge commit's first parent as the diff base:
 the current base branch already contains the head and would hide the change.
@@ -147,12 +152,23 @@ _overview_claim_check_spec = importlib.util.spec_from_file_location(
     / "overview-write-architecture-overview-claim-check-by-fresh-agent.py")
 overview_claim_check = importlib.util.module_from_spec(_overview_claim_check_spec)
 _overview_claim_check_spec.loader.exec_module(overview_claim_check)
+_overview_path_reader_spec = importlib.util.spec_from_file_location(
+    "architecture_overview_path_template_and_checked_against_commit_reader_common",
+    Path(__file__).resolve().parent / "architecture-overview-path-template-and-checked-against-commit-reader-common.py")
+overview_path_reader = importlib.util.module_from_spec(_overview_path_reader_spec)
+_overview_path_reader_spec.loader.exec_module(overview_path_reader)
 
 REVIEW_TIER_ORDER = {"no-reviewer-tier": 0, "codex-review-and-head-tests-tier": 1, "claude-and-codex-review-and-head-tests-tier": 2}
 GITHUB_PULL_REQUEST_FIELDS = "number,title,url,state,author,headRefOid,baseRefName,mergeCommit"
 GIT_FULL_HASH_PATTERN = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 DIFF_HUNK_HEADER_PATTERN = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
 REGISTERED_HOOK_PATH_PATTERN = re.compile(r'\$CLAUDE_PROJECT_DIR"?/([^"\s]+)')
+MARKDOWN_SECTION_HEADING_PATTERN = re.compile(r"^##\s")
+COMPONENTS_SECTION_HEADING_PATTERN = re.compile(r"^##\s+Components\s*$")
+BACKTICKED_TEXT_PATTERN = re.compile(r"`([^`]+)`")
+# A component path is relative to the repository and holds a directory; this
+# leaves out `claude`, `<placeholder>`s, ~ and absolute paths, and globs.
+REPOSITORY_RELATIVE_COMPONENT_PATH_PATTERN = re.compile(r"[A-Za-z0-9_.][^\s<>*?\[\]]*/[^\s<>*?\[\]]*")
 PROSE_DIRECTORY_CODE_EXTENSIONS = {".py", ".sh", ".json", ".yaml", ".yml", ".toml", ".js"}
 
 
@@ -652,21 +668,100 @@ def merged_tree_against_origin_main(repository, head):
     return {"tree": None, "conflicting_paths": [], "error": first_output_line(result.stderr)}
 
 
-def architecture_overview_claim_check_shortfalls(repository, head, changed_files, report_directory):
-    """For each nc-architecture-overview the pull request adds or changes, the
-    newest claim-check report for the overview's text at head, when that report
-    does not show every claim supported; an empty list lets the plan go on."""
-    shortfalls = []
+def changed_architecture_overview_paths_and_systems(repository, head, changed_files):
+    """(path, system) for each nc-architecture-overview the pull request adds or
+    changes whose system has a directory under nc-systems/ at head."""
+    overviews = []
     for entry in changed_files:
         system = overview_claim_check.nc_architecture_overview_described_system_name_from_page_path(entry["path"])
         if entry["status"] == "D" or system is None:
             continue
         if not git_result_or_refuse(repository, "ls-tree", "-d", "--name-only", head, f"nc-systems/{system}").stdout.strip():
             continue
-        blob = required_git_output(repository, "rev-parse", f"{head}:{entry['path']}")
-        newest = overview_claim_check.find_newest_architecture_overview_claim_check_report_path_and_result_for_overview_git_blob(report_directory, entry["path"], blob)
+        overviews.append((entry["path"], system))
+    return overviews
+
+
+def architecture_overview_component_paths(overview_text):
+    """The repository paths the overview's Components section names in backticks."""
+    paths, in_components = set(), False
+    for line in overview_text.splitlines():
+        if MARKDOWN_SECTION_HEADING_PATTERN.match(line):
+            in_components = bool(COMPONENTS_SECTION_HEADING_PATTERN.match(line))
+        elif in_components:
+            for text in BACKTICKED_TEXT_PATTERN.findall(line):
+                if REPOSITORY_RELATIVE_COMPONENT_PATH_PATTERN.fullmatch(text):
+                    paths.add(text.rstrip("/"))
+    return paths
+
+
+def path_is_architecture_overview_described_code(path, system, component_paths):
+    if path.startswith(f"nc-systems/{system}/") and not path.endswith(".md"):
+        return True
+    return any(path == component or path.startswith(component + "/") for component in component_paths)
+
+
+def architecture_overview_checked_against_commit_problems(repository, head, changed_files):
+    """For each nc-architecture-overview the pull request adds or changes whose
+    **Checked against:** commit is not on origin/main, why that commit does not
+    hold the code the overview describes at head; an empty list lets the plan go on."""
+    problems = []
+    for path, system in changed_architecture_overview_paths_and_systems(repository, head, changed_files):
+        text = required_git_output(repository, "show", f"{head}:{path}")
+        named = overview_path_reader.checked_against_commit(text)
+        # An overview with no such line is refused by the claim check, which names the fix.
+        if named is None:
+            continue
+        named_is_present = commit_is_in_repository(repository, named)
+        if named_is_present and commit_is_ancestor_of(repository, named, "refs/remotes/origin/main"):
+            continue
+        if not named_is_present or not commit_is_ancestor_of(repository, named, head):
+            problems.append({"path": path, "named": named, "later_changed_paths": None})
+            continue
+        component_paths = architecture_overview_component_paths(text)
+        changed_since = git_result_or_refuse(repository, "diff", "--name-only", "-z", named, head).stdout.split("\0")
+        later = sorted(changed for changed in changed_since
+                       if changed and path_is_architecture_overview_described_code(changed, system, component_paths))
+        if later:
+            problems.append({"path": path, "named": named, "later_changed_paths": later})
+    return problems
+
+
+def architecture_overview_checked_against_commit_refusal_message(number, head, problems):
+    lines = [f"pull request {number} adds or changes {len(problems)} nc-architecture-overview(s) whose "
+             "**Checked against:** commit is not on main and does not hold the code the overview describes at "
+             f"head {head[:12]}, so no plan was computed. The claim check read the code at that commit, so its "
+             "report does not cover the code this pull request would merge."]
+    for problem in problems:
+        if problem["later_changed_paths"] is None:
+            lines.append(f"  {problem['path']} names commit {problem['named']}, which is not in the history of head {head[:12]}.")
+        else:
+            lines.append(f"  {problem['path']} names commit {problem['named']}, and later commits of the pull request "
+                         f"change code the overview describes: {', '.join(problem['later_changed_paths'])}.")
+    lines.append("Send this whole message to the pull request's author. The author clears it on ned-box, in a checkout "
+                 "of the pull request's branch, for each overview listed:")
+    lines.append("  1. Commit every change to the code the overview describes, then make the overview's "
+                 "**Checked against:** line name the last of those commits, or a commit of main when the pull request "
+                 "no longer changes that code, as the section \"Keeping an overview true\" of "
+                 "docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md says, and commit the overview.")
+    lines.extend(f"  2. Run the claim check again: python3 nc-systems/skills/overview-write/"
+                 f"overview-write-architecture-overview-claim-check-by-fresh-agent.py --overview {shlex.quote(problem['path'])}"
+                 for problem in problems)
+    lines.append("  3. Do what the claim check prints, and push once its report shows every claim supported.")
+    lines.append(f"Once the author says this is done: run scripts/pull-request-review-plan.py --pull-request {number} again.")
+    return "\n".join(lines)
+
+
+def architecture_overview_claim_check_shortfalls(repository, head, changed_files, report_directory):
+    """For each nc-architecture-overview the pull request adds or changes, the
+    newest claim-check report for the overview's text at head, when that report
+    does not show every claim supported; an empty list lets the plan go on."""
+    shortfalls = []
+    for path, _system in changed_architecture_overview_paths_and_systems(repository, head, changed_files):
+        blob = required_git_output(repository, "rev-parse", f"{head}:{path}")
+        newest = overview_claim_check.find_newest_architecture_overview_claim_check_report_path_and_result_for_overview_git_blob(report_directory, path, blob)
         if newest is None or newest[1] != overview_claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED:
-            shortfalls.append({"path": entry["path"], "blob": blob, "newest_report": newest})
+            shortfalls.append({"path": path, "blob": blob, "newest_report": newest})
     return shortfalls
 
 
@@ -749,6 +844,10 @@ def compute_pull_request_review_plan(arguments):
         repository, merge_base, head, hook_registration_old_revision=diff_base)
     # A merged pull request is past the gate; its plan is read only to see what it changed.
     if pull_request["state"] != "MERGED":
+        checked_against_problems = architecture_overview_checked_against_commit_problems(repository, head, changed_files)
+        if checked_against_problems:
+            raise ReviewPlanRefusal(architecture_overview_checked_against_commit_refusal_message(
+                number, head, checked_against_problems))
         shortfalls = architecture_overview_claim_check_shortfalls(
             repository, head, changed_files, arguments.overview_write_architecture_overview_claim_check_report_directory)
         if shortfalls:

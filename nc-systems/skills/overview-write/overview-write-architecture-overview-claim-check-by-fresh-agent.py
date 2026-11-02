@@ -301,7 +301,7 @@ def check_overview_claims(arguments):
     if named_commit is None:
         raise ClaimCheckRefusal(
             f"{overview_path} has no **Checked against:** last line, so no commit names the code to check it against.\n"
-            f"To check it: end the overview with the line the page {HOW_TO_PAGE} gives, naming the main commit you "
+            f"To check it: end the overview with the line the page {HOW_TO_PAGE} gives, naming the commit you "
             "checked it against, commit it, then run this again.")
     commit = run_git(repository, "rev-parse", "--verify", "--quiet", f"{named_commit}^{{commit}}", check=False)
     if commit.returncode:
