@@ -964,6 +964,8 @@ def test_only_a_line_the_program_writes_records_a_decision_or_a_deferral():
             ("item 3 of 9: approved option 9; every text the change adds has had a fast read. <accepted>\n",
              (set(), {}), "close's took-effect form with an option --option never accepts records nothing"),
             ("item 3 of 9: not asked, kind 6; every text the change adds has had a fast read. <accepted>\n",
+             ({"3"}, {}), "the line close writes for an item settled as kind 6 decides it"),
+            ("item 3 of 9: not asked, kind 7; every text the change adds has had a fast read. <accepted>\n",
              (set(), {}), "close's took-effect form with a kind --not-asked never accepts records nothing"),
             ("item 3 of 9: part 1 approved <rejected>; every text the change adds has had a fast read.\n",
              (set(), {}), "close's parts form pairing a part's answer with the other answer's outcome records "
