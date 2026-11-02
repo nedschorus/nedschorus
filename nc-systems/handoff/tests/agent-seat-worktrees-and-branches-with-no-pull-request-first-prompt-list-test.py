@@ -153,6 +153,8 @@ def test_branches():
     main = new_clone()
     set_pull_requests([])
     branch_with_commit(main, "seat-a-work", "seat-a")
+    # Sorts before "main", so a test of the name against main by order would show.
+    branch_with_commit(main, "a-early-work", "seat-a")
     branch_with_commit(main, "seat-b-work", "seat-b")
     branch_with_commit(main, "nobody-work", "unconfigured-agent")
     branch_with_commit(main, "by-head-name", "seat-a")
@@ -186,7 +188,9 @@ def test_branches():
     check("landed" not in text, "a branch with nothing beyond origin/main is not listed")
     check("checked-out" not in text, "a branch a worktree has checked out is not listed as a branch")
     check("branch main;" not in text, "main is never listed, even with commits origin/main lacks", text)
-    check("branches with no pull request: 2:" in text and "git branch -D <branch>" in text,
+    check("branch a-early-work;" in text, "a branch whose name sorts before main is listed", text)
+    check("more; list them all with:" not in text, "a list within the limit has no line for more")
+    check("branches with no pull request: 3:" in text and "git branch -D <branch>" in text,
           "the branch section counts its entries and the steps follow", text)
     check(listing.list_text_and_failure(main, "seat-c") == ("", False),
           "an agent-seat with nothing to list gets no paragraph")
@@ -220,6 +224,8 @@ def test_worktrees():
                                                         "owner_key": dead_owner_key()})
     # Named to sort after the others, so a skip test that compared paths by order would show.
     home = owned_worktree(main, "zz-agent-home", {"owner_kind": "agent-seat", "agent_seat": "seat-a"})
+    after_home = owned_worktree(main, "zzz-after-home", {"owner_kind": "agent-seat",
+                                                          "agent_seat": "seat-a"})
     stopped_head = git(stopped, "rev-parse", "HEAD")
     set_pull_requests([{"number": 12, "state": "OPEN", "headRefName": "seat-owned",
                         "headRefOid": "0" * 40},
@@ -234,7 +240,9 @@ def test_worktrees():
           text)
     check(str(other) not in text, "another agent-seat's worktree is not listed")
     check(str(home) not in text, "the directory the agent-session starts in is not listed")
-    check("worktrees: 2:" in text, "the worktree section counts its entries", text)
+    check(str(after_home) in text,
+          "the worktrees git lists after the skipped directory are still listed", text)
+    check("worktrees: 3:" in text, "the worktree section counts its entries", text)
     after_stopped = owned_worktree_listed_after(main, "zz-after-stopped", stopped,
                                                 {"owner_kind": "agent-seat", "agent_seat": "seat-a"})
     saved = owner_file.worktree_owner_running_state
