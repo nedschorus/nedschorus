@@ -1560,16 +1560,16 @@ with tempfile.TemporaryDirectory() as scratch:
     (scan_root / "wide" / "notes.txt").write_text("not a credential\n", encoding="utf-8")
     (scan_root / "level-1" / "link-to-outside").symlink_to(outside, target_is_directory=True)
     real_roots = codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS
-    real_find_commands = codex_module.common.CREDENTIAL_FILE_SCAN_FIND_COMMANDS
+    real_find_commands = codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT
     codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = (scan_root,)
     codex_module.common.CREDENTIAL_DIRECTORIES = ()
-    codex_module.common.CREDENTIAL_FILE_SCAN_FIND_COMMANDS = 2
+    codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = 2
     try:
         split_scan_found = codex_module.common.credential_files_found_now()
     finally:
         codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = real_roots
         codex_module.common.CREDENTIAL_DIRECTORIES = real_directories
-        codex_module.common.CREDENTIAL_FILE_SCAN_FIND_COMMANDS = real_find_commands
+        codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = real_find_commands
     check("the credential scan finds a credential file at every depth and in every subtree",
           split_scan_found == sorted(str(canary) for canary in scan_canaries),
           f"expected {sorted(str(canary) for canary in scan_canaries)}, found {split_scan_found}")
@@ -1620,7 +1620,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
         codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = (scan_root,)
         codex_module.common.CREDENTIAL_DIRECTORIES = ()
-        codex_module.common.CREDENTIAL_FILE_SCAN_FIND_COMMANDS = 2
+        codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = 2
         codex_module.common.os.scandir = scandir_failing_once
         try:
             failed_scan_found = codex_module.common.credential_files_found_now()
@@ -1630,7 +1630,7 @@ with tempfile.TemporaryDirectory() as scratch:
             codex_module.common.os.scandir = real_scandir
             codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = real_roots
             codex_module.common.CREDENTIAL_DIRECTORIES = real_directories
-            codex_module.common.CREDENTIAL_FILE_SCAN_FIND_COMMANDS = real_find_commands
+            codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = real_find_commands
         expected = sorted(str(canary) for canary in scan_canaries
                           if not (failed and failed[0] in canary.parents))
         check(f"a {failure} failure on one subtree leaves its readable siblings' credential "
