@@ -736,10 +736,11 @@ def refuse_heading_with_date(heading: str):
             "Then rerun the same command.", 64)
 
 def slug(title: str) -> str:
-    """The title's words, lowercased and joined by hyphens, with a
-    possessive 's dropped, any other apostrophe closed up and a Markdown
-    link reduced to its text, so "collector's" gives "collector", "don't"
-    gives "dont" and "[GHI 5](https://...)" gives "ghi-5". Every word is
+    """The title's words, lowercased and joined by hyphens, with every 's
+    at a word's end dropped, a contraction's as well as a possessive's, any
+    other apostrophe closed up and a Markdown link reduced to its text, so
+    "collector's" gives "collector", "Let's" gives "let", "don't" gives
+    "dont" and "[GHI 5](https://...)" gives "ghi-5". Every word is
     kept up to GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT characters; a longer
     slug is cut at the last hyphen before the limit."""
     text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", title.lower())

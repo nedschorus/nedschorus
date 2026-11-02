@@ -476,9 +476,12 @@ def run_cases(scratch: Path):
                            "rules-on-python-symtable-module-instead-of-hand-"
                            "written-rules", repr(symtable_slug))
     curly_slug = tool.slug("The walker\u2019s marker")
-    check("a possessive 's, straight or curly, is dropped, not made a word",
+    check("an 's at a word's end, straight or curly, is dropped, not made a word",
           "-s-" not in symtable_slug and curly_slug == "the-walker-marker",
           repr(curly_slug))
+    check("a contraction's 's is dropped too, as the docstring says",
+          tool.slug("Let's file it") == "let-file-it",
+          repr(tool.slug("Let's file it")))
     check("any other apostrophe is closed up, not made a hyphen",
           tool.slug("Hooks that don't exit") == "hooks-that-dont-exit",
           repr(tool.slug("Hooks that don't exit")))
