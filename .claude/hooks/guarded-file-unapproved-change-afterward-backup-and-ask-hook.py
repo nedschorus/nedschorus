@@ -15,14 +15,16 @@ git cannot read origin/main, the run reports that failure and settles nothing. T
 in place while he is asked. A version with no copy is read
 back from git; a file outside every checkout, such as ~/.claude/CLAUDE.md, is always copied.
 
-A checkout's first run records the commit HEAD names, in the checkout's state, and counts every
-file that matches that commit as approved without writing to the store, when the store has no
-directory for the file or holds that version approved. A matching file whose store directory
-holds the version unapproved is checked as any first run checks it, so a version a run saw and
-the user never approved is still asked about after the state is lost. A file that differs from
-the commit is stored and approved as it is. When such a file first changes, its version at the
-recorded commit is approved, and copied unless the branch HEAD holds it, before the change is
-checked.
+A checkout's first run records the commit HEAD names, in the checkout's state. Every checked
+version goes through one approval step: it is approved without asking when origin/main holds
+it, when a first run finds it and no run saw it unapproved, or when a guarded Edit or Write made
+it. A file a first run finds at the recorded commit's version goes through that step, but when
+the step approves it and the store has no directory for the file or already approves it,
+nothing is written; so a version a run saw and the user never approved is still asked about
+after the state is lost. When such a file first changes, its version at the recorded commit
+goes through the same step as an earlier version, before the change is checked: it is approved
+or not as the step decides, copied when approved unless the branch HEAD holds it, and never
+asked about.
 
     python3 <this file> --approve <path> <hash> [<path> <hash> ...]
     python3 <this file> --restore <path> <hash> [<path> <hash> ...]
@@ -884,7 +886,8 @@ def diff_text(before: bytes, after: bytes, path: str):
 class Check:
     """What one run found about one checked file, to be settled in the store."""
 
-    def __init__(self, path, data, key, copy_hash, how="", in_git=False, previous=None):
+    def __init__(self, path, data, key, copy_hash, how="", in_git=False, previous=None,
+                 at_base=False, earlier=False):
         self.path, self.data, self.key, self.copy_hash, self.how = path, data, key, copy_hash, how
         self.in_git = in_git
         # The key of the version the previous run saw: None when no run recorded the file,
@@ -892,14 +895,24 @@ class Check:
         # a version no run saw, such as one a shell command wrote in a run that saved no state;
         # that version is approved with the Edit's result without asking the user.
         self.previous = previous
+        # The file holds the version of the commit its checkout started from, at the
+        # checkout's first run. Git keeps that version, so when it is approved without asking
+        # and the store has no directory for the path or already approves it, nothing is
+        # written: on the Mac, a write per file passes the deadline, no state is saved, and
+        # every run repeats the writes.
+        self.at_base = at_base
+        # The version of that commit, which the file held until this run changed it: it is
+        # approved or not as any version is, but never asked about, since the file no longer
+        # holds it. data is None when git no longer holds the blob.
+        self.earlier = earlier
 
 
 def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, quiet):
     """Everything that touches the store. Returns (asks, reminders, settled paths).
 
     approvals: [(path, key, how, rule)] git's own work and renames, recorded before the checks.
-    checks: the files whose content changed, each copied unless its checkout's branch HEAD
-    holds it.
+    checks: the versions to settle, each copied unless its checkout's branch HEAD holds it; an
+    earlier version comes before its path's current one.
     unsettled_unchanged: [(path, key)] files left unsettled by an earlier run. quiet: a rebase,
     merge, cherry-pick or revert is stopped, so every version is copied and nothing is asked."""
     for path, key, how, rule in approvals:
@@ -913,6 +926,23 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
         log_line(store, path, "approved", session, owner, key, how)
     asks, reminders, settled = [], [], {}
     for check in checks:
+        if check.earlier:
+            if check.how and check.data is not None \
+                    and check.key not in store.approved(check.path):
+                if not check.in_git:
+                    store.copy(check.path, check.copy_hash, check.data)
+                store.approve(check.path, check.key)
+                log_seen(store, check.path, session, owner, check.key, check.copy_hash, check.how)
+            continue
+        if check.at_base and check.how:
+            directory = store.path_directory(check.path, create=False)
+            if directory is None:
+                settled[check.path] = True
+                continue
+            os.close(directory)
+            if check.key in store.approved(check.path):
+                settled[check.path] = True
+                continue
         if check.key != DELETED and not check.in_git:
             store.copy(check.path, check.copy_hash, check.data)
         log = store.log(check.path)
@@ -1131,9 +1161,8 @@ def run_hook(payload):
             checkout_root = str(checkout)
             base = state.get(BASE_COMMIT_KEY)
             if base and changed and stocking:
-                # A file that matches the commit the worktree started from counts as approved,
-                # with nothing written to the store, when the store has no directory for it;
-                # its version reaches the store when it first changes.
+                # A file that matches the commit the worktree started from is checked as a
+                # version that commit holds; see Check.at_base.
                 for path, blob in blobs_at_commit(checkout, base, list(changed)).items():
                     if changed[path][0] is not None and changed[path][3] == blob:
                         base_matched[path] = changed.pop(path)
@@ -1161,7 +1190,8 @@ def run_hook(payload):
             elif window:
                 approvals = git_own_work(checkout, window, state, changed)
             on_main = versions_origin_main_holds(
-                checkout, [(path, value[2]) for path, value in changed.items()] + unsettled)
+                checkout, [(path, value[2]) for path, value in {**changed, **base_matched}.items()]
+                + [(path, blob) for path, (blob, _) in base_versions.items()] + unsettled)
             # A changed file is approved through its check, which reads its approved set anyway.
             approvals = [(path, key, HOW_ORIGIN_MAIN, APPROVE_ALWAYS)
                          for path, key in unsettled if (path, key) in on_main] + approvals
@@ -1197,52 +1227,46 @@ def run_hook(payload):
         for plan in plans:
             (kind, state_path, state, files, changed, unsettled, approvals, quiet, _, stocking, _,
              held, base_versions, base_matched, checkout_root, on_main) = plan
-            # The version at the commit the worktree started from, not at HEAD: an agent's
-            # commit of an unapproved edit moves HEAD, never that commit.
-            for path, (blob, data) in base_versions.items():
-                if data is None or blob in store.approved(path) \
-                        or seen_lines(store.log(path), blob):
-                    continue
-                if (path, blob) not in held:
-                    store.copy(path, blob, data)
-                store.approve(path, blob)
-                log_seen(store, path, session, owner(), blob, blob, HOW_STOCK)
-            checks = []
-            for path, (now, data, key, copy_hash) in changed.items():
-                how = ""
+            def how_approved(path, key, stock_rule, edit=False):
+                """How the version enters the approved set without asking the user, or "".
+                Every checked version, the base commit's included, is decided here."""
                 if (path, key) in on_main:
-                    how = HOW_ORIGIN_MAIN
-                elif stocking:
-                    log = store.log(path)
-                    if not (key not in store.approved(path) and seen_lines(log, key)):
-                        how = HOW_STOCK
-                elif edit_succeeded and written == path:
-                    how = HOW_EDIT
+                    return HOW_ORIGIN_MAIN
+                if stock_rule:
+                    # A path with no store directory has no version a run saw. Asking first
+                    # keeps a new worktree's first run from reading the store once per file.
+                    directory = store.path_directory(path, create=False)
+                    if directory is None:
+                        return HOW_STOCK
+                    os.close(directory)
+                    if key in store.approved(path) or not seen_lines(store.log(path), key):
+                        return HOW_STOCK
+                    return ""
+                return HOW_EDIT if edit else ""
+
+            if base_matched:
+                # When the checkout's store directory is missing, this one failed open tells the
+                # store that every file under it is missing too, without one open per file.
+                root = store.path_directory(checkout_root, create=False)
+                if root is not None:
+                    os.close(root)
+            # The version at the commit the worktree started from, not at HEAD: an agent's
+            # commit of an unapproved edit moves HEAD, never that commit. It goes first, so the
+            # change after it is shown against it.
+            checks = [Check(path, data, blob, blob, how_approved(path, blob, True),
+                            (path, blob) in held, earlier=True)
+                      for path, (blob, data) in base_versions.items()]
+            for path, (now, data, key, copy_hash) in base_matched.items():
+                checks.append(Check(path, data, key, copy_hash, how_approved(path, key, True),
+                                    (path, copy_hash) in held, at_base=True))
+            for path, (now, data, key, copy_hash) in changed.items():
+                how = how_approved(path, key, stocking, edit_succeeded and written == path)
                 previous = state["files"].get(path)
                 checks.append(Check(path, data, key, copy_hash, how, (path, copy_hash) in held,
                                     previous and previous[4]))
-            # A path the store has a directory for may have a version a run saw and the user
-            # never approved, as after a lost checkout state, so it is checked as stocking is.
-            # An approved version is settled without writing: on the Mac, a write per file after
-            # a lost state passes the deadline, so no state is saved and every run repeats it.
-            base_quiet = []
-            root = store.path_directory(checkout_root, create=False) if base_matched else None
-            if root is not None:
-                os.close(root)
-            for path, (now, data, key, copy_hash) in base_matched.items():
-                directory = None if root is None else store.path_directory(path, create=False)
-                if directory is None:
-                    base_quiet.append(path)
-                    continue
-                os.close(directory)
-                if key in store.approved(path):
-                    base_quiet.append(path)
-                    continue
-                how = "" if seen_lines(store.log(path), key) else HOW_STOCK
-                checks.append(Check(path, data, key, copy_hash, how, (path, copy_hash) in held))
             approvals = approvals + renames(store, changed, state["files"])
             results.append(store_phase(store, session, owner(), checks, unsettled, approvals,
-                                       quiet) + (base_quiet,))
+                                       quiet))
         return results
 
     try:
@@ -1253,9 +1277,8 @@ def run_hook(payload):
         return [STORE_FAILED.format(reason=str(error).rstrip("."), remedy=remedy)]
 
     asks, reminders = [], []
-    for plan, (plan_asks, plan_reminders, settled, base_quiet) in zip(plans, results):
+    for plan, (plan_asks, plan_reminders, settled) in zip(plans, results):
         state, changed = plan[2], {**plan[4], **plan[13]}
-        settled.update(dict.fromkeys(base_quiet, True))
         for path, (now, _, key, copy_hash) in changed.items():
             if now is None:
                 state["files"][path] = [0, 0, 0, 0, DELETED, DELETED, settled.get(path, False)]

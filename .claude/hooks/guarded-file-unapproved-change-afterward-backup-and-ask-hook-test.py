@@ -1000,6 +1000,90 @@ def cases(scratch):
           and "-project v1" in message and "+project v2" in message,
           (world.store_file(claude, "approved"), message))
 
+    # -- origin/main holds a base version a run saw unapproved: the change is shown against it
+    world = fresh(scratch, "base-version-seen-and-on-origin-main")
+    claude = world.repo / "CLAUDE.md"
+    base = world.key(claude)
+    world.git("update-ref", "refs/remotes/origin/main", "HEAD")
+    directory = world.store / str(claude).lstrip("/")
+    directory.mkdir(parents=True)
+    body = f"seen\t1\tsession-old\tended-old\t{base}\t{base}\t"
+    (directory / "log").write_bytes(
+        f"{body}\t{hashlib.sha256(body.encode()).hexdigest()[:16]}\n".encode())
+    world.run()
+    claude.write_text("project v2\n")
+    message = world.run()
+    check("a base version a run saw unapproved, which origin/main holds, is approved by the first "
+          "change, and the change is shown against it",
+          base in world.store_file(claude, "approved") and "-project v1" in message
+          and "+project v2" in message, (world.store_file(claude, "approved"), message))
+
+    # -- a file at the base commit's version goes through each rule of the one approval step,
+    # at the checkout's first run and, as an earlier version, when the file first changes
+    def base_rule_world(name, seen=False, approved=False, on_main=False):
+        directory = Path(scratch) / name
+        directory.mkdir()
+        world = World(directory)
+        claude = world.repo / "CLAUDE.md"
+        base = world.key(claude)
+        store_directory = world.store / str(claude).lstrip("/")
+        if seen or approved:
+            store_directory.mkdir(parents=True)
+        if seen:
+            body = f"seen\t1\tsession-old\tended-old\t{base}\t{base}\t"
+            (store_directory / "log").write_bytes(
+                f"{body}\t{hashlib.sha256(body.encode()).hexdigest()[:16]}\n".encode())
+        if approved:
+            (store_directory / "approved").write_bytes(
+                f"{base}\t{hashlib.sha256(base.encode()).hexdigest()[:16]}\n".encode())
+        if on_main:
+            world.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        return world, claude, base
+
+    # (name, seen, approved, on origin/main, the first run asks, the first run writes,
+    #  how the base version is approved by the first change or None when it is not)
+    rules = [
+        ("no run saw the version", False, False, False, False, False, "stock"),
+        ("the store already approves the version", False, True, False, False, False, None),
+        ("a run saw the version and the user never approved it", True, False, False, True, True,
+         None),
+        ("a run saw the version, and origin/main holds it", True, False, True, False, True,
+         "origin-main"),
+        ("origin/main holds the version, which no run saw", False, False, True, False, False,
+         "origin-main"),
+    ]
+    for number, (name, seen, approved, on_main, first_asks, first_writes, how) in enumerate(rules):
+        world, claude, base = base_rule_world(f"base-rule-{number}", seen, approved, on_main)
+        before = store_listing(world.store)
+        message = world.run()
+        writes = [entry for entry in store_listing(world.store) if entry not in before
+                  and str(claude).lstrip("/") in str(entry)]
+        check(f"base version, {name}: the first run {'asks' if first_asks else 'asks nothing'} "
+              f"and {'writes' if first_writes else 'writes nothing'} for the file",
+              (str(claude) in message) == first_asks and bool(writes) == first_writes,
+              (message, writes))
+        claude.write_text("project v2\n")
+        message = world.run()
+        log = world.store_file(claude, "log")
+        if how is None:
+            approved_lines = world.store_file(claude, "approved").count(base)
+            check(f"base version, {name}: the first change does not approve it again, and the "
+                  f"change is asked about", approved_lines == (1 if approved else 0)
+                  and str(claude) in message, (world.store_file(claude, "approved"), message))
+        else:
+            check(f"base version, {name}: the first change approves it as {how}, and the change "
+                  f"is asked about against it", f"\t{base}\t{base}\t{how}\t" in log
+                  and "-project v1" in message and "+project v2" in message, (log, message))
+    world, claude, base = base_rule_world("base-rule-guarded-edit")
+    world.run()
+    claude.write_text("project v2\n")
+    message = world.run(tool="Edit", file_path=claude)
+    check("base version, a guarded Edit makes the first change: the base version is approved "
+          "first, so the Edit's version is approved too and nothing is asked",
+          message == "" and base in world.store_file(claude, "approved")
+          and world.key(claude) in world.store_file(claude, "approved"),
+          (message, world.store_file(claude, "approved")))
+
     # -- unapproved commit, switch away and back
     world = fresh(scratch, "switch-back")
     claude = world.repo / "CLAUDE.md"
