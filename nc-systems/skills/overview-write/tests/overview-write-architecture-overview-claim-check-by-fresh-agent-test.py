@@ -248,6 +248,28 @@ def run_program_cases(fixture):
           code == 5 and "injected removal failure" in stderr and len(fixture.reports_written()) == count + 2, stderr)
     fixture.git("worktree", "prune")
 
+    for raised in (subprocess.TimeoutExpired(["git", "worktree", "remove"], 1), OSError("injected OSError")):
+        def run_git_whose_worktree_remove_raises(repository, *arguments, check=True, raised=raised):
+            if arguments[:2] == ("worktree", "remove"):
+                raise raised
+            return real_run_git(repository, *arguments, check=check)
+
+        kind = type(raised).__name__
+        fixture.answer(claude_stdout="", claude_exit=1)
+        code, stderr = fixture.run_in_process_with_timeouts(run_git=run_git_whose_worktree_remove_raises)
+        check(f"a worktree removal that raises {kind} after a failed fresh-agent keeps exit 4 and reports the removal",
+              code == 4 and "could not run" in stderr and "checkout-at-checked-against-commit" in stderr, stderr)
+        fixture.git("worktree", "prune")
+        fixture.answer(claude_stdout=UNSUPPORTED_REPORT)
+        code, stderr = fixture.run_in_process_with_timeouts(run_git=run_git_whose_worktree_remove_raises)
+        check(f"a worktree removal that raises {kind} after an unsupported claim keeps exit 5", code == 5, stderr)
+        fixture.git("worktree", "prune")
+        fixture.answer()
+        code, stderr = fixture.run_in_process_with_timeouts(run_git=run_git_whose_worktree_remove_raises)
+        check(f"a worktree removal that raises {kind} with every claim supported exits 6 and reports the removal",
+              code == 6 and "could not run" in stderr, stderr)
+        fixture.git("worktree", "prune")
+
     fixture.answer(claude_stdout="I ran out of time.\n")
     result = fixture.run()
     newest = claim_check.find_newest_architecture_overview_claim_check_report_path_and_result_for_overview_git_blob(fixture.reports, OVERVIEW, blob)
