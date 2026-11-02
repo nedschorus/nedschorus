@@ -1385,10 +1385,37 @@ def run_user_alert_cases(root: Path):
               and "PermissionError" in entry["error"] for entry in harness.decisions())
           and len(harness.notices()) == 1 and [window[0] for window in harness.windows] == ["page"],
           repr(harness.decisions()))
-    check("every kind of notice the watcher writes has an alert title",
-          {kind for kind in watcher_module.FAILED_RESTART_NOTICE_KIND_TO_USER_ALERT_TITLE_TEMPLATE}
-          == {"second-crash", "recovery-failed", "assessment-failed", "run-failed", "waiting-handoff",
-              "recorded-exit", "leftover-shell", "recovery-refuses"}, "")
+    written = []
+    outside_line = ("recover-crashed-seats: merge-lane-2: "
+                    f"{recovery_module.AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER}"
+                    ": its tmux server could not be put in a scope, because systemd-run exited 1")
+    harness = Harness(root / "alert-not-for-a-restart", recovery_result=(0, f"{outside_line}\n"
+                                                                            "merge-lane-2: relaunched resuming x"))
+    harness.user_alert_write_to_pending = lambda title, text, action: written.append(title) or "alert-3"
+    try:
+        crash_after_running(harness)
+        raised = ""
+    except Exception as error:  # noqa: BLE001 - in production run_once turns this into a false run-failed alert
+        raised = f"{type(error).__name__}: {error}"
+    check("a restart recovery started outside the user's systemd manager gets its notice and no alert, "
+          "since only a failed restart needs the user",
+          not raised and written == [] and len(harness.notices()) == 1, repr((raised, written)))
+
+    written_kinds = notice_kinds_write_notice_is_called_with_in_the_watchers_source()
+    check("every kind of notice the watcher writes after a failed restart has an alert title, and every "
+          "title is for a kind the watcher writes",
+          set(watcher_module.FAILED_RESTART_NOTICE_KIND_TO_USER_ALERT_TITLE_TEMPLATE)
+          == written_kinds - {"started-outside-user-systemd-manager"}, repr(written_kinds))
+
+
+def notice_kinds_write_notice_is_called_with_in_the_watchers_source():
+    """The kind strings the crash watcher passes to write_notice, read from its source: the
+    second argument of each `.write_notice(...)` call."""
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    return {node.args[1].value for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "write_notice" and len(node.args) > 1
+            and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str)}
 
 
 def run_crashed_verdict_spelling_cases():

@@ -533,10 +533,13 @@ class Watcher:
         return notice
 
     def write_alert(self, seat, kind, notice_path: Path, text):
-        if self.user_alert_write_to_pending is None:
+        title_template = FAILED_RESTART_NOTICE_KIND_TO_USER_ALERT_TITLE_TEMPLATE.get(kind)
+        # A kind without a title, such as the notice written after a successful restart, gets no
+        # alert: only a failed restart needs the user.
+        if self.user_alert_write_to_pending is None or title_template is None:
             return
         try:
-            alert_id = self.user_alert_write_to_pending(FAILED_RESTART_NOTICE_KIND_TO_USER_ALERT_TITLE_TEMPLATE[kind].format(seat=seat), text,
+            alert_id = self.user_alert_write_to_pending(title_template.format(seat=seat), text,
                                              FAILED_RESTART_NOTICE_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO)
         except OSError as error:
             self.log(seat, "user alert not written; the notice's page or window still opens",
