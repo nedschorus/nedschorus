@@ -71,6 +71,13 @@ HANDOFF_INSTRUCTION = (
     "reached the reincarnation threshold. Run the /handoff skill now."
 )
 
+HANDOFF_DEFERRED_MARKER_NOT_DELETED = (
+    "The threshold hook could not delete its handoff-deferral marker {path}: {error}. "
+    "While it stays, the hook asks again for the /handoff skill after every compaction.\n"
+    "Run the /handoff skill now, as asked above, and tell the user this message, so the "
+    "marker's directory can be fixed."
+)
+
 HANDOFF_DEFERRED_NOTICE = (
     "Context at {share} — handoff deferred while {running} run, because a "
     "handoff now would stop them.\n"
@@ -454,9 +461,6 @@ def main(argv=None) -> int:
         # A failed marker write would repeat the handoff request every turn.
         HANDOFF_DIRECTORY.mkdir(parents=True, exist_ok=True)
         fired_marker.write_text(f"{used:.1f}\n", encoding="utf-8")
-        # The deferral's promise is kept; left in place, it would refire the instruction
-        # below the threshold after every later compaction.
-        (HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred").unlink(missing_ok=True)
     except OSError:
         pass
 
@@ -464,6 +468,14 @@ def main(argv=None) -> int:
         HANDOFF_INSTRUCTION.format(share=share),
         file=sys.stderr,
     )
+    # The deferral's promise is kept; left in place, the marker would refire the
+    # instruction below the threshold after every later compaction.
+    deferred_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred"
+    try:
+        deferred_marker.unlink(missing_ok=True)
+    except OSError as error:
+        print(HANDOFF_DEFERRED_MARKER_NOT_DELETED.format(path=deferred_marker, error=error),
+              file=sys.stderr)
     return 2
 
 

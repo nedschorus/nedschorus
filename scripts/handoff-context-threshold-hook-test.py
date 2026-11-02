@@ -1101,6 +1101,23 @@ with tempfile.TemporaryDirectory() as workspace:
             compacted_marker_file.unlink(missing_ok=True)
             compacted_deferred_marker_file.unlink(missing_ok=True)
 
+            # A deferred marker the hook cannot delete: a directory in its place makes
+            # the unlink raise, so the hook must say so and still send the instruction.
+            compacted_deferred_marker_file.mkdir()
+            try:
+                result = run_hook({**compacted_payload, "transcript_path": str(compacted_finished)})
+                instruction, _, rest = result.stderr.partition("\n")
+                check("a deferred marker the hook cannot delete still lets the instruction go",
+                      result.returncode == 2 and is_handoff_instruction(instruction),
+                      f"code {result.returncode}, stderr {result.stderr[:300]}")
+                check("a deferred marker the hook cannot delete is reported after the instruction",
+                      "could not delete its handoff-deferral marker" in rest
+                      and str(compacted_deferred_marker_file) in rest,
+                      f"stderr {result.stderr[:300]}")
+            finally:
+                compacted_deferred_marker_file.rmdir()
+                compacted_marker_file.unlink(missing_ok=True)
+
             # The unknown-count deferral: the transcript first could not be read,
             # then the context fell below the threshold.
             code, stderr = run_hook_in_process(
