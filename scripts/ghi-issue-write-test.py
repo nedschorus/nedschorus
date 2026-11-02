@@ -489,11 +489,11 @@ def run_cases(scratch: Path):
     long_title = " ".join(["word"] * 60)
     long_slug = tool.slug(long_title)
     check("a slug over the character limit is cut at a hyphen, inside it",
-          len(long_slug) <= tool.SLUG_CHARACTER_LIMIT
+          len(long_slug) <= tool.GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT
           and long_title.replace(" ", "-").startswith(long_slug + "-"),
           repr(long_slug))
     check("a single word over the character limit is cut at the limit",
-          tool.slug("x" * 300) == "x" * tool.SLUG_CHARACTER_LIMIT)
+          tool.slug("x" * 300) == "x" * tool.GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT)
     log_store_name = (f"99999-{long_slug}"
                       f"{tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX}"
                       f"{tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_GUIDE_AGENT}"
