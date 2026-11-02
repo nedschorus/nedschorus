@@ -34,8 +34,9 @@ Failures: every failure is printed to stderr with what to do and exits
 nonzero; no report is written unless the fresh-agent produced output. The
 temporary worktree is removed on every path, including a failure; when git
 cannot remove it, the program prints git's words and the worktree's path, and
-exits 6 even after writing a report, leaving git's record of the worktree in
-the checkout until `git worktree prune` runs. Apart from that record, the
+exits 6 only when the run would otherwise exit 0; any other exit code is
+kept; git's record of the worktree stays in the checkout
+until `git worktree prune` runs. Apart from that record, the
 program writes nothing in the checkout it is run from.
 
 Usage:
@@ -46,9 +47,9 @@ Usage:
 Exit 0: report written, every claim supported. 1: refused, nothing run.
 2: program defect. 3: md-drift-lint found problems, so no fresh-agent ran.
 4: the fresh-agent failed, so no report was written. 5: report written, and
-not every claim is supported, or the report is malformed. 6: git could not
-remove the temporary worktree; any report was still written, and its result
-printed.
+not every claim is supported, or the report is malformed. 6: every claim is
+supported, but git could not remove the temporary worktree; the report was
+still written, and its result printed.
 """
 
 import argparse
@@ -265,7 +266,6 @@ def check_overview_claims(arguments):
     with tempfile.TemporaryDirectory(prefix=PROGRAM + "-") as temporary:
         worktree = Path(temporary) / "checkout-at-checked-against-commit"
         run_git(repository, "worktree", "add", "--quiet", "--detach", str(worktree), commit)
-        worktree_removal = None
         try:
             (worktree / overview_path).parent.mkdir(parents=True, exist_ok=True)
             (worktree / overview_path).write_text(text, encoding="utf-8")
@@ -306,9 +306,9 @@ def check_overview_claims(arguments):
         f"overview: {overview_path}\noverview blob: {blob}\nrevision: {revision}\nchecked against: {commit}\n"
         f"writer answers: {writer_answers or 'none'}\n{RESULT_LINE_PREFIX}{result}\n\n{report}", encoding="utf-8")
     print(f"{PROGRAM}: {result}. Report: {destination}")
-    if worktree_removal.returncode:
-        return 6
-    return 0 if result == OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED else 5
+    if result != OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED:
+        return 5
+    return 6 if worktree_removal.returncode else 0
 
 
 def main(argv=None):

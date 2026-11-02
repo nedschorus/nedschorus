@@ -751,7 +751,13 @@ def test_a_new_text_line_shown_as_if_you_approve_the_new_text_is_the_items_own_t
              "If you approve, the new text: the threshold-hook bullet becomes: \"The hook waits.\""),
             ("a `#new_if_d` line passes shown after `If you disapprove, the new text:`",
              "#new_if_d The new text: the hook waits unless you stop it.",
-             "If you disapprove, the new text: the hook waits unless you stop it.")):
+             "If you disapprove, the new text: the hook waits unless you stop it."),
+            ("a `#new` line that opens with a list mark passes shown after `If you approve, the new text:`",
+             "- #new The new text: the hook waits for the list.",
+             "If you approve, the new text: the hook waits for the list."),
+            ("a `#new` line that opens with a quote mark passes shown after `If you approve, the new text:`",
+             "> #new The new text: the hook waits for the quote.",
+             "If you approve, the new text: the hook waits for the quote.")):
         varied = Case(minutes="#next_to_present item 1.2 of 6",
                       document=document.replace(HANDOFF_WALK_ITEM_1_2_LINES[2], document_line))
         varied.reply(HANDOFF_WALK_ITEM_1_2_REPLY.replace(HANDOFF_WALK_ITEM_1_2_REPLY.split("\n\n")[4], shown_line))
