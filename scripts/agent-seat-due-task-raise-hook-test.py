@@ -946,10 +946,13 @@ text = json.loads(output)["hookSpecificOutput"]["additionalContext"] if output e
 check("one GitHub budget for the whole run: once the due-task pass spends it, the next-action "
       "prompt asks gh nothing more",
       gh_calls_made == ["301", "302"], gh_calls_made)
-check("one GitHub budget for the whole run: each condition gh could not answer is reported once",
+# A second budget would ask gh about task 3's prerequisite too, and report that failure as well.
+check("one GitHub budget for the whole run: each condition gh could not answer is reported "
+      "once, and the condition past the spent budget is not reported",
       text.startswith(NEXT_ACTION_FIRST_LINE)
       and text.count("could not ask GitHub whether PR 301 is merged") == 1
       and text.count("could not ask GitHub whether PR 302 is merged") == 1
+      and "could not ask GitHub whether PR 303 is merged" not in text
       and "3 more open task(s) are not listed" in text, text)
 
 

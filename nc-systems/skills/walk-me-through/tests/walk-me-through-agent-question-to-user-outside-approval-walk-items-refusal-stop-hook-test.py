@@ -1113,7 +1113,11 @@ def test_a_hyphenated_word_after_yes_or_no_is_not_an_ask():
 def test_an_answer_cue_followed_by_another_hyphenated_word_goes_to_the_model():
     for case_name, text in (("`Type A-D`", "Type A-D to answer."),
                             ("`Say yes-or-no`", "Say yes-or-no and I will merge it."),
-                            ("`on a yes-or-no`", "I will merge it on a yes-or-no from you.")):
+                            ("`on a yes-or-no`", "I will merge it on a yes-or-no from you."),
+                            ("`on a yes-decision`", "I will merge it on a yes-decision from you."),
+                            ("`Reply A-OP`", "Reply A-OP to approve the operation."),
+                            ("`Type D-OP`", "Type D-OP to drop the operation."),
+                            ("`Say no-opinion`", "Say no-opinion if you have none.")):
         case = Case()
         case.reply(text)
         check_blocked(case_name + " blocks when the model says it asks the user something", case.run(model="yes:1"),

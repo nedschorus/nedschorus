@@ -534,6 +534,30 @@ for case_name, source in HELPER_PARAMETER_SCOPE_FORMS_NOT_RECOGNIZED:
     found = [entry["text"] for entry in entries(source) if entry["label"] in ("emit()", "sink()")]
     check(f"not recognized: {case_name}", found == [], found)
 
+SCOPE_FORMS_EACH_RULE_ONCE_MISSED = (
+    ("a nested function's global declaration hides the helper's parameter",
+     'text = 1\ndef emit(text):\n    def inner():\n        global text\n        print(text)\n    inner()\n'
+     'emit("global hidden")\n', []),
+    ("a comprehension target in a nested function hides the helper's parameter",
+     'def emit(text):\n    def inner():\n        [print(text) for text in ["actual"]]\n    inner()\n'
+     'emit("never shown")\n', []),
+    ("a comprehension target hides the function's local at a printed form inside the comprehension",
+     'def main(items):\n    text = "local hidden"\n    [print(text) for text in items]\n', []),
+    ("a helper's parameter printed in a comprehension's first iterable, which the target does not hide",
+     'def emit(text):\n    [text for text in print(text)]\nemit("first iterable shown")\n',
+     ["first iterable shown"]),
+    ("a name read inside a comprehension's target is not bound by it",
+     'def main(items, messages):\n    text = "subscript shown"\n    print([text for messages[text] in items])\n',
+     ["subscript shown"]),
+    ("a type parameter's name hides the function's local in its own bound",
+     'def main():\n    text = "type parameter hidden"\n    class Holder[text: print(text)]:\n        pass\n', []),
+    ("a type parameter's name hides the helper's parameter in its own bound",
+     'def emit(text):\n    class Holder[text: print(text)]:\n        pass\nemit("bound hidden")\n', []),
+)
+for case_name, source, expected in SCOPE_FORMS_EACH_RULE_ONCE_MISSED:
+    found = texts(source)
+    check(f"scope: {case_name}", found == expected, found)
+
 check("source that does not parse yields no entries", texts('print("unclosed\n') == [])
 check("no source yields no entries", texts(None) == [])
 

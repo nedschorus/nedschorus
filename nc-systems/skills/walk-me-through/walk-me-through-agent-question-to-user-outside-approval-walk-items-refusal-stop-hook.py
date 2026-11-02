@@ -68,8 +68,9 @@ THE TEXT CHECKED is the reply, line by line, without:
 
 EACH LINE is question-like when it holds a `?` or a phrase in ASK_PHRASE,
 such as `say yes`, `should I`, `needs your approval`, `I recommend`,
-`whether to`, or an answer cue followed by a hyphen, as in `type A-D` or
-`say yes-or-no`, apart from `no-decision` and `no-op`, which are words. Code
+`whether to`, or an answer cue followed by a hyphen, as in `type A-D`,
+`reply A-OP` or `say yes-or-no`, apart from the whole words `no-decision` and
+`no-op`, which are words. Code
 refuses no line by itself: a `?` or an ask phrase also ends or fills lines
 that ask nothing, such as a question the agent answers itself, the
 walk-me-through skill's answer line, or `nothing here needs your answer`.

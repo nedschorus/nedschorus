@@ -1779,18 +1779,18 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
     os.environ[DESTINATION_VARIABLE] = str(names_store)
     try:
         handoff_record, handoff_unlisted = (
-            names_shipper.cold_read_record_directory_created_unused_in_checkout_and_log_store_with_log_store_listing_error(
+            names_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
                 names_records / "SKILL-handoff-2026-10-25"))
         item_record, item_unlisted = (
-            names_shipper.cold_read_record_directory_created_unused_in_checkout_and_log_store_with_log_store_listing_error(
+            names_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
                 names_records / "item-19-1-2026-10-25"))
-        free_record, _ = names_shipper.cold_read_record_directory_created_unused_in_checkout_and_log_store_with_log_store_listing_error(
+        free_record, _ = names_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
             names_records / "c-2026-10-25")
         os.environ[DESTINATION_VARIABLE] = "nobody@ned-box:" + str(names_store)
         names_shipper.SSH_COMMAND = unreachable_ssh_command
         try:
             unlisted_record, unlisted_reason = (
-                names_shipper.cold_read_record_directory_created_unused_in_checkout_and_log_store_with_log_store_listing_error(
+                names_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
                     names_records / "SKILL-handoff-2026-10-25"))
         finally:
             names_shipper.SSH_COMMAND = real_ssh_command
