@@ -35,8 +35,8 @@ nonzero; no report is written unless the fresh-agent produced output. The
 temporary worktree is removed on every path, including a failure; when git
 cannot remove it, the program prints git's words and the worktree's path, and
 exits 6 only when the run would otherwise exit 0; any other exit code is
-kept; git's record of the worktree stays in the checkout
-until `git worktree prune` runs. Apart from that record, the
+kept; the worktree then stays on disk, and git's record of it in the
+checkout, until the worktree is removed. Apart from that record, the
 program writes nothing in the checkout it is run from.
 
 Usage:
@@ -226,7 +226,6 @@ def failure_removing_worktree(repository, worktree):
     turn its exit code into 2."""
     try:
         removal = run_git(repository, "worktree", "remove", "--force", str(worktree), check=False)
-        run_git(repository, "worktree", "prune", check=False)
     except (OSError, subprocess.TimeoutExpired) as failure:
         return f"`git worktree remove --force {worktree}` could not run: {failure}"
     if removal.returncode:
@@ -307,8 +306,8 @@ def check_overview_claims(arguments):
             if worktree_removal_failure:
                 print(f"{PROGRAM}: {worktree_removal_failure}\n"
                       "Only the cleanup failed: the claim check's own result is printed apart from this.\n"
-                      f"To clean up, once this program has exited: run `git -C {repository} worktree prune`, then "
-                      f"check that `git -C {repository} worktree list` no longer shows {worktree}; if it does, tell "
+                      f"To clean up, once this program has exited: run `git -C {repository} worktree remove --force "
+                      f"{worktree}`, then check that `git -C {repository} worktree list` no longer shows {worktree}; if it does, tell "
                       "the user.", file=sys.stderr)
 
     result = result_from_fresh_agent_report(report)
