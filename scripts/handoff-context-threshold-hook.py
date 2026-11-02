@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Request a handoff before context runs out.
 
-It fires at a share of the context window.
+It fires at a share of the context window, or below that share once it has deferred the
+handoff in this session and the work it deferred for has finished.
 
 Stop-hook payloads lack context usage; headless sessions lack a status line.
 The transcript supplies usage for both interactive and headless sessions."""
@@ -404,7 +405,10 @@ def main(argv=None) -> int:
     used_tokens, window = reading
     used = 100.0 * used_tokens / window
     share = f"{used:.0f}%"
-    if used < arguments.threshold_used_percentage:
+    # A compaction can drop the share below the threshold after a deferral; the deferred marker
+    # records that the threshold was passed, so the handoff its notice promised still comes.
+    if used < arguments.threshold_used_percentage and not (
+            HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred").exists():
         return 0
 
     fired_marker = fired_marker_path(session_id)
@@ -450,6 +454,9 @@ def main(argv=None) -> int:
         # A failed marker write would repeat the handoff request every turn.
         HANDOFF_DIRECTORY.mkdir(parents=True, exist_ok=True)
         fired_marker.write_text(f"{used:.1f}\n", encoding="utf-8")
+        # The deferral's promise is kept; left in place, it would refire the instruction
+        # below the threshold after every later compaction.
+        (HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred").unlink(missing_ok=True)
     except OSError:
         pass
 
