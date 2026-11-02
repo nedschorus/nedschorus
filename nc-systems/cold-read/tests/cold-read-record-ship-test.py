@@ -1779,18 +1779,18 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
     os.environ[DESTINATION_VARIABLE] = str(names_store)
     try:
         handoff_record, handoff_unlisted = (
-            names_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
+            names_shipper.cold_read_record_directory_created_unused_in_checkout_and_log_store_with_log_store_listing_error(
                 names_records / "SKILL-handoff-2026-10-25"))
         item_record, item_unlisted = (
-            names_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
+            names_shipper.cold_read_record_directory_created_unused_in_checkout_and_log_store_with_log_store_listing_error(
                 names_records / "item-19-1-2026-10-25"))
-        free_record, _ = names_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
+        free_record, _ = names_shipper.cold_read_record_directory_created_unused_in_checkout_and_log_store_with_log_store_listing_error(
             names_records / "c-2026-10-25")
         os.environ[DESTINATION_VARIABLE] = "nobody@ned-box:" + str(names_store)
         names_shipper.SSH_COMMAND = unreachable_ssh_command
         try:
             unlisted_record, unlisted_reason = (
-                names_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
+                names_shipper.cold_read_record_directory_created_unused_in_checkout_and_log_store_with_log_store_listing_error(
                     names_records / "SKILL-handoff-2026-10-25"))
         finally:
             names_shipper.SSH_COMMAND = real_ssh_command
@@ -1806,8 +1806,8 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
     check("the item-19-1 case: a name only the store holds is passed over, giving -2",
           item_record == names_records / "item-19-1-2026-10-25-2" and item_unlisted is None,
           f"{item_record} {item_unlisted}")
-    check("a name free in both is used as it is, and no directory is made",
-          free_record == names_records / "c-2026-10-25" and not free_record.exists(),
+    check("a name free in both is used as it is, and the directory is made",
+          free_record == names_records / "c-2026-10-25" and free_record.is_dir(),
           str(free_record))
     check("when the store cannot be listed, the name free in the checkout is given "
           "with the reason, for the caller to print",
@@ -1818,6 +1818,10 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
     check("the line a caller prints names the program, the record name and the reason",
           line.startswith("some-program: ") and "SKILL-handoff-2026-10-25-2" in line
           and unlisted_reason in line, line)
+    # The claims above created their directories; removed so the shipment's
+    # rename cases below see only the names they set up.
+    for claimed_record in (handoff_record, item_record, free_record, unlisted_record):
+        claimed_record.rmdir()
 
     # The SKILL-handoff shipment itself: the store's record holds a full run's
     # files, and the local directory of that name holds a fast read's.
