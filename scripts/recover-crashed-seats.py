@@ -135,6 +135,17 @@ file a launch needs is missing from the durable checkout — launch-claude-mac
 on the Mac, the supervisor elsewhere — the seat is refused and nothing is
 launched, never launched from this tool's own checkout instead.
 
+CPU priority: off macOS the seat's tmux server is started inside a transient
+scope of the user's systemd manager (`systemd-run --user --scope`), so the seat
+and the test suites' low-CPU-weight slice, also under that manager, are
+siblings and the suites yield CPU to the seat. Cron, which runs the crash
+watcher that calls this tool, gives no XDG_RUNTIME_DIR, so it is set to
+/run/user/<uid> when missing. When the manager cannot be reached, the seat is
+still started, outside it, and a line holding
+`STARTED OUTSIDE THE USER'S SYSTEMD MANAGER` (the constant
+AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER) is printed to
+stderr with the reason; the crash watcher shows the user a notice for it.
+
 Usage:
   recover-crashed-seats.py <seat-name>... [--dry-run] [--fresh-session-from-conversation-tail]
                            [--open-iterm-window-per-seat] [--checkout DIR]
@@ -250,8 +261,11 @@ def harness_project_directory(seat_directory: Path, projects_root: Path) -> Path
     return claude_code_session_transcript_lookup_and_text_search_common.project_directory_for_seat(seat_directory, projects_root)
 
 
-def run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
-    """Return the tmux result, or None when tmux cannot answer."""
+def run_tmux(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
+    """Return the tmux result, or None when tmux cannot answer.
+
+    command_prefix is put before tmux, such as the systemd-run words that start it in a scope.
+    """
     if shutil.which("tmux") is None:
         return None
     socket_arguments = [] if socket_name is None else ["-L", socket_name]
@@ -259,12 +273,41 @@ def run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
         # A server this call starts keeps this cwd (new-session -c sets only the pane's), and the
         # occupancy check counts a server rooted in the caller's agent-home against that seat.
         return subprocess.run(
-            ["tmux", *socket_arguments, *arguments_after_tmux],
+            [*command_prefix, "tmux", *socket_arguments, *arguments_after_tmux],
             capture_output=True, text=True, timeout=30, check=False, env=environment,
             cwd=os.path.expanduser("~"),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
+
+
+# The crash watcher finds this text in recovery's output and shows the user a notice.
+AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER = "STARTED OUTSIDE THE USER'S SYSTEMD MANAGER"
+
+
+def agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason(
+        name: str, environment: dict):
+    """Return (prefix, failure): the systemd-run words that start the seat's tmux server in a
+    transient scope of the user's systemd manager, or ([], why the manager cannot be reached).
+
+    Probes the manager with a scope that runs `true` first, because systemd-run and tmux both
+    exit 1, so a failed wrapped launch could not say which of them failed.
+    """
+    if shutil.which("systemd-run") is None:
+        return [], "systemd-run is not installed"
+    probe = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "true"]
+    try:
+        completed = subprocess.run(probe, capture_output=True, text=True, timeout=30,
+                                   check=False, env=environment)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return [], f"`{' '.join(probe)}` could not run: {error}"
+    if completed.returncode != 0:
+        said = completed.stderr.strip() or completed.stdout.strip() or "(it printed nothing)"
+        return [], f"`{' '.join(probe)}` exited {completed.returncode}: {said}"
+    # No --unit: a scope an old after-exit shell keeps alive would make a fixed unit name collide.
+    # The pane command carries literal $HOME and $PATH for the pane's shell, not for systemd-run.
+    return ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--expand-environment=no",
+            f"--description=agent-seat {name} tmux server", "--"], None
 
 
 def tmux_has_session(name: str, socket_name: str):
@@ -767,12 +810,39 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
     )
     if first_prompt_file is not None:
         supervisor_command += f" --first-prompt-file {shlex.quote(str(first_prompt_file))}"
+    # Cron gives no XDG_RUNTIME_DIR, without which systemd-run --user cannot find the manager.
+    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    command_prefix, scope_failure = (
+        agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason(
+            name, environment))
+    if scope_failure is not None:
+        # A seat that does not start is worse than one at equal CPU priority with the test suites.
+        print(f"recover-crashed-seats: {name}: "
+              f"{AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER}"
+              f": the agent-seat's tmux server could not be put in a scope of nedlern's systemd "
+              f"user manager on ned-box, because {scope_failure}\n"
+              f"The agent-seat is being started anyway, outside the user manager. The test suites "
+              f"run inside the user manager at low CPU weight, and that weight reaches only "
+              f"processes inside it, so the suites compete with {name} for CPU at equal priority.\n"
+              f"To find why the user manager cannot be reached, run on ned-box: "
+              f"XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user status\n"
+              f"If that command fails, also run on ned-box: loginctl show-user nedlern -p Linger\n"
+              f"If that says Linger=no, the user manager stops whenever nedlern has no login "
+              f"session; ask the user to run on ned-box: loginctl enable-linger nedlern\n"
+              f"If it says Linger=yes, tell the user that the user manager on ned-box does not "
+              f"answer, quoting both commands' output.\n"
+              f"Do not restart {name} for this alone, since a restart interrupts its work. Once "
+              f"the systemctl command above succeeds, {name}'s next start, at its next crash "
+              f"recovery or launch, puts the agent-seat inside the user manager; a "
+              f"session-handoff does not, because the tmux server outlives it.",
+              file=sys.stderr)
     # A pane command that ends with the supervisor call lets the pane's shell exec into it;
     # tmux, then its parent, wakes it at once after a `kill -STOP`. The pane still closes
     # with the supervisor's exit status.
     completed = run_tmux(
         "new-session", "-d", "-s", name, "-c", str(seat_directory),
         f"{supervisor_command}; exit $?", socket_name=name, environment=environment,
+        command_prefix=command_prefix,
     )
     return 1 if completed is None else completed.returncode
 
