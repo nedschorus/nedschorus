@@ -68,7 +68,9 @@ EACH LINE is one of three:
 - unclear: a `?` inside the line, a phrase in CLEAR_ASK inside quoted text,
   such as a quoted title or a quoted line of the walk-me-through skill, which
   may only be named and not asked, or a phrase in UNCLEAR_ASK such as `I
-  recommend` or `whether to`;
+  recommend`, `whether to`, or an answer cue followed by a hyphen, as in
+  `type A-D` or `say yes-or-no`, apart from `no-decision` and `no-op`, which
+  are words and pass;
 - not question-like: everything else; it passes.
 When no line is a clear ask and some are unclear, the unclear lines go to
 the model MODEL in one headless `claude -p` call, which is shown the text of
@@ -177,8 +179,13 @@ CLEAR_ASK = re.compile(
     r"|\bneeds?\s+your\s+(?:answer|decision|ruling|approval|word|go-ahead|yes)\b"
     r"|\b(?:tell\s+me|let\s+me\s+know)\s+(?:if|whether|which)\b|\bplease\s+(?:confirm|approve|decide|choose|pick|rule)\b",
     re.I)
+# `no-decision` and `no-op` after an answer cue are words, not answers; any other hyphen after one, as in `type A-D`,
+# may still be an answer, so the model judges it.
+HYPHENATED_ANSWER_CUE_WORDS_THAT_ASK_NOTHING = r"(?:decision|op)\b"
 UNCLEAR_ASK = re.compile(
-    r"\brecommend|^\W*recommendation:|\bI\s+suggest\b|\blet\s+me\s+know\b|\btell\s+me\b|\basking\s+you\b"
+    r"\b(?:say|reply|answer|type)\s+(?:yes|no|y|n|ao|d|(?-i:A))-(?!" + HYPHENATED_ANSWER_CUE_WORDS_THAT_ASK_NOTHING + r")"
+    r"|\bon\s+(?:a|your)\s+(?:yes|no)-(?!" + HYPHENATED_ANSWER_CUE_WORDS_THAT_ASK_NOTHING + r")"
+    r"|\brecommend|^\W*recommendation:|\bI\s+suggest\b|\blet\s+me\s+know\b|\btell\s+me\b|\basking\s+you\b"
     r"|\bwaiting\s+(?:on|for)\s+(?:you|your)\b|\bstill\s+open\b|\bneeds?\s+(?:you|your)\b|\bwhether\s+(?:I|to|we)\b"
     r"|\bA\s+or\s+D\b|\bY\s+or\s+N\b|\brule\s+once\b|\byou(?:'d|\s+would|\s+must|\s+need\s+to)?\s+rule\s+on\b"
     r"|\byour\s+(?:yes|word|call|go-ahead|approval|decision|choice|pick|ruling)\b"
