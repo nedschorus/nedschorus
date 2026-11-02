@@ -219,6 +219,21 @@ def run_fresh_agent(worktree, overview_path, commit, writer_answers):
     return result.stdout
 
 
+def failure_removing_worktree(repository, worktree):
+    """Remove the temporary worktree; return why that failed, or None.
+
+    Runs inside a `finally`, so it raises nothing: an exception here would replace the refusal in flight and
+    turn its exit code into 2."""
+    try:
+        removal = run_git(repository, "worktree", "remove", "--force", str(worktree), check=False)
+        run_git(repository, "worktree", "prune", check=False)
+    except (OSError, subprocess.TimeoutExpired) as failure:
+        return f"`git worktree remove --force {worktree}` could not run: {failure}"
+    if removal.returncode:
+        return f"`git worktree remove --force {worktree}` failed with exit {removal.returncode}: {removal.stderr.strip()}"
+    return None
+
+
 def check_overview_claims(arguments):
     top_level = run_git(Path.cwd(), "rev-parse", "--show-toplevel", check=False)
     if top_level.returncode:
@@ -288,11 +303,10 @@ def check_overview_claims(arguments):
                                         "Do what its output says, then run this again.", exit_code=4)
             report = run_fresh_agent(worktree, overview_path, commit, writer_answers)
         finally:
-            worktree_removal = run_git(repository, "worktree", "remove", "--force", str(worktree), check=False)
-            run_git(repository, "worktree", "prune", check=False)
-            if worktree_removal.returncode:
-                print(f"{PROGRAM}: `git worktree remove --force {worktree}` failed with exit "
-                      f"{worktree_removal.returncode}: {worktree_removal.stderr.strip()}\n"
+            worktree_removal_failure = failure_removing_worktree(repository, worktree)
+            if worktree_removal_failure:
+                print(f"{PROGRAM}: {worktree_removal_failure}\n"
+                      "Only the cleanup failed: the claim check's own result is printed apart from this.\n"
                       f"To clean up, once this program has exited: run `git -C {repository} worktree prune`, then "
                       f"check that `git -C {repository} worktree list` no longer shows {worktree}; if it does, tell "
                       "the user.", file=sys.stderr)
@@ -308,7 +322,7 @@ def check_overview_claims(arguments):
     print(f"{PROGRAM}: {result}. Report: {destination}")
     if result != OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED:
         return 5
-    return 6 if worktree_removal.returncode else 0
+    return 6 if worktree_removal_failure else 0
 
 
 def main(argv=None):
