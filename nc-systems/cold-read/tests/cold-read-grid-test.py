@@ -2666,6 +2666,22 @@ with tempfile.TemporaryDirectory() as scratch:
           "EARLIER COLD-READ-FULL-RUNS NOT COUNTED:" in result.stdout and "git log --follow" in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
+
+# The docstring is a reader's map of the run: its cell count must match the
+# grid's cells plus the Question 4 cell, and it must name the Question 4 file.
+_docstring_grid_spec = importlib.util.spec_from_file_location(
+    "cold_read_grid_docstring_under_test", SYSTEM_DIRECTORY / "cold-read-grid.py")
+_docstring_grid = importlib.util.module_from_spec(_docstring_grid_spec)
+_docstring_grid_spec.loader.exec_module(_docstring_grid)
+_number_words = {7: "seven", 8: "eight", 9: "nine"}
+_expected_count_word = _number_words.get(len(_docstring_grid.GRID_CELLS) + 1, "")
+check("the module docstring counts the grid's cells and the Question 4 cell together, and names the Question 4 report file",
+      f"One invocation = one review: {_expected_count_word} cold-read-cells launched in parallel"
+      in " ".join(_docstring_grid.__doc__.split())
+      and _docstring_grid.COLD_READ_FULL_RUN_WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_FILE_NAME
+      in _docstring_grid.__doc__,
+      f"expected count word {_expected_count_word!r}")
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

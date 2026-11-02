@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Run a cold-read-full-run against a cold-read-target.
 
-One invocation = one review: seven cold-read-cells launched in parallel -- the
+One invocation = one review: eight cold-read-cells launched in parallel, seven
+for the two passes and the eighth for Question 4 (see below) -- the
 defect-hunt pass in five ({deep, second-strongest-model} x {claude, codex}, where
 second-strongest-model is the agent-binary's second-strongest model, and Gemini
 Argon at high on agy) and the terminology pass in two (deep x {claude, codex})
@@ -106,7 +107,7 @@ is decided: the absence, the closing text and the exit code turn only on
 whether a report landed.
 
 QUESTION 4, WHAT SHOULD BE CODE, IS ASKED ONCE PER RUN, beside the cells
-above, by one more cold-read-cell: the claude launcher on the model and effort the
+above, by the eighth cold-read-cell, launched at the same time as the seven: the claude launcher on the model and effort the
 cold-read-fast-read uses for it, with the cold-read-fast-read's own prompt
 for it, read from that program so the two runs cannot drift apart. It reads
 the frozen copy like the cells above and is retried and timed out by the same
@@ -114,7 +115,8 @@ rules, but it is not one of them: whether its report landed changes
 neither the closing text's variant, the INCOMPLETE SET marker, the
 AGENT-BINARY DOWN line, "Tell the user: ..." nor the exit code. When one of
 the cells above is absent, its landed report gets the INCOMPLETE SET marker like
-every .md file in the record; its own absence puts no marker anywhere. Its report file's name starts with neither agent-binary, so a run in
+every .md file in the record; its own absence puts no marker anywhere. Its report
+is `question-4-what-should-be-code-answer.md`, a name that starts with neither agent-binary, so a run in
 which it alone landed is not counted among the three. The grid writes the
 question's heading under the report's provenance comment, as the prompt
 tells the reviewer it will, and the closing text says where the answer is,
