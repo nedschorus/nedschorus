@@ -6,8 +6,9 @@ from-name="merge-lane-2" and whose body holds the line "#follow_up_request pull 
 followed by numbered findings, one to a line. For each such block it saves the block word for word
 with save_follow_up_request_and_clear_answers_when_its_findings_changed() of the program at FOLLOW_UP_PROGRAM_PATH, which owns the file's
 place in the git common directory, and hands the agent, as additionalContext, the brief
-build_follow_up_request_forked_subagent_brief() of that program writes. Any other prompt, including that line outside a merge-lane-2 message, gets no output
-and exit 0.
+build_follow_up_request_forked_subagent_brief() of that program writes. A merge-lane-2 message with a line
+that starts with "#follow_up_request" but is not that line gets the unreadable-block text below. Any other
+prompt, including that line outside a merge-lane-2 message, gets no output and exit 0.
 
 The hook never blocks the prompt, so merge-lane-2's message always reaches the agent. When a block
 cannot be read or saved, the additionalContext says so instead, and says what to do; the hook still
