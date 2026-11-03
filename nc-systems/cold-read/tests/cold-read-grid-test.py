@@ -2183,6 +2183,23 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an original changed beside a still copy says the set stands",
           "which did not change, so the set stands" in line, repr(line))
 
+    # --- A Mac link to ned-box's home is rewritten in the frozen copy only ----
+    link_directory = scratch / "mac-link-freeze"
+    link_directory.mkdir()
+    link_original = link_directory / "document.md"
+    link_original.write_text("See file:///Volumes/nedhome/agents/x/log.md now.\n", encoding="utf-8")
+    link_record = link_directory / "record"
+    link_record.mkdir()
+    link_digest = grid_module.freeze_target(link_original, link_record)
+    link_frozen = grid_module.record_names.frozen_target_path(link_original, link_record)
+    check("the frozen copy holds the link as a /home/nedlern/ path",
+          link_frozen.is_file()
+          and link_frozen.read_text(encoding="utf-8") == "See /home/nedlern/agents/x/log.md now.\n",
+          repr(link_frozen.read_bytes() if link_frozen.is_file() else None))
+    check("the document keeps its link and the digest returned is the document's",
+          "file:///Volumes/nedhome/" in link_original.read_text(encoding="utf-8")
+          and link_digest == hashlib.sha256(link_original.read_bytes()).hexdigest())
+
     # --- The third stop in a row ends the attempt ----------------------------
     # The marker detail is printed and written into every report on every stop,
     # so it must leave whether to start a new run to the stop-count line.

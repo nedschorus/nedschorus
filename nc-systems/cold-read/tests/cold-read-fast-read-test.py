@@ -1373,6 +1373,26 @@ with tempfile.TemporaryDirectory() as scratch:
               marked_copy.read_text(encoding="utf-8"))
           == (repository / other_relative).read_text(encoding="utf-8"),
           f"marked copy present={marked_copy.exists()}")
+    # --- A Mac link to ned-box's home reaches the reviewer as a ned-box path ---
+    link_relative = "docs/drafts/a-mac-link.md"
+    (repository / link_relative).write_text(
+        "See [the log](file:///Volumes/nedhome/agents/x/log.md) for it.\n", encoding="utf-8")
+    link_report = (repository / "cold-read-records" / f"a-mac-link-{record_stamp}"
+                   / "cold-read-fast-read.md")
+    run_fast_read(repository, stubs, {"*": {"report": "STUB FAST READ: of the link\n"}},
+                  link_report, link_relative, counter)
+    link_marked = (link_report.parent / ("a-mac-link"
+                   + script_under_test_module().SENTENCE_ID_MARKED_COPY_SUFFIX))
+    link_marked_text = link_marked.read_text(encoding="utf-8") if link_marked.is_file() else ""
+    check("the reviewer's copy holds the link as a /home/nedlern/ path and no /Volumes path",
+          "(/home/nedlern/agents/x/log.md)" in link_marked_text
+          and "/Volumes/" not in link_marked_text, repr(link_marked_text))
+    check("the document keeps its file:///Volumes/nedhome/ link",
+          "file:///Volumes/nedhome/agents/x/log.md" in (repository / link_relative).read_text(
+              encoding="utf-8"))
+    # Later cases list the records beside the report, so leave none of this one.
+    import shutil
+    shutil.rmtree(link_report.parent)
     # Every read below survives an absent file: a record path this suite or
     # the script got wrong should fail these cases by name, not end the run in
     # a traceback that takes every later case with it (found by mutating the

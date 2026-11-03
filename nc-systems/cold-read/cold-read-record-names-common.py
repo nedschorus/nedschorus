@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Define shared cold-read-record names and paths."""
+"""Define shared cold-read-record names and paths, and the one rewrite both cold reads apply to the copy a reviewer reads."""
 
 import datetime
 import json
@@ -198,3 +198,17 @@ def cold_read_record_directory_at_first_free_name_created_atomically(base: pathl
         except FileExistsError:
             continue
         return record_directory
+
+
+MAC_MOUNT_OF_NED_BOX_HOME_LINK_PREFIX = "file:///Volumes/nedhome/"
+NED_BOX_HOME_PATH_PREFIX = "/home/nedlern/"
+
+
+def reader_copy_text_with_mac_links_to_ned_box_home_as_ned_box_paths(text: str) -> str:
+    """Return text with each file:///Volumes/nedhome/ link prefix replaced by /home/nedlern/.
+
+    Reviewers run on ned-box, where /Volumes does not exist, so they report such
+    links as broken. Apply it only to the copy a reviewer reads, never to the
+    user's document. A bare /Volumes/nedhome/ path without file:// is left alone.
+    """
+    return text.replace(MAC_MOUNT_OF_NED_BOX_HOME_LINK_PREFIX, NED_BOX_HOME_PATH_PREFIX)

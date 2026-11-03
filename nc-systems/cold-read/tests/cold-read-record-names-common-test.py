@@ -604,6 +604,13 @@ with tempfile.TemporaryDirectory() as scratch:
               and claimed.is_dir() and base.is_symlink(), str(claimed))
     signal.signal(signal.SIGALRM, previous_handler)
 
+rewritten = names.reader_copy_text_with_mac_links_to_ned_box_home_as_ned_box_paths(
+    "[a](file:///Volumes/nedhome/x/y.md) and file:///Volumes/nedhome/z, bare /Volumes/nedhome/w, "
+    "other file:///Volumes/other/q\n")
+check("the reader-copy rewrite changes each file:///Volumes/nedhome/ link and nothing else",
+      rewritten == "[a](/home/nedlern/x/y.md) and /home/nedlern/z, bare /Volumes/nedhome/w, "
+                   "other file:///Volumes/other/q\n", repr(rewritten))
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed")
