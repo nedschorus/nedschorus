@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Send this machine's queued events to agent-seat-database-service.py, oldest first.
+"""Send this machine's queued events to nc-shared-database-service.py, oldest first.
 
 Usage:
-  nc-systems/agent-seat-database/agent-seat-database-local-events-file-sender.py
+  nc-systems/nc-shared-database/nc-shared-database-local-events-file-sender.py
       [--local-events-file PATH] [--service-url URL] [--token-file PATH]
 
   --local-events-file  default ~/.local/state/nedschorus/agent-seat-events.sqlite
   --service-url        default http://ned-box.local:8765
-  --token-file         default ~/.config/nedschorus/agent-seat-database-service.token
+  --token-file         default ~/.config/nedschorus/nc-shared-database-service.token
 
 write_event_to_local_events_file_and_start_sender, in
-agent-seat-database-local-events-file-common.py, starts this program after
+nc-shared-database-local-events-file-common.py, starts this program after
 each event it queues; the sending job will start it every 10 minutes. One sender runs per machine at a time: it runs only while it holds an
 exclusive SQLite transaction on agent-seat-events-sender.sqlite, beside the local
 events file, taken without waiting, and exits 0 at once when another sender
@@ -61,7 +61,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-PROGRAM = "nc-systems/agent-seat-database/agent-seat-database-local-events-file-sender.py"
+PROGRAM = "nc-systems/nc-shared-database/nc-shared-database-local-events-file-sender.py"
 ANSWER_TIMEOUT_SECONDS = 2
 EXIT_QUEUE_SENT = 0
 EXIT_STOPPED_WITH_ROWS_QUEUED = 1
@@ -69,16 +69,16 @@ EXIT_TOKEN_FILE_UNREADABLE = 2
 STOP_ADVICE = {
     None: "The service did not answer: it is down, or ned-box cannot be reached.",
     401: ("The service refused this machine's token: the token in "
-          "~/.config/nedschorus/agent-seat-database-service.token must be one line of "
-          "~/.config/nedschorus/agent-seat-database-service-accepted-tokens on ned-box."),
+          "~/.config/nedschorus/nc-shared-database-service.token must be one line of "
+          "~/.config/nedschorus/nc-shared-database-service-accepted-tokens on ned-box."),
     409: ("The service does not know the event's operation or fields: the program that wrote "
           "the event is newer than the running service, or wrong."),
     "other": "The service gave an answer the sender does not act on.",
 }
 
 _events_file_spec = importlib.util.spec_from_file_location(
-    "agent_seat_database_local_events_file_common",
-    Path(__file__).resolve().with_name("agent-seat-database-local-events-file-common.py"))
+    "nc_shared_database_local_events_file_common",
+    Path(__file__).resolve().with_name("nc-shared-database-local-events-file-common.py"))
 events_file = importlib.util.module_from_spec(_events_file_spec)
 _events_file_spec.loader.exec_module(events_file)
 
@@ -93,7 +93,7 @@ def post_event(service_url, token, generation, body):
     """Return (status, answer text); status is None when no answer came."""
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     if generation is not None:
-        headers[events_file.GENERATION_HEADER] = generation
+        headers[events_file.NC_SHARED_DATABASE_GENERATION_ID_HTTP_HEADER] = generation
     request = urllib.request.Request(f"{service_url}/events", data=body.encode("utf-8"),
                                      headers=headers, method="POST")
     try:
@@ -116,10 +116,10 @@ def answer_object(text, keys):
     return answer
 
 
-def record_sent(connection, row_number, answer):
+def mark_outbox_event_sent_and_delete_events_the_newest_backup_holds(connection, row_number, answer):
     connection.execute("BEGIN IMMEDIATE")
     try:
-        generation = events_file.generation_seen(connection)
+        generation = events_file.read_local_events_file_last_seen_nc_shared_database_generation_id(connection)
         if generation == answer["generation_id"]:
             connection.execute("UPDATE outbox_event SET sent = ?, sequence = ? "
                                "WHERE row_number = ?",
@@ -147,12 +147,12 @@ def send_queued_rows(connection, service_url, token):
         if row is None:
             return None
         row_number, event_id, body = row
-        generation = events_file.generation_seen(connection)
+        generation = events_file.read_local_events_file_last_seen_nc_shared_database_generation_id(connection)
         status, text = post_event(service_url, token, generation, body)
         if status is not None and 200 <= status < 300:
             answer = answer_object(text, ("sequence", "generation_id", "newest_backup"))
             if answer is not None:
-                record_sent(connection, row_number, answer)
+                mark_outbox_event_sent_and_delete_events_the_newest_backup_holds(connection, row_number, answer)
                 continue
         elif status == 412:
             answer = answer_object(text, ("generation_id",))
@@ -170,7 +170,7 @@ def send_queued_rows(connection, service_url, token):
                 f"after the next event any program on this machine writes, and sends them then.\n"
                 f"If you ran this sender yourself, run it once more; if it stops the same way, "
                 f"tell the user that this machine's agent-seat events are not reaching the "
-                f"agent-seat database service, quoting this message's first line. "
+                f"nc-shared-database service, quoting this message's first line. "
                 f"{STOP_ADVICE.get(status, STOP_ADVICE['other'])}\n"
                 f"If you are a subagent, tell the agent that dispatched you instead, with the "
                 f"same quote.")
@@ -179,12 +179,12 @@ def send_queued_rows(connection, service_url, token):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--local-events-file",
-                        default=str(events_file.AGENT_SEAT_DATABASE_LOCAL_EVENTS_FILE_PATH))
-    parser.add_argument("--service-url", default=events_file.AGENT_SEAT_DATABASE_SERVICE_URL)
+                        default=str(events_file.NC_SHARED_DATABASE_LOCAL_EVENTS_FILE_PATH))
+    parser.add_argument("--service-url", default=events_file.NC_SHARED_DATABASE_SERVICE_URL)
     parser.add_argument("--token-file",
-                        default=str(events_file.AGENT_SEAT_DATABASE_SERVICE_TOKEN_FILE_PATH))
+                        default=str(events_file.NC_SHARED_DATABASE_SERVICE_TOKEN_FILE_PATH))
     arguments = parser.parse_args(argv)
-    stop_report = events_file.local_events_file_sender_stop_report_path(
+    stop_report = events_file.nc_shared_database_local_events_file_sender_stop_report_path(
         arguments.local_events_file)
     try:
         code, stopped, queue_emptied = send(arguments)
@@ -216,11 +216,11 @@ def send(arguments):
                 f"  python3 -c 'import secrets; print(secrets.token_hex(32))' > "
                 f"{arguments.token_file} && chmod 600 {arguments.token_file}\n"
                 f"and its line is then added to "
-                f"~/.config/nedschorus/agent-seat-database-service-accepted-tokens on ned-box. "
+                f"~/.config/nedschorus/nc-shared-database-service-accepted-tokens on ned-box. "
                 f"If you are a subagent, pass the same fact to the agent that dispatched you.",
                 False)
     connection = events_file.open_local_events_file(arguments.local_events_file)
-    lock_path = events_file.local_events_file_sender_lock_file_path(arguments.local_events_file)
+    lock_path = events_file.nc_shared_database_local_events_file_sender_lock_file_path(arguments.local_events_file)
     lock = sqlite3.connect(str(lock_path), timeout=0, isolation_level=None)
     while True:
         try:
