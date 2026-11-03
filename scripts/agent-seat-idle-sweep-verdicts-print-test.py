@@ -213,6 +213,34 @@ check("a task created earlier in the promise's own turn backs it, so the judge d
       verdicts["alpha"]["sentences"][0]["code_reading"] == "judge"
       and verdicts["alpha"]["decision"] == "judge", verdicts["alpha"])
 
+
+machine = Machine()
+machine.seat("alpha", [user("a", at="2026-11-02T11:30:00Z"),
+                       assistant("Ok.", at="2026-11-02T11:30:00Z"),
+                       turn_end(at="2026-11-02T11:31:00Z"),
+                       user("go", at="2026-11-02T11:49:00Z"),
+                       assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
+                           {"pr_merged": 927}]}}), at="2026-11-02T11:49:30Z"),
+                       assistant(PROMISE), turn_end()])
+_, verdicts, _ = machine.run()
+check("a task created earlier in the promise's later turn backs it",
+      verdicts["alpha"]["sentences"][0]["code_reading"] == "judge"
+      and verdicts["alpha"]["decision"] == "judge", verdicts["alpha"])
+
+for interruption in ("[Request interrupted by user]",
+                     "[Request interrupted by user for tool use]\n"):
+    machine = Machine()
+    interrupted = user([{"type": "text", "text": interruption}], at="2026-11-02T11:36:00Z")
+    machine.seat("alpha", [user("a", at="2026-11-02T11:30:00Z"),
+                           assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
+                               {"pr_merged": 927}]}}), at="2026-11-02T11:35:00Z"),
+                           interrupted, user("new prompt", at="2026-11-02T11:49:00Z"),
+                           assistant(PROMISE), turn_end()])
+    _, verdicts, _ = machine.run()
+    check(f"a task from a turn ended by {interruption!r} does not back the next turn's promise",
+          verdicts["alpha"]["sentences"][0]["code_reading"] == "unbacked"
+          and verdicts["alpha"]["decision"] == "send_unbacked", verdicts["alpha"])
+
 for feedback in ("Stop hook feedback: finish the work.",
                  "Base directory for this skill: /skills/report"):
     for after_text in (False, True):

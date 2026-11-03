@@ -333,7 +333,9 @@ def read_main_transcript(path):
             facts.turn_ended_after_last_model_turn_record = False
         if record.get("type") == "assistant" and message_text(record).strip():
             newest_text_record = (record, moment, turn_started_at)
-        if record.get("type") == "system" and record.get("subtype") == "turn_duration":
+        if ((record.get("type") == "system" and record.get("subtype") == "turn_duration")
+                or (record.get("type") == "user"
+                    and message_text(record).strip().startswith("[Request interrupted by user"))):
             facts.turn_ended_after_last_model_turn_record = True
             awaiting_turn_start = True
             turn_started_at = None
