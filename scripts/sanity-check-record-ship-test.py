@@ -188,6 +188,11 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
     shutil.copytree(SCRIPTS_DIR.parent / "nc-systems" / "cold-read",
                     scratch_repo / "nc-systems" / "cold-read",
                     ignore=shutil.ignore_patterns("__pycache__"))
+    # cold-read-record-names-common.py reads ned-box's home and its Mac mount from this module.
+    ned_box_home_module = "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py"
+    (scratch_repo / "nc-systems" / "general-tools").mkdir()
+    shutil.copy2(SCRIPTS_DIR.parent / "nc-systems" / "general-tools" / ned_box_home_module,
+                 scratch_repo / "nc-systems" / "general-tools" / ned_box_home_module)
     scratch_ship = scratch_repo / "scripts" / SHIP.name
     all_store = str(scratch / "all-store" / "cold-read-records")
     good = make_record(scratch_repo / "sanity-check-records", "2026-09-10-good",
