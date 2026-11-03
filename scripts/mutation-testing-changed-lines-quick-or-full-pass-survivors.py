@@ -805,7 +805,7 @@ def recorded_mutant_killed_check(arguments, checkout, environment, runner):
             try:
                 mutated_source = source_with_recorded_mutant_applied(
                     (worktree / path).read_text(encoding="utf-8"), hunks)
-                why_not_applied = ("the lines the diff replaces are not in the file once"
+                why_not_applied = ("the lines the diff replaces are missing from the file or appear in it more than once"
                                    if mutated_source is None else None)
             except (OSError, UnicodeDecodeError) as error:
                 why_not_applied = f"the file cannot be read ({error})"
