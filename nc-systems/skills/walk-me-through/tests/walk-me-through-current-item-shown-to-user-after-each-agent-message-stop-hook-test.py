@@ -224,7 +224,8 @@ def test_a_reply_ending_with_the_closing_line_passes_and_one_without_it_is_sent_
             ("a closing line followed by blank lines passes", closing(2) + "\n\n  \n"),
             ("a closing line whose point holds escaped brackets passes",
              "Recorded.\n\n" + closing(2, point="the \\[advisor\\] check")),
-            ("a closing line without a point passes", "Recorded.\n\n" + closing(2, point=None))):
+            ("a closing line without a point passes", "Recorded.\n\n" + closing(2, point=None)),
+            ("a closing line with another M passes, since M is display only", "Recorded.\n\n" + closing(2, 90))):
         case.reply(reply)
         check_silent(case_name, case.run())
     for case_name, reply in (
@@ -234,7 +235,6 @@ def test_a_reply_ending_with_the_closing_line_passes_and_one_without_it_is_sent_
             ("a reply ending with a sentence naming the item is sent back",
              "The background job finished.\n\nItem 2 of 9 is waiting for your answer."),
             ("a closing line with text after it is sent back", closing(2) + "\n\nRecorded."),
-            ("a closing line with another total is sent back", "Recorded.\n\n" + closing(2, 90)),
             ("a closing line for another item is sent back", "Recorded.\n\n" + closing(5)),
             ("a closing line for the item's part is sent back", "Recorded.\n\n" + closing("2.1")),
             ("a closing line in bold is sent back", f"**{closing(2)}**"),
@@ -360,11 +360,20 @@ def test_item_added_by_re_planning_with_a_dotted_number():
     case.reply("**Item 37.2 of 44: a case item 37 missed**\n\nRecommendation: add the filter.\n\n"
                + closing("37.2", 44))
     check_silent("a reply ending with a dotted item's closing line passes", case.run())
-    for case_name, reply in (
-            ("a reply ending with the closing line of the item a dotted item follows is sent back", closing(37, 44)),
-            ("a dotted item's closing line with another total is sent back", closing("37.2", 4))):
-        case.reply(reply)
-        check_reminded(case_name, case.run(), "`Item 37.2 of 44`")
+    case.reply(closing("37.2", 4))
+    check_silent("a dotted item's closing line with another M passes", case.run())
+    case.reply(closing(37, 44))
+    check_reminded("a reply ending with the closing line of the item a dotted item follows is sent back", case.run(),
+                   "`Item 37.2 of 44`")
+
+
+def test_headings_whose_m_the_close_step_has_since_counted_differently_still_work():
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 5 of 7.", document=WALK_DOCUMENT + "\n## a case the walk missed\n\nText.\n")
+    case.reply("Recorded.\n\n" + closing(5, 7, point="the hook"))
+    check_silent("a closing line with the minutes' M passes though every heading still says `of 9`", case.run())
+    case.reply("Recorded.")
+    check_reminded("the hook names the waiting item with the minutes' M", case.run(), "`Item 5 of 7`")
 
 
 def no_decision_line(link):
@@ -682,7 +691,7 @@ def test_range_headings_and_values():
     case.walk_files(minutes="#next_to_present item 10 of 54.", document=backwards_document)
     case.reply("Recorded.")
     check_blocked("minutes naming an item of a heading whose range runs backwards are told that heading",
-                  case.run(), "no heading `Item 10 of 54`",
+                  case.run(), "no heading `Item 10`",
                   "heading `Items 12 to 10 of 54: backwards` names no item", "`12 to 10` runs backwards")
     item_and_parts = ("# A walk\n\n## Item 11 of 54: before\n\nBefore.\n\n"
                       "## Items 12 to 12.2 of 54: an item and its inserted questions\n\nTogether.\n\n"
@@ -704,7 +713,7 @@ def test_range_headings_and_values():
                     document=WALK_DOCUMENT + "\n## Item 5 of 9: a misnumbered copy\n\nText.\n")
     case.reply("Recorded.")
     check_blocked("minutes naming an item two headings carry are told the heading is misnumbered",
-                  case.run(), "more than one heading for `Item 5 of 9`", "misnumbered")
+                  case.run(), "more than one heading for `Item 5`", "misnumbered")
     case = Case()
     case.walk_files(minutes="#next_to_present items 12 to 10 of 54.", document=RANGE_WALK_DOCUMENT)
     case.reply("Recorded.")
@@ -794,7 +803,7 @@ def test_grouped_heading_paragraphs_and_kept_revisions_are_found():
                         "## Item 12 of 12: after\n\n**Item 11 of 12: misplaced.** Text.\n\nAfter."))
     case.reply("Recorded.")
     check_blocked("a bold paragraph naming an item its heading does not name still starts an item",
-                  case.run(), "more than one heading for `Item 11 of 12`")
+                  case.run(), "more than one heading for `Item 11`")
     for case_name, minutes in (
             ("minutes naming an item kept beside its revision find only the revision",
              "#next_to_present item 27 of 72."),
@@ -818,7 +827,7 @@ def test_grouped_heading_paragraphs_and_kept_revisions_are_found():
     case.walk_files(minutes="#next_to_present item 27 of 72.",
                     document=REVISED_WALK_DOCUMENT.replace("## Item 27 of 72 (revised)", "## Item 27 of 76 (revised)"))
     case.reply("Recorded.")
-    check_reminded("a revision under another total leaves the original in force", case.run())
+    check_reminded("a revision under another M is read without a block", case.run())
     case = Case()
     case.walk_files(minutes="#next_to_present item 10 of 54.",
                     document=("# A walk\n\n## Item 9 of 54: first\n\nText.\n\n"
@@ -832,14 +841,14 @@ def test_grouped_heading_paragraphs_and_kept_revisions_are_found():
                     document=REVISED_WALK_DOCUMENT.replace("## Item 27 of 72 (revised)", "## Item 27 of 72"))
     case.reply("Recorded.")
     check_blocked("two headings for one item, neither a revision, still block", case.run(),
-                  "more than one heading for `Item 27 of 72`")
+                  "more than one heading for `Item 27`")
     case = Case()
     case.walk_files(minutes="#next_to_present item 27 of 72.",
                     document=REVISED_WALK_DOCUMENT.replace("## Item 27 of 72 (revised): keeping code and design in step",
                                                            "## Item 27 of 72: what the revised rule changes"))
     case.reply("Recorded.")
     check_blocked("`revised` elsewhere in a heading's title does not make it a revision", case.run(),
-                  "more than one heading for `Item 27 of 72`")
+                  "more than one heading for `Item 27`")
     case = Case()
     case.walk_files(minutes="#next_to_present item 27 of 72.",
                     document=REVISED_WALK_DOCUMENT.replace("## Item 27 of 72 (revised): keeping",
@@ -856,7 +865,7 @@ def test_grouped_heading_paragraphs_and_kept_revisions_are_found():
     case.walk_files(minutes="#next_to_present item 5 of 9.", document=partial)
     case.reply("Recorded.")
     check_blocked("a revision of one item of a grouped heading leaves that item under two headings",
-                  case.run(), "more than one heading for `Item 5 of 9`")
+                  case.run(), "more than one heading for `Item 5`")
     case = Case()
     case.walk_files(minutes="#next_to_present item 27 of 72.",
                     document=REVISED_WALK_DOCUMENT.replace("## Item 27 of 72 (revised): keeping",
@@ -925,8 +934,8 @@ def test_where_the_minutes_line_sits():
     case.walk_files(minutes="#next_to_present item 2.",
                     document=WALK_DOCUMENT + "\n## Item 2 of 10: a re-planned copy\n\nText.\n")
     case.reply("Recorded.")
-    check_blocked("a line without `of M` over headings with two totals is sent back", case.run(),
-                  "gives no `of M`", "more than one total (`of 9`, `of 10`)")
+    check_blocked("a line without `of M` over two headings for its item, of different M, is sent back", case.run(),
+                  "more than one heading for `Item 2`", "write the minutes' last `#next_to_present` line as `item N of M`")
     case = Case()
     case.walk_files(minutes="#next_to_present item 2.",
                     document="# A walk\n\n## The poem page\n\nText.\n\n## The summary\n\nText.\n")
@@ -965,7 +974,7 @@ def test_missing_heading():
     case.walk_files(minutes="#next_to_present item 3 of 9.")
     case.reply(ITEM_2_REPLY)
     check_blocked("a heading the walk-document lacks is named", case.run(),
-                  "no heading `Item 3 of 9`")
+                  "no heading `Item 3`")
 
 
 def test_closed_and_last_line_wins():

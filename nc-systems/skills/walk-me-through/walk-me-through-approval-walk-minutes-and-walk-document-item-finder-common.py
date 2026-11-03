@@ -26,7 +26,21 @@ with its pause, so the check program can say how to resume it.
 ITEMS IN THE WALK-DOCUMENT. An item starts at its running count, `Item N of
 M`, `Items 5 and 6 of M`, `Items 10 to 12 of M` or `Items 12 to 12.3 of M`,
 on a top-level heading or paragraph opening with `**`, outside any list or
-quotation, as markdown-it-py reads the document, and runs to the next running count. A heading that names several
+quotation, as markdown-it-py reads the document, and runs to the next running
+count or unnumbered item. An unnumbered item is a waiting item that has only
+a title: a top-level `## <title>` heading, ATX-style, after the first running
+count, that holds no running count, does not open with `Withdrawn`, and does
+not open with an item label such as `Item 3:`, which in older walks groups
+the sub-steps under it. The answer program's close step numbers it when it is
+shown. M is display only: approval_walk_item_count counts it from the
+walk-document, the whole numbers its item headings hold, a dotted number
+counting as the item before its first dot, plus its unnumbered items, so an
+item added changes no other heading. The close step writes it into the
+`#next_to_present` line, and the hooks show the M that line gives; no M is
+compared, and an `of M` a heading or the minutes give is read only to choose
+between two headings that name the same item. A
+dot in a number marks a sub-step of an item too big for one item, as in 6.1.
+A heading that names several
 items is one unit, and so are the top-level paragraphs under it that open
 with the count of one of its items. Within the unit, an item's lines start at
 its opening, where N is one of the unit's items, read whole, and M, when
@@ -137,6 +151,10 @@ CLOSING_LINE_LABEL = re.compile(rf"Items?\s+({NUMBER_LIST})\s+of\s+(\d+)(?:,\s.*
 # Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
 REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
 WITHDRAWN_HEADING = re.compile(r"^[*_\s(]*withdrawn\b", re.I)
+# A `##` heading that opens with an item label but no `of M`, as in `## Item 3: corrections` over `### Item 3.1 of
+# 16`, groups items and is not an item itself.
+ITEM_LABEL_WITHOUT_COUNT = re.compile(r"^[*_\s]*items?\s+\d", re.I)
+UNNUMBERED_ITEM_HEADING_MARKUP = "##"
 # The close step of the answer program puts this right after a deferred item's running count. It holds a colon, so
 # every pattern that reads a heading past its count reads approval_walk_item_heading_with_deferred_note_removed's line.
 APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT = "(deferred: moved to just before the summary item)"
@@ -422,8 +440,10 @@ def item_unit_spans(document_text, parser):
     paragraph whose items the count heading above it already names, with no other count
     between them, which stays in that heading's unit. A count that names no item still
     ends the unit before it; its unit has no numbers, and problem names the heading and
-    says why. problem is None for every other unit. A unit is left out when a later
-    heading that says `revised` right after its count names all of its items.
+    says why. An unnumbered item, as the module docstring says, starts a unit with no numbers, M None and
+    problem None; approval_walk_unit_is_unnumbered_item tells it apart. problem is None for every other
+    unit. A unit is left out when a later heading that says `revised` right after its count names all of its
+    items, whatever M either heading gives.
     """
     lines = document_text.split("\n")
     tokens = parser.parse(document_text)
@@ -436,8 +456,8 @@ def item_unit_spans(document_text, parser):
             for position, (numbers, _, _, _, first) in enumerate(starts)]
     return [(numbers, total, problem, first, ends[index])
             for index, (numbers, total, problem, _, first) in enumerate(starts)
-            if not (numbers and any(revised and later_total == total and set(numbers) <= set(later_numbers)
-                                    for later_numbers, later_total, _, revised, _ in starts[index + 1:]))]
+            if not (numbers and any(revised and set(numbers) <= set(later_numbers)
+                                    for later_numbers, _, _, revised, _ in starts[index + 1:]))]
 
 
 def item_unit_starts(tokens, lines):
@@ -459,6 +479,11 @@ def item_unit_starts(tokens, lines):
         content = approval_walk_item_heading_with_deferred_note_removed(content)
         match = HEADING_COUNT.match(content)
         if not match:
+            # Before the first item, a `##` heading is the walk-document's own, such as its introduction's.
+            if (starts and token.type == "heading_open" and token.markup == UNNUMBERED_ITEM_HEADING_MARKUP
+                    and not ITEM_LABEL_WITHOUT_COUNT.match(content)):
+                group = None
+                starts.append((index, [], None, None, False, token.map[0]))
             continue
         try:
             numbers, problem = expand_numbers(match[1]), None
@@ -493,45 +518,70 @@ def approval_walk_item_line_range_within_heading_shared_by_several_items(opening
     return starts[number], min(later + [end])
 
 
-def waiting_item_units(document, value, numbers, total, parser, all_units=None):
-    """Return (M, the units of item_unit_spans that hold the waiting items) for the item numbers and
-    total M that parse_items read from the `#next_to_present` value, M None when it gives none.
+def approval_walk_unit_is_unnumbered_item(unit):
+    """Whether unit, one of item_unit_spans' units, is an unnumbered item: a waiting item the close step numbers
+    when it is shown."""
+    numbers, _, problem, _, _ = unit
+    return not numbers and problem is None
 
-    Raise UnusableRange, saying what is wrong, when the walk-document does not exist, when M is None
-    and the walk-document's headings give no total or more than one, or when a waiting item has no
-    heading, or more than one that is not a revision. all_units are item_unit_spans of the walk-document when
-    the caller has them already."""
+
+def approval_walk_item_count(units):
+    """M, as a string: the whole numbers the numbered items of units hold, a dotted number such as 6.1 counting
+    as its item 6, plus the unnumbered items; so it counts the items shown and the items waiting."""
+    whole = {number.split(".")[0] for unit in units for number in unit[0]}
+    return str(len(whole) + sum(map(approval_walk_unit_is_unnumbered_item, units)))
+
+
+def approval_walk_next_unnumbered_item_number(units):
+    """The number the close step gives the next unnumbered item it shows: one more than the highest whole number
+    any item heading of units holds, so no number is used twice even where waiting items carry numbers."""
+    return str(max((int(number.split(".")[0]) for unit in units for number in unit[0]), default=0) + 1)
+
+
+def waiting_item_units(document, value, numbers, total, parser, all_units=None):
+    """Return (M to show, the units of item_unit_spans that hold the waiting items) for the item numbers and
+    total that parse_items read from the `#next_to_present` value, total None when it gives none. M to show is
+    total, which the close step writes as approval_walk_item_count counted it, or, when the value gives none,
+    approval_walk_item_count's.
+
+    Each waiting item's unit is the one heading that names it, whatever M the heading gives; total is read only
+    to choose between two headings that name the same item and are not revisions, as in a walk-document
+    renumbered before numbers were never reused. Raise UnusableRange, saying what is wrong, when the
+    walk-document does not exist, when a waiting item has no heading, or when it has more than one and total
+    does not pick exactly one of them. all_units are item_unit_spans of the walk-document when the caller has
+    them already."""
     if all_units is None:
         if not document.is_file():
             raise UnusableRange(f"its walk-document {document} does not exist.")
         all_units = item_unit_spans(document.read_text(encoding="utf-8"), parser)
-    if total is None:
-        totals = {unit[1] for unit in all_units}
-        if not totals:
-            raise UnusableRange(
-                f"its walk-document {document} has no heading with a running count, such "
-                f"as `## Item 3 of 9: <the point>`, so the hook cannot find the item the "
-                f"minutes name: give each item's heading its count `Item N of M`.")
-        if len(totals) > 1:
-            listed = ", ".join(f"`of {each}`" for each in sorted(totals, key=int))
-            raise UnusableRange(
-                f"its minutes' last `#next_to_present` line, `{value}`, gives no `of M`, "
-                f"and the walk-document's headings give more than one total ({listed}), "
-                f"so the line must say which: write it as `item N of M`, with M the total "
-                f"of the heading meant.")
-        total = totals.pop()
-    units = [unit for unit in all_units if unit[1] == total and set(unit[0]) & set(numbers)]
-    missing = [number for number in numbers if not any(number in unit[0] for unit in units)]
+    if not any(unit[0] for unit in all_units):
+        raise UnusableRange(
+            f"its walk-document {document} has no heading with a running count, such "
+            f"as `## Item 3 of 9: <the point>`, so the hook cannot find the item the "
+            f"minutes name: give the item shown now its count `Item N of M`.")
+    chosen, missing, repeated = [], [], []
+    for number in numbers:
+        naming = [unit for unit in all_units if number in unit[0]]
+        picked = [unit for unit in naming if unit[1] == total]
+        if len(naming) > 1 and len(picked) == 1:
+            naming = picked
+        if not naming:
+            missing.append(number)
+        elif len(naming) > 1:
+            repeated.append(number)
+        else:
+            chosen.append(naming[0])
     if missing:
-        named = ", ".join(f"`Item {number} of {total}`" for number in missing)
-        unreadable = [unit[2] for unit in all_units if unit[1] == total and unit[2]]
+        named = ", ".join(f"`Item {number}`" for number in missing)
+        unreadable = [unit[2] for unit in all_units if unit[2]]
         raise UnusableRange(
             f"its walk-document has no heading {named}, which the minutes name"
             + "".join(f"; {each}" for each in unreadable) + ".")
-    repeated = [number for number in numbers if sum(number in unit[0] for unit in units) > 1]
     if repeated:
-        named = ", ".join(f"`Item {number} of {total}`" for number in repeated)
+        named = ", ".join(f"`Item {number}`" for number in repeated)
         raise UnusableRange(
             f"its walk-document has more than one heading for {named}, so the hook cannot tell "
-            f"which one the minutes name.")
-    return total, units
+            f"which one the minutes name: write the minutes' last `#next_to_present` line as `item N of M`, "
+            f"with M the one the heading meant gives, or make the other heading a revision or Withdrawn.")
+    shown_total = total if total is not None else approval_walk_item_count(all_units)
+    return shown_total, [unit for unit in all_units if unit in chosen]
