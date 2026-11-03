@@ -534,20 +534,22 @@ class Watcher:
         self.show(notice)
         return notice
 
-    def write_alert(self, seat, kind, notice_path: Path, text):
+    def write_alert(self, seat, kind, notice_path: Path, text) -> bool:
+        """Write the notice's user-alert; return whether one was written."""
         title_template = FAILED_RESTART_NOTICE_KIND_TO_USER_ALERT_TITLE_TEMPLATE.get(kind)
         # A kind without a title, such as the notice written after a successful restart, gets no
         # alert: only a failed restart needs the user.
         if self.user_alert_write_to_pending is None or title_template is None:
-            return
+            return False
         try:
             alert_id = self.user_alert_write_to_pending(title_template.format(seat=seat), text,
                                              FAILED_RESTART_NOTICE_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO)
         except OSError as error:
             self.log(seat, "user alert not written; the notice's page or window still opens",
                      notice=str(notice_path), error=f"{type(error).__name__}: {error}")
-            return
+            return False
         self.log(seat, "user alert written", notice=str(notice_path), alert=alert_id)
+        return True
 
     def write_notice_page(self, seat, notice_path: Path, text, title=None):
         """Write the notice's HTML page; return its path, or None to show the text instead."""
@@ -957,9 +959,11 @@ def report_run_failure(error_text, state_directory: Path, log_directory: Path):
     for notice in list(state["pending_notices"]):
         watcher.show(notice)
     if error_text not in reported:
-        watcher.write_notice("watcher", "run-failed", RUN_FAILED_NOTICE_TEMPLATE,
-                             write_user_alert=error_text not in alerted, error=error_text)
-        if error_text not in alerted:
+        notice = watcher.write_notice("watcher", "run-failed", RUN_FAILED_NOTICE_TEMPLATE,
+                                      write_user_alert=False, error=error_text)
+        notice_path = Path(notice["path"])
+        if error_text not in alerted and watcher.write_alert(
+                "watcher", "run-failed", notice_path, notice_path.read_text(encoding="utf-8")):
             try:
                 with alerted_path.open("a", encoding="utf-8") as stream:
                     stream.write(error_text + "\n")

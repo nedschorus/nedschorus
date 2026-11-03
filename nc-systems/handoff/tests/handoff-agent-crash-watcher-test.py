@@ -1155,6 +1155,28 @@ def run_report_run_failure_state_cases(root: Path):
         check("a state directory where the alerted record cannot be written is logged, not raised",
               raised is None and "could not record that the run failure's user alert was written"
               in decisions, repr(raised))
+
+        flaky = root / "flaky-alert-state"
+        flaky.mkdir()
+        (flaky / f"{watcher_module.PROGRAM}-state.json").write_text("{not json", encoding="utf-8")
+        alerts_before = set(pending_alerts.glob("*.json"))
+        real_alert_writer = watcher_module.user_alerts.user_alert_write_to_pending
+        attempts = []
+
+        def alert_writer_failing_once(*arguments):
+            attempts.append(arguments)
+            if len(attempts) == 1:
+                raise OSError("user-alerts directory full")
+            return real_alert_writer(*arguments)
+        watcher_module.user_alerts.user_alert_write_to_pending = alert_writer_failing_once
+        try:
+            watcher_module.report_run_failure("OSError: x", flaky, root / "flaky-alert-log")
+            watcher_module.report_run_failure("OSError: x", flaky, root / "flaky-alert-log")
+        finally:
+            watcher_module.user_alerts.user_alert_write_to_pending = real_alert_writer
+        check("an alert write that fails is not recorded as alerted, so the next failing run writes it",
+              len(attempts) == 2 and len(set(pending_alerts.glob("*.json")) - alerts_before) == 1,
+              repr((len(attempts), sorted(set(pending_alerts.glob("*.json")) - alerts_before))))
     finally:
         watcher_module.open_mac_window = real_opener
         watcher_module.open_mac_browser_page = real_page_opener
