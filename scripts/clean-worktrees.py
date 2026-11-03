@@ -605,14 +605,16 @@ class PullRequestsByHeadBranchLazyCache:
         return self._by_head_branch
 
 
-def list_all_pull_requests_grouped_by_head_branch(repo):
+def list_all_pull_requests_grouped_by_head_branch(repo,
+                                                  timeout_seconds=PULL_REQUEST_LISTING_TIMEOUT_SECONDS):
     """Return {head branch name: [{number, state, headRefName, headRefOid}]} for every pull request
-    of the repository's GitHub remote; raise PullRequestListingFailed when gh cannot list them."""
+    of the repository's GitHub remote; raise PullRequestListingFailed when gh cannot list them, or
+    does not finish within timeout_seconds."""
     command = ["gh", "pr", "list", "--state", "all", "--limit", str(PULL_REQUEST_LISTING_LIMIT),
                "--json", "number,state,headRefName,headRefOid"]
     try:
         listing = subprocess.run(command, cwd=repo, capture_output=True, text=True, check=False,
-                                 timeout=PULL_REQUEST_LISTING_TIMEOUT_SECONDS)
+                                 timeout=timeout_seconds)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise PullRequestListingFailed(f"`{shlex.join(command)}` could not be run: {error}") from None
     if listing.returncode != 0:

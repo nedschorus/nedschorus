@@ -49,6 +49,9 @@ REPO_ROOT = MODULE_PATH.parent.parent.parent
 CLEAN_WORKTREES_PATH = REPO_ROOT / "scripts" / "clean-worktrees.py"
 
 ENTRIES_AT_MOST = 20
+# Every agent-session's first prompt waits on this listing, which took about 13 s for 2,239 pull
+# requests; 60 s leaves room for the count to grow before a slow gh is cut off.
+PULL_REQUEST_LISTING_TIMEOUT_SECONDS = 60
 MAIN_BRANCH = "main"
 ORIGIN_MAIN = "origin/main"
 
@@ -88,7 +91,8 @@ def pull_requests_or_failure(repo):
     (None, None, why gh could not list them)."""
     cleaner = clean_worktrees_module()
     try:
-        by_head_branch = cleaner.list_all_pull_requests_grouped_by_head_branch(repo)
+        by_head_branch = cleaner.list_all_pull_requests_grouped_by_head_branch(
+            repo, PULL_REQUEST_LISTING_TIMEOUT_SECONDS)
     except cleaner.PullRequestListingFailed as error:
         return None, None, str(error)
     by_head_commit = {pull_request["headRefOid"]: pull_request
