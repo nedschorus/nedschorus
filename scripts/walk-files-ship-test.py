@@ -137,7 +137,7 @@ def one_line(text: str) -> bool:
 
 
 WALK = "demo-walk-2026-09-18"
-FILES = {"-draft": "# draft\n", "-suggestions": "# suggestions\n",
+FILES = {"-draft": "# draft\n", "-cold-read-fast-read": "# cold-read-fast-read report\n",
          "": "# walk\n\n## Item 1 of 2\n", "-minutes": "# minutes\n\nItem 1 ruled.\n"}
 
 with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name:
@@ -171,6 +171,50 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           and "log-store" in (store_root / "README.md").read_text(encoding="utf-8"))
     check("the sibling's files were named on stderr as not shipped",
           f"{sibling}.md" in result.stderr and "not shipped" in result.stderr, result.stderr)
+    check("the not-shipped note lists the names a file of the walk can have",
+          f"{WALK}-draft.md, {WALK}-cold-read-fast-read.md, {WALK}.md, "
+          f"{WALK}-minutes.md, {WALK}-dispositions.md; or, in a walk started before "
+          f"its fast read's report took the name {WALK}-cold-read-fast-read.md, that "
+          f"report's earlier name {WALK}-suggestions.md." in result.stderr,
+          result.stderr)
+    not_shipped_instruction_lines = [line for line in result.stderr.splitlines()
+                                     if line.startswith("For ")]
+    check("the not-shipped note gives one instruction line for another walk's file, "
+          "one for this walk's file under another name, and one for any other file",
+          len(not_shipped_instruction_lines) == 3
+          and "do nothing; it ships when that walk is shipped" in not_shipped_instruction_lines[0]
+          and "rename it to that name; once every such file is renamed, run "
+              f"`{SHIP} {walks.resolve() / (WALK + '-minutes.md')}` again"
+              in not_shipped_instruction_lines[1]
+          and f"the log-store has no copy of it; it is in {walks.resolve()}"
+              in not_shipped_instruction_lines[2],
+          result.stderr)
+
+    # --- The note's rerun command runs as printed ---------------------------
+    # Started by a relative program path from scripts/, with the walk reached
+    # through a symlinked directory, the printed command must still run from
+    # any other working directory.
+    import re
+    linked_walks = scratch / "linked-walks"
+    linked_walks.symlink_to(walks, target_is_directory=True)
+    relative_env = dict(os.environ)
+    relative_env[DESTINATION_VARIABLE] = local_destination
+    relative = subprocess.run(
+        [sys.executable, SHIP.name, str(linked_walks / f"{WALK}.md")],
+        capture_output=True, text=True, check=False, env=relative_env, cwd=SCRIPTS_DIR)
+    printed = re.search(r"once every such file is renamed, run `([^`]+)` again",
+                        relative.stderr)
+    # The shell runs the printed command, as an agent would, so a program path
+    # that does not resolve from this directory fails with exit 127.
+    rerun_result = (subprocess.run(printed.group(1), shell=True, capture_output=True,
+                                   text=True, check=False, env=relative_env, cwd=scratch)
+                    if printed else None)
+    check("the not-shipped note's rerun command, printed by a run started as "
+          "`python3 walk-files-ship.py` from scripts/ on a symlinked walk directory, "
+          "runs from another working directory and ships the walk",
+          printed is not None and rerun_result.returncode == 0
+          and f"minutes at {store_walk}/{WALK}-minutes.md" in rerun_result.stdout,
+          relative.stderr + (rerun_result.stdout + rerun_result.stderr if rerun_result else ""))
 
     # --- Nothing new: nothing touched ---------------------------------------
     stored_minutes = store_walk / f"{WALK}-minutes.md"
@@ -383,8 +427,8 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
     order_walk_text = write_walk(walks, order_walk, FILES)
     (store_walk / f"{order_walk}.md").write_text("# an older walk text\n", encoding="utf-8")
     result = ship(local_destination, str(order_walk_text))
-    check("files added with a new revised copy are listed draft, suggestions, revised copy, minutes",
-          f"4 file(s) added ({order_walk}-draft.md, {order_walk}-suggestions.md, "
+    check("files added with a new revised copy are listed draft, cold-read-fast-read report, revised copy, minutes",
+          f"4 file(s) added ({order_walk}-draft.md, {order_walk}-cold-read-fast-read.md, "
           f"{order_walk}-revised-1.md, {order_walk}-minutes.md)" in result.stdout,
           result.stdout + result.stderr)
 
@@ -392,7 +436,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
     (walks / f"{WALK}.md").write_text(FILES[""] + "\n## Item 2 of 2\n", encoding="utf-8")
 
     # --- Argument forms -------------------------------------------------------
-    result = ship(local_destination, str(walks / f"{WALK}-suggestions.md"))
+    result = ship(local_destination, str(walks / f"{WALK}-cold-read-fast-read.md"))
     check("a path to any of the walk's files names the walk (role suffix stripped)",
           result.returncode == 0 and result.stdout.startswith(f"shipped: {WALK} "),
           result.stdout)
@@ -432,10 +476,31 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           and f"{partial}-minutes.md" in result.stdout, result.stdout)
     write_walk(walks, partial, {"": "# walk\n", "-minutes": "# minutes\n"})
     result = ship(local_destination, str(walks / f"{partial}.md"))
-    check("a walk without draft or suggestions ships, and stderr notes each missing file",
+    check("a walk without draft or cold-read-fast-read report ships, and stderr notes each missing file",
           result.returncode == 0 and "2 file(s) added" in result.stdout
           and f"{partial}-draft.md" in result.stderr
-          and f"{partial}-suggestions.md" in result.stderr, result.stdout + result.stderr)
+          and f"{partial}-cold-read-fast-read.md" in result.stderr, result.stdout + result.stderr)
+
+    # --- A walk started before the report was named -cold-read-fast-read.md ---
+    earlier = "earlier-walk-2026-10-01"
+    earlier_files = {"-draft": "# draft\n", "-suggestions": "# fast read's report\n",
+                     "": "# walk\n", "-minutes": "# minutes\n"}
+    write_walk(walks, earlier, earlier_files)
+    result = ship(local_destination, str(walks / f"{earlier}.md"))
+    check("an earlier walk's <name>-suggestions.md ships under its own name, in the report's place, "
+          "and stderr notes no missing report and no unshipped file",
+          result.returncode == 0
+          and f"4 file(s) added ({earlier}-draft.md, {earlier}-suggestions.md, "
+              f"{earlier}.md, {earlier}-minutes.md)" in result.stdout
+          and all(text_or_none(store_walk / f"{earlier}{suffix}.md") == text
+                  for suffix, text in earlier_files.items())
+          and not (store_walk / f"{earlier}-cold-read-fast-read.md").exists()
+          and "-cold-read-fast-read.md" not in result.stderr
+          and "not shipped" not in result.stderr, result.stdout + result.stderr)
+    result = ship(local_destination, str(walks / f"{earlier}-suggestions.md"))
+    check("a path to an earlier walk's <name>-suggestions.md names that walk",
+          result.returncode == 0 and result.stdout.startswith(f"shipped: {earlier} "),
+          result.stdout + result.stderr)
 
     # --- The store cannot be written: FAILED, exit 1 --------------------------
     result = ship(str(scratch / "no-store" / "cold-read-records"), str(walk_text),
@@ -495,7 +560,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           "existing file, and removes the staging directory",
           len(placing_calls) == 1 and "ln -- " in placing_calls[0][-1]
           and "ln -f" not in placing_calls[0][-1]
-          and all(f"{WALK}{s}.md" in placing_calls[0][-1] for s in ("-draft", "-suggestions", ""))
+          and all(f"{WALK}{s}.md" in placing_calls[0][-1] for s in ("-draft", "-cold-read-fast-read", ""))
           and f"{WALK}-minutes.md" not in placing_calls[0][-1]
           and f"rm -rf -- {RULED_WALK_PATH}/.ship-staging-{WALK}-" in placing_calls[0][-1],
           str(placing_calls))
@@ -764,7 +829,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           and "walk-me-through skill" in module.shipper.STORE_README
           and "scripts/walk-files-ship.py" in module.shipper.STORE_README
           and not any(ending in module.shipper.STORE_README
-                      for ending in ("-draft.md", "-suggestions.md",
+                      for ending in ("-draft.md", "-cold-read-fast-read.md", "-suggestions.md",
                                      "-minutes.md", "-dispositions.md")),
           module.shipper.STORE_README)
 
@@ -844,7 +909,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-race-test-") as race_sc
             subprocess.run = saved_subprocess_run
             os.replace = saved_os_replace
         kept = {suffix: (walk_store / f"{WALK}{suffix}.md").read_text(encoding="utf-8")
-                for suffix in ("-draft", "-suggestions", "", "-minutes", "-dispositions")
+                for suffix in ("-draft", "-cold-read-fast-read", "", "-minutes", "-dispositions")
                 if (walk_store / f"{WALK}{suffix}.md").is_file()}
         return (code, out.getvalue(), err.getvalue(), kept,
                 sorted(p.name for p in walk_store.iterdir()))
@@ -1005,7 +1070,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-ssh-") as 
     real_placement = partial.shipper.link_staged_files_never_over_existing
 
     def placement_that_fails(copy_host, staging_dir, walk_path, names):
-        return subprocess.CompletedProcess([], 255, "Disk quota exceeded (injected)", "injected: ssh exit 255\n"), None
+        return subprocess.CompletedProcess([], 255, "Disk quota exceeded (injected)", "injected: ssh exit 255\n"), None, None
 
     def rerun_sentence(module, walks, walk):
         return (f"`{module.REPO_ROOT}/scripts/walk-files-ship.py "
@@ -1299,11 +1364,26 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
           code == 1 and out.startswith(f"FAILED: {LEFT_WALK} — another shipment")
           and f"{store}/{staging_marker}" in out, f"exit {code}: {out}{err}")
 
+    # A first shipment, whose add-only files are placed by the link step, then
+    # whose staging directory stays.
+    walks, store, destination = left_walk_and_store("after-linking")
+    code, out, err = ship_left(walks, destination)
+    check("a shipment whose add-only files are linked into the store but whose staging "
+          "directory cannot be removed is FAILED, exit 1, one line naming the directory, "
+          "why, the command that deletes it, and the minutes' citation",
+          code == 1 and out.startswith(f"FAILED: {LEFT_WALK} — This run's staging directory")
+          and one_line(out) and names_the_directory_and_its_deletion(out, store)
+          and "file(s) added" in out
+          and out.rstrip().endswith(f"minutes at {store}/{LEFT_WALK}-minutes.md")
+          and (store / f"{LEFT_WALK}-draft.md").is_file()
+          and len(list(store.glob(f"{staging_marker}*"))) == 1,
+          f"exit {code}: {out}{err}")
+
     # The same, with an add-only file refused: 1 wins over 2.
     walks, store, destination = left_walk_and_store("refused-too")
     first = ship_left(walks, destination, removal=real_removal)
     # The draft, not the walk text: a rewritten walk text ships as a revised
-    # copy, and placing that copy removes the staging directory itself.
+    # copy, which the link step places, and this case is the one with nothing to place.
     (walks / f"{LEFT_WALK}-draft.md").write_text("# draft, rewritten\n", encoding="utf-8")
     (walks / f"{LEFT_WALK}-minutes.md").write_text("# minutes\n\nItem 2 ruled.\n",
                                                     encoding="utf-8")
@@ -1356,7 +1436,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
     real_left_placement = left.shipper.link_staged_files_never_over_existing
 
     def placement_that_fails_left(copy_host, staging_dir, walk_path, names):
-        return subprocess.CompletedProcess([], 255, "Disk quota exceeded (injected)", "injected: ssh exit 255\n"), None
+        return subprocess.CompletedProcess([], 255, "Disk quota exceeded (injected)", "injected: ssh exit 255\n"), None, None
 
     left.shipper.link_staged_files_never_over_existing = placement_that_fails_left
     try:

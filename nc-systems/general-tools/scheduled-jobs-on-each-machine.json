@@ -49,6 +49,15 @@
       }
     },
     {
+      "name": "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open",
+      "program": "scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py",
+      "arguments": [],
+      "output": ".claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "30 0 * * *"}
+      }
+    },
+    {
       "name": "clean-worktrees",
       "program": "scripts/clean-worktrees.py",
       "arguments": ["--remove"],

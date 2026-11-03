@@ -32,7 +32,7 @@ The cycle, per reincarnation:
      found, then the instruction to put items needing the user in one
      approval-walk, then the lines step 6 says the initial agent
      instructions carry, such as the launch-time-git-sync's line and the
-     leftover work-snapshots.
+     leftover work-snapshots and the agent-seat's worktrees and branches.
   4. Each generation opens the same launcher-pinned task list.
   5. Print one queue-status line — to the console only. It does not ride
      the initial agent instructions (user-ruled 2026-08-29: "Also useless is the
@@ -48,7 +48,9 @@ The cycle, per reincarnation:
      Every launch, a resume included, also carries the agent-seat's leftover
      work-snapshots whose worktree is gone or no longer holds their changes,
      with the steps to restore them
-     (uncommitted_work_snapshot_text).
+     (uncommitted_work_snapshot_text), and the agent-seat's worktrees and
+     its branches with no pull request, with the steps to keep or delete each
+     (agent_seat_worktrees_and_branches_text).
   7. Keep the current and previous handoff and conversation-tail; delete older ones.
 
 The handoff file the agent writes (simple `key: value` lines):
@@ -119,6 +121,7 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -202,6 +205,16 @@ _uncommitted_work_snapshots_spec = importlib.util.spec_from_file_location(
     "uncommitted_work_snapshots", UNCOMMITTED_WORK_SNAPSHOTS_PATH)
 uncommitted_work_snapshots = importlib.util.module_from_spec(_uncommitted_work_snapshots_spec)
 _uncommitted_work_snapshots_spec.loader.exec_module(uncommitted_work_snapshots)
+
+AGENT_SEAT_WORKTREES_AND_BRANCHES_LIST_PATH = Path(__file__).resolve().with_name(
+    "agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py")
+_agent_seat_worktrees_and_branches_list_spec = importlib.util.spec_from_file_location(
+    "agent_seat_worktrees_and_branches_with_no_pull_request_first_prompt_list",
+    AGENT_SEAT_WORKTREES_AND_BRANCHES_LIST_PATH)
+agent_seat_worktrees_and_branches_list = importlib.util.module_from_spec(
+    _agent_seat_worktrees_and_branches_list_spec)
+_agent_seat_worktrees_and_branches_list_spec.loader.exec_module(
+    agent_seat_worktrees_and_branches_list)
 
 # One loaded copy, so the GitCommandFailed checkout_freshness_catch_up raises is the class caught here.
 git_machine_readable_output = checkout_freshness_catch_up.git_output
@@ -918,11 +931,38 @@ def project_directory_for_working_directory(working_directory: Path) -> Path:
 
 
 def substantive_turn_count_of_session_transcript(session_id: str, working_directory: Path) -> int:
-    """Return the session's substantive turn count, or zero if unreadable."""
+    """Return the session's substantive turn count, or zero when the session wrote no transcript.
+
+    Raise OSError when the transcript exists but cannot be read."""
     # Launch prompts and synthetic error records grow the transcript without work and must not reset the budget.
     transcript_path = (project_directory_for_working_directory(working_directory)
                        / f"{session_id}.jsonl")
-    return worth_resuming.substantive_turn_count(transcript_path)
+    try:
+        return worth_resuming.substantive_turn_count(transcript_path)
+    except FileNotFoundError:
+        # A session that died before writing anything did no work.
+        return 0
+
+
+RECOVER_CRASHED_SEATS_SCRIPT = SCRIPTS_DIRECTORY / "recover-crashed-seats.py"
+
+
+def unreadable_path_restart_instruction(agent: str, handoff_directory: Path, unreadable_path) -> str:
+    # OSError covers more than permissions (EIO, ENOTDIR), so the instruction names no cause.
+    recovery_command = shlex.join(["python3", str(RECOVER_CRASHED_SEATS_SCRIPT),
+                                   "--handoff-dir", str(handoff_directory), agent])
+    return (f"When {unreadable_path} can be read again, start the agent-seat {agent} by running, "
+            f"at a terminal on {socket.gethostname()}: "
+            f"{recovery_command}\n"
+            f"If recover-crashed-seats.py asks whether to restart {agent}, answer y.")
+
+
+def transcript_unreadable_stop_message(agent: str, handoff_directory: Path, session_id: str,
+                                       error: OSError) -> str:
+    return (f"handoff-supervisor: stopped: whether session {session_id} did new work could not "
+            f"be decided, because its transcript could not be read: "
+            f"{error.filename}: {error.strerror}.\n"
+            + unreadable_path_restart_instruction(agent, handoff_directory, error.filename))
 
 
 def queue_status_line(working_directory: Path) -> str:
@@ -1465,6 +1505,16 @@ def uncommitted_work_snapshot_text(agent: str, working_directory: Path,
     """The first prompt's paragraph on the agent-seat's leftover work-snapshots, or ""."""
     text = uncommitted_work_snapshots.first_prompt_text(
         working_directory, agent, handoff_directory)
+    if text:
+        print(f"handoff-supervisor: {text.splitlines()[0]}")
+    return text
+
+
+def agent_seat_worktrees_and_branches_text(agent: str, working_directory: Path) -> str:
+    """The first prompt's paragraph on the agent-seat's worktrees and its branches with no pull
+    request, or ""."""
+    text = agent_seat_worktrees_and_branches_list.first_prompt_text(
+        working_directory, agent, skip_worktree=working_directory)
     if text:
         print(f"handoff-supervisor: {text.splitlines()[0]}")
     return text
@@ -2194,10 +2244,11 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             by_hand_session_id, by_hand_detail = worth_resuming.newest_real_transcript(project_directory)
         except OSError as error:
             # A fresh session's transcript would become the newest and bury the crashed one.
-            print(f"handoff-supervisor: startup stopped: whether this seat has a transcript "
-                  f"worth resuming could not be decided, because {project_directory} could not "
-                  f"be read: {error.filename}: {error.strerror}.\n"
-                  f"When that folder's permissions are fixed, start the seat again.",
+            print(f"handoff-supervisor: startup stopped: whether agent-seat {settings.agent} has a transcript "
+                  f"worth resuming could not be decided, because {error.filename} "
+                  f"could not be read: {error.strerror}.\n"
+                  + unreadable_path_restart_instruction(
+                      settings.agent, settings.handoff_directory, error.filename),
                   file=sys.stderr)
             return 5
         if by_hand_session_id is not None:
@@ -2256,9 +2307,14 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             )
             if next_launch_resumes_the_session:
                 consecutive_resumes_without_new_work += 1
-                substantive_turns_at_the_last_resume = (
-                    substantive_turn_count_of_session_transcript(
-                        session_id, settings.working_directory))
+                try:
+                    substantive_turns_at_the_last_resume = (
+                        substantive_turn_count_of_session_transcript(
+                            session_id, settings.working_directory))
+                except OSError as error:
+                    print(transcript_unreadable_stop_message(settings.agent, settings.handoff_directory,
+                                                             session_id, error), file=sys.stderr)
+                    return 5
             else:
                 consecutive_resumes_without_new_work = 0
                 substantive_turns_at_the_last_resume = None
@@ -2267,8 +2323,10 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             # Read at each launch: a resume after a crash is when a dead agent's work-snapshots appear.
             leftover_work_snapshots = uncommitted_work_snapshot_text(
                 settings.agent, settings.working_directory, settings.handoff_directory)
-            launch_prompt = (f"{prompt}\n\n{leftover_work_snapshots}"
-                             if leftover_work_snapshots else prompt)
+            worktrees_and_branches = agent_seat_worktrees_and_branches_text(
+                settings.agent, settings.working_directory)
+            launch_prompt = "\n\n".join(
+                part for part in (prompt, leftover_work_snapshots, worktrees_and_branches) if part)
             process = launch_agent_session(
                 settings.agent_command, session_id, settings.working_directory, launch_prompt,
                 resume=next_launch_resumes_the_session, remote_control_name=settings.agent,
@@ -2286,8 +2344,15 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             print(f"handoff-supervisor: {death.reason}")
             if death.resume:
                 # Only substantive work restores the resume budget; launch bookkeeping must not sustain a loop.
-                substantive_turns = substantive_turn_count_of_session_transcript(
-                    session_id, settings.working_directory)
+                try:
+                    substantive_turns = substantive_turn_count_of_session_transcript(
+                        session_id, settings.working_directory)
+                except OSError as error:
+                    record_agent_exit_in_supervisor_state(settings.state_path, state,
+                                                          process.returncode)
+                    print(transcript_unreadable_stop_message(settings.agent, settings.handoff_directory,
+                                                             session_id, error), file=sys.stderr)
+                    return 5
                 if (substantive_turns_at_the_last_resume is None
                         or substantive_turns > substantive_turns_at_the_last_resume):
                     consecutive_resumes_without_new_work = 0

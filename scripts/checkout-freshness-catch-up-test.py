@@ -1244,6 +1244,11 @@ with tempfile.TemporaryDirectory() as naming_scratch:
           "hooks and wiring that run on your work (2)"
           in named((".claude/hooks/a-guard.py", "a hook"),
                    (".claude/settings.json", "wiring")), named())
+    guard_listing = named((".claude/guard-hooks/a-guard.py", "a guard hook"))
+    check("a guard under .claude/guard-hooks/ is named with the hooks",
+          any(line.startswith("  hooks and wiring that run on your work (3):")
+              and ".claude/guard-hooks/a-guard.py" in line
+              for line in guard_listing.splitlines()), guard_listing)
     check("an uncategorised path is still surfaced rather than hidden",
           "other files (1): Makefile" in named(("Makefile", "a makefile")), named())
 

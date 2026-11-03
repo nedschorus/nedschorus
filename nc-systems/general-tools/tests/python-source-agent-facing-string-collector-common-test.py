@@ -214,10 +214,10 @@ LOCAL_NAME_FORMS = (
      [("%d failed", "text = in main()")]),
     ("a local join whose pieces are listed",
      'def main(items):\n    text = "\\n".join(["Fix these:", *items])\n    print(text)\n',
-     [("\n", "text = in main()"), ("Fix these:", "text = in main()")]),
+     [("Fix these:", "text = in main()")]),
     ("a local joined from another local",
      'def main():\n    head = "Fix these"\n    text = " ".join([head])\n    print(text)\n',
-     [("Fix these", "head = in main()"), (" ", "text = in main()")]),
+     [("Fix these", "head = in main()")]),
     ("a local chosen by a condition, its condition left out",
      'def main(row):\n    verb = "resuming" if row["kind"] == "known" else "launching"\n    print(f"{verb} now")\n',
      [("resuming", "verb = in main()"), ("launching", "verb = in main()"), ("f'{verb} now'", "print in main()")]),
@@ -236,7 +236,7 @@ LOCAL_NAME_FORMS = (
      [("Read the transcript.", "note = in build_prompt()")]),
     ("a local printed through a string literal's join",
      'def main():\n    note = "Read the transcript."\n    print(" ".join([note]))\n',
-     [(" ", "print in main()"), ("Read the transcript.", "note = in main()")]),
+     [("Read the transcript.", "note = in main()")]),
     ("a local in a + chain as a hook output value",
      'def main():\n    note = "Read the transcript."\n    return {"additionalContext": "Instructions: " + note}\n',
      [("Instructions: {note}", '"additionalContext" value in main()'), ("Read the transcript.", "note = in main()")]),
@@ -443,6 +443,135 @@ check("a dict literal's key in a raise is not a message, so the line holds one m
       found == ["the event's event_id holds a lone surrogate, so SQLite cannot store it"], found)
 found = texts('print(MESSAGES["refusal"])\n')
 check("a subscript's index in a print is not a message", found == [], found)
+
+found = texts('def key():\n    return "refusal"\nprint(MESSAGES[key()])\n')
+check("a string returned by a function called for a subscript's index is not a message", found == [], found)
+found = texts('def key():\n    return "refusal"\nraise SystemExit({key(): "shown"})\n')
+check("a string returned by a function called for a dict literal's key is not a message",
+      found == ["shown"], found)
+found = texts('def main(messages):\n    key = "refusal"\n    print(messages[key])\n')
+check("a local used as a subscript's index is not followed", found == [], found)
+found = texts('def key():\n    return "key text"\ndef value():\n    return "value text"\n'
+              'print({key(): value() for item in items})\n')
+check("a string returned by a function a dict comprehension calls for its value is a message, "
+      "and one it calls for its key is not",
+      "value text" in found and "key text" not in found, found)
+
+# Modelled on parser_unavailable_hook_output() in
+# nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py, whose message local holds
+# report_to_user_or_dispatching_agent_instruction_build()'s returned instruction.
+found = texts('def instruction():\n    return "Tell the user in these words."\n'
+              'def parser_unavailable_hook_output():\n'
+              '    message = f"The parser is unavailable. {instruction()}"\n'
+              '    return {"additionalContext": message}\n')
+check("a string returned by a function whose call a followed local's binding carries is a message",
+      "Tell the user in these words." in found, found)
+
+COMPREHENSION_AND_BINDING_FORMS = (
+    ("a local a generator loops over, through a string literal's join",
+     'def main():\n    lines = "line text"\n    print("\\n".join(line for line in lines))\n', ["line text"]),
+    ("a string literal in the iterable a generator loops over",
+     'print(" ".join(w for w in ("alpha", "beta")))\n', ["alpha", "beta"]),
+    ("a string returned by a function called for the iterable a generator loops over",
+     'def words():\n    return "from words"\nprint(" ".join(w for w in words()))\n', ["from words"]),
+    ("a type parameter's bound, which is evaluated where the class stands",
+     'class Holder[T: print("bound text")]:\n    pass\n', ["bound text"]),
+    ("a type parameter's default", 'def pick[T = print("default text")]():\n    pass\n', ["default text"]),
+)
+for case_name, source, expected in COMPREHENSION_AND_BINDING_FORMS:
+    found = texts(source)
+    check(f"recognized: {case_name}", all(text in found for text in expected), found)
+
+COMPREHENSION_AND_BINDING_FORMS_NOT_RECOGNIZED = (
+    ("a local a generator's target shadows, through a string literal's join",
+     'def build_prompt(items):\n    note = "unused"\n    return "\\n".join(note for note in items)\n'),
+    ("a string in a comprehension's if-condition, which is compared, not shown",
+     'print([line for line in lines if line != "skipped text"])\n'),
+    ("a local a lambda rebinds with :=",
+     'def main():\n    prompt = "unused"\n    g = lambda: ((prompt := 3), print(prompt))\n'),
+    ("a local a class body rebinds with import ... as",
+     'def main():\n    prompt = "unused"\n    class Holder:\n        import sys as prompt\n        print(prompt)\n'),
+    ("a local a class body rebinds with from ... import ... as",
+     'def main():\n    prompt = "unused"\n    class Holder:\n        from os import sep as prompt\n        print(prompt)\n'),
+    ("a local a class body rebinds with a dotted import",
+     'def main():\n    os = "unused"\n    class Holder:\n        import os.path\n        print(os)\n'),
+    ("a local a class body rebinds with except ... as",
+     'def main():\n    prompt = "unused"\n    class Holder:\n        try:\n            pass\n'
+     '        except Exception as prompt:\n            print(prompt)\n'),
+    ("a local a class body rebinds with a match capture",
+     'def main(x):\n    prompt = "unused"\n    class Holder:\n        match x:\n            case prompt:\n'
+     '                print(prompt)\n'),
+    ("a local a class body rebinds with a starred match capture",
+     'def main(x):\n    prompt = "unused"\n    class Holder:\n        match x:\n            case [*prompt]:\n'
+     '                print(prompt)\n'),
+    ("a local a class body rebinds with a match mapping's rest",
+     'def main(x):\n    prompt = "unused"\n    class Holder:\n        match x:\n            case {**prompt}:\n'
+     '                print(prompt)\n'),
+)
+for case_name, source in COMPREHENSION_AND_BINDING_FORMS_NOT_RECOGNIZED:
+    found = texts(source)
+    check(f"not recognized: {case_name}", found == [], found)
+
+HELPER_PARAMETER_SCOPE_FORMS = (
+    ("a nested function's comprehension target, which does not hide the helper's parameter",
+     'def emit(text):\n    def inner():\n        values = [text for text in range(3)]\n        print(text)\n'
+     '    inner()\nemit("comprehension visible")\n', "comprehension visible"),
+    ("a nested function's nonlocal parameter, which is the helper's own",
+     'def emit(text):\n    def inner():\n        nonlocal text\n        text += "!"\n        print(text)\n'
+     '    inner()\nemit("nonlocal visible")\n', "nonlocal visible"),
+)
+for case_name, source, expected in HELPER_PARAMETER_SCOPE_FORMS:
+    found = [(entry["text"], entry["label"]) for entry in entries(source)]
+    check(f"recognized: {case_name}", (expected, "emit()") in found, found)
+
+HELPER_PARAMETER_SCOPE_FORMS_NOT_RECOGNIZED = (
+    ("a string a helper prints only through a generator's own target of the parameter's name",
+     'def emit(text):\n    print(" ".join(text for text in ["actual"]))\nemit("generator hidden")\n'),
+    ("a string a helper's lambda prints only after rebinding the parameter's name with :=",
+     'def sink(text):\n    f = lambda: ((text := 3), print(text))\nsink("walrus hidden")\n'),
+)
+for case_name, source in HELPER_PARAMETER_SCOPE_FORMS_NOT_RECOGNIZED:
+    found = [entry["text"] for entry in entries(source) if entry["label"] in ("emit()", "sink()")]
+    check(f"not recognized: {case_name}", found == [], found)
+
+SCOPE_FORMS_EACH_RULE_ONCE_MISSED = (
+    ("a nested function's global declaration hides the helper's parameter",
+     'text = 1\ndef emit(text):\n    def inner():\n        global text\n        print(text)\n    inner()\n'
+     'emit("global hidden")\n', []),
+    ("a comprehension target in a nested function hides the helper's parameter",
+     'def emit(text):\n    def inner():\n        [print(text) for text in ["actual"]]\n    inner()\n'
+     'emit("never shown")\n', []),
+    ("a comprehension target hides the function's local at a printed form inside the comprehension",
+     'def main(items):\n    text = "local hidden"\n    [print(text) for text in items]\n', []),
+    ("a helper's parameter printed in a comprehension's first iterable, which the target does not hide",
+     'def emit(text):\n    [text for text in print(text)]\nemit("first iterable shown")\n',
+     ["first iterable shown"]),
+    ("a name read inside a comprehension's target is not bound by it",
+     'def main(items, messages):\n    text = "subscript shown"\n    print([text for messages[text] in items])\n',
+     ["subscript shown"]),
+    ("a type parameter's name hides the function's local in its own bound",
+     'def main():\n    text = "type parameter hidden"\n    class Holder[text: print(text)]:\n        pass\n', []),
+    ("a type parameter's name hides the helper's parameter in its own bound",
+     'def emit(text):\n    class Holder[text: print(text)]:\n        pass\nemit("bound hidden")\n', []),
+)
+# Modelled on output_for() in the walk-me-through question-check Stop hook, whose "\n" separator was
+# the only text listed for a hook output value built as "\n".join(lines_out).
+found = entries('REFUSAL_TEMPLATE = "Refused: {why}."\n'
+                'def output_for(why, extra):\n'
+                '    lines_out = [REFUSAL_TEMPLATE.format(why=why)] + extra\n'
+                '    return {"reason": "\\\\n".join(lines_out)}\n'
+                'print("; ".join(["first part", "second part"]))\n')
+check("a string literal's join lists the joined parts, never the separator alone",
+      [entry["text"] for entry in found] == ["Refused: {why}.", "first part", "second part"], found)
+
+# Modelled on run_model_chain() in nc-systems/cold-read/cold-read-cell-common.py, whose stdout=""
+# argument was listed as an empty message.
+found = texts('print("")\nprint(cause_line(stdout="", detail="the run failed"))\n')
+check("an empty string literal is not a message", found == ["the run failed"], found)
+
+for case_name, source, expected in SCOPE_FORMS_EACH_RULE_ONCE_MISSED:
+    found = texts(source)
+    check(f"scope: {case_name}", found == expected, found)
 
 check("source that does not parse yields no entries", texts('print("unclosed\n') == [])
 check("no source yields no entries", texts(None) == [])

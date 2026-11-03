@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Request a handoff before context runs out.
 
-It fires at a share of the context window.
+It fires at a share of the context window, or below that share once it has deferred the
+handoff in this session and the work it deferred for has finished.
 
 Stop-hook payloads lack context usage; headless sessions lack a status line.
 The transcript supplies usage for both interactive and headless sessions."""
@@ -11,6 +12,7 @@ import importlib.util
 import json
 import os
 import re
+import socket
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,9 +44,16 @@ HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
 FIRED_MARKER_SUFFIX = "-handoff-asked"
 
 
+DEFERRED_MARKER_SUFFIX = "-handoff-deferred"
+
+
 def fired_marker_path(session_id: str) -> Path:
     # Read HANDOFF_DIRECTORY at call time so tests can redirect marker writes.
     return HANDOFF_DIRECTORY / f"{session_id}{FIRED_MARKER_SUFFIX}"
+
+
+def deferred_marker_path(session_id: str) -> Path:
+    return HANDOFF_DIRECTORY / f"{session_id}{DEFERRED_MARKER_SUFFIX}"
 
 # Caller-owned reincarnation must not replace the caller's answer with a handoff.
 REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
@@ -61,6 +70,9 @@ CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX = {
 }
 DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
 
+# scripts/agent-seat-due-task-raise-hook.py reads this to tell a handoff is due at the same Stop.
+DEFAULT_THRESHOLD_USED_PERCENTAGE = 33.0
+
 FIRST_TAIL_READ_BYTES = 256 * 1024
 
 # Messages below follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
@@ -68,6 +80,21 @@ FIRST_TAIL_READ_BYTES = 256 * 1024
 HANDOFF_INSTRUCTION = (
     "This session has used {share} of its context window, which has "
     "reached the reincarnation threshold. Run the /handoff skill now."
+)
+
+HANDOFF_DEFERRED_MARKER_NOT_DELETED = (
+    "The threshold-hook could not delete this agent-session's handoff-deferral marker "
+    "{path} on {host}: {error}. If this agent-session keeps working after a compaction "
+    "instead of handing off, the threshold-hook asks for the /handoff skill again, even "
+    "below the threshold, because the marker is still there.\n"
+    "The text for the user: \"On {host}, the threshold-hook could not delete the "
+    "handoff-deferral marker {path} ({error}). Please check why that path cannot be "
+    "deleted, and delete it.\"\n"
+    "If you are a subagent, put that text in your final report to the agent that "
+    "dispatched you, and do not run the /handoff skill.\n"
+    "Otherwise, in the same reply, give the user that text word for word, then run the "
+    "/handoff skill, as the threshold-hook's instruction just before this message says, "
+    "without waiting for an answer."
 )
 
 HANDOFF_DEFERRED_NOTICE = (
@@ -374,7 +401,8 @@ def subagent_own_transcript_shows_work_in_flight(subagent_path: Path,
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Fire the handoff skill when context runs low.")
-    parser.add_argument("--threshold-used-percentage", type=float, default=33.0)
+    parser.add_argument("--threshold-used-percentage", type=float,
+                        default=DEFAULT_THRESHOLD_USED_PERCENTAGE)
     parser.add_argument(
         "--ceiling-used-percentage", type=float, default=65.0,
         help="above this used share the handoff fires even with work in flight",
@@ -404,7 +432,10 @@ def main(argv=None) -> int:
     used_tokens, window = reading
     used = 100.0 * used_tokens / window
     share = f"{used:.0f}%"
-    if used < arguments.threshold_used_percentage:
+    # A compaction can drop the share below the threshold after a deferral; the deferred marker
+    # records that the threshold was passed, so the handoff its notice promised still comes.
+    if used < arguments.threshold_used_percentage and not (
+            HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred").exists():
         return 0
 
     fired_marker = fired_marker_path(session_id)
@@ -423,7 +454,7 @@ def main(argv=None) -> int:
             count_is_known = False
 
         if not count_is_known or flight:
-            deferred_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred"
+            deferred_marker = deferred_marker_path(session_id)
             if deferred_marker.exists():
                 return 0  # Repeating the refusal would drive idle sessions into a loop; completion notifications wake them.
 
@@ -457,6 +488,15 @@ def main(argv=None) -> int:
         HANDOFF_INSTRUCTION.format(share=share),
         file=sys.stderr,
     )
+    # The deferral's promise is kept; left in place, the marker would refire the
+    # instruction below the threshold after every later compaction.
+    deferred_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred"
+    try:
+        deferred_marker.unlink(missing_ok=True)
+    except OSError as error:
+        print(HANDOFF_DEFERRED_MARKER_NOT_DELETED.format(
+                  path=deferred_marker, host=socket.gethostname(), error=error),
+              file=sys.stderr)
     return 2
 
 

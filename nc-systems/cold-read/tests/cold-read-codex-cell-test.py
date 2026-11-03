@@ -205,7 +205,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- The cell's own refusals ------------------------------------------
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
-                      "--cell", "restate", "--tier", "deep",
+                      "--cell", "defect-hunt", "--tier", "deep",
                       "--target", str(scratch / "no-such-document.md"))
     check("a --target that is not a file exits 64",
           result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -219,7 +219,7 @@ with tempfile.TemporaryDirectory() as scratch:
     existing_directory = scratch / "a-directory-as-report"
     existing_directory.mkdir()
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, existing_directory,
-                      "--cell", "restate", "--tier", "deep", "--target", str(target))
+                      "--cell", "defect-hunt", "--tier", "deep", "--target", str(target))
     check("a --report naming an existing directory exits 64",
           result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("a --report naming an existing directory says so on stderr",
@@ -227,14 +227,14 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # argparse's route into the same channel.
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
-                      "--cell", "restate", "--target", str(target))
+                      "--cell", "defect-hunt", "--target", str(target))
     check("a missing required option exits 64",
           result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("a missing required option still prints argparse's usage text",
           "usage:" in result.stderr, repr(result.stderr))
 
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
-                      "--cell", "restate", "--tier", "deep",
+                      "--cell", "defect-hunt", "--tier", "deep",
                       "--target", str(target), "--no-such-flag")
     check("an unrecognized option exits 64",
           result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -248,7 +248,7 @@ with tempfile.TemporaryDirectory() as scratch:
     for codex_exit_code in (2, 7):
         report.unlink(missing_ok=True)
         result = run_cell(stubs, stub_codex_exits(codex_exit_code), report,
-                          "--cell", "restate", "--tier", "deep", "--target", str(target))
+                          "--cell", "defect-hunt", "--tier", "deep", "--target", str(target))
         check(f"a codex that exits {codex_exit_code} leaves the cell exiting 1",
               result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
         check(f"a codex that exits {codex_exit_code} is reported, not thrown",
@@ -281,7 +281,7 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(classified))
     report.unlink(missing_ok=True)
     result = run_cell(stubs, stub_codex_exits(1, CODEX_LOGGED_OUT_LINE), report,
-                      "--cell", "restate", "--tier", "deep", "--target", str(target))
+                      "--cell", "defect-hunt", "--tier", "deep", "--target", str(target))
     check("a codex that prints the captured 401 line leaves the cell exiting 1",
           result.returncode == 1 and not report.exists(),
           f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -310,7 +310,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # report proves codex was never run.
     report.unlink(missing_ok=True)
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
-                      "--cell", "restate", "--tier", "deep", "--target", str(target),
+                      "--cell", "defect-hunt", "--tier", "deep", "--target", str(target),
                       "--prompt-file", str(scratch / "no-such-draft-prompt.md"))
     check("a --prompt-file naming no file exits 64",
           result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -328,7 +328,7 @@ with tempfile.TemporaryDirectory() as scratch:
                             encoding="utf-8")
     report.unlink(missing_ok=True)
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
-                      "--cell", "restate", "--tier", "deep", "--target", str(target),
+                      "--cell", "defect-hunt", "--tier", "deep", "--target", str(target),
                       "--prompt-file", str(draft_prompt))
     check("a cell given a --prompt-file that exists exits 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -343,7 +343,7 @@ with tempfile.TemporaryDirectory() as scratch:
     argv_dump = scratch / "successful-cell-argv.json"
     added_listing_dump = scratch / "successful-cell-added-directory-listing.json"
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
-                      "--cell", "restate", "--tier", "deep", "--target", str(target),
+                      "--cell", "defect-hunt", "--tier", "deep", "--target", str(target),
                       argv_path=argv_dump, added_listing_path=added_listing_dump)
     check("a cell whose codex succeeds exits 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -415,7 +415,7 @@ with tempfile.TemporaryDirectory() as scratch:
     try:
         argv_dump.unlink(missing_ok=True)
         result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, locked_report,
-                          "--cell", "restate", "--tier", "deep", "--target", str(target),
+                          "--cell", "defect-hunt", "--tier", "deep", "--target", str(target),
                           argv_path=argv_dump)
     finally:
         locked_directory.chmod(0o755)
@@ -443,7 +443,7 @@ with tempfile.TemporaryDirectory() as scratch:
         f"print({refused_write_line!r})\n"
         "raise SystemExit(0)\n")
     result = run_cell(stubs, stub_explains_no_report, report,
-                      "--cell", "restate", "--tier", "deep", "--target", str(target))
+                      "--cell", "defect-hunt", "--tier", "deep", "--target", str(target))
     check("a codex that exits 0 without a report leaves the cell exiting 1",
           result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("its cause line carries the reviewer's last line",
@@ -461,6 +461,7 @@ with tempfile.TemporaryDirectory() as scratch:
             "nc-systems/cold-read/cold-read-codex-cell.py",
             "nc-systems/cold-read/cold-read-cell-common.py",
             "nc-systems/cold-read/cold-read-record-names-common.py",
+            "nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py",
             "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py"):
         (copied_checkout / relative_path).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO_ROOT / relative_path, copied_checkout / relative_path)
@@ -477,11 +478,13 @@ with tempfile.TemporaryDirectory() as scratch:
     result = subprocess.run(
         [sys.executable,
          str(copied_checkout / "nc-systems/cold-read/cold-read-codex-cell.py"),
-         "--report", str(report), "--cell", "restate", "--tier", "deep",
+         "--report", str(report), "--cell", "defect-hunt", "--tier", "deep",
          "--target", str(target)],
         capture_output=True, text=True, check=False, env=environment)
     check("a missing prompt template refuses the cell",
-          result.returncode == 64 and "prompt template missing" in result.stderr,
+          result.returncode == 64 and "no cold-read-cell to run" in result.stderr
+          and "that directory holds no *-prompt.md file" in result.stderr
+          and "defect-hunt is the choice for defect-hunt-prompt.md" in result.stderr,
           f"exit {result.returncode}; stderr={result.stderr[-600:]!r}")
     leftover = sorted(path.name for path in copied_temporary_directory.iterdir())
     check("a refusal leaves no staging directory behind", leftover == [], repr(leftover))

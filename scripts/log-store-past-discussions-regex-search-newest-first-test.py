@@ -975,6 +975,29 @@ locked.chmod(0o644)
                                                    "session_last_activity locked raised"],
           session_dates.stdout + session_dates.stderr)
 
+    # 20 s is far above one pass over the dialog and far below counting once per hit, which grows as hits squared.
+    many_repeats = Path(scratch) / "many-repeats-dialog.md"
+    repeated = ["heron plan", "egret plan"] * 50000
+    write(many_repeats, "\n".join(repeated + [refresh_common.session_dialog_extractor_sha256_last_line_build(
+        EXTRACTOR_SHA256)]) + "\n")
+    try:
+        counted = subprocess.run([sys.executable, "-c", f"""
+import importlib.util, json
+spec = importlib.util.spec_from_file_location("search", {str(PROGRAM)!r})
+search = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(search)
+hits = [{{"path": {str(many_repeats)!r}, "line": number, "text": text}}
+        for number, text in enumerate(["heron plan", "egret plan"] * 50000, 1)]
+kept = search.session_dialog_hits_checked_against_one_read(hits, {EXTRACTOR_SHA256!r}, [])
+print(json.dumps([hit.get("occurrence") for hit in kept]))
+"""], capture_output=True, text=True, timeout=20)
+        occurrences, detail = json.loads(counted.stdout or "null"), counted.stderr
+    except subprocess.TimeoutExpired:
+        occurrences, detail = None, "timed out after 20 s"
+    check("each of 100,000 hits in one dialog gets how often its line comes before it, counted in one pass "
+          "over the dialog rather than once per hit",
+          occurrences == [number // 2 for number in range(100000)], detail)
+
     # Failures.
     result = run(Path(scratch) / "absent", "heron")
     check("a missing log-store on ned-box is a failure, not an empty result",

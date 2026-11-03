@@ -70,7 +70,7 @@ walk route it is scratch.
 
 WHERE THE REPORT GOES. A walk draft, `docs/walk/<name>-draft.md` in this
 checkout or in any other git worktree, gets its suggestions file beside it:
-`docs/walk/<name>-suggestions.md`, which is what the walk reads next.
+`docs/walk/<name>-cold-read-fast-read.md`, which is what the walk reads next.
 Anything else -- a design, a skill, a record copy, a file in no git
 worktree -- gets a cold-read-record of its own under the
 gitignored records tree:
@@ -314,9 +314,7 @@ FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES = FAST_CLARIFY_PROMPT_TEMPLATE[
 COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE = (
     "Read {TARGET_PATH} in full, including any YAML frontmatter, and answer one "
     "question about it. " + FAST_CLARIFY_PROMPT_DOCUMENT_READING_RULES + " Read all of them, then answer the "
-    "question for each document. The question is numbered 4 because another "
-    "reviewer answers Questions 1 to 3 about the same text, and the program that "
-    "runs you puts your report after theirs.\n\n"
+    "question for each document.\n\n"
     + WHAT_SHOULD_BE_CODE_QUESTION + "\n\n"
     "Write your report to {REPORT_PATH}, once, when your analysis is complete. Do "
     "not write the question's heading: the program that runs you puts your report "
@@ -348,7 +346,7 @@ WALK_DRAFT_SUFFIX = "-draft.md"
 # Both endings are the walk-me-through skill's to name; this program only
 # follows them, and scripts/walk-file-endings-match-the-skill-test.py fails
 # if these two drift from what .claude/skills/walk-me-through/SKILL.md says.
-WALK_SUGGESTIONS_SUFFIX = "-suggestions.md"
+WALK_SUGGESTIONS_SUFFIX = "-cold-read-fast-read.md"
 
 # WHICH DOCUMENTS THIS READ DOES NOT FINISH. The /cold-read skill's step 2
 # sends a class of documents to the cold-read-full-run and gives everything
@@ -728,7 +726,8 @@ def full_run_required_line(class_name: str) -> str:
 def fast_read_report_path_for_target(
     target: pathlib.Path, now: datetime.datetime,
 ) -> pathlib.Path:
-    """The path rule in the docstring, and nothing else.
+    """The path rule in the docstring; on the records route the record
+    directory is also created, so a concurrent run cannot take the same one.
 
     `target` is absolute and resolved; `now` is the one clock reading the
     record's name is taken from, and the walk route does not use it. A walk
@@ -743,7 +742,7 @@ def fast_read_report_path_for_target(
         target, checkout_root_holding(target))
     if suggestions is not None:
         return suggestions
-    record_dir, store_unlisted = record_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
+    record_dir, store_unlisted = record_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
         RECORDS_DIR / record_directory_name_for_target(target, now))
     if store_unlisted is not None:
         print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(PROGRAM, record_dir, store_unlisted),
@@ -1462,6 +1461,9 @@ def main() -> int:
         launch_sha256 = sha256_of_file_or_empty(target)
         marked_text, sentences = sentence_id_markup(
             target.read_text(encoding="utf-8"))
+        # After the markup, so `sentences` keep the document's own text for triage.
+        marked_text = record_names.cold_read_reviewer_copy_text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths_where_mac_mount_absent(
+            marked_text)
         marked_copy = (report.parent if on_records_route else pathlib.Path(scratch)) / (
             f"{target.stem}{SENTENCE_ID_MARKED_COPY_SUFFIX}")
         marked_copy.write_text(marked_text, encoding="utf-8")

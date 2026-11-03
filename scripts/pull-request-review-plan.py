@@ -5,7 +5,8 @@ Rule 1: tiers follow content. Tests, fenced Markdown code, and Python changes
 limited to docstrings, comments and string constants get codex-review-and-head-tests-tier.
 Python behaviour changes and other code get claude-and-codex-review-and-head-tests-tier. Prose gets
 no-reviewer-tier. Settings, Bash guards and registered hooks always get
-claude-and-codex-review-and-head-tests-tier; all of .claude/hooks/ does too,
+claude-and-codex-review-and-head-tests-tier; all of .claude/hooks/ and
+.claude/guard-hooks/ does too,
 including test files there. A pull request gets the strictest tier that any of
 its changed files gets; from least to most strict, the tiers are
 no-reviewer-tier, codex-review-and-head-tests-tier and
@@ -57,6 +58,30 @@ A string the collector's kind calls a prompt, text a program hands an agent as
 its instructions, is also marked "needs the user's approval", and has
 needs_user_approval set in --json; a printed message is not.
 
+Rule 4: a pull request that adds or changes an nc-architecture-overview, a
+file at the path scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py
+gives for a directory under nc-systems/ at the head, is refused, with exit 1
+and no plan, until the newest claim-check report for the overview's text at
+the head says every claim is supported.
+nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py
+writes the reports, keyed by the overview's blob, under
+--overview-write-architecture-overview-claim-check-report-directory, the log-store's
+overview-write-architecture-overview-claim-check-reports by default.
+
+The code an overview describes is every path its Components section names in
+backticks, whatever the path's extension, and every file under
+nc-systems/<system>/ other than a .md file. Rule 4 also refuses such a pull
+request in either of these cases:
+  1. The commit the overview's **Checked against:** line names is on
+     origin/main, and the pull request changes code the overview describes.
+     Code that main changed after that commit is left to an overview refresh.
+  2. That commit is not on origin/main, and one or more of these hold:
+     - that commit is not an ancestor of the head commit;
+     - a commit after that commit, up to the head commit, changes code the
+       overview describes.
+When Rule 4 refuses this way, the claim check read code other than the code at
+the head commit. A merged pull request is not refused.
+
 Merged pull requests use the merge commit's first parent as the diff base:
 the current base branch already contains the head and would hide the change.
 No rename detection is used: moving a program changes behaviour for callers,
@@ -64,7 +89,8 @@ so a rename is a deletion and an addition. Markdown prose anywhere is
 no-reviewer-tier because prose outside code is outside the review scope.
 
 Reads the pull request, reviews, inline comments and live base tip through
-four read-only gh calls, and commits, refs and diffs from the local repository.
+four read-only gh calls, commits, refs and diffs from the local repository,
+and, under rule 4, the claim-check reports.
 Never fetches, pushes or writes refs. git merge-tree --write-tree may write
 tree objects. Writes no file except the cold-read-fast-read target files and
 the optional --brief-skeleton file. The program refuses, with exit 1 and no
@@ -78,6 +104,7 @@ command, so that a caller notices the missing reads.
 Usage:
   scripts/pull-request-review-plan.py --pull-request N [--repository DIR]
       [--github-repository OWNER/NAME] [--json] [--brief-skeleton PATH]
+      [--overview-write-architecture-overview-claim-check-report-directory DIR]
 """
 
 import argparse
@@ -88,6 +115,7 @@ import json
 import os
 import re
 import shlex
+import socket
 import subprocess
 import sys
 import traceback
@@ -126,12 +154,30 @@ fast_read_target_file_name = _message_reminder_hook.fast_read_target_file_name
 cold_read_fast_read_review_command_line_for_target_file = _message_reminder_hook.cold_read_fast_read_review_command_line_for_target_file
 FAST_READ_COMMAND = _message_reminder_hook.FAST_READ_COMMAND
 PLAN_PRINTED_WITH_MESSAGES_MISSING_FAST_READ_COMMAND_EXIT_STATUS = 3
+_overview_claim_check_spec = importlib.util.spec_from_file_location(
+    "overview_write_architecture_overview_claim_check_by_fresh_agent",
+    Path(__file__).resolve().parent.parent / "nc-systems" / "skills" / "overview-write"
+    / "overview-write-architecture-overview-claim-check-by-fresh-agent.py")
+overview_claim_check = importlib.util.module_from_spec(_overview_claim_check_spec)
+_overview_claim_check_spec.loader.exec_module(overview_claim_check)
+_overview_path_reader_spec = importlib.util.spec_from_file_location(
+    "architecture_overview_path_template_and_checked_against_commit_reader_common",
+    Path(__file__).resolve().parent / "architecture-overview-path-template-and-checked-against-commit-reader-common.py")
+overview_path_reader = importlib.util.module_from_spec(_overview_path_reader_spec)
+_overview_path_reader_spec.loader.exec_module(overview_path_reader)
 
 REVIEW_TIER_ORDER = {"no-reviewer-tier": 0, "codex-review-and-head-tests-tier": 1, "claude-and-codex-review-and-head-tests-tier": 2}
 GITHUB_PULL_REQUEST_FIELDS = "number,title,url,state,author,headRefOid,baseRefName,mergeCommit"
 GIT_FULL_HASH_PATTERN = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 DIFF_HUNK_HEADER_PATTERN = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
 REGISTERED_HOOK_PATH_PATTERN = re.compile(r'\$CLAUDE_PROJECT_DIR"?/([^"\s]+)')
+MARKDOWN_SECTION_HEADING_PATTERN = re.compile(r"^##\s")
+COMPONENTS_SECTION_HEADING_PATTERN = re.compile(r"^##\s+Components\s*$")
+BACKTICKED_TEXT_PATTERN = re.compile(r"`([^`]+)`")
+# A component path is relative to the repository; this leaves out
+# `<placeholder>`s, ~ and absolute paths, and globs. A name with no slash that
+# is not a path, such as `claude`, is kept but matches no changed path.
+REPOSITORY_RELATIVE_COMPONENT_PATH_PATTERN = re.compile(r"[A-Za-z0-9_.][^\s<>*?\[\]]*")
 PROSE_DIRECTORY_CODE_EXTENSIONS = {".py", ".sh", ".json", ".yaml", ".yml", ".toml", ".js"}
 
 
@@ -368,10 +414,9 @@ def registered_hook_paths_at_revision(repository, revision):
 
 
 def hook_path_rule_reason(path, registered_paths):
-    if path.startswith(".claude/hooks/"):
-        return f"{path} is under .claude/hooks/; every file there always gets claude-and-codex-review-and-head-tests-tier"
-    if path.startswith("scripts/") and path.count("/") == 1 and path.endswith("guard-hook.py"):
-        return f"{path} is a Bash guard; a change to it always gets claude-and-codex-review-and-head-tests-tier"
+    for directory in (".claude/hooks/", ".claude/guard-hooks/"):
+        if path.startswith(directory):
+            return f"{path} is under {directory}; every file there always gets claude-and-codex-review-and-head-tests-tier"
     if path in registered_paths:
         return f"{path} is registered as a hook in .claude/settings.json; a change to it always gets claude-and-codex-review-and-head-tests-tier"
     return None
@@ -463,7 +508,7 @@ def changed_agent_facing_text_entries(repository, old_revision, new_revision, ch
     for changed_file in changed_files:
         path = changed_file["path"]
         if (not path.endswith(".py") or path_is_test_file(path)
-                or not path.startswith(("scripts/", ".claude/hooks/", "nc-systems/"))
+                or not path.startswith(("scripts/", ".claude/hooks/", ".claude/guard-hooks/", "nc-systems/"))
                 or changed_file["status"] == "D"):
             continue
         new_nodes = agent_facing_string_nodes_in_source(read_revision_blob_or_none(repository, new_revision, path))
@@ -541,7 +586,9 @@ def json_rerun_command_line(arguments):
     the top of the checkout, which a relative --repository may not be relative to."""
     return shlex.join(["python3", "scripts/pull-request-review-plan.py",
                        "--pull-request", str(arguments.pull_request), "--repository", str(arguments.repository.resolve()),
-                       "--github-repository", arguments.github_repository, "--json"])
+                       "--github-repository", arguments.github_repository, "--json",
+                       "--overview-write-architecture-overview-claim-check-report-directory",
+                       str(arguments.overview_write_architecture_overview_claim_check_report_directory.resolve())])
 
 
 def missing_fast_read_commands_message(missing, json_rerun_command=None):
@@ -630,6 +677,136 @@ def merged_tree_against_origin_main(repository, head):
     return {"tree": None, "conflicting_paths": [], "error": first_output_line(result.stderr)}
 
 
+def changed_architecture_overview_paths_and_systems(repository, head, changed_files):
+    """(path, system) for each nc-architecture-overview the pull request adds or
+    changes whose system has a directory under nc-systems/ at head."""
+    overviews = []
+    for entry in changed_files:
+        system = overview_claim_check.nc_architecture_overview_described_system_name_from_page_path(entry["path"])
+        if entry["status"] == "D" or system is None:
+            continue
+        if not git_result_or_refuse(repository, "ls-tree", "-d", "--name-only", head, f"nc-systems/{system}").stdout.strip():
+            continue
+        overviews.append((entry["path"], system))
+    return overviews
+
+
+def architecture_overview_component_paths(overview_text):
+    """The repository paths the overview's Components section names in backticks."""
+    paths, in_components = set(), False
+    for line in overview_text.splitlines():
+        if MARKDOWN_SECTION_HEADING_PATTERN.match(line):
+            in_components = bool(COMPONENTS_SECTION_HEADING_PATTERN.match(line))
+        elif in_components:
+            for text in BACKTICKED_TEXT_PATTERN.findall(line):
+                if REPOSITORY_RELATIVE_COMPONENT_PATH_PATTERN.fullmatch(text):
+                    paths.add(text.rstrip("/"))
+    return paths
+
+
+def path_is_architecture_overview_described_code(path, system, component_paths):
+    if path.startswith(f"nc-systems/{system}/") and not path.endswith(".md"):
+        return True
+    return any(path == component or path.startswith(component + "/") for component in component_paths)
+
+
+def architecture_overview_checked_against_commit_problems(repository, head, changed_files):
+    """For each nc-architecture-overview the pull request adds or changes, why
+    its **Checked against:** commit does not hold the code the overview
+    describes at head; an empty list lets the plan go on."""
+    problems = []
+    for path, system in changed_architecture_overview_paths_and_systems(repository, head, changed_files):
+        text = required_git_output(repository, "show", f"{head}:{path}")
+        named = overview_path_reader.checked_against_commit(text)
+        # An overview with no such line is refused by the claim check, which names the fix.
+        if named is None:
+            continue
+        component_paths = architecture_overview_component_paths(text)
+        named_is_present = commit_is_in_repository(repository, named)
+        if named_is_present and commit_is_ancestor_of(repository, named, "refs/remotes/origin/main"):
+            # Main's own commits after the named one are a refresh's concern; only this pull request's are checked.
+            changed_here = sorted(entry["path"] for entry in changed_files
+                                  if path_is_architecture_overview_described_code(entry["path"], system, component_paths))
+            if changed_here:
+                problems.append({"path": path, "named": named, "named_is_on_main": True, "later_changed_paths": changed_here})
+            continue
+        if not named_is_present or not commit_is_ancestor_of(repository, named, head):
+            problems.append({"path": path, "named": named, "named_is_on_main": False, "later_changed_paths": None})
+            continue
+        # Without --no-renames, a component renamed away lists only its new path.
+        changed_since = git_result_or_refuse(repository, "diff", "--no-renames", "--name-only", "-z",
+                                             named, head).stdout.split("\0")
+        later = sorted(changed for changed in changed_since
+                       if changed and path_is_architecture_overview_described_code(changed, system, component_paths))
+        if later:
+            problems.append({"path": path, "named": named, "named_is_on_main": False, "later_changed_paths": later})
+    return problems
+
+
+def architecture_overview_checked_against_commit_refusal_message(number, head, problems):
+    lines = [f"pull request {number} adds or changes {len(problems)} nc-architecture-overview(s) whose "
+             "**Checked against:** commit does not hold the code the overview describes at "
+             f"head {head[:12]}, so no plan was computed. The claim check read the code at that commit, so its "
+             "report does not cover the code this pull request would merge."]
+    for problem in problems:
+        if problem["named_is_on_main"]:
+            lines.append(f"  {problem['path']} names commit {problem['named']} of main, and this pull request "
+                         f"changes code the overview describes: {', '.join(problem['later_changed_paths'])}.")
+        elif problem["later_changed_paths"] is None:
+            lines.append(f"  {problem['path']} names commit {problem['named']}, which is not in the history of head {head[:12]}.")
+        else:
+            lines.append(f"  {problem['path']} names commit {problem['named']}, and later commits of the pull request "
+                         f"change code the overview describes: {', '.join(problem['later_changed_paths'])}.")
+    lines.append("Send this whole message to the pull request's author. The author clears it on ned-box, in a checkout "
+                 "of the pull request's branch, for each overview listed:")
+    lines.append("  1. Commit every change to the code the overview describes, then make the overview's "
+                 "**Checked against:** line name the last of those commits, or a commit of main when the pull request "
+                 "no longer changes that code, as the section \"Keeping an overview true\" of "
+                 "docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md says, and commit the overview.")
+    lines.extend(f"  2. Run the claim check again: python3 nc-systems/skills/overview-write/"
+                 f"overview-write-architecture-overview-claim-check-by-fresh-agent.py --overview {shlex.quote(problem['path'])}"
+                 for problem in problems)
+    lines.append("  3. Do what the claim check prints, and push once its report shows every claim supported.")
+    lines.append(f"Once the author says this is done: run scripts/pull-request-review-plan.py --pull-request {number} again.")
+    return "\n".join(lines)
+
+
+def architecture_overview_claim_check_shortfalls(repository, head, changed_files, report_directory):
+    """For each nc-architecture-overview the pull request adds or changes, the
+    newest claim-check report for the overview's text at head, when that report
+    does not show every claim supported; an empty list lets the plan go on."""
+    shortfalls = []
+    for path, _system in changed_architecture_overview_paths_and_systems(repository, head, changed_files):
+        blob = required_git_output(repository, "rev-parse", f"{head}:{path}")
+        newest = overview_claim_check.find_newest_architecture_overview_claim_check_report_path_and_result_for_overview_git_blob(report_directory, path, blob)
+        if newest is None or newest[1] != overview_claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED:
+            shortfalls.append({"path": path, "blob": blob, "newest_report": newest})
+    return shortfalls
+
+
+def architecture_overview_claim_check_refusal_message(number, head, shortfalls, report_directory):
+    lines = [f"pull request {number} adds or changes {len(shortfalls)} nc-architecture-overview(s), and for each one "
+             f"listed below no claim-check report on the overview's text at head {head[:12]} shows every claim "
+             "supported, so no plan was computed."]
+    for shortfall in shortfalls:
+        looked_for = overview_claim_check.overview_write_architecture_overview_claim_check_report_directory_for_overview(report_directory, shortfall["path"]) / f"{shortfall['blob']}-*.md"
+        newest = shortfall["newest_report"]
+        lines.append(f"  {shortfall['path']} (git blob {shortfall['blob'][:12]} at head): looked on {socket.gethostname()} for "
+                     f"{looked_for}; newest report found: "
+                     + (f"{newest[0]}, whose result is: {newest[1]}" if newest else "none, so the check has not run on this text"))
+    lines.append("Send this whole message to the pull request's author. The author clears it on ned-box, in a checkout "
+                 "of the pull request's branch at its head, by running for each overview listed:")
+    lines.extend(f"     python3 nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py "
+                 f"--overview {shlex.quote(shortfall['path'])}" for shortfall in shortfalls)
+    lines.append("If the command fails to run, the author does what it prints.")
+    lines.append("If its report shows a claim contradicted or unsupported, the author fixes the overview as the section "
+                 "\"Checking an overview\" of docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md "
+                 "says, commits, runs the command again, and pushes once the report shows every claim supported.")
+    lines.append(f"Once the author says each listed overview's newest report shows every claim supported: run "
+                 f"scripts/pull-request-review-plan.py --pull-request {number} again.")
+    return "\n".join(lines)
+
+
 def compute_pull_request_review_plan(arguments):
     repository = arguments.repository.resolve()
     # Git reads pathspecs relative to the -C directory, but every path here is
@@ -684,6 +861,17 @@ def compute_pull_request_review_plan(arguments):
         warning = f"local origin/{base_branch} is behind GitHub's; run `{fetch_command}` and run this again"
     changed_files = changed_files_with_classes_and_tiers(
         repository, merge_base, head, hook_registration_old_revision=diff_base)
+    # A merged pull request is past the gate; its plan is read only to see what it changed.
+    if pull_request["state"] != "MERGED":
+        checked_against_problems = architecture_overview_checked_against_commit_problems(repository, head, changed_files)
+        if checked_against_problems:
+            raise ReviewPlanRefusal(architecture_overview_checked_against_commit_refusal_message(
+                number, head, checked_against_problems))
+        shortfalls = architecture_overview_claim_check_shortfalls(
+            repository, head, changed_files, arguments.overview_write_architecture_overview_claim_check_report_directory)
+        if shortfalls:
+            raise ReviewPlanRefusal(architecture_overview_claim_check_refusal_message(
+                number, head, shortfalls, arguments.overview_write_architecture_overview_claim_check_report_directory))
     tier, tier_reason = review_tier_and_deciding_reason(changed_files)
     posted_reviews = [review for page in review_pages for review in page if review["state"] != "PENDING"]
     inline_counts = {}
@@ -883,6 +1071,8 @@ def build_review_plan_argument_parser():
     parser.add_argument("--github-repository", default="nedschorus/nedschorus", metavar="OWNER/NAME")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--brief-skeleton", type=Path, metavar="PATH")
+    parser.add_argument("--overview-write-architecture-overview-claim-check-report-directory", type=Path, metavar="DIR",
+                        default=overview_claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_REPORT_DIRECTORY)
     return parser
 
 

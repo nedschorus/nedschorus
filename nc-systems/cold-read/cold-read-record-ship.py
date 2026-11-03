@@ -47,7 +47,7 @@ with the design:
      judged on the inventory taken before the copy, not again in the placing
      step, for the reason NO LOCK gives below. The cold-read programs choose
      a record name free both in their checkout and in the store
-     (cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error), so this refusal is
+     (cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason), so this refusal is
      met only when the store could not be listed when the name was chosen,
      a directory was named by hand, or a file was removed from the local
      directory after it shipped.
@@ -62,7 +62,16 @@ with the design:
      cold-read-triage.md; an older record, and a sanity-check record, names
      it triage.md. The shipper replaces whichever of the two the record
      holds; when it holds both, it replaces cold-read-triage.md and leaves
-     triage.md as it is. It is the one file in a
+     triage.md as it is. The store treats the two names as two separate
+     files. When the store holds the triage file under one name and the
+     record holds it only under the other, rule 2's check for a store file
+     the record lacks runs before this rule's replacement, on the inventory
+     taken before anything is copied, so the whole record is refused and the
+     store is left as it was. When that triage file is the only file the
+     store holds and the record lacks, and the store does not also hold it
+     under the record's name, the refusal prints the `mv` that renames the local
+     record's triage file to the store's name; otherwise it refuses the store's
+     record as another read's. It is the one file in a
      cold-read-record written twice on purpose: the agent triages the
      reviewers' findings into it, and it is written again with the user's
      rulings once the approval-walk closes. Rules 1 and 2 refused that second
@@ -248,6 +257,10 @@ PLACE_STAGED_FILES_MARKER = "# cold-read-record-ship: place staged files"
 # Marks the one ssh call that links a walk's add-only files into the store,
 # for the same reason; see link_staged_files_never_over_existing.
 LINK_STAGED_FILES_MARKER = "# cold-read-record-ship: link staged files"
+# Begins the line the linking script prints when it cannot remove its staging
+# directory; no sha256sum line begins with it, since those begin with a digest
+# or, for an escaped name, a backslash.
+STAGING_DIRECTORY_NOT_REMOVED_LINE_PREFIX = "staging directory not removed: "
 # Marks the one ssh call that replaces store files with staged ones, for the
 # same reason; see replace_with_staged_files.
 REPLACE_WITH_STAGED_FILES_MARKER = "# cold-read-record-ship: replace with staged files"
@@ -382,10 +395,9 @@ def log_store_listed_record_directory_names_or_listing_failure_reason(host, reco
             return {entry.name for entry in directory.iterdir() if entry.is_dir()}, None
         except OSError as error:
             return None, f"listing {directory} failed: {error}"
-    # The store a remote host holds is on ned-box, whose find is GNU find.
     script = (f"if [ -d {shlex.quote(str(records_path))} ]; then find "
               f"{shlex.quote(str(records_path))} -mindepth 1 -maxdepth 1 -type d "
-              f"-printf '%f\\n'; fi")
+              f"-exec basename {{}} \\; ; fi")
     listed = subprocess.run(SSH_COMMAND + [host, script],
                             capture_output=True, text=True, check=False)
     if listed.returncode != 0:
@@ -394,14 +406,14 @@ def log_store_listed_record_directory_names_or_listing_failure_reason(host, reco
     return set(listed.stdout.splitlines()), None
 
 
-def cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(base: pathlib.Path) -> tuple:
-    """(the first of base, base-2, base-3 ... that names no directory on disk
-    nor in the log-store this machine ships to, None), or, when the store
-    could not be listed, (the first free on disk, why the store could not be
-    listed) for the caller to print; shipping then refuses a name another
-    read holds in the store."""
+def cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(base: pathlib.Path) -> tuple:
+    """(base, base-2, base-3 ... whichever is first free on disk and in the
+    log-store this machine ships to, now created by a claim no concurrent run
+    can share, None), or, when the store could not be listed, (the first free
+    on disk, created, why the store could not be listed) for the caller to
+    print; shipping then refuses a name another read holds in the store."""
     names, unlisted = log_store_listed_record_directory_names_or_listing_failure_reason(*destination_for_this_machine())
-    return record_names.fresh_record_directory(
+    return record_names.cold_read_record_directory_at_first_free_name_created_atomically(
         base, names_taken_in_log_store=names or set()), unlisted
 
 
@@ -801,10 +813,13 @@ def link_staged_files_never_over_existing(host, staging_dir: pathlib.PurePosixPa
                                           store_dir: pathlib.PurePosixPath,
                                           relatives: list):
     """Hard-link each staged file into the store directory, in the order
-    given, then remove the staging directory and return the process and the
+    given, then remove the staging directory and return the process, the
     store's {relative path: sha256} of `relatives` -- the files the store now
-    holds under those names, whoever put them there. An unreachable host, or
-    a local step that fails, is an inventory of None, as in store_inventory.
+    holds under those names, whoever put them there -- and why removing the
+    staging directory failed, or None when it was removed. An unreachable
+    host, or a local step that fails, is an inventory of None, as in
+    store_inventory, and a reason of None: the caller removes the directory
+    itself then.
 
     A link is never made over an existing file: a name already taken is left
     as it is, and placing goes on past it, so the caller judges each file by
@@ -830,23 +845,29 @@ def link_staged_files_never_over_existing(host, staging_dir: pathlib.PurePosixPa
                     except OSError:
                         break
             finally:
-                shutil.rmtree(staging, ignore_errors=True)
-            return {relative: hashlib.sha256((store / relative).read_bytes()).hexdigest()
-                    for relative in relatives if (store / relative).is_file()}
+                not_removed = remove_staging_directory(None, staging_dir)
+            return ({relative: hashlib.sha256((store / relative).read_bytes()).hexdigest()
+                     for relative in relatives if (store / relative).is_file()}, not_removed)
 
-        return local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
+        completed, linked = local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
             link_and_read_back)
+        if linked is None:
+            return completed, None, None
+        return (completed, *linked)
     script = link_staged_files_never_over_existing_script(staging_dir, store_dir, relatives)
     completed = subprocess.run(SSH_COMMAND + [host, script],
                                capture_output=True, text=True, check=False)
     if completed.returncode != 0:
-        return completed, None
-    after = {}
+        return completed, None, None
+    after, not_removed = {}, None
     for line in completed.stdout.splitlines():
+        if line.startswith(STAGING_DIRECTORY_NOT_REMOVED_LINE_PREFIX):
+            not_removed = one_line(line[len(STAGING_DIRECTORY_NOT_REMOVED_LINE_PREFIX):])
+            continue
         digest, _, relative = line.partition("  ")
         if digest and relative:
             after[relative] = digest
-    return completed, after
+    return completed, after, not_removed
 
 
 def link_staged_files_never_over_existing_script(staging_dir: pathlib.PurePosixPath,
@@ -856,7 +877,9 @@ def link_staged_files_never_over_existing_script(staging_dir: pathlib.PurePosixP
     ned-box: link each file, leaving a name already taken as it is, remove
     the staging directory, print `sha256sum`'s line for each of `relatives`
     the store holds. `ln` without -f fails when the name exists, and makes
-    the link in the same step when it does not."""
+    the link in the same step when it does not. When `rm -rf` fails, its
+    error is printed on one line after STAGING_DIRECTORY_NOT_REMOVED_LINE_PREFIX
+    and the script goes on, so the digests are still read."""
     quoted_relatives = " ".join(shlex.quote(relative) for relative in relatives)
     staging = shlex.quote(str(staging_dir))
     store = shlex.quote(str(store_dir))
@@ -866,7 +889,10 @@ def link_staged_files_never_over_existing_script(staging_dir: pathlib.PurePosixP
         f"  mkdir -p -- \"$(dirname -- {store}/\"$relative\")\" || break\n"
         f"  ln -- {staging}/\"$relative\" {store}/\"$relative\" 2>/dev/null || :\n"
         f"done\n"
-        f"rm -rf -- {staging}\n"
+        f"if ! not_removed=$(rm -rf -- {staging} 2>&1); then\n"
+        f"  printf '%s%s\\n' {shlex.quote(STAGING_DIRECTORY_NOT_REMOVED_LINE_PREFIX)} "
+        f"\"$(printf '%s' \"$not_removed\" | tr '\\n' ' ')\"\n"
+        f"fi\n"
         f"cd -- {store} || exit 0\n"
         f"for relative in {quoted_relatives}; do\n"
         f"  if [ -f \"$relative\" ]; then sha256sum -- \"$relative\"; fi\n"
@@ -1121,6 +1147,22 @@ def staging_directory_host_colon_path_and_local_or_ssh_rm_command(host, staging_
     return shown, command
 
 
+def triage_file_name_held_only_locally_when_store_holds_it_only_under_the_other(
+        held_only_in_store, local, in_store):
+    """Return the local triage file's name when the only file the store holds and the
+    record lacks is the triage file under its other name, and the record holds it
+    only under this one; otherwise None, and the store's record is another read's."""
+    names = {TRIAGE_FILE_REPLACED_IN_THE_STORE,
+             record_names.COLD_READ_RECORD_FILE_NAME_TO_ITS_NAME_BEFORE_COLD_READ_PREFIX[
+                 TRIAGE_FILE_REPLACED_IN_THE_STORE]}
+    if len(held_only_in_store) != 1 or held_only_in_store[0] not in names:
+        return None
+    (other_name,) = names - {held_only_in_store[0]}
+    if other_name in local and other_name not in in_store:
+        return other_name
+    return None
+
+
 def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path,
              rerun_program: pathlib.Path = pathlib.Path(__file__).resolve()) -> int:
     """One directory, one stdout line, one exit code. `rerun_program` is the
@@ -1212,6 +1254,17 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     # this directory lacks is another read that took the same name.
     held_only_in_store = sorted(set(in_store) - set(local))
     if held_only_in_store:
+        local_triage_name = triage_file_name_held_only_locally_when_store_holds_it_only_under_the_other(
+            held_only_in_store, local, in_store)
+        if local_triage_name is not None:
+            store_triage_name = held_only_in_store[0]
+            print(f"REFUSED: {name} — nothing was copied: the store's record {citation} holds "
+                  f"its triage file as {store_triage_name}, and this directory {record_dir} "
+                  f"holds it only as {local_triage_name}. Rename the local triage file with "
+                  f"`mv {shlex.quote(str(record_dir / local_triage_name))} "
+                  f"{shlex.quote(str(record_dir / store_triage_name))}`, then ship again with "
+                  f"`{shlex.join([sys.argv[0], str(record_dir)])}`.")
+            return EXIT_REFUSED
         print(f"REFUSED: {name} — nothing was copied: the store's record {citation} holds "
               f"files this directory {record_dir} does not, so the store's record is "
               f"another read's: {', '.join(held_only_in_store)}. "

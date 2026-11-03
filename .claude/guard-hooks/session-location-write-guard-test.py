@@ -1,0 +1,569 @@
+#!/usr/bin/env python3
+"""Tests for session-location-write-guard.py.
+
+Run: python3 .claude/guard-hooks/session-location-write-guard-test.py
+Prints one line per case and exits non-zero if any case fails. Cases run
+against throwaway repositories mirroring the fleet layout: a clone whose main
+worktree is the reference copy, with linked worktrees as seats. As with the
+sibling guards' suites, $CLAUDE_PROJECT_DIR is pointed at a decoy throughout
+to prove the guard never consults it.
+"""
+
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+# Before anything runs git: a run started with GIT_DIR set, or with another
+# variable that redirects git, must still build this suite's scratch
+# repositories where the suite says, not in the repository the variable names.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().parents[2] / "scripts"
+    / "git-redirecting-environment-removal-test-fixture.py")
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
+SCRIPT_PATH = Path(__file__).with_name("session-location-write-guard.py")
+
+failures = []
+
+
+def check(case_name, condition, detail=""):
+    if condition:
+        print(f"PASS  {case_name}")
+    else:
+        print(f"FAIL  {case_name}: {detail}")
+        failures.append(case_name)
+
+
+def run_hook(session_cwd: Path, file_path: str, decoy: Path, notebook: bool = False,
+             path_prefix: Path = None, process_cwd: Path = None, script_path: Path = None,
+             expect_note: bool = False, path: str = None):
+    """Invoke the guard.
+
+    path_prefix puts a directory first on PATH, so a stub git can drive states
+    a real git will not produce on demand; path replaces PATH whole, so git can be
+    made impossible to launch. process_cwd runs the hook from
+    somewhere other than the session's directory, which is how a relative
+    target proves it is judged against the session and not against the hook.
+
+    result.note is the could-not-check note the agent reads, or "". The guard lets an
+    unchecked write through with exit 0, so a case that expects a checked pass would
+    pass on an unchecked one too; a note nobody expected is therefore a failure here.
+    """
+    key = "notebook_path" if notebook else "file_path"
+    payload = json.dumps({"cwd": str(session_cwd), "tool_input": {key: file_path}})
+    environment = dict(os.environ, CLAUDE_PROJECT_DIR=str(decoy))
+    if path_prefix is not None:
+        environment["PATH"] = f"{path_prefix}{os.pathsep}{environment.get('PATH', '')}"
+    if path is not None:
+        environment["PATH"] = path
+    result = subprocess.run(
+        [sys.executable, str(script_path or SCRIPT_PATH)], input=payload,
+        capture_output=True, text=True, check=False, env=environment,
+        cwd=str(process_cwd) if process_cwd is not None else None,
+    )
+    result.note = ""
+    if result.returncode == 0 and result.stdout.strip():
+        output = json.loads(result.stdout)["hookSpecificOutput"]
+        if output.get("hookEventName") == "PreToolUse":
+            result.note = output.get("additionalContext", "")
+    if result.note and not expect_note:
+        check(f"no could-not-check note on a write to {file_path}", False, result.note)
+    return result
+
+
+def git(arguments, cwd: Path):
+    """Run a fixture's git command; a failed setup step stops the suite and names the command."""
+    return subprocess.run(["git", *arguments], cwd=str(cwd),
+                          capture_output=True, text=True, check=True)
+
+
+with tempfile.TemporaryDirectory() as temporary_directory:
+    tmp = Path(temporary_directory)
+    decoy = tmp / "decoy"
+    decoy.mkdir()
+
+    # The reference copy: a repository's main worktree, parked on main.
+    reference = tmp / "reference-clone"
+    reference.mkdir()
+    git(["init", "-q", "-b", "main"], reference)
+    git(["config", "user.email", "t@example.invalid"], reference)
+    git(["config", "user.name", "location test"], reference)
+    (reference / "file.txt").write_text("content\n", encoding="utf-8")
+    git(["add", "file.txt"], reference)
+    git(["commit", "-q", "-m", "first"], reference)
+
+    # A seat: a linked worktree on its own branch.
+    seat = tmp / "seat-worktree"
+    git(["worktree", "add", "-q", "-b", "seat", str(seat), "main"], reference)
+
+    # A detached seat.
+    detached = tmp / "detached-worktree"
+    git(["worktree", "add", "-q", "--detach", str(detached), "main"], reference)
+
+    result = run_hook(seat, str(seat / "notes.md"), decoy)
+    check("a branch seat writes freely into its own checkout", result.returncode == 0,
+          result.stderr)
+
+    result = run_hook(detached, str(detached / "notes.md"), decoy)
+    check("a detached session's write into its checkout is blocked", result.returncode == 2,
+          str(result.returncode))
+    check("the detached refusal teaches the branch fix", "git switch -c" in result.stderr,
+          result.stderr)
+
+    result = run_hook(detached, str(tmp / "outside-any-repo.md"), decoy)
+    check("a detached session may still write outside its checkout", result.returncode == 0,
+          result.stderr)
+
+    result = run_hook(reference, str(reference / "docs.md"), decoy)
+    check("a session seated in the reference checkout is blocked", result.returncode == 2,
+          str(result.returncode))
+    check("the reference refusal names the marker", ".location-write-approved" in result.stderr,
+          result.stderr)
+    check("the reference refusal asks for the user's approval of this write",
+          "If the user has approved this write in this checkout, quote his approval words"
+          in result.stderr and "merge-lane resolving" not in result.stderr, result.stderr)
+
+    result = run_hook(reference, str(reference / "book.ipynb"), decoy, notebook=True)
+    check("NotebookEdit's notebook_path is judged too", result.returncode == 2,
+          str(result.returncode))
+
+    result = run_hook(reference, str(seat / "other.md"), decoy)
+    check("a reference-seated write into ANOTHER tree is not this guard's business",
+          result.returncode == 0, result.stderr)
+
+    # The exception lane: one approved write per marker, own marker file.
+    marker = reference / ".location-write-approved"
+    marker.write_text("user approved: the merge lane's conflict resolution\n", encoding="utf-8")
+    result = run_hook(reference, str(reference / "file.txt"), decoy)
+    check("an approved write in the reference passes once", result.returncode == 0,
+          result.stderr)
+    check("the marker is consumed by the pass", not marker.exists())
+    result = run_hook(reference, str(reference / "file.txt"), decoy)
+    check("the next write is blocked again", result.returncode == 2)
+
+    marker.write_text("   \n", encoding="utf-8")
+    result = run_hook(reference, str(reference / "file.txt"), decoy)
+    check("an empty marker approves nothing", result.returncode == 2)
+    marker.unlink()
+
+    # The instruction-file guard's marker must not carry over to this guard.
+    (reference / ".walk-approved").write_text("approved\n", encoding="utf-8")
+    result = run_hook(reference, str(reference / "file.txt"), decoy)
+    check("a .walk-approved marker does not authorize a location write",
+          result.returncode == 2)
+
+    # The landing side (user-walked 2026-08-17): a write from a seat into the
+    # reference checkout is refused; other trees stay out of scope.
+    result = run_hook(seat, str(reference / "landed-from-seat.md"), decoy)
+    check("a seat's write landing in the reference is blocked", result.returncode == 2,
+          str(result.returncode))
+    check("the cross refusal says the session works in another checkout",
+          "this session works in another checkout" in result.stderr, result.stderr)
+    check("the cross refusal asks for the user's approval of writing the path directly",
+          "If the user has approved writing " in result.stderr
+          and " directly, quote his approval words" in result.stderr
+          and "merge-lane resolving" not in result.stderr, result.stderr)
+    result = run_hook(seat, str(reference / "brand" / "new" / "dir" / "note.md"), decoy)
+    check("a write creating new directories in the reference is still judged",
+          result.returncode == 2, str(result.returncode))
+    seat_marker = seat / ".location-write-approved"
+    seat_marker.write_text("user approved: the merge lane's cross-tree fix\n", encoding="utf-8")
+    result = run_hook(seat, str(reference / "landed-from-seat.md"), decoy)
+    check("the cross block honours a marker in the SESSION'S own tree",
+          result.returncode == 0, result.stderr)
+    check("the cross marker is consumed", not seat_marker.exists())
+
+    # A second seat's tree is deliberately out of scope: no recorded incident.
+    other_seat = tmp / "other-seat-worktree"
+    git(["worktree", "add", "-q", "-b", "other-seat", str(other_seat), "main"], reference)
+    result = run_hook(seat, str(other_seat / "note.md"), decoy)
+    check("a write into another SEAT'S tree is not blocked (recorded-unbuilt class)",
+          result.returncode == 0, result.stderr)
+
+    # A standalone clone is its own workspace, never "the reference" —
+    # verdict pinned per the #88 review's standalone-clone finding.
+    lone = tmp / "standalone-clone"
+    git(["clone", "-q", str(reference), str(lone)], tmp)
+    result = run_hook(lone, str(lone / "notes.md"), decoy)
+    check("a session seated in a standalone clone writes freely",
+          result.returncode == 0, result.stderr)
+    result = run_hook(seat, str(lone / "notes.md"), decoy)
+    check("a write landing in a standalone clone is not blocked",
+          result.returncode == 0, result.stderr)
+
+    nowhere = tmp / "not-a-checkout"
+    nowhere.mkdir()
+    result = run_hook(nowhere, str(nowhere / "anything.md"), decoy)
+    check("a session outside any checkout passes", result.returncode == 0, result.stderr)
+    result = run_hook(nowhere, str(reference / "from-nowhere.md"), decoy)
+    check("a no-checkout session's write landing in the reference is still blocked",
+          result.returncode == 2, str(result.returncode))
+
+    result = run_hook(seat, "", decoy)
+    check("a payload without a target passes", result.returncode == 0)
+
+    # ------------------------------------------------------------------
+    # PR #88's review: the two HEAD states the old reading got wrong
+    # ------------------------------------------------------------------
+    # A repository created by `git init` with nothing committed. The old
+    # reading called this detached, because `rev-parse --abbrev-ref HEAD`
+    # prints "HEAD" there while exiting 128, and the exit status was ignored.
+    unborn = tmp / "unborn-repository"
+    unborn.mkdir()
+    git(["init", "-q", "-b", "main"], unborn)
+    result = run_hook(unborn, str(unborn / "first.md"), decoy)
+    check("an unborn repository is not reported as detached HEAD",
+          "detached HEAD" not in result.stderr, result.stderr)
+    check("the unborn refusal says the repository has no commits yet",
+          "no commits yet" in result.stderr, result.stderr)
+    check("the unborn refusal names the branch HEAD points at",
+          "main" in result.stderr, result.stderr)
+
+    # A healthy seat whose HEAD lookups fail. The old reading treated ANY
+    # failure of its one git command as detached, so a transient fault refused
+    # a seat that was on a perfectly good branch and told it to fix a state it
+    # was not in. A stub git fails exactly the two HEAD questions and delegates
+    # everything else, so the repository still resolves.
+    import shutil as _shutil
+    real_git = _shutil.which("git")
+    stub_directory = tmp / "stub-git"
+    stub_directory.mkdir()
+    stub_git = stub_directory / "git"
+    stub_git.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        "  symbolic-ref) exit 128 ;;\n"
+        "esac\n"
+        'if [ "$1" = "rev-parse" ] && [ "$2" = "--verify" ]; then exit 128; fi\n'
+        # --abbrev-ref is what the OLD reading used. Breaking only the new
+        # commands would let the pre-fix guard pass this case for the wrong
+        # reason; the realistic fault is a git that cannot answer about HEAD
+        # at all, while --show-toplevel still resolves the repository.
+        'if [ "$1" = "rev-parse" ] && [ "$2" = "--abbrev-ref" ]; then exit 128; fi\n'
+        f'exec {real_git} "$@"\n',
+        encoding="utf-8")
+    stub_git.chmod(0o755)
+    # With no marker present the old reading's refusal is visible directly.
+    result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=stub_directory,
+                      expect_note=True)
+    check("an unreadable HEAD does not refuse a healthy seat, and reports that it could not check",
+          "did not check the write" in result.note and "exited 128" in result.note,
+          (result.returncode, result.stdout, result.stderr))
+    check("an unreadable HEAD does not claim the seat is on a detached HEAD",
+          "this checkout is on a detached HEAD" not in result.stderr + result.note,
+          result.stderr + result.note)
+    # And with one present, the old reading spent it to let the write through —
+    # the seat paid an approval for a state it was never in.
+    stub_marker = seat / ".location-write-approved"
+    stub_marker.write_text("an approval that must not be spent here\n", encoding="utf-8")
+    result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=stub_directory,
+                      expect_note=True)
+    check("an unreadable HEAD does not spend the seat's marker", stub_marker.exists())
+    stub_marker.unlink(missing_ok=True)
+
+    # One-sided git failures must be reported as a failure, not read as a repository state.
+    # Found on PR #103's review, in the replacement for is_detached: with only
+    # symbolic-ref broken the seat read as detached, and with only verify
+    # broken it read as unborn — the same class the replacement was written to
+    # close. Neither is reachable with a real git, so each gets a stub that
+    # breaks exactly one command and passes the rest through.
+    for broken, wrong_state in (("symbolic-ref", "this checkout is on a detached HEAD"),
+                                ("rev-parse --verify", "no commits yet")):
+        one_sided = tmp / f"stub-{broken.split()[0]}-{len(broken)}"
+        one_sided.mkdir()
+        stub = one_sided / "git"
+        if broken == "symbolic-ref":
+            failing_case = 'if [ "$1" = "symbolic-ref" ]; then exit 3; fi\n'
+        else:
+            failing_case = ('if [ "$1" = "rev-parse" ] && [ "$2" = "--verify" ]; '
+                            "then exit 3; fi\n")
+        stub.write_text("#!/bin/sh\n" + failing_case + f'exec {real_git} "$@"\n',
+                        encoding="utf-8")
+        stub.chmod(0o755)
+        result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=one_sided,
+                          expect_note=True)
+        check(f"a healthy seat survives a broken {broken}, and the guard says it could not check",
+              "did not check the write" in result.note and "exited 3" in result.note,
+              (result.returncode, result.stdout, result.stderr))
+        check(f"a broken {broken} is not reported as \"{wrong_state}\"",
+              wrong_state not in result.stderr + result.note, result.stderr + result.note)
+
+    # A git failure in any other question the guard asks is reported, not read as an answer.
+    def failing_git_directory(name, condition):
+        directory = tmp / f"stub-{name}"
+        directory.mkdir()
+        (directory / "git").write_text(
+            "#!/bin/sh\n"
+            f"if {condition}; then echo 'fatal: stand-in failure' >&2; exit 128; fi\n"
+            f'exec {real_git} "$@"\n', encoding="utf-8")
+        (directory / "git").chmod(0o755)
+        return directory
+
+    common_dir_failing = failing_git_directory(
+        "git-common-dir", '[ "$1" = rev-parse ] && [ "$2" = --git-common-dir ]')
+    result = run_hook(reference, str(reference / "docs.md"), decoy,
+                      path_prefix=common_dir_failing, expect_note=True)
+    check("a failed reference-checkout question in the session's checkout is reported, "
+          "not read as \"not the reference\"",
+          "stand-in failure" in result.note, (result.returncode, result.stdout, result.stderr))
+    result = run_hook(seat, str(reference / "landed-from-seat.md"), decoy,
+                      path_prefix=common_dir_failing, expect_note=True)
+    check("a failed reference-checkout question about a write's target is reported",
+          "stand-in failure" in result.note, (result.returncode, result.stdout, result.stderr))
+    check_ignore_failing = failing_git_directory("check-ignore", '[ "$1" = check-ignore ]')
+    result = run_hook(detached, str(detached / "notes.md"), decoy,
+                      path_prefix=check_ignore_failing, expect_note=True)
+    check("a failed git check-ignore in a detached checkout is reported, not read as \"not ignored\"",
+          "check-ignore" in result.note and "stand-in failure" in result.note,
+          (result.returncode, result.stdout, result.stderr))
+    git_dir_failing = failing_git_directory(
+        "absolute-git-dir", '[ "$1" = rev-parse ] && [ "$2" = --absolute-git-dir ]')
+    result = run_hook(detached, str(detached / "notes.md"), decoy, path_prefix=git_dir_failing,
+                      expect_note=True)
+    check("a failed git-directory lookup in a detached checkout is reported, not read as "
+          "\"no operation in progress\"",
+          "--absolute-git-dir" in result.note and "stand-in failure" in result.note,
+          (result.returncode, result.stdout, result.stderr))
+
+    # A git that cannot be launched at all. checkout_root_of once read that as "not a
+    # repository", so a write from a detached or reference checkout passed with nothing said.
+    # A PATH holding only an empty directory makes git impossible to launch, as a missing git does.
+    no_git = tmp / "no-git-on-path"
+    no_git.mkdir()
+    result = run_hook(detached, str(detached / "notes.md"), decoy, path=str(no_git),
+                      expect_note=True)
+    check("a git that cannot be launched is reported, not read as \"not a repository\"",
+          "--show-toplevel could not be started" in result.note
+          and "FileNotFoundError" in result.note,
+          (result.returncode, result.stdout, result.stderr))
+    check("the could-not-check note lets the write through with exit 0 and prints nothing to "
+          "stderr", result.returncode == 0 and not result.stderr,
+          (result.returncode, result.stderr))
+    check("the could-not-check note tells the agent each next step on its own line",
+          "git switch -c" in result.note and "reference-checkout" in result.note
+          and "say so in that message. Do not revert the write yourself." in result.note
+          and "the write went ahead" in result.note
+          and "Tell the user this guard could not check the write" in result.note
+          and "quoting this whole note." in result.note
+          and "Then carry on with your task." in result.note
+          and len(result.note.splitlines()) == 3, result.note)
+
+    # A session whose directory was deleted. Launching git there fails as a missing git does,
+    # and once dropped the whole check, so a write landing in the reference passed with a note.
+    deleted_directory = tmp / "deleted-session-directory"
+    deleted_directory.mkdir()
+    deleted_directory.rmdir()
+    result = run_hook(deleted_directory, str(reference / "landed-from-deleted.md"), decoy,
+                      process_cwd=tmp)
+    check("a session in a deleted directory is still refused a write landing in the reference",
+          result.returncode == 2
+          and "this session works in another checkout" in result.stderr,
+          (result.returncode, result.stdout, result.stderr))
+
+    def answering_git_directory(name, body):
+        directory = tmp / f"stub-{name}"
+        directory.mkdir()
+        (directory / "git").write_text("#!/bin/sh\n" + body + f'exec {real_git} "$@"\n',
+                                       encoding="utf-8")
+        (directory / "git").chmod(0o755)
+        return directory
+
+    common_dir_empty = answering_git_directory(
+        "git-common-dir-empty",
+        'if [ "$1" = rev-parse ] && [ "$2" = --git-common-dir ]; then exit 0; fi\n')
+    result = run_hook(reference, str(reference / "docs.md"), decoy, path_prefix=common_dir_empty,
+                      expect_note=True)
+    check("a git that prints no common directory is reported, not read as \"not the reference\"",
+          "printed no git directory" in result.note,
+          (result.returncode, result.stdout, result.stderr))
+    git_dir_empty = answering_git_directory(
+        "absolute-git-dir-empty",
+        'if [ "$1" = rev-parse ] && [ "$2" = --absolute-git-dir ]; then exit 0; fi\n')
+    result = run_hook(detached, str(detached / "notes.md"), decoy, path_prefix=git_dir_empty,
+                      expect_note=True)
+    check("a git that prints no git directory in a detached checkout is reported",
+          "printed nothing" in result.note, (result.returncode, result.stdout, result.stderr))
+    no_branch_no_commit = answering_git_directory(
+        "no-branch-no-commit",
+        'if [ "$1" = symbolic-ref ]; then exit 1; fi\n'
+        'if [ "$1" = rev-parse ] && [ "$2" = --verify ]; then exit 1; fi\n')
+    result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=no_branch_no_commit,
+                      expect_note=True)
+    check("a HEAD that git says is on no branch and names no commit is reported, not allowed in "
+          "silence", "names no commit" in result.note,
+          (result.returncode, result.stdout, result.stderr))
+
+    # The guard reads git's in-progress markers from the freshness hook's module, found
+    # relative to the guard's own file; a copy of the guard beside a broken module shows
+    # that a module that cannot be loaded is reported.
+    broken_tree = tmp / "broken-freshness-tree"
+    (broken_tree / ".claude" / "guard-hooks").mkdir(parents=True)
+    (broken_tree / ".claude" / "hooks").mkdir()
+    (broken_tree / "scripts").mkdir()
+    import shutil as _copier
+    _copier.copy(SCRIPT_PATH, broken_tree / ".claude" / "guard-hooks" / SCRIPT_PATH.name)
+    _copier.copy(SCRIPT_PATH.resolve().parents[1] / "hooks" / "guard-approval-marker-common.py",
+                 broken_tree / ".claude" / "hooks" / "guard-approval-marker-common.py")
+    (broken_tree / "scripts" / "checkout-freshness-catch-up.py").write_text(
+        "raise RuntimeError('stand-in broken module')\n", encoding="utf-8")
+    result = run_hook(detached, str(detached / "notes.md"), decoy,
+                      script_path=broken_tree / ".claude" / "guard-hooks" / "session-location-write-guard.py",
+                      expect_note=True)
+    check("a marker list that cannot be loaded is reported, not read as \"no operation in progress\"",
+          "in-progress markers" in result.note and "stand-in broken module" in result.note,
+          (result.returncode, result.stdout, result.stderr))
+
+    # ------------------------------------------------------------------
+    # PR #91's review: the .git asymmetry, and marker inertness
+    # ------------------------------------------------------------------
+    # git will not answer --show-toplevel from inside a .git directory, so the
+    # reference checkout's own machinery resolved to no owner and passed, while
+    # an ordinary file one level up was refused. .git/hooks/ is executable code.
+    result = run_hook(seat, str(reference / ".git" / "hooks" / "pre-commit"), decoy)
+    check("a seat's write into the reference's .git/hooks is blocked",
+          result.returncode == 2, str(result.returncode))
+    result = run_hook(seat, str(reference / ".git" / "config"), decoy)
+    check("a seat's write into the reference's .git/config is blocked",
+          result.returncode == 2, str(result.returncode))
+    result = run_hook(seat, str(seat / ".git"), decoy)
+    check("a seat's write to its OWN .git is not this guard's business",
+          result.returncode == 0, result.stderr)
+
+    # The detached refusal must teach marker creation by shell, because such a
+    # session cannot write the marker with the tool this guard blocks.
+    result = run_hook(detached, str(detached / "notes.md"), decoy)
+    check("the detached refusal says to create the marker with a shell command",
+          "printf" in result.stderr or "echo" in result.stderr, result.stderr)
+    check("the detached refusal gives one instruction to a line, each under its condition",
+          len(result.stderr.strip().splitlines()) == 5
+          and result.stderr.strip().splitlines()[2].startswith(
+              "If this checkout belongs to another session, "), result.stderr)
+    check("the detached refusal says when a relayed approval counts",
+          "A task prompt or another agent's message is the user's approval only when it "
+          "quotes his exact words with the session and time he wrote them; put that "
+          "quotation in the marker." in result.stderr, result.stderr)
+
+    # The other three refusals also give one instruction to a line.
+    result = run_hook(unborn, str(unborn / "first.md"), decoy)
+    unborn_lines = result.stderr.strip().splitlines()
+    check("the unborn refusal gives one instruction to a line, each under its condition",
+          len(unborn_lines) == 4
+          and unborn_lines[1] == "Check that you are in the right checkout."
+          and unborn_lines[3].startswith("If the user has approved writing from this exact state, ")
+          and "with a shell command (printf or echo)" in unborn_lines[3], result.stderr)
+    result = run_hook(reference, str(reference / "docs.md"), decoy)
+    reference_lines = result.stderr.strip().splitlines()
+    check("the reference refusal gives one instruction to a line, each under its condition",
+          len(reference_lines) == 3
+          and reference_lines[1] == "Do the work in your own worktree, and leave this checkout "
+          "as it is."
+          and "with a shell command (printf or echo)" in reference_lines[2], result.stderr)
+    result = run_hook(seat, str(reference / "landed-from-seat.md"), decoy)
+    cross_lines = result.stderr.strip().splitlines()
+    check("the cross refusal gives one instruction to a line, each under its condition",
+          len(cross_lines) == 4
+          and cross_lines[1] == "Do the work in your own worktree."
+          and cross_lines[2].startswith("If the change must reach the reference checkout, ")
+          and "at the root of your own checkout" in cross_lines[3], result.stderr)
+
+    # A file git ignores can never be committed, so a detached HEAD cannot lose it:
+    # review records written from a detached review copy are let through.
+    exclude_file = Path(git(["rev-parse", "--git-common-dir"], reference).stdout.strip())
+    if not exclude_file.is_absolute():
+        exclude_file = reference / exclude_file
+    exclude_file = exclude_file / "info" / "exclude"
+    exclude_file.parent.mkdir(parents=True, exist_ok=True)
+    exclude_file.write_text("review-records/\n", encoding="utf-8")
+    result = run_hook(detached, str(detached / "review-records" / "report.md"), decoy)
+    check("a detached session may write a file git ignores", result.returncode == 0,
+          result.stderr)
+    result = run_hook(detached, str(detached / "tracked-notes.md"), decoy)
+    check("a detached session's write of a file git would track is still refused",
+          result.returncode == 2, str(result.returncode))
+
+    # A rebase, merge, cherry-pick or revert stopped on a conflict leaves HEAD
+    # detached, and the write that resolves it must go through.
+    detached_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], detached).stdout.strip())
+    for in_progress_marker in ("rebase-merge", "CHERRY_PICK_HEAD"):
+        marker_path = detached_git_dir / in_progress_marker
+        if in_progress_marker == "rebase-merge":
+            marker_path.mkdir()
+        else:
+            marker_path.write_text("0" * 40 + "\n", encoding="utf-8")
+        result = run_hook(detached, str(detached / "conflicted.txt"), decoy)
+        check(f"a detached checkout with {in_progress_marker} lets the resolving write through",
+              result.returncode == 0, result.stderr)
+        if marker_path.is_dir():
+            marker_path.rmdir()
+        else:
+            marker_path.unlink()
+    # A bisect also detaches HEAD, but no write resolves it.
+    (detached_git_dir / "BISECT_LOG").write_text("git bisect start\n", encoding="utf-8")
+    result = run_hook(detached, str(detached / "fix.py"), decoy)
+    (detached_git_dir / "BISECT_LOG").unlink()
+    check("a detached checkout mid-bisect is still refused",
+          result.returncode == 2, str(result.returncode))
+    result = run_hook(detached, str(detached / "conflicted.txt"), decoy)
+    check("once the operation is finished, the detached refusal is back",
+          result.returncode == 2, str(result.returncode))
+
+    # A marker sitting at the TARGET's root must stay inert and unspent for a
+    # normally-seated session: without this, an implementation that wrongly
+    # honoured the target's marker would still pass every other case here.
+    target_side_marker = reference / ".location-write-approved"
+    target_side_marker.write_text("an approval lying in the target tree\n", encoding="utf-8")
+    result = run_hook(seat, str(reference / "still-blocked.md"), decoy)
+    check("a marker at the TARGET's root does not approve a cross write",
+          result.returncode == 2, str(result.returncode))
+    check("a marker at the TARGET's root is left unspent", target_side_marker.exists())
+    target_side_marker.unlink()
+
+    # ------------------------------------------------------------------
+    # PR #88's review: the remaining test gaps
+    # ------------------------------------------------------------------
+    # A relative target is judged against the SESSION's directory. The hook runs
+    # from somewhere else entirely, so a guard resolving against its own cwd
+    # would reach the wrong tree.
+    result = run_hook(reference, "docs-relative.md", decoy, process_cwd=tmp)
+    check("a relative target is judged against the session's directory",
+          result.returncode == 2, str(result.returncode))
+    result = run_hook(seat, "notes-relative.md", decoy, process_cwd=reference)
+    check("a relative target does not inherit the hook process's directory",
+          result.returncode == 0, result.stderr)
+
+    # A session seated in a SUBDIRECTORY of its checkout is still that checkout.
+    reference_subdirectory = reference / "nested" / "deeper"
+    reference_subdirectory.mkdir(parents=True)
+    result = run_hook(reference_subdirectory, str(reference / "from-subdir.md"), decoy)
+    check("a session in a subdirectory of the reference is still seated there",
+          result.returncode == 2, str(result.returncode))
+    seat_subdirectory = seat / "nested"
+    seat_subdirectory.mkdir()
+    result = run_hook(seat_subdirectory, str(seat / "ok.md"), decoy)
+    check("a session in a subdirectory of a seat writes freely",
+          result.returncode == 0, result.stderr)
+
+    # An explicitly symlinked path must be judged by where it LANDS.
+    symlink_to_reference = tmp / "link-to-reference"
+    symlink_to_reference.symlink_to(reference, target_is_directory=True)
+    result = run_hook(seat, str(symlink_to_reference / "through-a-link.md"), decoy)
+    check("a write reaching the reference through a symlink is blocked",
+          result.returncode == 2, str(result.returncode))
+
+    # The allowed side of NotebookEdit: the field is read, not merely blocked.
+    result = run_hook(seat, str(seat / "analysis.ipynb"), decoy, notebook=True)
+    check("a seat's own notebook write passes through notebook_path",
+          result.returncode == 0, result.stderr)
+
+print()
+if failures:
+    print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
+    sys.exit(1)
+print("all cases passed")

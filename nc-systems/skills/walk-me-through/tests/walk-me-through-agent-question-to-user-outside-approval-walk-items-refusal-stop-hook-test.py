@@ -6,6 +6,13 @@ Most cases run the hook as a subprocess, its real stdin-to-stdout path, in a
 scratch checkout this suite made, with a transcript this suite wrote. The model
 call is never real: a fake `claude` first on PATH records each call and answers
 as the case sets it. The refusal log goes to a file in the scratch directory.
+
+With LIVE_MODEL_FLAG, the suite does not run: instead each of REAL_CASES, and
+UNRELATED_ASK_CASE, runs
+through the hook with the real `claude` behind a recorder first on PATH, and
+the hook's decision and the real model's label for each numbered line are
+printed. That run makes real model calls and asserts nothing; it exits 1 only
+when `claude` is not on PATH.
 """
 
 import importlib.util
@@ -81,11 +88,57 @@ Recommendation: File it.
 {ANSWER_LINE}
 """
 
+# Real replies that show or explain the waiting item, each with that item's walk-document text; each must pass.
+REAL_ITEM_5_REPLY = 'Item 5 of 23 is still waiting for your answer, so here it is again. The page linked below already shows it.\n\n## Item 5 of 23: when the rejected-rows alert repeats and clears\n\nOn 2026-10-26 you approved two rules for the rejected-rows alert (walk ghi-972-agent-seat-database-service-design-nine-remaining-decisions-approval-walk-2026-10-26, item 2):\n- While rows are still being rejected, the alert repeats 24 hours after the last one.\n- The alert\'s condition clears "after a sending-job pass that sends and has no new rejection".\n\nThis item changes the clearing rule, because it fails in two ways.\n\nExample 1: an alert reports row A. An hour later row B is rejected. The next pass sends with no new rejection, so the condition clears, and B is never reported.\n\nExample 2: on an idle Mac, no pass sends anything, so the condition never clears.\n\nThe strongest case against: No harm found; it costs only the work or a short delay.\n\n#new_if_d Alternative: keep the wording you approved on 2026-10-26.\n\nRecommendation: while the condition holds, rows rejected since the last alert set off a new alert 24 hours after the last one. A pass that finds no row rejected since the last alert clears the condition, and the next rejection then alerts at once.\n\n#new "While the condition holds, rows rejected since the last rejected-rows alert make the job write a new one 24 hours after the last; a pass that finds no row rejected since the last alert clears the condition, so the next rejection is reported on the pass that finds it."\n\n[Item 5 of 23, when the rejected-rows alert repeats and clears](https://claude.ai/artifact/G9kzSQvayD96kRMvRKsh1s) · A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · E explain · O other options'
+REAL_ITEM_7_REPLY = 'Yes, item 7 is about losing ned-box\'s disk. But it doesn\'t propose solving that. It only corrects one sentence in the GHI 972 design ([docs/issues/972-a-small-service-on-ned-box-keeps-one.md](https://github.com/nedschorus/nedschorus/issues/972)) that promises more than the design delivers. Nothing gets built.\n\n**What the design says** (it\'s still a design; no program sends events yet):\n- A program that records an event about an agent-seat first writes it to a local events file on its own machine.\n- A sender then passes the event on to the agent-seat database service on ned-box.\n- A sent event stays in the local events file until a nightly backup holds it.\n- The backups are kept in `~/backups/agent-seat-database/` on ned-box, and the Mac copies the newest one each night.\n- After a restore, each machine sends again whatever its local events file still holds, so the record catches up.\n\n**The sentence**, from condition 1 of the design: "So a restore from the newest backup loses nothing, however long ago that backup ran."\n\n**Where the sentence is false** (a made-up example; it has never happened): ned-box\'s disk dies at 15:00, and the last backup ran at 02:00. You restore that backup from the Mac\'s copy.\n- The Mac\'s events since 02:00 are still in the Mac\'s local events file, so they come back.\n- ned-box\'s own events since 02:00 were in ned-box\'s local events file, on the dead disk, so they\'re gone.\n- The same loss hits one machine\'s events if its local events file is set aside as corrupt.\n\nSo up to a day of events can be lost, which the sentence says can\'t happen.\n\n**The proposed sentence:** "So a restore from the newest backup loses nothing that a machine\'s local events file still holds, however long ago that backup ran."\n\nThe point is that whoever runs the restore knows the record may be missing up to a day, and doesn\'t trust it as complete. I recommend approving it: it costs one sentence and nothing more. If you disapprove, the sentence stays as it is.\n\n[Item 7 of 23, "a restore from the newest backup loses nothing"](https://claude.ai/artifact/G9kzSQvayD96kRMvRKsh1s) · A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · E explain · O other options'
+REAL_ITEM_1_REPLY = 'The handoff was written 16 seconds ago, so nothing has drifted. I\'m resuming the walk at item 1. The page is already published, so it stays at the same link.\n\nNo item in this walk has been ruled on yet. We resume at item 1 of 5.\n\n## Item 1 of 5: close the cold-read speed-up measurement on its first-half result\n\nOn 2026-10-03 this agent-seat started measuring whether a faster cold-read-full-run finds fewer problems than the slower one. The plan had two halves. The first half\'s interim result came in on 2026-10-04 and showed no loss: the faster run found as many of the known problems as the slower one (p=0.72, so no difference showed up; [first-half results](file:///Volumes/nedhome/nedschorus-logs/seats/cold-read-improvement/cold-read-speed-up-measurement-first-half-2026-10-03/RESULTS-first-half-interim-2026-10-04.md)). Some scoring checks on the first half never ran, and neither did the second half.\n\nThe cold-read has changed a lot since then:\n- it now uses six reviewers instead of the old set;\n- a cold-read-fast-read now runs before every full run;\n- a rebuild is planned ([GHI 2158](https://github.com/nedschorus/nedschorus/issues/2158)).\n\nA second half would measure a cold-read that no longer exists.\n\n**Alternative:** plan a new measurement of today\'s cold-read once the rebuild lands.\n\n**The case against closing it:** the interim result comes from one small sample that was only partly scored, so "no loss" is weak evidence.\n\n**Recommendation:** close task #9, "Run the first half and bring results to the user", on the interim result and run no second half. Also close task #10, which only prepared the scoring checks.\n\n[Item 1 of 5 page](https://claude.ai/artifact/EZrNpowcQr6iRYHYAQCDHJ) · A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · E explain · O other options'
+REAL_ITEM_3_1_REPLY = 'Item 3 is approved and recorded.\n\n`#new` text 1, "Proposed: that hook also gives every subagent a folder of...": fast read had to be run (/home/nedlern/agents/cold-read-improvement/cold-read-records/cold-read-improvement-open-items-2026-10-30-item-3-of-5-new-1-2026-10-30).\n\nNone of its findings changed what the item decides. I made one wording fix: "that hook" became "the Agent-tool pointer hook". A background subagent is building the scratch-folder hook. It will test it end to end, then send the pull request to merge-lane-2. The pointer to the briefs wiki page waits until that page exists, because a pointer to a missing page would be broken.\n\nI added item 3.1 from your remark about the reason against, so the walk now has 6 items. I also removed a line from the memory index that pointed at a note that doesn\'t exist.\n\n## Item 3.1 of 6: "more work for agents" is not a case against\n\nEvery approval-walk item states the strongest case against its recommendation, just before the recommendation. Item 3\'s case against was "a hook that edits briefs is more code to build and test than one sentence". You answered: "The reason against is the usual, this is more work." The time agents spend building something costs you almost nothing. What costs you is what you have to read and rule on.\n\nI tried to save that as a note in Claude Code\'s memory, and the instruction-file guard refused: a memory note is not read at the moment it applies. The place an agent would meet the rule is this sentence in the walk-me-through skill, `.claude/skills/walk-me-through/SKILL.md`: "Just before each recommendation, state in one sentence the strongest case against it."\n\n**Proposed:** add after that sentence: "The work agents must do to build it is not a case against; more for the user to read or rule on is. When you find no other case against, write "The case against this recommendation: none found.""\n\n**The alternative:** leave the skill as it is, and you keep pointing it out when an item does it.\n\n**The case against this recommendation:** an agent barred from the easy reason may reach for a vague one instead of writing "none found". An example is "this could have unforeseen effects".\n\n**Recommendation:** add the two sentences to the walk-me-through skill.\n\n[Item 3.1 of 6, "more work for agents" is not a case against](https://claude.ai/artifact/LXin9KHmdixhJGn3Hm3Fgx) · A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · E explain · O other options'
+REAL_ITEM_5_DOCUMENT_TEXT = '## Item 5 of 23: when the rejected-rows alert repeats and clears\n\nYou approved on 2026-10-26 that the rejected-rows alert repeats 24 hours after the last one while rows are still rejected, and clears "after a sending-job pass that sends and has no new rejection" (walk ghi-972-agent-seat-database-service-design-nine-remaining-decisions-approval-walk-2026-10-26, item 2); this changes it because the clearing rule fails two ways.\n\nExample 1: an alert reports row A; an hour later row B is rejected; the next pass sends with no new rejection, so the condition clears and B is never reported. Example 2: on an idle Mac no pass sends anything, so the condition never clears.\n\nThe strongest case against: No harm found; it costs only the work or a short delay.\n\n#new_if_d Alternative: keep the user-ruling\'s wording.\n\nRecommendation: while the condition holds, rows rejected since the last alert make a new alert 24 hours after the last one; a pass with no rejection since the last alert clears the condition, and the next rejection then alerts at once.\n\n#new "While the condition holds, rows rejected since the last rejected-rows alert make the job write a new one 24 hours after the last; a pass that finds no row rejected since the last alert clears the condition, so the next rejection is reported on the pass that finds it."\n'
+REAL_ITEM_7_DOCUMENT_TEXT = '## Item 7 of 23: "a restore from the newest backup loses nothing"\n\nCondition 1 says each machine keeps sent events until a backup holds them, "So a restore from the newest backup loses nothing, however long ago that backup ran." You approved that sentence on 2026-10-14 (walk ghi-972-seat-service-design-open-defects-2026-10-14, item 9); this changes it because it fails when the restore follows the loss of ned-box\'s disk, since ned-box\'s own local events file goes with it, and when a machine\'s local file was set aside as corrupt after that backup.\n\n\nThe strongest case against: No harm found; it costs only the work or a short delay.\n\n#new_if_d Alternative: leave the sentence.\n\nRecommendation: qualify the promise, so whoever runs a restore after a disk loss, or after a local events file was set aside as corrupt, does not expect a complete record.\n\n#new "So a restore from the newest backup loses nothing that a machine\'s local events file still holds, however long ago that backup ran."\n'
+REAL_ITEM_1_DOCUMENT_TEXT = '## Item 1 of 5: close the cold-read speed-up measurement on its first-half result\n\nOn 2026-10-03 this agent-seat started a measurement: does a faster cold-read-full-run find fewer problems than the slower one? The measurement was planned in two halves, each a set of documents run both ways. The first half\'s interim result, on 2026-10-04, showed no loss: the faster run found as many of the known problems as the slower one (p=0.72, so no difference showed; [first-half results](file:///Volumes/nedhome/nedschorus-logs/seats/cold-read-improvement/cold-read-speed-up-measurement-first-half-2026-10-03/RESULTS-first-half-interim-2026-10-04.md)). Some scoring checks on the first half, and the whole second half, never ran.\n\nSince then the cold-read has changed a great deal: six reviewers instead of the old set, a cold-read-fast-read before every full run, and a planned rebuild ([GHI 2158, Rebuild the /cold-read skill so its programs do the mechanical steps and print each instruction when the agent needs it](https://github.com/nedschorus/nedschorus/issues/2158)). A second half would measure a cold-read that no longer exists.\n\nAlternative: plan a new measurement of today\'s cold-read, after the rebuild lands.\n\nThe case against this recommendation: the interim result rests on one small, partly scored sample, so "no loss" is weak evidence.\n\nRecommendation: close task #9, "Run the first half and bring results to the user", on the interim result, run no second half, and close task #10, which only prepared the scoring checks.\n'
+REAL_ITEM_3_1_DOCUMENT_TEXT = '## Item 3.1 of 6: "more work for agents" is not a case against\n\nEvery approval-walk item states, just before its recommendation, "the strongest case against it". Item 3 gave "a hook that edits briefs is more code to build and test than one sentence", and you answered: "The reason against is the usual, this is more work." The time agents spend building something costs you almost nothing; what costs you is what you have to read and rule on. I tried to save that as a note in Claude Code\'s memory, and the instruction-file guard refused: a memory note is not read at the moment it applies. The place an agent would meet the rule is this sentence in the walk-me-through skill, `.claude/skills/walk-me-through/SKILL.md`: "Just before each recommendation, state in one sentence the strongest case against it."\n\n#new Proposed: add after that sentence: "The work agents must do to build it is not a case against; more for the user to read or rule on is. When you find no other case against, write "The case against this recommendation: none found.""\n\nThe alternative: leave the skill as it is, and you keep pointing it out when an item does it.\n\nThe case against this recommendation: an agent barred from the easy reason may reach for a vague one, such as "this could have unforeseen effects", instead of writing "none found".\n\nRecommendation: add the two sentences to the walk-me-through skill.\n'
+REAL_CASES = (
+    ("a reply showing item 5 again with its recommendation reworded", REAL_ITEM_5_REPLY, REAL_ITEM_5_DOCUMENT_TEXT,
+     "#next_to_present item 5 of 23",
+     "Recommendation: while the condition holds, rows rejected since the last alert set off a new alert 24 hours "
+     "after the last one."),
+    ("an explanation of item 7 ending on its recommendation", REAL_ITEM_7_REPLY, REAL_ITEM_7_DOCUMENT_TEXT,
+     "#next_to_present item 7 of 23", "I recommend approving it: it costs one sentence and nothing more."),
+    ("a reply showing item 1 with its recommendation reworded", REAL_ITEM_1_REPLY, REAL_ITEM_1_DOCUMENT_TEXT,
+     "#next_to_present item 1 of 5", "Recommendation: close task #9,"),
+    ("a reply showing item 3.1 with its `#new Proposed:` line in bold", REAL_ITEM_3_1_REPLY,
+     REAL_ITEM_3_1_DOCUMENT_TEXT, "#next_to_present item 3.1 of 6", None))
+UNRELATED_ASK = "I recommend we also delete the 37 finished topic-worktrees today, if you agree."
+UNRELATED_ASK_CASE = ("item 1's reply with an unrelated ask added, which must block",
+                      REAL_ITEM_1_REPLY.replace("\n\n[Item 1 of 5 page]", f"\n\n{UNRELATED_ASK}\n\n[Item 1 of 5 page]"),
+                      REAL_ITEM_1_DOCUMENT_TEXT, "#next_to_present item 1 of 5", None)
+REAL_ITEM_3_1_PROPOSED_LINE =next(line for line in REAL_ITEM_3_1_REPLY.split("\n") if line.startswith("**Proposed:**"))
+
+
+# The fake answers for the prompt's numbered lines: `no` answers each as ASKS_NOTHING, `yes:N` (N 1 by default)
+# answers line N as ASKS_ELSE and the rest as ASKS_NOTHING, `waiting` answers each as WAITING_ITEM, `labels:<json
+# list>` answers each line as the label given, and `verdict:<json>` gives the whole structured output as written. A
+# label is turned into the two answers that make it; main fills the label and answer names in.
 FAKE_CLAUDE = """#!/usr/bin/env python3
-import json, os, sys, time
+import json, os, re, sys, time
+prompt = sys.stdin.read()
 with open(os.environ["FAKE_CLAUDE_CALLS"], "a") as calls:
-    calls.write(json.dumps({"argv": sys.argv[1:], "stdin": sys.stdin.read()}) + "\\n")
+    calls.write(json.dumps({"argv": sys.argv[1:], "stdin": prompt}) + "\\n")
 mode = os.environ.get("FAKE_CLAUDE_MODE", "no")
+count = len(re.findall(r"(?m)^\\d+\\. ", prompt.split("The numbered lines:\\n", 1)[-1]))
+if mode.startswith("verdict:"):
+    print(json.dumps({"type": "result", "is_error": False, "structured_output": json.loads(mode[len("verdict:"):])}))
+    sys.exit(0)
+if mode.startswith("labels:"):
+    labels = json.loads(mode[len("labels:"):])
+elif mode == "waiting":
+    labels = ["WAITING_ITEM"] * count
+else:
+    labels = ["ASKS_NOTHING"] * count
+    if mode.startswith("yes"):
+        labels[int(mode.split(":")[1]) - 1 if ":" in mode else 0] = "ASKS_ELSE"
+verdict = {"lines": [{"line_number": number, "CONCERNS_ANSWER": label == "WAITING_ITEM",
+                       "ASKS_ELSE_ANSWER": label == "ASKS_ELSE"} for number, label in enumerate(labels, 1)]}
 if mode == "sleep":
     time.sleep(30)
 if mode == "fail":
@@ -99,19 +152,14 @@ if mode == "stderr-only":
     sys.exit(1)
 if mode == "error-exit-0":
     print(json.dumps({"type": "result", "is_error": True, "result": "API overloaded",
-                      "structured_output": {"asks_user": False, "line_number": 0}}))
+                      "structured_output": verdict}))
     sys.exit(0)
-if mode in ("verdict-exit-1", "verdict-then-killed"):
-    print(json.dumps({"type": "result", "is_error": False,
-                      "structured_output": {"asks_user": False, "line_number": 0}}), flush=True)
-    if mode == "verdict-exit-1":
-        sys.exit(1)
+print(json.dumps({"type": "result", "is_error": False, "structured_output": verdict}), flush=True)
+if mode == "verdict-exit-1":
+    sys.exit(1)
+if mode == "verdict-then-killed":
     import signal
     os.kill(os.getpid(), signal.SIGKILL)
-asks = mode.startswith("yes")
-number = int(mode.split(":")[1]) if ":" in mode else (1 if asks else 0)
-print(json.dumps({"type": "result", "is_error": False,
-                  "structured_output": {"asks_user": asks, "line_number": number}}))
 """
 
 
@@ -168,8 +216,8 @@ class Case:
     def reply(self, *texts, opening=USER_PROMPT):
         self.records(opening, *(text_record(text) for text in texts))
 
-    def run(self, model="no", stop_hook_active=False, last_assistant_message=None, environment_extra=None,
-            stdin_text=None):
+    def run(self, model="yes", stop_hook_active=False, last_assistant_message=None, environment_extra=None,
+            stdin_text=None, bin_directory=FAKE_BIN):
         payload = {"hook_event_name": "Stop", "session_id": "test-session",
                    "transcript_path": str(self.transcript), "cwd": str(self.checkout),
                    "stop_hook_active": stop_hook_active}
@@ -178,7 +226,7 @@ class Case:
         environment = {name: value for name, value in os.environ.items()
                        if name not in ("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
                                        "CLAUDE_CODE_SESSION_ATTENDED")}
-        environment.update({"PATH": f"{FAKE_BIN}{os.pathsep}{os.environ['PATH']}",
+        environment.update({"PATH": f"{bin_directory}{os.pathsep}{os.environ['PATH']}",
                             "FAKE_CLAUDE_CALLS": str(self.calls), "FAKE_CLAUDE_MODE": model,
                             hook.LOG_PATH_VARIABLE: str(self.log)})
         environment.update(environment_extra or {})
@@ -215,30 +263,76 @@ def check_blocked(case_name, result, *phrases):
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 
-def test_a_clear_question_blocks_without_the_model_and_is_logged():
+def test_a_question_mark_or_an_ask_phrase_sends_the_line_to_the_model_and_a_block_is_logged():
     case = Case()
     case.reply("The tests passed.\n\nShould I merge the pull request now?\n\nItem 2 of 10 is waiting for your answer.")
-    result = case.run(model="no")
-    check_blocked("a sentence ending in a question mark blocks", result,
-                  '"Should I merge the pull request now?"', "the hook's code read it as a clear question")
-    check("a clear question is decided without the model", case.model_calls() == [], case.model_calls())
+    result = case.run(model="yes")
+    check_blocked("a sentence ending in a question mark blocks when the model says it asks the user something", result,
+                  '"Should I merge the pull request now?"', "the model judged that it asks him something")
+    calls = case.model_calls()
+    check("a sentence ending in a question mark goes to the model, numbered",
+          len(calls) == 1 and numbered_lines(calls[0]) == "1. Should I merge the pull request now?", calls)
     entries = case.logged()
     check("the refusal is logged with its time, session, walk, sentence and what decided",
           len(entries) == 1 and entries[0]["session"] == "test-session"
           and entries[0]["walk"] == "poem-page-2026-10-12"
           and entries[0]["sentence"] == "Should I merge the pull request now?"
-          and entries[0]["decided_by"] == "code" and entries[0]["time"].endswith("+00:00"), entries)
+          and entries[0]["decided_by"] == "model" and entries[0]["time"].endswith("+00:00"), entries)
+    check_silent("a sentence ending in a question mark passes when the model says it asks nothing",
+                 case.run(model="no"))
+    check_blocked("a sentence ending in a question mark blocks when the model check fails", case.run(model="fail"),
+                  '"Should I merge the pull request now?"', "the hook's `claude -p` call that has the model judge")
     for case_name, text in (
-            ("`say yes` blocks", "The fix is ready. Say yes and I will push it."),
-            ("`answer A` blocks", "The fix is ready. Answer A and I will push it."),
-            ("`waiting for your answer` on a question that is not an item blocks",
+            ("`say yes`", "The fix is ready. Say yes and I will push it."),
+            ("`answer A`", "The fix is ready. Answer A and I will push it."),
+            ("`waiting for your answer` on a question that is not an item",
              "The cleanup of the old directories is still waiting for your answer."),
-            ("a bold question blocks", "**Do you agree with merging the two lines?** A: merge. D: keep both."),
-            ("a cue split by bold marks blocks once the marks are dropped", "**Should** I go ahead with the merge."),
-            ("a question relayed in quotes from another agent blocks",
+            ("a bold question", "**Do you agree with merging the two lines?** A: merge. D: keep both."),
+            ("a cue split by bold marks, once the marks are dropped", "**Should** I go ahead with the merge."),
+            ("a question relayed in quotes from another agent",
              'merge-lane-2 asks: "Should the hook be fixed today?" I recommend yes.')):
+        case = Case()
         case.reply(text)
-        check_blocked(case_name, case.run(model="no"), "approval-walk question check")
+        check_blocked(case_name + " blocks when the model says it asks the user something", case.run(model="yes"),
+                      "approval-walk question check", "the model judged that it asks him something")
+        check_silent(case_name + " passes when the model says it asks nothing", case.run(model="no"))
+        check(case_name + " goes to the model each time", len(case.model_calls()) == 2, case.model_calls())
+
+
+# Lines agents wrote during approval-walks, one of each kind that holds a `?` or an ask phrase but asks the user nothing.
+LOGGED_LINES_THAT_ASK_NOTHING = (
+    ("the walk-me-through skill's answer line, with its item not shown", ANSWER_LINE),
+    ("an answer to his question that restates the question first",
+     "**Do we need it?** The processes cost nothing so far. The /tmp quota did stop work yesterday, so a daily /tmp "
+     "check passes the project's bar for adding a guard: that failure has already happened. The process part is "
+     "cheap to include with it."),
+    ("the advisor-check questions the walk-me-through skill has the agent write",
+     "Walk-start advisor call, on the draft above. Does anything change what the items decide? Then the six "
+     "questions."),
+    ("the waiting item's recommendation reworded", "Recommendation: answer A if the disk is back, or D if it isn't."),
+    ("a check of what his last message meant as an answer to the waiting item",
+     "I'm taking your \"Yeah\" as A, approve. Reply A to confirm."),
+    ("a question routed to a later walk item",
+     "One thing waits on you later, not now. Before merging that pull request, merge-lane-2 needs your approval of "
+     "the not-restarted message it adds. I'll bring that to you once questions are allowed again."),
+    ("an ask phrase inside a negation", "cold-read-improvement says the docstring fix for the record-names guard's "
+     "list of what it does not catch is up for review: [PR 2368](https://github.com/nedschorus/nedschorus/pull/2368)."
+     " Nothing here needs your answer."),
+    ("a status report", "I'm continuing your request from the last session: everything that needs your ruling is "
+     "collected into one approval-walk. Meanwhile, without needing you, I merged two GHI-MD pull requests, checked "
+     "eight rulings that earlier pull requests had cited (all eight match your own words in the transcripts), and "
+     "restarted the code-review queue in the background."),
+    ("a question the agent asks itself", "Now #310 and #315's cleanup checks: are the locked worktrees free yet?"),
+)
+
+
+def test_each_kind_of_logged_line_that_asks_nothing_passes_once_the_model_says_so():
+    for case_name, line in LOGGED_LINES_THAT_ASK_NOTHING:
+        case = Case()
+        case.reply("PR 1922 merged.\n\n" + line)
+        check_silent(f"{case_name} passes when the model says it asks nothing", case.run(model="no"))
+        calls = case.model_calls()
+        check(f"{case_name} goes to the model", len(calls) == 1 and numbered_lines(calls[0]).startswith("1. "), calls)
 
 
 def test_the_block_message_says_what_to_do():
@@ -248,7 +342,8 @@ def test_the_block_message_says_what_to_do():
     for case_name, phrase in (
             ("the message says the hook refused on purpose", "this hook refused to end your turn on purpose"),
             ("the message names the walk and quotes the flagged text",
-             "the open approval-walk poem-page-2026-10-12 (the hook's code read it as a clear question). "
+             "the open approval-walk poem-page-2026-10-12 (the model judged that it asks him something other than a "
+             "waiting item's decision). "
              "The flagged text: \"Should I merge the pull request now?\""),
             ("the message names the waiting item", "goes to the waiting item, item 2,"),
             ("the message names the interruption item's number and the new total",
@@ -299,11 +394,11 @@ def test_a_reply_with_nothing_question_like_passes():
     check("a reply with nothing question-like never calls the model", case.model_calls() == [], case.model_calls())
 
 
-def test_an_unclear_line_goes_to_the_model():
+def test_a_question_like_line_goes_to_the_model():
     case = Case()
     case.reply("The fix has a second part, and I recommend building it next.")
     result = case.run(model="yes:1")
-    check_blocked("an unclear line the model says asks the user blocks", result,
+    check_blocked("a question-like line the model says asks the user blocks", result,
                   '"The fix has a second part, and I recommend building it next."',
                   "the model judged that it asks him something")
     calls = case.model_calls()
@@ -312,17 +407,78 @@ def test_an_unclear_line_goes_to_the_model():
           len(calls) == 1 and argv[argv.index("--model") + 1] == hook.MODEL == "claude-haiku-5-5"
           and json.loads(argv[argv.index("--settings") + 1]) == {"disableAllHooks": True}
           and "--no-session-persistence" in argv, calls)
-    check("the model is given the unclear line, numbered, and the walk's total and waiting item",
+    check("the model is given the question-like line, numbered, and the walk's total and waiting item",
           calls and "1. The fix has a second part, and I recommend building it next." in calls[0]["stdin"]
           and "`Item N of 10`, or `item N` for short, and item 2 waits for his answer" in calls[0]["stdin"], calls)
     check("a block the model decided is logged as the model's",
           [entry["decided_by"] for entry in case.logged()] == ["model"], case.logged())
-    check_silent("an unclear line the model says asks nothing passes", case.run(model="no"))
+    check_silent("a question-like line the model says asks nothing passes", case.run(model="no"))
     case.reply("Waiting on you: should line 34 change, as item 2 of 10 asks?")
-    check_silent("a clear question on a line naming an item is unclear, so the model decides", case.run(model="no"))
+    check_silent("a question on a line naming an item goes to the model too", case.run(model="no"))
     case.reply("I recommend building it next.\n\nThat also fixes the second part, if you agree with the plan.")
     check_blocked("the model's line number picks the sentence named", case.run(model="yes:2"),
                   '"That also fixes the second part, if you agree with the plan."')
+
+
+def numbered_lines(call):
+    return call["stdin"].split("The numbered lines:\n", 1)[1]
+
+
+def test_a_line_about_only_the_waiting_items_decision_passes():
+    for case_name, reply, item_text, minutes, reworded in REAL_CASES:
+        case = Case(document=f"# A walk\n\n{item_text}\n", minutes=minutes)
+        case.reply(reply)
+        check_silent(f"{case_name} passes when the model labels its lines as about the waiting item",
+                     case.run(model="waiting"))
+        calls = case.model_calls()
+        if reworded is None:
+            check(f"{case_name}: the model is not given the `#new Proposed:` line",
+                  all(REAL_ITEM_3_1_PROPOSED_LINE.replace("**", "") not in numbered_lines(call) for call in calls),
+                  calls)
+            continue
+        check(f"{case_name}: the model is given the waiting item's text and the reworded line, numbered",
+              len(calls) == 1 and item_text.split("\n")[0] in calls[0]["stdin"]
+              and any(reworded in line.split(". ", 1)[1]
+                      for line in numbered_lines(calls[0]).split("\n") if ". " in line), calls)
+        check_blocked(f"{case_name} still blocks when the model labels a line as asking something else",
+                      case.run(model="yes"), "the model judged that it asks him something other than a waiting item's decision")
+    case = Case(document=f"# A walk\n\n{REAL_ITEM_3_1_DOCUMENT_TEXT}\n", minutes="#next_to_present item 3.1 of 6")
+    heading = REAL_ITEM_3_1_DOCUMENT_TEXT.split("\n")[0]
+    closing = REAL_ITEM_3_1_REPLY.rstrip().split("\n")[-1]
+    case.reply(f"{heading}\n\n{REAL_ITEM_3_1_PROPOSED_LINE}\n\n{closing}")
+    check_silent("a `#new Proposed:` line shown as `**Proposed:**` matches the walk-document's line",
+                 case.run(model="yes"))
+    check("a `#new Proposed:` line shown as `**Proposed:**` never reaches the model", case.model_calls() == [],
+          case.model_calls())
+    case.reply(f"{heading}\n\n#new {REAL_ITEM_3_1_PROPOSED_LINE.replace('**', '')}\n\n{closing}")
+    check_silent("the walk-document's `#new Proposed:` line copied with its marker matches too", case.run(model="yes"))
+    check("a hashtag marker is dropped only when a word character follows `#`, so a heading keeps its text",
+          hook.normalized("#new_if_d Alternative: x") == "alternative: x" and hook.normalized("## Item 3") == "item 3"
+          and hook.normalized("#9 is closed") == "is closed", hook.normalized("#new_if_d Alternative: x"))
+
+
+def test_a_question_about_something_other_than_the_waiting_item_still_blocks():
+    _, reply, item_text, minutes, _ = UNRELATED_ASK_CASE
+    case = Case(document=f"# A walk\n\n{item_text}\n", minutes=minutes)
+    unrelated = UNRELATED_ASK
+    case.reply(reply)
+    result = case.run(model=f'labels:["{hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION}", '
+                            f'"{hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE}"]')
+    check_blocked("an unrelated ask without a question mark, labelled as asking something else, blocks", result,
+                  f'"{unrelated}"', "the model judged that it asks him something other than a waiting item's decision")
+    case.reply(REAL_ITEM_1_REPLY.replace("**Recommendation:** close task #9",
+                                         "**Recommendation:** shall I close task #9"))
+    calls_before = len(case.model_calls())
+    check_silent("a reworded recommendation holding an ask phrase passes when the model says it concerns the waiting "
+                 "item", case.run(model="waiting"))
+    calls = case.model_calls()[calls_before:]
+    check("a reworded recommendation holding an ask phrase goes to the model",
+          len(calls) == 1 and "shall I close task #9" in numbered_lines(calls[0]), calls)
+    case.reply(REAL_ITEM_1_REPLY.replace("Also close task #10, which only prepared the scoring checks.",
+                                         "Do you approve closing task #10 too?"))
+    check_blocked("a reworded recommendation ending in a question mark blocks when the model says it asks something "
+                  "else", case.run(model="yes"), 'Do you approve closing task #10 too?"',
+                  "the model judged that it asks him something")
 
 
 def test_a_failed_model_check_blocks():
@@ -339,32 +495,86 @@ def test_a_failed_model_check_blocks():
             ("a model call that prints a verdict but exits 1 blocks", "verdict-exit-1",
              "claude exited 1 reporting an error"),
             ("a model call killed by a signal after printing a verdict blocks", "verdict-then-killed",
-             "claude exited -9 reporting an error")):
-        check_blocked(case_name, case.run(model=mode), "the hook's `claude -p` call that has the model judge this unclear text failed", phrase,
+             "claude exited -9 reporting an error"),
+            ("a model verdict that answers for no line blocks", 'verdict:{"lines": []}',
+             "claude's verdict does not give each of the 1 numbered lines exactly one entry with a true or false")):
+        check_blocked(case_name, case.run(model=mode), "the hook's `claude -p` call that has the model judge this question-like text failed", phrase,
                       '"The fix has a second part, and I recommend building it next."')
     check("a block after a failed model check is logged as such",
-          [entry["decided_by"] for entry in case.logged()] == ["model-check-failed"] * 7, case.logged())
+          [entry["decided_by"] for entry in case.logged()] == ["model-check-failed"] * 8, case.logged())
     saved_path = os.environ["PATH"]
     os.environ["FAKE_CLAUDE_CALLS"] = str(case.calls)
     try:
         os.environ["PATH"] = str(SUITE_ROOT / "no-such-directory")
-        line, failure = hook.model_judgement(["x"], ["x"], "10", "2")
+        line, failure = hook.model_judgement(["x"], ["x"], "10", "2", "## Item 2 of 10")
         check("a model that cannot be run is a failure", line is None and "could not be run" in (failure or ""),
               failure)
         os.environ["PATH"] = f"{FAKE_BIN}{os.pathsep}{saved_path}"
         os.environ["FAKE_CLAUDE_MODE"] = "sleep"
-        line, failure = hook.model_judgement(["x"], ["x"], "10", "2", timeout_seconds=1)
+        line, failure = hook.model_judgement(["x"], ["x"], "10", "2", "## Item 2 of 10", timeout_seconds=1)
         check("a model call past its time limit is a failure",
               line is None and "no answer within 1 seconds" in (failure or ""), failure)
-        os.environ["FAKE_CLAUDE_MODE"] = "yes:7"
-        line, failure = hook.model_judgement(["a", "b"], ["a", "b"], "10", "2")
-        check("a line number out of range picks the first unclear line", (line, failure) == ("a", None),
-              (line, failure))
-        for mode, expected in (("yes:0", "a"), ("yes:3", "c"), ("yes:2", "b")):
+        for mode, expected in (("yes:3", "c"), ("yes:2", "b"), ("no", None), ("waiting", None),
+                               (f'labels:["{hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION}", "{hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION}", '
+                                f'"{hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE}"]', "c")):
             os.environ["FAKE_CLAUDE_MODE"] = mode
-            line, failure = hook.model_judgement(["a", "b", "c"], ["a", "b", "c"], "10", "2")
-            check(f"the model's answer {mode} picks unclear line {expected}", (line, failure) == (expected, None),
+            line, failure = hook.model_judgement(["a", "b", "c"], ["a", "b", "c"], "10", "2", "## Item 2 of 10")
+            check(f"the model's answer {mode} picks question-like line {expected}", (line, failure) == (expected, None),
                   (line, failure))
+        concerns = hook.AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER
+        asks_else = hook.AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER
+
+        def entry(number, concerns_answer, asks_else_answer):
+            return {"line_number": number, concerns: concerns_answer, asks_else: asks_else_answer}
+        os.environ["FAKE_CLAUDE_MODE"] = "verdict:" + json.dumps({"lines": [entry(2, False, True), entry(1, False, True)]})
+        line, failure = hook.model_judgement(["a", "b"], ["a", "b"], "10", "2", "## Item 2 of 10")
+        check("answers given out of order are read by line number, and the first line asking something else is named",
+              (line, failure) == ("a", None), (line, failure))
+        for case_name, answers, expected in (
+                ("a line that concerns the waiting item and also asks something else is named: asking else wins",
+                 [entry(1, False, False), entry(2, True, True)], "b"),
+                ("a line that only concerns the waiting item, or asks nothing, is not named",
+                 [entry(1, True, False), entry(2, False, False)], None)):
+            os.environ["FAKE_CLAUDE_MODE"] = "verdict:" + json.dumps({"lines": answers})
+            line, failure = hook.model_judgement(["a", "b"], ["a", "b"], "10", "2", "## Item 2 of 10")
+            check(case_name, (line, failure) == (expected, None), (line, failure))
+        check("code turns the two answers into the three labels",
+              hook.agent_reply_line_model_labels_from_true_or_false_model_answers([entry(1, True, True), entry(2, True, False), entry(3, False, False)], 3)
+              == [hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE,
+                  hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION,
+                  hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION])
+        for case_name, verdict in (
+                ("a verdict with no lines is a failure", {"asks_user": False}),
+                ("a verdict whose lines are not a list is a failure", {"lines": "asks_nothing"}),
+                ("a verdict whose lines are not objects is a failure", {"lines": [False, False]}),
+                ("a verdict with an entry for too few lines is a failure", {"lines": [entry(1, False, False)]}),
+                ("a verdict with an entry for a line not given is a failure",
+                 {"lines": [entry(1, False, False), entry(2, False, False), entry(3, False, True)]}),
+                ("a verdict answering for one line twice is a failure",
+                 {"lines": [entry(1, False, False), entry(1, False, False)]}),
+                ("a verdict answering for every line but one of them twice is a failure",
+                 {"lines": [entry(1, False, False), entry(2, False, False), entry(2, False, True)]}),
+                ("a verdict with an answer that is not true or false is a failure",
+                 {"lines": [entry(1, False, False), entry(2, False, "maybe")]}),
+                ("a verdict whose concerns answer is not true or false is a failure",
+                 {"lines": [entry(1, False, False), entry(2, 1, False)]}),
+                ("a verdict with a missing answer is a failure",
+                 {"lines": [entry(1, False, False), {"line_number": 2, concerns: False}]}),
+                ("a verdict whose line number is not a whole number is a failure",
+                 {"lines": [entry(1, False, False), entry("2", False, True)]})):
+            os.environ["FAKE_CLAUDE_MODE"] = "verdict:" + json.dumps(verdict)
+            line, failure = hook.model_judgement(["a", "b"], ["a", "b"], "10", "2", "## Item 2 of 10")
+            expected = "without a verdict (KeyError('lines'))" if "lines" not in verdict else \
+                "claude's verdict does not give each of the 2 numbered lines exactly one"
+            check(case_name, line is None and expected in (failure or ""), (line, failure))
+        calls_before = len(case.model_calls())
+        os.environ["FAKE_CLAUDE_MODE"] = "no"
+        hook.model_judgement(["a"], ["a"], "10", "2", "## Item 2 of 10")
+        hook.model_judgement(["a"], ["a"], "10", "2 and 2.1", "## Item 2 of 10\n\n## Item 2.1 of 10")
+        one, two = (call["stdin"] for call in case.model_calls()[calls_before:])
+        check("the prompt names one waiting item as `item N waits` and two as `items N and P wait`",
+              "and item 2 waits for his answer" in one and "and items 2 and 2.1 wait for his answer" in two,
+              (one[:600], two[:600]))
     finally:
         os.environ["PATH"] = saved_path
         os.environ.pop("FAKE_CLAUDE_MODE", None)
@@ -499,7 +709,11 @@ def test_a_question_held_in_an_interruption_item_is_not_checked():
             ("under a shared heading, an interruption item's question passes after items without their own",
              partly_opened, "Should I rename the hook?", True),
             ("under a shared heading whose items have no openings, the interruption item's question blocks",
-             without_openings, "Should I file the GHI?", False)):
+             without_openings, "Should I file the GHI?", False),
+            ("under a shared heading whose items have no openings and that keeps a Withdrawn version, the "
+             "interruption item's question still blocks",
+             without_openings + "\n#### Withdrawn version 1 of items 2.1 and 3\n\nShould I file two GHIs?\n",
+             "Should I file the GHI?", False)):
         case = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + shared,
                     minutes="#next_to_present item 2 of 11")
         case.reply(reply_line + "\n\n" + closing)
@@ -530,8 +744,9 @@ def test_the_shown_item_and_quotes_from_it_are_not_checked():
     case = Case()
     case.reply("Recorded your answer to item 1.\n\n" + ITEM_2_SHOWN)
     check_silent("a question inside the item the reply shows does not block", case.run(model="yes"))
-    case.reply(ITEM_2_SHOWN + "\n\nShould I also add a link to it?")
-    check_blocked("a question after the shown item still blocks", case.run(), '"Should I also add a link to it?"')
+    after = Case()
+    after.reply(ITEM_2_SHOWN + "\n\nShould I also add a link to it?")
+    check_blocked("a question after the shown item still blocks", after.run(), '"Should I also add a link to it?"')
     case.reply('You asked about "Do you agree that agents look there first?" It means the wiki comes first.')
     check_silent("a quote of the walk-document's text is not checked", case.run(model="no"))
     case.reply("> Do you agree that agents look there first?\n\nThat line is the item's question.")
@@ -548,6 +763,83 @@ def test_the_shown_item_and_quotes_from_it_are_not_checked():
     numbered.reply(ITEM_2_SHOWN)
     check_silent("the shown item's answer line passes without the number and the alternative the walk-document adds",
                  numbered.run(model="yes"))
+
+
+def test_a_withdrawn_versions_lines_under_a_shared_heading_are_not_the_shown_items():
+    document = (f"# The poem page: approval-walk\n\n## Items 2 and 3 of 10: the poem page\n\n"
+                f"**Item 2: where it lives.** Should I keep the poem page in the wiki?\n\n"
+                f"#### Withdrawn version 1 of item 2\n\nShould I drop the poem page?\n\n"
+                f"**Item 3: its name.** Should I keep its name?\n\n{ANSWER_LINE}\n")
+    for case_name, line, passes in (
+            ("a reply showing a shared heading passes the live item's own line",
+             "**Item 2: where it lives.** Should I keep the poem page in the wiki?", True),
+            ("a reply showing a shared heading passes the line of an item whose opening follows another item's "
+             "Withdrawn version", "**Item 3: its name.** Should I keep its name?", True),
+            ("a reply showing a shared heading still has a line copied from a Withdrawn version under it checked",
+             "Should I drop the poem page?", False)):
+        case = Case(document=document)
+        case.reply("## Items 2 and 3 of 10: the poem page\n\n" + line)
+        if passes:
+            check_silent(case_name, case.run(model="yes"))
+        else:
+            check_blocked(case_name, case.run(), '"Should I drop the poem page?"')
+
+
+HANDOFF_WALK_ITEM_1_2_LINES = (
+    "## Item 1.2 of 6: a wait limit for each kind of background Bash task",
+    "Item 1.1, from about 9,000 measured runs, proposed 90 minutes for a test suite, 105 for nc-mutation-testing, 75 for every other kind, and 0 for a waiter (explained below). In [handoff-design.md](https://github.com/nedschorus/nedschorus/blob/main/nc-systems/handoff/handoff-design.md), the threshold hook's old text: \"The hook now counts a background Bash task as in flight while it is younger than `--background-task-wait-minutes` and no completion notification names it, judging each task's wait on its own;\"",
+    "#new The new text: \"The hook now counts a background Bash task as in flight while it is younger than its kind's wait limit and no completion notification names it, judging each task's wait on its own. A table the hook reads gives each kind its command patterns and its wait limit, and replaces the hook's `--background-task-wait-minutes` option: the first kind whose pattern matches the command is the task's kind, a command no pattern matches gets 75 minutes, and a kind that only waits, such as `gh pr checks --watch` or a `sleep` loop, has a limit of 0 minutes, so it is never in flight.\"",
+    "The rule for a subagent's own background work, approved 2026-10-30, reads the same table. [advisor]",
+    "A waiter, such as `gh pr checks --watch`, does no work; it only watches for an outside event. A limit of 0 means the handoff never waits for it, and the next agent-session starts the watch again.",
+    "The advisor reviewed this item, and the new text had its own fast read.",
+    "#case_against medium: the alternative needs no table kept up to date, but holds the handoff up to 30 minutes longer behind a stuck task. [advisor]",
+    "The alternative: one limit of 105 minutes for every kind, waiters at 0, and no table.",
+    "Recommendation: adopt the table and the new text.",
+)
+HANDOFF_WALK_ITEM_1_2_REPLY = "\n\n".join((
+    "Last ruled on: item 1.1.1 (the glossary terms), which you approved on 2026-11-01.",
+    "I found two work-snapshots in this seat's worktree. Both held the same four drafts in docs/drafts/ (work-with-mac skill, its proposals, the bang-prefix sentence and the objective section). Those files are still there, uncommitted, with the same contents, so there was nothing to restore. I deleted both snapshots.",
+    "## Item 1.2 of 6: a wait limit for each kind of background Bash task",
+    "Item 1.1, from about 9,000 measured runs, proposed 90 minutes for a test suite, 105 for nc-mutation-testing, 75 for every other kind, and 0 for a waiter (explained below). In [handoff-design.md](https://github.com/nedschorus/nedschorus/blob/main/nc-systems/handoff/handoff-design.md), the threshold hook's old text: \"The hook now counts a background Bash task as in flight while it is younger than `--background-task-wait-minutes` and no completion notification names it, judging each task's wait on its own;\"",
+    "If you approve, the new text: \"The hook now counts a background Bash task as in flight while it is younger than its kind's wait limit and no completion notification names it, judging each task's wait on its own. A table the hook reads gives each kind its command patterns and its wait limit, and replaces the hook's `--background-task-wait-minutes` option: the first kind whose pattern matches the command is the task's kind, a command no pattern matches gets 75 minutes, and a kind that only waits, such as `gh pr checks --watch` or a `sleep` loop, has a limit of 0 minutes, so it is never in flight.\"",
+    "The rule for a subagent's own background work, approved 2026-10-30, reads the same table. [advisor]",
+    "A waiter, such as `gh pr checks --watch`, does no work; it only watches for an outside event. A limit of 0 means the handoff never waits for it, and the next agent-session starts the watch again.",
+    "The advisor reviewed this item, and the new text had its own fast read.",
+    "#case_against medium: the alternative needs no table kept up to date, but holds the handoff up to 30 minutes longer behind a stuck task. [advisor]",
+    "The alternative: one limit of 105 minutes for every kind, waiters at 0, and no table.",
+    "Recommendation: adopt the table and the new text.",
+    "[Item 1.2 of 6, a wait limit for each kind of background Bash task](https://claude.ai/artifact/T2uhWgiK9eFspNAiZ5MEyb) · A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · E explain · O other options",
+))
+
+
+def test_a_new_text_line_shown_as_if_you_approve_the_new_text_is_the_items_own_text():
+    document = "# Handoff wait limits: approval-walk\n\n" + "\n\n".join(HANDOFF_WALK_ITEM_1_2_LINES) + "\n"
+    case = Case(minutes="#next_to_present item 1.2 of 6", document=document)
+    case.reply(HANDOFF_WALK_ITEM_1_2_REPLY)
+    check_silent("the reply that showed item 1.2's `#new` line as `If you approve, the new text:` passes",
+                 case.run(model="yes"))
+    check("that reply sends no line to the model", case.model_calls() == [], case.model_calls())
+    for case_name, document_line, shown_line in (
+            ("a `#new` line with no `The new text:` passes shown after `If you approve, the new text:`, "
+             "whatever the case of its first letter",
+             "#new The threshold-hook bullet becomes: \"The hook waits.\"",
+             "If you approve, the new text: the threshold-hook bullet becomes: \"The hook waits.\""),
+            ("a `#new_if_d` line passes shown after `If you disapprove, the new text:`",
+             "#new_if_d The new text: the hook waits unless you stop it.",
+             "If you disapprove, the new text: the hook waits unless you stop it."),
+            ("a `#new` line that opens with a list mark passes shown after `If you approve, the new text:`",
+             "- #new The new text: the hook waits for the list.",
+             "If you approve, the new text: the hook waits for the list."),
+            ("a `#new` line that opens with a quote mark passes shown after `If you approve, the new text:`",
+             "> #new The new text: the hook waits for the quote.",
+             "If you approve, the new text: the hook waits for the quote.")):
+        varied = Case(minutes="#next_to_present item 1.2 of 6",
+                      document=document.replace(HANDOFF_WALK_ITEM_1_2_LINES[2], document_line))
+        varied.reply(HANDOFF_WALK_ITEM_1_2_REPLY.replace(HANDOFF_WALK_ITEM_1_2_REPLY.split("\n\n")[4], shown_line))
+        check_silent(case_name, varied.run(model="yes"))
+    case.reply(HANDOFF_WALK_ITEM_1_2_REPLY.replace("its kind's wait limit", "a wait limit you choose"))
+    check_blocked("a shown new text that differs from the item's `#new` line still goes to the model",
+                  case.run(model="yes"), "If you approve, the new text:")
 
 
 def test_every_turn_is_checked_whoever_started_it():
@@ -611,9 +903,9 @@ def test_the_refusal_log():
 def test_which_line_is_flagged_and_how_lines_are_joined():
     case = Case()
     case.reply("Should I merge it now?\n\nShould I also tag it?")
-    check_blocked("of two clear questions, the first is flagged", case.run(), '"Should I merge it now?"')
+    check_blocked("of two questions the model flags, the first is flagged", case.run(), '"Should I merge it now?"')
     case.reply("I recommend merging it.\n\nI recommend tagging it too.")
-    check_blocked("after a failed model check, the first unclear line is flagged", case.run(model="fail"),
+    check_blocked("after a failed model check, the first question-like line is flagged", case.run(model="fail"),
                   '"I recommend merging it."')
     case.reply("Still waiting for you:\n- the cleanup of the old directories;\n- the naming change.\n\nDone.")
     case.run(model="no")
@@ -793,7 +1085,7 @@ def test_the_closing_line_and_the_item_ending_are_the_walk_skills():
 SUB_STEP_2_1_NO_DECISION_CLOSING_LINE = "[No decision here; type N or next to continue.](https://claude.ai/artifact/p21)"
 
 
-def test_a_no_decision_sub_steps_line_is_skipped_only_while_a_sub_step_waits():
+def test_the_no_decision_line_is_skipped_whatever_item_waits():
     sub_step = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + INTERRUPTION_ITEM,
                     minutes="#next_to_present item 2.1 of 11")
     sub_step.reply("PR 1922 merged.\n\n" + SUB_STEP_2_1_NO_DECISION_CLOSING_LINE)
@@ -803,9 +1095,61 @@ def test_a_no_decision_sub_steps_line_is_skipped_only_while_a_sub_step_waits():
     check_blocked("the no-decision line with text after it is checked", sub_step.run(model="yes"),
                   "approval-walk question check")
     whole_item = Case()
-    whole_item.reply("PR 1922 merged.\n\n" + SUB_STEP_2_1_NO_DECISION_CLOSING_LINE)
-    check_blocked("the no-decision line is checked while a whole item waits", whole_item.run(model="yes"),
-                  "approval-walk question check")
+    for case_name, line in (
+            ("the no-decision line a whole item's summary ended with passes, since it asks nothing",
+             "[No decision here; type N or next to continue.](https://claude.ai/artifact/EfeHPme4RgDpPRFiVaXegU)"),
+            ("the no-decision line without its link passes", "No decision here; type N or next to continue.")):
+        whole_item.reply("No decision here.\n\n" + line)
+        check_silent(case_name, whole_item.run(model="yes"))
+    check("the no-decision line of a whole item never reaches the model", whole_item.model_calls() == [],
+          whole_item.model_calls())
+
+
+def test_an_ask_phrase_only_inside_quoted_text_goes_to_the_model():
+    case = Case()
+    explanation = ('The walk skill says an item that asks no decision, like the summary, ends with the line "No '
+                   'decision here; type N or next to continue." I wrote exactly that line, and two hooks refused it:')
+    case.reply(explanation)
+    check_silent("an ask phrase quoted in an explanation passes when the model says it asks nothing",
+                 case.run(model="no"))
+    check("the line with the quoted ask phrase went to the model", len(case.model_calls()) == 1, case.model_calls())
+    check_blocked("the same line blocks when the model says it asks the user something", case.run(model="yes:1"),
+                  "the model judged that it asks him something")
+    case.reply('merge-lane-2 says: "Answer A and I will merge it."')
+    check_blocked("an ask relayed in quotes from another agent still blocks once the model says so",
+                  case.run(model="yes:1"), "approval-walk question check")
+
+
+def test_a_hyphenated_word_after_yes_or_no_is_not_an_ask():
+    case = Case()
+    for case_name, text in (
+            ("a quoted task title with `a no-decision` passes without the model",
+             'I started a background subagent on task #392, "Walk hooks contradict SKILL.md on a no-decision '
+             'item\'s closing line".'),
+            ("`on a no-decision item` outside quotes passes", "The hook now passes the line on a no-decision item."),
+            ("`type no-op` passes", "Then type no-op lines into the test file.")):
+        case.reply(text)
+        check_silent(case_name, case.run(model="yes"))
+    check("a hyphenated word after yes or no never reaches the model", case.model_calls() == [], case.model_calls())
+    case.reply("The fix is ready; on a yes I will push it.")
+    check_blocked("`on a yes` still goes to the model, and blocks when the model says it asks the user something",
+                  case.run(model="yes"), "the model judged that it asks him something")
+
+
+def test_an_answer_cue_followed_by_another_hyphenated_word_goes_to_the_model():
+    for case_name, text in (("`Type A-D`", "Type A-D to answer."),
+                            ("`Say yes-or-no`", "Say yes-or-no and I will merge it."),
+                            ("`on a yes-or-no`", "I will merge it on a yes-or-no from you."),
+                            ("`on a yes-decision`", "I will merge it on a yes-decision from you."),
+                            ("`Reply A-OP`", "Reply A-OP to approve the operation."),
+                            ("`Type D-OP`", "Type D-OP to drop the operation."),
+                            ("`Say no-opinion`", "Say no-opinion if you have none.")):
+        case = Case()
+        case.reply(text)
+        check_blocked(case_name + " blocks when the model says it asks the user something", case.run(model="yes:1"),
+                      "the model judged that it asks him something")
+        check(case_name + " went to the model", len(case.model_calls()) == 1, case.model_calls())
+        check_silent(case_name + " passes when the model says it asks nothing", case.run(model="no"))
 
 
 PUBLISH_FAILED_LINE = "#item_page item {number} of {total} publish failed: the Artifact tool timed out"
@@ -838,23 +1182,68 @@ def test_the_closing_line_without_its_link_is_skipped_only_for_an_item_whose_pub
                   two_waiting.run(model="yes"), "approval-walk question check", "Item 3 of 10, the hook")
 
 
-def test_the_no_decision_line_without_its_link_is_skipped_only_for_a_sub_step_whose_publish_failed():
-    bare = "No decision here; type N or next to continue."
-    document = WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + INTERRUPTION_ITEM
-    failed = Case(document=document,
-                  minutes=PUBLISH_FAILED_LINE.format(number="2.1", total=11) + "\n#next_to_present item 2.1 of 11")
-    failed.reply("PR 1922 merged.\n\n" + bare)
-    check_silent("the no-decision line without its link passes for a sub-step whose newest publish failed",
-                 failed.run(model="yes"))
-    published = Case(document=document,
-                     minutes="#item_page item 2.1 of 11 https://claude.ai/artifact/p21\n#next_to_present item 2.1 of 11")
-    published.reply("PR 1922 merged.\n\n" + bare)
-    check_blocked("the no-decision line without its link is checked for a sub-step that has a page",
-                  published.run(model="yes"), "approval-walk question check")
-    whole_item = Case(minutes=PUBLISH_FAILED_LINE.format(number=2, total=10) + "\n#next_to_present item 2 of 10")
-    whole_item.reply("PR 1922 merged.\n\n" + bare)
-    check_blocked("the no-decision line without its link is checked while a whole item whose publish failed waits",
-                  whole_item.run(model="yes"), "approval-walk question check")
+def test_a_message_ending_with_a_closing_line_blocks_when_the_checkout_holds_no_open_or_paused_walk():
+    ending = "PR 1922 merged.\n\n" + closing_line("2 of 10")
+    empty = Case()
+    empty.document.unlink()
+    empty.minutes.unlink()
+    empty.reply(ending)
+    reason = blocked_reason(empty.run(model="yes")) or ""
+    walk_directory = empty.checkout / "docs" / "walk"
+    for case_name, phrase in (
+            ("a closing line with an empty docs/walk/ blocks, saying the hook refused on purpose",
+             "approval-walk closing-line check: this hook refused to end your turn on purpose"),
+            ("the block quotes the closing line", f'"{closing_line("2 of 10")}"'),
+            ("the block names the checkout searched and its docs/walk/",
+             f"the checkout you work in, {empty.checkout}, has no open or paused approval-walk in {walk_directory}."),
+            ("the block tells the agent to move the walk's files into that docs/walk/",
+             f"move both files into {walk_directory}, creating {walk_directory} if it is missing"),
+            ("the block says what to do from now on",
+             "From now on, keep the walk-document and walk-minutes of every approval-walk you run in the `docs/walk/` "
+             "of the checkout you work in.")):
+        check(case_name, phrase in reason, reason)
+    check("a closing line with no walk never reaches the model", empty.model_calls() == [], empty.model_calls())
+    entries = empty.logged()
+    check("the block is logged with its sentence, no walk, and what decided",
+          len(entries) == 1 and entries[0]["walk"] is None and entries[0]["sentence"] == closing_line("2 of 10")
+          and entries[0]["decided_by"] == "no-walk-in-checkout", entries)
+    missing = Case()
+    shutil.rmtree(missing.walk)
+    missing.reply(ending)
+    check_blocked("a closing line with no docs/walk/ blocks, saying the folder does not exist", missing.run(),
+                  f"in {missing.walk}, which does not exist.")
+    closed = Case(minutes="#next_to_present none, closed")
+    for case_name, text in (
+            ("a closing line after a closed walk blocks", ending),
+            ("a closing line without its link blocks",
+             f"PR 1922 merged.\n\nItem 2 of 10, the poem page · {CLOSING_LINE_ANSWER_LETTERS}")):
+        closed.reply(text)
+        check_blocked(case_name, closed.run(), "approval-walk closing-line check", str(closed.checkout))
+    check_blocked("a closing line only in the payload's last_assistant_message blocks",
+                  closed.run(last_assistant_message=ending), "approval-walk closing-line check")
+    closed.reply("Should I merge it?\n\n" + closing_line("2 of 10"))
+    check_blocked("the closing line ending the turn's last text blocks when the payload has no last message",
+                  closed.run(last_assistant_message=""), "approval-walk closing-line check")
+    for case_name, text in (
+            ("a reply with no walk and no closing line passes", "Should I merge it?"),
+            ("a closing line that is not the message's last line passes", closing_line("2 of 10") + "\n\nDone."),
+            ("a closing line inside a code block passes", f"PR 1922 merged.\n\n```\n{closing_line('2 of 10')}\n```"),
+            ("a line holding the answer letters that is not a closing line passes",
+             f"The skill's letters are {CLOSING_LINE_ANSWER_LETTERS}")):
+        closed.reply(text)
+        check_silent(case_name, closed.run())
+    paused = Case(minutes="#next_to_present item 2 of 10\n#approval_walk_paused")
+    paused.reply(ending)
+    check_silent("a closing line while the walk is paused passes", paused.run())
+    paused.reply("The tests passed.\n\nShould I merge the pull request now?")
+    check_silent("a question-like line while the walk is paused passes, though the model would say it asks",
+                 paused.run(model="yes"))
+    check("a question-like line while the walk is paused never reaches the model",
+          paused.model_calls() == [], paused.model_calls())
+    outside = Case()
+    outside.reply(ending)
+    shutil.rmtree(outside.checkout / ".git")
+    check_silent("a closing line from a cwd outside any checkout passes", outside.run())
 
 
 def test_a_fault_exits_1_and_names_it():
@@ -867,10 +1256,69 @@ def test_a_fault_exits_1_and_names_it():
           f"exit {result.returncode}, stderr {result.stderr!r}")
 
 
+LIVE_MODEL_FLAG = "--skip-tests-and-print-live-claude-labels-of-sample-lines"
+LIVE_BIN = SUITE_ROOT / "live-bin"
+LIVE_RECORDER = """#!/usr/bin/env python3
+import json, os, subprocess, sys
+prompt = sys.stdin.read()
+completed = subprocess.run([REAL_CLAUDE] + sys.argv[1:], input=prompt, capture_output=True, text=True)
+with open(os.environ["FAKE_CLAUDE_CALLS"], "a") as calls:
+    calls.write(json.dumps({"argv": sys.argv[1:], "stdin": prompt, "stdout": completed.stdout,
+                            "stderr": completed.stderr, "returncode": completed.returncode}) + "\\n")
+sys.stdout.write(completed.stdout)
+sys.stderr.write(completed.stderr)
+sys.exit(completed.returncode)
+"""
+
+
+def print_live_model_labels():
+    real_claude = shutil.which("claude")
+    if real_claude is None:
+        print("claude is not on PATH, so the live model cannot be run.")
+        return 1
+    LIVE_BIN.mkdir(parents=True)
+    recorder = LIVE_BIN / "claude"
+    recorder.write_text(LIVE_RECORDER.replace("#!/usr/bin/env python3", f"#!{sys.executable}", 1)
+                        .replace("REAL_CLAUDE", json.dumps(real_claude)))
+    recorder.chmod(0o755)
+    try:
+        for case_name, reply, item_text, minutes, _ in REAL_CASES + (UNRELATED_ASK_CASE,):
+            case = Case(document=f"# A walk\n\n{item_text}\n", minutes=minutes)
+            case.reply(reply)
+            result = case.run(bin_directory=LIVE_BIN)
+            reason = blocked_reason(result)
+            print(f"== {case_name}")
+            print("hook: " + ("passed" if result.returncode == 0 and not result.stdout else
+                              (reason or f"exit {result.returncode}: {result.stdout}{result.stderr}").split("\n")[0][:400]))
+            calls = case.model_calls()
+            if not calls:
+                print("model: not called")
+            for call in calls:
+                lines = dict(line.split(". ", 1) for line in numbered_lines(call).split("\n") if ". " in line)
+                try:
+                    entries = json.loads(call["stdout"])["structured_output"]["lines"]
+                    labels = hook.agent_reply_line_model_labels_from_true_or_false_model_answers(entries, len(entries)) or ["?"] * len(entries)
+                except (ValueError, TypeError, KeyError):
+                    print(f"model: no labels; exit {call['returncode']}: {call['stdout'][:300]}{call['stderr'][:300]}")
+                    continue
+                for number, label in enumerate(labels, 1):
+                    print(f"model: {label} <- {lines.get(str(number), '?')[:160]}")
+    finally:
+        shutil.rmtree(SUITE_ROOT, ignore_errors=True)
+    return 0
+
+
 def main():
+    if sys.argv[1:] == [LIVE_MODEL_FLAG]:
+        return print_live_model_labels()
     FAKE_BIN.mkdir(parents=True)
     fake = FAKE_BIN / "claude"
-    fake.write_text(FAKE_CLAUDE.replace("#!/usr/bin/env python3", f"#!{sys.executable}", 1))
+    fake.write_text(FAKE_CLAUDE.replace("#!/usr/bin/env python3", f"#!{sys.executable}", 1)
+                    .replace('"WAITING_ITEM"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION))
+                    .replace('"ASKS_ELSE"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE))
+                    .replace('"ASKS_NOTHING"', json.dumps(hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_NO_QUESTION))
+                    .replace('"CONCERNS_ANSWER"', json.dumps(hook.AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER))
+                    .replace('"ASKS_ELSE_ANSWER"', json.dumps(hook.AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER)))
     fake.chmod(0o755)
     try:
         for name, function in sorted(globals().items()):
