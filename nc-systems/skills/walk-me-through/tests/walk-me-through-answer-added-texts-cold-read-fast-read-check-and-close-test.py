@@ -2050,11 +2050,11 @@ def test_an_item_of_no_kind_settles_only_when_rated_none_and_touching_no_guarded
 
 
 def test_a_not_asked_value_other_than_a_kind_or_none_is_refused_as_usage():
-    for value in ("6", "0", "weak"):
+    for value in ("7", "0", "weak"):
         case = rated_none_case()
         result = case.run("check", "--not-asked", value)
         check(f"`--not-asked {value}` is refused as usage, writing nothing",
-              result.returncode == 2 and f"`{value}` is not a kind: give 1, 2, 3, 4, 5 or none" in result.stderr
+              result.returncode == 2 and f"`{value}` is not a kind: give 1, 2, 3, 4, 5, 6 or none" in result.stderr
               and case.minutes.read_text().rstrip().endswith("#next_to_present item 1 of 3"), described(result))
 
 

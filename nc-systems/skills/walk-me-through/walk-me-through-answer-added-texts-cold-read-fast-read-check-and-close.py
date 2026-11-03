@@ -470,7 +470,8 @@ _PART_VALUE = r"part \d+ " + _one_of(f"{word} {outcome}" for word, outcome in OU
 # The values close fills each placeholder with; {ruling} and {reason} carry the agent's own words, so any text.
 PLACEHOLDER_VALUES = {
     "answered": _one_of([APPROVED, DISAPPROVED] + [f"{APPROVED} option {number}" for number in OPTION_NUMBERS]
-                        + [f"not asked, kind {kind}" for kind in NOT_ASKED_KINDS]),
+                        + [f"not asked, kind {kind}" for kind in NOT_ASKED_KINDS]
+                        + [f"not asked, case against {NOT_ASKED_RATED_NONE}"]),
     "outcome": _one_of(OUTCOMES.values()),
     "parts": rf"{_PART_VALUE}(?:, {_PART_VALUE})*",
     "ruling": ".+",
@@ -893,13 +894,13 @@ def part_answer(value):
 
 
 def not_asked_kind(value):
-    """Return the --not-asked value: a kind, 1 to 5, or `none` for an item of no kind whose case against is
+    """Return the --not-asked value: a kind, 1 to 6, or `none` for an item of no kind whose case against is
     rated none."""
     if value.strip().lower() == NOT_ASKED_RATED_NONE:
         return NOT_ASKED_RATED_NONE
     if value.strip() in {str(kind) for kind in NOT_ASKED_KINDS}:
         return int(value)
-    raise argparse.ArgumentTypeError(f"`{value}` is not a kind: give 1, 2, 3, 4, 5 or none")
+    raise argparse.ArgumentTypeError(f"`{value}` is not a kind: give 1, 2, 3, 4, 5, 6 or none")
 
 
 def not_asked_label(kind):
