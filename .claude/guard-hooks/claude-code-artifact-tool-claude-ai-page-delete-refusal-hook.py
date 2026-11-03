@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Refuse every Artifact tool call whose action is "delete"; let every other Artifact call through.
 
-Claude Code makes each Artifact delete wait for the user to confirm it, and nothing on
-screen tells him a confirmation is waiting, so the agent's turn stops until he notices.
-The refusal names the page the call would have deleted, from the call's url, so the
-agent can give the user the link to delete it himself on claude.ai.
+Claude Code shows the confirmation prompt for an Artifact delete only in its terminal UI,
+so in the desktop app or over Remote Control the user never sees it and the turn blocks
+indefinitely. A hook cannot tell which UI the user is on, so it refuses the action
+everywhere. The refusal names the artifact the call would have deleted, from the call's
+url, so the agent can give the user the link to delete it himself on claude.ai.
 
 Only the Artifact tool is read. A payload that is not JSON, not an object, or not an
 Artifact call is let through without output, as the other guard hooks do.
@@ -19,14 +20,15 @@ import sys
 NO_LINK_TEXT = "(no link in the call)"
 
 REFUSAL_TEMPLATE = (
-    'REFUSED: an Artifact tool call with action "delete". This call was not sent, so nothing '
-    "waits for the user. Agents in this project do not delete claude.ai pages, because each "
-    "delete waits for the user to confirm it, and the agent's turn would stop until the user "
-    "confirmed it.\n"
-    "If a step, a session-handoff, a skill or your own plan tells you to delete a claude.ai "
-    "page, such as a walk's item page: skip that step and go on.\n"
-    "If the user asked you to delete a page or an artifact: give him its link, {link}, and "
-    "tell him he can delete it himself on claude.ai."
+    'REFUSED: Artifact tool call with action "delete", blocked by a PreToolUse hook. Claude '
+    "Code shows the confirmation prompt for this action only in its terminal UI, so in the "
+    "desktop app or over Remote Control the user never sees it and the turn blocks "
+    "indefinitely. A hook cannot tell which UI the user is on, so it blocks the action "
+    "everywhere. The call was not sent; nothing is pending.\n"
+    "If a step, skill, session-handoff or plan says to delete an artifact: skip that step "
+    "and continue.\n"
+    "If the user asked for the delete: give him the artifact URL, {link}, so he can delete "
+    "it on claude.ai, then continue."
 )
 
 
