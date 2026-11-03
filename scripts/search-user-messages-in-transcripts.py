@@ -66,18 +66,19 @@ def user_turn_text_is_compaction_summary_or_launch_prompt(text):
             or any(phrase in text for phrase in LAUNCH_PROMPT_PHRASES))
 
 
-def written_by_a_program(record, text):
-    """Whether a user turn's text came from Claude Code, a hook or a program rather than the user."""
+def written_by_a_program(record, text, judge_by_text=True):
+    """Whether a user turn's text came from Claude Code, a hook or a program rather than the user; with
+    judge_by_text false, only by the record's own marks, not by what its text says."""
     if record.get("isMeta") or record.get("entrypoint") == PROGRAM_PROMPT_ENTRYPOINT:
         return True
     origin = record.get("origin")
     if "origin" in record and (not isinstance(origin, dict) or origin.get("kind") != "human"):
         return True
-    return user_turn_text_is_compaction_summary_or_launch_prompt(text)
+    return judge_by_text and user_turn_text_is_compaction_summary_or_launch_prompt(text)
 
 
-def typed_by_user(record):
-    """The record's text if the user typed it, else None."""
+def typed_by_user(record, judge_by_text=True):
+    """The record's text if the user typed it, else None; judge_by_text as written_by_a_program takes it."""
     if record.get("type") != "user":
         return None
     content = record.get("message", {}).get("content")
@@ -90,7 +91,7 @@ def typed_by_user(record):
         return None
     if text.startswith("Caveat:"):
         return None
-    if written_by_a_program(record, text):
+    if written_by_a_program(record, text, judge_by_text):
         return None
     return text
 
@@ -150,9 +151,12 @@ class TurnReader:
     """Reads one transcript's records in order and returns each turn of the user's or the agent's.
 
     Its state is a dict of plain values, so a reader that stops part way through a
-    transcript can save the state and resume at the next record."""
+    transcript can save the state and resume at the next record. With keep_text_recognized_prompts, a user
+    turn that only its text shows to be a program's prompt is still returned, for a caller that marks such
+    turns instead of dropping them."""
 
-    def __init__(self, state=None):
+    def __init__(self, state=None, keep_text_recognized_prompts=False):
+        self.keep_text_recognized_prompts = keep_text_recognized_prompts
         state = state or {}
         # After an interrupt the harness re-sends a queued message as a user turn; the same words
         # typed again later are a new message, so only that re-send is dropped.
@@ -173,7 +177,7 @@ class TurnReader:
             self.queued_text_awaiting_resend = text
             self.interrupted_since_queued = False
             return ("user", text)
-        text = typed_by_user(record)
+        text = typed_by_user(record, judge_by_text=not self.keep_text_recognized_prompts)
         if text is not None:
             if self.interrupted_since_queued and text == self.queued_text_awaiting_resend:
                 self.queued_text_awaiting_resend = None

@@ -182,16 +182,22 @@ with tempfile.TemporaryDirectory() as directory:
     ])
     result = case.run()
     entries = case.entries()
-    check("a first run exits 0 and adds his typed and queued messages only",
+    check("a first run exits 0 and adds his typed and queued messages as standing, and the handoff opener as "
+          "not-the-user's-words",
           result.returncode == 0 and [entry[1] for entry in entries] == [
               "start on the store",
               "A, approve; also look at /home/nedlern/agents/alpha-seat/CLAUDE.md and .claude/skills/find-info/SKILL.md",
-              "and the hook too"], described(result) + f" {entries}")
+              "and the hook too",
+              "Read /h/a-dialog-0002.md — the dialog from the session you are continuing"]
+          and [state for _, state in case.query("SELECT text, state FROM entries ORDER BY entry_id")]
+              == ["standing", "standing", "standing", "not-the-user's-words"]
+          and case.query("SELECT state_changed_at_utc IS NOT NULL FROM entries ORDER BY entry_id")
+              == [(0,), (0,), (0,), (1,)], described(result) + f" {entries}")
     check("each entry keeps its UTC time, its transcript line and the agent message he answered",
           entries[1][2:] == ("2026-10-20T01:05:00Z", str(path), 3, ANSWERED) and entries[0][5] is None
           and entries[2][5] is None, entries)
     check("the summary line counts what was added and what the index file holds",
-          "added 3 user-words and 0 walk-minutes-user-ruling entries" in result.stdout
+          "added 4 user-words and 0 walk-minutes-user-ruling entries" in result.stdout
           and "holds 3 standing entries" in result.stdout, result.stdout)
     check("each entry keeps its agent-session's id",
           case.query("SELECT DISTINCT session_id FROM entries") == [("session-one",)],
@@ -223,7 +229,7 @@ with tempfile.TemporaryDirectory() as directory:
                              "/nc-systems/skills/"], case.anchors())
     rerun = case.run()
     check("a rerun with nothing new adds nothing",
-          rerun.returncode == 0 and len(case.entries()) == 3
+          rerun.returncode == 0 and len(case.entries()) == 4
           and "added 0 user-words and 0 walk-minutes-user-ruling entries" in rerun.stdout, described(rerun))
     check("the pair table is there, empty, and its first state is unreviewed",
           case.query("SELECT count(*) FROM entry_pairs") == [(0,)]
@@ -628,8 +634,36 @@ with tempfile.TemporaryDirectory() as directory:
     case.transcript("ned-box", [human(resume_prompt, "2026-10-27T00:00:00Z"),
                                 human("my own words", "2026-10-27T00:01:00Z")])
     case.run()
-    check("crash recovery's resume prompt is not stored as the user's words",
-          [entry[1] for entry in case.entries()] == ["my own words"], case.entries())
+    check("crash recovery's resume prompt is stored with the status not-the-user's-words, and the index leaves it out",
+          case.query("SELECT text, state FROM entries ORDER BY entry_id")
+              == [(resume_prompt.strip(), "not-the-user's-words"), ("my own words", "standing")]
+          and [line["text"] for line in case.index()[1]] == ["my own words"],
+          case.query("SELECT text, state FROM entries ORDER BY entry_id"))
+
+# A turn of his that the reader takes for a program's prompt when the transcript is first read is stored, marked
+# not-the-user's-words; once the reader no longer takes it for one, a later run sets it back to standing, though the
+# transcript is not read again.
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    quoting = "Read /h/a-dialog-0002.md — the dialog from the session you are continuing: why did it say that?"
+    case.transcript("ned-box", [human(quoting, "2026-10-29T00:00:00Z")])
+    first = case.run()
+    marked_first = case.query("SELECT text, state FROM entries")
+    reader = program.transcript_reader
+    real_recognizer = reader.user_turn_text_is_compaction_summary_or_launch_prompt
+    reader.user_turn_text_is_compaction_summary_or_launch_prompt = lambda text: False
+    stdout, stderr = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = program.run(case.log_store, case.agents, case.checkout)
+    finally:
+        reader.user_turn_text_is_compaction_summary_or_launch_prompt = real_recognizer
+    check("a turn first recognized as a prompt, then no longer recognized, ends standing",
+          first.returncode == 0 and marked_first == [(quoting, "not-the-user's-words")] and exit_code == 0
+          and case.query("SELECT text, state FROM entries") == [(quoting, "standing")]
+          and [line["text"] for line in case.index()[1]] == [quoting],
+          described(first) + f" {marked_first} exit {exit_code} {stderr.getvalue()} "
+          f"{case.query('SELECT text, state FROM entries')}")
 
 # A prompt stored before the reader knew it: the handoff-supervisor's own no-handoff prompt, put in the store as
 # an earlier run did, with a tag, gets the status not-the-user's-words; it stays in the store, tag and full-text row

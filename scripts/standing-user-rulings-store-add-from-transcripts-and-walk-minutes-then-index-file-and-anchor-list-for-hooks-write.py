@@ -25,7 +25,8 @@ WHAT IT READS.
   then recovered/*/*/*.jsonl (the Mac's transcripts recovered from Time Machine), in that order, so a
   message found in more than one copy links to the current mirror. Subagent transcripts are not read: their
   user turns are the parent agent's prompts. A user turn is his when
-  scripts/search-user-messages-in-transcripts.py's TurnReader says so, queued_command attachments included.
+  scripts/search-user-messages-in-transcripts.py's TurnReader says so, queued_command attachments included,
+  read with keep_text_recognized_prompts, so a turn it tells is a program's prompt by its text alone is kept.
   ned-box's own ~/.claude/projects is not read: the mirror copies it each minute, and one copy keeps one
   link per message.
 - The walk-minutes: <agents-directory>/*/docs/walk/*-minutes.md, then <log-store>/walk/*-minutes.md, the
@@ -40,8 +41,9 @@ WHAT IT STORES. One entry per message of his, kind user-words, with its UTC time
 text of the agent's messages since his previous message (the agent message he was answering), at most
 AGENT_MESSAGE_ANSWERED_KEPT_CHARACTERS of its end, and its link, the transcript's path in the log-store and
 the line number. One entry per walk-minutes user-ruling line, kind walk-minutes-user-ruling, linked to its
-walk-minutes file and line. Every entry is added as standing, and no entry is deleted or has its text edited.
-Each run checks every stored user-words entry again: one whose text the transcript reader now tells is a
+walk-minutes file and line. Every entry is added as standing, except a user-words entry whose text the
+transcript reader tells is a program's prompt, which is added as not-the-user's-words; no entry is deleted or
+has its text edited. Each run checks every stored user-words entry again: one whose text the transcript reader now tells is a
 program's prompt goes from standing to the status not-the-user's-words, which the index file and the anchor list
 leave out, and one marked so whose text the reader no longer tells is a prompt goes back to standing. So a prompt
 stored before the reader knew it drops out once the reader learns it, and fixing a reader that recognized too
@@ -93,9 +95,8 @@ the lock, which is expected when a run outlasts the minute between two runs.
 
 WHAT IT DOES NOT HANDLE. A prompt an agent wrote and passed with --first-prompt-file, such as a new
 agent-seat's founding prompt, is stored as his words: TurnReader knows only the prompts the handoff-supervisor
-and crash recovery write. A user turn that TurnReader already tells is a program's prompt when the transcript is
-read is not stored at all, so a message of his that the reader wrongly takes for a prompt is never stored, and a
-later fix to the reader does not bring it back: the stored byte offset is past it. Only standing and
+and crash recovery write. A turn the transcript marks as not typed by a person (isMeta, a program entrypoint
+or a non-human origin) is not stored. Only standing and
 not-the-user's-words entries are checked again; a superseded or lapsed entry keeps its state. Words he typed only on the Mac reach the store once mirrored. A tag is only as
 good as the name matched: a GHI named without "GHI", "issue" or a link, or a system named without its
 path, is missed.
@@ -483,12 +484,14 @@ def user_words_entries_not_the_users_words_status_set_and_clear(connection):
 
 
 def add_entry(connection, entry, tags_by_source):
-    """Insert one entry and its tags; return whether it was new."""
+    """Insert one entry, standing unless it names another state, and its tags; return whether it was new."""
     cursor = connection.execute(
-        "INSERT OR IGNORE INTO entries (kind, said_at_utc, text, agent_message_answered, source_machine, "
-        "source_path, source_line, agent_seat, session_id, added_at_utc, added_by, duplicate_key) "
-        "VALUES (:kind, :said_at_utc, :text, :agent_message_answered, :source_machine, :source_path, "
-        ":source_line, :agent_seat, :session_id, :added_at_utc, :added_by, :duplicate_key)", entry)
+        "INSERT OR IGNORE INTO entries (kind, state, said_at_utc, text, agent_message_answered, source_machine, "
+        "source_path, source_line, agent_seat, session_id, state_changed_at_utc, added_at_utc, added_by, "
+        "duplicate_key) "
+        "VALUES (:kind, :state, :said_at_utc, :text, :agent_message_answered, :source_machine, :source_path, "
+        ":source_line, :agent_seat, :session_id, :state_changed_at_utc, :added_at_utc, :added_by, :duplicate_key)",
+        {"state": STATE_STANDING, "state_changed_at_utc": None, **entry})
     if not cursor.rowcount:
         return False
     tagged = set()
@@ -535,7 +538,7 @@ def read_transcript(connection, machine, path, repository, known_seats):
             return 0
         if (device, inode) == (status.st_dev, status.st_ino) and status.st_size >= size_read:
             offset, line_number, state = size_read, lines_read, json.loads(reader_state)
-    reader = transcript_reader.TurnReader(state.get("turn_reader"))
+    reader = transcript_reader.TurnReader(state.get("turn_reader"), keep_text_recognized_prompts=True)
     agent_text = state.get("agent_message_since_user_message", "")
     cwd = state.get("cwd", "")
     added = 0
@@ -571,8 +574,11 @@ def read_transcript(connection, machine, path, repository, known_seats):
                      tags_named_in(agent_text, repository, seat, known_seats, files_are_tags=False)),
                 ]
             stamp = record.get("timestamp") or ""
+            is_prompt = transcript_reader.user_turn_text_is_compaction_summary_or_launch_prompt(text)
             entry = {
                 "kind": KIND_USER_WORDS, "said_at_utc": stamp, "text": text,
+                "state": STATE_NOT_THE_USERS_WORDS if is_prompt else STATE_STANDING,
+                "state_changed_at_utc": utc_now_text() if is_prompt else None,
                 "agent_message_answered": agent_text or None, "source_machine": machine,
                 "source_path": str(path), "source_line": line_number, "agent_seat": seat,
                 "session_id": record.get("sessionId") or path.stem, "added_at_utc": utc_now_text(),
