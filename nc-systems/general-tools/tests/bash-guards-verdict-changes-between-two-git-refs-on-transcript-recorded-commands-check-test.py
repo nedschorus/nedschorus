@@ -602,11 +602,33 @@ try:
     check("a head that adds a guard refusing a recorded command: exit 1, the merge is blocked",
           status == 1 and "NEW GUARD REFUSES RECORDED COMMANDS" in out and "VERDICT CHANGED" not in out,
           f"status {status}\n{out}\n{err}")
-    check("a head that adds a guard refusing a recorded command: the section names the guard, the count, the command "
-          "and its working directory",
-          f"in-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command, listed with its "
-          "working directory\n  1. command: 'tmux kill-server'\n     working directory: /tmp\n" in out
-          and f"new-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command" in out, out)
+    tmux_kill_refusal = (TMUX_KILL_GUARD, replay.read_tmux_kill(
+        replay.load_module(REPOSITORY_ROOT, TMUX_KILL_GUARD, "tmux_kill_guard"), "tmux kill-server", "/tmp", None)[1])
+    tmux_kill_group = replay.refusal_group_ids([tmux_kill_refusal])[tmux_kill_refusal]
+    check("a head that adds a guard refusing a recorded command: each mode counts its refusals, and the one refusal "
+          "group, which both modes refuse, names its id, the guard, the command and its working directory",
+          f"in-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command\n" in out
+          and f"new-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command\n" in out
+          and "refusal groups of the guards the head adds: 1, holding 1 refused recorded command; every group in "
+          "full is in " in out
+          and f"  {tmux_kill_group}: {TMUX_KILL_GUARD} refuses 1 recorded command, in in-process, new-process\n"
+          "    reason: " in out
+          and "    command: 'tmux kill-server'\n      working directory: /tmp\n" in out, out)
+    # As Codex found on pull request 2468: two refusal messages whose digests share their first eight hex digits.
+    digest_as_written = replay.refusal_group_digest
+    replay.refusal_group_digest = lambda guard, reason: "8ee5bdb8" + ("1" if reason.endswith("4768") else "2") * 56
+    try:
+        colliding = replay.added_guard_refusal_groups([("in-process", [
+            (("git push --force origin topic-4768", "/tmp"), "force-push-guard.py", ("refused", "topic-4768")),
+            (("git push --force origin topic-111837", "/tmp"), "force-push-guard.py", ("refused", "topic-111837"))])])
+    finally:
+        replay.refusal_group_digest = digest_as_written
+    check("two refusal messages whose ids would share their first eight hex digits: two refusal groups, each with "
+          "its own message, its own command and an id of its own",
+          sorted((group["reason"], group["refused commands"]) for group in colliding)
+          == [("topic-111837", [["git push --force origin topic-111837", "/tmp"]]),
+              ("topic-4768", [["git push --force origin topic-4768", "/tmp"]])]
+          and len({group["group"] for group in colliding}) == 2, str(colliding))
     check("a head that adds a guard refusing a recorded command, and changes no verdict: merge-lane-2 may merge "
           "once each refusal is accepted",
           replay.NEW_GUARD_REFUSES_ONLY_ENDING in out
@@ -631,15 +653,44 @@ try:
           f"guards the head adds, read at the head only: ['{TMUX_KILL_GUARD}']" in out
           and "in-process: rows whose verdict differs: 0" in out, out)
 
-    # Longer than the 300 characters a printed reading is cut to, and different from its twin only at the end.
-    long_refused = ["tmux kill-server; echo " + "x" * 320 + " first", "/tmp"]
-    long_refused_twin = ["tmux kill-server; echo " + "x" * 320 + " second", "/tmp"]
+    # As on pull request 2446, where the added guard refused 296 recorded commands with one message: commands longer
+    # than the 300 characters a printed text is cut to, which differ only at the end.
+    many_long_refused = [["tmux kill-server; echo " + "x" * 400 + f" {number}", f"/tmp/{number}"]
+                         for number in range(300)]
     status, out, err = run_replay("HEAD", scratch, "--new-process-pairs", "none", base_ref=before_tmux_kill_guard,
-                                  pairs=[long_refused, long_refused_twin])
-    check("a head that adds a guard refusing two long commands that differ only at the end: each is listed in full",
-          status == 1 and f"would refuse 2 recorded commands" in out
-          and f"command: {long_refused[0]!r}\n" in out and f"command: {long_refused_twin[0]!r}\n" in out,
-          f"status {status}\n{out}\n{err}")
+                                  pairs=many_long_refused)
+    groups_file = Path(out.splitlines()[0].removeprefix("run log directory: ")) / replay.REFUSAL_GROUPS_FILE_NAME
+    groups = json.loads(groups_file.read_text()) if groups_file.exists() else []
+    check("a head that adds a guard refusing 300 long commands with one message: exit 1, and the report fits in a "
+          "GitHub review body, which holds 65,536 characters",
+          status == 1 and len(out) < 65536 and "NEW GUARD REFUSES RECORDED COMMANDS" in out,
+          f"status {status}, {len(out)} characters\n{out[:3000]}\n{err}")
+    check("a head that adds a guard refusing 300 long commands with one message: one refusal group is printed, with "
+          "3 of its commands, cut short, and the count of the 297 left out",
+          "refusal groups of the guards the head adds: 1, holding 300 refused recorded commands" in out
+          and out.count("    command: ") == 3 and "297 more commands of this group are left out here" in out
+          and many_long_refused[0][0] not in out, out[:3000])
+    check("a head that adds a guard refusing 300 long commands with one message: the refusal groups file holds the "
+          "group with every command in full",
+          [(group["group"], group["guard"], group["modes"], group["refused commands"]) for group in groups]
+          == [(tmux_kill_group, TMUX_KILL_GUARD, ["in-process"], many_long_refused)], f"{groups_file}: {groups}"[:3000])
+
+    refusing_each_command_with_its_own_message = commit_with_guard_changed(TMUX_KILL_GUARD, (
+        "_refusal_for_as_written = refusal_for\n"
+        "def refusal_for(command):\n"
+        "    reason = _refusal_for_as_written(command)\n"
+        "    return reason + ' ' + command if reason else reason"), scratch)
+    status, out, err = run_replay(refusing_each_command_with_its_own_message, scratch, "--new-process-pairs", "none",
+                                  base_ref=before_tmux_kill_guard, pairs=many_long_refused)
+    groups_file = Path(out.splitlines()[0].removeprefix("run log directory: ")) / replay.REFUSAL_GROUPS_FILE_NAME
+    groups = json.loads(groups_file.read_text()) if groups_file.exists() else []
+    check("a head that adds a guard refusing 300 long commands, each with its own message: exit 1, the report fits in "
+          "a GitHub review body, and 10 of the 300 refusal groups are printed, with the count of the 290 left out",
+          status == 1 and len(out) < 65536
+          and "refusal groups of the guards the head adds: 300, holding 300 refused recorded commands" in out
+          and out.count(f": {TMUX_KILL_GUARD} refuses 1 recorded command, in in-process\n") == 10
+          and "  290 more refusal groups are left out here, holding 290 refused recorded commands\n" in out
+          and len(groups) == 300, f"status {status}, {len(out)} characters\n{out[:3000]}\n{err}")
 
     before_search_file_guard = commit_without_guard(SEARCH_FILE_GUARD)
     status, out, err = run_replay(main_refusing_all, scratch, "--new-process-pairs", "none",
