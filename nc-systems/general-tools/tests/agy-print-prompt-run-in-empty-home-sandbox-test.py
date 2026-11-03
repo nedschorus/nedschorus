@@ -8,8 +8,12 @@ and a stub agy stands in for the real one.
 
   - `ls -A $HOME` run inside the sandbox prefix the program builds shows
     .gemini and nothing else.
-  - With bwrap missing from PATH the program refuses, exit 1, naming bwrap.
-  - With agy missing from PATH the program refuses, exit 1, naming agy.
+  - Inside that prefix /usr and /etc are mounted read-only, and so is
+    /run/systemd/resolve when this machine has it.
+  - With bwrap missing from PATH the program refuses, exit 1, naming bwrap,
+    with that one line and nothing else on stderr.
+  - With agy missing from PATH the program refuses, exit 1, naming agy,
+    with that one line and nothing else on stderr.
   - A stub agy that fails exits the program with the stub's code, its stderr
     passed through and a line naming the failure; a stub that succeeds has
     its stdout passed through and its arguments as the program built them;
@@ -65,6 +69,16 @@ def stub_agy(bin_directory: pathlib.Path, body: str) -> None:
     stub.chmod(0o755)
 
 
+def read_only_mount_points(mountinfo: str) -> set:
+    """Return the mount points that /proc/self/mountinfo lists with the ro option."""
+    read_only = set()
+    for line in mountinfo.splitlines():
+        fields = line.split()
+        if len(fields) > 5 and "ro" in fields[5].split(","):
+            read_only.add(fields[4])
+    return read_only
+
+
 def run_program(home, path, *arguments):
     environment = {**os.environ, "HOME": str(home), "PATH": path,
                    "GEMINI_API_KEY": "caller-key", "AAA_CALLER_VARIABLE": "kept-a",
@@ -91,16 +105,31 @@ def main() -> int:
               listing.returncode == 0 and listing.stdout.split() == [".gemini"],
               repr((listing.returncode, listing.stdout, listing.stderr)))
 
+        mounts = subprocess.run(
+            [*program.empty_home_sandbox_prefix(home, str(home / ".local/bin/agy")),
+             "cat", "/proc/self/mountinfo"], capture_output=True, text=True)
+        read_only = read_only_mount_points(mounts.stdout)
+        check("the sandbox mounts /usr and /etc read-only",
+              mounts.returncode == 0 and {"/usr", "/etc"} <= read_only,
+              repr((mounts.returncode, sorted(read_only), mounts.stderr)))
+        if pathlib.Path("/run/systemd/resolve").is_dir():
+            check("the sandbox mounts /run/systemd/resolve read-only, as this machine has it",
+                  "/run/systemd/resolve" in read_only, repr(sorted(read_only)))
+        else:
+            print("SKIP  the /run/systemd/resolve bind: this machine has no /run/systemd/resolve.")
+
         no_bwrap = root / "path-without-bwrap"
         stub_agy(no_bwrap, "exit 0\n")
         result = run_program(home, str(no_bwrap), "--model", "m", "prompt")
         check("bwrap missing from PATH: refused, exit 1, naming bwrap",
-              result.returncode == 1 and "bwrap is not on PATH" in result.stderr,
+              result.returncode == 1 and result.stderr == f"{program.PROGRAM}: refused: "
+              "bwrap is not on PATH, so agy was not run.\n",
               repr((result.returncode, result.stderr)))
 
         result = run_program(home, bwrap_directory, "--model", "m", "prompt")
         check("agy missing from PATH: refused, exit 1, naming agy",
-              result.returncode == 1 and "agy is not on PATH" in result.stderr,
+              result.returncode == 1 and result.stderr == f"{program.PROGRAM}: refused: "
+              "agy is not on PATH, so agy was not run.\n",
               repr((result.returncode, result.stderr)))
 
         failing = root / "failing-agy"
