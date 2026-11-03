@@ -90,8 +90,11 @@ and the old name in no file outside the touched ones and docs/walk/; kind 5,
 carrying out a ruling, needs a source; kind 6, a glossary term put in or a
 hashtag marker added, needs touches and a term or a marker line, every touched
 file Markdown and not a `*-glossary.md` file, each term as the term of an entry
-as for kind 4, and each marker, `#` then letters, digits, `_` or `-`, in no
-file but Markdown, so that no program, test or setting reads it; for kinds 1 to 4
+as for kind 4, and each marker, `#` then letters, digits, `_` or `-`, found
+in no file but Markdown, in any letter case, either whole or as a part of it
+that ends just before a `-` or ends with a `_` followed by no letter or digit,
+so that no program reads it, by name or by a pattern such as
+`#case_against_[a-z_]+`; for kinds 1 to 4
 and 6 every touched file but a kind 2 test must exist. An unused or old name is searched for as written and,
 when it has two or more words, with its words joined by hyphens, by underscores
 and by nothing, a run of digits both kept with the letters before it and
@@ -1080,6 +1083,20 @@ def not_asked_problems(kind, rating, lines, top, item):
     return problems
 
 
+def marker_reader_pattern(marker):
+    """The `git grep -E` pattern for code that reads `marker`: the marker whole; or a part of it that ends just
+    before a `-`, as `\\b` patterns read `#approval_walk_paused` in `#approval_walk_paused-note`; or a part that
+    ends with `_` and is followed by no letter or digit, as `#case_against_[a-z_]+` reads `#case_against_strong`.
+    A marker is otherwise found only whole: `#new` is not `#new_if_d`, nor `#newer`."""
+    parts = [f"{marker}([^A-Za-z0-9_-]|$)"]
+    for end, character in enumerate(marker):
+        if character == "-":
+            parts.append(f"{marker[:end]}([^A-Za-z0-9_-]|$)")
+        elif character == "_":
+            parts.append(f"{marker[:end + 1]}([^A-Za-z0-9]|$)")
+    return "|".join(f"({part})" for part in parts)
+
+
 def glossary_term_or_marker_problems(found, touched, top, item):
     """Return why a kind 6 item, a glossary term put in or a hashtag marker added to Markdown prose, cannot settle."""
     problems = []
@@ -1097,8 +1114,7 @@ def glossary_term_or_marker_problems(found, touched, top, item):
         if not HASHTAG_MARKER.fullmatch(value):
             problems.append(NOT_ASKED_MARKER_SHAPE_PROBLEM.format(value=value, marker=ADDED_HASHTAG_MARKER))
             continue
-        # A marker is found only whole: `#new` is not `#new_if_d`, nor `#newer`.
-        readers = sorted(files_matching(top, ["-E"], rf"{value}([^A-Za-z0-9_-]|$)", item, 6, NOT_MARKDOWN_FILES))
+        readers = sorted(files_matching(top, ["-E", "-i"], marker_reader_pattern(value), item, 6, NOT_MARKDOWN_FILES))
         if readers:
             problems.append(NOT_ASKED_MARKER_READ_PROBLEM.format(value=value, files=", ".join(readers)))
     return problems
@@ -1208,7 +1224,8 @@ def item_reads_directory(walk_finder, minutes):
 
 
 def text_key(text):
-    return hashlib.sha256(squeezed(text).encode("utf-8")).hexdigest()
+    # Whitespace is kept: inside a code span or fenced code it changes what the user is shown.
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def write_json(path, value):
@@ -1331,7 +1348,7 @@ def labelled_parts(text):
     return parts + [squeezed(line) for line in lines if CASE_AGAINST_LINE.match(line)]
 
 
-def approval_walk_item_changed_fact_words_needing_new_cold_read_fast_read(before, after, top):
+def approval_walk_item_before_and_after_fixes_compare_for_changed_fact_words_needing_another_cold_read_fast_read(before, after, top):
     """Return the facts the change from before to after touches, as words to list; empty when it touches none.
     When `git ls-files` fails and any word changed, the list holds one line saying so instead of the names."""
     facts = [f"\"{part[:40]}\"" for part in
@@ -1385,7 +1402,7 @@ def waiting_item_read(arguments):
         latest = latest_read(reads, item) if arguments.after_fixes_reread_only_when_facts_change else None
         if latest is not None:
             last_text = (reads / f"{latest[0]}.md").read_text(encoding="utf-8").rstrip("\n")
-            facts = approval_walk_item_changed_fact_words_needing_new_cold_read_fast_read(last_text, text, top)
+            facts = approval_walk_item_before_and_after_fixes_compare_for_changed_fact_words_needing_another_cold_read_fast_read(last_text, text, top)
             if not facts:
                 print("\n".join([ITEM_READ_NOT_RUN.format(item=item, report=latest[1]["report"]),
                                  ITEM_READ_NOT_RUN_NEXT.format(item=item)]))
