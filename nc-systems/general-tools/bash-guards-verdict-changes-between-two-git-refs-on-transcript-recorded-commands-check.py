@@ -161,13 +161,14 @@ NEW_GUARD_REFUSES_MESSAGE = (
     "Where every command in a group is rightly refused, the answer is a line of its own:\n"
     "  refusal right: <guard file> | <group id>\n"
     "for example, with a made-up guard path: refusal right: scripts/example-guard-hook.py | refusal-group-0a1b2c3d. "
-    "Each group listed above prints its own line in that form, ready to copy.\n"
+    "Each group listed above prints its own line in that form, ready to copy; a group the list leaves out "
+    "prints no line, so write its line from added-guard-refusal-groups.json.\n"
     "On the next line, write in one line why the guard is right to refuse that group's commands.\n"
     "Where a command in a group is wrongly refused, the group gets no \"refusal right\" line: the answer is a "
     "finding that names each wrongly refused command and its working directory, and the author then narrows the "
     "guard so that it lets that command through. Each other group still gets its own answer. A group whose "
-    "guard and message the narrowing leaves unchanged keeps its id, and the commands the guard still refuses in "
-    "it need its \"refusal right\" line in the review of the fix-round's head.\n"
+    "guard and message the narrowing leaves unchanged keeps its id, and while the guard still refuses any of its "
+    "commands, such a group needs its one \"refusal right\" line in the review of the fix-round's head.\n"
     "The answers go in the review of the nc-head-commit being merged; after a fix-round, that is the review of "
     "the fix-round's head; answers in a review of an earlier head do not count, so the review of the fix-round's head repeats them.\n")
 NEW_GUARD_REFUSES_ONLY_ENDING = (

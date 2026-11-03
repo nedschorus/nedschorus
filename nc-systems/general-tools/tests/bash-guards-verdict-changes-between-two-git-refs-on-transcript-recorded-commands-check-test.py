@@ -710,6 +710,13 @@ try:
           "    1 more command of this group is left out here\n" in printed.getvalue()
           and "  1 more refusal group is left out here, holding 1 refused recorded command\n" in printed.getvalue(),
           printed.getvalue())
+    message = " ".join(replay.NEW_GUARD_REFUSES_MESSAGE.split())
+    check("the message says a refusal group the list leaves out prints no \"refusal right\" line, so its line is "
+          "written from the groups file, and that a group still refused after a fix-round needs one line, not one "
+          "per command",
+          "a group the list leaves out prints no line, so write its line from added-guard-refusal-groups.json" in message
+          and "such a group needs its one \"refusal right\" line in the review of the fix-round's head" in message,
+          replay.NEW_GUARD_REFUSES_MESSAGE)
 
     before_search_file_guard = commit_without_guard(SEARCH_FILE_GUARD)
     status, out, err = run_replay(main_refusing_all, scratch, "--new-process-pairs", "none",
