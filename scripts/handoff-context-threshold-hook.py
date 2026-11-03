@@ -117,11 +117,11 @@ HANDOFF_DEFERRED_NOTICE = (
     "handoff now would stop them.\n"
     "Do not run the /handoff skill now; carry on with your work, and a later "
     "system message will tell you when to run it. That message comes once "
-    "the work running now has finished ({awaited}), a background task "
-    "counting as finished {wait_minutes:g} minutes after its launch, or once "
-    "this session's context reaches the {ceiling:g}% ceiling. Work you start "
-    "from now on does not delay that message, and a handoff then stops whatever is "
-    "still running.\n"
+    "the work running now has finished ({awaited}), with a background task, "
+    "though not a subagent, counted as finished {wait_minutes:g} minutes after "
+    "its launch even if it still runs, or once this session's context reaches the {ceiling:g}% ceiling. "
+    "Work you start from now on does not delay that message, and when the "
+    "handoff comes, it stops whatever is still running.\n"
     + NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION
 )
 
@@ -131,25 +131,27 @@ HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE = (
     "Do not run the /handoff skill now; carry on with your work, and a later "
     "system message will tell you when to run it. That message comes once "
     "the hook can read the whole transcript and finds that the work started "
-    "before now has finished, a background task counting as finished "
-    "{wait_minutes:g} minutes after its launch, or once this session's context "
-    "reaches the {ceiling:g}% ceiling. Work you start from now on does not "
-    "delay that message, and a handoff then stops whatever is still running.\n"
+    "before now has finished, with a background task, though not a subagent, "
+    "counted as finished {wait_minutes:g} minutes after its launch even if it "
+    "still runs, or once "
+    "this session's context reaches the {ceiling:g}% ceiling. Work you start "
+    "from now on does not delay that message, and when the handoff comes, it "
+    "stops whatever is still running.\n"
     + NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION
 )
 
 # Appended when an earlier marker file could not be read; the deferral starts again from now.
 UNREADABLE_MARKER_REPLACED_LINE = (
     "The hook could not read this session's earlier handoff-deferral record "
-    "({problem}), so it replaced it: the work it waits for is the work running "
-    "now. Nothing for you to do about this."
+    "({problem}), so the hook replaced that record with a new one: the work the "
+    "hook now waits for is the work running now. Nothing for you to do about this."
 )
 
 # Without the record, the next turn's end would defer again and repeat this notice.
 MARKER_NOT_WRITTEN_LINE = (
     "The hook could not save the list of work it waits for ({problem}), so at "
     "the end of your next turn it will defer again and repeat this notice. "
-    "If this notice comes back at the end of your next turn too, tell the user: "
+    "The second time you see this line about the list, tell the user, once: "
     "\"The handoff threshold hook cannot write {marker}, so it repeats its "
     "deferral notice at every turn's end; the session-handoff still fires at "
     "the context ceiling.\""
@@ -577,10 +579,12 @@ def main(argv=None) -> int:
         file=sys.stderr,
     )
     # The deferral's promise is kept; left in place, the marker would refire the
-    # instruction below the threshold after every later compaction.
-    deferred_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred"
+    # instruction below the threshold after every later compaction. It is moved, not
+    # deleted, because the handoff writer still needs the deferral's start time.
+    deferred_marker = deferred_marker_path(session_id)
     try:
-        deferred_marker.unlink(missing_ok=True)
+        handoff_deferred_marker_and_refused_commands_files_common.handoff_deferred_marker_move_aside_at_fire(
+            HANDOFF_DIRECTORY, session_id)
     except OSError as error:
         print(HANDOFF_DEFERRED_MARKER_NOT_DELETED.format(
                   path=deferred_marker, host=socket.gethostname(), error=error),

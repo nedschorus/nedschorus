@@ -455,7 +455,8 @@ def handoff_deferral_fields_for_this_session(handoff_directory: Path, working_di
                     "script again.")
     parts, failures = [], []
     try:
-        marker = deferred_marker_files.handoff_deferred_marker_read(handoff_directory, session_id)
+        marker = deferred_marker_files.handoff_deferral_record_read_from_marker_or_moved_at_fire(
+            handoff_directory, session_id)
     except deferred_marker_files.HandoffDeferredMarkerUnreadable as error:
         marker = None
         failures.append(f"the background tasks started during the deferral are not listed, because "

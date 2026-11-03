@@ -82,11 +82,16 @@ def command_cases():
         "python3 nc-systems/cold-read/cold-read-grid.py --help",
         "python3 -m py_compile nc-systems/cold-read/cold-read-grid.py",
         "python3 -c 'print(1)' nc-systems/cold-read/cold-read-grid.py",
+        "python3 - nc-systems/cold-read/cold-read-grid.py <<'EOF'\nimport ast, sys\nprint(ast.get_docstring(ast.parse(open(sys.argv[1]).read())))\nEOF",
+        "python3 -I - nc-systems/cold-read/cold-read-grid.py < read-docstring.py",
         "python3 nc-systems/cold-read/cold-read-grid.py --target a.md -h",
         "nc-systems/cold-read/cold-read-grid.py -h",
         "python3 -u",
         "python3 -W nc-systems/cold-read/cold-read-grid.py other.py",
         "FOO=1",
+        # A wrapper with no program after it runs nothing.
+        "env",
+        "timeout 3600",
         "bash -c 'echo nc-systems/cold-read/cold-read-grid.py'",
         "python3 nc-systems/cold-read/cold-read-fast-read.py --target a.md",
         "cat <<'EOF'\npython3 nc-systems/cold-read/cold-read-grid.py --target a.md\nEOF",
@@ -151,6 +156,17 @@ def hook_cases(workspace):
           and "start unchecked" in output.get("additionalContext", "")
           and "cold-read-grid.py --target docs/x.md" in output.get("additionalContext", ""),
           output)
+    check("a marker file that cannot be looked up names the command's working directory",
+          output is not None and "directory /work/checkout" in output.get("additionalContext", ""),
+          output)
+    os.chmod(unreachable, 0o000)
+    try:
+        code, output = run_main(GRID_COMMAND, unreachable, cwd="")
+    finally:
+        os.chmod(unreachable, 0o700)
+    check("a marker file that cannot be looked up, with no working directory given, says it was not given",
+          output is not None and "directory not given" in output.get("additionalContext", ""),
+          output)
 
     # An unavailable shell reader lets the command through, saying so.
     real_reader = hook.command_runs_cold_read_grid_script
@@ -190,6 +206,8 @@ def hook_cases(workspace):
 def payload_cases(workspace):
     handoffs = Path(workspace) / "payload-handoffs"
     defer(handoffs)
+    # A marker named for an empty session id, so a payload with no session id would be refused.
+    defer(handoffs, session_id="")
 
     def silent(stdin_text):
         stdout = io.StringIO()
@@ -202,8 +220,14 @@ def payload_cases(workspace):
             ("a JSON value that is not an object", json.dumps(["Bash"])),
             ("another tool", json.dumps({"tool_name": "Read", "session_id": SESSION_ID,
                                          "tool_input": {"command": GRID_COMMAND}})),
+            # A name that sorts before "Bash", so only an exact comparison lets it through.
+            ("another tool named before Bash", json.dumps({"tool_name": "Agent", "session_id": SESSION_ID,
+                                                           "tool_input": {"command": GRID_COMMAND}})),
             ("a command that is not text", json.dumps({"tool_name": "Bash", "session_id": SESSION_ID,
                                                        "tool_input": {"command": ["x"]}})),
+            ("a command that is a list naming the grid",
+             json.dumps({"tool_name": "Bash", "session_id": SESSION_ID,
+                         "tool_input": {"command": ["cold-read-grid.py"]}})),
             ("no session id", json.dumps({"tool_name": "Bash", "tool_input": {"command": GRID_COMMAND}})),
             ("an empty session id", json.dumps({"tool_name": "Bash", "session_id": "",
                                                 "tool_input": {"command": GRID_COMMAND}}))):
@@ -333,6 +357,26 @@ def marker_file_cases(workspace):
     check("a marker that cannot be replaced raises and leaves no partial file",
           raised and not any(entry.name.endswith(".partial") for entry in blocked.iterdir()),
           sorted(entry.name for entry in blocked.iterdir()))
+    # A partial file that cannot be written raises the write's own error, not one from cleaning up.
+    read_only = Path(workspace) / "marker-write-read-only"
+    read_only.mkdir()
+    os.chmod(read_only, 0o500)
+    try:
+        markers.handoff_deferred_marker_write(read_only, SESSION_ID, read_back)
+        write_error = None
+    except OSError as problem:
+        write_error = problem
+    finally:
+        os.chmod(read_only, 0o700)
+    check("a marker whose partial file cannot be written raises the write's permission error",
+          isinstance(write_error, PermissionError), repr(write_error))
+    # The share is kept to one decimal place, not rounded to a whole number.
+    markers.handoff_deferred_marker_write(handoffs, SESSION_ID, markers.HandoffDeferredMarker(
+        used_percentage=40.36, deferral_began_at=began_at, awaited_subagent_ids=[],
+        awaited_background_task_ids=[], awaited_work_is_unknown=False))
+    check("a written marker keeps the share to one decimal place",
+          json.loads(path.read_text(encoding="utf-8"))["used_percentage"] == 40.4,
+          path.read_text(encoding="utf-8"))
     # The directories are made when missing.
     fresh = Path(workspace) / "fresh" / "handoffs"
     markers.handoff_deferred_marker_write(fresh, SESSION_ID, read_back)

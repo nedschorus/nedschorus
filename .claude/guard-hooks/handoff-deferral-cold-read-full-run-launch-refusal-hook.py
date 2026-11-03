@@ -50,15 +50,17 @@ _deferred_marker_file_spec.loader.exec_module(handoff_deferred_marker_and_refuse
 
 COLD_READ_GRID_PROGRAM = "cold-read-grid.py"
 PYTHON_INTERPRETER_PATTERN = re.compile(r"(?:.*/)?python(?:\d+(?:\.\d+)?)?$")
-# Python's options that take the next word as their value; -c and -m end the search for a script.
+# Python's options that take the next word as their value; -c, -m and - (the script read from
+# stdin) end the search for a script, since every later word is an argument to it.
 PYTHON_VALUE_OPTIONS = {"-W", "-X", "--check-hash-based-pycs"}
-PYTHON_NON_SCRIPT_OPTIONS = {"-c", "-m"}
+PYTHON_NON_SCRIPT_OPTIONS = {"-c", "-m", "-"}
 USAGE_OPTIONS = {"--help", "-h"}
 
 COLD_READ_FULL_RUN_REFUSED_AND_SAVED_REASON = (
     "This cold-read-full-run would outlast the handoff-deferral, so this hook refused it and "
-    "saved the command for your successor, who runs it after the session-handoff. Report it to "
-    "whoever asked for it as put off, not failed."
+    "saved the command for your successor, who runs it after the session-handoff. The handoff "
+    "writer adds the command to your session-handoff, so you need not. Report it to whoever "
+    "asked for it as put off, not failed."
 )
 
 COLD_READ_FULL_RUN_REFUSED_NOT_SAVED_REASON = (

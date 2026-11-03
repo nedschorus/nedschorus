@@ -25,6 +25,7 @@ Run: python3 scripts/handoff-context-threshold-hook-test.py
 """
 
 import atexit
+import ast
 import contextlib
 import importlib.util
 import io
@@ -72,6 +73,27 @@ HANDOFF_INSTRUCTION_PATTERN = re.compile(
 DO_NOT_RUN_HANDOFF_SKILL_YET_INSTRUCTION = (
     "Do not run the /handoff skill now; carry on with your work, and a later "
     "system message will tell you when to run it.")
+
+
+for notice in (hook.HANDOFF_DEFERRED_NOTICE, hook.HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE):
+    check("the deferral timeout counts a task as finished without stopping the task",
+          "even if it still runs" in notice,
+          notice)
+    check("the deferral says the handoff stops remaining work when the handoff comes",
+          "when the handoff comes, it stops whatever is still running." in notice, notice)
+
+guard_source = HOOK_SCRIPT.parent.parent / ".claude/guard-hooks/handoff-deferral-cold-read-full-run-launch-refusal-hook.py"
+for statement in ast.parse(guard_source.read_text(encoding="utf-8")).body:
+    if isinstance(statement, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "COLD_READ_FULL_RUN_REFUSED_AND_SAVED_REASON"
+            for target in statement.targets):
+        reason = ast.literal_eval(statement.value)
+        check("the refusal says the handoff writer adds the command without agent action",
+              "The handoff writer adds the command to your session-handoff, so you need not." in reason,
+              reason)
+        break
+else:
+    check("the refusal reason exists", False)
 
 
 def opens_a_line_with_do_not_run_handoff_skill_yet(stderr):
@@ -726,7 +748,7 @@ with tempfile.TemporaryDirectory() as workspace:
         hook.HANDOFF_DIRECTORY / f"{CEILING_PROBE_SESSION_ID}-handoff-asked")
     # The second marker: written the first time the hook defers, so the
     # deferral is said once instead of at every boundary.
-    handoff_deferred_marker_and_refused_commands_files_common = (
+    deferred_marker_file = (
         hook.HANDOFF_DIRECTORY / f"{DEFERRAL_PROBE_SESSION_ID}-handoff-deferred")
     ceiling_deferred_marker_file = (
         hook.HANDOFF_DIRECTORY / f"{CEILING_PROBE_SESSION_ID}-handoff-deferred")
@@ -738,7 +760,7 @@ with tempfile.TemporaryDirectory() as workspace:
     caller_owned_marker_file = (
         hook.HANDOFF_DIRECTORY / f"{CALLER_OWNED_PROBE_SESSION_ID}-handoff-asked")
     for probe_marker in (deferral_marker_file, ceiling_marker_file,
-                         handoff_deferred_marker_and_refused_commands_files_common, ceiling_deferred_marker_file,
+                         deferred_marker_file, ceiling_deferred_marker_file,
                          unknown_marker_file, unknown_deferred_marker_file,
                          caller_owned_marker_file):
         probe_marker.unlink(missing_ok=True)
@@ -866,7 +888,7 @@ with tempfile.TemporaryDirectory() as workspace:
               "65% ceiling" in result.stderr, result.stderr[:500])
         # A reader could not tell whether the time limit bounds subagents too.
         check("the deferral says the time limit bounds background tasks, not subagents",
-              "a background task counting as finished 75 minutes after its launch"
+              "a background task, though not a subagent, counted as finished 75 minutes after its launch"
               in result.stderr, result.stderr[:600])
         check("the deferral says work started from now on does not delay the handoff",
               "Work you start from now on does not delay that message" in result.stderr,
@@ -878,8 +900,8 @@ with tempfile.TemporaryDirectory() as workspace:
         check("the deferral names the ceiling as the other way the handoff fires",
               "ceiling" in result.stderr, result.stderr[:250])
         check("a deferral writes the deferral marker and not the fired one",
-              handoff_deferred_marker_and_refused_commands_files_common.exists() and not deferral_marker_file.exists(),
-              f"deferred={handoff_deferred_marker_and_refused_commands_files_common.exists()} "
+              deferred_marker_file.exists() and not deferral_marker_file.exists(),
+              f"deferred={deferred_marker_file.exists()} "
               f"fired={deferral_marker_file.exists()}")
 
         # Said once, then quiet. Speaking at every boundary would refuse the
@@ -903,10 +925,18 @@ with tempfile.TemporaryDirectory() as workspace:
               deferral_marker_file.exists(), str(deferral_marker_file))
         # Left in place, it would hold the session past the below-threshold
         # return after every later compaction, refiring the instruction.
-        check("firing deletes the deferral marker",
-              not handoff_deferred_marker_and_refused_commands_files_common.exists(), str(handoff_deferred_marker_and_refused_commands_files_common))
+        check("firing removes the deferral marker",
+              not deferred_marker_file.exists(), str(deferred_marker_file))
+        # The handoff writer reads the deferral's start time after the fire.
+        moved_deferred_marker_file = (
+            hook.HANDOFF_DIRECTORY / f"{DEFERRAL_PROBE_SESSION_ID}-handoff-deferred-fired")
+        check("firing keeps the deferral's record, moved aside, for the handoff writer",
+              moved_deferred_marker_file.exists()
+              and "deferral_began_at" in moved_deferred_marker_file.read_text(encoding="utf-8"),
+              str(moved_deferred_marker_file))
         deferral_marker_file.unlink(missing_ok=True)
-        handoff_deferred_marker_and_refused_commands_files_common.unlink(missing_ok=True)
+        deferred_marker_file.unlink(missing_ok=True)
+        moved_deferred_marker_file.unlink(missing_ok=True)
 
         # The ceiling overrides a deferral already in progress: this session
         # deferred at 55%, kept working, and arrived at 70% with the subagent
@@ -1108,9 +1138,13 @@ with tempfile.TemporaryDirectory() as workspace:
             compacted_marker_file.unlink(missing_ok=True)
             compacted_deferred_marker_file.unlink(missing_ok=True)
 
-            # A deferred marker the hook cannot delete: a directory in its place makes
-            # the unlink raise, so the hook must say so and still send the instruction.
+            # A deferred marker the hook cannot remove: a directory in its place, with a
+            # file where it would be moved, makes the move raise, so the hook must say so
+            # and still send the instruction.
             compacted_deferred_marker_file.mkdir()
+            compacted_moved_marker_file = (
+                hook.HANDOFF_DIRECTORY / f"{COMPACTED_PROBE_SESSION_ID}-handoff-deferred-fired")
+            compacted_moved_marker_file.write_text("in the way\n", encoding="utf-8")
             try:
                 result = run_hook({**compacted_payload, "transcript_path": str(compacted_finished)})
                 instruction, _, rest = result.stderr.partition("\n")
@@ -1132,6 +1166,7 @@ with tempfile.TemporaryDirectory() as workspace:
                       f"stderr {result.stderr[:600]}")
             finally:
                 compacted_deferred_marker_file.rmdir()
+                compacted_moved_marker_file.unlink(missing_ok=True)
                 compacted_marker_file.unlink(missing_ok=True)
 
             # The unknown-count deferral: the transcript first could not be read,
@@ -1207,7 +1242,7 @@ with tempfile.TemporaryDirectory() as workspace:
                   f"code {result.returncode}, stderr {result.stderr[:200]}")
             check("the background-task deferral counts the task and not the monitor",
                   "1 background task(s) run" in result.stderr
-                  and "subagent" not in result.stderr.split("Carry on")[0],
+                  and "subagent" not in result.stderr.splitlines()[0],
                   result.stderr[:250])
             check("the background-task deferral names the task it waits for",
                   "(background task b27dndn4c)" in result.stderr, result.stderr[:600])
@@ -1321,7 +1356,7 @@ with tempfile.TemporaryDirectory() as workspace:
         marker_file.unlink(missing_ok=True)
         deferral_marker_file.unlink(missing_ok=True)
         ceiling_marker_file.unlink(missing_ok=True)
-        handoff_deferred_marker_and_refused_commands_files_common.unlink(missing_ok=True)
+        deferred_marker_file.unlink(missing_ok=True)
         ceiling_deferred_marker_file.unlink(missing_ok=True)
         unknown_marker_file.unlink(missing_ok=True)
         unknown_deferred_marker_file.unlink(missing_ok=True)
@@ -1440,6 +1475,8 @@ with tempfile.TemporaryDirectory() as wait_set_workspace:
         check("a marker file without the saved list is reported and replaced by the work "
               "running now",
               result.returncode == 2 and "could not read this session's earlier" in result.stderr
+              and "the hook replaced that record with a new one" in result.stderr
+              and "the work the hook now waits for is the work running now" in result.stderr
               and sorted(saved.get("awaited_subagent_ids", [])) == sorted([first, late]),
               f"code {result.returncode}, marker {saved}, stderr {result.stderr[-400:]}")
         clear(LEGACY_MARKER_SESSION_ID)
@@ -1475,6 +1512,7 @@ with tempfile.TemporaryDirectory() as wait_set_workspace:
               result.returncode == 2 and "handoff deferred" in result.stderr
               and "could not save the list of work it waits for" in result.stderr
               and str(deferred) in result.stderr
+              and "The second time you see this line about the list, tell the user, once:" in result.stderr
               and "could not read this session's earlier" not in result.stderr,
               f"code {result.returncode}, stderr {result.stderr[-500:]}")
     finally:

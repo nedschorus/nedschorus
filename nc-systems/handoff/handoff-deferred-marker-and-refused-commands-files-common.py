@@ -6,7 +6,11 @@ first handoff-deferral: when the deferral began, and the subagents and backgroun
 then in flight, which are the only work later turns wait for. The cold-read-grid refusal hook
 refuses a cold-read-full-run while the marker file exists and appends the refused command to
 the file of refused commands. The handoff writer script reads both to list, in the
-session-handoff, the work the deferral did not wait for.
+session-handoff, the work the deferral did not wait for. When the threshold hook fires the
+handoff instruction it moves the marker file aside, so a later compaction cannot refire it, and
+the writer reads the moved record; a record left by an earlier deferral that fired is read only
+when no marker file exists, and then lists only background tasks still running, which the
+session-handoff stops anyway.
 
 Both files live in the handoff directory and are named by the Claude Code session id, which a
 hook running inside a subagent also receives, as the id of the agent-session that started it.
@@ -28,6 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 HANDOFF_DEFERRED_MARKER_SUFFIX = "-handoff-deferred"
+HANDOFF_DEFERRED_MARKER_MOVED_AT_FIRE_SUFFIX = "-handoff-deferred-fired"
 COLD_READ_FULL_RUN_COMMANDS_REFUSED_DURING_HANDOFF_DEFERRAL_SUFFIX = "-cold-read-full-run-commands-refused-during-handoff-deferral.jsonl"
 
 
@@ -66,6 +71,23 @@ def handoff_deferred_marker_path(handoff_directory: Path, session_id: str) -> Pa
     return Path(handoff_directory) / f"{session_id}{HANDOFF_DEFERRED_MARKER_SUFFIX}"
 
 
+def handoff_deferred_marker_moved_at_fire_path(handoff_directory: Path, session_id: str) -> Path:
+    return Path(handoff_directory) / f"{session_id}{HANDOFF_DEFERRED_MARKER_MOVED_AT_FIRE_SUFFIX}"
+
+
+def handoff_deferred_marker_move_aside_at_fire(handoff_directory: Path, session_id: str):
+    """Move the marker file to its fired path; return that path, or None when there is no marker.
+
+    Raises OSError when the marker exists and cannot be moved.
+    """
+    moved = handoff_deferred_marker_moved_at_fire_path(handoff_directory, session_id)
+    try:
+        os.replace(handoff_deferred_marker_path(handoff_directory, session_id), moved)
+    except FileNotFoundError:
+        return None
+    return moved
+
+
 def utc_iso(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
@@ -97,7 +119,19 @@ def handoff_deferred_marker_write(handoff_directory: Path, session_id: str,
 
 def handoff_deferred_marker_read(handoff_directory: Path, session_id: str):
     """Return the session's HandoffDeferredMarker, or None when it has no marker file."""
-    path = handoff_deferred_marker_path(handoff_directory, session_id)
+    return _handoff_deferred_record_read(handoff_deferred_marker_path(handoff_directory, session_id))
+
+
+def handoff_deferral_record_read_from_marker_or_moved_at_fire(handoff_directory: Path, session_id: str):
+    """Return the marker file's record, else the one the fire moved aside, else None."""
+    marker = handoff_deferred_marker_read(handoff_directory, session_id)
+    if marker is not None:
+        return marker
+    return _handoff_deferred_record_read(
+        handoff_deferred_marker_moved_at_fire_path(handoff_directory, session_id))
+
+
+def _handoff_deferred_record_read(path: Path):
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
