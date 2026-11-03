@@ -1377,7 +1377,7 @@ with tempfile.TemporaryDirectory() as scratch:
           f"marked copy present={marked_copy.exists()}")
     # --- A Mac link to ned-box's home reaches the reviewer as a ned-box path ---
     mount_override = (script_under_test_module().record_names
-                      .MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY_OVERRIDE_VARIABLE)
+                      .MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE)
     import shutil
     # Each machine's read gets a document of its own: a second read of one name would take the -2 record.
     for machine, link_stem, mount, rewritten in (

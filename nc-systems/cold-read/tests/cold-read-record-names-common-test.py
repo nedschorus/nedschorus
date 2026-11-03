@@ -609,30 +609,30 @@ LINK_TEXT = ("[a](file:///Volumes/nedhome/x/y.md) and file:///Volumes/nedhome/z,
              "other file:///Volumes/other/q\n")
 LINK_TEXT_REWRITTEN = ("[a](/home/nedlern/x/y.md) and /home/nedlern/z, bare /Volumes/nedhome/w, "
                        "other file:///Volumes/other/q\n")
-rewritten = names.mac_nedhome_links_rewritten_to_ned_box_home_paths(LINK_TEXT)
+rewritten = names.text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths(LINK_TEXT)
 check("the rewrite changes each file:///Volumes/nedhome/ link and nothing else",
       rewritten == LINK_TEXT_REWRITTEN, repr(rewritten))
 with tempfile.TemporaryDirectory() as scratch:
-    saved_override = os.environ.get(names.MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY_OVERRIDE_VARIABLE)
+    saved_override = os.environ.get(names.MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE)
     try:
-        os.environ[names.MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY_OVERRIDE_VARIABLE] = str(
+        os.environ[names.MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE] = str(
             pathlib.Path(scratch) / "no-mount-here")
         reviewer_copy = (
-            names.cold_read_reviewer_copy_text_with_mac_nedhome_links_rewritten_to_ned_box_home_paths(
+            names.cold_read_reviewer_copy_text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths_where_mac_mount_absent(
                 LINK_TEXT))
         check("where the Mac's mount of ned-box's home is absent, as on ned-box, the reviewer's copy is rewritten",
               reviewer_copy == LINK_TEXT_REWRITTEN, repr(reviewer_copy))
-        os.environ[names.MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY_OVERRIDE_VARIABLE] = scratch
+        os.environ[names.MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE] = scratch
         reviewer_copy = (
-            names.cold_read_reviewer_copy_text_with_mac_nedhome_links_rewritten_to_ned_box_home_paths(
+            names.cold_read_reviewer_copy_text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths_where_mac_mount_absent(
                 LINK_TEXT))
         check("where the Mac's mount of ned-box's home is a directory, as on the Mac, the reviewer's copy keeps its links",
               reviewer_copy == LINK_TEXT, repr(reviewer_copy))
     finally:
         if saved_override is None:
-            os.environ.pop(names.MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY_OVERRIDE_VARIABLE, None)
+            os.environ.pop(names.MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE, None)
         else:
-            os.environ[names.MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY_OVERRIDE_VARIABLE] = saved_override
+            os.environ[names.MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE] = saved_override
 
 print()
 if failures:

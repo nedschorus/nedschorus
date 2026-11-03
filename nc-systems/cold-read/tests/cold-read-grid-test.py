@@ -2190,7 +2190,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and f"(sha256 {launch_sha256[:12]})" not in line, repr(line))
 
     # --- A Mac link to ned-box's home is rewritten in the frozen copy only ----
-    mount_override = grid_module.record_names.MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY_OVERRIDE_VARIABLE
+    mount_override = grid_module.record_names.MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE
     no_mount = {mount_override: str(scratch / "no-mac-mount-here")}
     link_directory = scratch / "mac-link-freeze"
     link_directory.mkdir()

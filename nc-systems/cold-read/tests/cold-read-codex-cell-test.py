@@ -461,6 +461,7 @@ with tempfile.TemporaryDirectory() as scratch:
             "nc-systems/cold-read/cold-read-codex-cell.py",
             "nc-systems/cold-read/cold-read-cell-common.py",
             "nc-systems/cold-read/cold-read-record-names-common.py",
+            "nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py",
             "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py"):
         (copied_checkout / relative_path).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO_ROOT / relative_path, copied_checkout / relative_path)

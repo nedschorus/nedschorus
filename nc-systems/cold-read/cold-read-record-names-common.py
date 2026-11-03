@@ -2,6 +2,7 @@
 """Define shared cold-read-record names and paths, and the one rewrite both cold reads apply to the copy a reviewer reads."""
 
 import datetime
+import importlib.util
 import json
 import os
 import pathlib
@@ -200,16 +201,22 @@ def cold_read_record_directory_at_first_free_name_created_atomically(base: pathl
         return record_directory
 
 
-MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY = "/Volumes/nedhome"
+_ned_box_home_spec = importlib.util.spec_from_file_location(
+    "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+_ned_box_home = importlib.util.module_from_spec(_ned_box_home_spec)
+_ned_box_home_spec.loader.exec_module(_ned_box_home)
+MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY = _ned_box_home.MAC_MOUNT_OF_NED_BOX_HOME
 MAC_MOUNT_OF_NED_BOX_HOME_LINK_PREFIX = f"file://{MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY}/"
-NED_BOX_HOME_PATH_PREFIX = "/home/nedlern/"
+NED_BOX_HOME_PATH_PREFIX = f"{_ned_box_home.NED_BOX_HOME}/"
 # Names the directory probed in place of MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY,
 # so a test can run either machine's case on either machine.
-MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY_OVERRIDE_VARIABLE = (
-    "COLD_READ_MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY_OVERRIDE")
+MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE = (
+    "COLD_READ_MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE")
 
 
-def mac_nedhome_links_rewritten_to_ned_box_home_paths(text: str) -> str:
+def text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths(text: str) -> str:
     """Return text with each file:///Volumes/nedhome/ link prefix replaced by /home/nedlern/.
 
     A bare /Volumes/nedhome/ path without file:// is left alone. This is the
@@ -219,7 +226,7 @@ def mac_nedhome_links_rewritten_to_ned_box_home_paths(text: str) -> str:
     return text.replace(MAC_MOUNT_OF_NED_BOX_HOME_LINK_PREFIX, NED_BOX_HOME_PATH_PREFIX)
 
 
-def cold_read_reviewer_copy_text_with_mac_nedhome_links_rewritten_to_ned_box_home_paths(
+def cold_read_reviewer_copy_text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths_where_mac_mount_absent(
         text: str) -> str:
     """Return the text a reviewer on this machine reads, for a cold read run here.
 
@@ -229,8 +236,8 @@ def cold_read_reviewer_copy_text_with_mac_nedhome_links_rewritten_to_ned_box_hom
     where the mount is a directory, as on the Mac, the text is returned unchanged.
     Apply it only to the copy a reviewer reads, never to the user's document.
     """
-    mount = (os.environ.get(MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY_OVERRIDE_VARIABLE)
+    mount = (os.environ.get(MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE)
              or MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY)
     if pathlib.Path(mount).is_dir():
         return text
-    return mac_nedhome_links_rewritten_to_ned_box_home_paths(text)
+    return text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths(text)
