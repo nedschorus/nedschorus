@@ -1276,7 +1276,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
               str(died.launches))
         check(f"TABLE IN THE LOOP: the resume after {row} carries the resume prompt",
               died.launches[1][1] == supervisor.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF
-              and died.launches[0][1] == first_prompt,
+              and died.launches[0][1] == supervisor.first_prompt_from_launch_command_marked_not_typed_by_the_user(first_prompt),
               str(died.launches))
 
     # 3. An adopted session's code is None — this supervisor never owned it —
@@ -1691,7 +1691,7 @@ def run_by_hand_resume_cases(workspace: Path):
     supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
     (session_id, prompt, resume), printed = launch_once_printing(settings, empty_projects)
     check("FIRST PROMPT: a seat with nothing worth resuming starts fresh on its first prompt",
-          resume is not True and prompt == founding_prompt
+          resume is not True and prompt == supervisor.first_prompt_from_launch_command_marked_not_typed_by_the_user(founding_prompt)
           and "ignoring the first prompt" not in printed,
           (session_id, prompt, resume))
 
@@ -1703,7 +1703,8 @@ def run_by_hand_resume_cases(workspace: Path):
         supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY: "2026-01-01T00:00:00+00:00"})
     (session_id, prompt, resume), printed = launch_once_printing(settings, projects)
     check("FIRST PROMPT: a seat with a recorded exit starts fresh on its first prompt",
-          resume is not True and session_id != crashed.stem and prompt == founding_prompt,
+          resume is not True and session_id != crashed.stem
+          and prompt == supervisor.first_prompt_from_launch_command_marked_not_typed_by_the_user(founding_prompt),
           (session_id, prompt, resume))
 
     settings = settings_for("first-prompt-waiting-handoff")
@@ -1764,7 +1765,7 @@ def run_by_hand_resume_cases(workspace: Path):
     check("IGNITION: --fresh-session-from-conversation-tail's arguments start fresh on its ignition prompt "
           "despite a crashed transcript",
           exit_code == 0 and resume is not True and session_id != crashed.stem
-          and prompt == "Read the conversation-tail and continue.",
+          and prompt == supervisor.first_prompt_from_launch_command_marked_not_typed_by_the_user("Read the conversation-tail and continue."),
           (exit_code, session_id, prompt, resume, printed[-400:]))
 
     # Control: the same launch without the recovery's flag resumes the transcript,

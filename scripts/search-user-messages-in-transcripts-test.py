@@ -213,6 +213,8 @@ with tempfile.TemporaryDirectory() as directory:
         recover_module.fresh_session_from_conversation_tail_prompt(handoffs / "alpha-conversation-tail.md"),
         supervisor_module.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF,
         no_handoff_yet,
+        supervisor_module.first_prompt_from_launch_command_marked_not_typed_by_the_user(
+            "You are the git-infra seat. Read docs/agents/seat-first-prompt.md."),
         no_handoff_yet + "\n\nLeftover work-snapshots: 1 copy(ies) of uncommitted work left by an agent of this "
         "agent-seat whose `claude` process is gone, and no longer in its worktree:",
         supervisor_module.build_ignition_prompt(

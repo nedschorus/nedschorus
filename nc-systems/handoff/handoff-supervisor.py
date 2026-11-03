@@ -228,6 +228,16 @@ RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF = (
     "state before trusting it, then continue the work underway."
 )
 FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_TEMPLATE = "You are {agent}. No handoff exists yet; ask what to work on."
+# Claude Code records a prompt passed on its command line as typed by a person, so this line is the only mark
+# by which scripts/search-user-messages-in-transcripts.py tells the launch command's prompt from the user's words.
+FIRST_PROMPT_FROM_LAUNCH_COMMAND_NOT_TYPED_BY_THE_USER_LINE = (
+    "The handoff-supervisor was given this first prompt with --first-prompt-file or --first-prompt; "
+    "the user did not type it.")
+
+
+def first_prompt_from_launch_command_marked_not_typed_by_the_user(first_prompt: str) -> str:
+    """The prompt from --first-prompt-file or --first-prompt, as the agent-session is launched with it."""
+    return f"{first_prompt}\n\n{FIRST_PROMPT_FROM_LAUNCH_COMMAND_NOT_TYPED_BY_THE_USER_LINE}"
 
 # subprocess reports signals as negative return codes; shell wrappers report 128 + signal.
 SIGTERM_SESSION_EXIT_CODES = (143, -15)
@@ -2153,7 +2163,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
     generation = max(state.get("generation", 0),
                      highest_generation_on_disk(settings.handoff_directory, settings.agent))
     if settings.first_prompt:
-        prompt = settings.first_prompt
+        prompt = first_prompt_from_launch_command_marked_not_typed_by_the_user(settings.first_prompt)
     elif settings.resume_session_id:
         # A resumed session retains its context and must not be told to ask for work it already has.
         prompt = RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF

@@ -4122,7 +4122,8 @@ with tempfile.TemporaryDirectory() as temporary:
         resume_command, workspace)
     check("EXIT RECORD: the printed resume starts the supervisor on the deliberate-stop prompt",
           resumed is True
-          and first_turn == FIRST_PROMPT_FOR_A_BY_HAND_RESUME_AFTER_A_RECORDED_EXIT,
+          and first_turn == recovery.supervisor.first_prompt_from_launch_command_marked_not_typed_by_the_user(
+              FIRST_PROMPT_FOR_A_BY_HAND_RESUME_AFTER_A_RECORDED_EXIT),
           (first_turn, resumed))
     first_turn_without_the_file, _ = supervisor_first_turn_for_a_by_hand_command(
         resume_command.replace(f" --first-prompt-file {shlex.quote(str(by_hand_prompt_path))}",
