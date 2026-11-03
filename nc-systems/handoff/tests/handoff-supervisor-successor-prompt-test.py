@@ -3250,6 +3250,8 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     check("the successor is told the refused cold-read-full-run and where to run it",
           "a hook refused 1 cold-read-full-run(s)" in deferral_prompt
           and "cold-read-grid.py --target a.md\" in /work" in deferral_prompt, deferral_prompt)
+    check("the successor is told to run each command from the directory listed with it",
+          "Run each command from the directory listed with it" in deferral_prompt, deferral_prompt)
     check("the deferral sentences come before the next step",
           deferral_prompt.index("handoff-deferral") < deferral_prompt.index("Then take the next step"),
           deferral_prompt)

@@ -92,7 +92,8 @@ NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION = (
     "Carry on, open approval-walks included. Short work, which usually ends "
     "within 10 minutes, such as a cold-read-fast-read, may start; if it is "
     "still running when the session-handoff ends this agent-session, it stops, "
-    "and the session-handoff lists it for your successor. Do not start long "
+    "and the handoff writer adds it to your session-handoff for your successor, "
+    "so you need not. Do not start long "
     "work, such as a cold-read-full-run or a pull-request review: add it to "
     "your task list for your successor."
 )

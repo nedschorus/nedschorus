@@ -880,6 +880,10 @@ with tempfile.TemporaryDirectory() as workspace:
               result.stderr[-600:])
         check("the deferral names the work it waits for",
               "(subagent a2573a7737ae643dc)" in result.stderr, result.stderr[:600])
+        check("the instruction on new work says the handoff writer, not the agent, adds stopped work to the session-handoff",
+              "the handoff writer adds it to your session-handoff for your successor, so you need not."
+              in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
+              hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION)
         # Agents read "handoff" in the notice and ran the skill anyway.
         check("the deferral tells the agent, on a line of its own, not to run the skill yet",
               opens_a_line_with_do_not_run_handoff_skill_yet(result.stderr),

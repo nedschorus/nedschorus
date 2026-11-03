@@ -508,7 +508,7 @@ BACKGROUND_TASKS_STARTED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE = (
 COLD_READ_FULL_RUN_COMMANDS_REFUSED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE = (
     "During the handoff-deferral of the session you are replacing, a hook refused "
     "{command_count} cold-read-full-run(s), because each would have outlasted that session, and "
-    "saved them for you: {joined_commands}. Run each command from the directory named after it, unless the "
+    "saved them for you: {joined_commands}. Run each command from the directory listed with it, unless the "
     "dialog you read first shows it is no longer needed, and tell whoever asked for it, as that "
     "dialog shows, that it now runs."
 )
