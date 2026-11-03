@@ -123,7 +123,11 @@ when it cannot judge the mutant: the diff file cannot be read or names no
 file, the file has no suite, a suite fails without the mutant, the diff does
 not apply at the head, or the runner judged no suite with the mutant applied,
 as when a suite ran past its own time limit or the runner was refused; the
-scratch worktree is removed whatever happens.
+scratch worktree is removed whatever happens. When the diff does not apply at
+the head, it also reads origin/main's copy of the file, without fetching, and
+says whether the replaced lines are gone from main, so the mutant is gone and
+its survivor task is to be marked completed, or are still on main, so the
+branch changed them.
 
 Exit codes: 0 every mutant was killed, 1 a mutant survived, errored or was
 not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
@@ -730,6 +734,26 @@ def source_with_recorded_mutant_applied(source, hunks):
     return "\n".join(lines)
 
 
+def recorded_mutant_lines_on_main(checkout, path, hunks, environment):
+    """"applies" when origin/main's file takes the mutant, "gone" when some hunk's old lines
+    are nowhere in it or the file is not there, None when it cannot tell (no origin/main, or
+    the old lines appear more than once)."""
+    if run(["git", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/main^{commit}"],
+           checkout, environment).returncode:
+        return None
+    shown = run(["git", "show", f"refs/remotes/origin/main:{path}"], checkout, environment)
+    if shown.returncode:
+        return "gone"
+    if source_with_recorded_mutant_applied(shown.stdout, hunks) is not None:
+        return "applies"
+    lines = shown.stdout.split("\n")
+    for _, old, _ in hunks:
+        if not any(lines[place:place + len(old)] == old
+                   for place in range(len(lines) - len(old) + 1)):
+            return "gone"
+    return None
+
+
 def recorded_mutant_run_verdict(exit_code, output, runner):
     """("killed" or "survived", None) for the suite runner's run with the mutant applied, or
     (None, why) when the runner judged no suite."""
@@ -810,14 +834,33 @@ def recorded_mutant_killed_check(arguments, checkout, environment, runner):
             except (OSError, UnicodeDecodeError) as error:
                 why_not_applied = f"the file cannot be read ({error})"
             if why_not_applied is not None:
+                on_main = recorded_mutant_lines_on_main(checkout, path, hunks, environment)
+                if on_main == "gone":
+                    next_step = (
+                        f"origin/main does not have the lines the diff replaces in {path} "
+                        f"either, so the mutant is gone from main and there is nothing to "
+                        f"kill: mark the survivor task that names {diff_file}, on your task "
+                        f"list, completed.\n")
+                elif on_main == "applies":
+                    next_step = (
+                        f"origin/main still has the lines the diff replaces in {path}, so your "
+                        f"branch changed them.\n"
+                        f"If your branch changed them on purpose, the mutant no longer exists "
+                        f"on it: once your branch is merged, mark the survivor task that names "
+                        f"{diff_file} completed.\n"
+                        f"Otherwise, put {path} back as origin/main has it, with git checkout "
+                        f"origin/main -- {shlex.quote(path)}, keep your test in another file, "
+                        f"and commit both.\n" + rerun)
+                else:
+                    next_step = (
+                        f"If the line the diff changes is no longer at your head as the diff "
+                        f"shows it, there is no mutant to kill: mark the survivor task "
+                        f"completed instead of running this.\n"
+                        f"Otherwise, make sure your branch's head has {path} as main has it, "
+                        f"and commit your test in another file.\n" + rerun)
                 raise CouldNotRun(
                     f"{PROGRAM}: not run — the mutant in {diff_file} does not apply to {path} at "
-                    f"head {head[:12]}: {why_not_applied}.\n"
-                    f"If the line the diff changes is no longer at your head as the diff shows "
-                    f"it, there is no mutant to kill: mark the survivor task completed instead "
-                    f"of running this.\n"
-                    f"Otherwise, make sure your branch's head has {path} as main has it, and "
-                    f"commit your test in another file.\n" + rerun)
+                    f"head {head[:12]}: {why_not_applied}.\n" + next_step)
             (worktree / path).write_text(mutated_source, encoding="utf-8")
             # Python checks cached bytecode by the source's size and whole-second mtime, which a
             # mutant such as + to * written within the second leaves the same.
