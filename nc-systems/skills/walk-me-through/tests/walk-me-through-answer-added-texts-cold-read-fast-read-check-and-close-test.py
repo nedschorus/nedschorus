@@ -1225,6 +1225,21 @@ def test_an_answer_to_a_deferred_item_takes_the_note_out_of_its_heading():
           and marker(case) == "#next_to_present item 5 of 5", described(closed) + walk_document(case))
 
 
+def test_a_deferred_item_decided_through_a_held_answer_loses_the_note_in_its_heading():
+    case = summary_case(next_to_present="item 2 of 5", recorded=approved_line("item 1 of 5"))
+    before = walk_document(case)
+    case.run("check", "--deferred")
+    case.run("close")
+    with open(case.minutes, "a") as minutes:
+        minutes.write("item 2 of 5: answer held: item 3 of 5, raised by a fast-read finding, waits for the user's "
+                      "answer. <open>\n#next_to_present item 3 of 5\n")
+    case.run("check")
+    closed = case.run("close")
+    check("an item deferred once, then decided with the item its answer was held for, loses the note in its heading",
+          closed.returncode == 0 and "item 2 of 5, whose answer was held for item 3 of 5" in closed.stdout
+          and walk_document(case) == before, described(closed) + walk_document(case))
+
+
 def test_a_deferral_in_a_walk_with_no_summary_item_gives_the_heading_no_note():
     case = Case(next_to_present="item 3 of 9")
     before = walk_document(case)

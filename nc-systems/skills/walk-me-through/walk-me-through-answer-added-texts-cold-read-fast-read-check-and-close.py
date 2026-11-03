@@ -1114,8 +1114,6 @@ def deferred_item_heading_noted(walk_finder, minutes, numbers, total, parser, no
     exactly the items numbered, unless it already holds the note; return the lines to print when no such heading
     exists. Without noted, take the note out of that heading, if it holds it, and return no lines."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
-    if not document.is_file():
-        return []
     text = document.read_text(encoding="utf-8")
     lines = text.split("\n")
     note = walk_finder.APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT
@@ -1272,6 +1270,9 @@ def close(arguments):
         held = held_items_decided_with(walk_finder, minutes, parser, answered_numbers, item, held_outcome)
         if held:
             append_to_minutes(minutes, held)
+        for line in held:
+            deferred_item_heading_noted(walk_finder, minutes, walk_finder.parse_items(line.split(": ")[0])[0], total,
+                                        parser, noted=False)
         output += [CLOSE_HELD_DECIDED.format(item=item, held=line.split(": ")[0]) for line in held]
     decided, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
     numbers = next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals)
