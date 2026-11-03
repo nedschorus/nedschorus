@@ -4,17 +4,21 @@
 The rule is config/ned-box-tmpfiles-tmp-cleanup-rule-ignoring-directory-access-time.conf;
 its comments say why it differs from the distribution's rule.
 
-With no flag: a dry run. Runs `systemd-tmpfiles --dry-run --clean <rule>` as the
-calling user and prints how many entries directly inside /tmp and /var/tmp the rule
-would remove, with a sample. Nothing is changed. Directories the calling user cannot
-open are left out of the count, and the number of them is printed.
+With no flag: a dry run. Runs
+`systemd-tmpfiles --dry-run --clean --replace=/etc/tmpfiles.d/tmp.conf <rule>` as the
+calling user: every tmpfiles.d file is read, as systemd-tmpfiles-clean.timer reads them,
+with the rule in place of tmp.conf, so other files' exclusions, such as tmux's
+`x /tmp/tmux-*`, still hold. It prints how many entries directly inside /tmp and
+/var/tmp would be removed, with a sample. Nothing is changed. Directories the calling
+user cannot open are left out of the count, and the number of them is printed.
 
-With --install-and-clean-once: the dry run first, then
-`sudo install` of the rule as /etc/tmpfiles.d/tmp.conf, then one
-`sudo systemd-tmpfiles --clean /etc/tmpfiles.d/tmp.conf`, which removes what the dry
-run listed, without undo. The daily systemd-tmpfiles-clean.timer reads the installed
-file from then on. sudo asks for the password, so run it from a terminal.
-Running it again rewrites the same file and cleans again.
+With --install-and-clean-once: the dry run first, then `sudo install` of the rule as
+/etc/tmpfiles.d/tmp.conf, then one `sudo systemd-tmpfiles --clean`, the same command
+systemd-tmpfiles-clean.timer runs each day. It removes, without undo, what the dry run
+counted, and also old entries inside the directories the dry run could not open, and
+whatever every other tmpfiles.d file's age rules would remove that day. The timer reads
+the installed file from then on. sudo asks for the user's password, so the user runs it
+from a terminal. Running it again rewrites the same file and cleans again.
 
 Each failed step prints what failed and what state it left, and the script exits 1.
 """
@@ -38,6 +42,11 @@ ANY_REMOVAL_LINE = re.compile(r'^Would remove ')
 UNOPENABLE_DIRECTORY_LINE = re.compile(r'^Opening directory ".*" failed, ignoring: Permission denied$')
 PROGRAM = "ned-box-tmpfiles-tmp-cleanup-rule-dry-run-or-install-and-clean-once"
 DRY_RUN_COMMAND_LINE = f"python3 {Path(__file__).resolve()}"
+# The program may fail on the Mac, whose path to this file does not exist on ned-box.
+DRY_RUN_ON_NED_BOX_COMMAND_LINE = (
+    "ssh nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
+    "scripts/ned-box-tmpfiles-tmp-cleanup-rule-dry-run-or-install-and-clean-once.py'")
+DAILY_CLEANER = "systemd-tmpfiles-clean.timer"
 INSTALL_COMMAND_LINE = f"{DRY_RUN_COMMAND_LINE} --install-and-clean-once"
 # sudo cannot ask for the password without a terminal, as in an agent's shell.
 # The durable checkout, not this file's path: an agent may run this from a worktree removed later.
@@ -52,13 +61,14 @@ SUDO_NEEDS_THE_USER_LINE = (
 
 def dry_run(rule_file: Path, run=subprocess.run) -> int:
     """Print what the rule would remove; return 0, or 1 when the dry run failed."""
-    command = ["systemd-tmpfiles", "--dry-run", "--clean", str(rule_file)]
+    command = ["systemd-tmpfiles", "--dry-run", "--clean", f"--replace={INSTALLED_RULE_PATH}",
+               str(rule_file)]
     try:
         result = run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     except FileNotFoundError:
         print(f"{PROGRAM}: dry run failed: systemd-tmpfiles is not on PATH, so nothing "
-              f"was counted and nothing was changed.\nRun `{DRY_RUN_COMMAND_LINE}` on ned-box, "
-              "whose /tmp the rule is for.", file=sys.stderr)
+              f"was counted and nothing was changed.\nRun it on ned-box, whose /tmp the rule is for: "
+              f"{DRY_RUN_ON_NED_BOX_COMMAND_LINE}", file=sys.stderr)
         return 1
     lines = (result.stdout + result.stderr).splitlines()
     unopenable = [line for line in lines if UNOPENABLE_DIRECTORY_LINE.match(line)]
@@ -84,8 +94,9 @@ def dry_run(rule_file: Path, run=subprocess.run) -> int:
         for path in top_level[:SAMPLE_SIZE]:
             print(f"  {path}")
     if unopenable:
-        print(f"{len(unopenable)} directories could not be opened without root, so what is "
-              "inside them is not counted.")
+        print(f"{len(unopenable)} directories could not be opened by this user, so what is "
+              "inside them is not counted; the install's clean runs as root, and also removes "
+              "old entries inside them.")
     return 0
 
 
@@ -93,7 +104,8 @@ def install_and_clean_once(rule_file: Path, run=subprocess.run) -> int:
     """Install the rule with sudo and clean once; return 0, or 1 at the first failed step."""
     install_command = ["sudo", "install", "-m", "0644", "-o", "root", "-g", "root",
                        str(rule_file), str(INSTALLED_RULE_PATH)]
-    clean_command = ["sudo", "systemd-tmpfiles", "--clean", str(INSTALLED_RULE_PATH)]
+    # No file argument: every tmpfiles.d file is read, so other files' exclusions hold.
+    clean_command = ["sudo", "systemd-tmpfiles", "--clean"]
     installed = run(install_command)
     if installed.returncode != 0:
         print(f"{PROGRAM}: install failed: `{' '.join(install_command)}` exited "
@@ -103,15 +115,15 @@ def install_and_clean_once(rule_file: Path, run=subprocess.run) -> int:
               "If that run fails the same way, stop and give the user what sudo printed.",
               file=sys.stderr)
         return 1
-    print(f"Installed {INSTALLED_RULE_PATH}; the daily cleaner uses it from now on.")
+    print(f"Installed {INSTALLED_RULE_PATH}; {DAILY_CLEANER} uses it from now on.")
     cleaned = run(clean_command)
     if cleaned.returncode != 0:
         print(f"{PROGRAM}: clean failed: `{' '.join(clean_command)}` exited "
-              f"{cleaned.returncode}. The rule is installed, and the daily cleaner uses it; "
+              f"{cleaned.returncode}. The rule is installed, and {DAILY_CLEANER} uses it; "
               "systemd-tmpfiles may have removed some old entries before it failed.\nFix what systemd-tmpfiles printed above, then run "
               f"`{' '.join(clean_command)}` again.", file=sys.stderr)
         return 1
-    print("Cleaned /tmp and /var/tmp once with the installed rule.")
+    print("Cleaned once with every tmpfiles.d file, the installed rule included.")
     return 0
 
 
@@ -125,9 +137,10 @@ def main(argv=None, rule_file: Path = RULE_FILE, run=subprocess.run) -> int:
     if dry_run(rule_file, run) != 0:
         return 1
     if not arguments.install_and_clean_once:
-        print("Nothing was changed. To install the rule and remove the entries counted above once, "
-              f"run `{INSTALL_COMMAND_LINE}` on ned-box from a terminal; sudo asks for the "
-              "password.")
+        print("Nothing was changed. The install removes the entries counted above, and also "
+              "old entries inside the directories this user could not open. sudo asks for the "
+              f"user's password, so the user runs it, from a Terminal on his Mac: "
+              f"{USER_INSTALL_COMMAND_LINE}")
         return 0
     return install_and_clean_once(rule_file, run)
 

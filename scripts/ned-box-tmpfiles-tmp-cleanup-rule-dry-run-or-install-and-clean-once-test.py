@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """Tests for ned-box-tmpfiles-tmp-cleanup-rule-dry-run-or-install-and-clean-once.py.
 
-Every case but the last runs commands through a stub that records them and answers
-with canned results, so no case runs sudo or touches /etc or /tmp. The last case
-parses the repository's rule file with the real systemd-tmpfiles against an empty
-root directory, and is skipped where systemd-tmpfiles is not installed.
+Most cases run commands through a stub that records them and answers with canned
+results, so no case runs sudo or touches /etc or /tmp. The last cases replay the
+commands the script builds with the real systemd-tmpfiles, in dry-run mode, against a
+scratch root directory, and are skipped where systemd-tmpfiles is not installed.
 
 Run: python3 scripts/ned-box-tmpfiles-tmp-cleanup-rule-dry-run-or-install-and-clean-once-test.py
 """
 
 import importlib.util
 import io
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -92,11 +94,16 @@ check("dry run samples the top-level paths",
       "  /tmp/merge-gate-abc\n" in printed and "  /tmp/tmp.t5kA0l0Tli\n" in printed
       and "/tmp/merge-gate-abc/sub" not in printed, printed)
 check("dry run reports the directories it could not open",
-      "1 directories could not be opened without root" in printed, printed)
-check("dry run runs systemd-tmpfiles on the rule file and nothing else",
-      stub.commands == [["systemd-tmpfiles", "--dry-run", "--clean", str(RULE)]],
+      "1 directories could not be opened by this user" in printed
+      and "also removes old entries inside them" in printed, printed)
+check("dry run runs systemd-tmpfiles on every tmpfiles.d file, the rule replacing "
+      "tmp.conf, and nothing else",
+      stub.commands == [["systemd-tmpfiles", "--dry-run", "--clean",
+                         "--replace=/etc/tmpfiles.d/tmp.conf", str(RULE)]],
       stub.commands)
-check("dry run says how to install", "--install-and-clean-once" in printed, printed)
+dry_run_command = stub.commands[0]
+check("dry run says the user installs it, with the command he types on his Mac",
+      installer.USER_INSTALL_COMMAND_LINE in printed and "the user runs it" in printed, printed)
 
 stub = CommandStub(dry_run_result=(0, ""))
 exit_code, printed, errors = run_main([], stub)
@@ -136,7 +143,8 @@ check("dry run samples the first 10 of 12 entries",
 stub = CommandStub(dry_run_raises=FileNotFoundError("systemd-tmpfiles"))
 exit_code, printed, errors = run_main(["--install-and-clean-once"], stub)
 check("systemd-tmpfiles missing: exit 1, says so, runs no sudo command",
-      exit_code == 1 and "not on PATH" in errors and f"Run `{installer.DRY_RUN_COMMAND_LINE}` on ned-box" in errors
+      exit_code == 1 and "not on PATH" in errors
+      and installer.DRY_RUN_ON_NED_BOX_COMMAND_LINE in errors
       and stub.sudo_commands == [],
       printed + errors)
 
@@ -147,8 +155,9 @@ check("install: installs the rule as /etc/tmpfiles.d/tmp.conf, then cleans with 
       stub.sudo_commands == [
           ["sudo", "install", "-m", "0644", "-o", "root", "-g", "root", str(RULE),
            "/etc/tmpfiles.d/tmp.conf"],
-          ["sudo", "systemd-tmpfiles", "--clean", "/etc/tmpfiles.d/tmp.conf"]],
+          ["sudo", "systemd-tmpfiles", "--clean"]],
       stub.commands)
+clean_command = stub.sudo_commands[1][1:]
 
 stub = CommandStub(failing_sudo_commands={"install"})
 exit_code, printed, errors = run_main(["--install-and-clean-once"], stub)
@@ -162,7 +171,7 @@ stub = CommandStub(failing_sudo_commands={"systemd-tmpfiles"})
 exit_code, printed, errors = run_main(["--install-and-clean-once"], stub)
 check("clean fails: exit 1, says the rule is installed and how to clean again",
       exit_code == 1 and "clean failed" in errors and "The rule is installed" in errors
-      and "`sudo systemd-tmpfiles --clean /etc/tmpfiles.d/tmp.conf` again" in errors,
+      and "`sudo systemd-tmpfiles --clean` again" in errors,
       printed + errors)
 
 for step in ("install", "systemd-tmpfiles"):
@@ -178,9 +187,47 @@ age_by = tmp_age.split(":")[0]
 check("the /tmp rule ignores directories' access time (A) and keeps files' (a)",
       "A" not in age_by and "a" in age_by and tmp_age.endswith(":10d"), tmp_age)
 
+
+
+def removals_in_scratch_root(command, installed_rule_text=None):
+    """Replay command with the real systemd-tmpfiles in dry-run mode against a scratch root
+    that holds tmux's `x /tmp/tmux-*` exclusion in its own file, and a socket folder and
+    another folder older than the test rule's 1-second age. The rule file argument, if
+    any, becomes that test rule. Return the paths it would remove, relative to the root."""
+    with tempfile.TemporaryDirectory() as root:
+        for directory in ("usr/lib/tmpfiles.d", "etc/tmpfiles.d", "tmp/tmux-1000", "tmp/old-dir"):
+            os.makedirs(f"{root}/{directory}")
+        Path(f"{root}/usr/lib/tmpfiles.d/tmux.conf").write_text("x /tmp/tmux-*\n")
+        Path(f"{root}/usr/lib/tmpfiles.d/tmp.conf").write_text("D /tmp 1777 root root -\n")
+        test_rule = Path(f"{root}/test-rule.conf")
+        test_rule.write_text("q /tmp 1777 root root abcmBM:1s\n")
+        if installed_rule_text is not None:
+            Path(f"{root}/etc/tmpfiles.d/tmp.conf").write_text(installed_rule_text)
+        for directory in ("tmux-1000", "old-dir"):
+            Path(f"{root}/tmp/{directory}/file").write_text("x")
+        time.sleep(1.5)
+        replayed = [command[0], f"--root={root}", "--dry-run"] + [
+            str(test_rule) if argument == str(RULE) else argument
+            for argument in command[1:] if argument != "--dry-run"]
+        result = subprocess.run(replayed, capture_output=True, text=True)
+        return [line.replace(root, "") for line in (result.stdout + result.stderr).splitlines()
+                if line.startswith("Would remove")]
+
+
 if shutil.which("systemd-tmpfiles") is None:
-    print("SKIP  the rule file parses: systemd-tmpfiles is not installed here")
+    print("SKIP  the real systemd-tmpfiles cases: it is not installed here")
 else:
+    removed = removals_in_scratch_root(dry_run_command)
+    check("dry run, replayed: another file's `x /tmp/tmux-*` keeps the tmux folder, "
+          "and the old folder is counted",
+          not any("tmux-1000" in line for line in removed)
+          and 'Would remove directory "/tmp/old-dir"' in removed, removed)
+    removed = removals_in_scratch_root(clean_command, "q /tmp 1777 root root abcmBM:1s\n")
+    check("install's clean, replayed: another file's `x /tmp/tmux-*` keeps the tmux folder, "
+          "and the installed rule removes the old folder",
+          not any("tmux-1000" in line for line in removed)
+          and 'Would remove directory "/tmp/old-dir"' in removed, removed)
+
     with tempfile.TemporaryDirectory() as empty_root:
         parsed = subprocess.run(
             ["systemd-tmpfiles", f"--root={empty_root}", "--dry-run", "--clean",
