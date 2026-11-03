@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Run main's pull-request-head-test-run.py on each pull request's wt/pr<n>-merged worktree.
+"""Run main's pull-request-head-test-run.py on each pull request's pr<n>-merged worktree.
 
 Usage:
   scripts/merge-lane-pull-request-head-test-run-on-merged-worktree.py <pull request number>...
-      [--merge-lane-worktrees-and-outputs-directory DIR] [--review-tools-worktree-at-main DIR]
+      [--merge-lane-worktrees-and-outputs-directory DIR] [--merge-lane-review-worktrees-directory DIR] [--review-tools-worktree-at-main DIR]
 
 For each pull request in turn, runs --review-tools-worktree-at-main's
 scripts/pull-request-head-test-run.py, not the pull request's, so a pull
-request cannot pass by changing its runner. Under the worktrees and outputs
-directory it tests wt/pr<n>-merged, files the record under
-hr/pr<n>/log-store, uses hr/pr<n>/tmp as its temporary directory and
+request cannot pass by changing its runner. It tests pr<n>-merged under the
+review worktrees directory and, under the worktrees and outputs directory,
+files the record under hr/pr<n>/log-store, uses hr/pr<n>/tmp as its temporary directory and
 hr/store as the recorded inputs, and writes its output to hr/pr<n>/stdout and
 hr/pr<n>/stderr; each line of the run's stderr, where it copies the
 runner's progress, is also printed on this program's stderr as it arrives,
@@ -36,7 +36,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-SUMMARY_LINE_PREFIX = "SUMMARY:"
 HEAD_TEST_RUNNER = Path("scripts") / "pull-request-head-test-run.py"
 
 _common_spec = importlib.util.spec_from_file_location(
@@ -49,11 +48,11 @@ run_all_test_suites = common.run_all_test_suites
 
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
-        description="Run main's pull-request-head-test-run.py on wt/pr<n>-merged for each "
+        description="Run main's pull-request-head-test-run.py on pr<n>-merged for each "
                     "pull request, with its outputs under the worktrees and outputs directory.")
     parser.add_argument("pull_requests", type=int, nargs="+", metavar="pull_request",
                         help="a pull request's number")
-    common.add_directory_options(parser, "wt/, hr/ and tripwire-bin/")
+    common.add_directory_options(parser, "hr/ and tripwire-bin/")
     return common.resolve_path_options(parser.parse_args(argv))
 
 
@@ -83,7 +82,7 @@ def main(argv=None):
         with open(outputs / "stdout", "w") as stdout, open(outputs / "stderr", "w") as stderr:
             run = subprocess.Popen(
                 [sys.executable, str(review_tools_worktree / HEAD_TEST_RUNNER),
-                 "--checkout", str(helpers / "wt" / f"pr{number}-merged"),
+                 "--checkout", str(common.pull_request_merged_worktree(arguments, number)),
                  "--log-store-root", str(outputs / "log-store"),
                  "--temporary-directory", str(outputs / "tmp"),
                  "--recorded-inputs-directory", str(helpers / "hr" / "store")],
@@ -117,8 +116,7 @@ def main(argv=None):
             completed = subprocess.CompletedProcess(run.args, run.wait())
         rerun = shlex.join([
             sys.executable, str(Path(__file__).resolve()), str(number),
-            "--merge-lane-worktrees-and-outputs-directory", str(helpers),
-            "--review-tools-worktree-at-main", str(review_tools_worktree)])
+            *common.directory_options_argv(arguments)])
         for name, failure in copy_failures.items():
             # Only the copy to this program's own stderr failed, so the file has every line.
             if f"{outputs}/stderr" not in copy_failures:
@@ -147,7 +145,7 @@ def main(argv=None):
             if first_failure == 0:
                 first_failure = 2
         summaries = [line for line in (outputs / "stdout").read_text().splitlines()
-                     if line.startswith(SUMMARY_LINE_PREFIX)]
+                     if line.startswith(run_all_test_suites.SUMMARY_LINE_PREFIX)]
         summary = summaries[-1] if summaries else f"no SUMMARY line; see {outputs}/stderr"
         print(f"PR {number} head test run: exit {completed.returncode}; {summary}", flush=True)
         if completed.returncode != 0 and first_failure == 0:

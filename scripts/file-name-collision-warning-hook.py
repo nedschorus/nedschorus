@@ -35,7 +35,8 @@ GIT_FAILURE_TEMPLATE = (
     "A later run of this hook checks only the file that run's Write or Edit touched, so check "
     "{path} by running the command printed on its own line below this paragraph. If git's error "
     "above names no lock file, run that "
-    "command now. If git's error names a lock file, "
+    "command now. "
+    + next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION + ", "
     + next_step_lines.lock_file_named_by_git_error_wait_then_rerun_instruction("the command below this paragraph")
     .replace("{", "{{").replace("}", "}}")
     + ". The command "

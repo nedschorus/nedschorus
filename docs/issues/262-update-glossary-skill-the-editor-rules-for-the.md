@@ -1,5 +1,6 @@
 ---
 issue: "[update-glossary skill: the editor rules for the nedschorus glossary, taken off the page (user-asked 2026-09-06)](https://github.com/nedschorus/nedschorus/issues/262)"
+kind: design
 ---
 
 # update-glossary skill: the editor rules for the nedschorus glossary, taken off the page (user-asked 2026-09-06)

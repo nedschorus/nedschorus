@@ -12,7 +12,7 @@ file rather than answering in chat.
 Usage:
   nc-systems/cold-read/cold-read-agy-cell.py --cell fast-clarify --tier fast \\
       --target docs/walk/foo-draft.md \\
-      --report cold-read-records/foo-2026-01-01/fast-read.md
+      --report cold-read-records/foo-2026-01-01/cold-read-fast-read.md
 
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.
@@ -47,7 +47,10 @@ committed): `agy --add-dir <repo> --dangerously-skip-permissions --model <id>
 repository's AGENTS.md does not load. `--dangerously-skip-permissions` is what
 lets the Write of the report happen headless. Antigravity's model ids carry the
 effort as a suffix (gemini-3.8-flash-{low,medium,high}); `--effort` is passed
-as well, exactly as the campaign passed it.
+as well, exactly as the campaign passed it. agy does not always stop at
+`--print-timeout`, so the cell runs agy in a process group of its own and kills
+that group 60 seconds after agy's own deadline; the attempt then fails with
+the cause `timed-out`, like any other failed attempt.
 
 THE CHAT-INSTEAD-OF-FILE QUIRK, and how it is handled. The campaign measured
 that gemini-3.8-flash sometimes answers the whole review in chat instead of
@@ -134,9 +137,15 @@ TIER_TO_REASONING_EFFORT = {
     "fast": "medium",
 }
 
-# The fast read on the Mac sizes its ssh time limit from this number.
 COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60
 AGY_PRINT_TIMEOUT = f"{COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS // 60}m"
+# agy does not always honour --print-timeout, so the cell kills agy's process
+# group this long after agy's own deadline. The fast read on the Mac sizes its
+# ssh time limit from the sum.
+COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS = 60
+COLD_READ_AGY_CELL_PER_MODEL_RUN_KILL_AFTER_SECONDS = (
+    COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS
+    + COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS)
 
 AGY_MISSING_GOOGLE_LOGIN_STDERR_LINE_PREFIX = "Authentication required."
 AGY_LOGGED_OUT_CAUSE_DETAIL = ("agy has no Google login on this machine; "
@@ -260,6 +269,7 @@ def main() -> int:
         recover_report_from_stdout=stdout_is_a_review,
         recognised_failure_texts_for_model=logged_out_failure_texts,
         child_environment=agy_environment_copy_without_gemini_api_key(os.environ),
+        per_model_run_timeout_seconds=COLD_READ_AGY_CELL_PER_MODEL_RUN_KILL_AFTER_SECONDS,
     )
 
 

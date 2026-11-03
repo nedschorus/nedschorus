@@ -235,7 +235,7 @@ GIT_PUSH_FAILED_LINE_START = "error: failed to push some refs to "
 GIT_PUSH_REF_LINE = re.compile(r"^ [ +\-*!=] ")
 SELECTIVE_TEST_RUN_STARTING = "pre-push: starting the selective test run on "
 SELECTIVE_TEST_RUN_PASSED = "pre-push: the selective test run passed. "
-SELECTIVE_TEST_RUN_REFUSED = ("pre-push: a test suite failed in the selective test run, so this "
+SELECTIVE_TEST_RUN_REFUSED = ("pre-push: an nc-test-suite failed in the selective test run, so this "
                               "push is refused. ")
 SELECTIVE_TEST_RUN_NOT_RUN_END = ", so this push goes ahead without the selective test run"
 SELECTIVE_TEST_RUN_HAND_RUN_LINE = (
@@ -276,6 +276,37 @@ print(%r)
 print(%r)
 sys.exit(1)
 """ % (FAKE_FAILING_SUITE_LINE, FAKE_FAILED_SUMMARY)
+
+# A suite whose nc-test-sandbox did not start, as the real runner reports one: a line as it
+# finishes, and a line with its log at the end.
+FAKE_NOT_RUN_SUITE_PROGRESS_LINE = ("NOT RUN scripts/fake-not-run-test.py did not start: bwrap "
+                                    "could not build its nc-test-sandbox (exit 1) (0.1s)")
+FAKE_NOT_RUN_SUITE_LINE = ("NOT RUN scripts/fake-not-run-test.py did not start: bwrap could not "
+                           "build its nc-test-sandbox (exit 1) — log /fake/fake-not-run-test.log")
+FAKE_NOT_RUN_SUMMARY = "SUMMARY: 2 passed, 0 failed, 1 not run, 3 total; 0 cases skipped in 0 suites"
+FAKE_FAILED_AND_NOT_RUN_SUMMARY = ("SUMMARY: 1 passed, 1 failed, 1 not run, 3 total; 0 cases "
+                                   "skipped in 0 suites")
+FAKE_NOT_RUN_SECTION = """\
+print(%r)
+print("")
+print("1 not run, because bwrap could not build the nc-test-sandbox; each log says why and what to do:")
+print(%r)
+""" % (FAKE_NOT_RUN_SUITE_PROGRESS_LINE, FAKE_NOT_RUN_SUITE_LINE)
+
+FAKE_TEST_SUITES_RUNNER_SUITE_NOT_RUN = FAKE_TEST_SUITES_RUNNER_PREAMBLE + FAKE_NOT_RUN_SECTION + """\
+print(%r)
+sys.exit(2)
+""" % FAKE_NOT_RUN_SUMMARY
+
+FAKE_TEST_SUITES_RUNNER_FAILS_AND_SUITE_NOT_RUN = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+print("FAIL scripts/fake-failing-test.py exit 1 (0.1s)")
+print("")
+print("1 failed:")
+print(%r)
+""" % FAKE_FAILING_SUITE_LINE + FAKE_NOT_RUN_SECTION + """\
+print(%r)
+sys.exit(1)
+""" % FAKE_FAILED_AND_NOT_RUN_SUMMARY
 
 FAKE_TEST_SUITES_RUNNER_LOCKED = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
 print(%r, file=sys.stderr)
@@ -1213,6 +1244,40 @@ def run_push_cases(scratch):
 
 # --- The selective test run -------------------------------------------------
 
+def load_module_from_path(name, path):
+    specification = importlib.util.spec_from_file_location(name, path)
+    loaded = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(loaded)
+    return loaded
+
+
+def run_selective_test_run_copies_of_runner_constants_cases():
+    # The hook keeps its own copies of the runner's output format, so nothing but this ties them.
+    hook = load_module_from_path("selective_test_run_check", SELECTIVE_TEST_RUN_CHECK)
+    runner = load_module_from_path("run_all_test_suites", REAL_TEST_SUITES_RUNNER)
+    for hook_name, hook_value, runner_value in (
+            ("RUNNER_FILE_NAME", hook.RUNNER_FILE_NAME, REAL_TEST_SUITES_RUNNER.name),
+            ("RUNNER_EXIT_ALL_PASSED", hook.RUNNER_EXIT_ALL_PASSED, runner.EXIT_ALL_PASSED),
+            ("RUNNER_EXIT_SOME_FAILED", hook.RUNNER_EXIT_SOME_FAILED, runner.EXIT_SOME_FAILED),
+            ("RUNNER_EXIT_LOCKED", hook.RUNNER_EXIT_LOCKED, runner.EXIT_LOCKED),
+            ("REPORT_FILE_NAME", hook.REPORT_FILE_NAME, runner.REPORT_FILE_NAME),
+            ("FAILED_SUITE_LINE_PREFIX", hook.FAILED_SUITE_LINE_PREFIX,
+             runner.FAILED_SUITE_LINE_PREFIX),
+            ("NOT_RUN_SUITE_LINE_PREFIX", hook.NOT_RUN_SUITE_LINE_PREFIX,
+             runner.NOT_RUN_SUITE_LINE_PREFIX),
+            ("SUITE_LINE_LOG_MARK", hook.SUITE_LINE_LOG_MARK, runner.SUITE_LINE_LOG_MARK),
+            ("SUMMARY_LINE_PREFIX", hook.SUMMARY_LINE_PREFIX, runner.SUMMARY_LINE_PREFIX),
+            ("RUNNER_REFUSAL_LINE_PREFIX", hook.RUNNER_REFUSAL_LINE_PREFIX,
+             f"{runner.PROGRAM}: not run")):
+        check(f"the selective test run's {hook_name} equals the runner's",
+              hook_value == runner_value, f"hook {hook_value!r}, runner {runner_value!r}")
+    first_line = (f"{runner.PROGRAM}: /fake at abc (clean); -j 4"
+                  f"{runner.FIRST_REPORT_LINE_LOG_DIRECTORY_MARK}/fake/logs")
+    found = hook.log_directory_named_in(first_line)
+    check("the selective test run's LOG_DIRECTORY_PATTERN finds the log directory after the "
+          "runner's FIRST_REPORT_LINE_LOG_DIRECTORY_MARK", found == "/fake/logs", repr(found))
+
+
 def run_selective_test_run_cases(scratch):
     def lines_from(stderr, first):
         """The stderr lines from the first one starting with `first`, or []."""
@@ -1298,6 +1363,19 @@ def run_selective_test_run_cases(scratch):
     check("a failing suite: the refusal does not offer --no-verify",
           "--no-verify" not in result.stderr, result.describe())
 
+    hooks = make_layout(scratch, "layout-selective-fails-and-not-run",
+                        test_suites_runner_text=FAKE_TEST_SUITES_RUNNER_FAILS_AND_SUITE_NOT_RUN)
+    failing_and_not_run = Scenario(scratch, "selective-fails-and-not-run", hooks)
+    result = failing_and_not_run.push("origin", "clean")
+    refusal = lines_from(result.stderr, SELECTIVE_TEST_RUN_REFUSED)
+    check("a failing suite and a suite not run: the push is refused, naming the failing suite "
+          "and the suite not run, each with its log, then the whole report's path",
+          was_refused(result)
+          and refusal[:4] == [SELECTIVE_TEST_RUN_REFUSED + FAKE_FAILED_AND_NOT_RUN_SUMMARY,
+                              FAKE_FAILING_SUITE_LINE, FAKE_NOT_RUN_SUITE_LINE,
+                              "The whole report: %s/test-run-report.txt" % FAKE_LOG_DIRECTORY],
+          result.describe())
+
     def not_run_case(label, runner_text, expected_cause, tell_user, budget=None,
                      include_test_suites_runner=True, extra_environment=None):
         hooks = make_layout(scratch, "layout-selective-" + label,
@@ -1326,7 +1404,7 @@ def run_selective_test_run_cases(scratch):
 
     _, outcome = not_run_case(
         "lock held", FAKE_TEST_SUITES_RUNNER_LOCKED,
-        "another run of the test suites held this machine's test lock: " + FAKE_LOCK_HOLDER_LINE,
+        "another run of the nc-test-suites held this machine's test lock: " + FAKE_LOCK_HOLDER_LINE,
         tell_user=False)
     check("lock held: the runner's advice to its own caller is not passed on",
           FAKE_LOCK_ADVICE_LINE not in outcome.stderr, outcome.describe())
@@ -1358,6 +1436,20 @@ def run_selective_test_run_cases(scratch):
         + FAKE_SANDBOX_REFUSAL_FIRST_LINE, tell_user=True)
     check("sandbox cannot start: everything the runner printed on stderr is shown",
           FAKE_SANDBOX_REFUSAL_LAST_LINE in outcome.stderr.splitlines(), outcome.describe())
+    _, outcome = not_run_case(
+        "a suite not run", FAKE_TEST_SUITES_RUNNER_SUITE_NOT_RUN,
+        "the selective test run gave no verdict, because it exited 2", tell_user=True)
+    check("a suite not run: the suite is named with its log, then the whole report's path, "
+          "above the message",
+          lines_from(outcome.stderr, "pre-push: these suites were not run")[:4]
+          == ["pre-push: these suites were not run; each log says why and what to do:",
+              FAKE_NOT_RUN_SUITE_LINE,
+              "The whole report: %s/test-run-report.txt" % FAKE_LOG_DIRECTORY,
+              "pre-push: the selective test run gave no verdict, because it exited 2"
+              + SELECTIVE_TEST_RUN_NOT_RUN_END + "."],
+          outcome.describe())
+    check("a suite not run: the line printed as the suite finished, without its log, is not "
+          "repeated", FAKE_NOT_RUN_SUITE_PROGRESS_LINE not in outcome.stderr, outcome.describe())
     not_run_case("killed", FAKE_TEST_SUITES_RUNNER_KILLED,
                  "the selective test run gave no verdict, because it was killed by signal 9",
                  tell_user=True)
@@ -2034,6 +2126,7 @@ def run_revert_check_cases(scratch):
 
 def main():
     run_unit_cases()
+    run_selective_test_run_copies_of_runner_constants_cases()
     # Resolved, because git and the hooks print resolved paths: on macOS the temporary
     # directory is under /var, a symlink to /private/var.
     scratch = Path(tempfile.mkdtemp(prefix="pre-push-test-")).resolve()

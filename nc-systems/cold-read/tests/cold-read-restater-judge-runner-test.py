@@ -281,7 +281,7 @@ def write_stub_prompt_file(repository, text=STUB_JUDGE_PROMPT):
 
 def run_runner(repository, stub_directory, plan, *arguments,
                cases=THREE_CASES, restater=RESTATER_CLASS, prompt_file=None,
-               current_directory=None):
+               current_directory=None, log_store=None):
     stub_directory.mkdir(parents=True, exist_ok=True)
     stub = stub_directory / "claude"
     stub.write_text(STUB_CLAUDE, encoding="utf-8")
@@ -289,6 +289,9 @@ def run_runner(repository, stub_directory, plan, *arguments,
     environment = dict(os.environ)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     environment["COLD_READ_RESTATER_JUDGE_RUNNER_TEST_STUB_PLAN"] = json.dumps(plan)
+    # The record name is chosen free in the log-store too; never the real one.
+    environment["COLD_READ_RECORD_SHIP_DESTINATION"] = str(
+        log_store or repository / "scratch-log-store")
     if prompt_file is None:
         prompt_file = write_stub_prompt_file(repository)
     command = [
@@ -588,6 +591,37 @@ with tempfile.TemporaryDirectory() as scratch:
           {path.name: path.read_bytes() for path in sorted(first_dir.glob("*.md"))}
           == first_files,
           f"{sorted(path.name for path in first_dir.glob('*.md'))}")
+    third_log_store = scratch / "restater-log-store"
+    (third_log_store / (first_dir.name + "-3")).mkdir(parents=True)
+    third = run_runner(
+        repository, stubs,
+        {"run1": {"*": {"report": RUN_REPORT_AGREEING}},
+         "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
+        log_store=third_log_store,
+    )
+    check("a name another checkout's judging holds in the log-store is passed over too",
+          third.returncode == 0
+          and Path(third.stdout.strip()).parent.name == first_dir.name + "-4",
+          f"exit {third.returncode}: {third.stdout}{third.stderr}")
+    if os.geteuid() != 0:
+        third_log_store.chmod(0)
+        try:
+            unlisted = run_runner(
+                repository, stubs,
+                {"run1": {"*": {"report": RUN_REPORT_AGREEING}},
+                 "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
+                log_store=third_log_store,
+            )
+        finally:
+            third_log_store.chmod(0o755)
+        check("when the log-store cannot be listed, the name free in this checkout is "
+              "used, and stderr says it was not checked against the log-store",
+              unlisted.returncode == 0
+              and Path(unlisted.stdout.strip()).parent.name == first_dir.name + "-3"
+              and f"cold-read-restater-judge-runner: the record name {first_dir.name}-3 "
+                  f"is free in this checkout" in unlisted.stderr
+              and str(third_log_store) in unlisted.stderr,
+              f"exit {unlisted.returncode}: {unlisted.stdout}{unlisted.stderr}")
     check("the second judging's reports carry the suffixed name, so the shared "
           "module's near-miss recovery cannot confuse the two judgings",
           (second_dir / f"{second_dir.name}--claude-restater-judge-run1.md").is_file()

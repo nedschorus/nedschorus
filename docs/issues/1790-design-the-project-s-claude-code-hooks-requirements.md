@@ -16,7 +16,7 @@ The user asked whether the hooks need a refactor or a redesign, and said: "They 
 
 ## State
 
-Deferred by the user on 2026-10-21. Work starts after the repeated and failing reminders of `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`, the backup-and-ask hook, are fixed; ask ghi-info, with `scripts/ghi-info-ask.py`, which GHI or pull request carries that fix. That one hook sent 63% of the week's reminders, so fixing it first shows how much noise the other hooks make on their own.
+Deferred by the user on 2026-10-21. Work starts after the repeated and failing reminders of `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`, the backup-and-ask hook, are fixed; ask ghi-guide-agent, with `scripts/ghi-guide-agent-ask.py`, which GHI or pull request carries that fix. That one hook sent 63% of the week's reminders, so fixing it first shows how much noise the other hooks make on their own.
 
 ## Inputs
 

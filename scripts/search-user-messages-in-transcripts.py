@@ -4,22 +4,81 @@
 The harness also labels tool results, reminders, and command output as user
 turns; exclude those when searching for the user’s own words. A message the
 user types while the agent is mid-turn has no user turn: it is a queued_command
-attachment whose origin is human."""
+attachment whose origin is human.
+
+A user turn that Claude Code marks with an origin other than human, or as meta,
+is not his: such turns carry other agents' messages, hook feedback and delivery
+notices. Neither is a turn of a `claude -p` agent-session, whose entrypoint is
+sdk-cli and whose prompts a program wrote, nor the summary Claude Code writes
+when it compacts a conversation, nor a prompt that the handoff-supervisor or
+crash recovery (scripts/recover-crashed-seats.py) starts or resumes an
+agent-session with, which this reader recognizes by those programs' own
+constants. A prompt an agent wrote and passed with --first-prompt-file, such as
+a new agent-seat's founding prompt, has no such text and is read as his. Turns
+written before Claude Code recorded an origin are read by their text alone."""
 
 import argparse
 import glob
+import importlib.util
 import json
 import os
 import re
 import sys
 import time
+from pathlib import Path
+
+_claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_lookup_and_text_search_common",
+    Path(__file__).resolve().parent / "claude-code-session-transcript-lookup-and-text-search-common.py")
+claude_code_session_transcript_lookup_and_text_search_common = importlib.util.module_from_spec(_claude_code_session_transcript_lookup_and_text_search_common_spec)
+_claude_code_session_transcript_lookup_and_text_search_common_spec.loader.exec_module(claude_code_session_transcript_lookup_and_text_search_common)
+
+# The programs that write the prompts a supervised agent-session starts or resumes with. Their own
+# constants recognize those prompts, so a prompt they add or reword cannot slip past this reader.
+_crash_recovery_spec = importlib.util.spec_from_file_location(
+    "recover_crashed_seats", Path(__file__).resolve().parent / "recover-crashed-seats.py")
+crash_recovery = importlib.util.module_from_spec(_crash_recovery_spec)
+_crash_recovery_spec.loader.exec_module(crash_recovery)
+handoff_supervisor = crash_recovery.supervisor
 
 DEFAULT_PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 WRAPPED_BLOCK = re.compile(r"\A\s*<[a-z-]+>.*</[a-z-]+>\s*\Z", re.DOTALL)
+PROGRAM_PROMPT_ENTRYPOINT = "sdk-cli"
+COMPACTION_SUMMARY_OPENING = "This session is being continued from a previous conversation"
+FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_PATTERN = re.compile(
+    re.escape(handoff_supervisor.FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_TEMPLATE).replace(re.escape("{agent}"), ".+?"))
+FRESH_SESSION_FROM_CONVERSATION_TAIL_PROMPT_PATTERN = re.compile(
+    r"Read .+? — " + re.escape(crash_recovery.FRESH_SESSION_FROM_CONVERSATION_TAIL_PROMPT_PHRASE))
+# Each phrase is inside every prompt of one kind, wherever it falls in that prompt.
+LAUNCH_PROMPT_PHRASES = (
+    crash_recovery.IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER,
+    crash_recovery.FIRST_PROMPT_AFTER_RECORDED_EXIT_MARKER,
+)
 
 
-def typed_by_user(record):
-    """The record's text if the user typed it, else None."""
+def user_turn_text_is_compaction_summary_or_launch_prompt(text):
+    """Whether a user turn's text is a compaction summary or a prompt the handoff-supervisor or crash recovery wrote."""
+    return (text.startswith(COMPACTION_SUMMARY_OPENING)
+            or text.startswith(handoff_supervisor.CRASH_RECOVERY_RESUME_PROMPT_OPENING)
+            or FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_PATTERN.match(text) is not None
+            or crash_recovery.REINCARNATION_OPENER_PATTERN.match(text) is not None
+            or FRESH_SESSION_FROM_CONVERSATION_TAIL_PROMPT_PATTERN.match(text) is not None
+            or any(phrase in text for phrase in LAUNCH_PROMPT_PHRASES))
+
+
+def written_by_a_program(record, text, judge_by_text=True):
+    """Whether a user turn's text came from Claude Code, a hook or a program rather than the user; with
+    judge_by_text false, only by the record's own marks, not by what its text says."""
+    if record.get("isMeta") or record.get("entrypoint") == PROGRAM_PROMPT_ENTRYPOINT:
+        return True
+    origin = record.get("origin")
+    if "origin" in record and (not isinstance(origin, dict) or origin.get("kind") != "human"):
+        return True
+    return judge_by_text and user_turn_text_is_compaction_summary_or_launch_prompt(text)
+
+
+def typed_by_user(record, judge_by_text=True):
+    """The record's text if the user typed it, else None; judge_by_text as written_by_a_program takes it."""
     if record.get("type") != "user":
         return None
     content = record.get("message", {}).get("content")
@@ -31,6 +90,8 @@ def typed_by_user(record):
     if WRAPPED_BLOCK.match(text):
         return None
     if text.startswith("Caveat:"):
+        return None
+    if written_by_a_program(record, text, judge_by_text):
         return None
     return text
 
@@ -86,13 +147,54 @@ def assistant_text(record):
     return joined or None
 
 
+class TurnReader:
+    """Reads one transcript's records in order and returns each turn of the user's or the agent's.
+
+    Its state is a dict of plain values, so a reader that stops part way through a
+    transcript can save the state and resume at the next record. With keep_text_recognized_prompts, a user
+    turn that only its text shows to be a program's prompt is still returned, for a caller that marks such
+    turns instead of dropping them."""
+
+    def __init__(self, state=None, keep_text_recognized_prompts=False):
+        self.keep_text_recognized_prompts = keep_text_recognized_prompts
+        state = state or {}
+        # After an interrupt the harness re-sends a queued message as a user turn; the same words
+        # typed again later are a new message, so only that re-send is dropped.
+        self.queued_text_awaiting_resend = state.get("queued_text_awaiting_resend")
+        self.interrupted_since_queued = bool(state.get("interrupted_since_queued"))
+
+    def state(self):
+        return {"queued_text_awaiting_resend": self.queued_text_awaiting_resend,
+                "interrupted_since_queued": self.interrupted_since_queued}
+
+    def turn(self, record):
+        """("user" or "agent", text) for a record that is a turn, else None."""
+        if is_interrupt_notice(record):
+            self.interrupted_since_queued = True
+            return None
+        text = queued_by_user(record)
+        if text is not None:
+            self.queued_text_awaiting_resend = text
+            self.interrupted_since_queued = False
+            return ("user", text)
+        text = typed_by_user(record, judge_by_text=not self.keep_text_recognized_prompts)
+        if text is not None:
+            if self.interrupted_since_queued and text == self.queued_text_awaiting_resend:
+                self.queued_text_awaiting_resend = None
+                return None
+            self.queued_text_awaiting_resend = None
+            return ("user", text)
+        text = assistant_text(record)
+        if text is not None:
+            self.queued_text_awaiting_resend = None
+            return ("agent", text)
+        return None
+
+
 def read_turns(path):
     """Every turn in one transcript: (index, speaker, text, timestamp)."""
     turns = []
-    # After an interrupt the harness re-sends a queued message as a user turn; the same words
-    # typed again later are a new message, so only that re-send is dropped.
-    queued_text_awaiting_resend = None
-    interrupted_since_queued = False
+    reader = TurnReader()
     with open(path, "r", errors="replace") as handle:
         for line in handle:
             line = line.strip()
@@ -104,28 +206,9 @@ def read_turns(path):
                 continue
             if not isinstance(record, dict):
                 continue
-            stamp = record.get("timestamp", "")
-            if is_interrupt_notice(record):
-                interrupted_since_queued = True
-                continue
-            text = queued_by_user(record)
-            if text is not None:
-                turns.append((len(turns), "user", text, stamp))
-                queued_text_awaiting_resend = text
-                interrupted_since_queued = False
-                continue
-            text = typed_by_user(record)
-            if text is not None:
-                if interrupted_since_queued and text == queued_text_awaiting_resend:
-                    queued_text_awaiting_resend = None
-                    continue
-                turns.append((len(turns), "user", text, stamp))
-                queued_text_awaiting_resend = None
-                continue
-            text = assistant_text(record)
-            if text is not None:
-                turns.append((len(turns), "agent", text, stamp))
-                queued_text_awaiting_resend = None
+            turn = reader.turn(record)
+            if turn is not None:
+                turns.append((len(turns), turn[0], turn[1], record.get("timestamp", "")))
     return turns
 
 
@@ -140,6 +223,30 @@ def transcripts(projects_dir, seats, since_hours):
         floor = time.time() - since_hours * 3600
         paths = [p for p in paths if os.path.getmtime(p) >= floor]
     return paths
+
+
+def claude_code_session_transcript_paths_prefilter_on_raw_json(projects_dir, paths, patterns, all_terms):
+    """Return (the paths whose raw JSON holds a pattern's text, a note on what was not prefiltered, or "").
+
+    Every path is kept when a pattern is not plain text, or the search fails, so a prefilter
+    never drops a transcript that holds a match."""
+    prefilters = [claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcript_raw_json_ripgrep_prefilter_pattern_from_search_text_or_none_when_not_plain_text(pattern)
+                  for pattern in patterns]
+    if not paths:
+        return paths, ""
+    if None in prefilters:
+        return paths, (f"every transcript was read, because ripgrep might not find the pattern "
+                       f"{patterns[prefilters.index(None)]!r} wherever Python would")
+    groups = [[prefilter] for prefilter in prefilters] if all_terms else [prefilters]
+    kept = {os.path.normpath(path) for path in paths}
+    for group in groups:
+        found, problems = claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcripts_matching_any_pattern_ignoring_case(
+            [projects_dir], group, include_subagents=False)
+        if problems:
+            return paths, (f"every transcript was read, because the search that picks the transcripts to read "
+                           f"failed: {problems[0]}")
+        kept &= {os.path.normpath(path) for path in found}
+    return [path for path in paths if os.path.normpath(path) in kept], ""
 
 
 def main():
@@ -183,8 +290,11 @@ def main():
 
     total_user_messages = 0
     total_hits = 0
+    read, note = claude_code_session_transcript_paths_prefilter_on_raw_json(args.projects_dir, paths, args.patterns, args.all_terms)
+    if note:
+        print(note, file=sys.stderr)
 
-    for path in paths:
+    for path in read:
         turns = read_turns(path)
         user_turns = [t for t in turns if t[1] == "user"]
         total_user_messages += len(user_turns)
@@ -206,9 +316,12 @@ def main():
                     print(f"  [{near[1]}] {near[2][:400]}")
 
     print("=" * 72)
+    skipped = len(paths) - len(read)
     print(
-        f"{total_hits} matching user message(s) in {len(paths)} transcript(s); "
-        f"{total_user_messages} user message(s) scanned."
+        f"{total_hits} matching user message(s) found among {len(paths)} transcript(s)"
+        + (f"; ripgrep found none of the search pattern(s) in {skipped} of them, so only the other "
+           f"{len(read)} {'was' if len(read) == 1 else 'were'} opened" if skipped else "")
+        + f"; {total_user_messages} user message(s) read in the transcript(s) opened."
     )
     return 0 if total_hits else 1
 

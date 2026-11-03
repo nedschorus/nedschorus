@@ -73,14 +73,15 @@ sys.exit(response.get("exit_code", 0))
 
 FAILING_GIT_ARGUMENTS_VARIABLE = "PULL_REQUEST_REVIEW_PLAN_TEST_FAILING_GIT_ARGUMENTS"
 REAL_GIT_VARIABLE = "PULL_REQUEST_REVIEW_PLAN_TEST_REAL_GIT"
-# Fails as a broken repository does when the git arguments after -C begin with
-# the listed ones, and runs the real git for every other call.
+# Fails as a broken repository does when the git subcommand after -C is the first
+# listed argument and every other listed argument appears among its arguments, in
+# any order, and runs the real git for every other call.
 STAND_IN_FAILING_GIT_SOURCE = f'''#!/usr/bin/env python3
 import json
 import os
 import sys
 failing = json.loads(os.environ[{FAILING_GIT_ARGUMENTS_VARIABLE!r}])
-if sys.argv[1] == "-C" and sys.argv[3:3 + len(failing)] == failing:
+if sys.argv[1] == "-C" and sys.argv[3] == failing[0] and all(argument in sys.argv[4:] for argument in failing[1:]):
     sys.stderr.write("fatal: injected repository failure\\n")
     sys.exit(128)
 os.execv(os.environ[{REAL_GIT_VARIABLE!r}], ["git", *sys.argv[1:]])
@@ -93,7 +94,7 @@ BASELINE_FILE_CONTENTS = {
     "scripts/example-program-test.py": 'EXPECTED = "old"\nassert EXPECTED\n',
     ".claude/hooks/example-hook.py": 'print("old")\n',
     ".claude/hooks/example-hook-test.py": 'print("old")\n',
-    "scripts/synthetic-keystroke-guard-hook.py": 'print("old")\n',
+    ".claude/guard-hooks/synthetic-keystroke-guard-hook.py": 'print("old")\n',
     "scripts/registered-example-hook.py": 'print("old")\n',
     ".claude/settings.json": json.dumps({"hooks": {"PreToolUse": [{"hooks": [
         {"command": 'python3 "$CLAUDE_PROJECT_DIR"/scripts/registered-example-hook.py'}]}]}}) + "\n",
@@ -264,7 +265,7 @@ def run_classification_cases(fixture):
         ("Python logic changes get claude-and-codex-review-and-head-tests-tier", "scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace("return 1", "return 2")),
         ("every hook directory file gets claude-and-codex-review-and-head-tests-tier", ".claude/hooks/example-hook.py", 'print("new")\n'),
         ("settings gets claude-and-codex-review-and-head-tests-tier", ".claude/settings.json", '{"hooks": {}}\n'),
-        ("a Bash guard string-only change gets claude-and-codex-review-and-head-tests-tier", "scripts/synthetic-keystroke-guard-hook.py", 'print("new")\n'),
+        ("a Bash guard string-only change gets claude-and-codex-review-and-head-tests-tier", ".claude/guard-hooks/synthetic-keystroke-guard-hook.py", 'print("new")\n'),
         ("a registered hook string-only change gets claude-and-codex-review-and-head-tests-tier", "scripts/registered-example-hook.py", 'print("new")\n'),
         ("a new Python program gets claude-and-codex-review-and-head-tests-tier", "scripts/new-example-program.py", 'print("new")\n'),
         ("a test under the hook directory gets claude-and-codex-review-and-head-tests-tier", ".claude/hooks/example-hook-test.py", 'print("new")\n'),
@@ -579,6 +580,57 @@ def run_agent_text_cases(fixture):
     fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
     plan = fixture.read_review_plan()
     check("reflowed identical messages are omitted", plan["agent_facing_text_delta"] == [], plan)
+    # Modelled on pull request 2119, which changed only the recovery note that
+    # IgnitionPlanWithoutConversationTail.compose() builds in a local name and returns in its prompt.
+    compose_before = ('class IgnitionPlan:\n    def compose(self):\n        if self.transcript_path is None:\n'
+                      '            recovery_note = "old note, whole context."\n        else:\n'
+                      '            recovery_note = f"old note, transcript at {self.transcript_path}."\n'
+                      '        prompt = f"{self.next_step} (Recovered: {recovery_note})"\n        return prompt\n')
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file("nc-systems/handoff/recovery-note-program.py", compose_before)
+    earlier = fixture.commit_fixture_changes("recovery note")
+    fixture.write_fixture_file("nc-systems/handoff/recovery-note-program.py",
+                               compose_before.replace("old note, transcript", "new note, transcript"))
+    head = fixture.commit_fixture_changes("recovery note changed")
+    fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
+    delta = fixture.read_review_plan()["agent_facing_text_delta"]
+    check("a changed recovery note built in a local name and returned in a prompt is listed, needing approval",
+          [(entry["label"], entry["old_text"], entry["new_text"], entry["needs_user_approval"]) for entry in delta]
+          == [("recovery_note = in IgnitionPlan.compose()", "f'old note, transcript at {self.transcript_path}.'",
+               "f'new note, transcript at {self.transcript_path}.'", True)], delta)
+    text_plan = fixture.run_review_plan(json_output=False).stdout
+    check("the text plan marks the changed prompt as needing the user's approval",
+          review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE in text_plan, text_plan)
+    skeleton_path = fixture.control_directory / "prompt-brief.md"
+    fixture.run_review_plan("--brief-skeleton", str(skeleton_path))
+    skeleton = skeleton_path.read_text() if skeleton_path.exists() else ""
+    check("the brief skeleton marks the changed prompt as needing the user's approval",
+          review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE in skeleton, skeleton)
+    fixture.reset_fixture_to_base()
+    printed_before = compose_before.replace("return prompt", "print(prompt)").replace("prompt", "line")
+    fixture.write_fixture_file("nc-systems/handoff/recovery-note-program.py", printed_before)
+    earlier = fixture.commit_fixture_changes("printed note")
+    fixture.write_fixture_file("nc-systems/handoff/recovery-note-program.py",
+                               printed_before.replace("old note, transcript", "new note, transcript"))
+    head = fixture.commit_fixture_changes("printed note changed")
+    fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
+    delta = fixture.read_review_plan()["agent_facing_text_delta"]
+    text_plan = fixture.run_review_plan(json_output=False).stdout
+    check("a changed message built in a local name and printed is listed with no approval needed",
+          [(entry["label"], entry["needs_user_approval"]) for entry in delta]
+          == [("recovery_note = in IgnitionPlan.compose()", False)]
+          and review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE not in text_plan, (delta, text_plan))
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file("nc-systems/handoff/added-prompt-program.py",
+                               'def compose(next_step):\n    prompt = f"added prompt: {next_step}"\n    return prompt\n\n\n'
+                               'def report(name):\n    line = f"added message: {name}"\n    print(line)\n')
+    head = fixture.commit_fixture_changes("added prompt program")
+    fixture.configure_github_answers(head, reviews=[[fixture_review(101, fixture.base_head)]])
+    entries = [entry for entry in fixture.read_review_plan()["agent_facing_text_whole_pull_request"]
+               if entry["path"] == "nc-systems/handoff/added-prompt-program.py"]
+    check("an added file's prompt built in a local name needs approval, and its printed message does not",
+          sorted((entry["label"], entry["needs_user_approval"]) for entry in entries)
+          == [("line = in report()", False), ("prompt = in compose()", True)], entries)
 
 
 def run_fast_read_command_cases(fixture):
@@ -662,7 +714,10 @@ def run_fast_read_command_cases(fixture):
     check("after a text run, the message gives this run's own command with --json and without --brief-skeleton",
           rerun_words == ["python3", "scripts/pull-request-review-plan.py",
                           "--pull-request", str(FIXTURE_PULL_REQUEST_NUMBER), "--repository", str(fixture.repository.resolve()),
-                          "--github-repository", FIXTURE_GITHUB_REPOSITORY, "--json"], text_result.stderr)
+                          "--github-repository", FIXTURE_GITHUB_REPOSITORY, "--json",
+                          "--overview-write-architecture-overview-claim-check-report-directory",
+                          str(review_plan_module.overview_claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_REPORT_DIRECTORY.resolve())],
+          text_result.stderr)
     fixture.environment = {**saved_environment, "TMPDIR": str(blocked_temporary_directory)}
     try:
         relative_result = subprocess.run(
@@ -901,18 +956,235 @@ def run_git_failure_cases(fixture):
     check("the git failure cases' control plan runs the changed program's test",
           plan["test_files_to_run"] == ["scripts/example-program-test.py"], plan)
 
-    result = fixture.run_review_plan_with_git_failing_on("rev-parse", "--verify", "--quiet", f"{head}^{{commit}}")
+    result = fixture.run_review_plan_with_git_failing_on("rev-parse", f"{head}^{{commit}}")
     check("git failing while looking up the head is refused with git's error, not as a head missing from the repository",
           refused_with_git_failure(result) and "is not in the repository" not in result.stderr, result.stderr)
-    result = fixture.run_review_plan_with_git_failing_on("ls-tree", "-z", "--name-only", head, "--", "docs/review-note.md")
+    result = fixture.run_review_plan_with_git_failing_on("ls-tree", head, "docs/review-note.md")
     check("git failing while looking for a changed file is refused, not read as the file being absent",
           refused_with_git_failure(result) and not result.stdout, result.stderr + result.stdout)
     result = fixture.run_review_plan_with_git_failing_on("show", f"{head}:docs/review-note.md")
     check("git failing while reading a changed file that is there is refused",
           refused_with_git_failure(result) and not result.stdout, result.stderr + result.stdout)
-    result = fixture.run_review_plan_with_git_failing_on("ls-tree", "-z", "--name-only", head, "--", "scripts/example-program-test.py")
+    result = fixture.run_review_plan_with_git_failing_on("ls-tree", head, "scripts/example-program-test.py")
     check("git failing while looking for test files is refused, not a plan that leaves the test out",
           refused_with_git_failure(result) and not result.stdout, result.stderr + result.stdout)
+
+
+FIXTURE_OVERVIEW_PATH = "docs/nedschorus-wiki/nedschorus-example-architecture-overview.md"
+FIXTURE_HOW_TO_PAGE_PATH = "docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md"
+
+
+def run_architecture_overview_claim_check_cases(fixture):
+    """Rule 4: an overview the pull request adds or changes needs a report showing every claim supported."""
+    claim_check = review_plan_module.overview_claim_check
+    report_directory = fixture.repository.parent / "claim-check-reports"
+    flag = ["--overview-write-architecture-overview-claim-check-report-directory", str(report_directory)]
+
+    def write_report(blob, result, stamp):
+        directory = claim_check.overview_write_architecture_overview_claim_check_report_directory_for_overview(report_directory, FIXTURE_OVERVIEW_PATH)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{blob}-{stamp}.md").write_text(
+            f"overview: {FIXTURE_OVERVIEW_PATH}\n{claim_check.RESULT_LINE_PREFIX}{result}\n\nVERDICT 1 supported: x\n",
+            encoding="utf-8")
+
+    fixture.reset_fixture_to_base()
+    shutil.rmtree(report_directory, ignore_errors=True)
+    fixture.write_fixture_file(FIXTURE_OVERVIEW_PATH, "# Example overview\n\nThe example system.\n")
+    head = fixture.commit_fixture_changes("add an overview of nc-systems/example")
+    fixture.configure_github_answers(head)
+    blob = fixture.git_command("rev-parse", f"{head}:{FIXTURE_OVERVIEW_PATH}")
+    result = fixture.run_review_plan(*flag)
+    check("an added overview with no claim-check report is refused, naming the overview and the command that checks it",
+          refusal_has_expected_prefix(result) and not result.stdout
+          and f"{FIXTURE_OVERVIEW_PATH} (git blob {blob[:12]} at head): looked " in result.stderr
+          and "newest report found: none" in result.stderr
+          and f"--overview {FIXTURE_OVERVIEW_PATH}\n" in result.stderr, result.stderr)
+    write_report("0" * 40, claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED, "2026-01-01T00-00-00-000000Z")
+    result = fixture.run_review_plan(*flag)
+    check("a report for another text of the overview does not clear the refusal",
+          refusal_has_expected_prefix(result) and "newest report found: none" in result.stderr, result.stderr)
+    write_report(blob, claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED, "2026-01-01T00-00-00-000000Z")
+    write_report(blob, "not all claims supported: 1 contradicted, 0 unsupported, 3 supported", "2026-01-02T00-00-00-000000Z")
+    result = fixture.run_review_plan(*flag)
+    check("the newest report decides, so a later report that falls short is refused and named",
+          refusal_has_expected_prefix(result) and "whose result is: not all claims supported: 1 contradicted" in result.stderr, result.stderr)
+    write_report(blob, claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED, "2026-01-03T00-00-00-000000Z")
+    result = fixture.run_review_plan(*flag)
+    check("a newest report showing every claim supported lets the plan through",
+          result.returncode == 0 and json.loads(result.stdout)["head"] == head, result.stderr)
+    fixture.configure_github_answers(head, state="MERGED", merge_commit=head)
+    shutil.rmtree(report_directory)
+    result = fixture.run_review_plan(*flag)
+    check("a merged pull request that changed an overview is not refused", result.returncode == 0, result.stderr)
+
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file(FIXTURE_HOW_TO_PAGE_PATH, "# How to write one\n")
+    fixture.write_fixture_file("docs/nedschorus-wiki/nedschorus-nosystem-architecture-overview.md", "# No system\n")
+    head = fixture.commit_fixture_changes("pages the template matches with no nc-systems directory")
+    fixture.configure_github_answers(head)
+    result = fixture.run_review_plan(*flag)
+    check("the how-to page and a page naming no directory under nc-systems/ are not overviews, so they are not refused",
+          result.returncode == 0, result.stderr)
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file(FIXTURE_OVERVIEW_PATH, "# Example overview\n")
+    with_overview = fixture.commit_fixture_changes("overview on main")
+    fixture.git_command("update-ref", "refs/remotes/origin/main", with_overview)
+    (fixture.repository / FIXTURE_OVERVIEW_PATH).unlink()
+    head = fixture.commit_fixture_changes("delete the overview")
+    fixture.configure_github_answers(head, live_base=with_overview)
+    result = fixture.run_review_plan(*flag)
+    check("a pull request that deletes an overview is not refused", result.returncode == 0, result.stderr)
+    fixture.reset_fixture_to_base()
+
+
+def run_architecture_overview_checked_against_commit_cases(fixture):
+    """Rule 4: an overview's **Checked against:** commit must hold the code it describes at head: a commit of main when the pull request changes none of that code, or else a commit of the head's history after which none of that code changes."""
+    claim_check = review_plan_module.overview_claim_check
+    report_directory = fixture.repository.parent / "checked-against-claim-check-reports"
+    flag = ["--overview-write-architecture-overview-claim-check-report-directory", str(report_directory)]
+
+    def write_overview_with_report(named, path=FIXTURE_OVERVIEW_PATH):
+        last_line = f"**Checked against:** commit [{named}](https://github.com/nedschorus/nedschorus/commit/{named})\n" if named else ""
+        text = ("# Example overview\n\nIt is not `scripts/sibling-program.py`.\n\n## Components\n\n"
+                "- `nc-systems/example/parent-program.py`: the program.\n"
+                "- `scripts/example-program.py`: a shared script.\n- `config`: its settings.\n"
+                "- `claude`, run by `~/bin/x` and `/usr/bin/y`.\n\n"
+                "## Invariants\n\n- `scripts/sibling-program.py` is mentioned, not a component.\n\n" + last_line)
+        fixture.write_fixture_file(path, text)
+        blob = fixture.git_command("hash-object", "-w", path)
+        directory = claim_check.overview_write_architecture_overview_claim_check_report_directory_for_overview(report_directory, path)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{blob}-2026-01-01T00-00-00-000000Z.md").write_text(
+            f"overview: {path}\n{claim_check.RESULT_LINE_PREFIX}"
+            f"{claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED}\n", encoding="utf-8")
+
+    def commit_overview_naming(named):
+        write_overview_with_report(named)
+        head = fixture.commit_fixture_changes("overview checked against the named commit")
+        fixture.configure_github_answers(head)
+        return head
+
+    def change_and_commit(path, content):
+        fixture.write_fixture_file(path, content)
+        head = fixture.commit_fixture_changes("change " + path)
+        fixture.configure_github_answers(head)
+        return head
+
+    def refused_for_checked_against(result, overview_path=FIXTURE_OVERVIEW_PATH):
+        return (refusal_has_expected_prefix(result) and not result.stdout
+                and "whose **Checked against:** commit does not hold the code the overview describes" in result.stderr
+                and f"--overview {overview_path}\n" in result.stderr)
+
+    fixture.reset_fixture_to_base()
+    shutil.rmtree(report_directory, ignore_errors=True)
+    code_commit = change_and_commit("nc-systems/example/parent-program.py", 'print("new")\n')
+    commit_overview_naming(code_commit)
+    result = fixture.run_review_plan(*flag)
+    check("an overview naming the pull request's own code commit, with no code it describes changed after it, lets the plan through",
+          result.returncode == 0, result.stderr)
+    change_and_commit("nc-systems/example/example-design.md", "Design prose.\n")
+    change_and_commit("scripts/sibling-program.py", 'print("new")\n')
+    result = fixture.run_review_plan(*flag)
+    check("a later change to a .md file under nc-systems/<system>/, or to a path named outside the Components section, lets the plan through",
+          result.returncode == 0, result.stderr)
+
+    fixture.reset_fixture_to_base()
+    code_commit = change_and_commit("scripts/example-program.py", "VALUE = 'first'\n")
+    commit_overview_naming(code_commit)
+    head = change_and_commit("scripts/example-program.py", "VALUE = 'second'\n")
+    result = fixture.run_review_plan(*flag)
+    check("a later commit changing a component the Components section names outside nc-systems/ is refused, naming the path",
+          refused_for_checked_against(result)
+          and f"names commit {code_commit}, and later commits of the pull request change code the overview describes: "
+              "scripts/example-program.py." in result.stderr, result.stderr)
+    result = fixture.run_review_plan_with_git_failing_on("diff", code_commit, head)
+    check("git failing while listing the paths changed after the named commit is refused with git's error, not a plan",
+          refusal_has_expected_prefix(result) and "fatal: injected repository failure" in result.stderr and not result.stdout,
+          result.stderr + result.stdout)
+
+    fixture.reset_fixture_to_base()
+    code_commit = change_and_commit("scripts/example-program.py", "VALUE = 'first'\n")
+    commit_overview_naming(code_commit)
+    fixture.git_command("mv", "scripts/example-program.py", "scripts/renamed-program.py")
+    fixture.configure_github_answers(fixture.commit_fixture_changes("rename the component"))
+    result = fixture.run_review_plan(*flag)
+    check("a later commit renaming a component the Components section names away from its path is refused, naming the old path",
+          refused_for_checked_against(result) and "change code the overview describes: scripts/example-program.py." in result.stderr,
+          result.stderr)
+
+    fixture.reset_fixture_to_base()
+    code_commit = change_and_commit("config/settings.conf", "value = first\n")
+    commit_overview_naming(code_commit)
+    change_and_commit("config/settings.conf", "value = second\n")
+    result = fixture.run_review_plan(*flag)
+    check("a later commit changing a file under a root-level component the Components section names with no slash is refused",
+          refused_for_checked_against(result) and "change code the overview describes: config/settings.conf." in result.stderr,
+          result.stderr)
+
+    fixture.reset_fixture_to_base()
+    code_commit = change_and_commit("nc-systems/example/parent-program.py", 'print("first")\n')
+    commit_overview_naming(code_commit)
+    change_and_commit("nc-systems/example/unlisted-program.py", 'print("new")\n')
+    result = fixture.run_review_plan(*flag)
+    check("a later commit adding a program under nc-systems/<system>/ that the overview does not list is refused",
+          refused_for_checked_against(result) and "nc-systems/example/unlisted-program.py." in result.stderr, result.stderr)
+
+    fixture.reset_fixture_to_base()
+    side_commit = change_and_commit("nc-systems/example/parent-program.py", 'print("side")\n')
+    fixture.git_command("checkout", "-q", "--detach", fixture.base_head)
+    commit_overview_naming(side_commit)
+    result = fixture.run_review_plan(*flag)
+    head = fixture.git_command("rev-parse", "HEAD")
+    check("an overview naming a commit off main that is not in the head's history is refused",
+          refused_for_checked_against(result) and f"describes at head {head[:12]}, so no plan" in result.stderr
+          and f"names commit {side_commit}, which is not in the history of head {head[:12]}.\n" in result.stderr, result.stderr)
+    second_overview_path = "docs/nedschorus-wiki/nedschorus-second-architecture-overview.md"
+    for first_named, case in ((None, "has no **Checked against:** line"), (fixture.base_head, "names a commit of main"),
+                              (side_commit, "is refused too")):
+        fixture.git_command("checkout", "-q", "--detach", fixture.base_head)
+        fixture.git_command("clean", "-fdq")
+        fixture.write_fixture_file("nc-systems/second/second-program.py", 'print("second")\n')
+        write_overview_with_report(first_named)
+        write_overview_with_report(side_commit, second_overview_path)
+        fixture.configure_github_answers(fixture.commit_fixture_changes("two overviews"))
+        result = fixture.run_review_plan(*flag)
+        check(f"a second overview naming a commit off the head's history is refused when the first overview {case}",
+              refused_for_checked_against(result, second_overview_path)
+              and f"{second_overview_path} names commit {side_commit}, which is not in the history" in result.stderr
+              and (f"{FIXTURE_OVERVIEW_PATH} names commit" in result.stderr) == (first_named == side_commit), result.stderr)
+    fixture.reset_fixture_to_base()
+    commit_overview_naming("f" * 40)
+    result = fixture.run_review_plan(*flag)
+    check("an overview naming a commit the repository does not hold is refused as not in the head's history",
+          refused_for_checked_against(result) and "which is not in the history of head" in result.stderr, result.stderr)
+
+    fixture.reset_fixture_to_base()
+    commit_overview_naming(fixture.base_head)
+    change_and_commit("scripts/example-program.py", "VALUE = 'later'\n")
+    change_and_commit("nc-systems/example/unlisted-program.py", 'print("new")\n')
+    result = fixture.run_review_plan(*flag)
+    check("an overview naming a commit of main is refused when the pull request changes code the overview describes, naming each path",
+          refused_for_checked_against(result)
+          and f"names commit {fixture.base_head} of main, and this pull request changes code the overview describes: "
+              "nc-systems/example/unlisted-program.py, scripts/example-program.py." in result.stderr, result.stderr)
+
+    fixture.reset_fixture_to_base()
+    commit_overview_naming(fixture.base_head)
+    change_and_commit("nc-systems/example/example-design.md", "Design prose.\n")
+    change_and_commit("scripts/sibling-program.py", 'print("new")\n')
+    result = fixture.run_review_plan(*flag)
+    check("an overview naming a commit of main lets the plan through when the pull request changes only a .md file under "
+          "nc-systems/<system>/ and a path named outside the Components section", result.returncode == 0, result.stderr)
+
+    fixture.reset_fixture_to_base()
+    main_code_commit = change_and_commit("scripts/example-program.py", "VALUE = 'on main'\n")
+    fixture.git_command("update-ref", "refs/remotes/origin/main", main_code_commit)
+    fixture.git_command("checkout", "-q", "--detach", main_code_commit)
+    commit_overview_naming(fixture.base_head)
+    result = fixture.run_review_plan(*flag)
+    check("an overview naming an older commit of main is not refused for code main changed after it, which a refresh handles",
+          result.returncode == 0, result.stderr)
+    fixture.reset_fixture_to_base()
 
 
 def main():
@@ -928,6 +1200,8 @@ def main():
         run_repository_and_output_cases(fixture)
         run_refusal_and_call_shape_cases(fixture)
         run_git_failure_cases(fixture)
+        run_architecture_overview_claim_check_cases(fixture)
+        run_architecture_overview_checked_against_commit_cases(fixture)
     print(f"{len(CHECK_FAILURE_NAMES)} failed; elapsed {time.monotonic() - start_time:.2f}s")
     return 1 if CHECK_FAILURE_NAMES else 0
 

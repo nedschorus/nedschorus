@@ -4,7 +4,7 @@
 Run: python3 scripts/obsolete-file-edit-warning-hook-test.py
 Prints one line per case and exits non-zero if any case fails. Every case
 runs against throwaway repositories under a temporary directory: an "origin"
-reached by path, and a clone on a topic branch standing in for a seat's
+reached by path, and a clone on an nc-topic-branch standing in for a seat's
 checkout.
 
 Two things are asserted by INSTRUMENT rather than by inspection, because
@@ -131,7 +131,8 @@ LOCK_FILE_WAIT_CLAUSE = next_step_lines.lock_file_named_by_git_error_wait_then_r
 GIT_FAILURE_RERUN_LINE = (
     "A later run of this hook checks only the file that run's Edit or Write touched, so check "
     "{path} by running the command printed on its own line below this paragraph. If git's error above names no lock file, run that "
-    "command now. If git's error names a lock file, "
+    "command now. "
+    + next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION + ", "
     + LOCK_FILE_WAIT_CLAUSE.replace("{", "{{").replace("}", "}}")
     + ". The command "
     "prints nothing when there is nothing new to tell you about the file. Otherwise it prints JSON "
@@ -242,7 +243,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                 log.read_text(encoding="utf-8").splitlines()].count(subcommand)
 
     # The "remote", and a clone standing in for a seat's checkout, on its own
-    # topic branch cut from main.
+    # nc-topic-branch cut from main.
     origin = tmp / "origin-repo"
     origin.mkdir()
     git(["init", "-q", "-b", "main"], origin)
@@ -569,8 +570,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     rerun_line = (agent_text(result).splitlines() + ["", ""])[1]
     check("a git failure's rerun line says to run the command now when git names no lock file, "
           "and gives the lock-file wait otherwise",
-          "names no lock file, run that command now. If git's error names a lock file, "
-          + LOCK_FILE_WAIT_CLAUSE + "." in rerun_line, rerun_line)
+          "names no lock file, run that command now. " + next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION
+          + ", " + LOCK_FILE_WAIT_CLAUSE + "." in rerun_line, rerun_line)
     check("a git failure's rerun line says what the command prints when git fails again "
           "and points to the closing line",
           "or, when git fails again, a git-failure message like this one, and the last line here "

@@ -1,5 +1,6 @@
 ---
 issue: "[Nudge the author of a pull request whose review findings have gone unanswered for hours](https://github.com/nedschorus/nedschorus/issues/1203)"
+kind: design
 ---
 
 # Nudge the author of a pull request whose review findings have gone unanswered for hours

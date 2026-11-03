@@ -1,5 +1,6 @@
 ---
 issue: "[Memory: a daily review of both memory stores with the user](https://github.com/nedschorus/nedschorus/issues/39)"
+kind: design
 ---
 
 # Memory: a daily review of both memory stores with the user
@@ -94,7 +95,7 @@ The issue's original plan was two hooks printing a line whenever memory was read
 
 ## What has to change
 
-1. `.claude/hooks/instruction-file-guard.py` stops protecting `~/.claude/projects/*/memory`, the index inside it included. A hook change, so it must be approved-by-walk; the `fleet` seat builds it.
+1. `.claude/guard-hooks/instruction-file-guard.py` stops protecting `~/.claude/projects/*/memory`, the index inside it included. A hook change, so it must be approved-by-walk; the `fleet` seat builds it.
 2. CLAUDE.md's memory rule changes from approve-each-write to write-then-drain. A walked change.
 3. A script does steps 1, 2, 3 and 5 of a drain for both stores. The `fleet` seat owns it, with the session machinery.
 4. Every incoming session counts and lists at its start; only a session with the user at the console walks the list and writes the markers, which is what makes a headless agent's entries reviewable at all. The seat briefs say so.

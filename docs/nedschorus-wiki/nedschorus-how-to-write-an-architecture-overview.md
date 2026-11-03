@@ -1,6 +1,6 @@
-# How to write an architecture overview
+# How to write an nc-architecture-overview
 
-An architecture overview tells a reader who must change a system what the system is for, what its components are, and how the components fit together. It describes the system as it is on main at the commit named in its last line. It summarizes and points: it says in a sentence, or for a few in a short paragraph, what each component and each piece of shared state does and where it lives, and leaves the detail to the code and the documents that hold it. An overview does not replace reading the code; it teaches an agent who will change the system the rules no single file states, and what to do and not do.
+An nc-architecture-overview tells a reader who must change a system what the system is for, what its components are, and how the components fit together. It describes the system as it is on main at the commit named in its last line. It summarizes and points: it says in a sentence, or for a few in a short paragraph, what each component and each piece of shared state does and where it lives, and leaves the detail to the code and the documents that hold it. An overview does not replace reading the code; it teaches an agent who will change the system the rules no single file states, and what to do and not do.
 
 The overview of a system whose code lives in `nc-systems/<system>/` is `docs/nedschorus-wiki/nedschorus-<system>-architecture-overview.md`, where `<system>` is the directory directly under `nc-systems/`. This page is `docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md`.
 
@@ -14,7 +14,7 @@ The overview has these seven sections, in this order. The words component, share
 4. **Invariants.** State each rule the code keeps across components that no single file states, especially an absence, such as "the launchers never start `claude` themselves; only the handoff-supervisor does", in one to three sentences, with its reason in at most one clause.
 5. **Shared state.** For each file, lock, environment variable, git ref or other state that two or more components use, say which components create or write it and which read or wait on it, naming an outside program such as Claude Code or git where it is the writer, and say where it lives, naming the machine when that matters.
 6. **Entry points.** For each component where execution starts, say what starts it: a person, a Claude Code hook event, a job in `nc-systems/general-tools/scheduled-jobs-on-each-machine.json`, or another system.
-7. **Planned work.** List each open GHI that holds work on the system, one line each, written `GHI [<title>](<url>)`; find them with `scripts/ghi-info-ask.py` and a GitHub search for the system's name and directory. Do not list work recorded only on an agent-seat's task list.
+7. **Planned work.** List each open GHI that holds work on the system, one line each, written `GHI [<title>](<url>)`; find them with `scripts/ghi-guide-agent-ask.py` and a GitHub search for the system's name and directory. Do not list work recorded only on an agent-seat's task list.
 
 ## What an overview leaves out
 
@@ -25,7 +25,7 @@ The overview has these seven sections, in this order. The words component, share
 
 ## Improvements and problems the writer notices
 
-While reading the code, a writer may notice something worth changing: an improvement, such as something to add, remove, simplify or archive, or a possible problem. None of it goes into the overview, which describes the system as it is, and Planned work does not list it. The writer records it in a proposed-improvements-or-changes-file beside the overview, as GHI [Proposed improvements or changes to a GHI are handled by agents first, and reach the user only when they need him](https://github.com/nedschorus/nedschorus/issues/1132) says for an architecture overview; the line that GHI puts under the overview's first heading stands before the seven sections and is not one of them. Until an agent exists to settle the file's entries, the file waits on main as a reminder.
+While reading the code, a writer may notice something worth changing: an improvement, such as something to add, remove, simplify or archive, or a possible problem. None of it goes into the overview, which describes the system as it is, and Planned work does not list it. The writer records it in a proposed-improvements-or-changes-file beside the overview, as GHI [Proposed improvements or changes to a GHI are handled by agents first, and reach the user only when they need him](https://github.com/nedschorus/nedschorus/issues/1132) says for an nc-architecture-overview; the line that GHI puts under the overview's first heading stands before the seven sections and is not one of them. Until an agent exists to settle the file's entries, the file waits on main as a reminder.
 
 ## Length
 
@@ -37,7 +37,7 @@ Use project-terms, the described system's system-terms where the system has a gl
 
 ## Keeping an overview true
 
-The last line of an overview is `**Checked against:** commit [<full commit id>](https://github.com/nedschorus/nedschorus/commit/<full commit id>)`, naming the commit of main that the last check ran against. It is data a program reads, and it is the only commit the overview names.
+The last line of an overview is `**Checked against:** commit [<full commit id>](https://github.com/nedschorus/nedschorus/commit/<full commit id>)`, naming the commit that the last check ran against: a commit of main, or, in a pull request that also changes the code the overview describes, a commit of that pull request that holds the code and is earlier in its history than the overview edit. It is data a program reads, and it is the only commit the overview names.
 
 An overview refresh brings an overview into line with the code on main and with this page. It reads the commits between the commit in the `**Checked against:**` line and main to find what changed; nothing about those commits goes into the overview. It corrects every statement that is no longer true, adds what the code added (a component, an invariant, shared state, an entry point), takes out what the code removed, takes out anything this page leaves out, and updates Planned work to the open GHIs. Then it replaces the `**Checked against:**` line with the commit it checked against. A refresh that finds nothing to change replaces only that line.
 
@@ -47,7 +47,7 @@ An overview already on main without a `**Checked against:**` line was written be
 
 ## Checking an overview
 
-A new overview gets a cold-read-full-run of the /cold-read skill; a refresh gets a cold-read-fast-read (both terms are in `.claude/skills/skills-glossary.md`). Then the overview is checked against the code of main at one commit, the one its `**Checked against:**` line will name. A round is the check, the writer's fixes, and a cold-read-fast-read of the whole overview. The overview merges after a round in which the check found nothing to fix and the read changed nothing the check covers. If two rounds pass without that, the writer brings the overview to the user.
+A new overview gets a cold-read-full-run of the /cold-read skill; a refresh gets a cold-read-fast-read (both terms are in `.claude/skills/skills-glossary.md`). Then the overview is checked against the code at one commit, the one its `**Checked against:**` line will name: a commit of main, or, in a pull request that also changes the code the overview describes, a commit of that pull request that holds the code and is earlier in its history than the overview edit. A round is the check, the writer's fixes, and a cold-read-fast-read of the whole overview. The overview merges after a round in which the check found nothing to fix and the read changed nothing the check covers. If two rounds pass without that, the writer brings the overview to the user.
 
 The check has two stages, and the second runs only once the first is clean.
 

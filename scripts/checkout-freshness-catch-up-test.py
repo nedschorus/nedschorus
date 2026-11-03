@@ -360,7 +360,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           merge_note.endswith("\n" + NOT_FOR_THE_USER_LINE), merge_note)
     check("and only once",
           "merge commit(s) from main" not in agent_text(run_catch_up(["--cwd", str(merge_seat)])))
-    # A merge of another topic branch is not the banned thing.
+    # A merge of another nc-topic-branch is not the banned thing.
     topic_seat = tmp / "topic-merge-worktree"
     git(["worktree", "add", "-q", "-b", "topic-a", str(topic_seat), "main"], reference)
     configure_identity(topic_seat)
@@ -372,7 +372,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     commit_file(other, "topic-b.txt", "b\n", "topic b work")
     git(["-c", "core.editor=true", "merge", "--no-ff", "--no-edit", "topic-b"], topic_seat)
     result = run_catch_up(["--cwd", str(topic_seat)])
-    check("a merge of another topic branch is NOT reported as a merge from main",
+    check("a merge of another nc-topic-branch is NOT reported as a merge from main",
           "merge commit(s) from main" not in agent_text(result), agent_text(result))
 
     # -----------------------------------------------------------------------
@@ -754,12 +754,12 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           agent_text(result))
     git(["cherry-pick", "--abort"], sequencing)
 
-    # The ghi-info shape (nedschorus#334): no commits of its own, far behind,
+    # The ghi-guide-agent shape (nedschorus#334): no commits of its own, far behind,
     # never pushed — so it is simply brought level, the same fast-forward the
-    # box's ghi-info-ask now does for itself (#375).
-    ghi = tmp / "ghi-info-worktree"
+    # box's ghi-guide-agent-ask now does for itself (#375).
+    ghi = tmp / "ghi-guide-agent-worktree"
     first_commit = git(["rev-list", "--max-parents=0", "main"], reference).stdout.strip()
-    git(["worktree", "add", "-q", "-b", "ghi-info", str(ghi), first_commit], reference)
+    git(["worktree", "add", "-q", "-b", "ghi-guide-agent", str(ghi), first_commit], reference)
     configure_identity(ghi)
     result = run_catch_up(["--cwd", str(ghi)])
     check("a never-pushed branch with no own commits, far behind, is brought level",
@@ -1079,6 +1079,28 @@ with tempfile.TemporaryDirectory() as reference_pull_scratch:
     check("a successful pull clears the reference's reason key",
           "last_reference_blockers" not in stamp_of(reference), str(stamp_of(reference)))
 
+    # Git exits 0 after a fast-forward whatever post-merge returns, so the
+    # hook's FAILED line reaches nobody unless the catch-up relays it.
+    hooks = tmp / "hooks"
+    hooks.mkdir()
+    (hooks / "post-merge").write_text(
+        "#!/bin/sh\necho 'restart-program: FAILED — the restart did not happen' >&2\nexit 1\n",
+        encoding="utf-8")
+    (hooks / "post-merge").chmod(0o755)
+    git(["config", "core.hooksPath", str(hooks)], reference)
+    commit_file(origin, "advance-again.txt", "two\n", "advance again")
+    pulled = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    check("a post-merge hook's FAILED line after a fast-forward of the reference is relayed",
+          (reference / "advance-again.txt").exists()
+          and "post-merge hook reported a failure" in pulled.stdout
+          and "restart-program: FAILED — the restart did not happen" in pulled.stdout,
+          pulled.stdout + pulled.stderr)
+    (hooks / "post-merge").write_text("#!/bin/sh\necho 'all went well' >&2\n", encoding="utf-8")
+    commit_file(origin, "advance-third.txt", "three\n", "advance a third time")
+    pulled = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    check("(control) a post-merge hook that reports no failure adds no line",
+          "post-merge hook" not in pulled.stdout, pulled.stdout)
+
 
 # ---------------------------------------------------------------------------
 # A reference whose fetch failed must not read as up to date. It computed
@@ -1222,6 +1244,11 @@ with tempfile.TemporaryDirectory() as naming_scratch:
           "hooks and wiring that run on your work (2)"
           in named((".claude/hooks/a-guard.py", "a hook"),
                    (".claude/settings.json", "wiring")), named())
+    guard_listing = named((".claude/guard-hooks/a-guard.py", "a guard hook"))
+    check("a guard under .claude/guard-hooks/ is named with the hooks",
+          any(line.startswith("  hooks and wiring that run on your work (3):")
+              and ".claude/guard-hooks/a-guard.py" in line
+              for line in guard_listing.splitlines()), guard_listing)
     check("an uncategorised path is still surfaced rather than hidden",
           "other files (1): Makefile" in named(("Makefile", "a makefile")), named())
 

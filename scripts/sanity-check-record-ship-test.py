@@ -55,9 +55,10 @@ def make_record(root: pathlib.Path, name: str, files: dict) -> pathlib.Path:
     return record
 
 
-def ship(destination, *args, script=SHIP):
+def ship(destination, *args, script=SHIP, extra_env=None):
     env = dict(os.environ)
     env[DESTINATION_VARIABLE] = destination
+    env.update(extra_env or {})
     return subprocess.run([sys.executable, str(script), *args],
                           capture_output=True, text=True, check=False, env=env)
 
@@ -151,6 +152,23 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
           and "localhost/home/nedlern/nedschorus-logs/cold-read-records/" not in result.stderr,
           result.stderr)
 
+    # --- A failed copy names this program in its rerun command ---------------
+    # The record shipper builds the line; a sanity-check record is shipped
+    # again by this program, not by the record shipper.
+    failing_rsync = scratch / "stub-bin-rsync-exit-23"
+    failing_rsync.mkdir()
+    (failing_rsync / "rsync").write_text("#!/bin/sh\nexit 23\n", encoding="utf-8")
+    (failing_rsync / "rsync").chmod(0o755)
+    unshipped = make_record(records, "2026-10-31-copy-fails", {"cut-adversarial-prompt-claude.md": CUT_REPORT})
+    result = ship(local_destination, str(unshipped), extra_env={
+        "PATH": f"{failing_rsync}{os.pathsep}{os.environ.get('PATH', '')}"})
+    check("a failed copy is FAILED, exit 1, ending with the command that reruns "
+          "this program, not the record shipper, on the record",
+          result.returncode == 1
+          and result.stdout == (f"FAILED: {unshipped.name} — rsync exit 23 during the "
+                                f"copy. Rerun: `{SHIP} {unshipped.resolve()}`\n"),
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+
     # --- Bad invocation --------------------------------------------------------
     result = ship(local_destination)
     check("no argument exits 64 with FAILED on stdout",
@@ -170,6 +188,11 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
     shutil.copytree(SCRIPTS_DIR.parent / "nc-systems" / "cold-read",
                     scratch_repo / "nc-systems" / "cold-read",
                     ignore=shutil.ignore_patterns("__pycache__"))
+    # cold-read-record-names-common.py reads ned-box's home and its Mac mount from this module.
+    ned_box_home_module = "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py"
+    (scratch_repo / "nc-systems" / "general-tools").mkdir()
+    shutil.copy2(SCRIPTS_DIR.parent / "nc-systems" / "general-tools" / ned_box_home_module,
+                 scratch_repo / "nc-systems" / "general-tools" / ned_box_home_module)
     scratch_ship = scratch_repo / "scripts" / SHIP.name
     all_store = str(scratch / "all-store" / "cold-read-records")
     good = make_record(scratch_repo / "sanity-check-records", "2026-09-10-good",

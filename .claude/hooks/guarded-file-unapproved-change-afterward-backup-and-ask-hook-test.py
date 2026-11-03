@@ -684,6 +684,77 @@ def cases(scratch):
     check("a resolution a run saw before the finishing commit is asked about",
           str(claude) in message, message)
 
+    # -- a version origin/main holds is approved, even one a run saw unapproved
+    world = fresh(scratch, "origin-main")
+    claude = world.repo / "CLAUDE.md"
+    notes = world.repo / "notes.txt"
+    world.git("checkout", "-q", "-b", "topic")
+    notes.write_text("topic notes\n")
+    world.git("commit", "-qam", "topic")
+    world.git("checkout", "-q", "main")
+    claude.write_text("project v2, merged on main\n")
+    notes.write_text("main notes\n")
+    world.git("commit", "-qam", "a reviewed pull request")
+    world.git("update-ref", "refs/remotes/origin/main", "main")
+    world.git("reset", "-q", "--hard", "HEAD~1")
+    world.git("checkout", "-q", "topic")
+    world.run()
+    world.git("rebase", "origin/main", check_ok=False)
+    during = world.run()
+    check("nothing is asked while a rebase onto origin/main is stopped on a conflict", during == "",
+          during)
+    notes.write_text("resolved notes\n")
+    world.git("add", "notes.txt")
+    world.extra_environment["GIT_EDITOR"] = "true"
+    world.git("rebase", "--continue")
+    del world.extra_environment["GIT_EDITOR"]
+    message = world.run()
+    check("origin/main's version, which a run saw during the rebase, is not asked about",
+          message == "", message)
+    check("origin/main's version enters the approved set",
+          world.key(claude) in world.store_file(claude, "approved"),
+          world.store_file(claude, "approved"))
+    claude.write_text("project v3, not on main\n")
+    message = world.run()
+    check("a version origin/main does not hold is still asked about",
+          str(claude) in message and "has not approved" in message, message)
+
+    world = fresh(scratch, "origin-main-unreadable")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2, on main\n")
+    world.git("commit", "-qam", "main")
+    world.git("update-ref", "refs/remotes/origin/main", "main")
+    world.git("reset", "-q", "--hard", "HEAD~1")
+    world.run()
+    claude.write_text("project v2, on main\n")
+    world.failing_git("refs/remotes/origin/main")
+    message = world.run()
+    check("a git failing to read origin/main is reported, the version neither approved nor asked "
+          "about",
+          "did not run" in message and "exited 128" in message and "injected failure" in message
+          and "has not approved" not in message
+          and world.key(claude) not in world.store_file(claude, "approved"), message)
+    world.failing_git(None)
+    message = world.run()
+    check("once git reads origin/main again, the next run approves the version",
+          message == "" and world.key(claude) in world.store_file(claude, "approved"), message)
+
+    world = fresh(scratch, "origin-main-moves-to-an-unsettled-version")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2, merged on main later\n")
+    message = world.run()
+    check("a shell edit origin/main does not hold is asked about",
+          str(claude) in message and "has not approved" in message, message)
+    world.git("commit", "-qam", "the version a pull request will merge")
+    message = world.run()
+    check("the committed version is still waiting while origin/main does not hold it",
+          str(claude) in message and world.key(claude) not in world.store_file(claude, "approved"),
+          message)
+    world.git("update-ref", "refs/remotes/origin/main", "HEAD")
+    message = world.run()
+    check("once origin/main moves to the waiting version, the next run approves it and is silent",
+          message == "" and world.key(claude) in world.store_file(claude, "approved"), message)
+
     # -- stash
     world = fresh(scratch, "stash")
     claude = world.repo / "CLAUDE.md"
@@ -1284,6 +1355,77 @@ def cases(scratch):
           "nothing and does not open the store",
           texts == [] and not any(calls.values()) and store_listing(world.store) == store_before,
           (texts, calls))
+
+    # -- a new worktree: on the Mac's SMB mount every store open is a network round trip
+    worktree = copy_of_main / ".claude" / "worktrees" / "agent-new"
+    subprocess.run(["git", "-C", str(copy_of_main), "worktree", "add", "-q", "-b",
+                    "worktree-agent-new", str(worktree)], check=True, env=world.environment())
+    hook = load_hook_in_this_process()
+    store = {"open": 0, "not found": 0, "make": 0, "access": 0}
+
+    class StoreCountingOs:
+        """The os module, counting each open and mkdir relative to a store directory."""
+
+        def __getattr__(self, name):
+            return getattr(os, name)
+
+        @staticmethod
+        def open(path, flags, mode=0o777, *, dir_fd=None):
+            if dir_fd is not None:
+                store["open"] += 1
+            try:
+                return os.open(path, flags, mode, dir_fd=dir_fd)
+            except FileNotFoundError:
+                if dir_fd is not None:
+                    store["not found"] += 1
+                raise
+
+        @staticmethod
+        def mkdir(path, mode=0o777, *, dir_fd=None):
+            if dir_fd is not None:
+                store["make"] += 1
+            return os.mkdir(path, mode, dir_fd=dir_fd)
+
+    hook.os = StoreCountingOs()
+    for name in ("read", "append", "copy"):
+        def counted(self, *arguments, _method=getattr(hook.Store, name)):
+            store["access"] += 1
+            return _method(self, *arguments)
+        setattr(hook.Store, name, counted)
+
+    def counted_run(directory):
+        for name in store:
+            store[name] = 0
+        saved_environment, saved_directory = dict(os.environ), os.getcwd()
+        try:
+            os.environ.update(world.environment())
+            os.chdir(directory)
+            return hook.run_hook({"session_id": "session-a", "hook_event_name": "PostToolUse",
+                                  "tool_name": "Bash", "cwd": str(directory),
+                                  "tool_input": {"command": "x"}})
+        finally:
+            os.chdir(saved_directory)
+            os.environ.clear()
+            os.environ.update(saved_environment)
+
+    texts = counted_run(worktree)
+    git_directory = subprocess.run(["git", "-C", str(worktree), "rev-parse", "--absolute-git-dir"],
+                                   capture_output=True, text=True, check=True).stdout.strip()
+    guarded = len(json.loads((Path(git_directory) / hook.STATE_FILE_NAME).read_text())["files"])
+    print(f"INFO  the first run in a new worktree with {guarded} guarded files: {store}")
+    check("the first run in a new worktree opens each store directory with one open, not one per "
+          "part of its path",
+          texts == [] and guarded and store["open"] <= 2 * store["access"] + store["make"],
+          (texts, guarded, store))
+    # Each file has its own store directory, missing until the run makes it: one failed open of
+    # the whole path, then one failed open before each mkdir of the walk that makes it.
+    check("the first run in a new worktree looks each file's missing directory up once, though it "
+          "reads each file's log and approved set twice",
+          store["not found"] <= guarded + store["make"], (guarded, store))
+    (worktree / "CLAUDE.md").write_text((worktree / "CLAUDE.md").read_text() + "changed\n")
+    texts = counted_run(worktree)
+    check("a run that finds one changed file opens one directory and one file per store access",
+          len(texts) == 1 and 0 < store["open"] <= 2 * store["access"], (store, texts))
 
 
 def load_hook_in_this_process():

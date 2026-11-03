@@ -134,6 +134,16 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
+def run_hook(hook_script, stdin_text, environment_extra=None):
+    """Run hook_script with stdin_text, in this process's environment less the variables that silence the hook."""
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in ("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
+                                  "CLAUDE_CODE_SESSION_ATTENDED")}
+    environment.update(environment_extra or {})
+    return subprocess.run([sys.executable, str(hook_script)], input=stdin_text,
+                          capture_output=True, text=True, env=environment, timeout=60)
+
+
 class Case:
     """One case's own checkout, cold-read-records directory and transcript."""
 
@@ -186,16 +196,9 @@ class Case:
         payload = {"hook_event_name": "Stop", "session_id": "s1",
                    "transcript_path": str(self.transcript), "cwd": str(self.checkout)}
         payload.update(payload_extra or {})
-        environment = {key: value for key, value in os.environ.items()
-                       if key not in ("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
-                                      "CLAUDE_CODE_SESSION_ATTENDED")}
-        environment[STORE_VARIABLE] = str(self.store)
-        environment.update(environment_extra or {})
-        completed = subprocess.run(
-            [sys.executable, str(HOOK_SCRIPT)],
-            input=json.dumps(payload) if stdin_text is None else stdin_text,
-            capture_output=True, text=True, env=environment, timeout=60)
-        return completed
+        return run_hook(HOOK_SCRIPT,
+                        json.dumps(payload) if stdin_text is None else stdin_text,
+                        {STORE_VARIABLE: str(self.store), **(environment_extra or {})})
 
 
 def reported_paths(completed):
@@ -239,6 +242,14 @@ def main():
            case.run("Updated docs/plan-of-record.md."), None)
 
     case = Case()
+    document = case.document("docs/plan-of-record.md", modified=3_000_000,
+                             text="See file:///Volumes/nedhome/agents/x/log.md.\n")
+    case.record("plan-of-record-2026-10-08", 2_000_000, "docs/plan-of-record.md",
+                "See /home/nedlern/agents/x/log.md.\n")
+    expect("a frozen copy whose Mac links a cold read on ned-box rewrote matches its document despite file times",
+           case.run("Updated docs/plan-of-record.md."), None)
+
+    case = Case()
     document = case.document("docs/plan-of-record.md", text="same\n", modified=3_000_000)
     absolute_form = Path(*document.resolve().parts[1:])
     case.record("plan-of-record-2026-10-08", 2_000_000, absolute_form, "same\n")
@@ -274,9 +285,9 @@ def main():
     draft = case.document("docs/walk/naming-rules-draft.md", modified=2_000_000)
     expect("a walk-document without a suggestions file is reported",
            case.run("The walk-document is docs/walk/naming-rules-draft.md."), [draft])
-    case.document("docs/walk/naming-rules-suggestions.md", modified=3_000_000)
+    case.document("docs/walk/naming-rules-cold-read-fast-read.md", modified=3_000_000)
     expect("a walk-document with a newer suggestions file is silent, and the suggestions file is skipped",
-           case.run("See docs/walk/naming-rules-draft.md and docs/walk/naming-rules-suggestions.md."),
+           case.run("See docs/walk/naming-rules-draft.md and docs/walk/naming-rules-cold-read-fast-read.md."),
            None)
 
     case = Case()
@@ -454,7 +465,7 @@ def main():
 
     case = Case()
     draft = case.document("docs/walk/naming-rules-draft.md", modified=5_000_000)
-    suggestions = case.document("docs/walk/naming-rules-suggestions.md", modified=4_000_000)
+    suggestions = case.document("docs/walk/naming-rules-cold-read-fast-read.md", modified=4_000_000)
     expect("a walk-document changed after another agent-session's read is raised",
            case.run("The walk-document is docs/walk/naming-rules-draft.md."), [draft])
     name_agent_session(suggestions, "s1", draft)
@@ -463,7 +474,7 @@ def main():
 
     case = Case()
     draft = case.document("docs/walk/naming-rules-draft.md", modified=4_000_000)
-    suggestions = case.document("docs/walk/naming-rules-suggestions.md", modified=5_000_000)
+    suggestions = case.document("docs/walk/naming-rules-cold-read-fast-read.md", modified=5_000_000)
     malformed = suggestions.parent / (suggestions.name + ".agent-session.json")
     malformed.write_text("not json\n")
     completed = case.run("The walk-document is docs/walk/naming-rules-draft.md.")
@@ -496,11 +507,11 @@ def main():
     case.document("docs/plan-of-record.md", text="on main, edited\n")
     expect("a document on main with an uncommitted edit is reported",
            case.run("See docs/plan-of-record.md."), [document])
-    git(case.checkout, "commit", "-q", "-am", "edit on the topic branch")
-    expect("a document changed by a commit on the topic branch is reported",
+    git(case.checkout, "commit", "-q", "-am", "edit on the nc-topic-branch")
+    expect("a document changed by a commit on the nc-topic-branch is reported",
            case.run("See docs/plan-of-record.md."), [document])
     case.document("docs/plan-of-record.md", text="on main\n", modified=9_000_000)
-    expect("a document whose topic-branch commit is undone in the working tree is silent",
+    expect("a document whose nc-topic-branch commit is undone in the working tree is silent",
            case.run("See docs/plan-of-record.md."), None)
 
     case = Case()
@@ -574,8 +585,8 @@ def main():
     git(case.checkout, "checkout", "-q", "-")
     expect("a document only main changed since the checkout's branch was cut is silent",
            case.run("See docs/plan-of-record.md."), None)
-    case.document("docs/plan-of-record.md", text="changed on the topic branch too\n")
-    git(case.checkout, "commit", "-q", "-am", "edit on the topic branch")
+    case.document("docs/plan-of-record.md", text="changed on the nc-topic-branch too\n")
+    git(case.checkout, "commit", "-q", "-am", "edit on the nc-topic-branch")
     expect("a document a branch behind main also changed is reported",
            case.run("See docs/plan-of-record.md."), [document])
 
@@ -672,9 +683,7 @@ def main():
     rule_module = "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py"
     shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nc-systems" / "general-tools" / rule_module,
                 scratch_root / "nc-systems" / "general-tools" / rule_module)
-    completed = subprocess.run(
-        [sys.executable, str(scratch_root / "scripts" / HOOK_SCRIPT.name)],
-        input="{}", capture_output=True, text=True, timeout=60)
+    completed = run_hook(scratch_root / "scripts" / HOOK_SCRIPT.name, "{}")
     home_module_path = (scratch_root / "nc-systems" / "general-tools"
                         / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
     check("a shared module that is missing is a fault naming its path: exit 1, one stderr line, no output",
@@ -686,9 +695,7 @@ def main():
 
     # An error raised inside the module carries no path of its own; the loader must add it.
     home_module_path.write_text('raise RuntimeError("injected\\nload failure")\n')
-    completed = subprocess.run(
-        [sys.executable, str(scratch_root / "scripts" / HOOK_SCRIPT.name)],
-        input="{}", capture_output=True, text=True, timeout=60)
+    completed = run_hook(scratch_root / "scripts" / HOOK_SCRIPT.name, "{}")
     check("a shared module that raises while loading is a fault naming its path: exit 1, one stderr line",
           completed.returncode == 1 and completed.stdout == ""
           and f"could not load {home_module_path}: RuntimeError: injected load failure"
@@ -705,10 +712,9 @@ def main():
     record_names_path = scratch_root / "nc-systems" / "cold-read" / "cold-read-record-names-common.py"
     case = Case()
     case.transcript.write_text("")
-    completed = subprocess.run(
-        [sys.executable, str(scratch_root / "scripts" / HOOK_SCRIPT.name)],
-        input=json.dumps({"hook_event_name": "Stop", "transcript_path": str(case.transcript)}),
-        capture_output=True, text=True, timeout=60)
+    completed = run_hook(
+        scratch_root / "scripts" / HOOK_SCRIPT.name,
+        json.dumps({"hook_event_name": "Stop", "transcript_path": str(case.transcript)}))
     check("a module run() loads that is missing is a fault naming its path: exit 1, one stderr line",
           completed.returncode == 1 and completed.stdout == ""
           and f"could not load {record_names_path}: FileNotFoundError" in completed.stderr

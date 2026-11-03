@@ -24,9 +24,9 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py"
-TMUX_KILL_GUARD = "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py"
-ISSUE_WRITE_GUARD = ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py"
-SEARCH_FILE_GUARD = "scripts/search-file-argument-read-as-option-guard-hook.py"
+TMUX_KILL_GUARD = ".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py"
+ISSUE_WRITE_GUARD = ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py"
+SEARCH_FILE_GUARD = ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py"
 SHELL_READER = "nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py"
 
 spec = importlib.util.spec_from_file_location("bash_guards_replay", SCRIPT_PATH)
@@ -165,11 +165,36 @@ FIXTURE_PAIRS = [
 ]
 
 
+def log_store_runs_directory(scratch):
+    """The directory the suite passes as --log-store-runs-directory, so no replay writes into the log-store;
+    made on first use."""
+    directory = Path(scratch) / "log-store-runs"
+    directory.mkdir(exist_ok=True)
+    return directory
+
+
+def default_scratch_replay(head_ref, scratch, *extra, base_ref="HEAD", pairs=FIXTURE_PAIRS):
+    """run_replay() without --scratch-directory, its temporary directory in a new directory of the suite's scratch
+    and its run log directory in another; return (status, out, err, what the temporary directory holds after the
+    replay, the run log directories after the replay)."""
+    temporary = Path(tempfile.mkdtemp(prefix="temporary-", dir=scratch))
+    runs = Path(tempfile.mkdtemp(prefix="log-store-runs-", dir=scratch))
+    previous_tempdir = tempfile.tempdir
+    tempfile.tempdir = str(temporary)
+    try:
+        status, out, err = run_replay(head_ref, scratch, "--log-store-runs-directory", str(runs), *extra,
+                                      base_ref=base_ref, scratch_directory=False, pairs=pairs)
+    finally:
+        tempfile.tempdir = previous_tempdir
+    return status, out, err, sorted(os.listdir(temporary)), sorted(runs.iterdir())
+
+
 def run_replay(head_ref, scratch, *extra, base_ref="HEAD", scratch_directory=True, pairs=FIXTURE_PAIRS):
     pairs_file = Path(scratch) / "fixture-pairs.json"
     pairs_file.write_text(json.dumps(pairs))
     arguments = ["--repository", str(TEST_REPOSITORY), "--base-ref", base_ref, "--head-ref", head_ref,
-                 "--pairs-file", str(pairs_file), "--jobs", "2"]
+                 "--pairs-file", str(pairs_file), "--jobs", "2",
+                 "--log-store-runs-directory", str(log_store_runs_directory(scratch))]
     if scratch_directory:
         arguments += ["--scratch-directory", str(Path(scratch) / f"run-{len(os.listdir(scratch))}")]
     printed, errors = io.StringIO(), io.StringIO()
@@ -189,7 +214,8 @@ def run_replay_within(deadline_seconds, head_ref, scratch, *extra, base_ref="HEA
     pairs_file = Path(scratch) / "fixture-pairs.json"
     pairs_file.write_text(json.dumps(pairs))
     arguments = ["--repository", str(TEST_REPOSITORY), "--base-ref", base_ref, "--head-ref", head_ref,
-                 "--pairs-file", str(pairs_file), "--jobs", "2", *extra]
+                 "--pairs-file", str(pairs_file), "--jobs", "2",
+                 "--log-store-runs-directory", str(log_store_runs_directory(scratch)), *extra]
     process = subprocess.Popen([sys.executable, str(SCRIPT_PATH), *arguments], stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, text=True)
     try:
@@ -366,7 +392,7 @@ try:
     check("a guard whose own `except Exception` surrounds a timed-out read: exit 2, the timeout is not swallowed",
           status == 2 and "TIMEOUT" in out and "NO VERDICT CHANGED" not in out, f"status {status}\n{out}\n{err}")
 
-    codex_guard = "scripts/hand-typed-codex-exec-command-refusal-hook.py"
+    codex_guard = ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py"
     calls_file = Path(scratch) / "codex-guard-calls-on-tmux-kill-server"
 
     def codex_guard_on_tmux_kill_server(code_on_tmux_kill_server):
@@ -453,6 +479,18 @@ try:
           == (3 + 9) * (len(replay.GUARDS) + 1) * 7 + replay.STEP_DEADLINE_MARGIN_SECONDS,
           replay.step_deadline_seconds(9, 3, 7))
 
+    class GhiMdGuardNaming:
+        def __init__(self, replaced):
+            self.replaced = replaced
+
+        def ghi_md_replaced_by_command(self, command, working_directory):
+            return self.replaced
+
+    for replaced, expected in (("/c/docs/issues/46-a.md", ("refused", "replaces /c/docs/issues/46-a.md")),
+                               (None, ("passed", None))):
+        reading = replay.read_ghi_md_whole_file_replacement(GhiMdGuardNaming(replaced), "cp a b", "/c", None)
+        check(f"the GHI-MD soft-block's reading when its guard names {replaced}", reading == expected, reading)
+
     def add_bash_hook(worktree):
         path = worktree / ".claude" / "settings.json"
         settings = json.loads(path.read_text())
@@ -515,7 +553,7 @@ try:
     fewer_hooks = commit_with_change(drop_codex_hook, scratch)
     status, out, err = run_replay(fewer_hooks, scratch)
     check("a head whose settings.json lacks a Bash hook the replay reads: exit 2, naming the hook",
-          status == 2 and "replayed but not a Bash hook: ['scripts/hand-typed-codex-exec-command-refusal-hook.py']" in err,
+          status == 2 and "replayed but not a Bash hook: ['.claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py']" in err,
           f"status {status}\n{out}\n{err}")
 
     # In the guard's own directory, so the files it loads beside itself are still found.
@@ -564,11 +602,34 @@ try:
     check("a head that adds a guard refusing a recorded command: exit 1, the merge is blocked",
           status == 1 and "NEW GUARD REFUSES RECORDED COMMANDS" in out and "VERDICT CHANGED" not in out,
           f"status {status}\n{out}\n{err}")
-    check("a head that adds a guard refusing a recorded command: the section names the guard, the count, the command "
-          "and its working directory",
-          f"in-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command, listed with its "
-          "working directory\n  1. command: 'tmux kill-server'\n     working directory: /tmp\n" in out
-          and f"new-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command" in out, out)
+    tmux_kill_refusal = (TMUX_KILL_GUARD, replay.read_tmux_kill(
+        replay.load_module(REPOSITORY_ROOT, TMUX_KILL_GUARD, "tmux_kill_guard"), "tmux kill-server", "/tmp", None)[1])
+    tmux_kill_group = replay.refusal_group_ids_assign_to_bash_guard_path_and_message_pairs_by_shortest_unique_digest_prefix(
+        [tmux_kill_refusal])[tmux_kill_refusal]
+    check("a head that adds a guard refusing a recorded command: each mode counts its refusals, and the one refusal "
+          "group, which both modes refuse, names its id, the guard, the command and its working directory",
+          f"in-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command\n" in out
+          and f"new-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command\n" in out
+          and "refusal groups of the guards the head adds: 1, holding 1 refused recorded command; every group in "
+          "full is in " in out
+          and f"  {tmux_kill_group}: {TMUX_KILL_GUARD} refuses 1 recorded command, in in-process, new-process\n"
+          "    reason: " in out
+          and "    command: 'tmux kill-server'\n      working directory: /tmp\n" in out, out)
+    # As Codex found on pull request 2468: two refusal messages whose digests share their first eight hex digits.
+    digest_as_written = replay.refusal_group_digest_compute_from_bash_guard_path_and_message
+    replay.refusal_group_digest_compute_from_bash_guard_path_and_message = lambda guard, reason: "8ee5bdb8" + ("1" if reason.endswith("4768") else "2") * 56
+    try:
+        colliding = replay.added_guard_refusal_groups([("in-process", [
+            (("git push --force origin topic-4768", "/tmp"), "force-push-guard.py", ("refused", "topic-4768")),
+            (("git push --force origin topic-111837", "/tmp"), "force-push-guard.py", ("refused", "topic-111837"))])])
+    finally:
+        replay.refusal_group_digest_compute_from_bash_guard_path_and_message = digest_as_written
+    check("two refusal messages whose ids would share their first eight hex digits: two refusal groups, each with "
+          "its own message, its own command and an id of its own",
+          sorted((group["reason"], group["refused commands"]) for group in colliding)
+          == [("topic-111837", [["git push --force origin topic-111837", "/tmp"]]),
+              ("topic-4768", [["git push --force origin topic-4768", "/tmp"]])]
+          and len({group["group"] for group in colliding}) == 2, str(colliding))
     check("a head that adds a guard refusing a recorded command, and changes no verdict: merge-lane-2 may merge "
           "once each refusal is accepted",
           replay.NEW_GUARD_REFUSES_ONLY_ENDING in out
@@ -593,15 +654,69 @@ try:
           f"guards the head adds, read at the head only: ['{TMUX_KILL_GUARD}']" in out
           and "in-process: rows whose verdict differs: 0" in out, out)
 
-    # Longer than the 300 characters a printed reading is cut to, and different from its twin only at the end.
-    long_refused = ["tmux kill-server; echo " + "x" * 320 + " first", "/tmp"]
-    long_refused_twin = ["tmux kill-server; echo " + "x" * 320 + " second", "/tmp"]
+    # As on pull request 2446, where the added guard refused 296 recorded commands with one message: commands longer
+    # than the 300 characters a printed text is cut to, which differ only at the end.
+    many_long_refused = [["tmux kill-server; echo " + "x" * 400 + f" {number}", f"/tmp/{number}"]
+                         for number in range(300)]
     status, out, err = run_replay("HEAD", scratch, "--new-process-pairs", "none", base_ref=before_tmux_kill_guard,
-                                  pairs=[long_refused, long_refused_twin])
-    check("a head that adds a guard refusing two long commands that differ only at the end: each is listed in full",
-          status == 1 and f"would refuse 2 recorded commands" in out
-          and f"command: {long_refused[0]!r}\n" in out and f"command: {long_refused_twin[0]!r}\n" in out,
-          f"status {status}\n{out}\n{err}")
+                                  pairs=many_long_refused)
+    groups_file = Path(out.splitlines()[0].removeprefix("run log directory: ")) / replay.REFUSAL_GROUPS_FILE_NAME
+    groups = json.loads(groups_file.read_text()) if groups_file.exists() else []
+    check("a head that adds a guard refusing 300 long commands with one message: exit 1, and the report fits in a "
+          "GitHub review body, which holds 65,536 characters",
+          status == 1 and len(out) < 65536 and "NEW GUARD REFUSES RECORDED COMMANDS" in out,
+          f"status {status}, {len(out)} characters\n{out[:3000]}\n{err}")
+    check("a head that adds a guard refusing 300 long commands with one message: one refusal group is printed, with "
+          "3 of its commands, cut short, and the count of the 297 left out",
+          "refusal groups of the guards the head adds: 1, holding 300 refused recorded commands" in out
+          and out.count("    command: ") == 3 and "297 more commands of this group are left out here" in out
+          and many_long_refused[0][0] not in out, out[:3000])
+    check("a head that adds a guard refusing 300 long commands with one message: the printed group carries its "
+          "\"refusal right\" line, ready to copy",
+          f"    answer if every command of this group is rightly refused: refusal right: {TMUX_KILL_GUARD} | "
+          f"{tmux_kill_group}\n" in out, out[:3000])
+    check("a head that adds a guard refusing 300 long commands with one message: the refusal groups file holds the "
+          "group with every command in full",
+          [(group["group"], group["guard"], group["modes"], group["refused commands"]) for group in groups]
+          == [(tmux_kill_group, TMUX_KILL_GUARD, ["in-process"], many_long_refused)], f"{groups_file}: {groups}"[:3000])
+
+    refusing_each_command_with_its_own_message = commit_with_guard_changed(TMUX_KILL_GUARD, (
+        "_refusal_for_as_written = refusal_for\n"
+        "def refusal_for(command):\n"
+        "    reason = _refusal_for_as_written(command)\n"
+        "    return reason + ' ' + command if reason else reason"), scratch)
+    status, out, err = run_replay(refusing_each_command_with_its_own_message, scratch, "--new-process-pairs", "none",
+                                  base_ref=before_tmux_kill_guard, pairs=many_long_refused)
+    groups_file = Path(out.splitlines()[0].removeprefix("run log directory: ")) / replay.REFUSAL_GROUPS_FILE_NAME
+    groups = json.loads(groups_file.read_text()) if groups_file.exists() else []
+    check("a head that adds a guard refusing 300 long commands, each with its own message: exit 1, the report fits in "
+          "a GitHub review body, and 10 of the 300 refusal groups are printed, with the count of the 290 left out",
+          status == 1 and len(out) < 65536
+          and "refusal groups of the guards the head adds: 300, holding 300 refused recorded commands" in out
+          and out.count(f": {TMUX_KILL_GUARD} refuses 1 recorded command, in in-process\n") == 10
+          and "  290 more refusal groups are left out here, holding 290 refused recorded commands\n" in out
+          and len(groups) == 300, f"status {status}, {len(out)} characters\n{out[:3000]}\n{err}")
+
+    one_command_more = replay.REFUSED_COMMANDS_PRINTED_PER_GROUP + 1
+    one_left_out_group = [{"group": f"refusal-group-{number:08x}", "guard": "g.py", "reason": f"r{number}",
+                           "modes": ["in-process"], "refused commands": [[f"c{number}", "/tmp"]]}
+                          for number in range(replay.REFUSAL_GROUPS_PRINTED + 1)]
+    one_left_out_group[0]["refused commands"] = [[f"c{number}", "/tmp"] for number in range(one_command_more)]
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        replay.print_added_guard_refusal_groups(one_left_out_group, "groups.json")
+    check("a group with one command more than is printed, and one refusal group more than is printed: each count "
+          "of one left out is in the singular",
+          "    1 more command of this group is left out here\n" in printed.getvalue()
+          and "  1 more refusal group is left out here, holding 1 refused recorded command\n" in printed.getvalue(),
+          printed.getvalue())
+    message = " ".join(replay.NEW_GUARD_REFUSES_MESSAGE.split())
+    check("the message says a refusal group the list leaves out prints no \"refusal right\" line, so its line is "
+          "written from the groups file, and that a group still refused after a fix-round needs one line, not one "
+          "per command",
+          "a group the list leaves out prints no line, so write its line from added-guard-refusal-groups.json" in message
+          and "such a group needs its one \"refusal right\" line in the review of the fix-round's head" in message,
+          replay.NEW_GUARD_REFUSES_MESSAGE)
 
     before_search_file_guard = commit_without_guard(SEARCH_FILE_GUARD)
     status, out, err = run_replay(main_refusing_all, scratch, "--new-process-pairs", "none",
@@ -872,7 +987,7 @@ try:
         subprocess.run(["pkill", "-f", str(Path(scratch) / "run-exiting")])
 
     codex_guard, _, _, _ = replay.guards_loaded(REPOSITORY_ROOT, False)
-    codex_path = "scripts/hand-typed-codex-exec-command-refusal-hook.py"
+    codex_path = ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py"
     check("the codex exec guard's reading refuses a hand-typed codex exec and passes ls",
           replay.GUARDS[codex_path](codex_guard[codex_path], 'codex exec -C /tmp/x "do the task"', "/", "/")[0] == "refused"
           and replay.GUARDS[codex_path](codex_guard[codex_path], "ls -la", "/", "/")[0] == "passed",
@@ -954,6 +1069,12 @@ try:
               stopped.returncode == 2 and not worktrees_registered_under(stopped_scratch) and not still_running,
               f"exit {stopped.returncode}; registered {worktrees_registered_under(stopped_scratch)}; "
               f"running {still_running}\n{stopped_output}")
+        records = sorted(stopped_scratch.glob("multiprocessing-directory-*"))
+        recorded = [Path(record.read_text()) for record in records]
+        check(f"a replay stopped by {stop_signal.name} in the middle of a step: the killed step's multiprocessing "
+              f"directory is removed",
+              bool(recorded) and not any(directory.exists() for directory in recorded),
+              f"records {records}; recorded {recorded}")
 
     # SystemExit raised by the stop handler between Popen._wait()'s lock acquire and its try used to leave
     # the lock held, so the next wait() on that process blocked forever. The signal is delivered at exactly
@@ -1089,6 +1210,119 @@ try:
     check("a default scratch directory is removed after an exit 0",
           status == 0 and "scratch directory removed" in out and not os.listdir(Path(scratch) / "temporary"),
           f"status {status}\n{out}\n{os.listdir(Path(scratch) / 'temporary')}")
+    check("a run log directory is removed after an exit 0",
+          status == 0 and "run log directory removed" in out and not os.listdir(log_store_runs_directory(scratch)),
+          f"status {status}\n{out}\n{os.listdir(log_store_runs_directory(scratch))}")
+
+    status, out, err, left, runs = default_scratch_replay(refusing_ls, scratch)
+    kept = sorted(path.name for path in runs[0].iterdir()) if len(runs) == 1 else None
+    check("a default scratch directory is removed after an exit 1, and the run log directory is kept, holding the "
+          "differences and the step logs but not the checkouts or the pairs",
+          status == 1 and not left and "scratch directory removed" in out
+          and f"run log directory kept: {runs[0] if runs else None}" in out
+          and kept is not None and "differences-in-process.json" in kept and "verdicts-in-process-head.log" in kept
+          and not any(name.startswith("checkout-") or name == "pairs.json" for name in kept),
+          f"status {status}; left {left}; kept {kept}\n{out}\n{err}")
+    check("the run log directory the replay prints first is the one the VERDICT CHANGED message sends the reviewer to",
+          runs and out.splitlines()[0] == f"run log directory: {runs[0]}"
+          and json.loads((runs[0] / "differences-in-process.json").read_text())["verdict"], out)
+
+    status, out, err, left, runs = default_scratch_replay("no-such-ref-for-the-replay-test", scratch)
+    check("a default scratch directory is removed when the replay fails partway, at a ref that does not exist",
+          status == 2 and "REPLAY FAILED" in err and not left and len(runs) == 1,
+          f"status {status}; left {left}; runs {runs}\n{out}\n{err}")
+
+    not_json = Path(scratch) / "pairs-file-that-is-not-json.json"
+    not_json.write_text("not JSON")
+    status, out, err, left, runs = default_scratch_replay("HEAD", scratch, "--pairs-file", str(not_json))
+    check("a default scratch directory is removed when the replay raises an unforeseen error before it reads a ref",
+          status == 2 and "REPLAY FAILED: JSONDecodeError" in err and not left and len(runs) == 1,
+          f"status {status}; left {left}; runs {runs}\n{out}\n{err}")
+
+    status, out, err, left, runs = default_scratch_replay(
+        "HEAD", scratch, "--log-store-runs-directory", str(Path(scratch) / "no-such-log-store" / "runs"))
+    check("a run log directory that cannot be made: exit 2, the message says where to run the replay, and no "
+          "scratch directory is made",
+          status == 2 and "this Bash guards replay made no run log directory" in err
+          and "run the replay again with --log-store-runs-directory <an existing directory>" in err and not left
+          and not (Path(scratch) / "no-such-log-store").exists(), f"status {status}; left {left}\n{out}\n{err}")
+
+    removal_failures_as_written = replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures
+    replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures = lambda *arguments: (
+        removal_failures_as_written(*arguments) + ["a path: could not be removed in the test"])
+    try:
+        status, out, err, left, runs = default_scratch_replay("HEAD", scratch)
+    finally:
+        replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures = (
+            removal_failures_as_written)
+    check("a scratch directory that cannot be removed: exit 2, though no verdict changed, and the path is named "
+          "with the command that removes it",
+          status == 2 and "NO VERDICT CHANGED" in out and "could not be removed, so this Bash guards replay exits 2" in out
+          and "Remove each listed path with rm -rf <path>" in out and "a path: could not be removed in the test" in out,
+          f"status {status}\n{out}\n{err}")
+
+    remove_checkouts_as_written = replay.remove_checkouts
+    replay.remove_checkouts = lambda repository, checkouts: (
+        remove_checkouts_as_written(repository, checkouts) + ["a checkout: git worktree remove exited 128: the test"])
+    try:
+        status, out, err, left, runs = default_scratch_replay("HEAD", scratch)
+    finally:
+        replay.remove_checkouts = remove_checkouts_as_written
+    check("a default scratch directory is kept when a checkout in it could not be removed, so git's registration "
+          "still has its files",
+          status == 2 and len(left) == 1 and "scratch directory kept: " in out
+          and "scratch directory removed" not in out,
+          f"status {status}; left {left}\n{out}\n{err}")
+
+    locked_scratch = Path(scratch) / "removal-failures-scratch"
+    locked_run_logs = Path(scratch) / "removal-failures-run-logs"
+    for directory in (locked_scratch, locked_run_logs):
+        (directory / "locked").mkdir(parents=True)
+        (directory / "locked" / "file").write_text("x")
+        (directory / "locked").chmod(0o500)
+    try:
+        after_exit_1 = replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(
+            locked_scratch, locked_run_logs, 1)
+        after_exit_0 = replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(
+            locked_scratch, locked_run_logs, 0)
+    finally:
+        for directory in (locked_scratch, locked_run_logs):
+            (directory / "locked").chmod(0o700)
+    check("a path that cannot be removed is returned with its reason: the scratch directory's after any exit, the "
+          "run log directory's only after an exit 0",
+          any(str(locked_scratch / "locked" / "file") in line for line in after_exit_1)
+          and not any(str(locked_run_logs) in line for line in after_exit_1)
+          and any(str(locked_scratch / "locked" / "file") in line for line in after_exit_0)
+          and any(str(locked_run_logs / "locked" / "file") in line for line in after_exit_0),
+          f"after exit 1 {after_exit_1}; after exit 0 {after_exit_0}")
+
+    pairs_file = Path(scratch) / "fixture-pairs.json"
+    pairs_file.write_text(json.dumps(FIXTURE_PAIRS))
+    for stop_signal in (signal.SIGTERM, signal.SIGHUP):
+        temporary = Path(tempfile.mkdtemp(prefix=f"temporary-{stop_signal.name}-", dir=scratch))
+        runs = Path(tempfile.mkdtemp(prefix=f"log-store-runs-{stop_signal.name}-", dir=scratch))
+        stopped = subprocess.Popen(
+            [sys.executable, str(SCRIPT_PATH), "--repository", str(TEST_REPOSITORY), "--head-ref", "HEAD",
+             "--base-ref", "HEAD", "--pairs-file", str(pairs_file), "--jobs", "2", "--log-store-runs-directory",
+             str(runs)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(os.environ, TMPDIR=str(temporary)))
+        printed_before_the_stop = []
+        for line in stopped.stdout:
+            printed_before_the_stop.append(line)
+            if line.startswith("pairs: "):
+                break
+        stopped.send_signal(stop_signal)
+        try:
+            out, err = stopped.communicate(timeout=REPLAY_STOP_SECONDS)
+        except subprocess.TimeoutExpired:
+            stopped.kill()
+            out, err = stopped.communicate()
+        check(f"a replay stopped by {stop_signal.name} after it made its scratch directory: exit 2, the scratch "
+              f"directory is removed and the run log directory kept",
+              stopped.returncode == 2 and not os.listdir(temporary) and len(os.listdir(runs)) == 1
+              and "scratch directory removed" in out,
+              f"exit {stopped.returncode}; left {os.listdir(temporary)}; runs {os.listdir(runs)}\n"
+              f"{''.join(printed_before_the_stop)}{out}\n{err}")
 
     previous_directory = os.getcwd()
     os.chdir(scratch)
@@ -1187,6 +1421,16 @@ try:
           pairs == [["ls", "/a"], ["ls", "/b"]], pairs)
     check("transcripts: a line that is not JSON is counted, not dropped silently", lines_not_json == 1, lines_not_json)
 
+    subagent_transcript = transcripts / "a" / "subagents" / "agent-1.jsonl"
+    subagent_transcript.parent.mkdir(parents=True)
+    subagent_transcript.write_text(bash_call("ls", "/e") + "\n")
+    pairs, _ = replay.recorded_command_pairs([str(Path(scratch) / "transcripts")])
+    check("transcripts: a Bash call found only in a subagent's transcript is read too",
+          sorted(pairs) == [["ls", "/a"], ["ls", "/b"], ["ls", "/e"]], pairs)
+    subagent_transcript.unlink()
+    subagent_transcript.parent.rmdir()
+    subagent_transcript.parent.parent.rmdir()
+
     unreadable = transcripts / "unreadable.jsonl"
     unreadable.write_text(bash_call("ls", "/d"))
     unreadable.chmod(0)
@@ -1263,6 +1507,66 @@ try:
     check("the end-of-run cleanup fails the suite when the scratch directory cannot be removed, naming the path",
           len(recorded) == 1 and recorded[0][1] is False and str(left_behind / "locked" / "file") in recorded[0][2],
           recorded)
+
+    # A killed step's record of its multiprocessing directory: only an absolute pymp- path is ever removed.
+    record_cases = Path(scratch) / "multiprocessing-records"
+    working = record_cases / "working-directory"
+    (working / "pymp-relative").mkdir(parents=True)
+    (working / "kept").write_text("x")
+    previous_directory = os.getcwd()
+    os.chdir(working)
+    try:
+        for recorded_text, case in (("", "an empty record"), ("pymp-relative", "a relative record"),
+                                    (str(working), "a record naming a directory that is not pymp-")):
+            record = record_cases / "record"
+            record.write_text(recorded_text)
+            try:
+                replay.remove_recorded_multiprocessing_directory(record)
+                outcome = "returned"
+            except replay.ReplayFailed as error:
+                outcome = f"ReplayFailed: {error}"
+            check(f"{case} of a step's multiprocessing directory removes nothing and fails the replay",
+                  outcome.startswith("ReplayFailed") and (working / "kept").exists()
+                  and (working / "pymp-relative").is_dir(), outcome)
+    finally:
+        os.chdir(previous_directory)
+    recorded_directory = record_cases / "pymp-recorded"
+    (recorded_directory / "socket").mkdir(parents=True)
+    record.write_text(str(recorded_directory))
+    replay.remove_recorded_multiprocessing_directory(record)
+    check("a record of an absolute pymp- directory removes that directory", not recorded_directory.exists())
+    (recorded_directory / "locked").mkdir(parents=True)
+    (recorded_directory / "locked" / "file").write_text("x")
+    (recorded_directory / "locked").chmod(0o500)
+    try:
+        try:
+            replay.remove_recorded_multiprocessing_directory(record)
+            outcome = "returned"
+        except replay.ReplayFailed as error:
+            outcome = f"ReplayFailed: {error}"
+    finally:
+        (recorded_directory / "locked").chmod(0o700)
+    check("a multiprocessing directory that cannot be removed fails the replay, naming the directory",
+          outcome.startswith("ReplayFailed") and str(recorded_directory) in outcome, outcome)
+
+    # A stop signal during a failing step: stop_deferred() replaces the failure with SystemExit(2), so it
+    # prints the failure first.
+    printed = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(printed):
+            with replay.stop_deferred():
+                replay.STOP_STATE["stop_requested"] = True
+                raise replay.ReplayFailed("the test's leftover directory /tmp/pymp-test")
+        outcome = "no exception"
+    except SystemExit as stopped:
+        outcome = f"SystemExit({stopped.code})"
+    except replay.ReplayFailed:
+        outcome = "ReplayFailed"
+    finally:
+        replay.STOP_STATE["stop_requested"] = False
+    check("a failure that a stop signal replaces with exit 2 is printed first",
+          outcome == "SystemExit(2)" and "REPLAY FAILED: the test's leftover directory /tmp/pymp-test"
+          in printed.getvalue(), f"{outcome}; stderr {printed.getvalue()!r}")
 finally:
     # The test's checkouts are registered only in its own clone, which goes with the scratch directory.
     check_scratch_directory_removed(scratch)
