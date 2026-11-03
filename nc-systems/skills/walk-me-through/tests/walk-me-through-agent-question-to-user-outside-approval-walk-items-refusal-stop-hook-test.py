@@ -709,7 +709,11 @@ def test_a_question_held_in_an_interruption_item_is_not_checked():
             ("under a shared heading, an interruption item's question passes after items without their own",
              partly_opened, "Should I rename the hook?", True),
             ("under a shared heading whose items have no openings, the interruption item's question blocks",
-             without_openings, "Should I file the GHI?", False)):
+             without_openings, "Should I file the GHI?", False),
+            ("under a shared heading whose items have no openings and that keeps a Withdrawn version, the "
+             "interruption item's question still blocks",
+             without_openings + "\n#### Withdrawn version 1 of items 2.1 and 3\n\nShould I file two GHIs?\n",
+             "Should I file the GHI?", False)):
         case = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + shared,
                     minutes="#next_to_present item 2 of 11")
         case.reply(reply_line + "\n\n" + closing)

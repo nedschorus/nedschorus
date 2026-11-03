@@ -753,6 +753,18 @@ def test_a_withdrawn_version_below_the_item_adds_no_text():
           result.returncode == 0 and case.calls.read_text() == NEW_TEXTS, described(result))
 
 
+def test_a_withdrawn_version_under_a_shared_heading_ends_only_its_own_item():
+    document = WALK_DOCUMENT.replace(
+        "Item 7 of 9 drops a sentence.\n",
+        "#### Withdrawn version 1 of item 6\n\n#new \"The path was docs/.\"\n\nItem 7 of 9 drops a sentence.\n")
+    for number, texts in (("6", "The path is docs/walk/.\n"), ("7", "Item seven's text.\n")):
+        case = Case(next_to_present=f"item {number} of 9", document=document)
+        result = case.run("check")
+        check(f"under a shared heading, a Withdrawn version of item 6 ends only item 6, so item {number} reads its own "
+              "#new lines and not the withdrawn one",
+              result.returncode == 0 and case.calls.read_text() == texts, described(result))
+
+
 def test_check_refuses_when_more_than_one_item_waits():
     for flags in ((), ("--disapproved",), ("--deferred",)):
         case = Case(next_to_present="items 6 and 7 of 9")

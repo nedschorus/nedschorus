@@ -1229,6 +1229,85 @@ def test_parts_in_an_items_opening_paragraph_under_a_shared_heading_are_that_ite
           lines is not None and lines[1].startswith("The answer gives a letter to item 1 of 9"), f"lines {lines!r}")
 
 
+def test_a_withdrawn_version_under_a_shared_heading_ends_only_its_own_item():
+    withdrawn = "#### Withdrawn version 1 of item 5\n\nThe first path.\n\nRecommendation: add the filter.\n\n"
+    layouts = {
+        "with openings": shared_heading_document("**Item 5: the path.** Recommendation: fix the path.\n\n" + withdrawn
+                                                 + "**Item 6: the sentence.** Recommendation: drop it.\n"),
+    }
+    for layout, document in layouts.items():
+        for number, recommendation in (("5", "fix the path"), ("6", "drop it")):
+            lines = Case(next_to_present=f"item {number} of 9", document=document).lines("a")
+            check(f"under a shared heading {layout}, a Withdrawn version of item 5 ends only item 5, so item {number} "
+                  "reads its own live recommendation",
+                  lines is not None and lines[1].startswith(
+                      f"A means approve: the user agrees with the recommendation of item {number} of 9 ({recommendation})."),
+                  f"lines {lines!r}")
+    document = shared_heading_document("Both items share one recommendation. Recommendation: do both.\n\n" + withdrawn)
+    lines = Case(next_to_present="item 6 of 9", document=document).lines("a")
+    check("under a shared heading whose items have no openings, a Withdrawn heading ends the unit's text",
+          lines is not None and lines[1].startswith(
+              "A means approve: the user agrees with the recommendation of item 6 of 9 (do both)."), f"lines {lines!r}")
+    for heading, withdrawn_labels in (
+            ("#### Withdrawn version 1 of item 6", "**Item 6: the old sentence.** Recommendation: keep it.\n"),
+            ("#### Withdrawn version 1 of items 5 and 6",
+             "**Item 5: the old path.** Recommendation: keep it.\n\n"
+             "**Item 6: the old sentence.** Recommendation: keep it.\n")):
+        document = shared_heading_document(
+            "**Item 5: the path.** Recommendation: fix the path.\n\nThe sentence. Recommendation: drop it.\n\n"
+            + heading + "\n\n" + withdrawn_labels)
+        lines = Case(next_to_present="item 6 of 9", document=document).lines("a")
+        check(f"under a shared heading, every label of a Withdrawn version below `{heading}` that names an item the "
+              "heading names is no live item's opening, so item 6 gets no recommendation and the line saying why, "
+              "never the withdrawn one",
+              lines is not None
+              and lines[1] == "A means approve: the user agrees with the recommendation of item 6 of 9. "
+                              "Do what the recommendation says."
+              and not any("keep it" in line for line in lines)
+              and any("because item 6 has no opening it reads" in line for line in lines),
+              f"lines {lines!r}")
+    document = shared_heading_document(
+        "**Item 5: the path.** Recommendation: fix the path.\n\n#### Withdrawn version 1\n\n"
+        "The old path. Recommendation: move it.\n\n**Item 6: the sentence.** Recommendation: drop it.\n")
+    for number, recommendation in (("5", "fix the path"), ("6", "drop it")):
+        lines = Case(next_to_present=f"item {number} of 9", document=document).lines("a")
+        check(f"under a shared heading, a Withdrawn heading that names no item drops no label, so item {number} "
+              "reads its own live recommendation",
+              lines is not None and lines[1].startswith(
+                  f"A means approve: the user agrees with the recommendation of item {number} of 9 ({recommendation})."),
+              f"lines {lines!r}")
+
+
+def test_a_later_unit_that_names_a_withdrawn_item_again_reads_its_live_label():
+    specification = importlib.util.spec_from_file_location("item_finder", FINDER_MODULE_FILE)
+    finder = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(finder)
+    parser = finder.markdown_parser()
+    # A heading's count is no opening of item_opening_lines; a paragraph's is.
+    for start, revised, count_opening in (
+            ("a paragraph", "**Items 6 and 7 of 9 revised: the sentence and the link**", {8: (["6", "7"], "9")}),
+            ("a heading", "## Items 6 and 7 of 9 revised: the sentence and the link", {})):
+        document = "\n\n".join((
+            "## Item 6 of 9: the sentence", "The sentence.", "#### Withdrawn version 1 of item 6",
+            "**Item 6: the old sentence.** Recommendation: keep it.", revised,
+            "**Item 6: the sentence.** Recommendation: reword it.",
+            "**Item 7: the link.** Recommendation: fix the link.\n"))
+        openings = finder.item_opening_lines(document, parser)
+        units = finder.item_unit_spans(document, parser)
+        ranges = [finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
+            openings, first, end, "6", numbers, total) for numbers, total, _, first, end in units]
+        check(f"a unit started by {start} after a Withdrawn version of item 6 ends the Withdrawn version, so its "
+              "live `**Item 6:` label is item 6's opening and item 6's lines stop before item 7's",
+              openings == {4: ([], None), **count_opening, 10: (["6"], None), 12: (["7"], None)}
+              and units == [(["6", "7"], "9", None, 8, 14)] and ranges == [(10, 12)],
+              f"openings {openings!r}, units {units!r}, ranges {ranges!r}")
+        lines = Case(next_to_present="item 6 of 9", document=document).lines("a")
+        check(f"after a unit started by {start} names item 6 again, A on item 6 reads its live recommendation",
+              lines is not None and lines[1].startswith(
+                  "A means approve: the user agrees with the recommendation of item 6 of 9 (reword it)."),
+              f"lines {lines!r}")
+
+
 def test_numbered_r_whose_walk_document_or_marker_cannot_be_read_still_goes_to_the_agent():
     for case, problem in ((Case(next_to_present="item 4 of 9", document=None), "no walk-document"),
                           (Case(next_to_present="paused until rewritten"), "a marker naming no item")):
