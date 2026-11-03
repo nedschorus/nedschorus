@@ -1204,9 +1204,35 @@ def test_a_deferral_notes_it_in_the_items_heading_once():
         case.run("close")
     case.run("check", "--deferred")
     closed = case.run("close")
-    check("a second deferral leaves the heading with the note once, and the walk goes on to the summary item",
-          closed.returncode == 0 and walk_document(case).count(DEFERRED_NOTE) == 1
+    check("a second deferral drops the item from the walk, takes the note out of its heading, and goes on to the "
+          "summary item",
+          closed.returncode == 0 and walk_document(case) == before
           and marker(case) == "#next_to_present item 5 of 5", described(closed) + walk_document(case))
+
+
+def test_an_answer_to_a_deferred_item_takes_the_note_out_of_its_heading():
+    case = summary_case(next_to_present="item 2 of 5", recorded=approved_line("item 1 of 5"))
+    before = walk_document(case)
+    case.run("check", "--deferred")
+    case.run("close")
+    for _ in range(2):
+        case.run("check")
+        case.run("close")
+    case.run("check")
+    closed = case.run("close")
+    check("approving an item that was deferred once takes the note out of its heading again",
+          closed.returncode == 0 and walk_document(case) == before
+          and marker(case) == "#next_to_present item 5 of 5", described(closed) + walk_document(case))
+
+
+def test_a_deferral_in_a_walk_with_no_summary_item_gives_the_heading_no_note():
+    case = Case(next_to_present="item 3 of 9")
+    before = walk_document(case)
+    case.run("check", "--deferred")
+    closed = case.run("close")
+    check("a deferred item of a walk with no summary item goes to the end, so its heading gets no note",
+          closed.returncode == 0 and walk_document(case) == before and "not given the note" not in closed.stdout,
+          described(closed) + walk_document(case))
 
 
 def test_a_deferral_under_a_heading_naming_other_items_too_leaves_the_heading_alone_and_says_so():

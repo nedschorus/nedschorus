@@ -165,8 +165,11 @@ leaves the walk and stays open; for --already-decided or --moved-on, that the
 walk does not come back to the item, with the ruling or the reason. For a
 deferral it also puts `(deferred: moved to just before the summary item)` right
 after the running count of the item's walk-document heading, before it writes
-the minutes, so the heading says why the item comes late. CLOSE leaves the
-heading as it is when it holds the note already, or when it names more items
+the minutes, so the heading says why the item comes late; in a walk with no
+summary item a deferred item goes to the end and gets no note. CLOSE takes the
+note out again when it records any other answer to the item, or a second
+deferral, which drops the item from the walk. On a first deferral, CLOSE
+leaves the heading as it is when it holds the note already, or when it names more items
 than the deferred ones, such as `Items 3 to 5 of 9`; for the second, CLOSE
 prints that it gave the heading no note. It then writes a `#next_to_present` line as the
 minutes' last line, naming the next item: walking the walk-document's items in
@@ -1106,22 +1109,29 @@ def walk_document_items(walk_finder, minutes, value, numbers, total, parser):
     return total, order, summary
 
 
-def deferred_item_heading_noted(walk_finder, minutes, numbers, total, parser):
-    """Put the deferred note right after the running count of the walk-document heading that names exactly the
-    items numbered, unless it already holds the note; return the lines to print when no such heading exists."""
+def deferred_item_heading_noted(walk_finder, minutes, numbers, total, parser, noted=True):
+    """With noted, put the deferred note right after the running count of the walk-document heading that names
+    exactly the items numbered, unless it already holds the note; return the lines to print when no such heading
+    exists. Without noted, take the note out of that heading, if it holds it, and return no lines."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
+    if not document.is_file():
+        return []
     text = document.read_text(encoding="utf-8")
     lines = text.split("\n")
     note = walk_finder.APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT
     for unit_numbers, unit_total, _, first, _ in walk_finder.item_unit_spans(text, parser):
         if unit_total != total or unit_numbers != numbers:
             continue
-        if note not in lines[first]:
-            end = HEADING_COUNT_IN_LINE.search(lines[first]).end()
-            lines[first] = f"{lines[first][:end]} {note}{lines[first][end:]}"
+        heading = lines[first]
+        if noted and note not in heading:
+            end = HEADING_COUNT_IN_LINE.search(heading).end()
+            lines[first] = f"{heading[:end]} {note}{heading[end:]}"
+        elif not noted:
+            lines[first] = walk_finder.approval_walk_item_heading_with_deferred_note_removed(heading)
+        if lines[first] != heading:
             document.write_text("\n".join(lines), encoding="utf-8")
         return []
-    return [CLOSE_DEFERRED_HEADING_NOT_NOTED.format(document=document, note=note)]
+    return [CLOSE_DEFERRED_HEADING_NOT_NOTED.format(document=document, note=note)] if noted else []
 
 
 def minutes_record(walk_finder, minutes_text, parser):
@@ -1230,8 +1240,11 @@ def close(arguments):
         again = any(deferrals[number] for number in answered_numbers)
         recorded = (CLOSE_DEFERRED_AGAIN_MINUTES if again else CLOSE_DEFERRED_MINUTES).format(item=item)
         lines = CLOSE_DEFERRED_AGAIN_LINES if again else CLOSE_DEFERRED_LINES
+        # A walk with no summary item puts a deferred item last, where it needs no note; an item deferred again
+        # leaves the walk, so the note that says where it went is taken out.
+        noted = not again and summary is not None
         output = ([line.format(item=item) for line in lines]
-                  + deferred_item_heading_noted(walk_finder, minutes, answered_numbers, total, parser)
+                  + deferred_item_heading_noted(walk_finder, minutes, answered_numbers, total, parser, noted)
                   + statuses)
     elif answered.startswith(MOVED_ON_PREFIX):
         recorded = CLOSE_MOVED_ON_MINUTES.format(item=item, reason=answered[len(MOVED_ON_PREFIX):])
@@ -1252,6 +1265,8 @@ def close(arguments):
             recorded = CLOSE_TOOK_EFFECT_MINUTES.format(item=item, answered=answered, outcome=held_outcome)
         output = ([line.format(item=item) for line in CLOSE_TOOK_EFFECT_LINES] + statuses
                   + list(CLOSE_TOOK_EFFECT_NEXT))
+    if answered != DEFERRED:
+        deferred_item_heading_noted(walk_finder, minutes, answered_numbers, total, parser, noted=False)
     append_to_minutes(minutes, [recorded])
     if held_outcome:
         held = held_items_decided_with(walk_finder, minutes, parser, answered_numbers, item, held_outcome)
