@@ -100,7 +100,7 @@ with tempfile.TemporaryDirectory() as directory:
     code, out, err = run_main(runner)
     check("a failing step stops the run, exits 1, and reports the step, its error output and "
           "its advice",
-          code == 1 and len(runner.calls) == 7 and "stopped at step 7," in err
+          code == 1 and len(runner.calls) == 7 and "stopped at step 7 on ned-box" in err
           and "sudo: a password is required" in err
           and installer.sudo_advice("ned-box", runner.calls[6][1]) in err
           and installer.RERUN_LINE in err and installer.SUBAGENT_LINE in err
@@ -128,7 +128,7 @@ with tempfile.TemporaryDirectory() as directory:
     runner = FakeRunner({10: (0, "401", "")})
     code, out, err = run_main(runner)
     check("a service answer other than the one the check needs fails the step",
-          code == 1 and "stopped at step 10," in err and "answered 401" in err
+          code == 1 and "stopped at step 10 on mac" in err and "answered 401" in err
           and "needs 412" in err and "journalctl --user -u nc-shared-database-service" in err,
           err)
 

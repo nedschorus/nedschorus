@@ -68,8 +68,9 @@ PROGRAM_IN_REFERENCE_CHECKOUT = (f"{REFERENCE_CHECKOUT}/nc-systems/nc-shared-dat
                                  f"{Path(__file__).name}")
 RERUN_COMMAND = f"python3 {PROGRAM_IN_REFERENCE_CHECKOUT}"
 RERUN_LINE = f"To run this install again, run on the Mac: `{RERUN_COMMAND}`"
-SUBAGENT_LINE = ("If you are a subagent, send the agent that dispatched you this whole report, "
-                 "and what you did; it asks or tells the user what the lines above say to.")
+SUBAGENT_LINE = ("If you are a subagent, do not ask or tell the user anything: send this whole "
+                 "report, and what you did, to the agent that dispatched you, which asks or "
+                 "tells the user what the lines below say to.")
 
 
 def command_for_the_mac(machine, command, for_the_user_to_type=False):
@@ -179,9 +180,10 @@ def run_on(machine, command, standard_input):
 
 
 def failure_report(number, name, machine, command, result, expected, advice):
-    lines = [f"FAILED: the nc-shared-database install stopped at step {number}, {name}, on "
-             f"{machine}. The steps before it passed and stay done; running the install again "
-             f"repeats them without harm.",
+    lines = [f"FAILED: the nc-shared-database install stopped at step {number} on {machine}, "
+             f"whose goal is that {name}; it is not done. The steps before it passed and stay "
+             f"done; running the install again repeats them without harm.",
+             SUBAGENT_LINE,
              f"Command: {command}",
              f"Exit code: {result.returncode}"]
     if expected is not None:
@@ -195,7 +197,7 @@ def failure_report(number, name, machine, command, result, expected, advice):
                      f"Mac; when it succeeds, run the install again.")
     else:
         lines.append(advice(machine, command))
-    lines += [RERUN_LINE, SUBAGENT_LINE]
+    lines.append(RERUN_LINE)
     return "\n".join(lines)
 
 
