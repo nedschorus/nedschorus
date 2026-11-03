@@ -1,6 +1,6 @@
 # Project Goals and Philosophy
 
-This page holds the project's goals and philosophy: the user's founding statement, what it asks of an agent on every task, and how agents work with the user. This page names a Standing decision of the objective page that it meets, and does not restate it. A user-ruling on one task's content is not a principle here. The user's words behind each principle are quoted in the section Sources at the end, cited as S1, S2 and so on.
+This page holds the project's goals and philosophy: the user's founding statement, what it asks of an agent on every task, and how agents work with the user. Where a principle meets a Standing decision of the objective page, the principle names the decision and does not restate it. A user-ruling on one task's content is not a principle here. The user's words behind each principle are quoted in the section Sources at the end, cited as S1, S2 and so on.
 
 ## The founding statement
 
@@ -21,7 +21,7 @@ The statement says "three categories" and lists four; this page uses the four. E
 3. Fix during regular maintenance: the finding can wait for scheduled cleanup or a broader improvement.
 4. Defer to a later approval-walk, a task or a GHI: a task for smaller or sooner work, a GHI for larger or later work. A deferred finding stays visible, with the reason for deferring it, a defined follow-up, its prerequisites, and what it unblocks. Prerequisites are done first.
 
-An agent fixes what must be fixed and leaves the rest to its category, because an agent that works on a few things does them well. On a file with the -nbd suffix, only the four kinds of finding that `CLAUDE.md`'s -nbd bullet names are must fix. The agent that runs a review or a test files what it defers. Where maintenance findings are held, and how a finding is placed among categories 2 to 4, are listed among the deferred-decisions of the implementing GHI named in the last section. Sources: S6 to S9.
+An agent fixes what must be fixed and leaves the rest to its category, because an agent that works on a few things does them well. On a file with the -nbd suffix, only a failing test and the four kinds of finding that `CLAUDE.md`'s -nbd bullet names are must fix. The agent that runs a review or a test files what it defers. Where maintenance findings are held, and how a finding is placed among categories 2 to 4, are listed among the deferred-decisions of the implementing GHI named in the last section. Sources: S6 to S9.
 
 ### 3. Keep a checked claim, and reopen it only for a reason
 
@@ -47,7 +47,7 @@ More code, more steps, or simple changes such as renames count as a win when the
 
 ### 8. State the case against as it is, even when it is weak
 
-An agent states the strongest case against its recommendation that it has, and calls it weak when it is. The user accepts that about 5% of his decisions on such recommendations turn out wrong. An approval-walk item needs no answer from him only when its case against is rated none, or rated weak and names only cost, as the paragraph of `.claude/skills/walk-me-through/SKILL.md` that begins "An item needs no answer from the user" says in full. Widening that rule is the subject of GHI [Approve obvious approval-walk items automatically, by criteria drawn from the user's tracked obvious approvals, after the advisor checks each one](https://github.com/nedschorus/nedschorus/issues/1809). Sources: S17, S18.
+An agent states the strongest case against its recommendation that it has, and calls it weak when it is. The user accepts that about 5% of his decisions on such recommendations turn out wrong. An approval-walk item needs no answer from him only when its change is of a kind that the paragraph of `.claude/skills/walk-me-through/SKILL.md` beginning "An item needs no answer from the user" lists, and its case against is rated none, or rated weak and names only cost. Widening that rule is the subject of GHI [Approve obvious approval-walk items automatically, by criteria drawn from the user's tracked obvious approvals, after the advisor checks each one](https://github.com/nedschorus/nedschorus/issues/1809). Sources: S17, S18.
 
 ### 9. A case against that says only "this takes work" is not a real case
 
