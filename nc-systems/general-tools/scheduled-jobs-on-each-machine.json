@@ -49,6 +49,15 @@
       }
     },
     {
+      "name": "no-sandbox-test-suites-run-on-main-in-a-quiet-gap",
+      "program": "scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py",
+      "arguments": [],
+      "output": ".claude/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "*/10 * * * *"}
+      }
+    },
+    {
       "name": "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open",
       "program": "scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py",
       "arguments": [],

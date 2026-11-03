@@ -1132,6 +1132,81 @@ with tempfile.TemporaryDirectory() as scratch_name:
               code == runner.EXIT_COULD_NOT_RUN and "could not be written" in printed
               and "SUMMARY: 1 passed" in printed, (code, printed[-800:]))
 
+        # --- A selective run leaves the no-sandbox suites out ---------------------------
+        left_out_repository = scratch / "left-out-repository"
+        (left_out_repository / "scripts").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q"], cwd=left_out_repository, check=True)
+        for name in ("a-test.py", "outside-test.py"):
+            (left_out_repository / name).write_text("print('PASS  only case')\n")
+        (left_out_repository / "scripts" / "run-all-test-suites.py").write_text(
+            'SUITES_RUN_WITHOUT_ANY_SANDBOX = {"outside-test.py": "it starts bwrap itself"}\n'
+            "SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY = {}\n"
+            "SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK = {}\n")
+        subprocess.run(["git", "add", "."], cwd=left_out_repository, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                        "-m", "start"], cwd=left_out_repository, check=True)
+        # The suite's own file differs from the commit compared with, which alone selects it.
+        (left_out_repository / "outside-test.py").write_text("print('PASS  changed case')\n")
+        suites_started = []
+
+        def note_and_pass(top, interpreter, suite, *arguments, **options):
+            suites_started.append(suite)
+            return suite_passes(top, interpreter, suite, *arguments, **options)
+
+        def left_out_run(label, *extra, sandbox=as_if_bwrap):
+            suites_started.clear()
+            run_scratch = scratch / f"main-left-out-{label}"
+            run_scratch.mkdir()
+            printed_out = io.StringIO()
+            with replaced(run_one_suite=note_and_pass, **sandbox), \
+                    contextlib.redirect_stdout(printed_out), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                code = runner.main(["--checkout", str(left_out_repository),
+                                    "--lock-file", str(run_scratch / "run.lock"),
+                                    "--log-dir", str(run_scratch / "logs"),
+                                    "--recorded-inputs-directory", str(run_scratch / "recorded"),
+                                    *extra])
+            return code, printed_out.getvalue()
+
+        code, printed = left_out_run("selective", "--only-suites-whose-recorded-inputs-changed-since",
+                                     "HEAD")
+        left_out_lines = [line for line in printed.splitlines()
+                          if line.startswith(runner.LEFT_OUT_NO_SANDBOX_SUITE_LINE_PREFIX)]
+        check("a selective run in nc-test-sandboxes leaves out a no-sandbox suite whose own file "
+              "changed, prints its LEFT OUT line with the command that runs it by hand, counts "
+              "it in the SUMMARY, and exits 0 on the suites it ran",
+              code == runner.EXIT_ALL_PASSED and suites_started == ["a-test.py"]
+              and len(left_out_lines) == 1 and left_out_lines[0].startswith(
+                  f"{runner.LEFT_OUT_NO_SANDBOX_SUITE_LINE_PREFIX}outside-test.py: ")
+              and "--only-suites-named outside-test.py" in left_out_lines[0]
+              and "SELECTED outside-test.py" not in printed
+              and "1 no-sandbox suites left out" in printed
+              and "0 suites not selected" in printed, (code, suites_started, printed[-1500:]))
+
+        code, printed = left_out_run("named", "--only-suites-whose-recorded-inputs-changed-since",
+                                     "HEAD", "--only-suites-named", "outside-test.py")
+        check("a selective run given --only-suites-named runs a named no-sandbox suite, as before",
+              code == runner.EXIT_ALL_PASSED and suites_started == ["outside-test.py"]
+              and runner.LEFT_OUT_NO_SANDBOX_SUITE_LINE_PREFIX not in printed,
+              (code, suites_started, printed[-800:]))
+
+        code, printed = left_out_run(
+            "no-bwrap", "--only-suites-whose-recorded-inputs-changed-since", "HEAD",
+            sandbox={"signal_sandbox": lambda **options: ((), "bwrap is not on PATH")})
+        check("a selective run without nc-test-sandboxes, where the whole run takes the machine's "
+              "lock, still runs a selected no-sandbox suite",
+              code == runner.EXIT_ALL_PASSED
+              and sorted(suites_started) == ["a-test.py", "outside-test.py"]
+              and runner.LEFT_OUT_NO_SANDBOX_SUITE_LINE_PREFIX not in printed,
+              (code, suites_started, printed[-800:]))
+
+        code, printed = left_out_run("full")
+        check("a run with no selection runs the no-sandbox suites, as before",
+              code == runner.EXIT_ALL_PASSED
+              and sorted(suites_started) == ["a-test.py", "outside-test.py"]
+              and runner.LEFT_OUT_NO_SANDBOX_SUITE_LINE_PREFIX not in printed,
+              (code, suites_started, printed[-800:]))
+
         two_suites = scratch / "two-suites-repository"
         two_suites.mkdir()
         subprocess.run(["git", "init", "-q"], cwd=two_suites, check=True)
