@@ -45,8 +45,9 @@ line's running count, such as `item 4.1 of 6`. An item's recommendation is the
 rest of the line after the last `Recommendation:` in its part of the
 walk-document, emphasis and one trailing period aside; an item with none
 recommends nothing. Under a heading shared by several items, an item's part
-starts at its opening, as WALK_FINDER_FILE's docstring says; when the heading
-holds more than one recommendation and an item has no opening, the hook reads
+starts at its opening, as WALK_FINDER_FILE's docstring says; when an item has
+no opening and the heading holds more than one recommendation, or that item's
+lines run over another item's opening, the hook reads
 no recommendation for any of its items and says why.
 
 R ON AN OPEN APPROVAL-WALK, as the whole prompt (R or repeat), hands the
@@ -601,9 +602,9 @@ def recommendations_in(lines, openings, spans, total, walk_finder, starts):
     its part numbers} for the items that hold parts), from its prose_lines, item_opening_lines and
     part_starts.
 
-    Under a heading that names several items and holds more than one recommendation, every item's
-    recommendation is None when any of them has no opening, since an opening missed leaves the part
-    before it running on into the next item's recommendation."""
+    Under a heading that names several items, every item's recommendation is None when any of them has no
+    opening and either the heading holds more than one recommendation or that item's lines run over another
+    item's opening, since an opening missed leaves the part before it running on into the next item's text."""
     found, problems, parts = {}, {}, {}
     for numbers, unit_total, _, first, end in spans:
         if total is not None and unit_total != total:
@@ -616,7 +617,10 @@ def recommendations_in(lines, openings, spans, total, walk_finder, starts):
             missing = [number for number in numbers if ranges[number][0] == first]
             # Only the items' own lines, so a Withdrawn version's recommendation is not counted.
             held = sorted({line for start, stop in ranges.values() for line in range(start, stop)})
-            if missing and len(RECOMMENDATION.findall("\n".join(lines[line] for line in held))) > 1:
+            # A range with no opening that runs over another item's opening holds that item's text, so its own
+            # cannot be told apart: item 6's text below item 5's Withdrawn version would read item 5's.
+            overrun = any(first < ranges[other][0] < ranges[number][1] for number in missing for other in numbers)
+            if missing and (overrun or len(RECOMMENDATION.findall("\n".join(lines[line] for line in held))) > 1):
                 problem = PARTS_NOT_TOLD_APART_PROBLEM.format(
                     heading=lines[first].strip(), missing=", ".join(f"item {number}" for number in missing))
                 for number in numbers:

@@ -765,6 +765,24 @@ def test_the_shown_item_and_quotes_from_it_are_not_checked():
                  numbered.run(model="yes"))
 
 
+def test_a_withdrawn_versions_lines_under_a_shared_heading_are_not_the_shown_items():
+    document = (f"# The poem page: approval-walk\n\n## Items 2 and 3 of 10: the poem page\n\n"
+                f"**Item 2: where it lives.** Should I keep the poem page in the wiki?\n\n"
+                f"#### Withdrawn version 1 of item 2\n\nShould I drop the poem page?\n\n"
+                f"**Item 3: its name.** Recommendation: Use the name.\n\n{ANSWER_LINE}\n")
+    for case_name, line, passes in (
+            ("a reply showing a shared heading passes the live item's own line",
+             "**Item 2: where it lives.** Should I keep the poem page in the wiki?", True),
+            ("a reply showing a shared heading still has a line copied from a Withdrawn version under it checked",
+             "Should I drop the poem page?", False)):
+        case = Case(document=document)
+        case.reply("## Items 2 and 3 of 10: the poem page\n\n" + line)
+        if passes:
+            check_silent(case_name, case.run(model="yes"))
+        else:
+            check_blocked(case_name, case.run(), '"Should I drop the poem page?"')
+
+
 HANDOFF_WALK_ITEM_1_2_LINES = (
     "## Item 1.2 of 6: a wait limit for each kind of background Bash task",
     "Item 1.1, from about 9,000 measured runs, proposed 90 minutes for a test suite, 105 for nc-mutation-testing, 75 for every other kind, and 0 for a waiter (explained below). In [handoff-design.md](https://github.com/nedschorus/nedschorus/blob/main/nc-systems/handoff/handoff-design.md), the threshold hook's old text: \"The hook now counts a background Bash task as in flight while it is younger than `--background-task-wait-minutes` and no completion notification names it, judging each task's wait on its own;\"",

@@ -1278,6 +1278,37 @@ def test_a_withdrawn_version_under_a_shared_heading_ends_only_its_own_item():
               f"lines {lines!r}")
 
 
+def test_an_item_with_no_opening_below_another_items_withdrawn_version_reads_no_recommendation():
+    withdrawn = "#### Withdrawn version 1 of item 5\n\nThe first path.\n\nRecommendation: add the filter.\n\n"
+    document = shared_heading_document("**Item 5: the path.** Recommendation: fix the path.\n\n" + withdrawn
+                                       + "The sentence. Recommendation: drop it.\n")
+    lines = Case(next_to_present="item 6 of 9", document=document).lines("a")
+    check("under a shared heading, item 6 with no opening below item 5's Withdrawn version gets no recommendation "
+          "and the line saying why, never item 5's",
+          lines is not None
+          and lines[1] == "A means approve: the user agrees with the recommendation of item 6 of 9. "
+                          "Do what the recommendation says."
+          and not any("fix the path" in line for line in lines)
+          and any("because item 6 has no opening it reads" in line for line in lines),
+          f"lines {lines!r}")
+
+
+def test_a_label_below_consecutive_withdrawn_headings_naming_an_item_either_names_is_no_opening():
+    specification = importlib.util.spec_from_file_location("item_finder", FINDER_MODULE_FILE)
+    finder = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(finder)
+    # A live label sits above its item's Withdrawn version, so below that version it is withdrawn text, even past
+    # another item's Withdrawn heading.
+    document = "\n\n".join((
+        "## Items 5 and 6 of 9: the path and the sentence",
+        "**Item 5: the path.** Recommendation: fix the path.", "**Item 6: the sentence.** Recommendation: drop it.",
+        "#### Withdrawn version 1 of item 5", "The first path.", "#### Withdrawn version 1 of item 6",
+        "**Item 5: the old path.** Recommendation: keep it.\n"))
+    openings = finder.item_opening_lines(document, finder.markdown_parser())
+    check("a label of item 5 below Withdrawn headings of item 5 and then item 6 is no opening",
+          openings == {2: (["5"], None), 4: (["6"], None), 6: ([], None), 10: ([], None)}, f"openings {openings!r}")
+
+
 def test_a_later_unit_that_names_a_withdrawn_item_again_reads_its_live_label():
     specification = importlib.util.spec_from_file_location("item_finder", FINDER_MODULE_FILE)
     finder = importlib.util.module_from_spec(specification)
