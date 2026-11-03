@@ -26,6 +26,7 @@ A change is the difference an agent's work makes, from before it starts to after
 - In prose: renumbering headings, steps or items; updating a citation; naming the source of a statement; adding an open question to a document without answering it. A number or heading that a program reads is data, and renumbering it is not this exception.
 - Renaming a page, a file of any kind or a title to a term the project glossary or a system glossary already lists, with every reference in the repository updated, when nothing outside the repository, such as a crontab entry or a LaunchAgent, names it.
 - Respelling a word or phrase in prose as the project glossary or a system glossary spells a term it lists, when the words name that term, such as "fresh agent" written for fresh-agent.
+- Adding to prose a hashtag marker that no program reads, on a line that already says what the marker marks.
 - Removing a citation, a date or history from standing instructions, which `CLAUDE.md` says they do not carry, when the sentence that loses it still tells the agent to do the same thing.
 - Rewording a sentence of prose to remove an ambiguity or a contradiction, when the rest of the same document or the latest user-ruling on the subject settles which meaning is intended.
 - Carrying out a decision the user already made: merging a clean pull request, deleting what he retired, closing a finished task or GHI, or recording the decision in a GHI's outcome section.
