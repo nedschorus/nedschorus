@@ -37,7 +37,7 @@ Use project-terms, the described system's system-terms where the system has a gl
 
 ## Keeping an overview true
 
-The last line of an overview is `**Checked against:** commit [<full commit id>](https://github.com/nedschorus/nedschorus/commit/<full commit id>)`, naming the commit of main that the last check ran against. It is data a program reads, and it is the only commit the overview names.
+The last line of an overview is `**Checked against:** commit [<full commit id>](https://github.com/nedschorus/nedschorus/commit/<full commit id>)`, naming the commit that the last check ran against: a commit of main, or, in a pull request that also changes the code the overview describes, a commit of that pull request that holds the code and is earlier in its history than the overview edit. It is data a program reads, and it is the only commit the overview names.
 
 An overview refresh brings an overview into line with the code on main and with this page. It reads the commits between the commit in the `**Checked against:**` line and main to find what changed; nothing about those commits goes into the overview. It corrects every statement that is no longer true, adds what the code added (a component, an invariant, shared state, an entry point), takes out what the code removed, takes out anything this page leaves out, and updates Planned work to the open GHIs. Then it replaces the `**Checked against:**` line with the commit it checked against. A refresh that finds nothing to change replaces only that line.
 
@@ -47,7 +47,7 @@ An overview already on main without a `**Checked against:**` line was written be
 
 ## Checking an overview
 
-A new overview gets a cold-read-full-run of the /cold-read skill; a refresh gets a cold-read-fast-read (both terms are in `.claude/skills/skills-glossary.md`). Then the overview is checked against the code of main at one commit, the one its `**Checked against:**` line will name. A round is the check, the writer's fixes, and a cold-read-fast-read of the whole overview. The overview merges after a round in which the check found nothing to fix and the read changed nothing the check covers. If two rounds pass without that, the writer brings the overview to the user.
+A new overview gets a cold-read-full-run of the /cold-read skill; a refresh gets a cold-read-fast-read (both terms are in `.claude/skills/skills-glossary.md`). Then the overview is checked against the code at one commit, the one its `**Checked against:**` line will name: a commit of main, or, in a pull request that also changes the code the overview describes, a commit of that pull request that holds the code and is earlier in its history than the overview edit. A round is the check, the writer's fixes, and a cold-read-fast-read of the whole overview. The overview merges after a round in which the check found nothing to fix and the read changed nothing the check covers. If two rounds pass without that, the writer brings the overview to the user.
 
 The check has two stages, and the second runs only once the first is clean.
 

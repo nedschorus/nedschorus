@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Copy ned-box's newest agent-seat database backup to the Mac over ssh, so a backup survives the loss of ned-box.
+"""Copy ned-box's newest nc-shared-database backup to the Mac over ssh, so a backup survives the loss of ned-box.
 
 Usage:
-  nc-systems/agent-seat-database/agent-seat-database-newest-backup-copy-to-mac.py
+  nc-systems/nc-shared-database/nc-shared-database-newest-backup-copy-to-mac.py
       [--mac-backup-directory DIR]
 
-  --mac-backup-directory  default ~/backups/agent-seat-database on the Mac
+  --mac-backup-directory  default ~/backups/nc-shared-database on the Mac
 
 The Mac runs it each night, from the table
 nc-systems/general-tools/scheduled-jobs-on-each-machine.json, which
@@ -13,8 +13,8 @@ nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py installs as
 a launchd job at 04:15, after ned-box's nightly backup at 02:15; a run missed
 while the Mac sleeps starts at the next wake.
 
-It lists ned-box's ~/backups/agent-seat-database/ over ssh as nedlern@ned-box,
-takes the newest agent-seat-database-<UTC time>.sqlite3, and copies it under
+It lists ned-box's ~/backups/nc-shared-database/ over ssh as nedlern@ned-box,
+takes the newest nc-shared-database-<UTC time>.sqlite3, and copies it under
 the same name into the Mac's directory, through a .partial file renamed when
 the copy is whole. A copy the Mac already has is not copied again. Copies on
 the Mac are never deleted.
@@ -29,10 +29,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-PROGRAM = "nc-systems/agent-seat-database/agent-seat-database-newest-backup-copy-to-mac.py"
+PROGRAM = "nc-systems/nc-shared-database/nc-shared-database-newest-backup-copy-to-mac.py"
 NED_BOX_SSH_TARGET = "nedlern@ned-box"
 SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", NED_BOX_SSH_TARGET]
-MAC_BACKUP_DIRECTORY = Path.home() / "backups" / "agent-seat-database"
+MAC_BACKUP_DIRECTORY = Path.home() / "backups" / "nc-shared-database"
 EXIT_NEWEST_BACKUP_ON_THE_MAC = 0
 EXIT_NOT_COPIED = 1
 
@@ -43,12 +43,12 @@ _ned_box_paths_spec = importlib.util.spec_from_file_location(
 ned_box_paths = importlib.util.module_from_spec(_ned_box_paths_spec)
 _ned_box_paths_spec.loader.exec_module(ned_box_paths)
 
-NED_BOX_BACKUP_DIRECTORY = f"{ned_box_paths.NED_BOX_HOME}/backups/agent-seat-database"
+NED_BOX_NC_SHARED_DATABASE_BACKUP_DIRECTORY = f"{ned_box_paths.NED_BOX_HOME}/backups/nc-shared-database"
 
 
 def not_copied(what_failed, detail):
     print(f"{PROGRAM}: FAILED — {what_failed}, so this copy run copied no backup of the "
-          f"agent-seat database to the Mac.\n{detail}\n"
+          f"nc-shared-database to the Mac.\n{detail}\n"
           f"Copies already on the Mac are kept, and the next nightly run tries again.\n"
           f"Quote this message, from its first line, the program's name included, through the "
           f"line that ends \"tries again.\", to the agent that dispatched you if you are a "
@@ -61,18 +61,18 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--mac-backup-directory", default=str(MAC_BACKUP_DIRECTORY))
     arguments = parser.parse_args(argv)
-    listed = subprocess.run([*SSH_COMMAND, f"ls -1 {NED_BOX_BACKUP_DIRECTORY}"],
+    listed = subprocess.run([*SSH_COMMAND, f"ls -1 {NED_BOX_NC_SHARED_DATABASE_BACKUP_DIRECTORY}"],
                             capture_output=True, text=True)
     if listed.returncode != 0:
-        return not_copied(f"listing {NED_BOX_SSH_TARGET}:{NED_BOX_BACKUP_DIRECTORY} failed",
+        return not_copied(f"listing {NED_BOX_SSH_TARGET}:{NED_BOX_NC_SHARED_DATABASE_BACKUP_DIRECTORY} failed",
                           f"ssh exited {listed.returncode}: {listed.stderr.strip()}")
     backups = sorted(name for name in listed.stdout.split()
-                     if name.startswith("agent-seat-database-") and name.endswith(".sqlite3"))
+                     if name.startswith("nc-shared-database-") and name.endswith(".sqlite3"))
     if not backups:
-        return not_copied(f"{NED_BOX_SSH_TARGET}:{NED_BOX_BACKUP_DIRECTORY} holds no backup",
+        return not_copied(f"{NED_BOX_SSH_TARGET}:{NED_BOX_NC_SHARED_DATABASE_BACKUP_DIRECTORY} holds no backup",
                           "ned-box's nightly job, "
-                          "agent-seat-database-nightly-backup-with-integrity-check, writes "
-                          "its output to ~/.claude/agent-seat-database-nightly-backup-with-"
+                          "nc-shared-database-nightly-backup-with-integrity-check, writes "
+                          "its output to ~/.claude/nc-shared-database-nightly-backup-with-"
                           "integrity-check.log on ned-box; read it for why.")
     newest = backups[-1]
     mac_directory = Path(arguments.mac_backup_directory)
@@ -83,11 +83,11 @@ def main(argv=None):
     mac_directory.mkdir(parents=True, exist_ok=True)
     partial = mac_copy.with_name(newest + ".partial")
     with open(partial, "wb") as written:
-        copied = subprocess.run([*SSH_COMMAND, f"cat {NED_BOX_BACKUP_DIRECTORY}/{newest}"],
+        copied = subprocess.run([*SSH_COMMAND, f"cat {NED_BOX_NC_SHARED_DATABASE_BACKUP_DIRECTORY}/{newest}"],
                                 stdout=written, stderr=subprocess.PIPE, text=False)
     if copied.returncode != 0:
         partial.unlink()
-        return not_copied(f"copying {NED_BOX_SSH_TARGET}:{NED_BOX_BACKUP_DIRECTORY}/{newest} "
+        return not_copied(f"copying {NED_BOX_SSH_TARGET}:{NED_BOX_NC_SHARED_DATABASE_BACKUP_DIRECTORY}/{newest} "
                           f"failed", f"ssh exited {copied.returncode}: "
                                      f"{copied.stderr.decode('utf-8', 'replace').strip()}")
     partial.rename(mac_copy)

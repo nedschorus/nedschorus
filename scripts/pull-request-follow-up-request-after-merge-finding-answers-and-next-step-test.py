@@ -240,6 +240,25 @@ def test_block_parsing():
             check(f"a block with {label} is refused, naming the pull request", str(NUMBER) in str(error), str(error))
         else:
             check(f"a block with {label} is refused, naming the pull request", False)
+    try:
+        program.parse_follow_up_request_blocks_from_message_text(f"#follow_up_request pull request {NUMBER}\n1) a\n")
+    except ValueError as error:
+        check("a block numbered 1) is refused, showing the 1. form", "numbered `1.`, `2.`, `3.`" in str(error), str(error))
+    else:
+        check("a block numbered 1) is refused, showing the 1. form", False)
+    variant = "#follow_up_request PR 2369: open a pull request that fixes these, or tell merge-lane-2 why not."
+    for label, text in (("written as merge-lane-2 wrote it for pull request 2369", "1. a\n2. b\n" + variant + "\n"),
+                        ("with a trailing colon", f"#follow_up_request pull request {NUMBER}:\n1. a\n")):
+        try:
+            program.parse_follow_up_request_blocks_from_message_text(text)
+        except ValueError as error:
+            check(f"a request line {label} is refused, quoting the line and the form",
+                  next(line for line in text.splitlines() if line.startswith("#follow_up_request")) in str(error)
+                  and "pull request <number>` alone on its line" in str(error), str(error))
+        else:
+            check(f"a request line {label} is refused, quoting the line and the form", False)
+    check("a #follow_up_request inside a sentence is not a request line",
+          program.parse_follow_up_request_blocks_from_message_text("Use the #follow_up_request line.\n") == [])
 
 
 def test_brief_text():
@@ -948,7 +967,7 @@ def test_state_failures():
                   code == 2 and "exactly one block, for this pull request" in err, err)
         saved.write_text(f"#follow_up_request pull request {NUMBER}\n2. x\n")
         code, out, err = case.run(case.repository, "finish-and-print-merge-lane-2-message")
-        check("a saved block with bad numbering is FAILED", code == 2 and "numbered 1, 2, 3" in err, err)
+        check("a saved block with bad numbering is FAILED", code == 2 and "numbered `1.`, `2.`, `3.`" in err, err)
         saved.unlink()
         saved.mkdir()
         code, out, err = case.run(case.repository, "finish-and-print-merge-lane-2-message")

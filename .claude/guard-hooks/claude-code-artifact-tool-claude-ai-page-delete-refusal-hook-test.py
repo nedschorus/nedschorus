@@ -57,12 +57,14 @@ def refusal(tool_input, tool_name="Artifact"):
 
 reason = refusal({"action": "delete", "url": PAGE_LINK})
 check("a delete is refused", reason is not None and reason.startswith(
-    'REFUSED: an Artifact tool call with action "delete".'), reason)
-check("the refusal says the call was not sent, so nothing waits", reason is not None
-      and "This call was not sent, so nothing waits for the user." in reason, reason)
-check("the refusal names the page's link", reason is not None
-      and f"give him its link, {PAGE_LINK}, and tell him he can delete it himself" in reason,
-      reason)
+    'REFUSED: Artifact tool call with action "delete", blocked by a PreToolUse hook.'), reason)
+check("the refusal names the terminal-only confirmation prompt", reason is not None
+      and "shows the confirmation prompt for this action only in its terminal UI" in reason, reason)
+check("the refusal says the call was not sent, so nothing is pending", reason is not None
+      and "The call was not sent; nothing is pending." in reason, reason)
+check("the refusal names the artifact's link", reason is not None
+      and f"give him the artifact URL, {PAGE_LINK}, so he can delete it on claude.ai, then continue."
+      in reason, reason)
 check("the refusal has its three lines", reason is not None and len(reason.splitlines()) == 3, reason)
 
 for case_name, tool_input in [
@@ -71,7 +73,7 @@ for case_name, tool_input in [
         ("a delete with a url that is not text", {"action": "delete", "url": 7})]:
     reason = refusal(tool_input)
     check(f"{case_name} is refused, saying the call has no link", reason is not None
-          and f"give him its link, {hook.NO_LINK_TEXT}, and tell him" in reason, reason)
+          and f"give him the artifact URL, {hook.NO_LINK_TEXT}, so he" in reason, reason)
 
 for case_name, tool_input in [
         ("a publish with no action", {"file_path": "/tmp/page.html"}),

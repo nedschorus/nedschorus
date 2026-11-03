@@ -35,8 +35,9 @@ nonzero; no report is written unless the fresh-agent produced output. The
 temporary worktree is removed on every path, including a failure; when git
 cannot remove it, the program prints git's words and the worktree's path, and
 exits 6 only when the run would otherwise exit 0; any other exit code is
-kept; git's record of the worktree stays in the checkout
-until `git worktree prune` runs. Apart from that record, the
+kept. The worktree's folder is deleted with the temporary directory either
+way, but git's record of the worktree stays in the checkout until the
+cleanup command the program prints is run. Apart from that record, the
 program writes nothing in the checkout it is run from.
 
 Usage:
@@ -49,7 +50,15 @@ Exit 0: report written, every claim supported. 1: refused, nothing run.
 4: the fresh-agent failed, so no report was written. 5: report written, and
 not every claim is supported, or the report is malformed. 6: every claim is
 supported, but git could not remove the temporary worktree; the report was
-still written, and its result printed.
+still written, its result printed, and scripts/pull-request-review-plan.py
+accepts it as it accepts an exit-0 report.
+
+The last line printed, on stdout, starts with "Next: " and says what to do for
+that exit, so the overview-write skill's step 3 is only to do what it says.
+For exit 5 the program tells a malformed report apart from contradicted or
+unsupported claims. On the first malformed report for an overview text, its
+last line tells the agent to run the program again; on the second and each
+later one, to bring the reports to the user.
 """
 
 import argparse
@@ -119,6 +128,40 @@ The overview's writer disputes verdicts of an earlier check. The file {answers} 
 """
 
 
+NEXT_ACTION_LINE_PREFIX = "Next: "
+NEXT_ACTION_BY_EXIT_CODE = {
+    0: "every assertion is supported. Push your branch.",
+    1: "nothing was checked. Do what the refusal above says, then run this program again.",
+    2: "this program has a defect. Tell the user what it printed above, and stop.",
+    3: "scripts/md-drift-lint.py found problems in the overview. Fix each one it printed above, commit, then run "
+       "this program again.",
+    4: "no report was written. If the lines above say `claude` is logged out or a usage limit is reached, tell the "
+       "user what they say, and stop. Otherwise run this program again once; if it ends with this line again, tell "
+       "the user what it printed, and stop.",
+    6: "every assertion is supported, but the temporary worktree could not be removed. Push your branch, then do "
+       "the clean-up the lines above give.",
+}
+NEXT_ACTION_WHEN_NOT_EVERY_ASSERTION_IS_SUPPORTED = (
+    "open the report named above. For each verdict you believe is wrong, answer it as step 4 of the overview-write "
+    "skill (.claude/skills/overview-write/SKILL.md) says, and leave that statement as it is. Correct or remove each "
+    "other contradicted statement in the overview; in each other unsupported statement, name the repository files "
+    "that bear it out, or remove the statement. Commit, then run this program again.")
+NEXT_ACTION_WHEN_FRESH_AGENT_REPORT_IS_MALFORMED_FIRST_TIME = "the fresh-agent's report is malformed. Run this program again."
+NEXT_ACTION_WHEN_FRESH_AGENT_REPORT_IS_MALFORMED_AGAIN = (
+    "the fresh-agent's report for this overview text is malformed for the second time or more. Tell the user, giving "
+    "the report paths in {directory} whose names start with {blob}, and stop.")
+
+
+def malformed_report_count_for_overview_git_blob(destination_directory, blob):
+    count = 0
+    for report in destination_directory.glob(f"{blob}-*.md"):
+        for line in report.read_text(encoding="utf-8").splitlines():
+            if line.startswith(RESULT_LINE_PREFIX):
+                count += line.removeprefix(RESULT_LINE_PREFIX).startswith("malformed")
+                break
+    return count
+
+
 class ClaimCheckRefusal(Exception):
     def __init__(self, message, exit_code=1):
         super().__init__(message)
@@ -132,7 +175,7 @@ class RefusingArgumentParser(argparse.ArgumentParser):
         raise ClaimCheckRefusal(f"{message}\nTo see the arguments: run this with --help.")
 
 
-def architecture_overview_system_from_path(path):
+def nc_architecture_overview_described_system_name_from_page_path(path):
     """Return the <system> of a path the page gives for an overview, or None.
 
     The template alone also matches the how-to page itself; a caller checks
@@ -226,7 +269,6 @@ def failure_removing_worktree(repository, worktree):
     turn its exit code into 2."""
     try:
         removal = run_git(repository, "worktree", "remove", "--force", str(worktree), check=False)
-        run_git(repository, "worktree", "prune", check=False)
     except (OSError, subprocess.TimeoutExpired) as failure:
         return f"`git worktree remove --force {worktree}` could not run: {failure}"
     if removal.returncode:
@@ -241,7 +283,7 @@ def check_overview_claims(arguments):
                                 "To check an overview: run this from a checkout of this repository.")
     repository = Path(top_level.stdout.strip())
     overview_path = arguments.overview
-    system = architecture_overview_system_from_path(overview_path)
+    system = nc_architecture_overview_described_system_name_from_page_path(overview_path)
     revision = run_git(repository, "rev-parse", "--verify", f"{arguments.revision}^{{commit}}").stdout.strip()
     if system is None or not run_git(repository, "ls-tree", "-d", "--name-only", revision,
                                      f"nc-systems/{system}").stdout.strip():
@@ -259,7 +301,7 @@ def check_overview_claims(arguments):
     if named_commit is None:
         raise ClaimCheckRefusal(
             f"{overview_path} has no **Checked against:** last line, so no commit names the code to check it against.\n"
-            f"To check it: end the overview with the line the page {HOW_TO_PAGE} gives, naming the main commit you "
+            f"To check it: end the overview with the line the page {HOW_TO_PAGE} gives, naming the commit you "
             "checked it against, commit it, then run this again.")
     commit = run_git(repository, "rev-parse", "--verify", "--quiet", f"{named_commit}^{{commit}}", check=False)
     if commit.returncode:
@@ -279,7 +321,9 @@ def check_overview_claims(arguments):
     writer_answers = arguments.writer_answers.resolve() if arguments.writer_answers else None
 
     with tempfile.TemporaryDirectory(prefix=PROGRAM + "-") as temporary:
-        worktree = Path(temporary) / "checkout-at-checked-against-commit"
+        # git records a worktree by its resolved path; once the folder is deleted, an unresolved path (macOS /var is a
+        # symlink) no longer matches that record, and the printed `worktree remove --force` would fail.
+        worktree = Path(temporary).resolve() / "checkout-at-checked-against-commit"
         run_git(repository, "worktree", "add", "--quiet", "--detach", str(worktree), commit)
         try:
             (worktree / overview_path).parent.mkdir(parents=True, exist_ok=True)
@@ -307,8 +351,8 @@ def check_overview_claims(arguments):
             if worktree_removal_failure:
                 print(f"{PROGRAM}: {worktree_removal_failure}\n"
                       "Only the cleanup failed: the claim check's own result is printed apart from this.\n"
-                      f"To clean up, once this program has exited: run `git -C {repository} worktree prune`, then "
-                      f"check that `git -C {repository} worktree list` no longer shows {worktree}; if it does, tell "
+                      f"To clean up, once this program has exited: run `git -C {repository} worktree remove --force "
+                      f"{worktree}`, then check that `git -C {repository} worktree list` no longer shows {worktree}; if it does, tell "
                       "the user.", file=sys.stderr)
 
     result = result_from_fresh_agent_report(report)
@@ -320,6 +364,14 @@ def check_overview_claims(arguments):
         f"overview: {overview_path}\noverview blob: {blob}\nrevision: {revision}\nchecked against: {commit}\n"
         f"writer answers: {writer_answers or 'none'}\n{RESULT_LINE_PREFIX}{result}\n\n{report}", encoding="utf-8")
     print(f"{PROGRAM}: {result}. Report: {destination}")
+    if not result.startswith("malformed"):
+        next_action_when_not_all_supported = NEXT_ACTION_WHEN_NOT_EVERY_ASSERTION_IS_SUPPORTED
+    elif malformed_report_count_for_overview_git_blob(destination_directory, blob) < 2:
+        next_action_when_not_all_supported = NEXT_ACTION_WHEN_FRESH_AGENT_REPORT_IS_MALFORMED_FIRST_TIME
+    else:
+        next_action_when_not_all_supported = NEXT_ACTION_WHEN_FRESH_AGENT_REPORT_IS_MALFORMED_AGAIN.format(directory=destination_directory,
+                                                                               blob=blob)
+    arguments.next_action_when_not_all_supported = next_action_when_not_all_supported
     if result != OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED:
         return 5
     return 6 if worktree_removal_failure else 0
@@ -334,11 +386,24 @@ def main(argv=None):
                         help="the writer's answers to disputed verdicts of an earlier report")
     parser.add_argument("--report-directory", type=Path, default=OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_REPORT_DIRECTORY,
                         metavar="DIR")
+    arguments = None
     try:
-        return check_overview_claims(parser.parse_args(argv))
+        arguments = parser.parse_args(argv)
+        code = check_overview_claims(arguments)
     except ClaimCheckRefusal as refusal:
         print(f"{PROGRAM}: {refusal}", file=sys.stderr)
-        return refusal.exit_code
+        code = refusal.exit_code
+    print_next_action(code, getattr(arguments, "next_action_when_not_all_supported", None))
+    return code
+
+
+def print_next_action(code, next_action_when_not_all_supported=None):
+    """Print the next action as the run's last line: the overview-write skill's step 3 is to do what it says.
+
+    It goes to stdout after stderr is flushed, so a reader of both streams together sees it last."""
+    sys.stderr.flush()
+    action = next_action_when_not_all_supported if code == 5 else NEXT_ACTION_BY_EXIT_CODE[code]
+    print(f"{NEXT_ACTION_LINE_PREFIX}{action}", flush=True)
 
 
 if __name__ == "__main__":
@@ -347,4 +412,5 @@ if __name__ == "__main__":
     except Exception as defect:
         print(f"{PROGRAM}: program defect: {type(defect).__name__}: {defect}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
+        print_next_action(2)
         sys.exit(2)

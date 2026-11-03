@@ -10,7 +10,9 @@ activeForm, blockedBy, blocks, description, id, metadata, status and subject
 (activeForm and metadata are optional, and a few files carry `owner`). An
 agent-seat's list id is `nedschorus-<seat>-tasks`, read from the environment
 variable CLAUDE_CODE_TASK_LIST_ID, which the hook inherits from the session;
-a session without one prints nothing. Only `*.json` files are read, because
+a session without one prints nothing. A list whose directory does not exist
+yet holds no tasks, and its session can still get the next-action prompt.
+Only `*.json` files are read, because
 the list directory also holds the harness's `.lock`. Task files are never
 written.
 
@@ -72,8 +74,10 @@ the same task once; that is not locked against.
 GITHUB, and only for prerequisites. A condition is checked with `gh pr view` or
 `gh issue view` (read-only), GH_TOKEN removed from the environment so gh
 uses its keyring login, stdin closed, each call bounded by
-GH_CALL_TIMEOUT_SECONDS and all of a run's calls together by
-GH_CALLS_TOTAL_BUDGET_SECONDS. A condition checked within
+GH_CALL_TIMEOUT_SECONDS and all of a run's calls together, the due-task
+pass's and the next-action prompt's, by GH_CALLS_TOTAL_BUDGET_SECONDS, which
+leaves the rest of the run room inside the hook's 30-second timeout in
+.claude/settings.json. A condition checked within
 CONDITION_RECHECK_INTERVAL_SECONDS is answered from the state file. A check
 gh could not answer, because gh is missing, failed, timed out or printed no
 JSON object, is not an answer: no task waiting on it is raised, it is
@@ -93,7 +97,11 @@ holds; otherwise it says nothing about it:
   - no walk-minutes there has an unclosed `#next_to_present` line, paused
     or not, as the walk-me-through finder module reads it;
   - neither the handoff hook's asked marker nor its deferred marker exists
-    for the session;
+    for the session, and the share of the context window the transcript
+    records is below the reincarnation threshold, read with the handoff
+    hook's own reader and its DEFAULT_THRESHOLD_USED_PERCENTAGE: Claude Code
+    runs the hooks of one Stop group in parallel, so at the stop that first
+    reaches the threshold the asked marker may not be written yet;
   - the handoff hook's work_in_flight finds no subagent or background task
     running; a transcript it cannot fully read counts as work running;
   - the session has run a tool since this hook last handed it the prompt.
@@ -234,7 +242,7 @@ def state_file_path(home: Path, list_id: str) -> Path:
 
 
 def read_tasks(directory: Path) -> dict:
-    """Every readable task in the list, by id; a malformed file is skipped."""
+    """Every readable task in the list, by id; a malformed file is skipped, and a missing directory holds none."""
     tasks = {}
     for path in sorted(directory.glob("*.json")):
         try:
@@ -462,14 +470,14 @@ def old_keys_line(task: dict, old_keys: dict) -> str:
             f"metadata key; change it with TaskUpdate: {'; and '.join(changes)}.")
 
 
-def due_task_lines(tasks: dict, directory: Path, state: dict, now: datetime) -> "tuple[list, list, bool, list]":
-    """The raise lines, the old-key lines, whether the state changed, and the gh failure lines.
+def due_task_lines(tasks: dict, directory: Path, state: dict,
+                   checker: "GitHubConditionChecker") -> "tuple[list, list, bool]":
+    """The raise lines, the old-key lines, and whether the state changed apart from `checker`'s cache.
 
     Mutates `state` to record every raise and every old-key line it returns,
     and to prune entries for tasks and conditions that no longer need them.
     """
     raised = state["raised"]
-    checker = GitHubConditionChecker(state["checks"], now.timestamp())
     lines = []
     old_key_lines = []
     state_changed = False
@@ -546,8 +554,7 @@ def due_task_lines(tasks: dict, directory: Path, state: dict, now: datetime) -> 
         if key not in conditions_still_named:
             del state["checks"][key]
             state_changed = True
-    return lines, old_key_lines, state_changed or checker.changed, [
-        gh_failure_line(kind, number, cause) for kind, number, cause in checker.gh_failures]
+    return lines, old_key_lines, state_changed
 
 
 WALK_FINDER_FILE = (_HOOK_DIRECTORY.parent / "nc-systems" / "skills" / "walk-me-through"
@@ -566,8 +573,9 @@ NEXT_ACTION_INSTRUCTIONS = (
     "Start subagents now on every ready task that needs no review or approval from the user.",
     "Build an approval-walk of 8 to 16 items, more than 16 only for one large thing with many "
     "parts, from your loose-ends, open questions, concerns, suggestions and tasks that need the "
-    "user; put first what makes the user's interaction easier and what makes agents or the "
-    "process faster or cheaper.",
+    "user; put first the items that block work, then what makes the user's interaction easier "
+    "and what makes agents or the process faster or cheaper, then the rest, the oldest first "
+    "among equals.",
     "If you have none of these at all, ask ghi-guide-agent for 3 to 5 GHIs to work on, with "
     "`python3 scripts/ghi-guide-agent-ask.py \"Which 3 to 5 open GHIs would most improve how "
     "easy the user's interaction with agents is, or how fast or cheap agents and the "
@@ -658,7 +666,7 @@ def listed_with_limit(header: str, entries: list, limit: int) -> list:
 
 
 def next_action_prompt_lines(payload: dict, tasks: dict, directory: Path, state: dict,
-                             now: datetime) -> "list | None":
+                             checker: "GitHubConditionChecker", now: datetime) -> "list | None":
     """The next-action prompt's lines, or None when the hook stays silent about it.
 
     Silent when the session cannot be told idle: no readable transcript, no
@@ -689,6 +697,9 @@ def next_action_prompt_lines(payload: dict, tasks: dict, directory: Path, state:
     if (handoff.fired_marker_path(session_id).exists()
             or handoff.deferred_marker_path(session_id).exists()):
         return None
+    used_percentage = handoff.context_used_percentage_from_transcript(str(transcript))
+    if used_percentage is not None and used_percentage >= handoff.DEFAULT_THRESHOLD_USED_PERCENTAGE:
+        return None
     try:
         if handoff.work_in_flight(str(transcript),
                                   handoff.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60, now=now):
@@ -704,7 +715,6 @@ def next_action_prompt_lines(payload: dict, tasks: dict, directory: Path, state:
         return None
     state[NEXT_ACTION_STATE_KEY] = this_prompt
 
-    checker = GitHubConditionChecker(state["checks"], now.timestamp())
     unheld, held = unheld_and_held_tasks(tasks, directory, checker)
     lines = list(NEXT_ACTION_INSTRUCTIONS)
     lines += listed_with_limit(NEXT_ACTION_UNHELD_TASKS_HEADER, unheld,
@@ -713,7 +723,6 @@ def next_action_prompt_lines(payload: dict, tasks: dict, directory: Path, state:
         lines.append(NEXT_ACTION_HELD_TASKS_LINE.format(count=held))
     lines += listed_with_limit(NEXT_ACTION_OPEN_ITEMS_HEADER, open_outcome_lines(walk_directory),
                                NEXT_ACTION_LISTED_OPEN_ITEMS_LIMIT)
-    lines += [gh_failure_line(kind, number, cause) for kind, number, cause in checker.gh_failures]
     lines.append(NEXT_ACTION_STOP_AGAIN_LINE)
     return lines
 
@@ -735,18 +744,19 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
     if environment.get(SESSION_ATTENDED_VARIABLE) == SESSION_UNATTENDED_VALUE:
         return None  # a `claude -p` child, not the agent-seat's own session
     directory = task_list_directory(home, environment)
-    if directory is None or not directory.is_dir():
+    if directory is None:
         return None
     tasks = read_tasks(directory)
     state_path = state_file_path(home, directory.name)
     state = read_state(state_path)
-    lines, old_key_lines, state_changed, gh_failure_lines = due_task_lines(
-        tasks, directory, state, now)
+    # One checker for the whole run, so its GitHub budget bounds every gh call the run makes.
+    checker = GitHubConditionChecker(state["checks"], now.timestamp())
+    lines, old_key_lines, state_changed = due_task_lines(tasks, directory, state, checker)
     next_action_lines = []
     if not lines and not old_key_lines:
         try:
             next_action_lines = next_action_prompt_lines(payload, tasks, directory, state,
-                                                         now) or []
+                                                         checker, now) or []
         except Exception as error:
             raise HookFault(f"every task was checked and none was due, but the check whether to "
                             f"hand the next-action prompt failed, so none was handed at this "
@@ -759,6 +769,9 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
                             f"scripts/agent-seat-due-task-raise-hook.py or in a file it "
                             f"reads.") from error
         state_changed = state_changed or bool(next_action_lines)
+    state_changed = state_changed or checker.changed
+    gh_failure_lines = [gh_failure_line(kind, number, cause)
+                        for kind, number, cause in checker.gh_failures]
     if state_changed:
         try:
             write_state_atomically(state_path, state)

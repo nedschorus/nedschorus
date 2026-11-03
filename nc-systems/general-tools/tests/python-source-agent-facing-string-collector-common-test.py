@@ -214,10 +214,10 @@ LOCAL_NAME_FORMS = (
      [("%d failed", "text = in main()")]),
     ("a local join whose pieces are listed",
      'def main(items):\n    text = "\\n".join(["Fix these:", *items])\n    print(text)\n',
-     [("\n", "text = in main()"), ("Fix these:", "text = in main()")]),
+     [("Fix these:", "text = in main()")]),
     ("a local joined from another local",
      'def main():\n    head = "Fix these"\n    text = " ".join([head])\n    print(text)\n',
-     [("Fix these", "head = in main()"), (" ", "text = in main()")]),
+     [("Fix these", "head = in main()")]),
     ("a local chosen by a condition, its condition left out",
      'def main(row):\n    verb = "resuming" if row["kind"] == "known" else "launching"\n    print(f"{verb} now")\n',
      [("resuming", "verb = in main()"), ("launching", "verb = in main()"), ("f'{verb} now'", "print in main()")]),
@@ -236,7 +236,7 @@ LOCAL_NAME_FORMS = (
      [("Read the transcript.", "note = in build_prompt()")]),
     ("a local printed through a string literal's join",
      'def main():\n    note = "Read the transcript."\n    print(" ".join([note]))\n',
-     [(" ", "print in main()"), ("Read the transcript.", "note = in main()")]),
+     [("Read the transcript.", "note = in main()")]),
     ("a local in a + chain as a hook output value",
      'def main():\n    note = "Read the transcript."\n    return {"additionalContext": "Instructions: " + note}\n',
      [("Instructions: {note}", '"additionalContext" value in main()'), ("Read the transcript.", "note = in main()")]),
@@ -434,7 +434,7 @@ check("a string returned by a function called in a conditional expression's bran
       "and one called in its condition is not",
       "chosen text" in found and "ready text" not in found, found)
 
-# Modelled on parse_event() in nc-systems/agent-seat-database/agent-seat-database-service.py at pull
+# Modelled on parse_event() in nc-systems/nc-shared-database/nc-shared-database-service.py at pull
 # request 2310's head, whose dict key "error" was listed as a second message on the same line.
 found = texts('def parse_event(event):\n'
               '    raise Answer(400, {"error": "the event\'s event_id holds a lone surrogate, "\n'
@@ -533,6 +533,45 @@ HELPER_PARAMETER_SCOPE_FORMS_NOT_RECOGNIZED = (
 for case_name, source in HELPER_PARAMETER_SCOPE_FORMS_NOT_RECOGNIZED:
     found = [entry["text"] for entry in entries(source) if entry["label"] in ("emit()", "sink()")]
     check(f"not recognized: {case_name}", found == [], found)
+
+SCOPE_FORMS_EACH_RULE_ONCE_MISSED = (
+    ("a nested function's global declaration hides the helper's parameter",
+     'text = 1\ndef emit(text):\n    def inner():\n        global text\n        print(text)\n    inner()\n'
+     'emit("global hidden")\n', []),
+    ("a comprehension target in a nested function hides the helper's parameter",
+     'def emit(text):\n    def inner():\n        [print(text) for text in ["actual"]]\n    inner()\n'
+     'emit("never shown")\n', []),
+    ("a comprehension target hides the function's local at a printed form inside the comprehension",
+     'def main(items):\n    text = "local hidden"\n    [print(text) for text in items]\n', []),
+    ("a helper's parameter printed in a comprehension's first iterable, which the target does not hide",
+     'def emit(text):\n    [text for text in print(text)]\nemit("first iterable shown")\n',
+     ["first iterable shown"]),
+    ("a name read inside a comprehension's target is not bound by it",
+     'def main(items, messages):\n    text = "subscript shown"\n    print([text for messages[text] in items])\n',
+     ["subscript shown"]),
+    ("a type parameter's name hides the function's local in its own bound",
+     'def main():\n    text = "type parameter hidden"\n    class Holder[text: print(text)]:\n        pass\n', []),
+    ("a type parameter's name hides the helper's parameter in its own bound",
+     'def emit(text):\n    class Holder[text: print(text)]:\n        pass\nemit("bound hidden")\n', []),
+)
+# Modelled on output_for() in the walk-me-through question-check Stop hook, whose "\n" separator was
+# the only text listed for a hook output value built as "\n".join(lines_out).
+found = entries('REFUSAL_TEMPLATE = "Refused: {why}."\n'
+                'def output_for(why, extra):\n'
+                '    lines_out = [REFUSAL_TEMPLATE.format(why=why)] + extra\n'
+                '    return {"reason": "\\\\n".join(lines_out)}\n'
+                'print("; ".join(["first part", "second part"]))\n')
+check("a string literal's join lists the joined parts, never the separator alone",
+      [entry["text"] for entry in found] == ["Refused: {why}.", "first part", "second part"], found)
+
+# Modelled on run_model_chain() in nc-systems/cold-read/cold-read-cell-common.py, whose stdout=""
+# argument was listed as an empty message.
+found = texts('print("")\nprint(cause_line(stdout="", detail="the run failed"))\n')
+check("an empty string literal is not a message", found == ["the run failed"], found)
+
+for case_name, source, expected in SCOPE_FORMS_EACH_RULE_ONCE_MISSED:
+    found = texts(source)
+    check(f"scope: {case_name}", found == expected, found)
 
 check("source that does not parse yields no entries", texts('print("unclosed\n') == [])
 check("no source yields no entries", texts(None) == [])

@@ -98,7 +98,7 @@ CREDENTIAL_FILE_SCAN_ROOTS = (pathlib.Path.home(), REPO_ROOT)
 # log-store's 900,000 entries; several finds over parts of the tree at once
 # take a third of that.
 CREDENTIAL_FILE_SCAN_SPLIT_DEPTH = 3
-CREDENTIAL_FILE_SCAN_FIND_COMMANDS = 64
+CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = 64
 CREDENTIAL_FILE_SCAN_PARALLEL_FINDS = 16
 
 
@@ -152,8 +152,8 @@ def credential_files_found_now() -> list:
     for root in roots:
         shallow, subtrees = credential_file_scan_parts(root)
         commands.append(["find", *shallow, "-maxdepth", "1", *match])
-        commands += [["find", *subtrees[start::CREDENTIAL_FILE_SCAN_FIND_COMMANDS], "-xdev", *match]
-                     for start in range(min(len(subtrees), CREDENTIAL_FILE_SCAN_FIND_COMMANDS))]
+        commands += [["find", *subtrees[start::CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT], "-xdev", *match]
+                     for start in range(min(len(subtrees), CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT))]
 
     def run(command):
         return subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
