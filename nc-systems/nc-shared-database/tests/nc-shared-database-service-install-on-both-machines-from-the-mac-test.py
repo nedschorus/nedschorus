@@ -105,11 +105,12 @@ with tempfile.TemporaryDirectory() as directory:
           and installer.sudo_advice("ned-box", runner.calls[6][1]) in err
           and installer.RERUN_LINE in err and installer.SUBAGENT_LINE in err
           and "step 6 passed" in out, (code, out, err))
-    sudo_line = installer.command_for_the_mac("ned-box", runner.calls[6][1])
-    check("the sudo advice's ssh command hands ned-box the failed command unchanged, its own "
-          "quotes included",
-          shlex.split(sudo_line) == ["ssh", "-t", "nedlern@ned-box", runner.calls[6][1]],
-          sudo_line)
+    sudo_line = next(part for part in err.split("`") if part.startswith("ssh -t "))
+    check("the sudo advice gives the user an ssh -t command that hands ned-box the failed command, "
+          "its own quotes included, with sudo free to ask for his password",
+          shlex.split(sudo_line) == ["ssh", "-t", "nedlern@ned-box",
+                                     runner.calls[6][1].replace("sudo -n ", "sudo ", 1)]
+          and "sudo -n" not in shlex.split(sudo_line)[3], sudo_line)
 
     runner = FakeRunner({2: (255, "", "ssh: connect to host ned-box port 22: No route to host")})
     code, out, err = run_main(runner)
@@ -121,7 +122,7 @@ with tempfile.TemporaryDirectory() as directory:
     code, out, err = run_main(runner)
     check("a ned-box reference-checkout without main's commit gets the fast-forward command, "
           "through ssh",
-          code == 1 and "ssh -t nedlern@ned-box 'git -C ~/Projects/nedschorus pull --ff-only'"
+          code == 1 and "`ssh nedlern@ned-box 'git -C ~/Projects/nedschorus pull --ff-only'`"
           in err, err)
 
     runner = FakeRunner({10: (0, "401", "")})

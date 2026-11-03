@@ -68,13 +68,17 @@ PROGRAM_IN_REFERENCE_CHECKOUT = (f"{REFERENCE_CHECKOUT}/nc-systems/nc-shared-dat
                                  f"{Path(__file__).name}")
 RERUN_COMMAND = f"python3 {PROGRAM_IN_REFERENCE_CHECKOUT}"
 RERUN_LINE = f"To run this install again, run on the Mac: `{RERUN_COMMAND}`"
-SUBAGENT_LINE = ("If you are a subagent, report this failure to the agent that dispatched you "
-                 "instead of telling the user.")
+SUBAGENT_LINE = ("If you are a subagent, send the agent that dispatched you this whole report, "
+                 "and what you did; it asks or tells the user what the lines above say to.")
 
 
-def command_for_the_mac(machine, command):
-    """The command as typed in a Terminal on the Mac, through ssh for a ned-box command."""
-    return command if machine == "mac" else f"ssh -t {NED_BOX_SSH_TARGET} {shlex.quote(command)}"
+def command_for_the_mac(machine, command, for_the_user_to_type=False):
+    """The command as run on the Mac, through ssh for a ned-box command; ssh -t only for a
+    command the user types, because sudo then asks him for his password."""
+    if machine == "mac":
+        return command
+    terminal = "-t " if for_the_user_to_type else ""
+    return f"ssh {terminal}{NED_BOX_SSH_TARGET} {shlex.quote(command)}"
 
 
 def generic_advice(machine, command):
@@ -93,10 +97,12 @@ def reference_checkout_advice(machine, command):
 
 
 def sudo_advice(machine, command):
+    asking = command.replace("sudo -n ", "sudo ", 1)
     return ("ned-box's sudo asked for a password to change the firewall (ufw), and this program "
             "cannot type one. Ask the user to run, in a Terminal on his Mac, "
-            f"`{command_for_the_mac(machine, command)}`, which asks him for his ned-box password; "
-            "when it succeeds, run the install again.")
+            f"`{command_for_the_mac(machine, asking, for_the_user_to_type=True)}`, which asks him "
+            "for his ned-box password; when he says it succeeded, run the install again. When "
+            "he cannot or will not, the install stays stopped at this step: say so to him.")
 
 
 def service_answer_advice(machine, command):
