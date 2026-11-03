@@ -123,20 +123,10 @@ MAC_WEEKLY_LIVE_CHECK_PLIST = {
     "StandardErrorPath":
         "/Users/el/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log",
 }
-MAC_REMOTE_CONTROL_RECONNECT_WATCHER_PLIST = {
-    "Label": "com.nedschorus.handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher",
-    "ProgramArguments": ["/opt/homebrew/bin/python3",
-                         "/Users/el/Projects/nedschorus/nc-systems/handoff/"
-                         "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py"],
-    "EnvironmentVariables": {
-        "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
-                "/usr/sbin:/sbin"},
-    "StartInterval": 60,
-    "StandardOutPath":
-        "/Users/el/.claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log",
-    "StandardErrorPath":
-        "/Users/el/.claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log",
-}
+MAC_REMOTE_CONTROL_RECONNECT_WATCHER_LINE = (
+    "* * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedschorus/nc-systems/handoff/"
+    "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> "
+    "/Users/el/.claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log 2>&1")
 # The prune of the guarded-file hook's copies of removed checkouts, last in the table.
 NED_BOX_GUARDED_FILE_PRUNE_LINE = (
     "0 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
@@ -375,8 +365,7 @@ check("the lines each program documents are the table's lines, and each names th
       and f"    {NED_BOX_CLEAN_LINE}\n" in clean_documentation
       and f"    {NED_BOX_CRASH_RESTART_WATCHER_LINE}\n" in watcher_documentation
       and f"    {NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE}\n" in remote_control_watcher_documentation
-      and (f"\n{MAC_REMOTE_CONTROL_RECONNECT_WATCHER_PLIST['Label']},\nStartInterval 60,"
-           in remote_control_watcher_documentation)
+      and f"    {MAC_REMOTE_CONTROL_RECONNECT_WATCHER_LINE}\n" in remote_control_watcher_documentation
       and f"    {NED_BOX_WEEKLY_LIVE_CHECK_LINE}\n" in weekly_live_check_documentation
       and f"    {NED_BOX_GUARDED_FILE_PRUNE_LINE}\n" in guarded_file_prune_documentation
       and f"    {NED_BOX_AGENT_SEAT_DATABASE_BACKUP_LINE}\n" in agent_seat_database_backup_documentation
@@ -425,9 +414,7 @@ weekly_heading = ("weekly-uncommitted-work-snapshot-hook-real-claude-session-own
                   "/Users/el/Library/LaunchAgents/com.nedschorus.weekly-uncommitted-work-snapshot-"
                   "hook-real-claude-session-owner-check.plist:\n")
 remote_control_watcher_heading = (
-    "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher — launchd job, "
-    "/Users/el/Library/LaunchAgents/com.nedschorus.handoff-agent-seat-remote-control-lost-at-claude-login-"
-    "reconnect-by-tmux-typing-watcher.plist:\n")
+    "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher — cron line:\n")
 daily_part, _, clean_and_weekly_part = mac_printed.partition(clean_heading)
 clean_and_watcher_part, _, weekly_and_prune_part = clean_and_weekly_part.partition(weekly_heading)
 clean_part, _, remote_control_watcher_part = clean_and_watcher_part.partition(
@@ -441,7 +428,7 @@ backup_copy_heading = ("agent-seat-database-newest-backup-copy-to-mac — launch
                        "newest-backup-copy-to-mac.plist:\n")
 prune_part, _, backup_copy_part = prune_and_backup_copy_part.partition(backup_copy_heading)
 check("--print as the Mac prints the mirror's cron line, the full test run's and the worktree "
-      "cleanup's plists, the Remote Control reconnect watcher's plist, the weekly owner check's and the guarded-file prune's plists, and the "
+      "cleanup's plists, the Remote Control reconnect watcher's cron line, the weekly owner check's and the guarded-file prune's plists, and the "
       "agent-seat database backup copy's plist, and runs nothing",
       exit_code == 0 and stub.commands == [] and clean_part.startswith("<?xml")
       and daily_part.startswith(
@@ -451,9 +438,7 @@ check("--print as the Mac prints the mirror's cron line, the full test run's and
       and plistlib.loads(daily_part[daily_part.index("<?xml"):].encode("utf-8"))
       == MAC_DAILY_PLIST
       and plistlib.loads(clean_part.encode("utf-8")) == MAC_CLEAN_PLIST
-      and remote_control_watcher_part.startswith("<?xml")
-      and plistlib.loads(remote_control_watcher_part.encode("utf-8"))
-      == MAC_REMOTE_CONTROL_RECONNECT_WATCHER_PLIST
+      and remote_control_watcher_part == f"{MAC_REMOTE_CONTROL_RECONNECT_WATCHER_LINE}\n"
       and weekly_part.startswith("<?xml")
       and plistlib.loads(weekly_part.encode("utf-8")) == MAC_WEEKLY_LIVE_CHECK_PLIST
       and prune_part.startswith("<?xml")

@@ -4,7 +4,7 @@
 Usage, on ned-box or on the Mac, each watching its own agent-seats:
   nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py
       one run: check every running agent-seat of this machine and act. Cron
-      on ned-box, and launchd on the Mac, run this once a minute.
+      runs this once a minute, on ned-box and on the Mac.
   nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py --show-notice FILE
       what a notice window on the user's Mac runs: print FILE, then wait for
       Enter and close.
@@ -70,10 +70,12 @@ with nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py
 --install --job handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher,
 on each machine. On ned-box it is the cron line
     * * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> /home/nedlern/.claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log 2>&1
-On the Mac it is the launchd job
-com.nedschorus.handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher,
-StartInterval 60, because launchd gives the job the PATH that holds Homebrew's
-tmux, and cron's PATH on the Mac does not.
+On the Mac it is the cron line
+    * * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedschorus/nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> /Users/el/.claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log 2>&1
+It is not a launchd job, because the Mac's launchd never starts a StartInterval
+job (scripts/transcript-mirror-to-log-store.py says the same). Cron's PATH on
+the Mac lacks Homebrew's directories, so on the Mac the program looks for tmux
+in MAC_TMUX_DIRECTORIES_CRON_PATH_LACKS after the PATH it was given.
 
 The environment variables named by the *_ENVIRONMENT_VARIABLE constants
 override where the log, the session records, the transcripts and the process
@@ -86,6 +88,7 @@ import getpass
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -134,6 +137,7 @@ SESSION_RECORD_GRACE_SECONDS = 60
 # Typed text and its Enter sent together can arrive as one paste, which the prompt does not submit.
 SECONDS_BETWEEN_TEXT_AND_ENTER = 0.5
 TMUX_TIMEOUT_SECONDS = 30
+MAC_TMUX_DIRECTORIES_CRON_PATH_LACKS = ("/opt/homebrew/bin", "/usr/local/bin")
 # Longer than the opener's own ssh time limit, so the opener reports its timeout itself.
 MAC_WINDOW_OPENER_TIMEOUT_SECONDS = 90
 PANE_IN_MODE = "1"
@@ -274,9 +278,16 @@ def show_notice(path: str) -> int:
     return 0
 
 
+def tmux_program():
+    if sys.platform != "darwin":
+        return "tmux"
+    search_path = os.pathsep.join([os.environ.get("PATH", ""), *MAC_TMUX_DIRECTORIES_CRON_PATH_LACKS])
+    return shutil.which("tmux", path=search_path) or "tmux"
+
+
 def tmux(seat, *arguments):
     """Run one tmux command on the seat's own server; return (exit code, output)."""
-    return run_command(["tmux", "-L", seat, *arguments], TMUX_TIMEOUT_SECONDS)
+    return run_command([tmux_program(), "-L", seat, *arguments], TMUX_TIMEOUT_SECONDS)
 
 
 def process_table(process_table_directory: Path):

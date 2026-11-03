@@ -1008,6 +1008,39 @@ def case_on_the_mac(namespace):
               and fixture.decisions() == ["typed"], (exit_code, errors, fixture.entries()))
     finally:
         fixture.close()
+    fixture = lost_seat("mac-default-log", namespace)
+    saved_directories = (watcher.MAC_LOG_DIRECTORY, watcher.LOG_DIRECTORY)
+    mac_logs, ned_box_logs = fixture.root / "mac-own-disk-logs", fixture.root / "ned-box-logs"
+    del fixture.environment[watcher.LOG_DIRECTORY_ENVIRONMENT_VARIABLE]
+    watcher.MAC_LOG_DIRECTORY, watcher.LOG_DIRECTORY = mac_logs, ned_box_logs
+    try:
+        exit_code, errors = MacStandIns(fixture, mac_listing(fixture.seat)).run()
+        check("on the Mac, with no log directory given, as cron runs it: decisions.jsonl and run.lock "
+              "go under MAC_LOG_DIRECTORY, and nothing under LOG_DIRECTORY",
+              exit_code == 0 and (mac_logs / "decisions.jsonl").is_file() and (mac_logs / "run.lock").is_file()
+              and not ned_box_logs.exists(), (exit_code, errors))
+    finally:
+        watcher.MAC_LOG_DIRECTORY, watcher.LOG_DIRECTORY = saved_directories
+        fixture.close()
+    fixture = lost_seat("mac-cron-path", namespace)
+    saved = (os.environ["PATH"], watcher.MAC_TMUX_DIRECTORIES_CRON_PATH_LACKS)
+    path_without_tmux = fixture.root / "path-without-tmux"
+    path_without_tmux.mkdir()
+    # The ps stand-in runs cat; tmux is the only command this PATH leaves out.
+    (path_without_tmux / "cat").symlink_to(shutil.which("cat"))
+    watcher.MAC_TMUX_DIRECTORIES_CRON_PATH_LACKS = (str(Path(shutil.which("tmux")).parent),)
+    os.environ["PATH"] = str(path_without_tmux)
+    try:
+        exit_code, errors = MacStandIns(fixture, mac_listing(fixture.seat)).run()
+    finally:
+        os.environ["PATH"], watcher.MAC_TMUX_DIRECTORIES_CRON_PATH_LACKS = saved
+    try:
+        check("on the Mac, run by cron with a PATH that lacks tmux's directory: tmux is found in "
+              "MAC_TMUX_DIRECTORIES_CRON_PATH_LACKS and /remote-control <seat> is typed",
+              exit_code == 0 and f"/remote-control {fixture.seat}" in fixture.typed()
+              and fixture.decisions() == ["typed"], (exit_code, errors, fixture.entries()))
+    finally:
+        fixture.close()
     fixture = lost_seat("mac-notice", namespace, pane=False)
     try:
         stand_ins = MacStandIns(fixture, mac_listing(fixture.seat))
