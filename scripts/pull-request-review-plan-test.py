@@ -73,14 +73,15 @@ sys.exit(response.get("exit_code", 0))
 
 FAILING_GIT_ARGUMENTS_VARIABLE = "PULL_REQUEST_REVIEW_PLAN_TEST_FAILING_GIT_ARGUMENTS"
 REAL_GIT_VARIABLE = "PULL_REQUEST_REVIEW_PLAN_TEST_REAL_GIT"
-# Fails as a broken repository does when the git arguments after -C begin with
-# the listed ones, and runs the real git for every other call.
+# Fails as a broken repository does when the git subcommand after -C is the first
+# listed argument and every other listed argument appears among its arguments, in
+# any order, and runs the real git for every other call.
 STAND_IN_FAILING_GIT_SOURCE = f'''#!/usr/bin/env python3
 import json
 import os
 import sys
 failing = json.loads(os.environ[{FAILING_GIT_ARGUMENTS_VARIABLE!r}])
-if sys.argv[1] == "-C" and sys.argv[3:3 + len(failing)] == failing:
+if sys.argv[1] == "-C" and sys.argv[3] == failing[0] and all(argument in sys.argv[4:] for argument in failing[1:]):
     sys.stderr.write("fatal: injected repository failure\\n")
     sys.exit(128)
 os.execv(os.environ[{REAL_GIT_VARIABLE!r}], ["git", *sys.argv[1:]])
@@ -955,16 +956,16 @@ def run_git_failure_cases(fixture):
     check("the git failure cases' control plan runs the changed program's test",
           plan["test_files_to_run"] == ["scripts/example-program-test.py"], plan)
 
-    result = fixture.run_review_plan_with_git_failing_on("rev-parse", "--verify", "--quiet", f"{head}^{{commit}}")
+    result = fixture.run_review_plan_with_git_failing_on("rev-parse", f"{head}^{{commit}}")
     check("git failing while looking up the head is refused with git's error, not as a head missing from the repository",
           refused_with_git_failure(result) and "is not in the repository" not in result.stderr, result.stderr)
-    result = fixture.run_review_plan_with_git_failing_on("ls-tree", "-z", "--name-only", head, "--", "docs/review-note.md")
+    result = fixture.run_review_plan_with_git_failing_on("ls-tree", head, "docs/review-note.md")
     check("git failing while looking for a changed file is refused, not read as the file being absent",
           refused_with_git_failure(result) and not result.stdout, result.stderr + result.stdout)
     result = fixture.run_review_plan_with_git_failing_on("show", f"{head}:docs/review-note.md")
     check("git failing while reading a changed file that is there is refused",
           refused_with_git_failure(result) and not result.stdout, result.stderr + result.stdout)
-    result = fixture.run_review_plan_with_git_failing_on("ls-tree", "-z", "--name-only", head, "--", "scripts/example-program-test.py")
+    result = fixture.run_review_plan_with_git_failing_on("ls-tree", head, "scripts/example-program-test.py")
     check("git failing while looking for test files is refused, not a plan that leaves the test out",
           refused_with_git_failure(result) and not result.stdout, result.stderr + result.stdout)
 
@@ -1037,7 +1038,7 @@ def run_architecture_overview_claim_check_cases(fixture):
 
 
 def run_architecture_overview_checked_against_commit_cases(fixture):
-    """Rule 4: an overview whose **Checked against:** commit is off main must name a commit of the head's history after which no code it describes changes."""
+    """Rule 4: an overview's **Checked against:** commit must hold the code it describes at head: a commit of main when the pull request changes none of that code, or else a commit of the head's history after which none of that code changes."""
     claim_check = review_plan_module.overview_claim_check
     report_directory = fixture.repository.parent / "checked-against-claim-check-reports"
     flag = ["--overview-write-architecture-overview-claim-check-report-directory", str(report_directory)]
@@ -1071,7 +1072,7 @@ def run_architecture_overview_checked_against_commit_cases(fixture):
 
     def refused_for_checked_against(result, overview_path=FIXTURE_OVERVIEW_PATH):
         return (refusal_has_expected_prefix(result) and not result.stdout
-                and "whose **Checked against:** commit is not on main" in result.stderr
+                and "whose **Checked against:** commit does not hold the code the overview describes" in result.stderr
                 and f"--overview {overview_path}\n" in result.stderr)
 
     fixture.reset_fixture_to_base()
@@ -1096,7 +1097,7 @@ def run_architecture_overview_checked_against_commit_cases(fixture):
           refused_for_checked_against(result)
           and f"names commit {code_commit}, and later commits of the pull request change code the overview describes: "
               "scripts/example-program.py." in result.stderr, result.stderr)
-    result = fixture.run_review_plan_with_git_failing_on("diff", "--no-renames", "--name-only", "-z", code_commit, head)
+    result = fixture.run_review_plan_with_git_failing_on("diff", code_commit, head)
     check("git failing while listing the paths changed after the named commit is refused with git's error, not a plan",
           refusal_has_expected_prefix(result) and "fatal: injected repository failure" in result.stderr and not result.stdout,
           result.stderr + result.stdout)
@@ -1160,8 +1161,28 @@ def run_architecture_overview_checked_against_commit_cases(fixture):
     fixture.reset_fixture_to_base()
     commit_overview_naming(fixture.base_head)
     change_and_commit("scripts/example-program.py", "VALUE = 'later'\n")
+    change_and_commit("nc-systems/example/unlisted-program.py", 'print("new")\n')
     result = fixture.run_review_plan(*flag)
-    check("an overview naming a commit of main is not refused for code changed after it, which a refresh handles",
+    check("an overview naming a commit of main is refused when the pull request changes code the overview describes, naming each path",
+          refused_for_checked_against(result)
+          and f"names commit {fixture.base_head} of main, and this pull request changes code the overview describes: "
+              "nc-systems/example/unlisted-program.py, scripts/example-program.py." in result.stderr, result.stderr)
+
+    fixture.reset_fixture_to_base()
+    commit_overview_naming(fixture.base_head)
+    change_and_commit("nc-systems/example/example-design.md", "Design prose.\n")
+    change_and_commit("scripts/sibling-program.py", 'print("new")\n')
+    result = fixture.run_review_plan(*flag)
+    check("an overview naming a commit of main lets the plan through when the pull request changes only a .md file under "
+          "nc-systems/<system>/ and a path named outside the Components section", result.returncode == 0, result.stderr)
+
+    fixture.reset_fixture_to_base()
+    main_code_commit = change_and_commit("scripts/example-program.py", "VALUE = 'on main'\n")
+    fixture.git_command("update-ref", "refs/remotes/origin/main", main_code_commit)
+    fixture.git_command("checkout", "-q", "--detach", main_code_commit)
+    commit_overview_naming(fixture.base_head)
+    result = fixture.run_review_plan(*flag)
+    check("an overview naming an older commit of main is not refused for code main changed after it, which a refresh handles",
           result.returncode == 0, result.stderr)
     fixture.reset_fixture_to_base()
 
