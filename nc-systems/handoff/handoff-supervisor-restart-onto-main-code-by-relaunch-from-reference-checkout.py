@@ -427,7 +427,7 @@ def not_restarted_message(seat: str, reason: str, what_was_changed: str) -> str:
             f"Tell the user: \"The handoff-supervisor of {seat} on {socket.gethostname()} was not "
             f"restarted onto main's code, so {seat} keeps running on its old code. The program "
             f"said: {reason}.\"\n"
-            f"A subagent gives that sentence to the agent that dispatched it, not to the user.")
+            f"A subagent gives the text in quotation marks, both of its sentences, to the agent that dispatched it, not to the user.")
 
 
 # ---------------------------------------------------------------- second half: steps 4 to 7
