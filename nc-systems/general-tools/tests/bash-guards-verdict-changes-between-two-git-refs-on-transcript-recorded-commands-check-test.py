@@ -604,7 +604,8 @@ try:
           f"status {status}\n{out}\n{err}")
     tmux_kill_refusal = (TMUX_KILL_GUARD, replay.read_tmux_kill(
         replay.load_module(REPOSITORY_ROOT, TMUX_KILL_GUARD, "tmux_kill_guard"), "tmux kill-server", "/tmp", None)[1])
-    tmux_kill_group = replay.refusal_group_ids([tmux_kill_refusal])[tmux_kill_refusal]
+    tmux_kill_group = replay.refusal_group_ids_assign_to_bash_guard_path_and_message_pairs_by_shortest_unique_digest_prefix(
+        [tmux_kill_refusal])[tmux_kill_refusal]
     check("a head that adds a guard refusing a recorded command: each mode counts its refusals, and the one refusal "
           "group, which both modes refuse, names its id, the guard, the command and its working directory",
           f"in-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command\n" in out
@@ -615,14 +616,14 @@ try:
           "    reason: " in out
           and "    command: 'tmux kill-server'\n      working directory: /tmp\n" in out, out)
     # As Codex found on pull request 2468: two refusal messages whose digests share their first eight hex digits.
-    digest_as_written = replay.refusal_group_digest
-    replay.refusal_group_digest = lambda guard, reason: "8ee5bdb8" + ("1" if reason.endswith("4768") else "2") * 56
+    digest_as_written = replay.refusal_group_digest_compute_from_bash_guard_path_and_message
+    replay.refusal_group_digest_compute_from_bash_guard_path_and_message = lambda guard, reason: "8ee5bdb8" + ("1" if reason.endswith("4768") else "2") * 56
     try:
         colliding = replay.added_guard_refusal_groups([("in-process", [
             (("git push --force origin topic-4768", "/tmp"), "force-push-guard.py", ("refused", "topic-4768")),
             (("git push --force origin topic-111837", "/tmp"), "force-push-guard.py", ("refused", "topic-111837"))])])
     finally:
-        replay.refusal_group_digest = digest_as_written
+        replay.refusal_group_digest_compute_from_bash_guard_path_and_message = digest_as_written
     check("two refusal messages whose ids would share their first eight hex digits: two refusal groups, each with "
           "its own message, its own command and an id of its own",
           sorted((group["reason"], group["refused commands"]) for group in colliding)
@@ -670,6 +671,10 @@ try:
           "refusal groups of the guards the head adds: 1, holding 300 refused recorded commands" in out
           and out.count("    command: ") == 3 and "297 more commands of this group are left out here" in out
           and many_long_refused[0][0] not in out, out[:3000])
+    check("a head that adds a guard refusing 300 long commands with one message: the printed group carries its "
+          "\"refusal right\" line, ready to copy",
+          f"    answer if every command of this group is rightly refused: refusal right: {TMUX_KILL_GUARD} | "
+          f"{tmux_kill_group}\n" in out, out[:3000])
     check("a head that adds a guard refusing 300 long commands with one message: the refusal groups file holds the "
           "group with every command in full",
           [(group["group"], group["guard"], group["modes"], group["refused commands"]) for group in groups]
@@ -691,6 +696,27 @@ try:
           and out.count(f": {TMUX_KILL_GUARD} refuses 1 recorded command, in in-process\n") == 10
           and "  290 more refusal groups are left out here, holding 290 refused recorded commands\n" in out
           and len(groups) == 300, f"status {status}, {len(out)} characters\n{out[:3000]}\n{err}")
+
+    one_command_more = replay.REFUSED_COMMANDS_PRINTED_PER_GROUP + 1
+    one_left_out_group = [{"group": f"refusal-group-{number:08x}", "guard": "g.py", "reason": f"r{number}",
+                           "modes": ["in-process"], "refused commands": [[f"c{number}", "/tmp"]]}
+                          for number in range(replay.REFUSAL_GROUPS_PRINTED + 1)]
+    one_left_out_group[0]["refused commands"] = [[f"c{number}", "/tmp"] for number in range(one_command_more)]
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        replay.print_added_guard_refusal_groups(one_left_out_group, "groups.json")
+    check("a group with one command more than is printed, and one refusal group more than is printed: each count "
+          "of one left out is in the singular",
+          "    1 more command of this group is left out here\n" in printed.getvalue()
+          and "  1 more refusal group is left out here, holding 1 refused recorded command\n" in printed.getvalue(),
+          printed.getvalue())
+    message = " ".join(replay.NEW_GUARD_REFUSES_MESSAGE.split())
+    check("the message says a refusal group the list leaves out prints no \"refusal right\" line, so its line is "
+          "written from the groups file, and that a group still refused after a fix-round needs one line, not one "
+          "per command",
+          "a group the list leaves out prints no line, so write its line from added-guard-refusal-groups.json" in message
+          and "such a group needs its one \"refusal right\" line in the review of the fix-round's head" in message,
+          replay.NEW_GUARD_REFUSES_MESSAGE)
 
     before_search_file_guard = commit_without_guard(SEARCH_FILE_GUARD)
     status, out, err = run_replay(main_refusing_all, scratch, "--new-process-pairs", "none",

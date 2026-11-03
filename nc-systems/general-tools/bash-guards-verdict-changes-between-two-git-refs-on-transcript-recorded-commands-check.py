@@ -148,8 +148,8 @@ NEW_GUARD_REFUSES_MESSAGE = (
     "NEW GUARD REFUSES RECORDED COMMANDS: a guard the head adds refuses the recorded commands of each refusal "
     "group listed above, so this check exits 1. Agents ran each of those commands, and a guard that refuses a "
     "command agents need stops their work.\n"
-    "A refusal group is one added guard and one refusal message, with every recorded command, one working "
-    "directory and one command, that the guard refuses with that message, in any mode. The modes are the ways "
+    "A refusal group is one added guard and one refusal message, with every recorded command, one command "
+    "and one working directory, that the guard refuses with that message, in any mode. The modes are the ways "
     "this check reads a command: in-process, search-file main() and new-process. Each group has an id, "
     "refusal-group-<8 or more hex digits>, made from the guard's path and the message, so the same group has the "
     "same id in every run of this check that finds the same groups.\n"
@@ -160,11 +160,15 @@ NEW_GUARD_REFUSES_MESSAGE = (
     "\"modes\" the modes that refused, and \"refused commands\" a list of [command, working directory].\n"
     "Where every command in a group is rightly refused, the answer is a line of its own:\n"
     "  refusal right: <guard file> | <group id>\n"
-    "for example, with a made-up guard path: refusal right: scripts/example-guard-hook.py | refusal-group-0a1b2c3d.\n"
+    "for example, with a made-up guard path: refusal right: scripts/example-guard-hook.py | refusal-group-0a1b2c3d. "
+    "Each group listed above prints its own line in that form, ready to copy; a group the list leaves out "
+    "prints no line, so write its line from added-guard-refusal-groups.json.\n"
     "On the next line, write in one line why the guard is right to refuse that group's commands.\n"
     "Where a command in a group is wrongly refused, the group gets no \"refusal right\" line: the answer is a "
     "finding that names each wrongly refused command and its working directory, and the author then narrows the "
-    "guard so that it lets that command through. Each other group still gets its own answer.\n"
+    "guard so that it lets that command through. Each other group still gets its own answer. A group whose "
+    "guard and message the narrowing leaves unchanged keeps its id, and while the guard still refuses any of its "
+    "commands, such a group needs its one \"refusal right\" line in the review of the fix-round's head.\n"
     "The answers go in the review of the nc-head-commit being merged; after a fix-round, that is the review of "
     "the fix-round's head; answers in a review of an earlier head do not count, so the review of the fix-round's head repeats them.\n")
 NEW_GUARD_REFUSES_ONLY_ENDING = (
@@ -935,14 +939,14 @@ def print_rows(title, items, limit):
             print(f"    {name}: {shortened(reading)}")
 
 
-def refusal_group_digest(guard, reason):
+def refusal_group_digest_compute_from_bash_guard_path_and_message(guard, reason):
     return hashlib.sha256(json.dumps([guard, reason]).encode()).hexdigest()
 
 
-def refusal_group_ids(pairs):
+def refusal_group_ids_assign_to_bash_guard_path_and_message_pairs_by_shortest_unique_digest_prefix(pairs):
     """Return {(guard, reason): id} for the distinct pairs: each id is "refusal-group-" and the shortest prefix,
     eight hex digits or more, of the pair's digest that no other pair's digest shares."""
-    digests = {pair: refusal_group_digest(*pair) for pair in pairs}
+    digests = {pair: refusal_group_digest_compute_from_bash_guard_path_and_message(*pair) for pair in pairs}
     length = 8
     while len({digest[:length] for digest in digests.values()}) < len(digests):
         length += 1
@@ -961,7 +965,7 @@ def added_guard_refusal_groups(refusals_by_mode):
                                                             "refused commands": {}})
             group["modes"][mode] = None
             group["refused commands"][(command, working_directory)] = None
-    ids = refusal_group_ids(groups)
+    ids = refusal_group_ids_assign_to_bash_guard_path_and_message_pairs_by_shortest_unique_digest_prefix(groups)
     listed = [{"group": ids[pair], "guard": group["guard"], "reason": group["reason"], "modes": list(group["modes"]),
                "refused commands": [list(command) for command in group["refused commands"]]}
               for pair, group in groups.items()]
@@ -982,12 +986,16 @@ def print_added_guard_refusal_groups(groups, groups_file):
         for command, working_directory in commands[:REFUSED_COMMANDS_PRINTED_PER_GROUP]:
             print(f"    command: {shortened(repr(command))}\n      working directory: {shortened(working_directory)}")
         if len(commands) > REFUSED_COMMANDS_PRINTED_PER_GROUP:
-            print(f"    {len(commands) - REFUSED_COMMANDS_PRINTED_PER_GROUP} more commands of this group are left "
-                  f"out here")
+            more = len(commands) - REFUSED_COMMANDS_PRINTED_PER_GROUP
+            print(f"    {more} more {'command' if more == 1 else 'commands'} of this group "
+                  f"{'is' if more == 1 else 'are'} left out here")
+        print(f"    answer if every command of this group is rightly refused: refusal right: {group['guard']} | "
+              f"{group['group']}")
     left_out = groups[REFUSAL_GROUPS_PRINTED:]
+    left_out_commands = sum(len(group["refused commands"]) for group in left_out)
     if left_out:
         print(f"  {len(left_out)} more refusal {'group is' if len(left_out) == 1 else 'groups are'} left out here, "
-              f"holding {sum(len(group['refused commands']) for group in left_out)} refused recorded commands")
+              f"holding {left_out_commands} refused recorded {'command' if left_out_commands == 1 else 'commands'}")
 
 
 def remove_checkouts(repository, checkouts):
