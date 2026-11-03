@@ -1208,7 +1208,8 @@ def item_reads_directory(walk_finder, minutes):
 
 
 def text_key(text):
-    return hashlib.sha256(squeezed(text).encode("utf-8")).hexdigest()
+    # Whitespace is kept: inside a code span or fenced code it changes what the user is shown.
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def write_json(path, value):
@@ -1331,7 +1332,7 @@ def labelled_parts(text):
     return parts + [squeezed(line) for line in lines if CASE_AGAINST_LINE.match(line)]
 
 
-def approval_walk_item_changed_fact_words_needing_new_cold_read_fast_read(before, after, top):
+def approval_walk_item_before_and_after_fixes_compare_for_changed_fact_words_needing_another_cold_read_fast_read(before, after, top):
     """Return the facts the change from before to after touches, as words to list; empty when it touches none.
     When `git ls-files` fails and any word changed, the list holds one line saying so instead of the names."""
     facts = [f"\"{part[:40]}\"" for part in
@@ -1385,7 +1386,7 @@ def waiting_item_read(arguments):
         latest = latest_read(reads, item) if arguments.after_fixes_reread_only_when_facts_change else None
         if latest is not None:
             last_text = (reads / f"{latest[0]}.md").read_text(encoding="utf-8").rstrip("\n")
-            facts = approval_walk_item_changed_fact_words_needing_new_cold_read_fast_read(last_text, text, top)
+            facts = approval_walk_item_before_and_after_fixes_compare_for_changed_fact_words_needing_another_cold_read_fast_read(last_text, text, top)
             if not facts:
                 print("\n".join([ITEM_READ_NOT_RUN.format(item=item, report=latest[1]["report"]),
                                  ITEM_READ_NOT_RUN_NEXT.format(item=item)]))

@@ -2666,6 +2666,19 @@ def test_a_fix_is_compared_with_the_items_own_read_not_a_newer_read_of_another_i
           and times_read(case, ITEM_3_HEADING) == 1, described(result))
 
 
+def test_a_fix_that_changes_only_the_spacing_inside_a_code_span_is_read_again():
+    case = item_read_case()
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    document.write_text(document.read_text().replace(ITEM_3_HEADING, ITEM_3_HEADING + "\nIt edits `poem list`.\n"))
+    answered_and_closed(case)
+    case.run(WAITING_ITEM_READ)
+    document.write_text(document.read_text().replace("`poem list`", "`poem  list`"))
+    result = case.run(WAITING_ITEM_READ, AFTER_FIXES)
+    check(f"{AFTER_FIXES} after a fix that changes only the spacing inside a code span reads the item again",
+          result.returncode == 0 and "had to be run now, because your changes since" in result.stdout
+          and times_read(case, ITEM_3_HEADING) == 2, described(result))
+
+
 def test_a_fix_that_touches_a_fact_is_read_again():
     added = ITEM_3_HEADING + "\n{}\n"
     for name, old, new, fact in (
@@ -2701,20 +2714,20 @@ def test_a_file_or_path_git_lists_counts_as_a_fact_and_git_failing_counts_every_
     subprocess.run(["git", "init", "-q", str(top)], check=True)
     (top / "scripts" / "poem-index").write_text("x")
     subprocess.run(["git", "-C", str(top), "add", "scripts/poem-index"], check=True)
-    named = program.approval_walk_item_changed_fact_words_needing_new_cold_read_fast_read("It runs a tool.", "It runs poem-index.", top)
+    named = program.approval_walk_item_before_and_after_fixes_compare_for_changed_fact_words_needing_another_cold_read_fast_read("It runs a tool.", "It runs poem-index.", top)
     check("a changed word git ls-files lists, by path, directory or file name, is a fact",
           named == ["poem-index."]
-          and program.approval_walk_item_changed_fact_words_needing_new_cold_read_fast_read("Look in a place.", "Look in scripts/.", top) == ["scripts/."]
-          and program.approval_walk_item_changed_fact_words_needing_new_cold_read_fast_read("It runs a tool.", "It runs a script.", top) == []
-          and program.approval_walk_item_changed_fact_words_needing_new_cold_read_fast_read(
+          and program.approval_walk_item_before_and_after_fixes_compare_for_changed_fact_words_needing_another_cold_read_fast_read("Look in a place.", "Look in scripts/.", top) == ["scripts/."]
+          and program.approval_walk_item_before_and_after_fixes_compare_for_changed_fact_words_needing_another_cold_read_fast_read("It runs a tool.", "It runs a script.", top) == []
+          and program.approval_walk_item_before_and_after_fixes_compare_for_changed_fact_words_needing_another_cold_read_fast_read(
               "It reads <the item>.", "It reads <the item> [advisor].", top) == [], repr(named))
     not_a_checkout = SUITE_ROOT / "facts-no-git"
     not_a_checkout.mkdir()
-    facts = program.approval_walk_item_changed_fact_words_needing_new_cold_read_fast_read("It runs a tool.", "It runs a script.", not_a_checkout)
+    facts = program.approval_walk_item_before_and_after_fixes_compare_for_changed_fact_words_needing_another_cold_read_fast_read("It runs a tool.", "It runs a script.", not_a_checkout)
     check("when git ls-files fails, every changed word counts, so the item is read again",
           len(facts) == 1 and facts[0].startswith("every changed word, since `git ls-files` failed in "), repr(facts))
     check("an unchanged text touches no fact even when git ls-files fails",
-          program.approval_walk_item_changed_fact_words_needing_new_cold_read_fast_read("It runs a tool.", "It runs a tool.", not_a_checkout) == [], "")
+          program.approval_walk_item_before_and_after_fixes_compare_for_changed_fact_words_needing_another_cold_read_fast_read("It runs a tool.", "It runs a tool.", not_a_checkout) == [], "")
 
 
 
