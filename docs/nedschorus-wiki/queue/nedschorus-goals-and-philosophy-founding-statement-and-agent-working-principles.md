@@ -132,6 +132,12 @@ An agent keeps a file only for what the file is worth, and not because keeping i
 
 - 2026-08-31, items 2 and 3 of approval-walk retired-seat-cleanup-and-reboot-open-questions: "dont save junk becuase it's easy to save." and "Not everything that has no decendents is junk. Some are first steps". Walk-minutes `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/retired-seat-cleanup-and-reboot-open-questions-minutes.md` lines 6 and 7.
 
+## Open question for the user
+
+A review sometimes finds not a defect but an improvement, an addition or a change, such as a new test or a new GHI. On 2026-11-03 at about 23:00Z the user asked, in cold-read-improvement's agent-session on ned-box: "sometimes these reviews can come up with items which aren't fixes, they're improvements, say, or additions or changes, and those could be tests or GHIs ... if we're asking agents to report problems, is something an improvement to problem?" He has not decided whether such a finding is ranked in the four categories of principle 2, or is a separate kind routed straight to a test, a task or a GHI.
+
+Recommendation: rank it in the same four categories, marked as an improvement rather than a defect, so that one record holds every finding and none is forgotten. An improvement is must fix only when the next step cannot be completed or validated without it, such as a test that `CLAUDE.md` requires; most improvements fall in the fourth category, which the founding statement already words as "File as an improvement". The case against is weak: a reviewer told to report problems may report fewer improvements, which the mark answers by asking for them by name.
+
 ## What implementing the philosophy changes
 
 The four categories, kept claims and one standard for every agent change the places that produce findings today: pull request reviews and the follow-up of their non-blocking findings, the /cold-read skill's triage, the overview claim check, sanity-check triage, approval-walks, design-to-main's reviewers, and the advice findings on -nbd files; and the instructions every agent reads. GHI [Implementing the project's goals and philosophy: every finding sorted into four categories, checked claims kept with their evidence, and one standard in every agent's instructions](https://github.com/nedschorus/nedschorus/issues/2522) lists each place, says whether it already agrees, partly agrees or diverges, and carries the work.
