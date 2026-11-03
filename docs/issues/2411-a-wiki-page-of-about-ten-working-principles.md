@@ -14,7 +14,7 @@ The section "Standing decisions" in `docs/nedschorus-wiki/nedschorus-ai-native-s
 
 ## The principles
 
-The page pending approval, `docs/nedschorus-wiki/queue/nedschorus-goals-and-philosophies-for-how-agents-work-with-the-user-and-build.md`, which reaches main through PR [Wiki queue: the project's goals-and-philosophies page for GHI 2411, pending the user's approval](https://github.com/nedschorus/nedschorus/pull/2513), holds fourteen principles, each followed by the user-rulings it comes from, gathered from the walk-minutes and his typed messages.
+The page pending approval, `docs/nedschorus-wiki/queue/nedschorus-goals-and-philosophy-founding-statement-and-agent-working-principles.md`, which reaches main through PR [Wiki queue: the project's goals-and-philosophies page for GHI 2411, pending the user's approval](https://github.com/nedschorus/nedschorus/pull/2513), holds fourteen principles, each followed by the user-rulings it comes from, gathered from the walk-minutes and his typed messages.
 
 How agents work with the user:
 
@@ -38,7 +38,7 @@ How agents build and finish work, the three principles he gave on 2026-11-03:
 
 ## What the page is, and how it avoids drifting
 
-- It is a wiki page named `nedschorus-goals-and-philosophies-for-how-agents-work-with-the-user-and-build.md`, a name a fresh subagent read correctly from the name alone. Each principle is one short paragraph, followed by the user-rulings it comes from.
+- It is a wiki page named `nedschorus-goals-and-philosophy-founding-statement-and-agent-working-principles.md`, a name a fresh subagent read correctly from the name alone. Each principle is one short paragraph, followed by the user-rulings it comes from.
 - A principle is a rule for how agents work with the user, or build and finish work, across tasks. A user-ruling on one task's content is not a principle.
 - The page's goal section links to the section "What the project is" of the objective page, the user's own statement of the goal, in place of restating it.
 - The objective page links to the new page from the section "Standing decisions", and the new page links back to that section.
@@ -62,7 +62,7 @@ The user also said, on line 36, that the principles of 2026-11-03 belong in `CLA
 
 ## Next action
 
-1. Give the wiki page `docs/nedschorus-wiki/queue/nedschorus-goals-and-philosophies-for-how-agents-work-with-the-user-and-build.md` its cold-read-full-run with the /cold-read skill; it has had its cold-read-fast-read only.
+1. Give the wiki page `docs/nedschorus-wiki/queue/nedschorus-goals-and-philosophy-founding-statement-and-agent-working-principles.md` its cold-read-full-run with the /cold-read skill; it has had its cold-read-fast-read only.
 2. Put the page to the user in an approval-walk, one principle per item, with the proposed `CLAUDE.md` lines as items of their own. A principle he disapproves is dropped. A principle he revises is rewritten and goes back to him as a new item. The proposed `CLAUDE.md` lines are handled the same way, and do not hold up the page.
 3. In one pull request, move the approved page out of the queue to `docs/nedschorus-wiki/` with `git mv`, change its relative links from `../` to the same directory, and add the objective page's link from the section "Standing decisions".
 4. After he approves the `CLAUDE.md` lines, add them in their own pull request, and tell each other agent-seat of the principles with SendMessage, naming the page.
