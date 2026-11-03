@@ -515,7 +515,8 @@ class Watcher:
         stamp = self.now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         return self.log_directory / "notices" / f"{stamp}-{seat}-{kind}.txt"
 
-    def write_notice(self, seat, kind, template, title_template=None, **fields) -> dict:
+    def write_notice(self, seat, kind, template, title_template=None, write_user_alert=True,
+                     **fields) -> dict:
         path = self.notice_path(seat, kind)
         path.parent.mkdir(parents=True, exist_ok=True)
         # The user may hand a notice to an agent on ned-box, which needs the ned-box path.
@@ -523,7 +524,8 @@ class Watcher:
                   f"(on ned-box: {self.decisions_path})")
         text = template.format(seat=seat, record=record, mac_launcher=MAC_LAUNCHER, **fields)
         path.write_text(text, encoding="utf-8")
-        self.write_alert(seat, kind, path, text)
+        if write_user_alert:
+            self.write_alert(seat, kind, path, text)
         notice = {"path": str(path)}
         title = None if title_template is None else title_template.format(seat=seat)
         page = self.write_notice_page(seat, path, text, title)
@@ -932,6 +934,11 @@ def report_run_failure(error_text, state_directory: Path, log_directory: Path):
     reported_path = state_directory / f"{PROGRAM}-reported-run-failures.txt"
     reported = (reported_path.read_text(encoding="utf-8").splitlines()
                 if reported_path.is_file() else [])
+    # Apart from the reported record: a notice the Mac missed is retried each failing run, but
+    # its user-alert stays on disk until claimed, so a second alert would be a duplicate.
+    alerted_path = state_directory / f"{PROGRAM}-alerted-run-failures.txt"
+    alerted = (alerted_path.read_text(encoding="utf-8").splitlines()
+               if alerted_path.is_file() else [])
     state_path = state_directory / f"{PROGRAM}-state.json"
     try:
         state = read_state(state_path)
@@ -951,7 +958,14 @@ def report_run_failure(error_text, state_directory: Path, log_directory: Path):
         watcher.show(notice)
     if error_text not in reported:
         watcher.write_notice("watcher", "run-failed", RUN_FAILED_NOTICE_TEMPLATE,
-                             error=error_text)
+                             write_user_alert=error_text not in alerted, error=error_text)
+        if error_text not in alerted:
+            try:
+                with alerted_path.open("a", encoding="utf-8") as stream:
+                    stream.write(error_text + "\n")
+            except OSError as error:
+                watcher.log(None, "could not record that the run failure's user alert was written; "
+                            "the next failing run writes it again", error=f"{type(error).__name__}: {error}")
     saved = False
     if state_readable:
         try:

@@ -1104,23 +1104,57 @@ def run_report_run_failure_state_cases(root: Path):
               len(set(pending_alerts.glob("*.json")) - alerts_before) == 1, repr(alerts_before))
         check("with an unreadable state, a notice the Mac missed is left for the next failing run",
               not reported.exists(), reported.read_text(encoding="utf-8") if reported.exists() else "")
+        windows_before_retry = len(windows)
+        watcher_module.report_run_failure("ValueError: bad state", corrupt, root / "corrupt-log")
+        check("a failed run retried with an unreadable state tries the Mac again but writes no second alert",
+              len(windows) > windows_before_retry
+              and len(set(pending_alerts.glob("*.json")) - alerts_before) == 1,
+              repr(sorted(set(pending_alerts.glob("*.json")) - alerts_before)))
 
         locked = root / "unsavable-state"
         locked.mkdir()
         (locked / f"{watcher_module.PROGRAM}-state.json").write_text("{}", encoding="utf-8")
-        locked.chmod(0o555)
         raised = None
+        alerts_before = set(pending_alerts.glob("*.json"))
+        state_file = locked / f"{watcher_module.PROGRAM}-state.json"
+        real_write_state = watcher_module.write_state
+
+        def write_state_refused(path, state):
+            if Path(path) == state_file:
+                raise PermissionError("state not writable")
+            return real_write_state(path, state)
+        watcher_module.write_state = write_state_refused
         try:
+            watcher_module.report_run_failure("OSError: disk", locked, root / "unsavable-log")
             watcher_module.report_run_failure("OSError: disk", locked, root / "unsavable-log")
         except Exception as error:  # noqa: BLE001 - the case checks that nothing escapes
             raised = error
         finally:
-            locked.chmod(0o755)
+            watcher_module.write_state = real_write_state
+        check("a failed run retried with a state that cannot be saved writes no second alert",
+              len(set(pending_alerts.glob("*.json")) - alerts_before) == 1,
+              repr(sorted(set(pending_alerts.glob("*.json")) - alerts_before)))
         decisions = (root / "unsavable-log" / "decisions.jsonl").read_text(encoding="utf-8")
         check("a state that cannot be saved is logged, and the error is not marked as reported",
               raised is None and "could not save the watcher's state" in decisions
               and not (locked / f"{watcher_module.PROGRAM}-reported-run-failures.txt").exists(),
               repr(raised))
+
+        unwritable = root / "unwritable-state"
+        unwritable.mkdir()
+        (unwritable / f"{watcher_module.PROGRAM}-state.json").write_text("{}", encoding="utf-8")
+        unwritable.chmod(0o555)
+        raised = None
+        try:
+            watcher_module.report_run_failure("OSError: read-only", unwritable, root / "unwritable-log")
+        except Exception as error:  # noqa: BLE001 - the case checks that nothing escapes
+            raised = error
+        finally:
+            unwritable.chmod(0o755)
+        decisions = (root / "unwritable-log" / "decisions.jsonl").read_text(encoding="utf-8")
+        check("a state directory where the alerted record cannot be written is logged, not raised",
+              raised is None and "could not record that the run failure's user alert was written"
+              in decisions, repr(raised))
     finally:
         watcher_module.open_mac_window = real_opener
         watcher_module.open_mac_browser_page = real_page_opener

@@ -3,7 +3,8 @@
 his approval-walk.
 
 Each case runs the hook as a subprocess, its real stdin-to-stdout path, with HOME pointed at a scratch directory
-holding the alerts, in a scratch checkout. Prints one line per case and exits non-zero if any case fails.
+holding the alerts, in a scratch checkout. The hook claims alerts only on Linux, so each case sets the hook's
+sys.platform, and the suite passes on the Mac too. Prints one line per case and exits non-zero if any case fails.
 """
 import importlib.util
 import json
@@ -63,10 +64,13 @@ class Case:
             stream.write(json.dumps({"type": "user", "turnOrigin": origin,
                                      "message": {"role": "user", "content": text}}) + "\n")
 
-    def run(self, prompt, stdin=None):
+    def run(self, prompt, stdin=None, platform="linux"):
         payload = {"hook_event_name": "UserPromptSubmit", "prompt": prompt, "cwd": str(self.checkout),
                    "transcript_path": str(self.transcript)}
-        result = subprocess.run([sys.executable, str(HOOK)], input=stdin or json.dumps(payload),
+        run_hook_as_platform = ("import runpy, sys; sys.platform = sys.argv[1]; "
+                                "runpy.run_path(sys.argv[2], run_name='__main__')")
+        result = subprocess.run([sys.executable, "-c", run_hook_as_platform, platform, str(HOOK)],
+                                input=stdin or json.dumps(payload),
                                 capture_output=True, text=True, env={**os.environ, "HOME": str(self.home)},
                                 check=False)
         context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"] if result.stdout else ""
@@ -147,6 +151,15 @@ def run_not_typed_cases(root):
           case.names("pending") == ["alert-a"], repr(case.names("claimed")))
 
 
+def run_mac_cases(root):
+    case = Case(root, "mac")
+    case.alert("alert-a")
+    result, context = case.run("hello", platform="darwin")
+    check("on the Mac a typed prompt claims nothing and prints nothing",
+          result.returncode == 0 and result.stdout == "" and case.names("pending") == ["alert-a"],
+          result.stdout + result.stderr + repr(case.names("claimed")))
+
+
 def run_release_cases(root):
     case = Case(root, "returned")
     path = case.alert("alert-old", directory="claimed")
@@ -185,6 +198,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     scratch = Path(temporary_directory)
     run_typed_prompt_cases(scratch)
     run_not_typed_cases(scratch)
+    run_mac_cases(scratch)
     run_release_cases(scratch)
     run_failure_cases(scratch)
 
