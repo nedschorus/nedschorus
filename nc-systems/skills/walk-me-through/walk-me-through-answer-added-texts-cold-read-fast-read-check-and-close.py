@@ -206,10 +206,13 @@ next item, with the next item counted as decided, in a detached process of its
 own session that close does not wait for; and it tells the agent to run
 APPROVAL-WALK-WAITING-ITEM-COLD-READ-FAST-READ, below, before presenting the
 next item. That step starts the same read ahead, so a retried step or a
-successor agent-session starts it too; a read of a text already done, or still
-running, is not started again. The read ahead is a guess: when the walk
-presents another item next, or the item's text changes before it is shown, the
-read is only left unused. The last item has no item after it, so no read ahead
+successor agent-session starts it too; a text whose read was started or written
+before, whatever its outcome, is not read ahead again, so a failed read ahead is
+never retried. The read ahead is a guess: when the walk presents another item
+next, or the item's text changes before it is shown, the read is only left
+unused; when it cannot be started, for example because the walk-document has two
+headings for that item, close and the step print one line saying so and why,
+and go on. The last item has no item after it, so no read ahead
 starts while it is shown, and a close that writes `none, closed` starts none.
 CLOSE names item 1 only when the walk comes round to it again, so no read ahead
 covers item 1's first showing: the walk-me-through skill's cold-read-fast-read
@@ -235,7 +238,7 @@ compared with the text of the item's latest read that wrote its report. When
 the change touches no fact, the step runs no read and says so; otherwise it
 reads the item, listing the facts touched. The words of the two texts are
 matched by difflib, and a word changed, added or removed is a fact when it holds
-a digit; is a backquoted span, a Markdown link or an autolink, or holds `://`;
+a digit or a backquote; is a Markdown link or holds an autolink or `://`;
 ends in a file extension, a dot then a letter and at most four more letters or
 digits, unless it is a letter abbreviation such as `e.g.`; or, without the
 punctuation around it and a trailing `/`, is a path `git ls-files` lists in the
@@ -587,8 +590,9 @@ ITEM_READS_DIRECTORY_SUFFIX = "-item-cold-read-fast-read-review-status-per-text-
 READ_DONE, READ_FAILED = "done", "failed"
 READ_POLL_SECONDS = 2
 FACT_LABELS = ("Recommendation:", "The alternative:")
+AUTOLINK = r"<[A-Za-z][A-Za-z0-9+.-]*:[^>\s]*>"
 # A backquoted span, a Markdown link, an autolink, or any other run of non-space characters.
-FACT_TOKEN = re.compile(r"`[^`\n]+`|!?\[[^\]\n]*\]\([^)\s]*\)|<[A-Za-z][A-Za-z0-9+.-]*:[^>\s]*>|\S+")
+FACT_TOKEN = re.compile(r"`[^`\n]+`|!?\[[^\]\n]*\]\([^)\s]*\)|" + AUTOLINK + r"|\S+")
 FILE_EXTENSION_END = re.compile(r"\w\.[A-Za-z][A-Za-z0-9]{0,4}$")
 LETTER_ABBREVIATION = re.compile(r"(?:[A-Za-z]\.)+[A-Za-z]?")
 TOKEN_EDGE_PUNCTUATION = "\"'“”‘’()[]{}<>*_.,;:!?"
@@ -624,6 +628,9 @@ ITEM_READ_FAILED_LINES = (
     "line above and recommending that you run the command again later; a subagent puts that question to the agent "
     "that dispatched it.",
 )
+READ_AHEAD_NOT_STARTED = ("No cold-read-fast-read could be started ahead for the item after {item}; this needs nothing "
+                          "from you now, since when that item waits its read step reads it or reports the problem "
+                          "again. The problem: {problem}")
 GIT_LS_FILES_FAILED = "every changed word, since `git ls-files` failed in {top} ({error}) and file names were not known"
 
 
@@ -698,14 +705,15 @@ def waiting_items(walk_finder, value, minutes):
     return match[0], numbers, total
 
 
-def item_line_ranges(walk_finder, minutes, value, numbers, total, parser):
+def item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_by=None):
     """Return (walk-document path, its text, its tokens, the (first, end) line ranges of the items numbered),
-    finding the items as close does, so check refuses a walk-document close would refuse."""
+    finding the items as close does, so check refuses a walk-document close would refuse. A Failure names
+    named_by as what named the items, by default the walk-minutes' last `#next_to_present` line."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     try:
         _, spans = walk_finder.waiting_item_units(document, value, numbers, total, parser)
     except walk_finder.UnusableRange as problem:
-        raise Failure(f"the last `#next_to_present` line in {minutes}, `{value}`: {problem}")
+        raise Failure(f"{named_by or f'the last `#next_to_present` line in {minutes}'}, `{value}`: {problem}")
     text = document.read_text(encoding="utf-8")
     tokens = parser.parse(text)
     openings = walk_finder.item_opening_lines(text, parser, tokens)
@@ -725,9 +733,9 @@ def item_lines(walk_finder, minutes, value, numbers, total, parser):
     return document, [line for first, end in ranges for line in lines[first:end]]
 
 
-def item_text(walk_finder, minutes, value, numbers, total, parser):
+def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None):
     """Return (walk-document path, the items' text as the user is shown it, heading and fenced code included)."""
-    document, text, _, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
+    document, text, _, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_by)
     lines = text.split("\n")
     return document, "\n".join(line for first, end in ranges for line in lines[first:end]).strip()
 
@@ -1256,13 +1264,12 @@ def read_ahead_worker(arguments):
 
 
 def start_read_ahead(reads, item, text, name, fast_read_program, top):
-    """Start a detached read-ahead worker on the text, unless a read of the same text is done or running."""
+    """Start a detached read-ahead worker on the text, unless a read of the same text was started or written
+    before, whatever its outcome: a read ahead is never retried, so a failed one leaves the read to the read step."""
     key = text_key(text)
-    outcome = read_outcome(reads, key)
-    if (outcome and outcome["status"] == READ_DONE) or (outcome is None and worker_alive(reads, key)):
+    if (reads / f"{key}-outcome.json").is_file() or (reads / f"{key}-started.json").is_file():
         return
     reads.mkdir(exist_ok=True)
-    (reads / f"{key}-outcome.json").unlink(missing_ok=True)
     text_file = reads / f"{key}.md"
     text_file.write_text(text + "\n", encoding="utf-8")
     # Its own session, and no pipe to this process, so close returns at once and the read outlives it.
@@ -1275,18 +1282,25 @@ def start_read_ahead(reads, item, text, name, fast_read_program, top):
 
 
 def start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, total, fast_read_program):
-    """Start the read ahead of the item the walk would present after the items numbered, if there is one."""
+    """Start the read ahead of the item the walk would present after the items numbered, if there is one.
+    Return None, or a line saying why no read ahead could be started: the read ahead is a guess, so its
+    failure never stops close or the read step."""
     named = items_named(numbers, total)
-    _, order, summary = walk_document_items(walk_finder, minutes, named, numbers, total, parser)
-    decided, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
-    after = next_item(order, summary, numbers, numbers, decided | set(numbers), deferrals)
-    if not after:
-        return
-    after_named = items_named(after, total)
-    _, text = item_text(walk_finder, minutes, after_named, after, total, parser)
-    walk_name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
-    start_read_ahead(item_reads_directory(walk_finder, minutes), after_named, text,
-                     f"{walk_name}-{file_name_part(after_named)}", fast_read_program, top)
+    try:
+        _, order, summary = walk_document_items(walk_finder, minutes, named, numbers, total, parser)
+        decided, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
+        after = next_item(order, summary, numbers, numbers, decided | set(numbers), deferrals)
+        if not after:
+            return None
+        after_named = items_named(after, total)
+        _, text = item_text(walk_finder, minutes, after_named, after, total, parser,
+                            named_by=f"the item after {named}")
+        walk_name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
+        start_read_ahead(item_reads_directory(walk_finder, minutes), after_named, text,
+                         f"{walk_name}-{file_name_part(after_named)}", fast_read_program, top)
+    except Failure as problem:
+        return READ_AHEAD_NOT_STARTED.format(item=named, problem=problem)
+    return None
 
 
 def tracked_names(top):
@@ -1304,7 +1318,7 @@ def tracked_names(top):
 
 def is_fact(token, names):
     """Whether a changed token is a number, a path, a file or program name, or a link."""
-    if re.search(r"\d", token) or token.startswith("`") or "](" in token or "://" in token:
+    if re.search(r"\d", token) or "`" in token or "](" in token or "://" in token or re.search(AUTOLINK, token):
         return True
     core = token.strip(TOKEN_EDGE_PUNCTUATION).rstrip("/")
     return core in names or (bool(FILE_EXTENSION_END.search(core)) and not LETTER_ABBREVIATION.fullmatch(core))
@@ -1351,7 +1365,10 @@ def waiting_item_read(arguments):
     item = items_named(numbers, total)
     document, text = item_text(walk_finder, minutes, value, numbers, total, parser)
     reads = item_reads_directory(walk_finder, minutes)
-    start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, total, arguments.fast_read_program)
+    not_started = start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, total,
+                                                 arguments.fast_read_program)
+    if not_started:
+        print(not_started)
     program = Path(__file__).resolve()
     command = READ_STEP_COMMAND.format(program=program, flags=" " + AFTER_FIXES_FLAG, top=shlex.quote(str(top)))
     key = text_key(text)
@@ -1606,7 +1623,9 @@ def close(arguments):
     named = items_named(numbers, total)
     append_to_minutes(minutes, [NEXT_MARKER_LINE.format(value=named if numbers else CLOSED_MARKER_VALUE)])
     if numbers:
-        start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, total, arguments.fast_read_program)
+        not_started = start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, total,
+                                                     arguments.fast_read_program)
+        output += [not_started] if not_started else []
     output.append(CLOSE_READ_NEXT_ITEM.format(next_item=named, command=READ_STEP_COMMAND.format(
         program=Path(__file__).resolve(), flags="", top=shlex.quote(str(top)))) if numbers else CLOSE_NO_NEXT_ITEM)
     print("\n".join(output))

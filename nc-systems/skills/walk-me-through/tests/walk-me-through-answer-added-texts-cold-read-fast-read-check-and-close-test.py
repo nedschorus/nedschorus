@@ -2561,6 +2561,35 @@ def test_a_read_ahead_that_failed_or_ended_without_an_outcome_is_run_again():
           and times_read(case, "## Item 4 of 5: four") == 2, described(result))
 
 
+def test_a_failed_read_ahead_is_not_started_again_by_later_read_steps():
+    case = item_read_case()
+    answered_and_closed(case, mode="failed")
+    case.run(WAITING_ITEM_READ)
+    case.run(WAITING_ITEM_READ, AFTER_FIXES)
+    check("read steps for the item before a failed read ahead do not start that read ahead again",
+          times_read(case, "## Item 4 of 5: four") == 1, case.calls.read_text())
+
+
+def test_a_read_ahead_that_cannot_find_its_item_never_stops_close_or_the_read_step():
+    case = item_read_case()
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    document.write_text(document.read_text().replace("## Item 5 of 5", "## Item 4 of 5: four again\n\n## Item 5 of 5"))
+    closed = answered_and_closed(case)
+    lines = closed.stdout.rstrip("\n").split("\n")
+    not_started = ("No cold-read-fast-read could be started ahead for the item after item 3 of 5; this needs nothing "
+                   "from you now, since when that item waits its read step reads it or reports the problem again. "
+                   "The problem: the item after item 3 of 5, `item 4 of 5`: ")
+    check("close whose read ahead cannot find its item names the next item, saying in one line why no read ahead started",
+          closed.returncode == 0 and lines[-1] == read_next_item_line(case, "item 3 of 5")
+          and lines[-2].startswith(not_started) and closed.stdout.count(not_started) == 1
+          and marker(case) == "#next_to_present item 3 of 5" and times_read(case, "## Item") == 0, described(closed))
+    read = case.run(WAITING_ITEM_READ)
+    check("the read step reads its own item when the read ahead of the item after it cannot find that item",
+          read.returncode == 0 and read.stdout.startswith(not_started)
+          and "item 3 of 5: its cold-read-fast-read, of its text as it stands, had to be run now: " in read.stdout
+          and times_read(case, "## Item 3 of 5: three") == 1, described(read))
+
+
 def test_a_read_that_fails_in_the_read_step_says_not_to_present_the_item():
     case = item_read_case()
     answered_and_closed(case)
@@ -2621,11 +2650,31 @@ def test_a_fix_that_touches_no_fact_is_not_read_again():
           second.returncode == 0 and "no new cold-read-fast-read" in second.stdout, described(second))
 
 
+def test_a_fix_is_compared_with_the_items_own_read_not_a_newer_read_of_another_item():
+    case = item_read_case()
+    answered_and_closed(case)
+    case.run(WAITING_ITEM_READ)
+    for path in case.reads().glob("*-outcome.json"):
+        outcome = json.loads(path.read_text())
+        if outcome["item"] == "item 4 of 5":
+            path.write_text(json.dumps(dict(outcome, finished=time.time() + 3600)))
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    document.write_text(document.read_text().replace(ITEM_3_HEADING, ITEM_3_HEADING + "\nThis item asks little.\n"))
+    result = case.run(WAITING_ITEM_READ, AFTER_FIXES)
+    check(f"{AFTER_FIXES} after a wording fix runs no read though another item's read finished later",
+          result.returncode == 0 and "no new cold-read-fast-read" in result.stdout
+          and times_read(case, ITEM_3_HEADING) == 1, described(result))
+
+
 def test_a_fix_that_touches_a_fact_is_read_again():
     added = ITEM_3_HEADING + "\n{}\n"
     for name, old, new, fact in (
             ("a number", ITEM_3_HEADING, added.format("It costs 4 hours."), "4"),
             ("a backquoted name", ITEM_3_HEADING, added.format("It edits `poem list`."), "`poem list`"),
+            ("a backquoted name after a parenthesis", ITEM_3_HEADING, added.format("It edits (`poems`)."),
+             "(`poems`)."),
+            ("an autolink with no //", ITEM_3_HEADING, added.format("Write to <mailto:poems@localhost>."),
+             "<mailto:poems@localhost>"),
             ("a file name by its extension", ITEM_3_HEADING, added.format("It edits poems.yaml."), "poems.yaml."),
             ("a link", ITEM_3_HEADING, added.format("See [the page](../poems)."),
              "[the page](../poems)"),
