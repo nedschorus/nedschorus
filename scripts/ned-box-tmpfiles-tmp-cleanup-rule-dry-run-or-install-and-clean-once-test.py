@@ -94,8 +94,9 @@ check("dry run samples the top-level paths",
       "  /tmp/merge-gate-abc\n" in printed and "  /tmp/tmp.t5kA0l0Tli\n" in printed
       and "/tmp/merge-gate-abc/sub" not in printed, printed)
 check("dry run reports the directories it could not open",
-      "1 directories could not be opened by this user" in printed
-      and "also removes old entries inside them" in printed, printed)
+      "1 directories could not be opened by the account running this program" in printed
+      and "the clean that `--install-and-clean-once` runs as root also removes old entries "
+      "inside them" in printed, printed)
 check("dry run runs systemd-tmpfiles on every tmpfiles.d file, the rule replacing "
       "tmp.conf, and nothing else",
       stub.commands == [["systemd-tmpfiles", "--dry-run", "--clean",
@@ -103,7 +104,8 @@ check("dry run runs systemd-tmpfiles on every tmpfiles.d file, the rule replacin
       stub.commands)
 dry_run_command = stub.commands[0]
 check("dry run says the user installs it, with the command he types on his Mac",
-      installer.USER_INSTALL_COMMAND_LINE in printed and "the user runs it" in printed, printed)
+      installer.USER_INSTALL_COMMAND_LINE in printed and "the user runs this command" in printed
+      and "the directories the account running this program could not open" in printed, printed)
 
 stub = CommandStub(dry_run_result=(0, ""))
 exit_code, printed, errors = run_main([], stub)

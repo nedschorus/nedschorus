@@ -94,9 +94,9 @@ def dry_run(rule_file: Path, run=subprocess.run) -> int:
         for path in top_level[:SAMPLE_SIZE]:
             print(f"  {path}")
     if unopenable:
-        print(f"{len(unopenable)} directories could not be opened by this user, so what is "
-              "inside them is not counted; the install's clean runs as root, and also removes "
-              "old entries inside them.")
+        print(f"{len(unopenable)} directories could not be opened by the account running this "
+              "program, so what is inside them is not counted; the clean that "
+              "`--install-and-clean-once` runs as root also removes old entries inside them.")
     return 0
 
 
@@ -137,9 +137,10 @@ def main(argv=None, rule_file: Path = RULE_FILE, run=subprocess.run) -> int:
     if dry_run(rule_file, run) != 0:
         return 1
     if not arguments.install_and_clean_once:
-        print("Nothing was changed. The install removes the entries counted above, and also "
-              "old entries inside the directories this user could not open. sudo asks for the "
-              f"user's password, so the user runs it, from a Terminal on his Mac: "
+        print("Nothing was changed. The install, `--install-and-clean-once`, removes the entries "
+              "counted above, and also old entries inside the directories the account running "
+              "this program could not open. The install needs sudo, and sudo asks for the user's "
+              "password, so the user runs this command from a Terminal on his Mac: "
               f"{USER_INSTALL_COMMAND_LINE}")
         return 0
     return install_and_clean_once(rule_file, run)
