@@ -18,6 +18,7 @@ Prints one line per case and exits non-zero if any case fails.
 import importlib.util
 import io
 import os
+import shlex
 import subprocess
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
@@ -99,21 +100,36 @@ with tempfile.TemporaryDirectory() as directory:
     code, out, err = run_main(runner)
     check("a failing step stops the run, exits 1, and reports the step, its error output and "
           "its advice",
-          code == 1 and len(runner.calls) == 7 and "FAILED: step 7" in err
-          and "sudo: a password is required" in err and installer.SUDO_ADVICE in err
-          and installer.SUBAGENT_LINE in err and "step 6 passed" in out, (code, out, err))
+          code == 1 and len(runner.calls) == 7 and "stopped at step 7," in err
+          and "sudo: a password is required" in err
+          and installer.sudo_advice("ned-box", runner.calls[6][1]) in err
+          and installer.RERUN_LINE in err and installer.SUBAGENT_LINE in err
+          and "step 6 passed" in out, (code, out, err))
+    sudo_line = installer.command_for_the_mac("ned-box", runner.calls[6][1])
+    check("the sudo advice's ssh command hands ned-box the failed command unchanged, its own "
+          "quotes included",
+          shlex.split(sudo_line) == ["ssh", "-t", "nedlern@ned-box", runner.calls[6][1]],
+          sudo_line)
 
     runner = FakeRunner({2: (255, "", "ssh: connect to host ned-box port 22: No route to host")})
     code, out, err = run_main(runner)
     check("ssh's exit 255 on ned-box gets the advice to check that ssh reaches ned-box",
           code == 1 and "ssh could not reach ned-box" in err
-          and installer.REFERENCE_CHECKOUT_ADVICE not in err, err)
+          and "does not yet hold main's commit" not in err, err)
+
+    runner = FakeRunner({2: (1, "", "")})
+    code, out, err = run_main(runner)
+    check("a ned-box reference-checkout without main's commit gets the fast-forward command, "
+          "through ssh",
+          code == 1 and "ssh -t nedlern@ned-box 'git -C ~/Projects/nedschorus pull --ff-only'"
+          in err, err)
 
     runner = FakeRunner({10: (0, "401", "")})
     code, out, err = run_main(runner)
     check("a service answer other than the one the check needs fails the step",
-          code == 1 and "FAILED: step 10" in err and "answered 401" in err
-          and "needs 412" in err and installer.SERVICE_ANSWER_ADVICE in err, err)
+          code == 1 and "stopped at step 10," in err and "answered 401" in err
+          and "needs 412" in err and "journalctl --user -u nc-shared-database-service" in err,
+          err)
 
     runner = FakeRunner()
     code, out, err = run_main(runner, platform="linux")

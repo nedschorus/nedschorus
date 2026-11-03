@@ -41,6 +41,7 @@ machine that is not the Mac.
 """
 
 import argparse
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -63,22 +64,47 @@ SSH_CANNOT_CONNECT_EXIT_CODE = 255
 PLATFORM = sys.platform
 MAC_TOKEN_STEP_NAME = "the Mac's token file is made"
 
-GENERIC_ADVICE = ("Find the cause in the output above. When you can fix it, fix it and run this "
-                  "program again once. When it fails the same way, or the fix needs the user, "
-                  "such as a setting only he can change, tell him which step failed, on which "
-                  "machine, and the output above.")
-REFERENCE_CHECKOUT_ADVICE = (f"That machine's reference-checkout, {REFERENCE_CHECKOUT}, has not "
-                             "fast-forwarded to main yet. Run `git -C ~/Projects/nedschorus pull "
-                             "--ff-only` on that machine, then run this program again.")
-SUDO_ADVICE = ("ned-box's sudo needs a password for ufw, and this program cannot type one. Ask "
-               "the user to run the command above in a Terminal on his Mac as `ssh -t "
-               "nedlern@ned-box '<the command>'`, which asks him for the password; then run "
-               "this program again.")
-SERVICE_ANSWER_ADVICE = ("Read the service's log on ned-box with `ssh nedlern@ned-box "
-                         "'journalctl --user -u nc-shared-database-service -n 50'`, fix the "
-                         "cause, then run this program again once.")
+PROGRAM_IN_REFERENCE_CHECKOUT = (f"{REFERENCE_CHECKOUT}/nc-systems/nc-shared-database/"
+                                 f"{Path(__file__).name}")
+RERUN_COMMAND = f"python3 {PROGRAM_IN_REFERENCE_CHECKOUT}"
+RERUN_LINE = f"To run this install again, run on the Mac: `{RERUN_COMMAND}`"
 SUBAGENT_LINE = ("If you are a subagent, report this failure to the agent that dispatched you "
                  "instead of telling the user.")
+
+
+def command_for_the_mac(machine, command):
+    """The command as typed in a Terminal on the Mac, through ssh for a ned-box command."""
+    return command if machine == "mac" else f"ssh -t {NED_BOX_SSH_TARGET} {shlex.quote(command)}"
+
+
+def generic_advice(machine, command):
+    return ("Find the cause in the Error output and Output lines above. When you can fix it, fix "
+            "it and run the install again once. When it fails the same way, or the fix needs a "
+            f"setting only the user can change, tell him which step failed, on {machine}, and "
+            "those lines.")
+
+
+def reference_checkout_advice(machine, command):
+    pull = f"git -C {REFERENCE_CHECKOUT} pull --ff-only"
+    return (f"The reference-checkout {REFERENCE_CHECKOUT} on {machine} does not yet hold main's "
+            f"commit {FIRST_MAIN_COMMIT_WITH_THESE_FILES[:9]}, which this install's files came "
+            f"from. Fast-forward it to main by running on the Mac `{command_for_the_mac(machine, pull)}`, "
+            "then run the install again. When the fast-forward fails, tell the user its output.")
+
+
+def sudo_advice(machine, command):
+    return ("ned-box's sudo asked for a password to change the firewall (ufw), and this program "
+            "cannot type one. Ask the user to run, in a Terminal on his Mac, "
+            f"`{command_for_the_mac(machine, command)}`, which asks him for his ned-box password; "
+            "when it succeeds, run the install again.")
+
+
+def service_answer_advice(machine, command):
+    log = command_for_the_mac("ned-box", "journalctl --user -u nc-shared-database-service -n 50")
+    return ("The nc-shared-database service did not answer as this check needs. Read its log by "
+            f"running on the Mac `{log}`, fix the cause it shows, then run the install again once. "
+            "When it fails the same way, tell the user which step failed and the log's last "
+            "lines.")
 
 
 def reference_checkout_holds_commit_command():
@@ -113,31 +139,31 @@ def install_steps():
     input, the output it must print or None, what to do when it fails)."""
     steps = [(f"the {machine} reference-checkout holds main's commit "
               f"{FIRST_MAIN_COMMIT_WITH_THESE_FILES[:9]}", machine,
-              reference_checkout_holds_commit_command(), False, None, REFERENCE_CHECKOUT_ADVICE)
+              reference_checkout_holds_commit_command(), False, None, reference_checkout_advice)
              for machine in ("mac", "ned-box")]
     steps += [
         (MAC_TOKEN_STEP_NAME, "mac", token_file_made_unless_present_command(), False, None,
-         GENERIC_ADVICE),
+         generic_advice),
         ("ned-box's token file is made", "ned-box", token_file_made_unless_present_command(),
-         False, None, GENERIC_ADVICE),
+         False, None, generic_advice),
         ("ned-box's accepted-tokens file holds both tokens", "ned-box",
-         accepted_tokens_file_written_command(), True, None, GENERIC_ADVICE),
+         accepted_tokens_file_written_command(), True, None, generic_advice),
         ("ned-box enables and starts the service", "ned-box",
-         f"systemctl --user enable --now {UNIT_FILE}", False, None, GENERIC_ADVICE),
+         f"systemctl --user enable --now {UNIT_FILE}", False, None, generic_advice),
         ("ned-box's firewall opens the service's port to the home network", "ned-box",
          f"sudo -n ufw allow from {HOME_NETWORK} to any port {PORT} proto tcp "
-         f"comment 'nc-shared-database service from LAN'", False, None, SUDO_ADVICE),
+         f"comment 'nc-shared-database service from LAN'", False, None, sudo_advice),
         ("ned-box installs the nightly backup job", "ned-box", job_installed_command(NED_BOX_JOB),
-         False, None, GENERIC_ADVICE),
+         False, None, generic_advice),
         ("the Mac installs the backup copy job", "mac", job_installed_command(MAC_JOB), False,
-         None, GENERIC_ADVICE),
+         None, generic_advice),
     ]
     for machine in ("mac", "ned-box"):
         steps.append((f"from the {machine}, the service accepts the token", machine,
-                      service_status_code_command(True), False, "412", SERVICE_ANSWER_ADVICE))
+                      service_status_code_command(True), False, "412", service_answer_advice))
         steps.append((f"from the {machine}, the service refuses a request without a token",
                       machine, service_status_code_command(False), False, "401",
-                      SERVICE_ANSWER_ADVICE))
+                      service_answer_advice))
     return steps
 
 
@@ -147,8 +173,9 @@ def run_on(machine, command, standard_input):
 
 
 def failure_report(number, name, machine, command, result, expected, advice):
-    lines = [f"FAILED: step {number}, {name}, on {machine}. The steps before it passed and stay "
-             f"done; running this program again repeats them without harm.",
+    lines = [f"FAILED: the nc-shared-database install stopped at step {number}, {name}, on "
+             f"{machine}. The steps before it passed and stay done; running the install again "
+             f"repeats them without harm.",
              f"Command: {command}",
              f"Exit code: {result.returncode}"]
     if expected is not None:
@@ -159,10 +186,10 @@ def failure_report(number, name, machine, command, result, expected, advice):
     lines.append(f"Error output: {result.stderr.strip() or '(none)'}")
     if machine == "ned-box" and result.returncode == SSH_CANNOT_CONNECT_EXIT_CODE:
         lines.append(f"ssh could not reach ned-box. Run `ssh {NED_BOX_SSH_TARGET} true` on the "
-                     f"Mac; when it succeeds, run this program again.")
+                     f"Mac; when it succeeds, run the install again.")
     else:
-        lines.append(advice)
-    lines.append(SUBAGENT_LINE)
+        lines.append(advice(machine, command))
+    lines += [RERUN_LINE, SUBAGENT_LINE]
     return "\n".join(lines)
 
 
@@ -175,9 +202,10 @@ def main(arguments=None, run=run_on):
             print(f"{number}. {name}, on {machine}:\n   {command}")
         return 0
     if PLATFORM != "darwin":
-        print("REFUSED: this program runs on the Mac, which alone can open an ssh session to "
-              "ned-box. Run it in a Terminal on the Mac, in the reference-checkout "
-              "~/Projects/nedschorus.", file=sys.stderr)
+        print(f"REFUSED: the nc-shared-database install ran on {PLATFORM}, and it runs only on "
+              f"the Mac, which alone can open an ssh session to ned-box; nothing was installed. "
+              f"An agent on the Mac runs `{RERUN_COMMAND}`. From ned-box, ask the user to run "
+              f"it in a Terminal on his Mac.", file=sys.stderr)
         return 2
     mac_token = None
     for number, (name, machine, command, reads_mac_token, expected, advice) in enumerate(
