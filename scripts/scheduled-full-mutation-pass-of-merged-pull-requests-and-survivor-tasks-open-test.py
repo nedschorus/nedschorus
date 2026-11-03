@@ -280,8 +280,9 @@ def run_cases():
               and "merges tested: 2" in record, record)
         check("merges: the state names the last merge and the task given",
               fixture.state_json()["last_tested_main_commit"] == second
-              and list(fixture.state_json()["tasks_opened"].values())
-              == [{"agent_seat": "alpha", "task_id": 6}], fixture.state_json())
+              and [(given["agent_seat"], given["task_id"], given["subject"])
+                   for given in fixture.state_json()["tasks_opened"].values()]
+              == [("alpha", 6, task.get("subject"))], fixture.state_json())
 
         # The same survivor found again gets no second task.
         third = fixture.commit("scripts/third.py", "VALUE = 3\n", author="alpha")
@@ -398,8 +399,9 @@ def run_cases():
         check("a run stopped at the second survivor's task records the first task in the state",
               completed.returncode == job.EXIT_STEP_FAILED
               and task_files(alpha_list) == ["1.json"]
-              and list(fixture.state_json()["tasks_opened"].values())
-              == [{"agent_seat": "alpha", "task_id": 1}]
+              and [(given["agent_seat"], given["task_id"])
+                   for given in fixture.state_json()["tasks_opened"].values()]
+              == [("alpha", 1)]
               and fixture.state_json()["last_tested_main_commit"] == start,
               (completed.returncode, task_files(alpha_list), fixture.state_json()))
         fixture.seat(job.SURVIVOR_TASK_AGENT_SEAT_WHEN_LINE_AUTHOR_IS_RETIRED_OR_UNKNOWN)
@@ -407,6 +409,84 @@ def run_cases():
         check("the next run opens no second task for the first survivor",
               completed.returncode == 0 and task_files(alpha_list) == ["1.json"],
               (completed.returncode, task_files(alpha_list), completed.stderr))
+
+    # A task linked into place before the .highwatermark write failed is not in the state; the
+    # next run finds it on the list by the mutant's diff file and opens no second task.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        merge = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                               author="alpha")
+        (alpha_list / (job.TASK_HIGH_WATER_MARK_FILE_NAME + ".partial")).mkdir()
+        plan = {merge: {"json": verdict(survived=[survivor()])}}
+        completed = fixture.run(plan)
+        check("a .highwatermark that cannot be written after the task is linked stops the run, "
+              "exit 4, with the task on the list and not in the state",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and task_files(alpha_list) == ["1.json"]
+              and fixture.state_json()["tasks_opened"] == {}
+              and fixture.state_json()["last_tested_main_commit"] == start,
+              (completed.returncode, task_files(alpha_list), fixture.state_json(),
+               completed.stderr))
+        (alpha_list / (job.TASK_HIGH_WATER_MARK_FILE_NAME + ".partial")).rmdir()
+        completed = fixture.run(plan)
+        key = job.mutant_key(survivor())
+        given = fixture.state_json()["tasks_opened"].get(key, {})
+        original = json.loads((alpha_list / "1.json").read_text())
+        check("the next run finds that task by the mutant's diff file, opens no second one, "
+              "and records it in the state with its text",
+              completed.returncode == 0 and task_files(alpha_list) == ["1.json"]
+              and given.get("agent_seat") == "alpha" and given.get("task_id") == 1
+              and given.get("description") == original["description"]
+              and "already given task #1 on alpha's task list"
+              in fixture.records()[-1].read_text(),
+              (completed.returncode, task_files(alpha_list), fixture.state_json(),
+               completed.stderr))
+
+        # Each run checks that the tasks it opened still hold their survivors, and reopens any
+        # that do not.
+        (alpha_list / "1.json").write_text(json.dumps({"id": "1", "description": "rewritten"}))
+        completed = fixture.run()
+        reopened = json.loads((alpha_list / "2.json").read_text()) \
+            if (alpha_list / "2.json").exists() else {}
+        check("a task rewritten so it no longer names its mutant is reopened with its text, the "
+              "state and record say so, and the run exits 0",
+              completed.returncode == 0
+              and reopened.get("description") == original["description"]
+              and reopened.get("subject") == original["subject"]
+              and fixture.state_json()["tasks_opened"][key]["task_id"] == 2
+              and f"TASK REOPENED: task #1 on alpha's task list ({alpha_list / '1.json'}) no "
+                  f"longer holds the surviving mutant {key}.diff: its description no longer "
+                  f"names the mutant's diff file; reopened as task #2 on alpha's task list"
+              in fixture.records()[-1].read_text(),
+              (completed.returncode, task_files(alpha_list), completed.stderr))
+        completed = fixture.run()
+        check("a reopened task that holds its mutant is not reopened again",
+              completed.returncode == 0 and task_files(alpha_list) == ["1.json", "2.json"],
+              (completed.returncode, task_files(alpha_list)))
+
+        # A task whose file is gone, on a list that cannot take a new task: the run still tests
+        # the merges, and reports the task.
+        (alpha_list / "2.json").unlink()
+        (alpha_list / (job.TASK_HIGH_WATER_MARK_FILE_NAME + ".partial")).mkdir()
+        later = fixture.commit("scripts/other.py", "VALUE = 1\n", author="alpha")
+        completed = fixture.run({later: {"json": verdict()}})
+        check("a lost task that cannot be reopened: the merges are still tested, exit 7, and the "
+              "record and stderr say why",
+              completed.returncode == job.EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR
+              and fixture.state_json()["last_tested_main_commit"] == later
+              and "TASK LOST: task #2 on alpha's task list" in fixture.records()[-1].read_text()
+              and "the task file cannot be read (FileNotFoundError" in completed.stderr
+              and "could not be reopened on alpha's task list" in completed.stderr
+              and "reopens each such task" in completed.stderr,
+              (completed.returncode, completed.stderr))
+        (alpha_list / (job.TASK_HIGH_WATER_MARK_FILE_NAME + ".partial")).rmdir()
+        completed = fixture.run()
+        check("the next run reopens it",
+              completed.returncode == 0 and "TASK REOPENED: task #2" in
+              fixture.records()[-1].read_text(), (completed.returncode, completed.stderr))
 
     # A state file that cannot be read, or names a commit not on origin/main.
     with tempfile.TemporaryDirectory() as scratch:
