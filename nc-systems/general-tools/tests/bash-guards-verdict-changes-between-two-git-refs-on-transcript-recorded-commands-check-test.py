@@ -602,8 +602,9 @@ try:
     check("a head that adds a guard refusing a recorded command: exit 1, the merge is blocked",
           status == 1 and "NEW GUARD REFUSES RECORDED COMMANDS" in out and "VERDICT CHANGED" not in out,
           f"status {status}\n{out}\n{err}")
-    tmux_kill_group = replay.refusal_group_id(TMUX_KILL_GUARD, replay.read_tmux_kill(
+    tmux_kill_refusal = (TMUX_KILL_GUARD, replay.read_tmux_kill(
         replay.load_module(REPOSITORY_ROOT, TMUX_KILL_GUARD, "tmux_kill_guard"), "tmux kill-server", "/tmp", None)[1])
+    tmux_kill_group = replay.refusal_group_ids([tmux_kill_refusal])[tmux_kill_refusal]
     check("a head that adds a guard refusing a recorded command: each mode counts its refusals, and the one refusal "
           "group, which both modes refuse, names its id, the guard, the command and its working directory",
           f"in-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command\n" in out
@@ -613,6 +614,21 @@ try:
           and f"  {tmux_kill_group}: {TMUX_KILL_GUARD} refuses 1 recorded command, in in-process, new-process\n"
           "    reason: " in out
           and "    command: 'tmux kill-server'\n      working directory: /tmp\n" in out, out)
+    # As Codex found on pull request 2468: two refusal messages whose digests share their first eight hex digits.
+    digest_as_written = replay.refusal_group_digest
+    replay.refusal_group_digest = lambda guard, reason: "8ee5bdb8" + ("1" if reason.endswith("4768") else "2") * 56
+    try:
+        colliding = replay.added_guard_refusal_groups([("in-process", [
+            (("git push --force origin topic-4768", "/tmp"), "force-push-guard.py", ("refused", "topic-4768")),
+            (("git push --force origin topic-111837", "/tmp"), "force-push-guard.py", ("refused", "topic-111837"))])])
+    finally:
+        replay.refusal_group_digest = digest_as_written
+    check("two refusal messages whose ids would share their first eight hex digits: two refusal groups, each with "
+          "its own message, its own command and an id of its own",
+          sorted((group["reason"], group["refused commands"]) for group in colliding)
+          == [("topic-111837", [["git push --force origin topic-111837", "/tmp"]]),
+              ("topic-4768", [["git push --force origin topic-4768", "/tmp"]])]
+          and len({group["group"] for group in colliding}) == 2, str(colliding))
     check("a head that adds a guard refusing a recorded command, and changes no verdict: merge-lane-2 may merge "
           "once each refusal is accepted",
           replay.NEW_GUARD_REFUSES_ONLY_ENDING in out

@@ -150,8 +150,8 @@ NEW_GUARD_REFUSES_MESSAGE = (
     "A refusal group is one added guard and one refusal message, with every recorded command, one working "
     "directory and one command, that the guard refuses with that message, in any mode. The modes are the ways "
     "this check reads a command: in-process, search-file main() and new-process. Each group has an id, "
-    "refusal-group-<8 hex digits>, made from the guard's path and the message, so the same group has the same "
-    "id in every run of this check.\n"
+    "refusal-group-<8 or more hex digits>, made from the guard's path and the message, so the same group has the "
+    "same id in every run of this check that finds the same groups.\n"
     "The pull request's reviewer answers each refusal group in the body of the review the reviewer posts, "
     "every group in the file added-guard-refusal-groups.json in the run log directory whose path this check "
     "printed first, including the groups and commands the list above leaves out. That file is a JSON list with "
@@ -902,8 +902,18 @@ def print_rows(title, items, limit):
             print(f"    {name}: {shortened(reading)}")
 
 
-def refusal_group_id(guard, reason):
-    return "refusal-group-" + hashlib.sha256(json.dumps([guard, reason]).encode()).hexdigest()[:8]
+def refusal_group_digest(guard, reason):
+    return hashlib.sha256(json.dumps([guard, reason]).encode()).hexdigest()
+
+
+def refusal_group_ids(pairs):
+    """Return {(guard, reason): id} for the distinct pairs: each id is "refusal-group-" and the shortest prefix,
+    eight hex digits or more, of the pair's digest that no other pair's digest shares."""
+    digests = {pair: refusal_group_digest(*pair) for pair in pairs}
+    length = 8
+    while len({digest[:length] for digest in digests.values()}) < len(digests):
+        length += 1
+    return {pair: "refusal-group-" + digest[:length] for pair, digest in digests.items()}
 
 
 def added_guard_refusal_groups(refusals_by_mode):
@@ -914,14 +924,14 @@ def added_guard_refusal_groups(refusals_by_mode):
     groups = {}
     for mode, refusals in refusals_by_mode:
         for (command, working_directory), guard, reading in refusals:
-            key = refusal_group_id(guard, reading[1])
-            group = groups.setdefault(key, {"group": key, "guard": guard, "reason": reading[1], "modes": {},
-                                            "refused commands": {}})
+            group = groups.setdefault((guard, reading[1]), {"guard": guard, "reason": reading[1], "modes": {},
+                                                            "refused commands": {}})
             group["modes"][mode] = None
             group["refused commands"][(command, working_directory)] = None
-    listed = [dict(group, modes=list(group["modes"]), **{"refused commands": [list(pair) for pair in
-                                                                               group["refused commands"]]})
-              for group in groups.values()]
+    ids = refusal_group_ids(groups)
+    listed = [{"group": ids[pair], "guard": group["guard"], "reason": group["reason"], "modes": list(group["modes"]),
+               "refused commands": [list(command) for command in group["refused commands"]]}
+              for pair, group in groups.items()]
     return sorted(listed, key=lambda group: (-len(group["refused commands"]), group["guard"], group["group"]))
 
 
