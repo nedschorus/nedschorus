@@ -2335,7 +2335,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # through the supervisor's own plan so this case cannot drift from the
     # real shape -- but it does NOT pin the wording, and the comment here
     # claimed it did until 2026-09-21. Measured that day: appending a sentence
-    # to BRANCH_STATE_INSTRUCTION at the plan's own call site left this suite
+    # to the branch-state instruction at the plan's own call site left this suite
     # at 345 passed, 0 failed. Two reasons. The case asserts only that the
     # recovery marker reaches the successor, never what the prompt says; and
     # it composes with an empty launch-time-git-sync report, so the branch-state
