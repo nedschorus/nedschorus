@@ -598,7 +598,7 @@ def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> str:
     frozen.parent.mkdir(parents=True, exist_ok=True)
     # The reader's copy differs from the original only by this rewrite; the digest returned is the original's.
     try:
-        reader_text = record_names.cold_read_reviewer_copy_text_with_mac_nedhome_links_rewritten_to_ned_box_home_paths(
+        reader_text = record_names.cold_read_reviewer_copy_text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths_where_mac_mount_absent(
             content.decode("utf-8"))
         frozen.write_bytes(reader_text.encode("utf-8"))
     except UnicodeDecodeError:

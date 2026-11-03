@@ -137,6 +137,7 @@ FILES_THE_SUITE_RUN_WITH_EVERY_VARIABLE_READS = (
     "docs/agents/pr-reviewer-instructions.md",
     "nc-systems/cold-read/cold-read-cell-common.py",
     "nc-systems/cold-read/cold-read-record-names-common.py",
+    "nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py",
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
 )
 

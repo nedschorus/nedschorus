@@ -409,7 +409,7 @@ def document_is_due(document, record_directories, document_top, record_names,
             return False
     pattern = record_names.record_directory_name_pattern_for_target(document)
     current_bytes = document.read_bytes()
-    current_bytes_as_frozen_on_ned_box = record_names.mac_nedhome_links_rewritten_to_ned_box_home_paths(
+    current_bytes_as_frozen_on_ned_box = record_names.text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths(
         current_bytes.decode("utf-8", "surrogateescape")).encode("utf-8", "surrogateescape")
     newest_record_time = None
     for directory in record_directories:
