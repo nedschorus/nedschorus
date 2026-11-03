@@ -225,7 +225,7 @@ since no read ahead was started while item 1 was shown.
 APPROVAL-WALK-WAITING-ITEM-COLD-READ-FAST-READ gives the item the
 `#next_to_present` line names its cold-read-fast-read, as its text stands: the
 item's lines in the walk-document, heading and fenced code included, keyed by
-the sha256 of that text with its whitespace runs squeezed. A read of that key
+the sha256 of that text unchanged, whitespace included. A read of that key
 that wrote its report is used, a read ahead included; one a read-ahead worker
 still runs is waited for, for as long as the worker's process lives, since the
 fast read ends its own run with timeouts of its own; otherwise the step runs the
