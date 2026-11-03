@@ -354,7 +354,8 @@ def build_scratch_repository(scratch):
 def run_fast_read(repository, stub_directory, plan, expected_report, target_argument,
                   counter_path, ship_destination=None,
                   record_clock=FIXED_RECORD_CLOCK_FOR_TESTS, agent_session_id=None,
-                  current_directory=None, claude_plan=None, question_4_plan=None):
+                  current_directory=None, claude_plan=None, question_4_plan=None,
+                  environment_overrides=None):
     """The read as a subprocess, with the stub agy first on PATH, run from
     `current_directory`, by default `repository`.
 
@@ -394,6 +395,7 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     environment.pop(AGENT_SESSION_ID_VARIABLE, None)
     if agent_session_id is not None:
         environment[AGENT_SESSION_ID_VARIABLE] = agent_session_id
+    environment.update(environment_overrides or {})
     return subprocess.run(
         [sys.executable, str(repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py"),
          "--target", str(target_argument)],
@@ -1374,25 +1376,37 @@ with tempfile.TemporaryDirectory() as scratch:
           == (repository / other_relative).read_text(encoding="utf-8"),
           f"marked copy present={marked_copy.exists()}")
     # --- A Mac link to ned-box's home reaches the reviewer as a ned-box path ---
-    link_relative = "docs/drafts/a-mac-link.md"
-    (repository / link_relative).write_text(
-        "See [the log](file:///Volumes/nedhome/agents/x/log.md) for it.\n", encoding="utf-8")
-    link_report = (repository / "cold-read-records" / f"a-mac-link-{record_stamp}"
-                   / "cold-read-fast-read.md")
-    run_fast_read(repository, stubs, {"*": {"report": "STUB FAST READ: of the link\n"}},
-                  link_report, link_relative, counter)
-    link_marked = (link_report.parent / ("a-mac-link"
-                   + script_under_test_module().SENTENCE_ID_MARKED_COPY_SUFFIX))
-    link_marked_text = link_marked.read_text(encoding="utf-8") if link_marked.is_file() else ""
-    check("the reviewer's copy holds the link as a /home/nedlern/ path and no /Volumes path",
-          "(/home/nedlern/agents/x/log.md)" in link_marked_text
-          and "/Volumes/" not in link_marked_text, repr(link_marked_text))
-    check("the document keeps its file:///Volumes/nedhome/ link",
-          "file:///Volumes/nedhome/agents/x/log.md" in (repository / link_relative).read_text(
-              encoding="utf-8"))
-    # Later cases list the records beside the report, so leave none of this one.
+    mount_override = (script_under_test_module().record_names
+                      .MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY_OVERRIDE_VARIABLE)
     import shutil
-    shutil.rmtree(link_report.parent)
+    # Each machine's read gets a document of its own: a second read of one name would take the -2 record.
+    for machine, link_stem, mount, rewritten in (
+            ("ned-box", "a-mac-link-on-ned-box", scratch / "no-mac-mount-here", True),
+            ("the Mac", "a-mac-link-on-the-mac", scratch, False)):
+        link_relative = f"docs/drafts/{link_stem}.md"
+        (repository / link_relative).write_text(
+            "See [the log](file:///Volumes/nedhome/agents/x/log.md) for it.\n", encoding="utf-8")
+        link_report = (repository / "cold-read-records" / f"{link_stem}-{record_stamp}"
+                       / "cold-read-fast-read.md")
+        link_marked = (link_report.parent
+                       / (link_stem + script_under_test_module().SENTENCE_ID_MARKED_COPY_SUFFIX))
+        run_fast_read(repository, stubs, {"*": {"report": "STUB FAST READ: of the link\n"}},
+                      link_report, link_relative, counter,
+                      environment_overrides={mount_override: str(mount)})
+        link_marked_text = link_marked.read_text(encoding="utf-8") if link_marked.is_file() else ""
+        if rewritten:
+            check("on ned-box the reviewer's copy holds the link as a /home/nedlern/ path and no /Volumes path",
+                  "(/home/nedlern/agents/x/log.md)" in link_marked_text
+                  and "/Volumes/" not in link_marked_text, repr(link_marked_text))
+        else:
+            check("on the Mac the reviewer's copy keeps the file:///Volumes/nedhome/ link",
+                  "(file:///Volumes/nedhome/agents/x/log.md)" in link_marked_text,
+                  repr(link_marked_text))
+        check(f"on {machine} the document keeps its file:///Volumes/nedhome/ link",
+              "file:///Volumes/nedhome/agents/x/log.md" in (repository / link_relative).read_text(
+                  encoding="utf-8"))
+        # Later cases list the records beside the report, so leave none of this one.
+        shutil.rmtree(link_report.parent, ignore_errors=True)
     # Every read below survives an absent file: a record path this suite or
     # the script got wrong should fail these cases by name, not end the run in
     # a traceback that takes every later case with it (found by mutating the

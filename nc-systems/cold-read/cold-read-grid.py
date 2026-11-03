@@ -598,7 +598,7 @@ def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> str:
     frozen.parent.mkdir(parents=True, exist_ok=True)
     # The reader's copy differs from the original only by this rewrite; the digest returned is the original's.
     try:
-        reader_text = record_names.reader_copy_text_with_mac_links_to_ned_box_home_as_ned_box_paths(
+        reader_text = record_names.cold_read_reviewer_copy_text_with_mac_nedhome_links_rewritten_to_ned_box_home_paths(
             content.decode("utf-8"))
         frozen.write_bytes(reader_text.encode("utf-8"))
     except UnicodeDecodeError:
@@ -641,8 +641,7 @@ def moved_frozen_copy(frozen_target: pathlib.Path,
 
 
 def original_changed_line(target: pathlib.Path, frozen_target: pathlib.Path,
-                          before: str, frozen_changed: bool,
-                          frozen_before: typing.Optional[str] = None) -> str:
+                          before: str, frozen_changed: bool, frozen_before: str) -> str:
     """Return the line naming the copy reviewed when the original changed, or ""."""
     after = target_content_fingerprint(target)
     if after == before:
@@ -653,7 +652,7 @@ def original_changed_line(target: pathlib.Path, frozen_target: pathlib.Path,
         return (changed + f"The frozen copy {frozen_target} changed too, so the "
                 f"{FROZEN_COPY_CHANGED_HASHTAG} line above says what to do with the set.")
     return (changed + f"Every report reviews the frozen copy {frozen_target} (sha256 "
-            f"{(frozen_before or before)[:12]}), which did not change, so the set stands: triage it "
+            f"{frozen_before[:12]}), which did not change, so the set stands: triage it "
             f"against that copy, then carry each fix to the document as it now stands.")
 
 

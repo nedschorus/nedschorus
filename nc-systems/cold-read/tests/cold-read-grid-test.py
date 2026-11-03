@@ -2174,23 +2174,39 @@ with tempfile.TemporaryDirectory() as scratch:
     launch_sha256 = hashlib.sha256(original.read_bytes()).hexdigest()
     original.write_text("edited text\n", encoding="utf-8")
     copy = both_directory / "frozen-document.md"
-    line = grid_module.original_changed_line(original, copy, launch_sha256, True)
+    line = grid_module.original_changed_line(original, copy, launch_sha256, True, launch_sha256)
     check("an original changed beside a moved copy does not say the copy stood",
           line.startswith("#cold_read_target_changed_during_run")
           and "did not change" not in line and "the set stands" not in line
           and str(copy) in line and "#frozen_copy_changed_during_run" in line, repr(line))
-    line = grid_module.original_changed_line(original, copy, launch_sha256, False)
+    line = grid_module.original_changed_line(original, copy, launch_sha256, False, launch_sha256)
     check("an original changed beside a still copy says the set stands",
           "which did not change, so the set stands" in line, repr(line))
+    # A copy whose links were rewritten for the reviewer has a hash of its own.
+    copy_sha256 = hashlib.sha256(b"the reviewer's rewritten copy\n").hexdigest()
+    line = grid_module.original_changed_line(original, copy, launch_sha256, False, copy_sha256)
+    check("the still-copy line names the frozen copy's hash, not the original's",
+          f"(sha256 {copy_sha256[:12]})" in line
+          and f"(sha256 {launch_sha256[:12]})" not in line, repr(line))
 
     # --- A Mac link to ned-box's home is rewritten in the frozen copy only ----
+    mount_override = grid_module.record_names.MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY_OVERRIDE_VARIABLE
+    no_mount = {mount_override: str(scratch / "no-mac-mount-here")}
     link_directory = scratch / "mac-link-freeze"
     link_directory.mkdir()
     link_original = link_directory / "document.md"
     link_original.write_text("See file:///Volumes/nedhome/agents/x/log.md now.\n", encoding="utf-8")
     link_record = link_directory / "record"
     link_record.mkdir()
-    link_digest = grid_module.freeze_target(link_original, link_record)
+    saved_mount_override = os.environ.get(mount_override)
+    os.environ.update(no_mount)
+    try:
+        link_digest = grid_module.freeze_target(link_original, link_record)
+    finally:
+        if saved_mount_override is None:
+            os.environ.pop(mount_override, None)
+        else:
+            os.environ[mount_override] = saved_mount_override
     link_frozen = grid_module.record_names.frozen_target_path(link_original, link_record)
     check("the frozen copy holds the link as a /home/nedlern/ path",
           link_frozen.is_file()
@@ -2199,6 +2215,40 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the document keeps its link and the digest returned is the document's",
           "file:///Volumes/nedhome/" in link_original.read_text(encoding="utf-8")
           and link_digest == hashlib.sha256(link_original.read_bytes()).hexdigest())
+
+    # A whole run on such a document: the copy differs from the original from
+    # the start, and is still, so nothing may call it changed.
+    link_repository = build_scratch_repository(scratch, "checkout-mac-link-in-target")
+    link_text = "# Target\n\nSee [the log](file:///Volumes/nedhome/agents/x/log.md).\n"
+    (link_repository / TARGET_RELATIVE_PATH).write_text(link_text, encoding="utf-8")
+    link_result = run_grid(link_repository, stubs, no_mount)
+    link_record_directory = record_directory_of(link_repository)
+    link_frozen = (frozen_target_path_in_scratch_repository(link_repository, link_record_directory)
+                   if link_record_directory is not None else None)
+    check("a run on a document with a Mac link lands seven reviews and exits 0",
+          link_result.returncode == 0 and len(reviews_saved_lines(link_result)) == 7,
+          f"exit {link_result.returncode}; stdout={link_result.stdout!r}")
+    check("a still frozen copy whose links were rewritten is not reported as changed",
+          "#frozen_copy_changed_during_run" not in link_result.stdout
+          and "#cold_read_target_changed_during_run" not in link_result.stdout, repr(link_result.stdout))
+    check("the run's frozen copy holds the ned-box path and the document keeps its link",
+          link_frozen is not None and link_frozen.is_file()
+          and link_frozen.read_text(encoding="utf-8") == link_text.replace(
+              "file:///Volumes/nedhome/", "/home/nedlern/")
+          and (link_repository / TARGET_RELATIVE_PATH).read_text(encoding="utf-8") == link_text,
+          repr(link_frozen.read_text(encoding="utf-8") if link_frozen is not None and link_frozen.is_file() else None))
+
+    # Where the Mac mounts ned-box's home, the reviewer opens the link as written.
+    link_repository = build_scratch_repository(scratch, "checkout-mac-link-on-the-mac")
+    (link_repository / TARGET_RELATIVE_PATH).write_text(link_text, encoding="utf-8")
+    link_result = run_grid(link_repository, stubs, {mount_override: str(scratch)})
+    link_record_directory = record_directory_of(link_repository)
+    link_frozen = (frozen_target_path_in_scratch_repository(link_repository, link_record_directory)
+                   if link_record_directory is not None else None)
+    check("where the Mac's mount is a directory, the frozen copy keeps the document's bytes",
+          link_result.returncode == 0 and link_frozen is not None and link_frozen.is_file()
+          and link_frozen.read_text(encoding="utf-8") == link_text,
+          f"exit {link_result.returncode}; stdout={link_result.stdout!r}")
 
     # --- The third stop in a row ends the attempt ----------------------------
     # The marker detail is printed and written into every report on every stop,

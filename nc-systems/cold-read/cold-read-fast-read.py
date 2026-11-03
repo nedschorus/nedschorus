@@ -1462,7 +1462,7 @@ def main() -> int:
         marked_text, sentences = sentence_id_markup(
             target.read_text(encoding="utf-8"))
         # After the markup, so `sentences` keep the document's own text for triage.
-        marked_text = record_names.reader_copy_text_with_mac_links_to_ned_box_home_as_ned_box_paths(
+        marked_text = record_names.cold_read_reviewer_copy_text_with_mac_nedhome_links_rewritten_to_ned_box_home_paths(
             marked_text)
         marked_copy = (report.parent if on_records_route else pathlib.Path(scratch)) / (
             f"{target.stem}{SENTENCE_ID_MARKED_COPY_SUFFIX}")

@@ -57,7 +57,9 @@ belongs to the document only when the copy sits at the document's path,
 relative to its checkout or absolute without the leading slash, the form a
 fast read run from another checkout writes; a record without target/ is
 matched by name alone. The document is not due when a record's frozen copy
-has the document's bytes, whatever the file times say: a checkout or a pull
+has the document's bytes, or those bytes with each file:///Volumes/nedhome/
+link rewritten to /home/nedlern/ as a cold read on ned-box freezes them,
+whatever the file times say: a checkout or a pull
 stamps a file with the time of the checkout, so file times alone would call
 every document in a new worktree due. Otherwise the document is due when its
 modification time is later than the newest file time in its newest record;
@@ -407,6 +409,8 @@ def document_is_due(document, record_directories, document_top, record_names,
             return False
     pattern = record_names.record_directory_name_pattern_for_target(document)
     current_bytes = document.read_bytes()
+    current_bytes_as_frozen_on_ned_box = record_names.mac_nedhome_links_rewritten_to_ned_box_home_paths(
+        current_bytes.decode("utf-8", "surrogateescape")).encode("utf-8", "surrogateescape")
     newest_record_time = None
     for directory in record_directories:
         try:
@@ -429,7 +433,7 @@ def document_is_due(document, record_directories, document_top, record_names,
                 if frozen is None:
                     continue
                 try:
-                    if frozen.read_bytes() == current_bytes:
+                    if frozen.read_bytes() in (current_bytes, current_bytes_as_frozen_on_ned_box):
                         return False
                 except OSError:
                     pass

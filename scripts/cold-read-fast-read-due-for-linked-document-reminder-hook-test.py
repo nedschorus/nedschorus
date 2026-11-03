@@ -242,6 +242,14 @@ def main():
            case.run("Updated docs/plan-of-record.md."), None)
 
     case = Case()
+    document = case.document("docs/plan-of-record.md", modified=3_000_000,
+                             text="See file:///Volumes/nedhome/agents/x/log.md.\n")
+    case.record("plan-of-record-2026-10-08", 2_000_000, "docs/plan-of-record.md",
+                "See /home/nedlern/agents/x/log.md.\n")
+    expect("a frozen copy whose Mac links a cold read on ned-box rewrote matches its document despite file times",
+           case.run("Updated docs/plan-of-record.md."), None)
+
+    case = Case()
     document = case.document("docs/plan-of-record.md", text="same\n", modified=3_000_000)
     absolute_form = Path(*document.resolve().parts[1:])
     case.record("plan-of-record-2026-10-08", 2_000_000, absolute_form, "same\n")
