@@ -15,6 +15,7 @@ import importlib.util
 import io
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -190,8 +191,16 @@ def test_branches():
     check("branch main;" not in text, "main is never listed, even with commits origin/main lacks", text)
     check("branch a-early-work;" in text, "a branch whose name sorts before main is listed", text)
     check("more; list them all with:" not in text, "a list within the limit has no line for more")
-    check("branches with no pull request: 3:" in text and "git branch -D <branch>" in text,
+    check("branches with no pull request: 3:" in text and listing.INSTRUCTIONS in text,
           "the branch section counts its entries and the steps follow", text)
+    command_line = next((line for line in text.splitlines()
+                         if line.startswith("- branch seat-a-work;")), "")
+    command = command_line.split("; delete with: ", 1)[-1]
+    check(command.endswith(f"--repo {main} --delete-branch seat-a-work"),
+          "each branch entry ends with the command that deletes it", command_line)
+    deleted = subprocess.run(shlex.split(command), capture_output=True, text=True)
+    check(deleted.returncode == 0 and git(main, "branch", "--list", "seat-a-work") == "",
+          "the command printed beside a branch deletes it", deleted.stdout + deleted.stderr)
     check(listing.list_text_and_failure(main, "seat-c") == ("", False),
           "an agent-seat with nothing to list gets no paragraph")
     os.environ["FAKE_GH_EXIT_CODE"] = "3"
@@ -243,6 +252,22 @@ def test_worktrees():
     check(str(after_home) in text,
           "the worktrees git lists after the skipped directory are still listed", text)
     check("worktrees: 3:" in text, "the worktree section counts its entries", text)
+    command_line = next((line for line in text.splitlines()
+                         if line.startswith(f"- worktree {stopped};")), "")
+    command = command_line.split("; delete with: ", 1)[-1]
+    check(command.endswith(f"--repo {main} --remove-worktree {stopped}"),
+          "each worktree entry ends with the command that removes it", command_line)
+    removed = subprocess.run(shlex.split(command), capture_output=True, text=True,
+                             env={**os.environ, cleaner.REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE_VARIABLE:
+                                  str(SCRATCH / "removals-log.txt")})
+    check(removed.returncode == 0 and not stopped.exists()
+          and git(main, "branch", "--list", "stopped-session") == "",
+          "the command printed beside a worktree removes it and deletes its branch",
+          removed.stdout + removed.stderr)
+    git(main, "worktree", "add", "-q", "-b", "stopped-session", str(stopped), "origin/main")
+    (Path(git(stopped, "rev-parse", "--absolute-git-dir")) / owner_file.WORKTREE_OWNER_FILE_NAME
+     ).write_text(json.dumps({"owner_kind": "agent-session", "agent_seat": "seat-a",
+                              "owner_key": dead_owner_key()}) + "\n")
     after_stopped = owned_worktree_listed_after(main, "zz-after-stopped", stopped,
                                                 {"owner_kind": "agent-seat", "agent_seat": "seat-a"})
     saved = owner_file.worktree_owner_running_state
