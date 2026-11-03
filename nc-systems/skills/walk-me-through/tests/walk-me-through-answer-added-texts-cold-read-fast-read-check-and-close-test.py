@@ -2128,6 +2128,7 @@ def test_a_glossary_term_put_in_or_a_marker_no_program_reads_settles_as_kind_6_a
                              {"docs/poems-glossary.md": "- **poem index page** — the page that lists poems.\n"}),
                             ("#not_asked_hashtag_marker #poem_date", {"docs/about.md": "Mark a dated poem #poem_date.\n"}),
                             ("#not_asked_hashtag_marker #poem_date", {"tools/poems.py": "TAG = '#poem_date_old'\n"}),
+                            ("#not_asked_hashtag_marker #poem_date-note", {"tools/poems.py": "TAG = '#poem_date-old'\n"}),
                             ("#not_asked_glossary_term poem-index\n\n#not_asked_hashtag_marker #poem_date", None)):
         case = kind_6_case(evidence, files)
         result = case.run("check", "--not-asked", "6")
@@ -2164,6 +2165,16 @@ def test_kind_6_is_refused_unless_markdown_prose_outside_a_glossary_gets_a_liste
         check(f"kind 6 is refused when the marker is in {reader}, which a program runs or reads",
               *refused(kind_6_case("#not_asked_hashtag_marker #poem_date", {reader: 'if "#poem_date" in line: pass\n'}), 6,
                        f"the marker `#poem_date` is in {reader}, which are not Markdown"))
+    for marker, code, why in (
+            ("#POEM_DATE", 'if "#poem_date" in line: pass\n', "in another letter case"),
+            ("#poem_date-note", 'PAUSE = re.compile(r"#poem_date\\b")\n', "through a pattern that ends at its `-`"),
+            ("#case_poem_strong", 'RATING = re.compile(r"#case_poem_[a-z_]+")\n', "through a pattern for a family of markers")):
+        check(f"kind 6 is refused when a program reads the marker {why}",
+              *refused(kind_6_case(f"#not_asked_hashtag_marker {marker}", {"tools/poems.py": code}), 6,
+                       f"the marker `{marker}` is in tools/poems.py, which are not Markdown"))
+    check("kind 6 refuses a marker holding a character other than letters, digits, `_` and `-`, searching nothing",
+          *refused(kind_6_case("#not_asked_hashtag_marker #poem(date"), 6,
+                   "`#poem(date` on its `#not_asked_hashtag_marker` line is not a hashtag marker"))
     check("kind 6 is refused when its marker line holds no hashtag marker",
           *refused(kind_6_case("#not_asked_hashtag_marker poem_date"), 6,
                    "`poem_date` on its `#not_asked_hashtag_marker` line is not a hashtag marker"))

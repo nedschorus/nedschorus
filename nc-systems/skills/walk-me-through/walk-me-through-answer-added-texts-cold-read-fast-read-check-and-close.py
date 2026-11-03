@@ -90,8 +90,11 @@ and the old name in no file outside the touched ones and docs/walk/; kind 5,
 carrying out a ruling, needs a source; kind 6, a glossary term put in or a
 hashtag marker added, needs touches and a term or a marker line, every touched
 file Markdown and not a `*-glossary.md` file, each term as the term of an entry
-as for kind 4, and each marker, `#` then letters, digits, `_` or `-`, in no
-file but Markdown, so that no program, test or setting reads it; for kinds 1 to 4
+as for kind 4, and each marker, `#` then letters, digits, `_` or `-`, found
+in no file but Markdown, in any letter case, either whole or as a part of it
+that ends just before a `-` or ends with a `_` followed by no letter or digit,
+so that no program reads it, by name or by a pattern such as
+`#case_against_[a-z_]+`; for kinds 1 to 4
 and 6 every touched file but a kind 2 test must exist. An unused or old name is searched for as written and,
 when it has two or more words, with its words joined by hyphens, by underscores
 and by nothing, a run of digits both kept with the letters before it and
@@ -1080,6 +1083,20 @@ def not_asked_problems(kind, rating, lines, top, item):
     return problems
 
 
+def marker_reader_pattern(marker):
+    """The `git grep -E` pattern for code that reads `marker`: the marker whole; or a part of it that ends just
+    before a `-`, as `\\b` patterns read `#approval_walk_paused` in `#approval_walk_paused-note`; or a part that
+    ends with `_` and is followed by no letter or digit, as `#case_against_[a-z_]+` reads `#case_against_strong`.
+    A marker is otherwise found only whole: `#new` is not `#new_if_d`, nor `#newer`."""
+    parts = [f"{marker}([^A-Za-z0-9_-]|$)"]
+    for end, character in enumerate(marker):
+        if character == "-":
+            parts.append(f"{marker[:end]}([^A-Za-z0-9_-]|$)")
+        elif character == "_":
+            parts.append(f"{marker[:end + 1]}([^A-Za-z0-9]|$)")
+    return "|".join(f"({part})" for part in parts)
+
+
 def glossary_term_or_marker_problems(found, touched, top, item):
     """Return why a kind 6 item, a glossary term put in or a hashtag marker added to Markdown prose, cannot settle."""
     problems = []
@@ -1097,8 +1114,7 @@ def glossary_term_or_marker_problems(found, touched, top, item):
         if not HASHTAG_MARKER.fullmatch(value):
             problems.append(NOT_ASKED_MARKER_SHAPE_PROBLEM.format(value=value, marker=ADDED_HASHTAG_MARKER))
             continue
-        # A marker is found only whole: `#new` is not `#new_if_d`, nor `#newer`.
-        readers = sorted(files_matching(top, ["-E"], rf"{value}([^A-Za-z0-9_-]|$)", item, 6, NOT_MARKDOWN_FILES))
+        readers = sorted(files_matching(top, ["-E", "-i"], marker_reader_pattern(value), item, 6, NOT_MARKDOWN_FILES))
         if readers:
             problems.append(NOT_ASKED_MARKER_READ_PROBLEM.format(value=value, files=", ".join(readers)))
     return problems
