@@ -141,6 +141,11 @@ def test_unreadable_block():
               and "could not be read because the lines after `#follow_up_request pull request" in context
               and "numbered 1, 2, 3" in context and "SendMessage" in context, repr(context) + err)
         check("nothing is saved for an unreadable block", not (repository / SAVED).exists())
+        code, _, context, err = run(message("1. a\n2. b\n#follow_up_request PR 2369: open a pull request that "
+                                            "fixes these, or tell merge-lane-2 why not.\n"), repository)
+        check("a variant request line, as merge-lane-2 wrote it for pull request 2369, gets the unreadable-block "
+              "context", code == 0 and context is not None and "could not be read because the line "
+              "`#follow_up_request PR 2369:" in context and "SendMessage" in context, repr(context) + err)
     finally:
         shutil.rmtree(root)
 

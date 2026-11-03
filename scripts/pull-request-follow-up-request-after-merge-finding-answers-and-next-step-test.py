@@ -240,6 +240,19 @@ def test_block_parsing():
             check(f"a block with {label} is refused, naming the pull request", str(NUMBER) in str(error), str(error))
         else:
             check(f"a block with {label} is refused, naming the pull request", False)
+    variant = "#follow_up_request PR 2369: open a pull request that fixes these, or tell merge-lane-2 why not."
+    for label, text in (("written as merge-lane-2 wrote it for pull request 2369", "1. a\n2. b\n" + variant + "\n"),
+                        ("with a trailing colon", f"#follow_up_request pull request {NUMBER}:\n1. a\n")):
+        try:
+            program.parse_follow_up_request_blocks_from_message_text(text)
+        except ValueError as error:
+            check(f"a request line {label} is refused, quoting the line and the form",
+                  next(line for line in text.splitlines() if line.startswith("#follow_up_request")) in str(error)
+                  and "pull request <number>` alone on its line" in str(error), str(error))
+        else:
+            check(f"a request line {label} is refused, quoting the line and the form", False)
+    check("a #follow_up_request inside a sentence is not a request line",
+          program.parse_follow_up_request_blocks_from_message_text("Use the #follow_up_request line.\n") == [])
 
 
 def test_brief_text():

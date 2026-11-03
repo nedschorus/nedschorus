@@ -138,6 +138,7 @@ pre_push_selective_test_run = load_script_beside_this_one("git-client-side-hooks
 
 PROGRAM = "scripts/" + Path(__file__).name
 REPOSITORY = "nedschorus/nedschorus"
+FOLLOW_UP_REQUEST_LINE_START = "#follow_up_request"
 FOLLOW_UP_REQUEST_LINE_PATTERN = re.compile(r"^#follow_up_request pull request (\d+)[ \t]*$")
 FINDING_LINE_PATTERN = re.compile(r"^(\d+)\.\s+(\S.*)$")
 PULL_REQUEST_LINK_PATTERN = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+")
@@ -260,12 +261,18 @@ def parse_follow_up_request_blocks_from_message_text(text):
 
     A block ends at the first line after its request line that is not a numbered finding. Raises
     ValueError, naming the pull request, for a block whose findings are not numbered 1, 2, 3 and so
-    on, or that has none."""
+    on, or that has none; and, quoting the line, for a line that starts with #follow_up_request but is
+    not the request line, since merge-lane-2 writes the block by hand and a variant would otherwise be
+    skipped without a word."""
     lines = text.splitlines()
     requests = []
     for index, line in enumerate(lines):
         request = FOLLOW_UP_REQUEST_LINE_PATTERN.match(line)
         if not request:
+            if line.startswith(FOLLOW_UP_REQUEST_LINE_START):
+                raise ValueError(f"the line `{line.strip()}` starts with {FOLLOW_UP_REQUEST_LINE_START} but is not "
+                                 f"`{FOLLOW_UP_REQUEST_LINE_START} pull request <number>` alone on its line, with "
+                                 "the findings numbered 1, 2, 3 and so on, one to a line, on the lines after it")
             continue
         number = int(request.group(1))
         findings = []
