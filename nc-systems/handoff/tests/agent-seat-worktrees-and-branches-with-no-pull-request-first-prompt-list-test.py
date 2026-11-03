@@ -370,6 +370,26 @@ def test_more_than_the_limit():
           (exit_code, missing))
 
 
+def test_more_worktrees_than_the_limit():
+    main = new_clone()
+    set_pull_requests([])
+    count = listing.ENTRIES_AT_MOST + 2
+    for number in range(count):
+        owned_worktree(main, f"wt-{number:02d}", {"owner_kind": "agent-seat", "agent_seat": "seat-a"})
+    text = listing.first_prompt_text(main, "seat-a")
+    shown = [line for line in text.splitlines() if line.startswith("- worktree ")]
+    check(f"worktrees: {count}:" in text and len(shown) == listing.ENTRIES_AT_MOST
+          and "- and 2 more; list them all with:" in text,
+          "worktrees past the limit are counted, with the list command", text[:600])
+    output = io.StringIO()
+    with redirect_stdout(output):
+        exit_code = listing.main(["list", "--agent-seat", "seat-a", "--repo", str(main)])
+    printed = output.getvalue()
+    listed = [line for line in printed.splitlines() if line.startswith("- worktree ")]
+    check(exit_code == 0 and len(listed) == count and "more; list them all with:" not in printed,
+          "the list command prints every worktree past the limit", (exit_code, len(listed)))
+
+
 def test_supervisor_appends_the_list():
     fixture_spec = importlib.util.spec_from_file_location(
         "handoff_supervisor_test_fixture", SYSTEM_DIRECTORY / "tests" / "handoff-supervisor-test-fixture.py")
@@ -408,6 +428,7 @@ def test_supervisor_appends_the_list():
 
 for case in (test_branches, test_pushed_text, test_worktrees, test_gh_failure,
              test_other_failure_and_outside, test_more_than_the_limit,
+             test_more_worktrees_than_the_limit,
              test_supervisor_appends_the_list):
     print(f"-- {case.__name__}")
     case()
