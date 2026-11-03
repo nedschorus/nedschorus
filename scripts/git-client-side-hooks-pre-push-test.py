@@ -1327,8 +1327,9 @@ def run_selective_test_run_copies_of_runner_constants_cases():
     for hook_name, hook_value, in_runner in (
             ("RUNNER_STOPPED_LINE_PREFIX", hook.RUNNER_STOPPED_LINE_PREFIX,
              hook.RUNNER_STOPPED_LINE_PREFIX.replace(f"{runner.PROGRAM}: ", "{PROGRAM}: ")),
-            ("SUITE_KILLED_BY_STOP_MARK", hook.SUITE_KILLED_BY_STOP_MARK,
-             hook.SUITE_KILLED_BY_STOP_MARK.strip() + " {")):
+            ("SUITE_KILLED_BY_RUN_STOP_TEXT_IN_SUITE_LINE",
+             hook.SUITE_KILLED_BY_RUN_STOP_TEXT_IN_SUITE_LINE,
+             hook.SUITE_KILLED_BY_RUN_STOP_TEXT_IN_SUITE_LINE.strip() + " {")):
         check(f"the selective test run's {hook_name} is what the runner prints",
               in_runner in runner_source, f"{hook_value!r} not found as {in_runner!r}")
     first_line = (f"{runner.PROGRAM}: /fake at abc (clean); -j 4"
