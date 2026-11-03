@@ -199,7 +199,7 @@ def test_branches():
     command_line = next((line for line in text.splitlines()
                          if line.startswith("- branch seat-a-work;")), "")
     command = command_line.split("; delete with: ", 1)[-1]
-    check(command.endswith(f"--repo {main} --delete-branch seat-a-work"),
+    check(command.endswith(f"--repo {main} --force-delete-branch seat-a-work"),
           "each branch entry ends with the command that deletes it", command_line)
     deleted = subprocess.run(shlex.split(command), capture_output=True, text=True)
     check(deleted.returncode == 0 and git(main, "branch", "--list", "seat-a-work") == "",
@@ -262,7 +262,7 @@ def test_worktrees():
     command_line = next((line for line in text.splitlines()
                          if line.startswith(f"- worktree {stopped};")), "")
     command = command_line.split("; delete with: ", 1)[-1]
-    check(command.endswith(f"--repo {main} --remove-worktree {stopped}"),
+    check(command.endswith(f"--repo {main} --remove-worktree-and-force-delete-its-branch {stopped}"),
           "each worktree entry ends with the command that removes it", command_line)
     removed = subprocess.run(shlex.split(command), capture_output=True, text=True)
     check(removed.returncode == 0 and not stopped.exists()

@@ -1928,7 +1928,10 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a parent process whose command line ps cannot give is logged by its pid and unknown",
           unknown_caller == f"{os.getppid()} unknown", unknown_caller)
 
-# --- One named worktree or branch: --remove-worktree and --delete-branch ---
+# --- One named worktree or branch ---
+
+REMOVE_WORKTREE_FLAG = "--remove-worktree-and-force-delete-its-branch"
+FORCE_DELETE_BRANCH_FLAG = "--force-delete-branch"
 with tempfile.TemporaryDirectory() as scratch:
     scratch = Path(scratch).resolve()
     checkout = scratch / "checkout"
@@ -2007,45 +2010,45 @@ with tempfile.TemporaryDirectory() as scratch:
     gone_wt = named_worktree("gone-wt")
     gone_tip = commit_in(gone_wt, "unlanded-work")
     (gone_wt / "untracked.txt").write_text("keep me\n", encoding="utf-8")
-    removed = run_one_named("--remove-worktree", str(gone_wt))
+    removed = run_one_named(REMOVE_WORKTREE_FLAG, str(gone_wt))
     events = logged_events()
-    check("--remove-worktree removes a worktree whose branch has commits origin/main lacks, and "
+    check(f"{REMOVE_WORKTREE_FLAG} removes a worktree whose branch has commits origin/main lacks, and "
           "deletes the branch with -D",
           removed.returncode == 0 and not gone_wt.exists()
           and git(checkout, "branch", "--list", "gone-wt-branch") == ""
           and f"gone-wt: removed, branch gone-wt-branch deleted, its last commit {gone_tip}"
           in removed.stdout, removed.stdout + removed.stderr)
-    check("--remove-worktree logs the worktree and the branch's last commit in the log of removals",
+    check(f"{REMOVE_WORKTREE_FLAG} logs the worktree and the branch's last commit in the log of removals",
           [event for event, _ in events] == ["removed-worktree", "deleted-branch"]
           and events[1][1]["commit"] == gone_tip, str(events))
-    check("--remove-worktree first copies the untracked file to a work-snapshot",
+    check(f"{REMOVE_WORKTREE_FLAG} first copies the untracked file to a work-snapshot",
           any("untracked.txt" in git(checkout, "ls-tree", "-r", "--name-only", ref)
               for ref in git(checkout, "for-each-ref", "--format=%(refname)",
                              "refs/work-snapshots/").split()), removed.stdout)
 
     # An agent-seat's own worktree goes too: the caller, not the owner's state, decides.
     seat_wt = named_worktree("seat-wt", {"owner_kind": "agent-seat", "agent_seat": "test-seat"})
-    seat_removed = run_one_named("--remove-worktree", str(seat_wt))
-    check("--remove-worktree removes an agent-seat's own worktree",
+    seat_removed = run_one_named(REMOVE_WORKTREE_FLAG, str(seat_wt))
+    check(f"{REMOVE_WORKTREE_FLAG} removes an agent-seat's own worktree",
           seat_removed.returncode == 0 and not seat_wt.exists(), seat_removed.stdout)
 
     open_wt = named_worktree("open-wt")
     open_head = git(open_wt, "rev-parse", "HEAD").strip()
-    open_kept = run_one_named("--remove-worktree", str(open_wt), pull_requests=[
+    open_kept = run_one_named(REMOVE_WORKTREE_FLAG, str(open_wt), pull_requests=[
         {"number": 31, "state": "OPEN", "headRefName": "open-wt-branch", "headRefOid": "0" * 40}])
-    check("--remove-worktree keeps a worktree whose branch has an open pull request, with no "
+    check(f"{REMOVE_WORKTREE_FLAG} keeps a worktree whose branch has an open pull request, with no "
           "FAILED line and exit 0",
           open_kept.returncode == 0 and open_wt.exists()
           and "open-wt: kept — pull request #31 (open) has its branch or its HEAD commit as its "
               "head" in open_kept.stdout
           and "FAILED" not in open_kept.stdout, open_kept.stdout + open_kept.stderr)
     detached_open_wt = named_worktree("detached-open-wt", detach=True)
-    detached_kept = run_one_named("--remove-worktree", str(detached_open_wt), pull_requests=[
+    detached_kept = run_one_named(REMOVE_WORKTREE_FLAG, str(detached_open_wt), pull_requests=[
         {"number": 32, "state": "OPEN", "headRefName": "elsewhere", "headRefOid": open_head}])
-    check("--remove-worktree keeps a detached worktree whose HEAD is an open pull request's head",
+    check(f"{REMOVE_WORKTREE_FLAG} keeps a detached worktree whose HEAD is an open pull request's head",
           detached_kept.returncode == 0 and detached_open_wt.exists()
           and "pull request #32 (open)" in detached_kept.stdout, detached_kept.stdout)
-    closed_kept = run_one_named("--remove-worktree", str(detached_open_wt), pull_requests=[
+    closed_kept = run_one_named(REMOVE_WORKTREE_FLAG, str(detached_open_wt), pull_requests=[
         {"number": 33, "state": "CLOSED", "headRefName": "elsewhere", "headRefOid": open_head}])
     check("a closed pull request does not keep the worktree",
           closed_kept.returncode == 0 and not detached_open_wt.exists(), closed_kept.stdout)
@@ -2054,44 +2057,44 @@ with tempfile.TemporaryDirectory() as scratch:
     detached_logged = [fields for kind, fields in logged_events()
                        if kind == "removed-worktree" and fields.get("path", "").endswith(
                            "detached-open-wt")]
-    check("--remove-worktree on a detached HEAD deletes no branch, and the log names its head "
+    check(f"{REMOVE_WORKTREE_FLAG} on a detached HEAD deletes no branch, and the log names its head "
           "commit", detached_removal_line == "detached-open-wt: removed"
           and bool(detached_logged) and detached_logged[-1].get("branch") == "none"
           and detached_logged[-1].get("head") == open_head,
           closed_kept.stdout + str(detached_logged))
 
-    not_a_worktree = run_one_named("--remove-worktree", str(scratch / "nowhere"))
-    check("--remove-worktree on a path that is no worktree keeps nothing removed and fails",
+    not_a_worktree = run_one_named(REMOVE_WORKTREE_FLAG, str(scratch / "nowhere"))
+    check(f"{REMOVE_WORKTREE_FLAG} on a path that is no worktree keeps nothing removed and fails",
           kept_and_failed(not_a_worktree, str(scratch / "nowhere")), not_a_worktree.stdout)
-    main_checkout_named = run_one_named("--remove-worktree", str(checkout))
-    check("--remove-worktree never removes the main checkout",
+    main_checkout_named = run_one_named(REMOVE_WORKTREE_FLAG, str(checkout))
+    check(f"{REMOVE_WORKTREE_FLAG} never removes the main checkout",
           kept_and_failed(main_checkout_named, str(checkout)) and checkout.exists(),
           main_checkout_named.stdout)
 
     no_owner_wt = named_worktree("no-owner-wt", owner=False)
-    no_owner = run_one_named("--remove-worktree", str(no_owner_wt))
-    check("--remove-worktree keeps a worktree with no owner file and fails",
+    no_owner = run_one_named(REMOVE_WORKTREE_FLAG, str(no_owner_wt))
+    check(f"{REMOVE_WORKTREE_FLAG} keeps a worktree with no owner file and fails",
           kept_and_failed(no_owner, "no-owner-wt") and no_owner_wt.exists()
           and "no owner file" in no_owner.stdout, no_owner.stdout)
     unreadable_wt = named_worktree("unreadable-wt")
     owner_file_path(unreadable_wt).write_text("not json", encoding="utf-8")
-    unreadable = run_one_named("--remove-worktree", str(unreadable_wt))
-    check("--remove-worktree keeps a worktree whose owner file cannot be read and fails",
+    unreadable = run_one_named(REMOVE_WORKTREE_FLAG, str(unreadable_wt))
+    check(f"{REMOVE_WORKTREE_FLAG} keeps a worktree whose owner file cannot be read and fails",
           kept_and_failed(unreadable, "unreadable-wt") and unreadable_wt.exists()
           and "owner file could not be read" in unreadable.stdout, unreadable.stdout)
 
     locked_wt = named_worktree("locked-wt")
     git(checkout, "worktree", "lock", "--reason", "claude agent test", str(locked_wt))
-    locked = run_one_named("--remove-worktree", str(locked_wt))
-    check("--remove-worktree keeps a locked worktree and fails",
+    locked = run_one_named(REMOVE_WORKTREE_FLAG, str(locked_wt))
+    check(f"{REMOVE_WORKTREE_FLAG} keeps a locked worktree and fails",
           kept_and_failed(locked, "locked-wt") and locked_wt.exists()
           and "locked with git worktree lock (claude agent test)" in locked.stdout, locked.stdout)
     git(checkout, "worktree", "unlock", str(locked_wt))
 
     prunable_wt = named_worktree("prunable-wt")
     shutil.move(str(prunable_wt), str(scratch / "moved-away"))
-    prunable = run_one_named("--remove-worktree", str(prunable_wt))
-    check("--remove-worktree keeps a worktree git would prune and fails",
+    prunable = run_one_named(REMOVE_WORKTREE_FLAG, str(prunable_wt))
+    check(f"{REMOVE_WORKTREE_FLAG} keeps a worktree git would prune and fails",
           kept_and_failed(prunable, "prunable-wt") and "would prune" in prunable.stdout,
           prunable.stdout)
     shutil.move(str(scratch / "moved-away"), str(prunable_wt))
@@ -2099,8 +2102,8 @@ with tempfile.TemporaryDirectory() as scratch:
     rebasing_wt = named_worktree("rebasing-wt")
     Path(git(rebasing_wt, "rev-parse", "--path-format=absolute", "--git-path",
              "rebase-merge").strip()).mkdir()
-    rebasing = run_one_named("--remove-worktree", str(rebasing_wt))
-    check("--remove-worktree keeps a worktree with a rebase in progress and fails",
+    rebasing = run_one_named(REMOVE_WORKTREE_FLAG, str(rebasing_wt))
+    check(f"{REMOVE_WORKTREE_FLAG} keeps a worktree with a rebase in progress and fails",
           kept_and_failed(rebasing, "rebasing-wt") and rebasing_wt.exists()
           and "a rebase is in progress" in rebasing.stdout, rebasing.stdout)
 
@@ -2115,40 +2118,40 @@ with tempfile.TemporaryDirectory() as scratch:
         live_wt = named_worktree("live-wt", {
             "owner_kind": "agent-session", "agent_seat": "test-seat",
             "owner_key": snapshots_module.owner_key_of_process(live_session.pid)})
-        live = run_one_named("--remove-worktree", str(live_wt))
+        live = run_one_named(REMOVE_WORKTREE_FLAG, str(live_wt))
     finally:
         live_session.stdin.close()
         live_session.wait()
-    check("--remove-worktree keeps a worktree whose owning agent-session runs and fails",
+    check(f"{REMOVE_WORKTREE_FLAG} keeps a worktree whose owning agent-session runs and fails",
           kept_and_failed(live, "live-wt") and live_wt.exists() and "runs" in live.stdout,
           live.stdout)
 
     gh_wt = named_worktree("gh-wt")
-    gh_failed = run_one_named("--remove-worktree", str(gh_wt), gh_exit_code=3)
-    check("--remove-worktree keeps the worktree when gh cannot list the pull requests and fails",
+    gh_failed = run_one_named(REMOVE_WORKTREE_FLAG, str(gh_wt), gh_exit_code=3)
+    check(f"{REMOVE_WORKTREE_FLAG} keeps the worktree when gh cannot list the pull requests and fails",
           kept_and_failed(gh_failed, "gh-wt") and gh_wt.exists()
           and "stand-in listing failure" in gh_failed.stdout, gh_failed.stdout)
 
-    occupied = run_one_named("--remove-worktree", str(gh_wt),
+    occupied = run_one_named(REMOVE_WORKTREE_FLAG, str(gh_wt),
                              lsof_body=f"#!/bin/sh\nprintf 'p1\\nn{gh_wt}\\n'\n")
-    check("--remove-worktree keeps a worktree a live process has its working directory in and fails",
+    check(f"{REMOVE_WORKTREE_FLAG} keeps a worktree a live process has its working directory in and fails",
           kept_and_failed(occupied, "gh-wt") and gh_wt.exists()
           and "a live process is rooted inside it" in occupied.stdout, occupied.stdout)
 
-    status_failed = run_one_named("--remove-worktree", str(gh_wt), git_refuses=" status ")
-    check("--remove-worktree keeps the worktree when git cannot list its uncommitted changes",
+    status_failed = run_one_named(REMOVE_WORKTREE_FLAG, str(gh_wt), git_refuses=" status ")
+    check(f"{REMOVE_WORKTREE_FLAG} keeps the worktree when git cannot list its uncommitted changes",
           kept_and_failed(status_failed, "gh-wt") and gh_wt.exists()
           and "cannot list its uncommitted changes" in status_failed.stdout, status_failed.stdout)
-    ignored_failed = run_one_named("--remove-worktree", str(gh_wt), git_refuses=" --ignored ")
-    check("--remove-worktree keeps the worktree when git cannot list the files its removal "
+    ignored_failed = run_one_named(REMOVE_WORKTREE_FLAG, str(gh_wt), git_refuses=" --ignored ")
+    check(f"{REMOVE_WORKTREE_FLAG} keeps the worktree when git cannot list the files its removal "
           "discards", kept_and_failed(ignored_failed, "gh-wt") and gh_wt.exists()
           and "cannot list its files" in ignored_failed.stdout, ignored_failed.stdout)
 
     walk_wt = named_worktree("walk-wt")
     (walk_wt / "docs" / "walk").mkdir(parents=True)
     (walk_wt / "docs" / "walk" / "lonely-walk-minutes.md").write_text("# minutes\n", encoding="utf-8")
-    walk_refused = run_one_named("--remove-worktree", str(walk_wt))
-    check("--remove-worktree keeps a worktree whose walk does not ship, fails, and promises no "
+    walk_refused = run_one_named(REMOVE_WORKTREE_FLAG, str(walk_wt))
+    check(f"{REMOVE_WORKTREE_FLAG} keeps a worktree whose walk does not ship, fails, and promises no "
           "daily retry", walk_refused.returncode == 1 and walk_wt.exists()
           and walk_refused.stdout.splitlines()[-1].startswith("FAILED: ")
           and "the next scripts/clean-worktrees.py --remove" not in walk_refused.stdout,
@@ -2162,11 +2165,11 @@ with tempfile.TemporaryDirectory() as scratch:
     shutil.move(str(snapshot_refs), str(scratch / "work-snapshots-aside"))
     snapshot_refs.write_text("", encoding="utf-8")
     try:
-        snapshot_failed = run_one_named("--remove-worktree", str(snapshot_wt))
+        snapshot_failed = run_one_named(REMOVE_WORKTREE_FLAG, str(snapshot_wt))
     finally:
         snapshot_refs.unlink()
         shutil.move(str(scratch / "work-snapshots-aside"), str(snapshot_refs))
-    check("--remove-worktree keeps the worktree when its work-snapshot cannot be written, fails, "
+    check(f"{REMOVE_WORKTREE_FLAG} keeps the worktree when its work-snapshot cannot be written, fails, "
           "and promises no daily retry",
           snapshot_failed.returncode == 1 and (snapshot_wt / "unsaved.txt").is_file()
           and "snapshot-wt: work-snapshot FAILED" in snapshot_failed.stdout
@@ -2174,15 +2177,15 @@ with tempfile.TemporaryDirectory() as scratch:
           and snapshot_failed.stdout.splitlines()[-1].startswith("FAILED: "),
           snapshot_failed.stdout + snapshot_failed.stderr)
 
-    removal_failed = run_one_named("--remove-worktree", str(gh_wt), git_refuses=" worktree remove ")
-    check("--remove-worktree fails when git cannot remove the worktree",
+    removal_failed = run_one_named(REMOVE_WORKTREE_FLAG, str(gh_wt), git_refuses=" worktree remove ")
+    check(f"{REMOVE_WORKTREE_FLAG} fails when git cannot remove the worktree",
           removal_failed.returncode == 1 and gh_wt.exists()
           and "gh-wt: removal FAILED" in removal_failed.stdout
           and removal_failed.stdout.splitlines()[-1].startswith("FAILED: "), removal_failed.stdout)
 
     branch_kept_wt = named_worktree("branch-kept-wt")
-    branch_failed = run_one_named("--remove-worktree", str(branch_kept_wt), git_refuses=" branch -D ")
-    check("--remove-worktree fails when the worktree goes but its branch cannot be deleted",
+    branch_failed = run_one_named(REMOVE_WORKTREE_FLAG, str(branch_kept_wt), git_refuses=" branch -D ")
+    check(f"{REMOVE_WORKTREE_FLAG} fails when the worktree goes but its branch cannot be deleted",
           branch_failed.returncode == 1 and not branch_kept_wt.exists()
           and git(checkout, "branch", "--list", "branch-kept-wt-branch") != ""
           and "deleting its branch branch-kept-wt-branch FAILED" in branch_failed.stdout
@@ -2191,30 +2194,30 @@ with tempfile.TemporaryDirectory() as scratch:
     log_wt = named_worktree("log-wt")
     not_a_directory = scratch / "not-a-directory"
     not_a_directory.write_text("", encoding="utf-8")
-    log_failed = run_one_named("--remove-worktree", str(log_wt),
+    log_failed = run_one_named(REMOVE_WORKTREE_FLAG, str(log_wt),
                                log_file=not_a_directory / "log.txt")
-    check("--remove-worktree fails when its log of removals line cannot be written",
+    check(f"{REMOVE_WORKTREE_FLAG} fails when its log of removals line cannot be written",
           log_failed.returncode == 1 and not log_wt.exists()
           and "log of removals line(s) FAILED" in log_failed.stdout
           and log_failed.stdout.splitlines()[-1].startswith("FAILED: "), log_failed.stdout)
 
-    listing_failed = run_one_named("--remove-worktree", str(gh_wt), git_refuses=" worktree list ")
-    check("--remove-worktree fails with a FAILED line when git cannot list the worktrees",
+    listing_failed = run_one_named(REMOVE_WORKTREE_FLAG, str(gh_wt), git_refuses=" worktree list ")
+    check(f"{REMOVE_WORKTREE_FLAG} fails with a FAILED line when git cannot list the worktrees",
           listing_failed.returncode == 1 and gh_wt.exists()
           and "git could not list the worktrees" in listing_failed.stdout
           and listing_failed.stdout.splitlines()[-1].startswith("FAILED: "),
           listing_failed.stdout + listing_failed.stderr)
 
-    # --delete-branch
+    # --force-delete-branch
     one_named_log.unlink()
     git(checkout, "branch", "lone-branch", "origin/main")
     lone_wt = scratch / "lone-holder"
     git(checkout, "worktree", "add", str(lone_wt), "lone-branch")
     lone_tip = commit_in(lone_wt, "lone-work")
     git(checkout, "worktree", "remove", str(lone_wt))
-    deleted = run_one_named("--delete-branch", "lone-branch")
+    deleted = run_one_named(FORCE_DELETE_BRANCH_FLAG, "lone-branch")
     events = logged_events()
-    check("--delete-branch deletes a branch with commits origin/main lacks and logs its last "
+    check(f"{FORCE_DELETE_BRANCH_FLAG} deletes a branch with commits origin/main lacks and logs its last "
           "commit", deleted.returncode == 0
           and git(checkout, "branch", "--list", "lone-branch") == ""
           and f"branch lone-branch: deleted, its last commit {lone_tip}, with 1 commit(s)"
@@ -2224,58 +2227,58 @@ with tempfile.TemporaryDirectory() as scratch:
                                              "commits-not-on-origin-main": "1"})],
           deleted.stdout + deleted.stderr + str(events))
 
-    main_named = run_one_named("--delete-branch", "main")
-    check("--delete-branch never deletes main", kept_and_failed(main_named, "branch main")
+    main_named = run_one_named(FORCE_DELETE_BRANCH_FLAG, "main")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} never deletes main", kept_and_failed(main_named, "branch main")
           and git(checkout, "branch", "--list", "main") != "", main_named.stdout)
-    missing = run_one_named("--delete-branch", "no-such-branch")
-    check("--delete-branch on a branch that does not exist fails",
+    missing = run_one_named(FORCE_DELETE_BRANCH_FLAG, "no-such-branch")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} on a branch that does not exist fails",
           kept_and_failed(missing, "branch no-such-branch"), missing.stdout)
-    held = run_one_named("--delete-branch", "gh-wt-branch")
-    check("--delete-branch keeps a branch a worktree has checked out, and names the command that "
+    held = run_one_named(FORCE_DELETE_BRANCH_FLAG, "gh-wt-branch")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} keeps a branch a worktree has checked out, and names the command that "
           "removes that worktree", kept_and_failed(held, "branch gh-wt-branch")
-          and f"--repo {shlex.quote(str(checkout))} --remove-worktree {shlex.quote(str(gh_wt))}"
+          and f"--repo {shlex.quote(str(checkout))} --remove-worktree-and-force-delete-its-branch {shlex.quote(str(gh_wt))}"
           in held.stdout, held.stdout)
 
     git(checkout, "branch", "reviewed-branch", "origin/main")
-    reviewed = run_one_named("--delete-branch", "reviewed-branch", pull_requests=[
+    reviewed = run_one_named(FORCE_DELETE_BRANCH_FLAG, "reviewed-branch", pull_requests=[
         {"number": 41, "state": "OPEN", "headRefName": "reviewed-branch", "headRefOid": "0" * 40}])
-    check("--delete-branch keeps the head branch of an open pull request, with no FAILED line and "
+    check(f"{FORCE_DELETE_BRANCH_FLAG} keeps the head branch of an open pull request, with no FAILED line and "
           "exit 0", reviewed.returncode == 0
           and git(checkout, "branch", "--list", "reviewed-branch") != ""
           and "pull request #41 (open)" in reviewed.stdout and "FAILED" not in reviewed.stdout,
           reviewed.stdout)
-    gh_branch = run_one_named("--delete-branch", "reviewed-branch", gh_exit_code=3)
-    check("--delete-branch keeps the branch when gh cannot list the pull requests and fails",
+    gh_branch = run_one_named(FORCE_DELETE_BRANCH_FLAG, "reviewed-branch", gh_exit_code=3)
+    check(f"{FORCE_DELETE_BRANCH_FLAG} keeps the branch when gh cannot list the pull requests and fails",
           kept_and_failed(gh_branch, "branch reviewed-branch")
           and git(checkout, "branch", "--list", "reviewed-branch") != "", gh_branch.stdout)
-    refused = run_one_named("--delete-branch", "reviewed-branch", git_refuses=" branch -D ")
-    check("--delete-branch fails when git branch -D refuses",
+    refused = run_one_named(FORCE_DELETE_BRANCH_FLAG, "reviewed-branch", git_refuses=" branch -D ")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} fails when git branch -D refuses",
           kept_and_failed(refused, "branch reviewed-branch")
           and git(checkout, "branch", "--list", "reviewed-branch") != "", refused.stdout)
-    held_listing_failed = run_one_named("--delete-branch", "reviewed-branch",
+    held_listing_failed = run_one_named(FORCE_DELETE_BRANCH_FLAG, "reviewed-branch",
                                         git_refuses=" worktree list ")
-    check("--delete-branch fails with a FAILED line when git cannot list the worktrees",
+    check(f"{FORCE_DELETE_BRANCH_FLAG} fails with a FAILED line when git cannot list the worktrees",
           held_listing_failed.returncode == 1
           and git(checkout, "branch", "--list", "reviewed-branch") != ""
           and held_listing_failed.stdout.splitlines()[-1].startswith("FAILED: "),
           held_listing_failed.stdout + held_listing_failed.stderr)
-    uncounted = run_one_named("--delete-branch", "reviewed-branch", git_refuses=" rev-list --count ")
-    check("--delete-branch deletes the branch when its commits cannot be counted, and says unknown",
+    uncounted = run_one_named(FORCE_DELETE_BRANCH_FLAG, "reviewed-branch", git_refuses=" rev-list --count ")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} deletes the branch when its commits cannot be counted, and says unknown",
           uncounted.returncode == 0 and git(checkout, "branch", "--list", "reviewed-branch") == ""
           and "with unknown commit(s) origin/main lacks" in uncounted.stdout, uncounted.stdout)
     git(checkout, "branch", "log-branch", "origin/main")
-    branch_log_failed = run_one_named("--delete-branch", "log-branch",
+    branch_log_failed = run_one_named(FORCE_DELETE_BRANCH_FLAG, "log-branch",
                                       log_file=not_a_directory / "log.txt")
-    check("--delete-branch fails when its log of removals line cannot be written",
+    check(f"{FORCE_DELETE_BRANCH_FLAG} fails when its log of removals line cannot be written",
           branch_log_failed.returncode == 1
           and git(checkout, "branch", "--list", "log-branch") == ""
           and branch_log_failed.stdout.splitlines()[-1].startswith("FAILED: "),
           branch_log_failed.stdout)
 
-    for flags, case in ((["--remove-worktree"], "a flag with no value"),
-                        (["--remove-worktree", str(gh_wt), "--remove"], "with --remove"),
-                        (["--delete-branch", "x", "--only-done"], "with --only-done"),
-                        (["--remove-worktree", str(gh_wt), "--delete-branch", "x"], "both flags")):
+    for flags, case in (([REMOVE_WORKTREE_FLAG], "a flag with no value"),
+                        ([REMOVE_WORKTREE_FLAG, str(gh_wt), "--remove"], "with --remove"),
+                        ([FORCE_DELETE_BRANCH_FLAG, "x", "--only-done"], "with --only-done"),
+                        ([REMOVE_WORKTREE_FLAG, str(gh_wt), FORCE_DELETE_BRANCH_FLAG, "x"], "both flags")):
         bad = run_one_named(*flags)
         check(f"a bad invocation of the one-named modes exits 2: {case}",
               bad.returncode == 2 and gh_wt.exists(), bad.stdout + bad.stderr)
