@@ -53,7 +53,8 @@ R ON AN OPEN APPROVAL-WALK, as the whole prompt (R or repeat), hands the
 agent each waiting item's closing line to print, word for word: the item's
 link, from the newest `#item_page` line for that item number in the minutes,
 as WALK_FINDER_FILE's docstring says, with the item's running count and point
-from its walk-document heading, any link in the point cut to its text, then
+from its walk-document heading, any link in the point cut to its text and a
+deferred item's note `(deferred: moved to just before the summary item)` left out, then
 ANSWER_LETTERS_TEXT, as the walk-me-through skill writes it. The link opens
 the item's page, which shows the item in full on every screen the user reads.
 When the newest line records a failed publish, the closing line has no link,
@@ -516,10 +517,11 @@ def read_walk(cwd):
 
 def heading_points(lines, spans, total, parser):
     """{item number: the point its heading states after the running count's colon, without its links} for the
-    walk's items."""
+    walk's items; a deferred item's note is not part of its point."""
     points = {}
+    walk_finder = load_walk_finder()
     for numbers, unit_total, _, first, _ in spans:
-        match = HEADING_POINT.match(lines[first])
+        match = HEADING_POINT.match(walk_finder.approval_walk_item_heading_with_deferred_note_removed(lines[first]))
         if match and match[1] and (total is None or unit_total == total):
             points.update({number: without_links(match[1], parser) for number in numbers})
     return points

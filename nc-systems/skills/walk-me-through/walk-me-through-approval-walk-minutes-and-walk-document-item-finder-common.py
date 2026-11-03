@@ -48,8 +48,10 @@ number is read whole and so is not item 5's, a label whose bold ends before `of`
 or a line inside a quotation, a nested list or an HTML block. When an item of the unit
 has no opening, its items are not told apart, and the UserPromptSubmit hook
 says it cannot read their recommendations. A heading that says `revised` right after its
-count replaces the earlier units it names. A running count that names no
-item still ends the unit before it. A top-level heading that opens with
+count replaces the earlier units it names; the note `(deferred: moved to the end of
+the walk)`, which the answer program's close step puts right after a deferred item's
+count, is read as absent, here and by every program that loads this module. A
+running count that names no item still ends the unit before it. A top-level heading that opens with
 `Withdrawn`, as in `#### Withdrawn version 1 of item 4.1`, ends the unit it
 falls in, so a version the walk-document keeps after replacing it is never
 read for the item's recommendation, its `#new` lines or its parts. Every search of a walk file for its
@@ -133,6 +135,9 @@ CLOSING_LINE_LABEL = re.compile(rf"Items?\s+({NUMBER_LIST})\s+of\s+(\d+)(?:,\s.*
 # Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
 REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
 WITHDRAWN_HEADING = re.compile(r"^[*_\s(]*withdrawn\b", re.I)
+# The close step of the answer program puts this right after a deferred item's running count. It holds a colon, so
+# every pattern that reads a heading past its count reads approval_walk_item_heading_with_deferred_note_removed's line.
+APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT = "(deferred: moved to just before the summary item)"
 NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
 # A link is one run of non-space characters, so `publish failed: <reason>` can never be read as a link. Spaces
 # only, never a newline, so a line that ends short is not completed by the line below it.
@@ -169,6 +174,12 @@ def checkout_top(directory):
     if output is None:
         return None
     return Path(os.fsdecode(output).rstrip("\n"))
+
+
+def approval_walk_item_heading_with_deferred_note_removed(line):
+    """The heading line with its first APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT, and the spaces
+    before it, taken out."""
+    return re.sub(r"\s*" + re.escape(APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT), "", line, count=1)
 
 
 def markdown_parser():
@@ -396,6 +407,7 @@ def item_unit_spans(document_text, parser):
         if token.type == "paragraph_open" and not lines[token.map[0]].lstrip().startswith("**"):
             continue
         content = tokens[index + 1].content.split("\n")[0] if index + 1 < len(tokens) else ""
+        content = approval_walk_item_heading_with_deferred_note_removed(content)
         match = HEADING_COUNT.match(content)
         if not match:
             continue
