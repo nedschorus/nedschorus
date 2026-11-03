@@ -20,6 +20,11 @@ WHAT IS LISTED.
   unconfigured-agent, is in no agent-seat's list; the cleaner's count line
   counts it among the branches with no pull request.
 
+Beside each entry the list prints the command that deletes it:
+scripts/clean-worktrees.py --remove-worktree or --delete-branch, which ships a
+worktree's walks and records first, and keeps a worktree or branch whose pull
+request is open.
+
 origin/main is read as it is on disk: the handoff-supervisor fetches just
 before it builds the prompt.
 
@@ -41,6 +46,7 @@ Usage:
 import argparse
 import importlib.util
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -137,14 +143,22 @@ def owned_worktrees(repo, agent_seat, skip_worktree):
     return worktrees
 
 
-def worktree_entry(worktree, branch, tip, by_head_branch, by_head_commit):
+def delete_command_text(repo, flag, value):
+    """The scripts/clean-worktrees.py command that removes one worktree or deletes one branch."""
+    return shlex.join(["python3", str(CLEAN_WORKTREES_PATH), "--repo", str(repo), flag, str(value)])
+
+
+def worktree_entry(repo, worktree, branch, tip, by_head_branch, by_head_commit):
     if by_head_branch is None:
         pull_request_text = "pull request state unknown"
     else:
         pull_request = pull_request_for(branch, tip, by_head_branch, by_head_commit)
         pull_request_text = (clean_worktrees_module().pull_request_text(pull_request)
                              if pull_request else "no pull request")
-    return f"worktree {worktree}; branch {branch or 'none (detached HEAD)'}; {pull_request_text}"
+    command = delete_command_text(
+        repo, clean_worktrees_module().REMOVE_ONE_NAMED_WORKTREE_FLAG, worktree)
+    return (f"worktree {worktree}; branch {branch or 'none (detached HEAD)'}; {pull_request_text}; "
+            f"delete with: {command}")
 
 
 def checked_out_branches(repo):
@@ -195,18 +209,16 @@ def branch_entries(repo, branches, by_head_branch, by_head_commit):
         if pull_request_for(branch, tip, by_head_branch, by_head_commit) is not None:
             continue
         count = git_lines(repo, "rev-list", "--count", f"{ORIGIN_MAIN}..{tip}")[0]
+        command = delete_command_text(
+            repo, clean_worktrees_module().DELETE_ONE_NAMED_BRANCH_FLAG, branch)
         entries.append(f"branch {branch}; {count} commit(s) not on origin/main, the newest "
-                       f"{tip[:12]} of {date}; {pushed_text(branch, tip, origin_tips)}")
+                       f"{tip[:12]} of {date}; {pushed_text(branch, tip, origin_tips)}; "
+                       f"delete with: {command}")
     return entries
 
 
 INSTRUCTIONS = """\
-Each is listed because it belongs to this agent-seat: a worktree because its owner file names this agent-seat, a branch because this agent-seat wrote its newest commit not on origin/main and no pull request has it as its head. An earlier agent-session left each one. Before your other work, decide for each whether you will carry it on, and if not, delete it:
-- To carry one on, work on it, or say in your session-handoff which agent-seat will.
-- A worktree whose branch has an open pull request, or whose pull request state is unknown, is still in use: keep it; scripts/clean-worktrees.py removes it after the pull request closes.
-- A worktree you will not carry on: run `git -C <worktree path> status --ignored` first. Ship what belongs in the log-store, running each command in the worktree: each directory under cold-read-records/ with `python3 nc-systems/cold-read/cold-read-record-ship.py <its path>`, each under sanity-check-records/ with `python3 scripts/sanity-check-record-ship.py <its path>`, and each walk that has a docs/walk/<walk name>-minutes.md with `python3 scripts/walk-files-ship.py docs/walk/<walk name>-minutes.md`. If any prints a line opening FAILED or REFUSED, keep the worktree and its branch, and tell the user what it printed. Then run `git worktree remove <worktree path>`, using the path as listed. If git refuses because the worktree holds changed or untracked files, copy out of the worktree any that is work and say where in your session-handoff, then run `git worktree remove --force <worktree path>`. Then delete the worktree's branch as below, unless the list shows `branch none (detached HEAD)`.
-- A branch you will not carry on: run `git log origin/main..<branch>` first, then `git branch -D <branch>`. A branch the list marks "not on origin" has no copy on GitHub, so once it is deleted its commits can be found only in git's reflog.
-Tell the user in your next message which worktrees and branches you kept and which you deleted."""
+Each is listed because it belongs to this agent-seat: a worktree because its owner file names this agent-seat, a branch because this agent-seat wrote its newest commit not on origin/main and no pull request has it as its head. An earlier agent-session left each one. Before your other work, decide for each whether you will carry it on. To carry one on, work on it, or say in your session-handoff which agent-seat will. To delete one, run the command printed beside it, which keeps a worktree whose pull request is open; for a branch marked "not on origin", read `git log origin/main..<branch>` first. If the command prints a line opening FAILED or exits nonzero, keep that item, tell the user what it printed, and go on with the others. Tell the user in your next message which worktrees and branches you kept and which you deleted."""
 
 
 def section(heading, entries, agent_seat, entries_at_most):
@@ -236,7 +248,7 @@ def list_text_and_failure(repo, agent_seat, skip_worktree=None, entries_at_most=
             # gh is asked only when something could be listed: it takes seconds at every launch.
             return "", False
         by_head_branch, by_head_commit, pull_request_failure = pull_requests_or_failure(repo)
-        worktrees = [worktree_entry(worktree, branch, tip, by_head_branch, by_head_commit)
+        worktrees = [worktree_entry(repo, worktree, branch, tip, by_head_branch, by_head_commit)
                      for worktree, branch, tip in owned]
         branches = ([] if pull_request_failure else
                     branch_entries(repo, authored, by_head_branch, by_head_commit))
