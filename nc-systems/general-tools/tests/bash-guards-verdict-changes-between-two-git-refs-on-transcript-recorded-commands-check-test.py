@@ -149,6 +149,17 @@ def check_scratch_directory_removed(directory, record=None):
     record("the scratch directory is removed after the run", not could_not_remove, "\n".join(could_not_remove))
 
 
+def remove_scratch_directory_ignoring_stop_signals(directory, record=None):
+    """Ignore stop signals from here on, then remove directory as check_scratch_directory_removed does.
+
+    A first stop's SystemExit is what brings a stopped run here; a second, such as the SIGTERM that `timeout` also
+    sends to the process group, would raise again inside the removal and leave the directory half removed in /tmp.
+    """
+    for number in replay.STOP_SIGNALS:
+        signal.signal(number, signal.SIG_IGN)
+    check_scratch_directory_removed(directory, record)
+
+
 def worktrees_registered_under(directory):
     # git lists resolved paths; on macOS the scratch directory is named through the /var symlink.
     resolved = os.path.realpath(directory)
@@ -281,7 +292,8 @@ def stopped_by_sigterm(*_):
 HUNG_CHILD_CASE_DEADLINE_SECONDS = 150
 # Long enough for a stopped replay to stop its steps and remove its checkouts.
 REPLAY_STOP_SECONDS = 60
-signal.signal(signal.SIGTERM, stopped_by_sigterm)
+for stop_signal_number in replay.STOP_SIGNALS:
+    signal.signal(stop_signal_number, stopped_by_sigterm)
 scratch = tempfile.mkdtemp(prefix="bash-guards-replay-test-")
 # The test's checkouts are registered in a clone of its own inside the scratch directory, never in the
 # clone this checkout belongs to, whose worktree list other agent-seats and concurrent runs share; a run
@@ -298,8 +310,9 @@ try:
               for mode in ("in-process", "search-file main()", "new-process")), out)
     check("the same commit: no message differs, though the codex exec refusal names a file in each checkout",
           "in-process: rows whose message differs and verdict does not: 0" in out, out)
-    check("a replay that returns puts back the SIGTERM handler its caller had",
-          signal.getsignal(signal.SIGTERM) is stopped_by_sigterm, signal.getsignal(signal.SIGTERM))
+    check("a replay that returns puts back the SIGTERM and SIGHUP handlers its caller had",
+          all(signal.getsignal(number) is stopped_by_sigterm for number in replay.STOP_SIGNALS),
+          [signal.getsignal(number) for number in replay.STOP_SIGNALS])
     check("the same commit: new-process mode reads every pair by default",
           f"new-process pairs: {len(FIXTURE_PAIRS)}" in out, out)
     check("the same commit: new-process mode reads through a new process at both refs, in-process mode does not",
@@ -1567,9 +1580,36 @@ try:
     check("a failure that a stop signal replaces with exit 2 is printed first",
           outcome == "SystemExit(2)" and "REPLAY FAILED: the test's leftover directory /tmp/pymp-test"
           in printed.getvalue(), f"{outcome}; stderr {printed.getvalue()!r}")
+    for second_stop in replay.STOP_SIGNALS:
+        stopped_twice = Path(scratch) / f"second-{second_stop.name}-during-removal"
+        for run in range(5):
+            (stopped_twice / f"run-{run}").mkdir(parents=True)
+            (stopped_twice / f"run-{run}" / "file").write_text("x")
+        # Not os.rmdir: rmtree compares the os.rmdir it queued with the current one, so swapping it breaks rmtree.
+        real_unlink = os.unlink
+
+        def unlink_after_a_second_stop(path, *arguments, second_stop=second_stop, **keywords):
+            os.unlink = real_unlink
+            os.kill(os.getpid(), second_stop)
+            return real_unlink(path, *arguments, **keywords)
+
+        recorded = []
+        outcome = "no exception"
+        os.unlink = unlink_after_a_second_stop
+        try:
+            remove_scratch_directory_ignoring_stop_signals(stopped_twice, lambda *result: recorded.append(result))
+        except SystemExit as stopped:
+            outcome = f"SystemExit({stopped.code})"
+        finally:
+            os.unlink = real_unlink
+            for number in replay.STOP_SIGNALS:
+                signal.signal(number, stopped_by_sigterm)
+        check(f"a {second_stop.name} landing during the final removal does not stop it, so nothing is left",
+              outcome == "no exception" and not stopped_twice.exists() and len(recorded) == 1
+              and recorded[0][1] is True, f"{outcome}; left: {stopped_twice.exists()}; recorded {recorded}")
 finally:
     # The test's checkouts are registered only in its own clone, which goes with the scratch directory.
-    check_scratch_directory_removed(scratch)
+    remove_scratch_directory_ignoring_stop_signals(scratch)
 
 check("the default transcript folders are this machine's and the three copies the mirror keeps on ned-box",
       replay.DEFAULT_TRANSCRIPT_DIRECTORIES == [
