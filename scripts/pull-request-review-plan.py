@@ -68,16 +68,17 @@ writes the reports, keyed by the overview's blob, under
 --overview-write-architecture-overview-claim-check-report-directory, the log-store's
 overview-write-architecture-overview-claim-check-reports by default.
 
-Rule 4 also refuses such a pull request when both of these hold:
-  1. The commit the overview's **Checked against:** line names is not on
-     origin/main.
-  2. One or more of these hold:
+The code an overview describes is every path its Components section names in
+backticks, whatever the path's extension, and every file under
+nc-systems/<system>/ other than a .md file. Rule 4 also refuses such a pull
+request in either of these cases:
+  1. The commit the overview's **Checked against:** line names is on
+     origin/main, and the pull request changes code the overview describes.
+     Code that main changed after that commit is left to an overview refresh.
+  2. That commit is not on origin/main, and one or more of these hold:
      - that commit is not an ancestor of the head commit;
-     - a commit after that commit, up to the head commit, changes a path the
-       overview's Components section names in backticks, whatever the path's
-       extension;
-     - a commit after that commit, up to the head commit, changes a file
-       under nc-systems/<system>/ other than a .md file.
+     - a commit after that commit, up to the head commit, changes code the
+       overview describes.
 When Rule 4 refuses this way, the claim check read code other than the code at
 the head commit. A merged pull request is not refused.
 
@@ -710,9 +711,9 @@ def path_is_architecture_overview_described_code(path, system, component_paths):
 
 
 def architecture_overview_checked_against_commit_problems(repository, head, changed_files):
-    """For each nc-architecture-overview the pull request adds or changes whose
-    **Checked against:** commit is not on origin/main, why that commit does not
-    hold the code the overview describes at head; an empty list lets the plan go on."""
+    """For each nc-architecture-overview the pull request adds or changes, why
+    its **Checked against:** commit does not hold the code the overview
+    describes at head; an empty list lets the plan go on."""
     problems = []
     for path, system in changed_architecture_overview_paths_and_systems(repository, head, changed_files):
         text = required_git_output(repository, "show", f"{head}:{path}")
@@ -720,30 +721,38 @@ def architecture_overview_checked_against_commit_problems(repository, head, chan
         # An overview with no such line is refused by the claim check, which names the fix.
         if named is None:
             continue
+        component_paths = architecture_overview_component_paths(text)
         named_is_present = commit_is_in_repository(repository, named)
         if named_is_present and commit_is_ancestor_of(repository, named, "refs/remotes/origin/main"):
+            # Main's own commits after the named one are a refresh's concern; only this pull request's are checked.
+            changed_here = sorted(entry["path"] for entry in changed_files
+                                  if path_is_architecture_overview_described_code(entry["path"], system, component_paths))
+            if changed_here:
+                problems.append({"path": path, "named": named, "named_is_on_main": True, "later_changed_paths": changed_here})
             continue
         if not named_is_present or not commit_is_ancestor_of(repository, named, head):
-            problems.append({"path": path, "named": named, "later_changed_paths": None})
+            problems.append({"path": path, "named": named, "named_is_on_main": False, "later_changed_paths": None})
             continue
-        component_paths = architecture_overview_component_paths(text)
         # Without --no-renames, a component renamed away lists only its new path.
         changed_since = git_result_or_refuse(repository, "diff", "--no-renames", "--name-only", "-z",
                                              named, head).stdout.split("\0")
         later = sorted(changed for changed in changed_since
                        if changed and path_is_architecture_overview_described_code(changed, system, component_paths))
         if later:
-            problems.append({"path": path, "named": named, "later_changed_paths": later})
+            problems.append({"path": path, "named": named, "named_is_on_main": False, "later_changed_paths": later})
     return problems
 
 
 def architecture_overview_checked_against_commit_refusal_message(number, head, problems):
     lines = [f"pull request {number} adds or changes {len(problems)} nc-architecture-overview(s) whose "
-             "**Checked against:** commit is not on main and does not hold the code the overview describes at "
+             "**Checked against:** commit does not hold the code the overview describes at "
              f"head {head[:12]}, so no plan was computed. The claim check read the code at that commit, so its "
              "report does not cover the code this pull request would merge."]
     for problem in problems:
-        if problem["later_changed_paths"] is None:
+        if problem["named_is_on_main"]:
+            lines.append(f"  {problem['path']} names commit {problem['named']} of main, and this pull request "
+                         f"changes code the overview describes: {', '.join(problem['later_changed_paths'])}.")
+        elif problem["later_changed_paths"] is None:
             lines.append(f"  {problem['path']} names commit {problem['named']}, which is not in the history of head {head[:12]}.")
         else:
             lines.append(f"  {problem['path']} names commit {problem['named']}, and later commits of the pull request "
