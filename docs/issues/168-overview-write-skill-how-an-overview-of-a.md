@@ -29,7 +29,7 @@ The page `docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.
 
 The user ruled on 2026-10-30 that the skill is needed, approving this proposal at item 3 of the walk merge-lane-2-open-rulings-2026-10-30 (walk-document `nedlern@ned-box:/home/nedlern/agents/merge-lane-2/docs/walk/merge-lane-2-open-rulings-2026-10-30.md`, and its minutes `nedlern@ned-box:/home/nedlern/agents/merge-lane-2/docs/walk/merge-lane-2-open-rulings-2026-10-30-minutes.md`): "build the overview-write skill, whose program runs the claim check: a fresh-agent checks each claim about what the code does against the code, citing file and line, and the program writes a report. The review plan, `scripts/pull-request-review-plan.py`, refuses a pull request that changes an overview until a report for its head commit shows every claim confirmed or fixed, so the check does not depend on an agent remembering the skill."
 
-The claim check and the refusal are built: PR [overview-write: a fresh-agent checks an nc-architecture-overview's claims against the code, and the review plan refuses an overview change without a passing report](https://github.com/nedschorus/nedschorus/pull/2347), merged at 02:54 UTC on 2026-11-02, added `nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py` and made `scripts/pull-request-review-plan.py` refuse an overview change without a passing report. The skill file itself is not yet on main.
+The claim check and the refusal are built: PR [overview-write: a fresh-agent checks an nc-architecture-overview's claims against the code, and the review plan refuses an overview change without a passing report](https://github.com/nedschorus/nedschorus/pull/2347), merged at 02:54 UTC on 2026-11-02, added `nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py` and made `scripts/pull-request-review-plan.py` refuse an overview change without a passing report. The skill file, `.claude/skills/overview-write/SKILL.md`, is on main with the approved step 3, "Do what the program's last line says.", and the claim check prints the next action as its last line.
 
 The user ruled on the build on 2026-11-01, times in ned-box's Pacific time, in approval-walk cold-read-improvement-handoff-intake-decisions-2026-10-31 (walk-document `nedlern@ned-box:/home/nedlern/agents/cold-read-improvement/docs/walk/cold-read-improvement-handoff-intake-decisions-2026-10-31.md`, and its minutes beside it, `cold-read-improvement-handoff-intake-decisions-2026-10-31-minutes.md`). Each answer is quoted as he typed it: "a" approves the item's recommendation, and "ao" approves it as obvious.
 - Item 1.1, "a" at 10:16: the fresh-agent's prompt as written, with no fixed form for its evidence lines.
@@ -44,7 +44,7 @@ The user decided on 2026-11-02 at 10:30, Pacific time, at item 8.1.2 of the same
 
 ## Next action
 
-Make the claim check print the next action as its last line, and merge the overview-write skill with the step 3 the user approved at item 1.3.4, "Do what the program's last line says.", in one pull request.
+Merge PR [Let an overview name its own pull request's code commit, and refuse one that does not hold the code](https://github.com/nedschorus/nedschorus/pull/2482), which builds the 2026-11-02 ruling at item 8.1.2 and is in review.
 
 ## Relations
 
