@@ -75,8 +75,10 @@ ONE NAMED WORKTREE OR BRANCH. --remove-worktree PATH and --delete-branch
 NAME act on the one worktree or branch named, for an agent-session that has
 decided its agent-seat will not carry it on; the first prompt's list,
 nc-systems/handoff/agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py,
-prints the command beside each entry. Whether the owner runs does not decide
-here: the caller has decided. --remove-worktree keeps the worktree when it is
+prints the command beside each entry. Unlike --remove, --remove-worktree
+does not keep a worktree because the agent-seat that owns it runs, since that
+agent-seat has decided; an agent-session that owns it and runs still keeps
+it, as the next sentence says. --remove-worktree keeps the worktree when it is
 not a worktree of the clone other than its main checkout, has no owner file
 or one that cannot be read, is locked, would be pruned, has a rebase or merge
 in progress, is owned by an agent-session whose `claude` process runs or
@@ -85,11 +87,12 @@ an open pull request whose head branch is its branch or whose head commit is
 its HEAD, holds a live process's working directory, or git cannot list its
 files. Otherwise it ships its walks and records, puts its uncommitted and
 untracked files in a work-snapshot, and removes it, keeping it when any of
-these steps fails, as --remove does; commits on no branch get no branch of
-their own: the removal's line in the log of removals names its head commit.
-Then it deletes the worktree's branch with `git branch -D`, even when
-origin/main lacks some of its commits, and the branch's line in the log
-names its last commit. --delete-branch keeps the branch when it is main,
+these steps fails, as --remove does. A worktree on a detached HEAD has no
+branch, so nothing more is deleted; its commits get no branch of their own,
+and the removal's line in the log of removals names its head commit. A
+worktree on a branch other than main then has that branch deleted with
+`git branch -D`, even when origin/main lacks some of its commits, and the
+branch's line in the log names its last commit. --delete-branch keeps the branch when it is main,
 does not exist, is checked out in a worktree, cannot be checked against the
 pull requests, or is the head branch of an open pull request; otherwise it
 deletes it with `git branch -D` and writes its last commit to the log of
@@ -1179,8 +1182,9 @@ def delete_one_named_branch(repo, branch):
     for record in git_output.worktree_records(listing):
         if local_branch_name_of_full_ref(record.branch) == branch:
             print(f"{name}: kept — the worktree {record.path} has it checked out; remove that "
-                  f"worktree with scripts/clean-worktrees.py {REMOVE_ONE_NAMED_WORKTREE_FLAG} "
-                  f"{shlex.quote(record.path)}, which deletes its branch too")
+                  f"worktree with scripts/clean-worktrees.py --repo {shlex.quote(str(repo))} "
+                  f"{REMOVE_ONE_NAMED_WORKTREE_FLAG} {shlex.quote(record.path)}, which deletes "
+                  f"its branch too")
             return False
     try:
         by_head_branch = list_all_pull_requests_grouped_by_head_branch(repo)

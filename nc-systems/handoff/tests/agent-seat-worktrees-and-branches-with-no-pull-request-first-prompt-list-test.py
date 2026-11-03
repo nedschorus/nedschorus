@@ -61,6 +61,9 @@ listing = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(listing)
 cleaner = listing.clean_worktrees_module()
 owner_file = cleaner.owner_file
+# Every printed command these tests run writes its removals here, never to the log-store.
+REMOVALS_LOG = SCRATCH / "removals-log.txt"
+os.environ[cleaner.REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE_VARIABLE] = str(REMOVALS_LOG)
 
 failures = []
 
@@ -201,6 +204,10 @@ def test_branches():
     deleted = subprocess.run(shlex.split(command), capture_output=True, text=True)
     check(deleted.returncode == 0 and git(main, "branch", "--list", "seat-a-work") == "",
           "the command printed beside a branch deletes it", deleted.stdout + deleted.stderr)
+    logged = REMOVALS_LOG.read_text(encoding="utf-8") if REMOVALS_LOG.exists() else ""
+    check("deleted-branch\tbranch=seat-a-work" in logged,
+          "the branch deletion is logged to the test's own log of removals, not the log-store",
+          logged or "no log")
     check(listing.list_text_and_failure(main, "seat-c") == ("", False),
           "an agent-seat with nothing to list gets no paragraph")
     os.environ["FAKE_GH_EXIT_CODE"] = "3"
@@ -257,9 +264,7 @@ def test_worktrees():
     command = command_line.split("; delete with: ", 1)[-1]
     check(command.endswith(f"--repo {main} --remove-worktree {stopped}"),
           "each worktree entry ends with the command that removes it", command_line)
-    removed = subprocess.run(shlex.split(command), capture_output=True, text=True,
-                             env={**os.environ, cleaner.REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE_VARIABLE:
-                                  str(SCRATCH / "removals-log.txt")})
+    removed = subprocess.run(shlex.split(command), capture_output=True, text=True)
     check(removed.returncode == 0 and not stopped.exists()
           and git(main, "branch", "--list", "stopped-session") == "",
           "the command printed beside a worktree removes it and deletes its branch",

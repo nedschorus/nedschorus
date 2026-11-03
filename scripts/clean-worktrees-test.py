@@ -2049,6 +2049,16 @@ with tempfile.TemporaryDirectory() as scratch:
         {"number": 33, "state": "CLOSED", "headRefName": "elsewhere", "headRefOid": open_head}])
     check("a closed pull request does not keep the worktree",
           closed_kept.returncode == 0 and not detached_open_wt.exists(), closed_kept.stdout)
+    detached_removal_line = next((line for line in closed_kept.stdout.splitlines()
+                                  if line.startswith("detached-open-wt: removed")), "")
+    detached_logged = [fields for kind, fields in logged_events()
+                       if kind == "removed-worktree" and fields.get("path", "").endswith(
+                           "detached-open-wt")]
+    check("--remove-worktree on a detached HEAD deletes no branch, and the log names its head "
+          "commit", detached_removal_line == "detached-open-wt: removed"
+          and bool(detached_logged) and detached_logged[-1].get("branch") == "none"
+          and detached_logged[-1].get("head") == open_head,
+          closed_kept.stdout + str(detached_logged))
 
     not_a_worktree = run_one_named("--remove-worktree", str(scratch / "nowhere"))
     check("--remove-worktree on a path that is no worktree keeps nothing removed and fails",
@@ -2223,7 +2233,8 @@ with tempfile.TemporaryDirectory() as scratch:
     held = run_one_named("--delete-branch", "gh-wt-branch")
     check("--delete-branch keeps a branch a worktree has checked out, and names the command that "
           "removes that worktree", kept_and_failed(held, "branch gh-wt-branch")
-          and f"--remove-worktree {gh_wt}" in held.stdout, held.stdout)
+          and f"--repo {shlex.quote(str(checkout))} --remove-worktree {shlex.quote(str(gh_wt))}"
+          in held.stdout, held.stdout)
 
     git(checkout, "branch", "reviewed-branch", "origin/main")
     reviewed = run_one_named("--delete-branch", "reviewed-branch", pull_requests=[
