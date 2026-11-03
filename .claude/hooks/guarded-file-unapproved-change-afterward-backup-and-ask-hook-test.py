@@ -128,6 +128,10 @@ class World:
         target = self.store / str(Path(path)).lstrip("/") / name
         return target.read_text() if target.exists() else ""
 
+    def prune_copy(self, path, key):
+        """Delete a version's copy, as the daily prune does for a version git holds."""
+        (self.store / str(Path(path)).lstrip("/") / key).unlink()
+
     def git_holds(self, key):
         return self.git("cat-file", "-e", key, check_ok=False).returncode == 0
 
@@ -178,12 +182,15 @@ def cases(scratch):
     # -- a shell command that edits CLAUDE.md is caught
     world = fresh(scratch, "shell-edit")
     claude = world.repo / "CLAUDE.md"
-    check("the first run stocks the checkout and asks nothing",
-          world.key(claude) in world.store_file(claude, "approved"),
-          world.store_file(claude, "approved"))
+    committed = world.key(claude)
+    check("the first run writes nothing to the store for a file the branch HEAD holds",
+          not (world.store / str(claude).lstrip("/")).exists(), world.versions(claude))
     claude.write_text("project v2\n")
     key = world.key(claude)
     message = world.run()
+    check("when the file first changes, the version the first run found is approved first",
+          world.store_file(claude, "approved").split()[:1] == [committed],
+          world.store_file(claude, "approved"))
     check("a shell edit of CLAUDE.md is reported, with the path and the version's hash",
           str(claude) in message and key in message and "has not approved" in message, message)
     check("the shell edit's version is copied into the store",
@@ -474,8 +481,6 @@ def cases(scratch):
     committed = world.key(claude)
     check("a version a commit holds is not copied",
           committed not in world.versions(claude), world.versions(claude))
-    check("and the log has its line with the version's git id",
-          world.seen_in_log(claude, committed), world.store_file(claude, "log"))
     home_claude = world.home / ".claude" / "CLAUDE.md"
     check("a guarded file outside every checkout is copied",
           world.key(home_claude) in world.versions(home_claude), world.versions(home_claude))
@@ -483,10 +488,17 @@ def cases(scratch):
     world.git("commit", "-qam", "v2")
     second = world.key(claude)
     message = world.run()
+    check("the version the first run found is logged with its git id when the file first changes",
+          any(line.startswith("approved\t") and f"\t{committed}\t" in line
+              for line in world.store_file(claude, "log").splitlines()),
+          world.store_file(claude, "log"))
     check("a version committed before a run sees it is asked about, with the diff read from git",
           str(claude) in message and "-project v1" in message and "+project v2" in message,
           message)
     check("and it is not copied", second not in world.versions(claude), world.versions(claude))
+    check("the version the first run found is copied when the file first changes",
+          committed in world.versions(claude), world.versions(claude))
+    world.prune_copy(claude, committed)
     result = world.command("--restore", claude, second)
     check("--restore puts back an approved version that only git holds",
           result.returncode == 0 and claude.read_text() == "project v1\n",
@@ -593,6 +605,7 @@ def cases(scratch):
     world.failing_git(None)
     world.run()
     key = world.key(claude)
+    world.prune_copy(claude, world.git("rev-parse", "HEAD:CLAUDE.md").stdout.strip())
     world.failing_git("cat-file blob")
     result = world.command("--restore", claude, key)
     check("--restore whose git fails to read the approved version fails and changes nothing",
@@ -817,6 +830,8 @@ def cases(scratch):
     claude = world.repo / "CLAUDE.md"
     claude.write_text("project v2\n")
     directory = world.store / str(claude).lstrip("/")
+    directory.mkdir(parents=True)
+    (directory / "approved").write_text("")
     (directory / "approved").chmod(0o000)
     message = world.run()
     check("a run that cannot read the approved set reports the failure",
@@ -824,6 +839,54 @@ def cases(scratch):
     (directory / "approved").chmod(0o600)
     message = world.run()
     check("the next run checks the file", str(claude) in message, message)
+    check("and the version the first run found, kept unstored through the failed run, is "
+          "approved first", world.store_file(claude, "approved").split()[:1] == [
+              world.git("rev-parse", "HEAD:CLAUDE.md").stdout.strip()],
+          world.store_file(claude, "approved"))
+
+    # -- in a new checkout, git's own work after the first run is recorded after the version the
+    # first run found, so --restore goes back to git's version
+    world = fresh(scratch, "switch-after-unstored-first-run")
+    claude = world.repo / "CLAUDE.md"
+    world.git("switch", "-q", "-c", "other")
+    claude.write_text("project v1, on other\n")
+    world.git("commit", "-qam", "other's CLAUDE.md")
+    switched = world.key(claude)
+    world.git("switch", "-q", "main")
+    world.run()
+    world.git("switch", "-q", "other")
+    message = world.run()
+    check("a git switch after a first run that wrote nothing is not asked about", message == "",
+          message)
+    claude.write_text("project v1, on other, then a shell edit\n")
+    edited = world.key(claude)
+    message = world.run()
+    check("a shell edit after the switch is shown against the switched-to version",
+          "-project v1, on other" in message and "+project v1, on other, then a shell edit"
+          in message, message)
+    result = world.command("--restore", claude, edited)
+    check("--restore puts back the switched-to version, not the version the first run found",
+          result.returncode == 0 and claude.read_text() == "project v1, on other\n",
+          (result.stderr, claude.read_text()))
+    check("the switched-to version is approved after the first run's version",
+          world.store_file(claude, "approved").split()[::2][-1:] == [switched],
+          world.store_file(claude, "approved"))
+
+    # -- a file renamed after a first run that wrote nothing keeps its approval
+    world = fresh(scratch, "rename-after-unstored-first-run")
+    skills = world.repo / ".claude" / "skills"
+    skills.mkdir(parents=True)
+    (skills / "a.md").write_text("skill\n")
+    world.git("add", ".")
+    world.git("commit", "-qm", "a skill")
+    world.git("worktree", "add", "-q", "-b", "fresh-checkout", str(world.agents / "fresh"))
+    fresh_skills = world.agents / "fresh" / ".claude" / "skills"
+    world.run(cwd=world.agents / "fresh")
+    check("a new checkout's first run writes nothing for a file the branch HEAD holds",
+          not (world.store / str(fresh_skills / "a.md").lstrip("/")).exists())
+    os.rename(fresh_skills / "a.md", fresh_skills / "b.md")
+    message = world.run(cwd=world.agents / "fresh")
+    check("a file renamed after that first run is not asked about", message == "", message)
 
     # -- unapproved commit, switch away and back
     world = fresh(scratch, "switch-back")
@@ -895,6 +958,9 @@ def cases(scratch):
     claude = world.repo / "CLAUDE.md"
     claude.write_text("project v2\n")
     directory = world.store / str(claude).lstrip("/")
+    directory.mkdir(parents=True)
+    for name in ("approved", "log"):
+        (directory / name).write_text("")
     for target in (directory / "approved", directory / "log", directory):
         target.chmod(0o500 if target.is_dir() else 0o400)
     message = world.run()
@@ -1413,19 +1479,18 @@ def cases(scratch):
                                    capture_output=True, text=True, check=True).stdout.strip()
     guarded = len(json.loads((Path(git_directory) / hook.STATE_FILE_NAME).read_text())["files"])
     print(f"INFO  the first run in a new worktree with {guarded} guarded files: {store}")
-    check("the first run in a new worktree opens each store directory with one open, not one per "
-          "part of its path",
-          texts == [] and guarded and store["open"] <= 2 * store["access"] + store["make"],
-          (texts, guarded, store))
-    # Each file has its own store directory, missing until the run makes it: one failed open of
-    # the whole path, then one failed open before each mkdir of the walk that makes it.
-    check("the first run in a new worktree looks each file's missing directory up once, though it "
-          "reads each file's log and approved set twice",
-          store["not found"] <= guarded + store["make"], (guarded, store))
+    check("the first run in a new worktree writes nothing to the store and opens it once, to find "
+          "the worktree has no directory there",
+          texts == [] and guarded and store["access"] == 0 and store["make"] == 0
+          and store["open"] == 1, (texts, guarded, store))
     (worktree / "CLAUDE.md").write_text((worktree / "CLAUDE.md").read_text() + "changed\n")
     texts = counted_run(worktree)
-    check("a run that finds one changed file opens one directory and one file per store access",
-          len(texts) == 1 and 0 < store["open"] <= 2 * store["access"], (store, texts))
+    # Making the file's directory costs a failed open, a mkdir and an open per part made, and
+    # each lookup of a directory not yet made costs one failed open.
+    check("a run that finds one changed file opens one directory and one file per store access, "
+          "besides the lookups and the walk that make the file's directory",
+          len(texts) == 1 and 0 < store["open"]
+          <= 2 * store["access"] + 2 * store["make"] + store["not found"], (store, texts))
 
 
 def load_hook_in_this_process():

@@ -15,6 +15,13 @@ git cannot read origin/main, the run reports that failure and settles nothing. T
 in place while he is asked. A version with no copy is read
 back from git; a file outside every checkout, such as ~/.claude/CLAUDE.md, is always copied.
 
+A checkout's first run records the commit HEAD names in the checkout's state, and writes nothing
+to the store for a file that holds that commit's version and whose path has no directory in the
+store yet. When a file first changes from that commit's version, the run copies that version
+from git and approves it first, before git's own work and the change, so the change is shown
+and restored against the newest of them; a version a run saw and the user did not approve stays
+unapproved.
+
     python3 <this file> --approve <path> <hash> [<path> <hash> ...]
     python3 <this file> --restore <path> <hash> [<path> <hash> ...]
 
@@ -69,6 +76,8 @@ OWNER_VARIABLE = "GUARDED_FILE_VERSIONS_OWNER_KEY"
 MAC_STORE_DEADLINE_SECONDS = 15
 
 STATE_FILE_NAME = HOOK_NAME + "-state.json"
+# The checkout state's key for the commit HEAD named at the checkout's first run.
+BASE_COMMIT_KEY = "base_commit"
 APPROVED_FILE_NAME = "approved"
 LOG_FILE_NAME = "log"
 DELETED = "deleted"
@@ -473,6 +482,37 @@ def blobs_durable_refs_hold(checkout):
     return {line.split(" ", 1)[0] for line in output.splitlines()}
 
 
+def head_commit(checkout):
+    """The commit HEAD names, or None when the repository has no commit yet. Raises
+    BranchUnreadable, carrying git's stderr, when git fails otherwise."""
+    # git rev-parse -q --verify exits 1, with nothing on stderr, when HEAD names no commit yet.
+    result = subprocess.run(["git", "-C", str(checkout), "rev-parse", "-q", "--verify",
+                             "HEAD^{commit}"], capture_output=True, timeout=60, check=False)
+    if result.returncode == 1:
+        return None
+    if result.returncode != 0:
+        raise BranchUnreadable(f"git rev-parse -q --verify HEAD^{{commit}} in {checkout} exited "
+                               f"{result.returncode}: "
+                               f"{result.stderr.decode(errors='replace').strip()}")
+    return result.stdout.decode().strip()
+
+
+def blobs_at_commit(checkout, commit, paths):
+    """{absolute path: blob id} of those paths that the commit's tree holds as blobs."""
+    relative = {os.path.relpath(path, checkout): path for path in paths}
+    if not relative:
+        return {}
+    output = git_text(checkout, "--literal-pathspecs", "ls-tree", "-r", "-z", "--full-tree",
+                      commit, "--", *sorted(relative))
+    blobs = {}
+    for entry in output.split("\0"):
+        header, _, name = entry.partition("\t")
+        fields = header.split()
+        if len(fields) == 3 and fields[1] == "blob" and name in relative:
+            blobs[relative[name]] = fields[2]
+    return blobs
+
+
 def versions_head_holds(checkout, versions):
     """The (path, blob id) pairs among versions whose path, in the checkout's HEAD commit, is
     that blob, when HEAD is on a branch; none when HEAD is detached, since a detached HEAD is
@@ -482,15 +522,8 @@ def versions_head_holds(checkout, versions):
     rev-parse --verify or git symbolic-ref fails with any exit other than 1."""
     if all(blob_id == DELETED for _, blob_id in versions):
         return set()
-    # git rev-parse -q --verify exits 1, with nothing on stderr, when HEAD names no commit yet.
-    head_commit = subprocess.run(["git", "-C", str(checkout), "rev-parse", "-q", "--verify",
-                                  "HEAD^{commit}"], capture_output=True, timeout=60, check=False)
-    if head_commit.returncode == 1:
+    if head_commit(checkout) is None:
         return set()
-    if head_commit.returncode != 0:
-        raise BranchUnreadable(f"git rev-parse -q --verify HEAD^{{commit}} in {checkout} exited "
-                               f"{head_commit.returncode}: "
-                               f"{head_commit.stderr.decode(errors='replace').strip()}")
     # git symbolic-ref -q exits 1, with nothing on stderr, when HEAD is detached; any other
     # nonzero exit is git failing.
     on_branch = subprocess.run(["git", "-C", str(checkout), "symbolic-ref", "-q", "HEAD"],
@@ -1065,7 +1098,8 @@ def run_hook(payload):
         checkout_path = git_directory / STATE_FILE_NAME
         checkout_state = read_state(checkout_path)
         checkout_stocking = checkout_state is None
-        checkout_state = checkout_state or {"files": {}, "reflog": None, "stopped": False}
+        checkout_state = checkout_state or {"files": {}, "reflog": None, "stopped": False,
+                                            BASE_COMMIT_KEY: head_commit(checkout)}
         decisions = checkout_state.setdefault("guarded", {})
         decisions_before = dict(decisions)
         groups.append(("checkout", checkout_path, checkout_state, checkout_files(checkout, decisions),
@@ -1085,10 +1119,21 @@ def run_hook(payload):
         listed_before = set(state["files"])
         changed, unsettled = scan(files, state["files"], hash_function)
         approvals, quiet, new_position, held = [], False, None, set()
+        at_base, base_versions = set(), {}
         if repository is not None:
             checkout, git_directory = repository
             held = versions_head_holds(checkout, [(path, value[3])
                                                   for path, value in changed.items()])
+            base = state.get(BASE_COMMIT_KEY)
+            if base and changed:
+                blobs = blobs_at_commit(checkout, base, list(changed))
+                if stocking:
+                    at_base = {path for path, blob in blobs.items()
+                               if changed[path][2] == changed[path][3] == blob}
+                else:
+                    # The files that held the first run's version until this run.
+                    base_versions = {path: blob for path, blob in blobs.items()
+                                     if path in state["files"] and state["files"][path][4] == blob}
             entries = reflog_entries(git_directory)
             new_position = entries[-1][:2] if entries else None
             window = [] if stocking else entries_after(entries, state.get("reflog"))
@@ -1108,7 +1153,8 @@ def run_hook(payload):
         else:
             on_main = set()
         plans.append([kind, state_path, state, files, changed, unsettled, approvals, quiet,
-                      new_position, stocking, set(state["files"]) != listed_before, held, on_main])
+                      new_position, stocking, set(state["files"]) != listed_before, held, on_main,
+                      repository, at_base, base_versions])
 
     stocking_machine = outside_stocking
     nothing_to_do = all(not plan[4] and not plan[5] and not plan[6] and not plan[9]
@@ -1135,9 +1181,32 @@ def run_hook(payload):
                     log_seen(store, path, session, owner(), key, key, HOW_STOCK)
         for plan in plans:
             (kind, state_path, state, files, changed, unsettled, approvals, quiet, _, stocking, _,
-             held, on_main) = plan
+             held, on_main, repository, at_base, base_versions) = plan
+            # Approved before git's own work and the change, so each of those is recorded after
+            # it, and --restore and the diff go back to the newest of them, not to this one.
+            first = []
+            for path, blob in base_versions.items():
+                data = version_from_git(path, blob)
+                if data is not None:
+                    store.copy(path, blob, data)
+                    first.append((path, blob, HOW_STOCK, UNLESS_SEEN))
+            skipped = set()
+            if at_base:
+                # One failed open of the checkout's directory tells the store that every path
+                # under it is missing too, so a new checkout costs one open, not one per file.
+                root = store.path_directory(str(repository[0]), create=False)
+                if root is not None:
+                    os.close(root)
             checks = []
             for path, (now, data, key, copy_hash) in changed.items():
+                if path in at_base:
+                    # No directory means no run saw a version of this path, so the stock rule
+                    # approves this one, and git keeps it until the file first changes.
+                    directory = store.path_directory(path, create=False)
+                    if directory is None:
+                        skipped.add(path)
+                        continue
+                    os.close(directory)
                 how = ""
                 if (path, key) in on_main:
                     how = HOW_ORIGIN_MAIN
@@ -1150,9 +1219,12 @@ def run_hook(payload):
                 previous = state["files"].get(path)
                 checks.append(Check(path, data, key, copy_hash, how, (path, copy_hash) in held,
                                     previous and previous[4]))
-            approvals = approvals + renames(store, changed, state["files"])
-            results.append(store_phase(store, session, owner(), checks, unsettled, approvals,
-                                       quiet))
+            approvals = first + approvals + renames(store, changed, state["files"],
+                                                    {path: blob for path, blob, _, _ in first})
+            asks, reminders, settled = store_phase(store, session, owner(), checks, unsettled,
+                                                   approvals, quiet)
+            settled.update({path: True for path in skipped})
+            results.append((asks, reminders, settled))
         return results
 
     try:
@@ -1196,9 +1268,10 @@ def seat_briefs():
     return [str(agents / relative) for relative in mirror.seat_briefs_in(agents)]
 
 
-def renames(store, changed, state_files):
+def renames(store, changed, state_files, approved_first):
     """A path that disappeared and a path that appeared in one run with the same content: when
-    the content was approved under the old path, both are settled."""
+    the content was approved under the old path, both are settled. approved_first: {path: key}
+    of the versions this run approves before these, which the store does not yet hold."""
     approvals = []
     gone = {path: state_files[path][4] for path, value in changed.items()
             if value[2] == DELETED and path in state_files}
@@ -1206,7 +1279,8 @@ def renames(store, changed, state_files):
         if now is None or path in state_files:
             continue
         for old_path, old_key in gone.items():
-            if old_key == key and key in store.approved(old_path):
+            if old_key == key and (approved_first.get(old_path) == key
+                                   or key in store.approved(old_path)):
                 approvals.append((path, key, HOW_RENAME, APPROVE_ALWAYS))
                 approvals.append((old_path, DELETED, HOW_RENAME, APPROVE_ALWAYS))
                 break
