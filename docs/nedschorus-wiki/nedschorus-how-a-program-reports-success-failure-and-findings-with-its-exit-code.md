@@ -45,7 +45,7 @@ A search prints what it found on stdout, as `grep` does, so a search that finds 
 A program that does work, such as copying, building, installing, cleaning up, filing a GHI, asking an agent, or printing a report or a status, asks "did all the work get done?":
 
 - **0**: yes, it did all the work it was asked to do. A status report exits 0 when it read the status, whatever the status is. When the work is asking an agent, any reply the agent gives counts as work done, a refusal included; the kind of reply goes in the verdict line, for the caller to read.
-- **1**: no, not all of the work got done: a step failed, only part of the work was done, or the program refused on purpose, such as a request to cancel a change that has already reached main. The output says what was done, what was not, and why.
+- **1**: no, not all of the work got done: a step failed, only part of the work was done, or the program refused on purpose, such as a request to delete a branch whose commits are not on main. The output says what was done, what was not, and why.
 - **2**: it could not answer the question: it was called the wrong way, it crashed, or it could not tell whether the work got done.
 
 Exit 1 for work that did not all get done keeps the rule above: 1 when the program can answer its question and the answer is no, 2 when it cannot answer. A cleanup that could not delete one worktree, or could not list the worktrees, can answer "not all done": it exits 1, and does not report success. A caller of a program that does work treats any nonzero code as a failure.
