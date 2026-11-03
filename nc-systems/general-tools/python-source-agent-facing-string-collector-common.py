@@ -22,7 +22,9 @@ call carries in turn follows the same way. The function is matched by its name a
 that name in the file is followed. A dict literal's keys, a subscript's index and a comprehension's
 if-conditions are not text, so in raise Answer(400, {"error": text}) only text is a message; nor is
 a name a comprehension binds as its target, so " ".join(note for note in items) carries items, not
-a local note. A message built with + is one message,
+a local note. In a string literal's join, the literal is only the separator, so it is not a
+message; the strings among the joined parts are, so "\\n".join(lines) is found through lines
+alone. An empty string literal is no message either. A message built with + is one message,
 its literal pieces joined and each other operand shown as {source}; an f-string
 field in the chain keeps its conversion and format spec, {x!r} and {x:.1f}, as ast.unparse writes
 the field of a standalone f-string. Each entry also holds literal_text, the message's literal
@@ -148,7 +150,12 @@ def string_nodes_without_f_string_parts(expression):
     if isinstance(expression, ast.JoinedStr):
         yield expression
     elif isinstance(expression, ast.Constant) and isinstance(expression.value, str):
-        yield expression
+        if expression.value:
+            yield expression
+    elif is_join_on_string_literal(expression):
+        # The separator only glues the parts: alone it is no message a reader could check.
+        for argument in expression.args:
+            yield from string_nodes_without_f_string_parts(argument)
     else:
         for child in text_carrying_children(expression):
             yield from string_nodes_without_f_string_parts(child)
