@@ -24,12 +24,15 @@ WHAT ONE RUN DOES, in order.
      merges after that commit are tested from the next run on.
   4. Checks that each task it opened in an earlier run still holds its
      surviving mutant: the task file is still on the task list the state
-     names, and its description still names the mutant's diff file. Each
-     that does not is opened again, with the subject and description the
-     state keeps for it, on the list TASKS below picks for that agent-seat,
-     and the record names it. A task that cannot be reopened is named in the
-     record and on standard error; the run goes on, and it exits
-     EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR.
+     names, and its description still names the mutant's diff file. A task
+     marked completed is finished: the state stops naming it. Each other task
+     that no longer holds its mutant, because its file is gone, cannot be
+     read or no longer names the mutant, is reported once: the record and
+     standard error name it, the state stops naming it, and the run goes on
+     and exits EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR. The run opens
+     no task in its place: it cannot tell a task lost from one deleted after
+     it was finished, such as by a session-handoff's removal of completed
+     tasks.
   5. For each commit on main's first-parent line after the last one tested,
      oldest first, which is each merge of a pull request, runs
      scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py
@@ -98,8 +101,8 @@ EXIT_STEP_FAILED (4) a step failed, as above; EXIT_RECORD_NOT_WRITTEN (5) the
 record could not be written;
 EXIT_ANOTHER_RUN_HOLDS_THE_LOCK (6);
 EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR (7) no step failed, but a task
-an earlier run opened no longer holds its surviving mutant and could not be
-reopened (step 4).
+an earlier run opened, and not marked completed, no longer holds its
+surviving mutant (step 4).
 """
 
 # Messages here follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
@@ -247,13 +250,17 @@ def mutant_diff_file_path(log_store_root, key):
             / SURVIVING_MUTANT_DIFFS_DIRECTORY_NAME / f"{key}.diff")
 
 
-def task_names_mutant(task_file, key):
-    """Whether the task file's description names the mutant's diff file. Raises OSError."""
+def task_file_read(task_file):
+    """The task as a dict, or None when the file is not a JSON object. Raises OSError."""
     try:
         task = json.loads(task_file.read_text(encoding="utf-8"))
     except (ValueError, UnicodeDecodeError):
-        return False
-    return isinstance(task, dict) and f"{key}.diff" in str(task.get("description", ""))
+        return None
+    return task if isinstance(task, dict) else None
+
+
+def task_names_mutant(task, key):
+    return task is not None and f"{key}.diff" in str(task.get("description", ""))
 
 
 def task_on_list_naming_mutant(list_directory, key):
@@ -261,43 +268,41 @@ def task_on_list_naming_mutant(list_directory, key):
     if not list_directory.is_dir():
         return None
     for path in sorted(list_directory.iterdir()):
-        if TASK_FILE_NAME_PATTERN.fullmatch(path.name) and task_names_mutant(path, key):
+        if TASK_FILE_NAME_PATTERN.fullmatch(path.name) and task_names_mutant(
+                task_file_read(path), key):
             return int(path.stem)
     return None
 
 
-def lost_tasks_reopened(state, state_file, arguments, record):
-    """Reopen each task in the state whose file is gone or no longer names its mutant.
+def lost_tasks_reported(state, state_file, arguments, record):
+    """Stop naming in the state each task that is completed or no longer holds its mutant.
 
-    Return one line per task that could not be reopened."""
-    not_reopened = []
-    for key, given in state["tasks_opened"].items():
+    Return one line per task that no longer holds its mutant and is not completed. Raises
+    OSError when the state cannot be written."""
+    lost = []
+    tasks_before = len(state["tasks_opened"])
+    for key, given in list(state["tasks_opened"].items()):
         task_file = (arguments.task_lists_directory / f"nedschorus-{given['agent_seat']}-tasks"
                      / f"{given['task_id']}.json")
         try:
-            if task_names_mutant(task_file, key):
-                continue
-            why = "its description no longer names the mutant's diff file"
+            task = task_file_read(task_file)
         except OSError as error:
             why = f"the task file cannot be read ({type(error).__name__}: {error})"
-        lost = (f"task #{given['task_id']} on {given['agent_seat']}'s task list ({task_file}) "
-                f"no longer holds the surviving mutant {key}.diff: {why}")
-        owner, _ = task_list_owner(given["agent_seat"], arguments.task_lists_directory,
-                                   arguments.agent_seats_directory)
-        try:
-            task_id = agent_seat_task_list_new_pending_task_write(
-                arguments.task_lists_directory / f"nedschorus-{owner}-tasks",
-                given["subject"], given["description"])
-        except OSError as error:
-            not_reopened.append(f"{lost}; it could not be reopened on {owner}'s task list "
-                                f"({type(error).__name__}: {error})")
-            record.append(f"TASK LOST: {not_reopened[-1]}")
-            continue
-        given.update(agent_seat=owner, task_id=task_id)
+        else:
+            if task_names_mutant(task, key):
+                if task.get("status") != "completed":
+                    continue
+                del state["tasks_opened"][key]
+                continue
+            why = "its description no longer names the mutant's diff file"
+        lost.append(f"task #{given['task_id']} on {given['agent_seat']}'s task list "
+                    f"({task_file}) no longer holds the surviving mutant "
+                    f"{mutant_diff_file_path(arguments.log_store_root, key)}: {why}")
+        record.append(f"TASK LOST: {lost[-1]}")
+        del state["tasks_opened"][key]
+    if len(state["tasks_opened"]) != tasks_before:
         write_state(state_file, state)
-        record.append(f"TASK REOPENED: {lost}; reopened as task #{task_id} on {owner}'s task "
-                      f"list")
-    return not_reopened
+    return lost
 
 
 def agent_seat_task_list_new_pending_task_write(list_directory, subject, description):
@@ -466,8 +471,7 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
         # leaves the task on the list and not in the state.
         found = task_on_list_naming_mutant(list_directory, key)
         if found is not None:
-            state["tasks_opened"][key] = {"agent_seat": owner, "task_id": found,
-                                          "subject": subject, "description": description}
+            state["tasks_opened"][key] = {"agent_seat": owner, "task_id": found}
             write_state(state_file, state)
             record.append(f"  SURVIVED {place}: already given task #{found} on {owner}'s task "
                           f"list")
@@ -485,8 +489,7 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
                 f"Fix what the error names, such as a missing task list directory "
                 f"{list_directory} or a mutant's diff file {mutant_diff_file} that cannot be "
                 f"written, then run this program again on ned-box: {RUN_BY_HAND}") from error
-        state["tasks_opened"][key] = {"agent_seat": owner, "task_id": task_id,
-                                      "subject": subject, "description": description}
+        state["tasks_opened"][key] = {"agent_seat": owner, "task_id": task_id}
         write_state(state_file, state)
         record.append(f"  SURVIVED {place}: task #{task_id} opened on {owner}'s task list")
     for mutant in errored:
@@ -563,7 +566,7 @@ def main_under_lock(arguments):
         else:
             last = state["last_tested_main_commit"]
             record.append(f"after: {last}")
-            lost_tasks = lost_tasks_reopened(state, state_file, arguments, record)
+            lost_tasks = lost_tasks_reported(state, state_file, arguments, record)
             if git(arguments.clone, "merge-base", "--is-ancestor", last,
                    main_commit).returncode:
                 raise StepFailed(
@@ -594,11 +597,13 @@ def main_under_lock(arguments):
         print(f"{PROGRAM}: {failure}", file=sys.stderr)
     if lost_tasks:
         print(f"{PROGRAM}: {len(lost_tasks)} task(s) that an earlier run opened for a surviving "
-              f"mutant no longer hold it and could not be reopened, so that mutant has no task:\n"
+              f"mutant, and that are not marked completed, no longer hold it:\n"
               + "".join(f"  {line}\n" for line in lost_tasks)
-              + f"Fix the error at the end of each line above, such as a task list directory that "
-              f"does not exist; the next scheduled run of this program, or one run by hand on "
-              f"ned-box ({RUN_BY_HAND}), reopens each such task.", file=sys.stderr)
+              + "This run opened no task in their place, and later runs do not report them "
+              "again.\n"
+              "If a task above was finished and then deleted, nothing needs doing.\n"
+              "Otherwise its mutant has no task: open one on the owner's task list that cites "
+              "the mutant's diff file the line names.", file=sys.stderr)
     try:
         record_path.parent.mkdir(parents=True, exist_ok=True)
         record_path.write_text(text, encoding="utf-8")
