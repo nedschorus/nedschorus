@@ -1046,7 +1046,8 @@ def run_architecture_overview_checked_against_commit_cases(fixture):
         last_line = f"**Checked against:** commit [{named}](https://github.com/nedschorus/nedschorus/commit/{named})\n" if named else ""
         text = ("# Example overview\n\nIt is not `scripts/sibling-program.py`.\n\n## Components\n\n"
                 "- `nc-systems/example/parent-program.py`: the program.\n"
-                "- `scripts/example-program.py`: a shared script.\n- `claude`, run by `~/bin/x` and `/usr/bin/y`.\n\n"
+                "- `scripts/example-program.py`: a shared script.\n- `config`: its settings.\n"
+                "- `claude`, run by `~/bin/x` and `/usr/bin/y`.\n\n"
                 "## Invariants\n\n- `scripts/sibling-program.py` is mentioned, not a component.\n\n" + last_line)
         fixture.write_fixture_file(path, text)
         blob = fixture.git_command("hash-object", "-w", path)
@@ -1095,10 +1096,29 @@ def run_architecture_overview_checked_against_commit_cases(fixture):
           refused_for_checked_against(result)
           and f"names commit {code_commit}, and later commits of the pull request change code the overview describes: "
               "scripts/example-program.py." in result.stderr, result.stderr)
-    result = fixture.run_review_plan_with_git_failing_on("diff", "--name-only", "-z", code_commit, head)
+    result = fixture.run_review_plan_with_git_failing_on("diff", "--no-renames", "--name-only", "-z", code_commit, head)
     check("git failing while listing the paths changed after the named commit is refused with git's error, not a plan",
           refusal_has_expected_prefix(result) and "fatal: injected repository failure" in result.stderr and not result.stdout,
           result.stderr + result.stdout)
+
+    fixture.reset_fixture_to_base()
+    code_commit = change_and_commit("scripts/example-program.py", "VALUE = 'first'\n")
+    commit_overview_naming(code_commit)
+    fixture.git_command("mv", "scripts/example-program.py", "scripts/renamed-program.py")
+    fixture.configure_github_answers(fixture.commit_fixture_changes("rename the component"))
+    result = fixture.run_review_plan(*flag)
+    check("a later commit renaming a component the Components section names away from its path is refused, naming the old path",
+          refused_for_checked_against(result) and "change code the overview describes: scripts/example-program.py." in result.stderr,
+          result.stderr)
+
+    fixture.reset_fixture_to_base()
+    code_commit = change_and_commit("config/settings.conf", "value = first\n")
+    commit_overview_naming(code_commit)
+    change_and_commit("config/settings.conf", "value = second\n")
+    result = fixture.run_review_plan(*flag)
+    check("a later commit changing a file under a root-level component the Components section names with no slash is refused",
+          refused_for_checked_against(result) and "change code the overview describes: config/settings.conf." in result.stderr,
+          result.stderr)
 
     fixture.reset_fixture_to_base()
     code_commit = change_and_commit("nc-systems/example/parent-program.py", 'print("first")\n')

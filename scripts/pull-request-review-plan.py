@@ -166,9 +166,10 @@ REGISTERED_HOOK_PATH_PATTERN = re.compile(r'\$CLAUDE_PROJECT_DIR"?/([^"\s]+)')
 MARKDOWN_SECTION_HEADING_PATTERN = re.compile(r"^##\s")
 COMPONENTS_SECTION_HEADING_PATTERN = re.compile(r"^##\s+Components\s*$")
 BACKTICKED_TEXT_PATTERN = re.compile(r"`([^`]+)`")
-# A component path is relative to the repository and holds a directory; this
-# leaves out `claude`, `<placeholder>`s, ~ and absolute paths, and globs.
-REPOSITORY_RELATIVE_COMPONENT_PATH_PATTERN = re.compile(r"[A-Za-z0-9_.][^\s<>*?\[\]]*/[^\s<>*?\[\]]*")
+# A component path is relative to the repository; this leaves out
+# `<placeholder>`s, ~ and absolute paths, and globs. A name with no slash that
+# is not a path, such as `claude`, is kept but matches no changed path.
+REPOSITORY_RELATIVE_COMPONENT_PATH_PATTERN = re.compile(r"[A-Za-z0-9_.][^\s<>*?\[\]]*")
 PROSE_DIRECTORY_CODE_EXTENSIONS = {".py", ".sh", ".json", ".yaml", ".yml", ".toml", ".js"}
 
 
@@ -719,7 +720,9 @@ def architecture_overview_checked_against_commit_problems(repository, head, chan
             problems.append({"path": path, "named": named, "later_changed_paths": None})
             continue
         component_paths = architecture_overview_component_paths(text)
-        changed_since = git_result_or_refuse(repository, "diff", "--name-only", "-z", named, head).stdout.split("\0")
+        # Without --no-renames, a component renamed away lists only its new path.
+        changed_since = git_result_or_refuse(repository, "diff", "--no-renames", "--name-only", "-z",
+                                             named, head).stdout.split("\0")
         later = sorted(changed for changed in changed_since
                        if changed and path_is_architecture_overview_described_code(changed, system, component_paths))
         if later:
