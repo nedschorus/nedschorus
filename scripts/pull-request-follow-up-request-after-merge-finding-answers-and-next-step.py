@@ -272,7 +272,7 @@ def parse_follow_up_request_blocks_from_message_text(text):
             if line.startswith(FOLLOW_UP_REQUEST_LINE_START):
                 raise ValueError(f"the line `{line.strip()}` starts with {FOLLOW_UP_REQUEST_LINE_START} but is not "
                                  f"`{FOLLOW_UP_REQUEST_LINE_START} pull request <number>` alone on its line, with "
-                                 "the findings numbered 1, 2, 3 and so on, one to a line, on the lines after it")
+                                 "the findings numbered `1.`, `2.`, `3.` and so on, one to a line, on the lines after it")
             continue
         number = int(request.group(1))
         findings = []
@@ -284,7 +284,7 @@ def parse_follow_up_request_blocks_from_message_text(text):
         numbers = [int(FINDING_LINE_PATTERN.match(finding).group(1)) for finding in findings]
         if not findings or numbers != list(range(1, len(findings) + 1)):
             raise ValueError(f"the lines after `#follow_up_request pull request {number}` are not "
-                             "findings numbered 1, 2, 3 and so on, one finding to a line")
+                             "findings numbered `1.`, `2.`, `3.` and so on, one finding to a line")
         requests.append(FollowUpRequest(number, [line, *findings]))
     return requests
 
