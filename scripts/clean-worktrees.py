@@ -71,17 +71,20 @@ are all on origin/main and which no worktree has checked out, with
 qualifies, and every other such branch, named on one line in the report
 modes. origin/main is read as fetched; a stale ref only keeps more.
 
-ONE NAMED WORKTREE OR BRANCH. --remove-worktree PATH and --delete-branch
-NAME act on the one worktree or branch named, for an agent-session that has
-decided its agent-seat will not carry it on; the first prompt's list,
+ONE NAMED WORKTREE OR BRANCH. --remove-worktree-and-force-delete-its-branch
+PATH and --force-delete-branch NAME act on the one worktree or branch named,
+for an agent-session that has decided its agent-seat will not carry it on;
+the first prompt's list,
 nc-systems/handoff/agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py,
-prints the command beside each entry. Unlike --remove, --remove-worktree
-does not keep a worktree because the agent-seat that owns it runs, since that
-agent-seat has decided; an agent-session that owns it and runs still keeps
-it, as the next sentence says. --remove-worktree keeps the worktree when it is
-not a worktree of the clone other than its main checkout, has no owner file
-or one that cannot be read, is locked, would be pruned, has a rebase or merge
-in progress, is owned by an agent-session whose `claude` process runs or
+prints the command beside each entry. Unlike --remove,
+--remove-worktree-and-force-delete-its-branch does not keep a worktree
+because the agent-seat that owns it runs, since that agent-seat has decided;
+an agent-session that owns it and runs still keeps it, as the next sentence
+says. --remove-worktree-and-force-delete-its-branch keeps the worktree when it
+is not a worktree of the clone other than its main checkout, has no owner file
+or one that cannot be read, is locked, would be pruned, has a rebase, merge,
+cherry-pick or revert in progress or git cannot say where to look for the
+files that show one, is owned by an agent-session whose `claude` process runs or
 whose state cannot be read, cannot be checked against the pull requests, has
 an open pull request whose head branch is its branch or whose head commit is
 its HEAD, holds a live process's working directory, or git cannot list its
@@ -92,7 +95,8 @@ branch, so nothing more is deleted; its commits get no branch of their own,
 and the removal's line in the log of removals names its head commit. A
 worktree on a branch other than main then has that branch deleted with
 `git branch -D`, even when origin/main lacks some of its commits, and the
-branch's line in the log names its last commit. --delete-branch keeps the branch when it is main,
+branch's line in the log names its last commit. --force-delete-branch keeps
+the branch when it is main,
 does not exist, is checked out in a worktree, cannot be checked against the
 pull requests, or is the head branch of an open pull request; otherwise it
 deletes it with `git branch -D` and writes its last commit to the log of
@@ -138,7 +142,8 @@ Modes:
                and modified files and still refuses a locked worktree, then
                delete the branches the BRANCHES paragraph names. A refusal
                there is a failure rather than a silence.
-  --remove-worktree PATH, --delete-branch NAME
+  --remove-worktree-and-force-delete-its-branch PATH,
+  --force-delete-branch NAME
                remove the one worktree, or delete the one branch, named, as
                ONE NAMED WORKTREE OR BRANCH says
 
@@ -181,16 +186,16 @@ It does not fetch; a stale origin/main only keeps more.
 
 Usage:
   scripts/clean-worktrees.py [--only-done | --remove] [--repo PATH]
-  scripts/clean-worktrees.py --remove-worktree PATH [--repo PATH]
-  scripts/clean-worktrees.py --delete-branch NAME [--repo PATH]
+  scripts/clean-worktrees.py --remove-worktree-and-force-delete-its-branch PATH [--repo PATH]
+  scripts/clean-worktrees.py --force-delete-branch NAME [--repo PATH]
 
 Exit codes: 0 ok, 1 a removal, a record's shipment, a branch or work-snapshot
 made before a removal, a ref deletion, a line of the log of removals, or a
 work-snapshot listing or deletion failed, or the one named worktree or
 branch was kept for a reason other than an open pull request, 2 bad
 invocation, or git could not list the worktrees or the branches, which stops
-the run where it failed; with --remove-worktree or --delete-branch that is
-exit 1 with a FAILED line.
+the run where it failed; with --remove-worktree-and-force-delete-its-branch
+or --force-delete-branch that is exit 1 with a FAILED line.
 """
 
 import importlib.util
@@ -463,8 +468,8 @@ def in_progress_git_operation_keep_reason(worktree):
         arguments += ["--git-path", file_name]
     located = run_git(worktree, *arguments)
     if located.returncode != 0:
-        return (f"git cannot locate the files that show a rebase or merge in progress "
-                f"({located.stderr.strip()[:80]})")
+        return ("git could not say where to look for the files that show a rebase, merge, "
+                f"cherry-pick or revert in progress ({located.stderr.strip()[:80]})")
     for path, (file_name, operation) in zip(located.stdout.splitlines(),
                                             IN_PROGRESS_GIT_OPERATION_FILES):
         if Path(path).exists():
@@ -1079,8 +1084,8 @@ def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
     return failures
 
 
-REMOVE_ONE_NAMED_WORKTREE_FLAG = "--remove-worktree"
-DELETE_ONE_NAMED_BRANCH_FLAG = "--delete-branch"
+REMOVE_WORKTREE_AND_FORCE_DELETE_ITS_BRANCH_COMMAND_LINE_FLAG = "--remove-worktree-and-force-delete-its-branch"
+FORCE_DELETE_BRANCH_FLAG = "--force-delete-branch"
 # The first prompt's list tells the agent to keep the item and tell the user when a line opens so.
 ONE_NAMED_FAILED_LINE_TEMPLATE = (
     "FAILED: {what} was not fully removed or deleted; the line above says what was done to it "
@@ -1185,7 +1190,7 @@ def delete_one_named_branch(repo, branch):
         if local_branch_name_of_full_ref(record.branch) == branch:
             print(f"{name}: kept — the worktree {record.path} has it checked out; remove that "
                   f"worktree with scripts/clean-worktrees.py --repo {shlex.quote(str(repo))} "
-                  f"{REMOVE_ONE_NAMED_WORKTREE_FLAG} {shlex.quote(record.path)}, which deletes "
+                  f"{REMOVE_WORKTREE_AND_FORCE_DELETE_ITS_BRANCH_COMMAND_LINE_FLAG} {shlex.quote(record.path)}, which deletes "
                   f"its branch too")
             return False
     try:
@@ -1247,7 +1252,7 @@ def main(argv=None):
             return 2
         del arguments[flag_position:flag_position + 2]
     named = {}
-    for flag in (REMOVE_ONE_NAMED_WORKTREE_FLAG, DELETE_ONE_NAMED_BRANCH_FLAG):
+    for flag in (REMOVE_WORKTREE_AND_FORCE_DELETE_ITS_BRANCH_COMMAND_LINE_FLAG, FORCE_DELETE_BRANCH_FLAG):
         if flag in arguments:
             flag_position = arguments.index(flag)
             if flag_position + 1 >= len(arguments):
@@ -1269,8 +1274,8 @@ def main(argv=None):
 
     if named:
         return one_named_worktree_or_branch_exit_code(
-            repo, main_checkout, named.get(REMOVE_ONE_NAMED_WORKTREE_FLAG),
-            named.get(DELETE_ONE_NAMED_BRANCH_FLAG))
+            repo, main_checkout, named.get(REMOVE_WORKTREE_AND_FORCE_DELETE_ITS_BRANCH_COMMAND_LINE_FLAG),
+            named.get(FORCE_DELETE_BRANCH_FLAG))
 
     try:
         failures = clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done)

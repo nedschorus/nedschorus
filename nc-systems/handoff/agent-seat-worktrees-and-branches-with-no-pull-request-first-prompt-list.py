@@ -21,9 +21,9 @@ WHAT IS LISTED.
   counts it among the branches with no pull request.
 
 Beside each entry the list prints the command that deletes it:
-scripts/clean-worktrees.py --remove-worktree or --delete-branch, which ships a
-worktree's walks and records first, and keeps a worktree or branch whose pull
-request is open.
+scripts/clean-worktrees.py --remove-worktree-and-force-delete-its-branch or
+--force-delete-branch, which ships a worktree's walks and records first, and
+keeps a worktree or branch whose pull request is open.
 
 origin/main is read as it is on disk: the handoff-supervisor fetches just
 before it builds the prompt.
@@ -156,7 +156,8 @@ def worktree_entry(repo, worktree, branch, tip, by_head_branch, by_head_commit):
         pull_request_text = (clean_worktrees_module().pull_request_text(pull_request)
                              if pull_request else "no pull request")
     command = delete_command_text(
-        repo, clean_worktrees_module().REMOVE_ONE_NAMED_WORKTREE_FLAG, worktree)
+        repo, clean_worktrees_module().REMOVE_WORKTREE_AND_FORCE_DELETE_ITS_BRANCH_COMMAND_LINE_FLAG,
+        worktree)
     return (f"worktree {worktree}; branch {branch or 'none (detached HEAD)'}; {pull_request_text}; "
             f"delete with: {command}")
 
@@ -210,7 +211,7 @@ def branch_entries(repo, branches, by_head_branch, by_head_commit):
             continue
         count = git_lines(repo, "rev-list", "--count", f"{ORIGIN_MAIN}..{tip}")[0]
         command = delete_command_text(
-            repo, clean_worktrees_module().DELETE_ONE_NAMED_BRANCH_FLAG, branch)
+            repo, clean_worktrees_module().FORCE_DELETE_BRANCH_FLAG, branch)
         entries.append(f"branch {branch}; {count} commit(s) not on origin/main, the newest "
                        f"{tip[:12]} of {date}; {pushed_text(branch, tip, origin_tips)}; "
                        f"delete with: {command}")
