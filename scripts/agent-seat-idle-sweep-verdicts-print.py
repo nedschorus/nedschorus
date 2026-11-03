@@ -299,15 +299,6 @@ def message_text(record):
     return ""
 
 
-def is_prompt(record):
-    """A user record that is not a tool's result: the prompt that begins a turn."""
-    if record.get("type") != "user" or "toolUseResult" in record:
-        return False
-    content = (record.get("message") or {}).get("content")
-    return not (isinstance(content, list) and any(
-        isinstance(block, dict) and block.get("type") == "tool_result" for block in content))
-
-
 def tool_uses(record):
     content = (record.get("message") or {}).get("content")
     if record.get("type") != "assistant" or not isinstance(content, list):
@@ -329,23 +320,25 @@ def read_main_transcript(path):
     facts = TranscriptFacts()
     newest_text_record = None
     turn_started_at = None
+    awaiting_turn_start = True
     for record in transcript_records(path):
         moment = parse_time(record.get("timestamp"))
-        if is_prompt(record):
+        if awaiting_turn_start and record.get("type") == "user":
             turn_started_at = moment
+            awaiting_turn_start = False
         if spends_tokens(record) and moment:
             facts.last_token_spend = max(filter(None, (facts.last_token_spend, moment)))
         if is_model_turn_record(record):
             facts.last_model_turn_record = record
             facts.turn_ended_after_last_model_turn_record = False
         if record.get("type") == "assistant" and message_text(record).strip():
-            newest_text_record = record
+            newest_text_record = (record, moment, turn_started_at)
         if record.get("type") == "system" and record.get("subtype") == "turn_duration":
             facts.turn_ended_after_last_model_turn_record = True
+            awaiting_turn_start = True
+            turn_started_at = None
             if newest_text_record is not None:
-                facts.turn_ending_messages.append(
-                    (newest_text_record, parse_time(newest_text_record.get("timestamp")),
-                     turn_started_at))
+                facts.turn_ending_messages.append(newest_text_record)
                 newest_text_record = None
         for block in tool_uses(record):
             if block.get("name") in TASK_TOOL_NAMES:

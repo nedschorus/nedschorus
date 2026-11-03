@@ -213,6 +213,22 @@ check("a task created earlier in the promise's own turn backs it, so the judge d
       verdicts["alpha"]["sentences"][0]["code_reading"] == "judge"
       and verdicts["alpha"]["decision"] == "judge", verdicts["alpha"])
 
+for feedback in ("Stop hook feedback: finish the work.",
+                 "Base directory for this skill: /skills/report"):
+    for after_text in (False, True):
+        machine = Machine()
+        meta = {**user(feedback, at="2026-11-02T11:49:45Z"), "isMeta": True}
+        records = [user("go", at="2026-11-02T11:49:00Z"),
+                   assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
+                       {"pr_merged": 927}]}}), at="2026-11-02T11:49:30Z")]
+        records += ([assistant(PROMISE), meta] if after_text else [meta, assistant(PROMISE)])
+        machine.seat("alpha", records + [turn_end()])
+        code, verdicts, error = machine.run()
+        check(f"mid-turn {feedback!r}, after text={after_text}: the task backs the promise",
+              code == 0 and verdicts["alpha"]["decision"] == "judge"
+              and verdicts["alpha"]["sentences"][0]["code_reading"] == "judge",
+              (code, verdicts, error))
+
 # --- sentences that are not raised; rules 3 to 5 then decide --------------------------------
 for sentence, kind in (("Say the word and I'll merge it.", "conditional_on_user"),
                        ("I'll push it once you approve, your call.", "conditional_on_user")):
