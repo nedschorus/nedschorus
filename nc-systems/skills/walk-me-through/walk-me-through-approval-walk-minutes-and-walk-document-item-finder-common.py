@@ -198,20 +198,23 @@ def item_opening_lines(text, parser, tokens=None):
     of a top-level paragraph, a label ITEM_LABEL reads or a running count `Item N of M` after any emphasis; on
     the first line of an item of a top-level list, a label in bold. M is None when the label gives no `of M`.
     A top-level heading WITHDRAWN_HEADING reads is an opening that names no item, ([], None): it ends the item
-    it falls in. A label or count after it, before the next heading that is not a Withdrawn heading, is the
-    Withdrawn version's own, and no opening, when it names only items a Withdrawn heading since that heading
-    names; after a Withdrawn heading that names no item, every label and count stays an opening."""
+    it falls in. A label or count after it, before the next running count that starts a unit as
+    item_unit_spans reads them, is the Withdrawn version's own, and no opening, when it names only items a
+    Withdrawn heading since that start names; after a Withdrawn heading that names no item, every label and
+    count stays an opening. A heading or paragraph that starts no unit, such as `## Notes`, keeps them."""
     openings = {}
     tokens = parser.parse(text) if tokens is None else tokens
-    # The items the Withdrawn headings since the last other heading name.
+    unit_starts = {start[0] for start in item_unit_starts(tokens, text.split("\n"))}
+    # The items the Withdrawn headings since the last unit start name.
     withdrawn_items = set()
     for index, token in enumerate(tokens):
+        if index in unit_starts:
+            withdrawn_items = set()
         if token.type == "heading_open" and token.map is not None and token.level == 0:
             if index + 1 < len(tokens) and WITHDRAWN_HEADING.match(tokens[index + 1].content):
                 openings[token.map[0]] = ([], None)
                 withdrawn_items |= withdrawn_heading_items(tokens[index + 1].content)
                 continue
-            withdrawn_items = set()
         if token.type != "paragraph_open" or token.map is None:
             continue
         # A paragraph at level 2 straight after an item's start is that item's first paragraph; an item of a
@@ -412,16 +415,32 @@ def item_unit_spans(document_text, parser):
     heading that says `revised` right after its count names all of its items.
     """
     lines = document_text.split("\n")
-    starts = []
-    withdrawn = []
-    group = None
     tokens = parser.parse(document_text)
+    withdrawn = [token.map[0] for index, token in enumerate(tokens)
+                 if token.type == "heading_open" and token.map is not None and token.level == 0
+                 and index + 1 < len(tokens) and WITHDRAWN_HEADING.match(tokens[index + 1].content)]
+    starts = [start[1:] for start in item_unit_starts(tokens, lines)]
+    ends = [min([start[4] for start in starts[position + 1:position + 2]] + [len(lines)]
+                + [line for line in withdrawn if line > first and len(numbers) <= 1])
+            for position, (numbers, _, _, _, first) in enumerate(starts)]
+    return [(numbers, total, problem, first, ends[index])
+            for index, (numbers, total, problem, _, first) in enumerate(starts)
+            if not (numbers and any(revised and later_total == total and set(numbers) <= set(later_numbers)
+                                    for later_numbers, later_total, _, revised, _ in starts[index + 1:]))]
+
+
+def item_unit_starts(tokens, lines):
+    """Return [(token index, item numbers, M, problem, revised, first line)] for each running count that
+    starts a unit, as item_unit_spans' docstring says, before it leaves out the units a later revised heading
+    replaces; a Withdrawn heading starts none. item_opening_lines reads the same starts, so a Withdrawn
+    version's labels stop being dropped exactly where a unit starts."""
+    starts = []
+    group = None
     for index, token in enumerate(tokens):
         if token.map is None or token.level != 0 or token.type not in ("heading_open", "paragraph_open"):
             continue
         if (token.type == "heading_open" and index + 1 < len(tokens)
                 and WITHDRAWN_HEADING.match(tokens[index + 1].content)):
-            withdrawn.append(token.map[0])
             continue
         if token.type == "paragraph_open" and not lines[token.map[0]].lstrip().startswith("**"):
             continue
@@ -440,14 +459,8 @@ def item_unit_spans(document_text, parser):
         else:
             group = None
         revised = bool(REVISED.match(content[match.end():]))
-        starts.append((numbers, match[2], problem, revised, token.map[0]))
-    ends = [min([start[4] for start in starts[position + 1:position + 2]] + [len(lines)]
-                + [line for line in withdrawn if line > first and len(numbers) <= 1])
-            for position, (numbers, _, _, _, first) in enumerate(starts)]
-    return [(numbers, total, problem, first, ends[index])
-            for index, (numbers, total, problem, _, first) in enumerate(starts)
-            if not (numbers and any(revised and later_total == total and set(numbers) <= set(later_numbers)
-                                    for later_numbers, later_total, _, revised, _ in starts[index + 1:]))]
+        starts.append((index, numbers, match[2], problem, revised, token.map[0]))
+    return starts
 
 
 def approval_walk_item_line_range_within_heading_shared_by_several_items(openings, first, end, number, numbers, total):
