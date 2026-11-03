@@ -243,6 +243,7 @@ REINCARNATION_OPENER_PATTERN = re.compile(
     r"Read .+? — (?:it is )?" + re.escape(REINCARNATION_OPENER_MARKER))
 # An ignition without a conversation-tail, at boot or at a handoff, also consumes the handoff and retires the parent.
 IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER = "the previous session's conversation-tail is unavailable"
+FRESH_SESSION_FROM_CONVERSATION_TAIL_PROMPT_PHRASE = "it is the dialog from this seat's last recorded session"
 
 
 def default_agents_root() -> Path:
@@ -570,7 +571,7 @@ def write_resume_prompt(handoff_directory: Path, name: str,
     prompt_path = resume_prompt_path(handoff_directory, name)
     if unreplied_successor:
         prompt = (
-            "This session was resumed by crash recovery (nedschorus#120). You "
+            f"{supervisor.CRASH_RECOVERY_RESUME_PROMPT_OPENING}. You "
             "are the successor your predecessor's handoff started, and your "
             "first reply never happened: the session ended before you did any "
             "work (if the harness recorded why, its notice is above). The "
@@ -581,7 +582,7 @@ def write_resume_prompt(handoff_directory: Path, name: str,
         )
     else:
         prompt = (
-            "This session was resumed by crash recovery (nedschorus#120): your "
+            f"{supervisor.CRASH_RECOVERY_RESUME_PROMPT_OPENING}: your "
             "previous session ended without writing a handoff, and your transcript "
             "was resumed under a fresh supervisor. "
             "Re-verify any in-flight state before trusting it (files you were "
@@ -620,6 +621,16 @@ def write_first_prompt_after_recorded_exit(handoff_directory: Path, name: str,
                   "work on.")
     prompt_path.write_text(prompt, encoding="utf-8")
     return prompt_path
+
+
+def fresh_session_from_conversation_tail_prompt(conversation_tail) -> str:
+    return (
+        f"Read {conversation_tail} — {FRESH_SESSION_FROM_CONVERSATION_TAIL_PROMPT_PHRASE}; "
+        "the session that followed it ended without writing a handoff "
+        "(crash recovery, nedschorus#120). Continue from where that dialog ends, "
+        "checking the repository's current state before trusting any of the "
+        "dialog's in-flight assumptions."
+    )
 
 
 def find_newest_conversation_tail_file(handoff_directory: Path, name: str):
@@ -1353,13 +1364,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             return did_not_come_up
         return (f"{name}: relaunched fresh{in_window} (nothing to resume, no conversation-tail to read)"
                 f"{reach_clause_for_a_running_seat(name)}")
-    prompt = (
-        f"Read {conversation_tail} — it is the dialog from this seat's last recorded "
-        "session; the session that followed it ended without writing a handoff "
-        "(crash recovery, nedschorus#120). Continue from where that dialog ends, "
-        "checking the repository's current state before trusting any of the "
-        "dialog's in-flight assumptions."
-    )
+    prompt = fresh_session_from_conversation_tail_prompt(conversation_tail)
     prompt_path = handoff_directory / f"{name}-recovery-ignition-prompt.md"
     if dry_run:
         return (f"{name}: would launch and start a fresh agent-session from the conversation-tail {conversation_tail.name}"

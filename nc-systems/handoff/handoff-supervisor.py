@@ -219,12 +219,15 @@ _agent_seat_worktrees_and_branches_list_spec.loader.exec_module(
 # One loaded copy, so the GitCommandFailed checkout_freshness_catch_up raises is the class caught here.
 git_machine_readable_output = checkout_freshness_catch_up.git_output
 
+# Also opens scripts/recover-crashed-seats.py's resume prompts; the transcript reader recognizes all three by it.
+CRASH_RECOVERY_RESUME_PROMPT_OPENING = "This session was resumed by crash recovery (nedschorus#120)"
 # The opening is an EMPTY_SUCCESSOR_MARKERS entry used to recognize a workless resume.
 RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF = (
-    "This session was resumed by crash recovery (nedschorus#120): the "
+    f"{CRASH_RECOVERY_RESUME_PROMPT_OPENING}: the "
     "previous session ended without writing a handoff. Re-verify in-flight "
     "state before trusting it, then continue the work underway."
 )
+FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_TEMPLATE = "You are {agent}. No handoff exists yet; ask what to work on."
 
 # subprocess reports signals as negative return codes; shell wrappers report 128 + signal.
 SIGTERM_SESSION_EXIT_CODES = (143, -15)
@@ -2155,7 +2158,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         # A resumed session retains its context and must not be told to ask for work it already has.
         prompt = RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF
     else:
-        prompt = f"You are {settings.agent}. No handoff exists yet; ask what to work on."
+        prompt = FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_TEMPLATE.format(agent=settings.agent)
 
     adopted = settings.adopted_session
     # Compose at launch so the branch-state line reports the sync performed for that launch.
