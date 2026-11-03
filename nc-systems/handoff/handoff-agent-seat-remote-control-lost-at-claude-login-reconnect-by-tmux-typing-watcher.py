@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
-"""Turn Remote Control back on in a ned-box agent-seat that a Claude login on ned-box turned off.
+"""Turn Remote Control back on in an agent-seat that a Claude login on its machine turned off.
 
-Usage, on ned-box:
+Usage, on ned-box or on the Mac, each watching its own agent-seats:
   nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py
-      one run: check every running agent-seat and act. Cron runs this once a minute.
+      one run: check every running agent-seat of this machine and act. Cron
+      on ned-box, and launchd on the Mac, run this once a minute.
   nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py --show-notice FILE
       what a notice window on the user's Mac runs: print FILE, then wait for
       Enter and close.
 
-When the claude.ai account or organization signed in on ned-box changes, as a
+When the claude.ai account or organization signed in on a machine changes, as a
 `claude /login` does, Claude Code drops Remote Control in every running
-session and logs, in the session's transcript, a system line starting with
+session on that machine and logs, in the session's transcript, a system line starting with
 DISCONNECT_TEXT. It does not turn Remote Control back on. Each run finds every
 running agent-seat (a live `claude` process whose parent is
-`handoff-supervisor.py --agent <seat>`), reads its session record
+`handoff-supervisor.py --agent <seat>`; ned-box's process table is read from
+/proc, the Mac's from `ps`, whose argument list is split at spaces, so a
+supervisor or claude path holding a space is not found), reads its session record
 ~/.claude/sessions/<pid>.json and its current transcript, and types
 `/remote-control <seat>` and Enter into the claude's own tmux pane (server
 `-L <seat>`, the pane id the session record's "tmux" field ends with) when all
@@ -43,8 +46,9 @@ in one agent-seat, such as a session record it cannot read or a tmux command
 that fails or times out, is written to decisions.jsonl in LOG_DIRECTORY and
 printed to stderr; the run goes on to the next agent-seat and, once every
 agent-seat is checked, exits 1. The first time a failure is met, it is also
-shown to the user in a terminal window on his Mac, opened with
-scripts/open-mac-window-from-ned-box.py running --show-notice. "The first
+shown to the user in a terminal window on his Mac running --show-notice,
+opened from ned-box with scripts/open-mac-window-from-ned-box.py and on the
+Mac with scripts/open-iterm-window-running-command. "The first
 time" counts once per agent-seat, claude process and kind of failure; once per
 disconnect line for a failed typing; and once per error text for a failure that
 stops the whole run. When the notice cannot be written or the window cannot be
@@ -52,14 +56,24 @@ opened, that is printed to stderr too, and a later run that meets the same
 failure tries the notice again. Each typing is also written to decisions.jsonl, which is what
 keeps a later run from typing again for the same disconnect line.
 
-Off ned-box the program refuses: the agent-seats it reads are ned-box's.
+On ned-box the log directory is LOG_DIRECTORY, in the log-store. On the Mac it
+is MAC_LOG_DIRECTORY, on the Mac's own disk: decisions.jsonl there is also what
+keeps a later run from typing twice, and a run each minute must neither hang
+on nor write under the Mac's network mount of ned-box's home when that mount
+is hung or missing.
+
+On a machine that is neither Linux nor macOS the program refuses.
 
 SCHEDULED. The job is declared in
 nc-systems/general-tools/scheduled-jobs-on-each-machine.json and installed
 with nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py
 --install --job handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher,
-on ned-box only, as the cron line
+on each machine. On ned-box it is the cron line
     * * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> /home/nedlern/.claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log 2>&1
+On the Mac it is the launchd job
+com.nedschorus.handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher,
+StartInterval 60, because launchd gives the job the PATH that holds Homebrew's
+tmux, and cron's PATH on the Mac does not.
 
 The environment variables named by the *_ENVIRONMENT_VARIABLE constants
 override where the log, the session records, the transcripts and the process
@@ -82,6 +96,11 @@ PROGRAM = "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-t
 
 REPOSITORY = Path(__file__).resolve().parent.parent.parent
 MAC_WINDOW_OPENER_PROGRAM = REPOSITORY / "scripts" / "open-mac-window-from-ned-box.py"
+MAC_LOCAL_WINDOW_OPENER_PROGRAM = REPOSITORY / "scripts" / "open-iterm-window-running-command"
+MACHINE_NAMES_BY_PLATFORM = {"linux": "ned-box", "darwin": "the Mac"}
+# macOS cuts ps output at the terminal's width, even through a pipe, unless -ww is given.
+MAC_PROCESS_LISTING_COMMAND = ["ps", "-axww", "-o", "pid=,ppid=,etime=,args="]
+PROCESS_LISTING_TIMEOUT_SECONDS = 30
 _claude_code_session_transcript_lookup_and_text_search_common_specification = importlib.util.spec_from_file_location(
     "claude_code_session_transcript_lookup_and_text_search_common",
     REPOSITORY / "scripts" / "claude-code-session-transcript-lookup-and-text-search-common.py")
@@ -89,6 +108,7 @@ claude_code_session_transcript_lookup_and_text_search_common = importlib.util.mo
 _claude_code_session_transcript_lookup_and_text_search_common_specification.loader.exec_module(claude_code_session_transcript_lookup_and_text_search_common)
 
 LOG_DIRECTORY = Path.home() / "nedschorus-logs" / PROGRAM
+MAC_LOG_DIRECTORY = Path.home() / ".local" / "state" / "claude" / PROGRAM
 SESSION_RECORDS_DIRECTORY = Path.home() / ".claude" / "sessions"
 PROJECTS_DIRECTORY = Path.home() / ".claude" / "projects"
 PROCESS_TABLE_DIRECTORY = Path("/proc")
@@ -127,30 +147,30 @@ CRON_LOG = Path.home() / ".claude" / f"{PROGRAM}.log"
 SHOW_NOTICE_CLOSE_PROMPT = "Press Enter to close this window."
 
 RUN_FAILED_NOTICE_TEMPLATE = (
-    "The Remote Control watcher on ned-box failed and is checking no agent-seat: {problem}\n"
-    "Until the watcher is fixed, Remote Control that a Claude login on ned-box turns off stays off. "
+    "The Remote Control watcher on {machine} failed and is checking no agent-seat: {problem}\n"
+    "Until the watcher is fixed, Remote Control that a Claude login on {machine} turns off stays off. "
     "The watcher sends another notice only if its error changes.\n"
-    "To have the watcher fixed, give this notice to an agent on ned-box and ask it to fix the watcher.\n"
-    "Record: {record}, and the cron log {cron_log}\n"
+    "To have the watcher fixed, give this notice to an agent on {machine} and ask it to fix the watcher.\n"
+    "Record: {record}, and the scheduled job's log {cron_log}\n"
 )
 
 RECORD_PROBLEM_NOTICE_TEMPLATE = (
-    "The Remote Control watcher on ned-box cannot check {seat}: {problem}\n"
-    "If a Claude login on ned-box turns Remote Control off in {seat}, the watcher cannot turn it "
+    "The Remote Control watcher on {machine} cannot check {seat}: {problem}\n"
+    "If a Claude login on {machine} turns Remote Control off in {seat}, the watcher cannot turn it "
     "back on until this problem is fixed. The watcher sends another notice only if the problem changes.\n"
     "If {seat}'s Remote Control is off, turn it on by typing in {seat}'s window:\n"
     "  /remote-control {seat}\n"
-    "To have the problem fixed, give this notice to an agent on ned-box and ask it to fix the problem.\n"
+    "To have the problem fixed, give this notice to an agent on {machine} and ask it to fix the problem.\n"
     "Record: {record}\n"
 )
 
 TYPING_FAILED_NOTICE_TEMPLATE = (
-    "Remote Control in {seat} is off, and the Remote Control watcher on ned-box could not turn it "
+    "Remote Control in {seat} is off, and the Remote Control watcher on {machine} could not turn it "
     "back on: {problem}\n"
-    "A Claude login on ned-box turned it off at {disconnected_at}.\n"
+    "A Claude login on {machine} turned it off at {disconnected_at}.\n"
     "To turn it on, type in {seat}'s window:\n"
     "  /remote-control {seat}\n"
-    "If the watcher keeps failing, give this notice to an agent on ned-box and ask it to find out why.\n"
+    "If the watcher keeps failing, give this notice to an agent on {machine} and ask it to find out why.\n"
     "Record: {record}\n"
 )
 
@@ -199,15 +219,13 @@ def notice_show(log_directory: Path, seat, kind, template, **fields) -> bool:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(template.format(seat=seat, record=log_directory / "decisions.jsonl",
-                                        **fields), encoding="utf-8")
+                                        machine=this_machine_name(), **fields), encoding="utf-8")
     except OSError as error:
         print(f"{PROGRAM}: the notice to the user about {seat} was not written ({error}). If the failure "
               "this notice reports happens again, a later run tries the notice again; until then the user "
               "does not know of that failure.", file=sys.stderr)
         return False
-    exit_code, output = run_command(
-        [sys.executable, str(MAC_WINDOW_OPENER_PROGRAM), *show_notice_words(path)],
-        MAC_WINDOW_OPENER_TIMEOUT_SECONDS)
+    exit_code, output = run_command(notice_window_command(path), MAC_WINDOW_OPENER_TIMEOUT_SECONDS)
     if exit_code != 0:
         print(f"{PROGRAM}: the notice {path} did not open on the user's Mac (the opener "
               f"{outcome(exit_code)} and said: {output}). If the failure this notice reports happens "
@@ -233,6 +251,17 @@ def outcome(exit_code):
 
 def show_notice_words(path):
     return [sys.executable, str(Path(__file__).resolve()), "--show-notice", str(path)]
+
+
+def this_machine_name():
+    return MACHINE_NAMES_BY_PLATFORM[sys.platform]
+
+
+def notice_window_command(path):
+    """The command that opens a window on the user's Mac showing the notice at path."""
+    if sys.platform == "darwin":
+        return [str(MAC_LOCAL_WINDOW_OPENER_PROGRAM), *show_notice_words(path)]
+    return [sys.executable, str(MAC_WINDOW_OPENER_PROGRAM), *show_notice_words(path)]
 
 
 def show_notice(path: str) -> int:
@@ -269,6 +298,36 @@ def process_table(process_table_directory: Path):
         table[int(entry.name)] = (int(fields_after_name[1]), [word for word in words if word],
                                   uptime_seconds - started)
     return table
+
+
+def elapsed_seconds_from_ps_etime(etime: str) -> float:
+    """Seconds in ps's etime, written [[days-]hours:]minutes:seconds."""
+    days, _, clock = etime.rpartition("-")
+    parts = [int(part) for part in clock.split(":")]
+    while len(parts) < 3:
+        parts.insert(0, 0)
+    hours, minutes, seconds = parts
+    return ((int(days or 0) * 24 + hours) * 60 + minutes) * 60 + seconds
+
+
+def process_table_from_ps(listing: str):
+    """Return the table process_table returns, from the text MAC_PROCESS_LISTING_COMMAND prints."""
+    table = {}
+    for line in listing.splitlines():
+        fields = line.split(None, 3)
+        if len(fields) < 4:
+            # ps prints no arguments for a process whose argument list it cannot read.
+            continue
+        pid, parent, etime, arguments = fields
+        table[int(pid)] = (int(parent), arguments.split(), elapsed_seconds_from_ps_etime(etime))
+    return table
+
+
+def mac_process_table():
+    exit_code, listing = run_command(MAC_PROCESS_LISTING_COMMAND, PROCESS_LISTING_TIMEOUT_SECONDS)
+    if exit_code != 0:
+        raise RuntimeError(f"{' '.join(MAC_PROCESS_LISTING_COMMAND)} {outcome(exit_code)}: {listing}")
+    return process_table_from_ps(listing)
 
 
 def running_agent_seats(table):
@@ -477,7 +536,7 @@ def report_typing_failure(run: Run, seat, event, disconnect, problem):
 
 
 def report_run_failure(log_directory: Path, error_text):
-    """Show the user a notice the first time this error is met; cron's log keeps every one."""
+    """Show the user a notice the first time this error is met; the scheduled job's log keeps every one."""
     reported_path = log_directory / "reported-run-failures.txt"
     try:
         reported = reported_path.read_text(encoding="utf-8").splitlines()
@@ -492,7 +551,8 @@ def report_run_failure(log_directory: Path, error_text):
 
 
 def run_once(environment) -> int:
-    log_directory = Path(environment.get(LOG_DIRECTORY_ENVIRONMENT_VARIABLE) or LOG_DIRECTORY)
+    log_directory = Path(environment.get(LOG_DIRECTORY_ENVIRONMENT_VARIABLE)
+                         or (MAC_LOG_DIRECTORY if sys.platform == "darwin" else LOG_DIRECTORY))
     session_records_directory = Path(environment.get(SESSION_RECORDS_DIRECTORY_ENVIRONMENT_VARIABLE)
                                      or SESSION_RECORDS_DIRECTORY)
     projects_directory = Path(environment.get(PROJECTS_DIRECTORY_ENVIRONMENT_VARIABLE)
@@ -508,11 +568,13 @@ def run_once(environment) -> int:
             return 0
         try:
             run = Run(log_directory)
-            for seat, pid, age in running_agent_seats(process_table(process_table_directory)):
+            table = (mac_process_table() if sys.platform == "darwin"
+                     else process_table(process_table_directory))
+            for seat, pid, age in running_agent_seats(table):
                 check_seat(run, seat, pid, age, session_records_directory, projects_directory)
             if not transcript_read_positions_save(log_directory, run.transcript_read_positions):
                 run.failed = True
-        except Exception as error:  # noqa: BLE001 - a failed run must reach the user, not only cron's log
+        except Exception as error:  # noqa: BLE001 - a failed run must reach the user, not only the scheduled job's log
             report_run_failure(log_directory, f"{type(error).__name__}: {error}")
             raise
         return 1 if run.failed else 0
@@ -524,9 +586,12 @@ def main(argv=None, environment=None) -> int:
     arguments = parser.parse_args(argv)
     if arguments.show_notice:
         return show_notice(arguments.show_notice)
-    if sys.platform != "linux":
-        print(f"{PROGRAM}: refused: this machine is not ned-box (it is not Linux), and this program "
-              "watches only ned-box's agent-seats.", file=sys.stderr)
+    if sys.platform not in MACHINE_NAMES_BY_PLATFORM:
+        print(f"{PROGRAM}: refused: this machine's platform is {sys.platform}, and this program "
+              "knows how to find agent-seats only on Linux, which ned-box runs, and on macOS, which "
+              "the Mac runs.\n"
+              "Nothing needs doing: the program watches only the agent-seats of the machine it runs "
+              "on, and ned-box and the Mac each run their own copy.", file=sys.stderr)
         return 2
     return run_once(dict(os.environ) if environment is None else environment)
 
