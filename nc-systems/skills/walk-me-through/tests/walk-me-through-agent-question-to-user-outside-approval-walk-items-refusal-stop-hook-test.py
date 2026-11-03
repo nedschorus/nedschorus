@@ -468,10 +468,12 @@ def test_a_question_about_something_other_than_the_waiting_item_still_blocks():
                   f'"{unrelated}"', "the model judged that it asks him something other than a waiting item's decision")
     case.reply(REAL_ITEM_1_REPLY.replace("**Recommendation:** close task #9",
                                          "**Recommendation:** shall I close task #9"))
+    calls_before = len(case.model_calls())
     check_silent("a reworded recommendation holding an ask phrase passes when the model says it concerns the waiting "
                  "item", case.run(model="waiting"))
+    calls = case.model_calls()[calls_before:]
     check("a reworded recommendation holding an ask phrase goes to the model",
-          "shall I close task #9" in numbered_lines(case.model_calls()[-1]), case.model_calls()[-1:])
+          len(calls) == 1 and "shall I close task #9" in numbered_lines(calls[0]), calls)
     case.reply(REAL_ITEM_1_REPLY.replace("Also close task #10, which only prepared the scoring checks.",
                                          "Do you approve closing task #10 too?"))
     check_blocked("a reworded recommendation ending in a question mark blocks when the model says it asks something "
