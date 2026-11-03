@@ -484,7 +484,7 @@ def user_words_entries_not_the_users_words_status_set_and_clear(connection):
 
 
 def add_entry(connection, entry, tags_by_source):
-    """Insert one entry, standing unless it names another state, and its tags; return whether it was new."""
+    """Insert one entry as standing, and its tags; return whether it was new."""
     cursor = connection.execute(
         "INSERT OR IGNORE INTO entries (kind, state, said_at_utc, text, agent_message_answered, source_machine, "
         "source_path, source_line, agent_seat, session_id, state_changed_at_utc, added_at_utc, added_by, "
@@ -566,20 +566,21 @@ def read_transcript(connection, machine, path, repository, known_seats):
                     -AGENT_MESSAGE_ANSWERED_KEPT_CHARACTERS:]
                 continue
             in_nedschorus, seat = session_context(cwd)
+            # A compaction summary or launch prompt answers no agent message: the agent's question stays held
+            # for the user's next turn, so an answer given right after a compaction keeps its question.
+            is_prompt = transcript_reader.user_turn_text_is_compaction_summary_or_launch_prompt(text)
+            answered = "" if is_prompt else agent_text
             tags_by_source = []
             if in_nedschorus:
                 tags_by_source = [
                     ("user-words", tags_named_in(text, repository, seat, known_seats, files_are_tags=True)),
                     ("agent-message-answered",
-                     tags_named_in(agent_text, repository, seat, known_seats, files_are_tags=False)),
+                     tags_named_in(answered, repository, seat, known_seats, files_are_tags=False)),
                 ]
             stamp = record.get("timestamp") or ""
-            is_prompt = transcript_reader.user_turn_text_is_compaction_summary_or_launch_prompt(text)
             entry = {
                 "kind": KIND_USER_WORDS, "said_at_utc": stamp, "text": text,
-                "state": STATE_NOT_THE_USERS_WORDS if is_prompt else STATE_STANDING,
-                "state_changed_at_utc": utc_now_text() if is_prompt else None,
-                "agent_message_answered": agent_text or None, "source_machine": machine,
+                "agent_message_answered": answered or None, "source_machine": machine,
                 "source_path": str(path), "source_line": line_number, "agent_seat": seat,
                 "session_id": record.get("sessionId") or path.stem, "added_at_utc": utc_now_text(),
                 "added_by": ADDED_BY,
@@ -588,7 +589,8 @@ def read_transcript(connection, machine, path, repository, known_seats):
             }
             if add_entry(connection, entry, tags_by_source):
                 added += 1
-            agent_text = ""
+            if not is_prompt:
+                agent_text = ""
     record_reading(connection, path, status, offset, line_number,
                    {"turn_reader": reader.state(), "agent_message_since_user_message": agent_text, "cwd": cwd})
     return added

@@ -665,6 +665,22 @@ with tempfile.TemporaryDirectory() as directory:
           described(first) + f" {marked_first} exit {exit_code} {stderr.getvalue()} "
           f"{case.query('SELECT text, state FROM entries')}")
 
+# The agent asks, Claude Code compacts the session, and he answers: the stored summary answers nothing, and his
+# answer keeps the agent's question and its tag.
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    summary = program.transcript_reader.COMPACTION_SUMMARY_OPENING + " that ran out of context. Summary: ..."
+    case.transcript("ned-box", [agent("Shall I close GHI 46?", "2026-10-30T00:00:00Z"),
+                                human(summary, "2026-10-30T00:01:00Z"),
+                                human("yes, close it", "2026-10-30T00:02:00Z")])
+    result = case.run()
+    stored = {entry[1]: entry[5] for entry in case.entries()}
+    check("an answer given right after a compaction summary keeps the agent's question and its tag, and the "
+          "summary answers nothing",
+          result.returncode == 0 and stored.get("yes, close it") == "Shall I close GHI 46?"
+          and stored.get(summary.strip(), "missing") is None and case.tags("yes, close it") == {"GHI 46"},
+          described(result) + f" {stored} {case.tags('yes, close it')}")
+
 # A prompt stored before the reader knew it: the handoff-supervisor's own no-handoff prompt, put in the store as
 # an earlier run did, with a tag, gets the status not-the-user's-words; it stays in the store, tag and full-text row
 # included, and the index file and the anchor list leave it out.
