@@ -24,6 +24,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import types
 from pathlib import Path
 
@@ -59,6 +60,8 @@ target = Path(sys.argv[sys.argv.index("--target") + 1])
 with open(os.environ["STAND_IN_CALLS"], "a") as calls:
     calls.write(target.read_text())
 mode = os.environ.get("STAND_IN_MODE", "")
+if mode == "slow":
+    time.sleep(3)  # A read ahead still running when the item it reads comes up.
 if mode.startswith("stopped-unremovable "):
     (target.parent / "locked").mkdir()
     (target.parent / "locked" / "file").write_text("x")
@@ -75,7 +78,7 @@ if mode == "failed":
 if mode == "silent-exit":
     sys.exit(3)
 record = Path(os.environ["STAND_IN_RECORDS"]) / (target.stem + "-2026-10-17")
-(record / "target").mkdir(parents=True)
+(record / "target").mkdir(parents=True, exist_ok=True)
 (record / "target" / target.name).write_text(target.read_text())
 (record / "cold-read-fast-read.md").write_text("findings\n")
 print(record / "cold-read-fast-read.md")
@@ -198,6 +201,21 @@ class Case:
         self.temporary_directory = self.root / temporary_directory_name
         self.temporary_directory.mkdir()
 
+    def reads(self):
+        """The walk's directory of item cold-read-fast-read outcomes, keyed by a hash of each text read."""
+        return self.checkout / "docs" / "walk" / f"{WALK_NAME}-item-cold-read-fast-read-review-status-per-text-hash"
+
+    def wait_for_reads_ahead(self):
+        """Wait until every read-ahead worker this case started has ended, so none writes after the case."""
+        for started in self.reads().glob("*-started.json") if self.reads().is_dir() else []:
+            pid = json.loads(started.read_text())["pid"]
+            while True:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+
     def left_in_temporary_directory(self):
         return sorted(path.name for path in self.temporary_directory.iterdir())
 
@@ -209,9 +227,16 @@ class Case:
         return record
 
     def run(self, step, *flags, mode="", counts_log=None, fast_read_program=None, environment=None,
-            ignored_signal=None, reply="a"):
+            ignored_signal=None, reply="a", wait_for_reads_ahead=True):
         """Run the program; a check gets `--user-reply-as-typed reply` unless reply is None or the flags
-        hold --not-asked or a reply of their own."""
+        hold --not-asked or a reply of their own. Unless told not to, wait for the reads ahead it started."""
+        result = self.run_only(step, *flags, mode=mode, counts_log=counts_log, fast_read_program=fast_read_program,
+                               environment=environment, ignored_signal=ignored_signal, reply=reply)
+        if wait_for_reads_ahead:
+            self.wait_for_reads_ahead()
+        return result
+
+    def run_only(self, step, *flags, mode, counts_log, fast_read_program, environment, ignored_signal, reply):
         if step == "check" and reply is not None and not {"--not-asked", "--already-decided", "--moved-on", "--user-reply-as-typed"} & set(flags):
             flags = (*flags, "--user-reply-as-typed", reply)
         environment = dict(environment or os.environ, STAND_IN_MODE=mode, STAND_IN_CALLS=str(self.calls),
@@ -679,11 +704,19 @@ def test_a_capitalised_marker_is_read_and_closed():
           described(closed) + case.minutes.read_text())
 
 
-TOOK_EFFECT_NEXT = [
-    "If the change needs nothing more from the user, such as a text he has not yet seen, start it as the "
-    "walk-me-through skill's sentence on ready work says; if it edits a file that work you dispatched "
-    "earlier is still editing, start it when that earlier work finishes.",
-    "Then present item 6 of 9, which the minutes' `#next_to_present` line now names."]
+def read_next_item_line(case, item):
+    """The last line close prints when it names the next item."""
+    return (f"Then run `python3 {PROGRAM} approval-walk-waiting-item-cold-read-fast-read --cwd {shlex.quote(str(case.checkout.resolve()))}`, "
+            f"which gives {item}, the item the minutes' `#next_to_present` line now names, its cold-read-fast-read, "
+            "and do what it prints before you present it.")
+
+
+def took_effect_next(case):
+    return [
+        "If the change needs nothing more from the user, such as a text he has not yet seen, start it as the "
+        "walk-me-through skill's sentence on ready work says; if it edits a file that work you dispatched "
+        "earlier is still editing, start it when that earlier work finishes.",
+        read_next_item_line(case, "item 6 of 9")]
 
 
 def test_close_records_that_the_answer_took_effect():
@@ -695,7 +728,7 @@ def test_close_records_that_the_answer_took_effect():
           and result.stdout.rstrip("\n").split("\n") == [
               "item 4 of 9's answer is recorded in the minutes, and its change may now be made.",
               "Your next message must include these lines, as they are:",
-              "no proposed text marked"] + TOOK_EFFECT_NEXT
+              "no proposed text marked"] + took_effect_next(case)
           and case.minutes.read_text().rstrip().endswith(
               "item 4 of 9: approved; every text the change adds has had a fast read. <accepted>\n"
               "#next_to_present item 6 of 9"),
@@ -1013,7 +1046,9 @@ def test_close_holds_the_answer_for_a_waiting_new_item():
                            "raised, waits for the user's answer, and the minutes record item 3 of 9's answer as held "
                            "until he answers item 5 of 9.")
           and sum("fast read had to be run" in line for line in lines) == 2
-          and lines[-1] == ("Then present item 5 of 9. When the close step records the user's approval or disapproval "
+          and lines[-1] == (f"Then run `python3 {PROGRAM} approval-walk-waiting-item-cold-read-fast-read --cwd "
+                            f"{shlex.quote(str(case.checkout.resolve()))}`, which gives item 5 of 9 its "
+                            "cold-read-fast-read, do what it prints, and present item 5 of 9. When the close step records the user's approval or disapproval "
                             "of item 5 of 9, it records the same outcome for item 3 of 9; after a deferral, a move on "
                             "or answers to parts, item 3 of 9 stays waiting and the walk comes back to it.")
           and case.minutes.read_text().rstrip().endswith(
@@ -1736,7 +1771,7 @@ def test_each_parts_answer_is_recorded_and_close_records_each_parts_outcome():
               and closed.stdout.rstrip("\n").split("\n") == [
                   "item 4 of 9's answer is recorded in the minutes, and its change may now be made.",
                   "Your next message must include these lines, as they are:",
-                  "no proposed text marked"] + TOOK_EFFECT_NEXT
+                  "no proposed text marked"] + took_effect_next(case)
               and case.minutes.read_text().rstrip().endswith(
                   f"item 4 of 9: {recorded}; every text the change adds has had a fast read.\n"
                   "#next_to_present item 6 of 9"), described(closed) + case.minutes.read_text())
@@ -2197,7 +2232,7 @@ def test_an_item_the_walk_moves_on_from_is_recorded_without_a_fast_read_and_not_
           and closed.stdout.rstrip("\n").split("\n") == [
               "item 1 of 5 is recorded in the minutes as settled without being shown to the user.",
               "List it, with its number, in one line of your next message to the user.",
-              "Then present item 2 of 5, which the minutes' `#next_to_present` line now names."]
+              read_next_item_line(case, "item 2 of 5")]
           and marker(case) == "#next_to_present item 2 of 5", described(closed) + case.minutes.read_text())
 
 
@@ -2424,6 +2459,214 @@ def test_a_reply_given_with_already_decided_or_moved_on_is_refused_writing_nothi
         check(f"check {flag} with --user-reply-as-typed is refused, writing nothing",
               result.returncode == 1 and case.minutes.read_text() == before
               and f"--user-reply-as-typed was given with {flag}" in result.stderr, described(result))
+
+
+WAITING_ITEM_READ = "approval-walk-waiting-item-cold-read-fast-read"
+AFTER_FIXES = "--after-fixes-reread-only-when-facts-change"
+
+
+def item_read_case(next_to_present="item 2 of 5", recorded=""):
+    """A summary walk whose item 1 is decided, so close of item 2 names item 3 and reads item 4 ahead."""
+    return summary_case(next_to_present=next_to_present, recorded=recorded or approved_line("item 1 of 5"))
+
+
+def times_read(case, heading):
+    """How many cold-read-fast-reads the stand-in ran on a text holding the heading."""
+    return case.calls.read_text().count(heading)
+
+
+def answered_and_closed(case, mode=""):
+    case.run("check")
+    return case.run("close", mode=mode, wait_for_reads_ahead=mode != "slow")
+
+
+def next_item_waiting(case, answered, waiting):
+    """Record answered as decided and waiting as next, as a check and close would."""
+    with open(case.minutes, "a") as minutes:
+        minutes.write(approved_line(answered) + f"#next_to_present {waiting}\n")
+
+
+def test_close_reads_the_item_after_the_next_one_ahead_and_the_read_step_uses_it():
+    case = item_read_case()
+    closed = answered_and_closed(case)
+    check("close names the read step for the next item and starts the read of the item after it",
+          closed.returncode == 0
+          and closed.stdout.rstrip("\n").split("\n")[-1] == read_next_item_line(case, "item 3 of 5")
+          and times_read(case, "## Item 4 of 5: four") == 1 and times_read(case, "## Item 3 of 5") == 0,
+          described(closed) + case.calls.read_text())
+    first = case.run(WAITING_ITEM_READ)
+    lines = first.stdout.rstrip("\n").split("\n")
+    check("the read step runs a read of a waiting item that no read ahead covered, and says so",
+          first.returncode == 0
+          and lines[0].startswith("item 3 of 5: its cold-read-fast-read, of its text as it stands, had to be run now: ")
+          and lines[0].endswith("/cold-read-fast-read.md") and times_read(case, "## Item 3 of 5: three") == 1
+          and lines[-1] == "Then present item 3 of 5."
+          and f"{WAITING_ITEM_READ} {AFTER_FIXES} --cwd" in lines[2], described(first))
+    answered_and_closed(case)
+    ahead = case.run(WAITING_ITEM_READ)
+    check("the read step hands over the read ahead of an unchanged item without reading it again",
+          ahead.returncode == 0
+          and ahead.stdout.startswith("item 4 of 5: its cold-read-fast-read, of its text as it stands, was read ahead "
+                                      "while the item before it was shown: ")
+          and times_read(case, "## Item 4 of 5: four") == 1, described(ahead))
+    again = case.run(WAITING_ITEM_READ)
+    check("a second read step on the same text runs no read",
+          again.returncode == 0 and times_read(case, "## Item 4 of 5: four") == 1, described(again))
+
+
+def test_the_read_step_waits_for_a_read_ahead_still_running():
+    case = item_read_case()
+    answered_and_closed(case, mode="slow")
+    next_item_waiting(case, "item 3 of 5", "item 4 of 5")
+    no_outcome_yet = not any(case.reads().glob("*-outcome.json"))
+    result = case.run(WAITING_ITEM_READ)
+    check("the read step waits for the read ahead that is still running and uses it",
+          no_outcome_yet and result.returncode == 0
+          and "was read ahead while the item before it was shown" in result.stdout
+          and times_read(case, "## Item 4 of 5: four") == 1, described(result))
+
+
+def test_an_item_changed_after_its_read_ahead_started_is_read_again():
+    case = item_read_case()
+    answered_and_closed(case)
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    document.write_text(document.read_text().replace("## Item 4 of 5: four", "## Item 4 of 5: four, revised"))
+    next_item_waiting(case, "item 3 of 5", "item 4 of 5")
+    result = case.run(WAITING_ITEM_READ)
+    check("an item whose text changed after its read ahead started is read again as it stands",
+          result.returncode == 0 and "had to be run now: " in result.stdout
+          and times_read(case, "## Item 4 of 5: four, revised") == 1, described(result))
+
+
+def test_a_read_ahead_that_failed_or_ended_without_an_outcome_is_run_again():
+    case = item_read_case()
+    answered_and_closed(case, mode="failed")
+    next_item_waiting(case, "item 3 of 5", "item 4 of 5")
+    result = case.run(WAITING_ITEM_READ)
+    check("a read ahead that failed is run again before the item is shown, naming the failure",
+          result.returncode == 0
+          and result.stdout.startswith("item 4 of 5: its cold-read-fast-read, of its text as it stands, had to be run "
+                                       "now, because the read started ahead of it failed: FAILED: the stand-in "
+                                       "cold-read-cell failed twice: ")
+          and times_read(case, "## Item 4 of 5: four") == 2, described(result))
+    case = item_read_case()
+    answered_and_closed(case)
+    for outcome in case.reads().glob("*-outcome.json"):
+        outcome.unlink()  # As a worker killed before it wrote its outcome leaves the directory.
+    next_item_waiting(case, "item 3 of 5", "item 4 of 5")
+    result = case.run(WAITING_ITEM_READ)
+    check("a read ahead whose worker ended without an outcome is run again, naming its log",
+          result.returncode == 0
+          and "because the read started ahead of it ended without writing its outcome; its output is in " in result.stdout
+          and times_read(case, "## Item 4 of 5: four") == 2, described(result))
+
+
+def test_a_read_that_fails_in_the_read_step_says_not_to_present_the_item():
+    case = item_read_case()
+    answered_and_closed(case)
+    result = case.run(WAITING_ITEM_READ, mode="failed")
+    lines = result.stdout.rstrip("\n").split("\n")
+    check("a failed read of the waiting item exits 1 and says not to present it, with the command to run again",
+          result.returncode == 1 and lines[0] == "FAILED: the stand-in cold-read-cell failed twice"
+          and lines[1].startswith("item 3 of 5 has had no cold-read-fast-read of its text as it stands, so do not "
+                                  "present it yet")
+          and lines[2] == (f"Run `python3 {PROGRAM} {WAITING_ITEM_READ} --cwd "
+                           f"{shlex.quote(str(case.checkout.resolve()))}` again once."), described(result))
+    retried = case.run(WAITING_ITEM_READ)
+    check("the read step after a failed read reads the item, naming no read ahead",
+          retried.returncode == 0 and "had to be run now: " in retried.stdout
+          and "started ahead" not in retried.stdout, described(retried))
+
+
+def test_the_last_item_and_a_closed_walk_start_no_read_ahead():
+    recorded = "".join(approved_line(f"item {number} of 5") for number in (1, 2, 3))
+    case = summary_case(next_to_present="item 4 of 5", recorded=recorded)
+    answered_and_closed(case)
+    check("close of the item before the last starts no read ahead, since no item comes after the last",
+          case.calls.read_text() == "" and not case.reads().exists(), case.calls.read_text())
+    case.run(WAITING_ITEM_READ)
+    case.run("check", "--moved-on-no-decision", "--user-reply-as-typed", "next")
+    closed = case.run("close")
+    check("close that closes the walk starts no read",
+          closed.returncode == 0
+          and closed.stdout.rstrip("\n").endswith("go on to the walk-me-through skill's closing.")
+          and times_read(case, "## Item") == 1, described(closed) + case.calls.read_text())
+
+
+def after_fixes_case(old, new):
+    """A case whose item 3 was read, then changed from old to new in the walk-document."""
+    case = item_read_case()
+    answered_and_closed(case)
+    case.run(WAITING_ITEM_READ)
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    text = document.read_text()
+    if old not in text:
+        raise AssertionError(f"{old!r} is not in the walk-document")
+    document.write_text(text.replace(old, new))
+    return case, case.run(WAITING_ITEM_READ, AFTER_FIXES)
+
+
+ITEM_3_HEADING = "## Item 3 of 5: three\n"
+
+
+def test_a_fix_that_touches_no_fact_is_not_read_again():
+    case, result = after_fixes_case(ITEM_3_HEADING, ITEM_3_HEADING + "\nThis item, e.g. this one, asks little.\n")
+    check(f"{AFTER_FIXES} after a wording fix runs no read and says to present the item",
+          result.returncode == 0
+          and result.stdout.startswith("item 3 of 5: no new cold-read-fast-read: your changes since its last one (")
+          and result.stdout.rstrip("\n").split("\n")[-1] == "Present item 3 of 5."
+          and times_read(case, ITEM_3_HEADING) == 1, described(result))
+    second = case.run(WAITING_ITEM_READ, AFTER_FIXES)
+    check(f"a second {AFTER_FIXES} compares with the text last read, not the text it let pass",
+          second.returncode == 0 and "no new cold-read-fast-read" in second.stdout, described(second))
+
+
+def test_a_fix_that_touches_a_fact_is_read_again():
+    added = ITEM_3_HEADING + "\n{}\n"
+    for name, old, new, fact in (
+            ("a number", ITEM_3_HEADING, added.format("It costs 4 hours."), "4"),
+            ("a backquoted name", ITEM_3_HEADING, added.format("It edits `poem list`."), "`poem list`"),
+            ("a file name by its extension", ITEM_3_HEADING, added.format("It edits poems.yaml."), "poems.yaml."),
+            ("a link", ITEM_3_HEADING, added.format("See [the page](../poems)."),
+             "[the page](../poems)"),
+            ("the recommendation", "#case_against none.\n\n\nRecommendation: leave it.\n\n## Item 4",
+             "#case_against none.\n\n\nRecommendation: drop it.\n\n## Item 4", '"Recommendation: drop it."'),
+            ("the alternative", "#case_against none.\n\n\nRecommendation: leave it.\n\n## Item 4",
+             "#case_against none.\n\n\nThe alternative: drop it. Recommendation: leave it.\n\n## Item 4",
+             '"The alternative: drop it. Recommendation'),
+            ("the case against", ITEM_3_HEADING + "\n#case_against none.", ITEM_3_HEADING + "\n#case_against weak.",
+             '"#case_against weak."')):
+        case, result = after_fixes_case(old, new)
+        first = result.stdout.split("\n")[0]
+        check(f"{AFTER_FIXES} after a fix that changes {name} reads the item again and names the fact",
+              result.returncode == 0
+              and "had to be run now, because your changes since its last cold-read-fast-read (" in first
+              and fact in first.split(") touch ", 1)[-1]
+              and times_read(case, ITEM_3_HEADING) == 2, described(result))
+
+
+def test_a_file_or_path_git_lists_counts_as_a_fact_and_git_failing_counts_every_change():
+    program = load_program()
+    top = SUITE_ROOT / "facts-git"
+    (top / "scripts").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(top)], check=True)
+    (top / "scripts" / "poem-index").write_text("x")
+    subprocess.run(["git", "-C", str(top), "add", "scripts/poem-index"], check=True)
+    named = program.approval_walk_item_changed_fact_words_needing_new_cold_read_fast_read("It runs a tool.", "It runs poem-index.", top)
+    check("a changed word git ls-files lists, by path, directory or file name, is a fact",
+          named == ["poem-index."]
+          and program.approval_walk_item_changed_fact_words_needing_new_cold_read_fast_read("Look in a place.", "Look in scripts/.", top) == ["scripts/."]
+          and program.approval_walk_item_changed_fact_words_needing_new_cold_read_fast_read("It runs a tool.", "It runs a script.", top) == []
+          and program.approval_walk_item_changed_fact_words_needing_new_cold_read_fast_read(
+              "It reads <the item>.", "It reads <the item> [advisor].", top) == [], repr(named))
+    not_a_checkout = SUITE_ROOT / "facts-no-git"
+    not_a_checkout.mkdir()
+    facts = program.approval_walk_item_changed_fact_words_needing_new_cold_read_fast_read("It runs a tool.", "It runs a script.", not_a_checkout)
+    check("when git ls-files fails, every changed word counts, so the item is read again",
+          len(facts) == 1 and facts[0].startswith("every changed word, since `git ls-files` failed in "), repr(facts))
+    check("an unchanged text touches no fact even when git ls-files fails",
+          program.approval_walk_item_changed_fact_words_needing_new_cold_read_fast_read("It runs a tool.", "It runs a tool.", not_a_checkout) == [], "")
+
 
 
 def stopped_by_sigterm(*_):
