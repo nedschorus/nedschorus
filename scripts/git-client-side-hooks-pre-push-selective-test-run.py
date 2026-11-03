@@ -124,12 +124,7 @@ def descendant_process_ids(root_pid):
     return found
 
 
-def signal_quietly(signal_number, process_group=None, pids=()):
-    if process_group is not None:
-        try:
-            os.killpg(process_group, signal_number)
-        except (ProcessLookupError, PermissionError):
-            pass
+def signal_each(signal_number, pids):
     for pid in pids:
         try:
             os.kill(pid, signal_number)
@@ -150,15 +145,17 @@ def stop_process_group(process):
     except (OSError, subprocess.SubprocessError, RuntimeError) as error:
         descendants = []
         listing_error = str(error)
-    signal_quietly(signal.SIGTERM, process_group=process.pid)
+    # The run's group outlives the run until communicate() reaps it, so killpg cannot miss it here.
+    os.killpg(process.pid, signal.SIGTERM)
     try:
         stdout, stderr = process.communicate(timeout=RUNNER_STOP_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
         stdout = stderr = None
     # SIGTERM first, so a run that did not exit can still release its lock and finish its run record.
     for signal_number in (signal.SIGTERM, signal.SIGKILL):
-        signal_quietly(signal_number,
-                       process_group=process.pid if stdout is None else None, pids=descendants)
+        if stdout is None:
+            os.killpg(process.pid, signal_number)
+        signal_each(signal_number, descendants)
         if stdout is not None:
             continue
         try:

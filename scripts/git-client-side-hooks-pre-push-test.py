@@ -397,6 +397,17 @@ signal.signal(signal.SIGTERM, _on_stop)
 time.sleep(FAKE_HANG_SECONDS)
 """ % (FAKE_STOPPED_SUITE_LINE, FAKE_RUNNER_STOPPED_LINE)
 
+# A run killed while it reports its stop: it printed the stop line but never its exit status.
+FAKE_TEST_SUITES_RUNNER_KILLED_WHILE_STOPPING = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+import signal, time
+def _on_stop(_signal_number, _frame):
+    print(%r, flush=True)
+    os.kill(os.getpid(), signal.SIGKILL)
+signal.signal(signal.SIGTERM, _on_stop)
+print(%r, flush=True)
+time.sleep(FAKE_HANG_SECONDS)
+""" % (FAKE_RUNNER_STOPPED_LINE, FAKE_FAILED_BEFORE_STOP_SUITE_LINE)
+
 # An uncaught exception after the run has started: Python exits 1, as a failed
 # suite does, but the run prints no SUMMARY line.
 FAKE_RUNNER_CRASH_ERROR = "OSError: [Errno 28] No space left on device: '/fake/logs'"
@@ -1564,6 +1575,15 @@ def run_selective_test_run_cases(scratch):
                            "The whole report: %s/test-run-report.txt" % FAKE_LOG_DIRECTORY]
           and FAKE_STOPPED_SUITE_LINE not in refusal, result.describe())
 
+    _, outcome = not_run_case(
+        "killed while it reported its stop", FAKE_TEST_SUITES_RUNNER_KILLED_WHILE_STOPPING,
+        "the selective test run had not finished when the 1-second time budget ran out, and "
+        "was stopped; the logs of the suites it ran are in " + FAKE_LOG_DIRECTORY,
+        tell_user=False, budget=HANGING_CHECK_BUDGET_SECONDS)
+    check("killed while it reported its stop: with no exit status from the run, nothing refuses "
+          "the push", SELECTIVE_TEST_RUN_REFUSED_BEFORE_BUDGET_RAN_OUT not in outcome.stderr,
+          outcome.describe())
+
     stopping, outcome = not_run_case(
         "overrun with a suite in its own session", FAKE_TEST_SUITES_RUNNER_STOPS_ITS_OWN_SUITE,
         "the selective test run had not finished when the 1-second time budget ran out, and "
@@ -1689,6 +1709,29 @@ def run_selective_test_run_cases(scratch):
     check("a ps that fails: the run is still stopped, and the stop returns the listing error",
           sleeper.returncode is not None and stop_error is not None
           and "cannot read the process table" in stop_error, repr((sleeper.returncode, stop_error)))
+
+    # A run that does not exit within its grace after the stop is killed, with its output kept.
+    stubborn = subprocess.Popen(
+        [sys.executable, "-c", "import signal, time\n"
+         "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+         "print('ignoring the stop', flush=True)\n"
+         "time.sleep(60)\n"],
+        start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    saved_graces = selective.RUNNER_STOP_GRACE_SECONDS, selective.TERMINATE_GRACE_SECONDS
+    selective.RUNNER_STOP_GRACE_SECONDS = selective.TERMINATE_GRACE_SECONDS = 1.0
+    try:
+        stubborn.stdout.readline()
+        try:
+            stubborn_stdout, _stderr, _error = selective.stop_process_group(stubborn)
+            stop_raised = None
+        except Exception as error:
+            stubborn_stdout, stop_raised = "", repr(error)
+    finally:
+        selective.RUNNER_STOP_GRACE_SECONDS, selective.TERMINATE_GRACE_SECONDS = saved_graces
+        stop_leftover_process(stubborn.pid)
+    check("a run that ignores the stop past its grace is killed, and the stop returns",
+          stop_raised is None and stubborn.returncode == -signal.SIGKILL,
+          repr((stop_raised, stubborn.returncode, stubborn_stdout)))
 
 
 # --- Pushes from a mutation-testing worktree ------------------------------
