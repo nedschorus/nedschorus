@@ -66,13 +66,20 @@ the head says every claim is supported.
 nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py
 writes the reports, keyed by the overview's blob, under
 --overview-write-architecture-overview-claim-check-report-directory, the log-store's
-overview-write-architecture-overview-claim-check-reports by default. Rule 4 also
-refuses such a pull request when the commit the overview's **Checked against:**
-line names is not on origin/main and either is not an ancestor of the head, or
-is followed by a commit that changes a path the overview's Components section
-names in backticks, or a file under nc-systems/<system>/ other than a .md file:
-the overview was then checked against code the head no longer has. A merged
-pull request is not refused.
+overview-write-architecture-overview-claim-check-reports by default.
+
+Rule 4 also refuses such a pull request when both of these hold:
+  1. The commit the overview's **Checked against:** line names is not on
+     origin/main.
+  2. One or more of these hold:
+     - that commit is not an ancestor of the head commit;
+     - a commit after that commit, up to the head commit, changes a path the
+       overview's Components section names in backticks, whatever the path's
+       extension;
+     - a commit after that commit, up to the head commit, changes a file
+       under nc-systems/<system>/ other than a .md file.
+When Rule 4 refuses this way, the claim check read code other than the code at
+the head commit. A merged pull request is not refused.
 
 Merged pull requests use the merge commit's first parent as the diff base:
 the current base branch already contains the head and would hide the change.
