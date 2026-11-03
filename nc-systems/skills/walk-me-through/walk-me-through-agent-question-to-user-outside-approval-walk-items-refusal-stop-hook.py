@@ -25,7 +25,9 @@ the Stop hook before it has written the final message to the transcript.
 THE TEXT CHECKED is the reply, line by line, without:
 - every item of the walk-document the reply shows: an item is shown when a
   reply line matches its heading, and then every reply line matching a line
-  of the item, from its heading to its answer line, is left out, and so is
+  of the item, from its heading to its answer line, is left out, apart from
+  a Withdrawn version's lines, from its Withdrawn heading to the next
+  opening that names an item, as the approval-walk finder reads them, and so is
   one matching the answer line's first sentence, the walk-me-through skill's
   answer line without what the item adds after it, such as ` D: <the
   alternative>`; and one showing a line of the item that opens with the
@@ -403,15 +405,22 @@ def new_text_as_shown(line):
     return NEW_TEXT_SHOWN_AS[new_text[1]] + new_text[2] if new_text else None
 
 
-def shown_item_lines(reply_lines, document_lines, units):
+def shown_item_lines(reply_lines, document_lines, units, openings):
     """The normalized lines, heading to answer line, of every unit whose heading a reply line matches, the answer
-    line's answer sentence alone, and each `#new` or `#new_if_d` line as the agent shows it."""
+    line's answer sentence alone, and each `#new` or `#new_if_d` line as the agent shows it; a Withdrawn version's
+    lines, from its Withdrawn heading to the next of the approval-walk finder's openings that names an item, are
+    not the item's, so they are left out."""
     reply_set = normalized_lines(reply_lines)
     shown = set()
     for _, _, _, first, end in units:
         if normalized(document_lines[first]) not in reply_set:
             continue
-        for line in document_lines[first:end]:
+        withdrawn = False
+        for number, line in enumerate(document_lines[first:end], first):
+            if number in openings:
+                withdrawn = not openings[number][0]
+            if withdrawn:
+                continue
             shown |= normalized_lines([line, new_text_as_shown(line) or ""])
             if normalized(line).startswith(ANSWER_LINE_START):
                 shown |= normalized_lines([answer_sentence(line)])
@@ -451,7 +460,7 @@ def checked_lines(reply, document_text, units, parser, waiting_numbers, total, p
     document_lines = document_text.split("\n")
     normalized_document = normalized(" ".join(document_lines))
     lines = walk_finder.prose_lines(reply, parser)
-    shown = shown_item_lines(lines, document_lines, units)
+    shown = shown_item_lines(lines, document_lines, units, walk_finder.item_opening_lines(document_text, parser))
     kept, written, introduced_list = [], [], False
     for line in lines:
         if (normalized(line) in shown or is_closing_line(line, waiting_numbers, total, pages)
