@@ -1,0 +1,90 @@
+---
+issue: "[Pull requests, their reviews and approval-walks held as one state machine over one schema and one store, so code tracks their state and agents are handed only the steps that need judgment](https://github.com/nedschorus/nedschorus/issues/2505)"
+---
+
+# Pull requests, their reviews and approval-walks held as one state machine over one schema and one store, so code tracks their state and agents are handed only the steps that need judgment
+
+## What is wanted
+
+A design, and then its build, in which the state of every pull request, every review of a pull request and every approval-walk is held as records in one store, under one schema, and moved by one state machine in code. The code then knows, without reading prose, which fix-round a pull request is on, what each review decided, which step comes next, and which approval-walk item is waiting for the user. Agents are handed only the steps that need judgment, and return their results in a form the code checks against the schema.
+
+The user asked for this on 2026-11-03, and said the work should be prioritized because it will affect most of the project's work.
+
+## The user's words
+
+Both were typed to agent-instructions-editor on ned-box, during its approval-walk merge-lane-2-seat-brief-rewrite-without-history-2026-11-02, and are recorded as side directions in its walk-minutes, `nedlern@ned-box:/home/nedlern/agents/agent-instructions-editor/docs/walk/merge-lane-2-seat-brief-rewrite-without-history-2026-11-02-minutes.md`, lines 141 and 146. The agent-session's dialog is `nedlern@ned-box:/home/nedlern/nedschorus-logs/session-dialogs/ned-box/-home-nedlern-agents-agent-instructions-editor/b3af13fa-eedf-4220-ab50-9829cbef05db-dialog-complete.md`, lines 534 and 574.
+
+At 2026-11-03T17:43:54Z:
+
+> "So it seems increasingly that these PRs and reviews are structured. But we haven't set up a formal schema or database or state machine for the PRs and reviews. And even in the design domain thing, well, we set up a state machine for that. But I'm just wondering if talking to another agent about restructuring walks as a in a real schema, linked list, maybe database. I'm just wondering if we should consider that here too."
+
+At 2026-11-03T18:20:10Z:
+
+> "Also want to point out that agents are extremely good at debugging and testing state machines and schemas and databases and code, and really have almost no clue of what to do with prose. So the more we can put into a machine, and the fewer, and then specifically isolate the parts that need judgment and therefore LLMs and agents, the better. And I think this is important enough that might even want to go into Claude.md, but also since other agents are might be working on similar stuff, we might want to tell all the other agents this too. But yeah, so if you're filing, this should be a GHI and a task, though it's a task I think we want to prioritize because it's going to affect almost everything. Well, it's going to affect a lot."
+
+The "another agent" of the first quote is fleet-restart-at-login, whose approval-walk put the same question about approval-walks to the user that afternoon (see "Related work" below). The principle of the second quote, that state, schemas and code go in programs and only judgment goes to models, is already the rule of CLAUDE.md's bullet that begins "Build code-prompt-code"; cold-read-improvement recorded it for the project's page of goals and principles, GHI [A wiki page of about ten working principles for how agents work with the user](https://github.com/nedschorus/nedschorus/issues/2411). This GHI is the machine that applies the principle to pull requests, reviews and approval-walks; it does not restate the principle.
+
+## Why
+
+Today the state of a pull request's reviews and of an approval-walk is spread across GitHub review states, the text of review bodies and comments, seat-briefs and Markdown files, and each program that needs a piece of that state parses its own copy. Three cases show what that costs.
+
+### A review's decision held in its text, which the fix-round program does not read
+
+On pull request [Fix-round brief: a change that fails review may move to its own pull request so the rest merges](https://github.com/nedschorus/nedschorus/pull/2265), the review of nc-head-commit `49e13ff17` was posted on 2026-11-02T13:11:20Z by `mac-claude`, the account of the fresh Claude reviewer merge-lane-2 commissions. Its GitHub state is `COMMENTED`; its body begins `REQUEST_CHANGES` and names one blocking finding. That is the convention, not a slip: merge-lane-2's review program tells the `mac-claude` reviewer whether to post a review or a comment (merge-lane-2's seat-brief, `nedlern@ned-box:/home/nedlern/agents/merge-lane-2/CLAUDE.local.md`, line 139 on 2026-11-03), and every `mac-claude` review on this pull request is `COMMENTED`, with its verdict as the first word of its body. The decision is kept in prose that only merge-lane-2 reads. merge-lane-2's own account, `ned-review-merge`, posted no review of `49e13ff17`.
+
+`scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py`, the program CLAUDE.md tells an author to run when merge-lane-2 requests changes, takes as the fix-round's anchor the latest review by `ned-review-merge` whose GitHub state is `CHANGES_REQUESTED` (function `round_reviews`). The latest such review was of the earlier nc-head-commit `41fbf9934`, so when agent-instructions-editor ran the program on 2026-11-02T18:10:22Z it printed:
+
+```
+REFUSED: Pull request https://github.com/nedschorus/nedschorus/pull/2265 has head 49e13ff1786b6a93a00793ab1cfcb80c45388d04, but merge-lane-2 reviewed 41fbf993460cc3cbdfccdb41696ebc935a70644f; a commit was pushed after the review, so this fix-round has already pushed.
+```
+
+The review that did request changes was invisible to the program, because the decision was in the review's text and under another account. (The pull request was also paused at the time, waiting on item 7.1.4 of merge-lane-2's approval-walk merge-lane-2-open-rulings-2026-10-30, `nedlern@ned-box:/home/nedlern/agents/merge-lane-2/docs/walk/merge-lane-2-open-rulings-2026-10-30.md`, so the refusal was not the only thing holding the round.)
+
+The reviews on that pull request also show that no one record says which round a review belongs to: agent-instructions-editor's task list called `49e13ff17` "round 5" (line 56 of the dialog cited above), while `ned-review-merge` had posted changes-requested reviews on four distinct nc-head-commits before it. The review list is `gh api repos/nedschorus/nedschorus/pulls/2265/reviews`.
+
+### The fix-round count written by hand in a seat-brief
+
+The fix-round program counts rounds itself, by a regular expression over the pull request's comments (functions `round_records` and `round_count`). merge-lane-2's seat-brief, `nedlern@ned-box:/home/nedlern/agents/merge-lane-2/CLAUDE.local.md`, does not read that count: its section "When fix-rounds do not converge" (lines 49 to 53 on 2026-11-03) gives a fresh subagent a prompt that begins "Pull request <link> has had three fix-rounds", although the same section says "merge-lane-2 may stop after the second round" when a reviewer's findings say the design itself is wrong. The number is two copies of one fact, one in a comment pattern and one in prose, and neither is a field anything can query. Item 12 of agent-instructions-editor's approval-walk named above replaced the hard-coded "three" with a number filled in when the prompt is sent.
+
+### Approval-walk state held in Markdown lines that ten programs parse
+
+An approval-walk is four Markdown files. Which item is waiting is the last `#next_to_present item <n> of <m>` line in its walk-minutes, the item's page is the last `#item_page` line, and an answer is a line that `nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py` writes. Ten programs on main that are not tests read `#next_to_present` (`git grep -l "next_to_present" origin/main -- '*.py' ':!*test.py'` on 2026-11-03): six under `nc-systems/skills/walk-me-through/`, `nc-systems/handoff/handoff-supervisor.py`, and three under `scripts/`: `scripts/agent-seat-due-task-raise-hook.py` and two for the agent-seat idle sweep. GHI [The walk-me-through check program reads untagged walk-minutes lines as decisions by their keywords](https://github.com/nedschorus/nedschorus/issues/1930) is one defect of that design.
+
+fleet-restart-at-login set out the same problem as item 18.3.1 of its approval-walk, `nedlern@ned-box:/home/nedlern/agents/fleet-restart-at-login/docs/walk/ghi-972-agent-seat-database-service-design-mac-task-lists-fallback-decision-and-cold-read-findings-approval-walk-2026-10-29.md`, lines 789 to 799: an approval-walk is an ordered tree of items, each with versions of its text, a page link and one answer, plus an append-only log of answers, notes and re-plans; inserting an item today renumbers headings across the files, and each new feature has added another line type and another parser.
+
+## What the design does
+
+The design names, for pull requests, reviews and approval-walks:
+
+1. **The records and their schema.** At least: a pull request and its nc-head-commits; a review, with its reviewer, the nc-head-commit it reviewed, its decision as a field, and its findings, each finding blocking or not; a fix-round, numbered, with the reviews that opened it and the commit that answered it; an approval-walk, its items as an ordered tree, each item's versions and page link, and an append-only log of answers and notes.
+2. **The states and the moves between them,** in code, such as a pull request moving from awaiting review to changes requested, to a fix-round pushed, to approved and merged; and an approval-walk item moving from prepared to presented to answered. The states include the stop merge-lane-2's seat-brief applies by hand today, when fix-rounds do not converge: the machine enters it when the count of fix-round records reaches the limit, refuses to commission another round, and fills the round count into the subagent's prompt from the record.
+3. **Which steps need judgment,** as CLAUDE.md requires of every design. Code does: counting rounds, recording each review's decision, choosing the next step, choosing the next approval-walk item, inserting and ordering items, and checking every reply against the schema. A model does: reviewing code and finding defects, deciding whether a finding blocks, writing a fix-round, grouping findings, writing an approval-walk item's text and recommendation, and reading the user's answer when it is not one of the short answer codes.
+4. **How agents hand results back,** as JSON checked against the schema, the convention GHI [ghi-guide-agent answers with a JSON object checked against a schema, so its callers stop sorting its prose replies](https://github.com/nedschorus/nedschorus/issues/2159) and GHI [Sanity-check-cells return their reports as a JSON object checked against a schema, so the runner stops guessing from prose whether a text is a report](https://github.com/nedschorus/nedschorus/issues/2007) set for their programs. A review posted to GitHub keeps its text for people, and the decision the code acts on comes from the record. The program that posts a review sets GitHub's review state from the record's decision field, so a review like the one on `49e13ff17`, `COMMENTED` with a body that begins `REQUEST_CHANGES`, cannot be posted; this changes merge-lane-2's convention of posting the `mac-claude` reviewer's verdict as a comment.
+5. **The Markdown files as views.** The user and the log-store keep reading walk-minutes and review text as they do now; a program the design names writes them from the records, and agents stop editing those files by hand. Each view says at its top that it is generated, and the design says how a hand edit to a view is prevented or found.
+6. **The migration** of the programs that parse these files and review states today, starting with the fix-round program and the walk-me-through programs. A test fails when a program other than the one that owns the records, tests apart, reads `#next_to_present`, `#item_page` or a GitHub review state, so the migration is shown complete and no new parser appears.
+
+## Related work
+
+- GHI [Build the design-to-main state machine: the Python machine, its per-state agent-instructions, and the nine items the design defers to the build](https://github.com/nedschorus/nedschorus/issues/282): the project's one state machine in code so far, `scripts/design-to-main/design-to-main-state-tables-common.py`. Its `submit-to-PR-gate` state must map merge-lane's review onto its verdicts (item 4 of that GHI-MD), so a review record from this design is what that mapping would read. The design reuses that machine's structure of state and transition tables rather than inventing another.
+- GHI [A small HTTP service with SQLite on ned-box keeps one record of every agent-seat on both machines](https://github.com/nedschorus/nedschorus/issues/972): the store under `nc-systems/agent-seat-database/`. The user approved renaming it nc-shared-database on 2026-11-01 (item 16.3.3 of fleet-restart-at-login's approval-walk above, whose walk-minutes are `nedlern@ned-box:/home/nedlern/agents/fleet-restart-at-login/docs/walk/ghi-972-agent-seat-database-service-design-mac-task-lists-fallback-decision-and-cold-read-findings-approval-walk-2026-10-29-minutes.md`, line 175), to hold data beyond agent-seats; it is the first candidate for this design's store.
+- fleet-restart-at-login's item 18.3.1, "a small database for approval-walks", recommends writing a design for the approval-walk half, filing a GHI and bringing it to the user as its own approval-walk. On 2026-11-03 it was the item waiting for the user (its walk-minutes' last `#next_to_present` line). This GHI is meant to be that GHI, so that pull requests, reviews and approval-walks share one store and one schema rather than two designs building two.
+- GHI [A wiki page of about ten working principles for how agents work with the user](https://github.com/nedschorus/nedschorus/issues/2411), which carries the principle in the user's second quote (cold-read-improvement's task #219; its walk-minutes `nedlern@ned-box:/home/nedlern/agents/cold-read-improvement/docs/walk/walk-me-through-skill-refactor-approval-walk-2026-11-02-minutes.md`, line 43).
+- GHI [Each round of a pull request runs its test suites once, and a push reuses a passing test run of the same tree](https://github.com/nedschorus/nedschorus/issues/2384), which holds per-round state for test runs and would read the fix-round record.
+- GHI [ruling-agent keeps user-rulings, checks approval-walk items against them](https://github.com/nedschorus/nedschorus/issues/2118), a separate store of user-rulings that approval-walk items are checked against.
+- merge-lane-2's approval-walk merge-lane-2-everything-waiting-on-the-user-2026-10-22, item 1.2: the user wrote "claude supports structured outputs - sounds like this is what we need for this system", and merge-lane-2 confirmed `claude -p --json-schema` (`nedlern@ned-box:/home/nedlern/agents/merge-lane-2/docs/walk/merge-lane-2-everything-waiting-on-the-user-2026-10-22-minutes.md`, line 24).
+
+## Deferred-decisions
+
+For the design to settle, or the user where it changes a decision of his:
+
+- Where the store lives: nc-shared-database on ned-box, or a local file in each checkout, which also works when ned-box cannot be reached; for a local file, how the records of an agent-seat on the Mac and one on ned-box are kept the same.
+- How the user's own words enter the records: his answers and side directions typed in an agent-session, and anything he or an agent edits by hand in a generated view.
+- How several reviews of one nc-head-commit, such as the `mac-claude` reviewer's, the Codex reviewer's and merge-lane-2's, combine into the pull request's next state: whether one blocking finding moves it at once, or the machine waits for every commissioned review.
+- What the machine does when an agent's reply fails the schema: how many times it asks again, and whom it tells.
+- Whether GitHub stays the source of truth for a review's decision, with the record copied from it, or the record is the source and GitHub shows it; either way, how a review or an approval the user makes in GitHub's web pages reaches the record.
+- Whether the design is one design for pull requests, reviews and approval-walks together, or two designs over one shared schema, one for pull requests and their reviews and one for approval-walks; and how it fits design-to-main's machine once design-to-main is in use.
+- The order of the build-slices; the user said the work should be prioritized.
+
+## Next action
+
+The agent-seat that takes this GHI agrees with fleet-restart-at-login that this GHI holds the approval-walk half, so that item 18.3.1 points here; then writes the design in a file named by `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md` and ending in `-design.md`, gives it its cold read, and brings its decisions to the user as their own approval-walk. If the user answers item 18.3.1 before the two agent-seats have agreed, his answer decides: when he approves a separate GHI for approval-walks, this GHI-MD is edited to cover pull requests and reviews only, over the schema the two share. agent-instructions-editor holds this GHI as task #193 until another agent-seat takes it.
