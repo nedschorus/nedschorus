@@ -1036,6 +1036,136 @@ def run_architecture_overview_claim_check_cases(fixture):
     fixture.reset_fixture_to_base()
 
 
+def run_architecture_overview_checked_against_commit_cases(fixture):
+    """Rule 4: an overview whose **Checked against:** commit is off main must name a commit of the head's history after which no code it describes changes."""
+    claim_check = review_plan_module.overview_claim_check
+    report_directory = fixture.repository.parent / "checked-against-claim-check-reports"
+    flag = ["--overview-write-architecture-overview-claim-check-report-directory", str(report_directory)]
+
+    def write_overview_with_report(named, path=FIXTURE_OVERVIEW_PATH):
+        last_line = f"**Checked against:** commit [{named}](https://github.com/nedschorus/nedschorus/commit/{named})\n" if named else ""
+        text = ("# Example overview\n\nIt is not `scripts/sibling-program.py`.\n\n## Components\n\n"
+                "- `nc-systems/example/parent-program.py`: the program.\n"
+                "- `scripts/example-program.py`: a shared script.\n- `config`: its settings.\n"
+                "- `claude`, run by `~/bin/x` and `/usr/bin/y`.\n\n"
+                "## Invariants\n\n- `scripts/sibling-program.py` is mentioned, not a component.\n\n" + last_line)
+        fixture.write_fixture_file(path, text)
+        blob = fixture.git_command("hash-object", "-w", path)
+        directory = claim_check.overview_write_architecture_overview_claim_check_report_directory_for_overview(report_directory, path)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{blob}-2026-01-01T00-00-00-000000Z.md").write_text(
+            f"overview: {path}\n{claim_check.RESULT_LINE_PREFIX}"
+            f"{claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED}\n", encoding="utf-8")
+
+    def commit_overview_naming(named):
+        write_overview_with_report(named)
+        head = fixture.commit_fixture_changes("overview checked against the named commit")
+        fixture.configure_github_answers(head)
+        return head
+
+    def change_and_commit(path, content):
+        fixture.write_fixture_file(path, content)
+        head = fixture.commit_fixture_changes("change " + path)
+        fixture.configure_github_answers(head)
+        return head
+
+    def refused_for_checked_against(result, overview_path=FIXTURE_OVERVIEW_PATH):
+        return (refusal_has_expected_prefix(result) and not result.stdout
+                and "whose **Checked against:** commit is not on main" in result.stderr
+                and f"--overview {overview_path}\n" in result.stderr)
+
+    fixture.reset_fixture_to_base()
+    shutil.rmtree(report_directory, ignore_errors=True)
+    code_commit = change_and_commit("nc-systems/example/parent-program.py", 'print("new")\n')
+    commit_overview_naming(code_commit)
+    result = fixture.run_review_plan(*flag)
+    check("an overview naming the pull request's own code commit, with no code it describes changed after it, lets the plan through",
+          result.returncode == 0, result.stderr)
+    change_and_commit("nc-systems/example/example-design.md", "Design prose.\n")
+    change_and_commit("scripts/sibling-program.py", 'print("new")\n')
+    result = fixture.run_review_plan(*flag)
+    check("a later change to a .md file under nc-systems/<system>/, or to a path named outside the Components section, lets the plan through",
+          result.returncode == 0, result.stderr)
+
+    fixture.reset_fixture_to_base()
+    code_commit = change_and_commit("scripts/example-program.py", "VALUE = 'first'\n")
+    commit_overview_naming(code_commit)
+    head = change_and_commit("scripts/example-program.py", "VALUE = 'second'\n")
+    result = fixture.run_review_plan(*flag)
+    check("a later commit changing a component the Components section names outside nc-systems/ is refused, naming the path",
+          refused_for_checked_against(result)
+          and f"names commit {code_commit}, and later commits of the pull request change code the overview describes: "
+              "scripts/example-program.py." in result.stderr, result.stderr)
+    result = fixture.run_review_plan_with_git_failing_on("diff", "--no-renames", "--name-only", "-z", code_commit, head)
+    check("git failing while listing the paths changed after the named commit is refused with git's error, not a plan",
+          refusal_has_expected_prefix(result) and "fatal: injected repository failure" in result.stderr and not result.stdout,
+          result.stderr + result.stdout)
+
+    fixture.reset_fixture_to_base()
+    code_commit = change_and_commit("scripts/example-program.py", "VALUE = 'first'\n")
+    commit_overview_naming(code_commit)
+    fixture.git_command("mv", "scripts/example-program.py", "scripts/renamed-program.py")
+    fixture.configure_github_answers(fixture.commit_fixture_changes("rename the component"))
+    result = fixture.run_review_plan(*flag)
+    check("a later commit renaming a component the Components section names away from its path is refused, naming the old path",
+          refused_for_checked_against(result) and "change code the overview describes: scripts/example-program.py." in result.stderr,
+          result.stderr)
+
+    fixture.reset_fixture_to_base()
+    code_commit = change_and_commit("config/settings.conf", "value = first\n")
+    commit_overview_naming(code_commit)
+    change_and_commit("config/settings.conf", "value = second\n")
+    result = fixture.run_review_plan(*flag)
+    check("a later commit changing a file under a root-level component the Components section names with no slash is refused",
+          refused_for_checked_against(result) and "change code the overview describes: config/settings.conf." in result.stderr,
+          result.stderr)
+
+    fixture.reset_fixture_to_base()
+    code_commit = change_and_commit("nc-systems/example/parent-program.py", 'print("first")\n')
+    commit_overview_naming(code_commit)
+    change_and_commit("nc-systems/example/unlisted-program.py", 'print("new")\n')
+    result = fixture.run_review_plan(*flag)
+    check("a later commit adding a program under nc-systems/<system>/ that the overview does not list is refused",
+          refused_for_checked_against(result) and "nc-systems/example/unlisted-program.py." in result.stderr, result.stderr)
+
+    fixture.reset_fixture_to_base()
+    side_commit = change_and_commit("nc-systems/example/parent-program.py", 'print("side")\n')
+    fixture.git_command("checkout", "-q", "--detach", fixture.base_head)
+    commit_overview_naming(side_commit)
+    result = fixture.run_review_plan(*flag)
+    head = fixture.git_command("rev-parse", "HEAD")
+    check("an overview naming a commit off main that is not in the head's history is refused",
+          refused_for_checked_against(result) and f"describes at head {head[:12]}, so no plan" in result.stderr
+          and f"names commit {side_commit}, which is not in the history of head {head[:12]}.\n" in result.stderr, result.stderr)
+    second_overview_path = "docs/nedschorus-wiki/nedschorus-second-architecture-overview.md"
+    for first_named, case in ((None, "has no **Checked against:** line"), (fixture.base_head, "names a commit of main"),
+                              (side_commit, "is refused too")):
+        fixture.git_command("checkout", "-q", "--detach", fixture.base_head)
+        fixture.git_command("clean", "-fdq")
+        fixture.write_fixture_file("nc-systems/second/second-program.py", 'print("second")\n')
+        write_overview_with_report(first_named)
+        write_overview_with_report(side_commit, second_overview_path)
+        fixture.configure_github_answers(fixture.commit_fixture_changes("two overviews"))
+        result = fixture.run_review_plan(*flag)
+        check(f"a second overview naming a commit off the head's history is refused when the first overview {case}",
+              refused_for_checked_against(result, second_overview_path)
+              and f"{second_overview_path} names commit {side_commit}, which is not in the history" in result.stderr
+              and (f"{FIXTURE_OVERVIEW_PATH} names commit" in result.stderr) == (first_named == side_commit), result.stderr)
+    fixture.reset_fixture_to_base()
+    commit_overview_naming("f" * 40)
+    result = fixture.run_review_plan(*flag)
+    check("an overview naming a commit the repository does not hold is refused as not in the head's history",
+          refused_for_checked_against(result) and "which is not in the history of head" in result.stderr, result.stderr)
+
+    fixture.reset_fixture_to_base()
+    commit_overview_naming(fixture.base_head)
+    change_and_commit("scripts/example-program.py", "VALUE = 'later'\n")
+    result = fixture.run_review_plan(*flag)
+    check("an overview naming a commit of main is not refused for code changed after it, which a refresh handles",
+          result.returncode == 0, result.stderr)
+    fixture.reset_fixture_to_base()
+
+
 def main():
     start_time = time.monotonic()
     run_unit_cases()
@@ -1050,6 +1180,7 @@ def main():
         run_refusal_and_call_shape_cases(fixture)
         run_git_failure_cases(fixture)
         run_architecture_overview_claim_check_cases(fixture)
+        run_architecture_overview_checked_against_commit_cases(fixture)
     print(f"{len(CHECK_FAILURE_NAMES)} failed; elapsed {time.monotonic() - start_time:.2f}s")
     return 1 if CHECK_FAILURE_NAMES else 0
 
