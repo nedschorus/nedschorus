@@ -769,10 +769,12 @@ def test_a_withdrawn_versions_lines_under_a_shared_heading_are_not_the_shown_ite
     document = (f"# The poem page: approval-walk\n\n## Items 2 and 3 of 10: the poem page\n\n"
                 f"**Item 2: where it lives.** Should I keep the poem page in the wiki?\n\n"
                 f"#### Withdrawn version 1 of item 2\n\nShould I drop the poem page?\n\n"
-                f"**Item 3: its name.** Recommendation: Use the name.\n\n{ANSWER_LINE}\n")
+                f"**Item 3: its name.** Should I keep its name?\n\n{ANSWER_LINE}\n")
     for case_name, line, passes in (
             ("a reply showing a shared heading passes the live item's own line",
              "**Item 2: where it lives.** Should I keep the poem page in the wiki?", True),
+            ("a reply showing a shared heading passes the line of an item whose opening follows another item's "
+             "Withdrawn version", "**Item 3: its name.** Should I keep its name?", True),
             ("a reply showing a shared heading still has a line copied from a Withdrawn version under it checked",
              "Should I drop the poem page?", False)):
         case = Case(document=document)
