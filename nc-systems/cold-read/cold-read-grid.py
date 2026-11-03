@@ -596,7 +596,13 @@ def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> str:
         return ""
     frozen = record_names.frozen_target_path(target, record_dir)
     frozen.parent.mkdir(parents=True, exist_ok=True)
-    frozen.write_bytes(content)
+    # The reader's copy differs from the original only by this rewrite; the digest returned is the original's.
+    try:
+        reader_text = record_names.cold_read_reviewer_copy_text_with_mac_nedhome_links_rewritten_to_ned_box_home_paths(
+            content.decode("utf-8"))
+        frozen.write_bytes(reader_text.encode("utf-8"))
+    except UnicodeDecodeError:
+        frozen.write_bytes(content)
     frozen.chmod(0o444)
     return hashlib.sha256(content).hexdigest()
 
@@ -635,7 +641,7 @@ def moved_frozen_copy(frozen_target: pathlib.Path,
 
 
 def original_changed_line(target: pathlib.Path, frozen_target: pathlib.Path,
-                          before: str, frozen_changed: bool) -> str:
+                          before: str, frozen_changed: bool, frozen_before: str) -> str:
     """Return the line naming the copy reviewed when the original changed, or ""."""
     after = target_content_fingerprint(target)
     if after == before:
@@ -646,7 +652,7 @@ def original_changed_line(target: pathlib.Path, frozen_target: pathlib.Path,
         return (changed + f"The frozen copy {frozen_target} changed too, so the "
                 f"{FROZEN_COPY_CHANGED_HASHTAG} line above says what to do with the set.")
     return (changed + f"Every report reviews the frozen copy {frozen_target} (sha256 "
-            f"{before[:12]}), which did not change, so the set stands: triage it "
+            f"{frozen_before[:12]}), which did not change, so the set stands: triage it "
             f"against that copy, then carry each fix to the document as it now stands.")
 
 
@@ -1193,6 +1199,7 @@ def main() -> int:
     # All reviewers read the frozen bytes so live edits cannot split the review across versions.
     target_before = freeze_target(target, record_dir)
     frozen_target = record_names.frozen_target_path(target, record_dir)
+    frozen_before = target_content_fingerprint(frozen_target)
     if not target_before or not frozen_target.is_file():
         print(f"cold-read-grid: could not freeze {target} into {frozen_target}; "
               f"no cold-read-cell was launched. The frozen copy is what the "
@@ -1224,7 +1231,7 @@ def main() -> int:
             pathlib.Path(scratch) / WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_FILE_NAME))
         outcome = wait_for_cells(
             running,
-            lambda: moved_frozen_copy(frozen_target, target_before),
+            lambda: moved_frozen_copy(frozen_target, frozen_before),
             float(os.environ.get(TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE) or 0),
             float(os.environ.get(CELL_POLL_INTERVAL_OVERRIDE_VARIABLE)
                   or CELL_POLL_INTERVAL_DEFAULT_SECONDS),
@@ -1233,12 +1240,12 @@ def main() -> int:
     # Before any marker goes in and before shipping: the store refuses changed bytes.
     question_4_line = what_should_be_code_question_closing_line(record_dir, outcome)
     # Retain the poll result if the changed bytes were restored before the final comparison.
-    move = moved_frozen_copy(frozen_target, target_before) or outcome.moved_mid_run
+    move = moved_frozen_copy(frozen_target, frozen_before) or outcome.moved_mid_run
     target_changed = move is not None
     if target_changed:
         changed_path, changed_after = move
         detail = mark_reports_target_changed(
-            record_dir, changed_path, target_before, changed_after,
+            record_dir, changed_path, frozen_before, changed_after,
             seen_mid_run=outcome.moved_mid_run is not None)
         print(f"{FROZEN_COPY_CHANGED_HASHTAG} {detail}", flush=True)
         # Written before shipping, so the stop is in the record every later count reads.
@@ -1246,7 +1253,7 @@ def main() -> int:
             "This cold-read-full-run stopped because its frozen copy changed; it is not counted.\n",
             encoding="utf-8")
     original_line = original_changed_line(target, frozen_target, target_before,
-                                          target_changed)
+                                          target_changed, frozen_before)
     if original_line:
         print(original_line, flush=True)
 

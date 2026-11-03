@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Define shared cold-read-record names and paths."""
+"""Define shared cold-read-record names and paths, and the one rewrite both cold reads apply to the copy a reviewer reads."""
 
 import datetime
 import json
@@ -198,3 +198,39 @@ def cold_read_record_directory_at_first_free_name_created_atomically(base: pathl
         except FileExistsError:
             continue
         return record_directory
+
+
+MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY = "/Volumes/nedhome"
+MAC_MOUNT_OF_NED_BOX_HOME_LINK_PREFIX = f"file://{MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY}/"
+NED_BOX_HOME_PATH_PREFIX = "/home/nedlern/"
+# Names the directory probed in place of MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY,
+# so a test can run either machine's case on either machine.
+MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY_OVERRIDE_VARIABLE = (
+    "COLD_READ_MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY_OVERRIDE")
+
+
+def mac_nedhome_links_rewritten_to_ned_box_home_paths(text: str) -> str:
+    """Return text with each file:///Volumes/nedhome/ link prefix replaced by /home/nedlern/.
+
+    A bare /Volumes/nedhome/ path without file:// is left alone. This is the
+    rewrite on every machine; a program that compares a frozen copy with its
+    document applies it whichever machine made the copy.
+    """
+    return text.replace(MAC_MOUNT_OF_NED_BOX_HOME_LINK_PREFIX, NED_BOX_HOME_PATH_PREFIX)
+
+
+def cold_read_reviewer_copy_text_with_mac_nedhome_links_rewritten_to_ned_box_home_paths(
+        text: str) -> str:
+    """Return the text a reviewer on this machine reads, for a cold read run here.
+
+    Reviewers run on the machine that runs the cold read. Where the Mac's mount
+    of ned-box's home is not a directory, as on ned-box, a file:///Volumes/nedhome/
+    link does not open, so it is rewritten to the /home/nedlern/ path that does;
+    where the mount is a directory, as on the Mac, the text is returned unchanged.
+    Apply it only to the copy a reviewer reads, never to the user's document.
+    """
+    mount = (os.environ.get(MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY_OVERRIDE_VARIABLE)
+             or MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY)
+    if pathlib.Path(mount).is_dir():
+        return text
+    return mac_nedhome_links_rewritten_to_ned_box_home_paths(text)
