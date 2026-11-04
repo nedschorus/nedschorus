@@ -9,7 +9,10 @@ stops the run and reports the step, its output and its advice; ssh's exit 255
 gets the reach-ned-box advice; a service answer other than the one a check needs
 fails; a machine other than the Mac is refused; --print runs nothing. Two cases
 run the token and accepted-tokens commands in a real shell under a temporary
-HOME: a token is made once and kept, and the accepted-tokens file holds both.
+HOME: a token is made once and kept, and the accepted-tokens file holds both,
+and is left as it was when ned-box's token file cannot be read. One case calls
+the real runner with subprocess.run replaced, to check which machine each step
+runs on.
 
 Run: python3 nc-systems/nc-shared-database/tests/nc-shared-database-service-on-ned-box-and-jobs-on-both-machines-install-from-the-mac-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -184,5 +187,34 @@ with tempfile.TemporaryDirectory() as home:
     check("the accepted-tokens command writes both tokens, one per line, private to the user",
           written.returncode == 0 and lines == ["mac-secret-token", made]
           and (accepted_path.stat().st_mode & 0o077) == 0, (written, lines))
+
+    token_path.chmod(0)
+    unreadable = shell(installer.service_accepted_tokens_file_rewrite_shell_command(), "mac-secret-token")
+    token_path.chmod(0o600)
+    after = accepted_path.read_text(encoding="utf-8").splitlines()
+    check("when ned-box's token file cannot be read, the accepted-tokens command fails and leaves "
+          "the old accepted-tokens file in place",
+          unreadable.returncode != 0 and after == ["mac-secret-token", made], (unreadable, after))
+
+recorded = []
+
+
+def fake_subprocess_run(words, **keywords):
+    recorded.append((words, keywords))
+    return subprocess.CompletedProcess(words, 0, "", "")
+
+
+real_subprocess_run = installer.subprocess.run
+installer.subprocess.run = fake_subprocess_run
+try:
+    installer.run_on("mac", "echo mac step", None)
+    installer.run_on("ned-box", "echo ned-box step", "a token")
+finally:
+    installer.subprocess.run = real_subprocess_run
+check("a Mac step runs in a local shell and a ned-box step through ssh to ned-box, each with "
+      "its standard input",
+      [r[0] for r in recorded] == [["sh", "-c", "echo mac step"],
+                                   ["ssh", "nedlern@ned-box", "echo ned-box step"]]
+      and [r[1].get("input") for r in recorded] == [None, "a token"], recorded)
 
 raise SystemExit(1 if failures else 0)

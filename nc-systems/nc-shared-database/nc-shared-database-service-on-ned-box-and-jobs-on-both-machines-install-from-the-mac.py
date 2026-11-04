@@ -136,7 +136,10 @@ def service_token_file_create_unless_present_shell_command():
 
 def service_accepted_tokens_file_rewrite_shell_command():
     temporary = f"{ACCEPTED_TOKENS_FILE}.new"
-    return (f"umask 077 && {{ cat; echo; cat {TOKEN_FILE}; }} | grep -v '^$' > {temporary} && "
+    # The token file is read before the pipe: a failed cat inside the pipe would not fail it,
+    # and the file would be replaced with the Mac's token alone.
+    return (f"umask 077 && own_token=$(cat {TOKEN_FILE}) && "
+            f"{{ cat; echo; printf '%s\\n' \"$own_token\"; }} | grep -v '^$' > {temporary} && "
             f"mv {temporary} {ACCEPTED_TOKENS_FILE}")
 
 
@@ -222,7 +225,7 @@ def main(arguments=None, run=run_on):
         print(f"REFUSED: the nc-shared-database install ran on {THIS_MACHINE_PLATFORM}, and it runs only on "
               f"the Mac, which alone can open an ssh session to ned-box; nothing was installed. "
               f"An agent on the Mac runs `{INSTALL_RERUN_COMMAND}`. From ned-box, ask the user to run "
-              f"it in a Terminal on his Mac.", file=sys.stderr)
+              f"`{INSTALL_RERUN_COMMAND}` in a Terminal on his Mac.", file=sys.stderr)
         return 2
     mac_token = None
     for number, (name, machine, command, reads_mac_token, expected, advice) in enumerate(
@@ -235,8 +238,8 @@ def main(arguments=None, run=run_on):
         if name == MAC_TOKEN_STEP_NAME:
             mac_token = NC_SHARED_DATABASE_SERVICE_TOKEN_FILE_PATH.read_text(encoding="utf-8").strip()
         print(f"step {number} passed: {name}, on {machine}")
-    print("The nc-shared-database service is installed: it answers both machines, with a token "
-          "only.")
+    print(f"The nc-shared-database service is installed: it accepts requests from the Mac and "
+          f"ned-box on port {PORT}, and only with a token from the accepted-tokens file.")
     return 0
 
 
