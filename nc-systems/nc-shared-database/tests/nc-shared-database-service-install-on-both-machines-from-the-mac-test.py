@@ -55,7 +55,8 @@ class FakeRunner:
         if number in self.answers:
             code, out, err = self.answers[number]
             return subprocess.CompletedProcess([], code, out, err)
-        out = "412" if "Bearer" in command else "401" if "curl" in command else ""
+        # Built at run time, as curl's output is, so an identity comparison would not match.
+        out = "".join(["4", "12" if "Bearer" in command else "01"]) if "curl" in command else ""
         return subprocess.CompletedProcess([], 0, out, "")
 
 
@@ -131,6 +132,23 @@ with tempfile.TemporaryDirectory() as directory:
           code == 1 and "stopped at step 10 on mac" in err and "answered 401" in err
           and "needs 412" in err and "journalctl --user -u nc-shared-database-service" in err,
           err)
+
+    runner = FakeRunner({10: (0, "500", "")})
+    code, out, err = run_main(runner)
+    check("a service answer that sorts after the needed one fails the step too",
+          code == 1 and "stopped at step 10 on mac" in err and "answered 500" in err, err)
+
+    runner = FakeRunner({6: (-9, "", "")})
+    code, out, err = run_main(runner)
+    check("a command killed by a signal, with a negative exit code, fails the step",
+          code == 1 and "stopped at step 6 on ned-box" in err and "Exit code: -9" in err, err)
+
+    runner = FakeRunner({3: (255, "", "")})
+    code, out, err = run_main(runner)
+    check("exit 255 on the Mac gets the step's own advice, not the advice that ssh could not "
+          "reach ned-box",
+          code == 1 and "ssh could not reach ned-box" not in err
+          and "Find the cause" in err, err)
 
     runner = FakeRunner()
     code, out, err = run_main(runner, platform="linux")
