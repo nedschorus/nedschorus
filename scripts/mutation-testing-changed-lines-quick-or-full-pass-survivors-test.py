@@ -446,6 +446,27 @@ def run_recorded_mutant_killed_check_cases():
               and (repository / "scripts/thing.py").read_text() == HEAD_FILES["scripts/thing.py"],
               worktrees_of(repository))
 
+    # The suite's run without the mutant leaves bytecode that Python takes without checking the
+    # source, as a cache whose size and whole-second mtime the mutant leaves the same would be
+    # taken; only removing the scratch worktree's caches lets the mutated run see the mutant.
+    stale_cache_test = ("import importlib.util, py_compile, sys\n"
+                        "from pathlib import Path\n"
+                        "cache = importlib.util.cache_from_source('scripts/thing.py')\n"
+                        "if not Path(cache).exists():\n"
+                        "    py_compile.compile('scripts/thing.py', cfile=cache, doraise=True,\n"
+                        "        invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)\n"
+                        + killing_test.split("\n", 1)[1])
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**HEAD_FILES, "scripts/thing-test.py": stale_cache_test},
+            SURVIVOR_DIFF)
+        last = completed.stdout.strip().splitlines()[-1] if completed.stdout.strip() else ""
+        check("the recorded mutant killed check removes the scratch worktree's bytecode caches "
+              "before the run with the mutant, so a cache the run without it left cannot hide "
+              "the mutant",
+              completed.returncode == 0 and last.startswith(survivors.MUTANT_KILLED_LINE_PREFIX),
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
     with tempfile.TemporaryDirectory() as scratch_name:
         # double(2) is 4 under x + x and x * x alike.
         completed, _, _, _ = run_recorded_mutant_killed_check(
