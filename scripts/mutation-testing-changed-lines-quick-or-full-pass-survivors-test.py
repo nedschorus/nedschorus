@@ -528,6 +528,21 @@ def run_recorded_mutant_killed_check_cases():
               and both_cases in completed.stderr,
               f"rc={completed.returncode} err={completed.stderr}")
 
+    def origin_main_scripts_tree_unreadable(repository):
+        tree = git(repository, "rev-parse", "refs/remotes/origin/main:scripts").strip()
+        (repository / ".git" / "objects" / tree[:2] / tree[2:]).unlink()
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, branch_changed_files, SURVIVOR_DIFF, origin_main_files={
+                "scripts/thing.py": "def double(x):\n    return x + x\n# on main only\n"},
+            before_run=origin_main_scripts_tree_unreadable)
+        check("a recorded mutant that does not apply at the head, where git cannot list "
+              "origin/main's tree: it does not say the mutant is gone, and gives both cases",
+              completed.returncode == 2 and "gone from main" not in completed.stderr
+              and both_cases in completed.stderr,
+              f"rc={completed.returncode} err={completed.stderr}")
+
     with tempfile.TemporaryDirectory() as scratch_name:
         completed, _, _, _ = run_recorded_mutant_killed_check(
             scratch_name, branch_changed_files, SURVIVOR_DIFF)
