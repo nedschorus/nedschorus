@@ -236,6 +236,15 @@ with tempfile.TemporaryDirectory() as directory:
     check("every launch prompt crash recovery and the handoff-supervisor write is recognized as a program's",
           missed == [], missed)
 
+# Written out, not read from the handoff-supervisor, so that dropping the earlier wording from it fails here.
+first_prompt_ending_with_the_earlier_not_typed_by_the_user_line = (
+    "You are the git-infra seat. Read docs/agents/seat-first-prompt.md.\n\n"
+    "The handoff-supervisor was given this first prompt with --first-prompt-file or --first-prompt; "
+    "the user did not type it.")
+check("a first prompt that ends with the earlier wording of the not-typed-by-the-user line is still a program's",
+      search_module.written_by_a_program({"origin": {"kind": "human"}},
+                                         first_prompt_ending_with_the_earlier_not_typed_by_the_user_line))
+
 quoting = "I said: You are MD-skills. No handoff exists yet; ask what to work on."
 check("the user's words that quote the no-handoff prompt after his own opening are still his",
       not search_module.written_by_a_program({"origin": {"kind": "human"}}, quoting))
