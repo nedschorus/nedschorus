@@ -1396,18 +1396,20 @@ def test_print_block():
                                  [merge_lane_comment(10, 1, "**fix-next** Rename it.")])
     check(f"{PRINT_BLOCK} refuses when merge-lane-2 has no approving review, saying when to run it again",
           code == 1 and out == "" and err == (
-              f"REFUSED: ned-review-merge has no approving review of pull request {NUMBER}, so its findings are "
-              "not final.\nRun this command again once ned-review-merge's approving review is posted.\n"), err)
+              f"REFUSED: ned-review-merge, merge-lane-2's GitHub account, has no approving review of pull request "
+              f"{NUMBER}, so merge-lane-2's findings on it are not final and no block was printed.\n"
+              "Once ned-review-merge's approving review is posted, run: "
+              f"python3 {program.PROGRAM} {NUMBER} {PRINT_BLOCK}\n"), err)
     code, out, err = print_block([merge_lane_review(1)], [merge_lane_comment(10, 1, "Rename it.")])
-    check(f"{PRINT_BLOCK} refuses a merge-lane-2 comment with no mark, naming it, and says to write the block "
+    check(f"{PRINT_BLOCK} refuses a merge-lane-2 comment with no mark, naming it, and says how to write the block "
           "by hand",
-          code == 1 and out == "" and "comment on scripts/thing.py:3 of pull request 1964 opens with no category "
-                                      "mark" in err
-          and "Write the #follow_up_request block for this pull request by hand" in err, err)
+          code == 1 and out == "" and "comment on scripts/thing.py:3 of pull request 1964 does not open with a "
+                                      "category mark" in err
+          and f"the line `#follow_up_request pull request {NUMBER}`, then one line" in err, err)
     code, out, err = print_block([merge_lane_review(
         1, body="APPROVE\n\nBody.\n\nComments on lines outside this pull request's diff:\n- `a.py:4`: Unmarked.")], [])
     check(f"{PRINT_BLOCK} refuses an unmarked comment moved into the review body",
-          code == 1 and "comment on a.py:4 of pull request 1964 opens with no category mark" in err, err)
+          code == 1 and "comment on a.py:4 of pull request 1964 does not open with a category mark" in err, err)
     code, out, err = print_block(None, None, gh_failure=program.StepFailed("gh api exited 1: HTTP 502"))
     check(f"{PRINT_BLOCK} reports a failed gh call as FAILED with exit 2",
           code == 2 and out == "" and err.startswith("FAILED: gh api exited 1: HTTP 502\n"), err)

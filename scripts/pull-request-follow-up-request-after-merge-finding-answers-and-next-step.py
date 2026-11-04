@@ -941,18 +941,22 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
         raise StepFailed(f"GitHub's reviews of pull request {number} were not in the expected shape: "
                          f"{type(error).__name__}: {error}") from None
     if not any(review.get("state") == "APPROVED" for review in reviews):
-        raise Refused(f"{account} has no approving review of pull request {number}, so its findings are not final.\n"
-                      f"Run this command again once {account}'s approving review is posted.")
+        raise Refused(f"{account}, merge-lane-2's GitHub account, has no approving review of pull request {number}, so "
+                      "merge-lane-2's findings on it are not final and no block was printed.\n"
+                      f"Once {account}'s approving review is posted, run: "
+                      f"{command(number, 'print-follow-up-request-block-from-merge-lane-2-reviews')}")
     findings = []
     for comment in comments:
         marked = posting.posted_comment_category_and_text(comment["body"])
         if marked is None:
             raise Refused(
-                f"{account}'s comment on {comment['path']}:{comment['line']} of pull request {number} opens with no "
-                f"category mark, as a review posted before {POSTING_PROGRAM_FILE_NAME} wrote category marks does, "
-                "so its category cannot be read.\n"
-                "Write the #follow_up_request block for this pull request by hand, from its reviews' non-blocking "
-                "findings.")
+                f"{account}'s comment on {comment['path']}:{comment['line']} of pull request {number} does not open "
+                "with a category mark, such as **fix-next**, so its category cannot be read and no block was "
+                f"printed; reviews posted before scripts/{POSTING_PROGRAM_FILE_NAME} wrote category marks have none.\n"
+                "Write the block by hand at the end of your merge message instead: the line "
+                f"`{FOLLOW_UP_REQUEST_LINE_START} pull request {number}`, then one line for each fix-next, "
+                "fix-in-maintenance or file-for-later finding in your reviews of the pull request, numbered from 1, "
+                "as in `1. fix-next: `<path>:<line>`: <the finding on one line>`.")
         category, text = marked
         finding = (category, comment["path"], " ".join(text.split()))
         if category != posting.BLOCKING_CATEGORY and finding not in [found[:3] for found in findings]:
