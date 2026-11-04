@@ -35,9 +35,14 @@ and its event is always the verdict; GitHub refuses that review on a pull
 request ned-review-merge opened, and the post fails. For this file, this
 program alone writes what the fix-round program,
 pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py,
-reads blocking findings by, using that program's BLOCKING_MARKER_PATTERN:
-- each must-fix-now comment is posted opening with "**Blocks** ", and a
-  comment whose body already opens with a blocking mark is refused;
+reads blocking findings by, using that program's BLOCKING_MARKER_PATTERN,
+and the category marks that
+pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py
+reads non-blocking findings by:
+- each comment is posted opening with posted_category_mark() of its
+  category: "**Blocks** " for must-fix-now, and the category in bold, as in
+  "**fix-next** ", for the other three; a comment whose body already opens
+  with a blocking mark or a category mark is refused;
 - a comment with the same path, line and posted body as an earlier one is
   dropped, since the fix-round program counts such a repost once;
 - when N comments are must-fix-now, N at least 1, the body carries
@@ -100,8 +105,11 @@ POSTED_VERDICTS = ("APPROVE", "REQUEST_CHANGES")
 FINDING_CATEGORIES = ("must-fix-now", "fix-next", "fix-in-maintenance", "file-for-later")
 BLOCKING_CATEGORY = "must-fix-now"
 BLOCKING_MARK = "**Blocks** "
+NON_BLOCKING_CATEGORY_MARK_FORMAT = "**{category}** "
 BLOCKING_COUNT_FORMAT = "**Blocking: {count}**"
 OUTSIDE_THE_DIFF_HEADING = "Comments on lines outside this pull request's diff:"
+OUTSIDE_THE_DIFF_LINE_FORMAT = "- `{path}:{line}`: {body}"
+OUTSIDE_THE_DIFF_LINE_PATTERN = re.compile(r"^- `(?P<path>[^`]+):(?P<line>\d+)`: (?P<body>.*)$")
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 # The state GitHub gives a review posted with each event.
 EVENT_STATES = {"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED",
@@ -206,6 +214,12 @@ def read_review_file(path, account):
                 f"has a comment on {where} whose body already opens with the blocking mark "
                 f"{mark.group(0)}; this program writes that mark for each {BLOCKING_CATEGORY} "
                 f"comment, so leave it out of the body")
+        marked = posted_comment_category_and_text(comment["body"])
+        if marked:
+            raise ReviewFileUnusable(
+                f"has a comment on {where} whose body already opens with the category mark "
+                f"{posted_category_mark(marked[0]).strip()}; this program writes each comment's "
+                f"category mark from its \"finding_category\", so leave it out of the body")
     if verdict == "REQUEST_CHANGES" and not any(
             comment["finding_category"] == BLOCKING_CATEGORY for comment in comments):
         raise ReviewFileUnusable(
@@ -217,15 +231,52 @@ def read_review_file(path, account):
     return verdict, body, comments
 
 
-def with_blocking_marks(body, comments):
-    """Return (verdict, body, comments) as posted for categorized comments: each must-fix-now one
-    opened with the mark, no finding_category key left, a comment repeating an earlier one's path,
-    line and body dropped, as the fix-round program counts it once, and the verdict and the body's
+def posted_category_mark(category):
+    """The mark a comment of this finding_category opens with when posted."""
+    if category == BLOCKING_CATEGORY:
+        return BLOCKING_MARK
+    return NON_BLOCKING_CATEGORY_MARK_FORMAT.format(category=category)
+
+
+def posted_comment_category_and_text(body):
+    """(finding_category, text) of a posted merge-lane-2 comment, read by the mark it opens with,
+    or None when it opens with none. A blocking mark is read as the fix-round program reads it."""
+    stripped = body.lstrip()
+    blocking = fix_round.BLOCKING_MARKER_PATTERN.match(stripped)
+    if blocking:
+        return BLOCKING_CATEGORY, stripped[blocking.end():].strip()
+    for category in FINDING_CATEGORIES:
+        mark = posted_category_mark(category)
+        if category != BLOCKING_CATEGORY and stripped.startswith(mark):
+            return category, stripped[len(mark):].strip()
+    return None
+
+
+def comments_moved_into_body(body):
+    """The comments with_outside_comments_in_body() moved into a posted body, each a dict of path,
+    line and body; a line after the heading that does not start a comment continues the one before."""
+    lines = body.split("\n")
+    if OUTSIDE_THE_DIFF_HEADING not in lines:
+        return []
+    comments = []
+    for line in lines[lines.index(OUTSIDE_THE_DIFF_HEADING) + 1:]:
+        match = OUTSIDE_THE_DIFF_LINE_PATTERN.match(line)
+        if match:
+            comments.append({"path": match.group("path"), "line": int(match.group("line")),
+                             "body": match.group("body")})
+        elif comments:
+            comments[-1]["body"] += "\n" + line
+    return comments
+
+
+def with_finding_category_marks(body, comments):
+    """Return (verdict, body, comments) as posted for categorized comments: each opened with its
+    category's mark, no finding_category key left, a comment repeating an earlier one's path, line
+    and posted body dropped, as the fix-round program counts it once, and the verdict and the body's
     count set by the must-fix-now ones left."""
     comments = fix_round.without_reposts([
         {"path": comment["path"], "line": comment["line"],
-         "body": (BLOCKING_MARK if comment["finding_category"] == BLOCKING_CATEGORY else "")
-         + comment["body"]}
+         "body": posted_category_mark(comment["finding_category"]) + comment["body"]}
         for comment in comments])
     count = len(fix_round.marked(comments))
     verdict = "REQUEST_CHANGES" if count else "APPROVE"
@@ -256,8 +307,7 @@ def with_outside_comments_in_body(body, comments, lines):
     outside = [comment for comment in comments if comment not in inside]
     if outside:
         body = (body.rstrip("\n") + "\n\n" + OUTSIDE_THE_DIFF_HEADING + "\n"
-                + "\n".join(f"- `{comment['path']}:{comment['line']}`: {comment['body']}"
-                            for comment in outside))
+                + "\n".join(OUTSIDE_THE_DIFF_LINE_FORMAT.format(**comment) for comment in outside))
     return body, inside
 
 
@@ -355,7 +405,7 @@ def main(argv=None):
               file=sys.stderr)
         return EXIT_NOT_POSTED
     if account == MERGE_LANE_ACCOUNT:
-        verdict, body, comments = with_blocking_marks(body, comments)
+        verdict, body, comments = with_finding_category_marks(body, comments)
     body, inline_comments = with_outside_comments_in_body(body, comments, lines)
     moved_count = len(comments) - len(inline_comments)
     comments = inline_comments
