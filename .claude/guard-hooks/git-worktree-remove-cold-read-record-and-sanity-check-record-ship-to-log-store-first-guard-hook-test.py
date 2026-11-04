@@ -291,38 +291,38 @@ def runner_raising(error):
 
 
 check("a worktree word that matches no worktree is let through",
-      hook.worktree_directories(str(checkout), "no-such-worktree", subprocess.run) == [])
+      hook.git_worktree_remove_target_word_candidate_worktree_directories_find(str(checkout), "no-such-worktree", subprocess.run) == [])
 check("a failing worktree listing finds no worktree",
-      hook.worktree_directories("/nonexistent", "x", runner_failing_listing) == [])
+      hook.git_worktree_remove_target_word_candidate_worktree_directories_find("/nonexistent", "x", runner_failing_listing) == [])
 listing_naming_a_worktree = f"worktree {worktree}\0HEAD {'0' * 40}\0detached\0\0".encode()
 for code_given in (128, -9):
     check(f"a worktree listing that exits {code_given} is not read, though it names a matching worktree",
-          hook.worktree_directories("/nonexistent", worktree.name,
+          hook.git_worktree_remove_target_word_candidate_worktree_directories_find("/nonexistent", worktree.name,
                                     runner_answering(code_given, listing_naming_a_worktree)) == [])
 check("a worktree listing that exits 0 is read",
-      hook.worktree_directories("/nonexistent", worktree.name, runner_answering(0, listing_naming_a_worktree))
+      hook.git_worktree_remove_target_word_candidate_worktree_directories_find("/nonexistent", worktree.name, runner_answering(0, listing_naming_a_worktree))
       == [worktree])
 check("a worktree listing that cannot run finds no worktree",
-      hook.worktree_directories("/nonexistent", "x", runner_raising(OSError("no git"))) == [])
+      hook.git_worktree_remove_target_word_candidate_worktree_directories_find("/nonexistent", "x", runner_raising(OSError("no git"))) == [])
 check("a worktree listing that times out finds no worktree",
-      hook.worktree_directories("/nonexistent", "x", runner_raising(subprocess.TimeoutExpired("git", 10))) == [])
+      hook.git_worktree_remove_target_word_candidate_worktree_directories_find("/nonexistent", "x", runner_raising(subprocess.TimeoutExpired("git", 10))) == [])
 second_checkout, second_worktree = checkout_with_worktree("ambiguous")
 other_worktree = second_checkout.parent / "other" / second_worktree.name
 git(second_checkout, "worktree", "add", "-q", "--detach", str(other_worktree))
 check("a last path component two worktrees share finds both, since git may remove either",
-      sorted(hook.worktree_directories(str(second_checkout), second_worktree.name, subprocess.run))
+      sorted(hook.git_worktree_remove_target_word_candidate_worktree_directories_find(str(second_checkout), second_worktree.name, subprocess.run))
       == sorted([second_worktree, other_worktree]))
 check("a last path component one worktree has finds that worktree",
-      hook.worktree_directories(str(second_checkout), f"other/{second_worktree.name}", subprocess.run)
+      hook.git_worktree_remove_target_word_candidate_worktree_directories_find(str(second_checkout), f"other/{second_worktree.name}", subprocess.run)
       == [other_worktree])
 # git matches a word against the worktrees' last path components before it reads the word as a path.
 suffix_checkout, suffix_worktree = checkout_with_worktree("suffix-first")
 (suffix_checkout / suffix_worktree.name).mkdir()
 check("a word that is both an ordinary directory and one worktree's last path component finds both",
-      sorted(hook.worktree_directories(str(suffix_checkout), suffix_worktree.name, subprocess.run))
+      sorted(hook.git_worktree_remove_target_word_candidate_worktree_directories_find(str(suffix_checkout), suffix_worktree.name, subprocess.run))
       == sorted([suffix_worktree, suffix_checkout / suffix_worktree.name]))
 check("a failing worktree listing takes a word naming a directory as that directory",
-      hook.worktree_directories(str(suffix_checkout), suffix_worktree.name, runner_failing_listing)
+      hook.git_worktree_remove_target_word_candidate_worktree_directories_find(str(suffix_checkout), suffix_worktree.name, runner_failing_listing)
       == [suffix_checkout / suffix_worktree.name])
 
 # Review 5768090675, finding 1: a removal pointed at another repository by --git-dir ships that worktree's records.
@@ -354,8 +354,8 @@ alias_other = alias_checkout.parent / "elsewhere" / "alias"
 git(alias_checkout, "worktree", "add", "-q", "--detach", str(alias_other))
 (alias_checkout / "alias").symlink_to(alias_target)
 check("a word through a symlink finds the worktree it points to, beside any worktree whose path ends in it",
-      alias_target in hook.worktree_directories(str(alias_checkout), "alias/", subprocess.run),
-      hook.worktree_directories(str(alias_checkout), "alias/", subprocess.run))
+      alias_target in hook.git_worktree_remove_target_word_candidate_worktree_directories_find(str(alias_checkout), "alias/", subprocess.run),
+      hook.git_worktree_remove_target_word_candidate_worktree_directories_find(str(alias_checkout), "alias/", subprocess.run))
 code, output, stderr = run_hook_process("git worktree remove alias/", alias_checkout)
 check("removing a worktree through a symlink ships the records of the worktree it points to",
       code == 0 and output is None

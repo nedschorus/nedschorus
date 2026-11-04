@@ -84,10 +84,10 @@ CLEAN_WORKTREES_SCRIPT = REPOSITORY_ROOT / "scripts" / "clean-worktrees.py"
 SHIPPING_BUDGET_SECONDS = 240
 GIT_TIMEOUT_SECONDS = 10
 
-GIT_GLOBAL_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
+GIT_GLOBAL_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
                             "--exec-path"}
 # The global options that point git at another repository; the worktree listing is given them too.
-GIT_REPOSITORY_OPTIONS = ("--git-dir", "--work-tree")
+GIT_DIR_AND_WORK_TREE_OPTIONS = ("--git-dir", "--work-tree")
 WRAPPER_DIRECTORY_OPTIONS = {("env", "-C"), ("env", "--chdir"), ("sudo", "-D"), ("sudo", "--chdir")}
 # A word the shell expands at run time; the reader keeps it as written.
 UNREADABLE_WORD_PATTERN = re.compile(r"[$`*?\[]")
@@ -99,7 +99,7 @@ WHOLE_ASSIGNMENT_VALUE_PATTERN = re.compile(
     r"""(?:"[^"`\\]*"|'[^']*'|[^\s;&|`'"()<>\\])*(?=$|[\s;&|)<>])""")
 VARIABLE_REFERENCE_PATTERN = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 # Bounds the readings of one word when several names each have several values.
-MAXIMUM_READINGS = 32
+MAXIMUM_ALTERNATIVE_SHELL_VARIABLE_VALUE_READINGS_PER_WORD = 32
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
     "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
@@ -158,8 +158,8 @@ PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
 
 
 def distinct(values):
-    """Return values in their first order, each once, at most MAXIMUM_READINGS of them."""
-    return list(dict.fromkeys(values))[:MAXIMUM_READINGS]
+    """Return values in their first order, each once, at most MAXIMUM_ALTERNATIVE_SHELL_VARIABLE_VALUE_READINGS_PER_WORD of them."""
+    return list(dict.fromkeys(values))[:MAXIMUM_ALTERNATIVE_SHELL_VARIABLE_VALUE_READINGS_PER_WORD]
 
 
 def variables_substituted(word, variables):
@@ -243,11 +243,11 @@ def worktree_remove_directory_and_targets(words):
             directory = directory_joined(directory, word[2:])
             index += 1
             continue
-        if word in GIT_REPOSITORY_OPTIONS:
+        if word in GIT_DIR_AND_WORK_TREE_OPTIONS:
             repository_options.extend(words[index:index + 2])
-        elif word.startswith(tuple(f"{option}=" for option in GIT_REPOSITORY_OPTIONS)):
+        elif word.startswith(tuple(f"{option}=" for option in GIT_DIR_AND_WORK_TREE_OPTIONS)):
             repository_options.append(word)
-        index += 2 if word in GIT_GLOBAL_VALUE_OPTIONS else 1
+        index += 2 if word in GIT_GLOBAL_VALUE_FLAGS else 1
     if words[index:index + 2] != ["worktree", "remove"]:
         return None
     targets = []
@@ -260,7 +260,7 @@ def worktree_remove_directory_and_targets(words):
     return directory, targets, repository_options
 
 
-def readings_of_words(words, variables):
+def shell_words_every_combination_of_variable_values_substituted_build(words, variables):
     """Return every reading of the list of words, as tuples, each word read as variables_substituted reads it."""
     readings = [()]
     for word in words:
@@ -318,7 +318,7 @@ def worktree_removals_in_command(command, working_directory, variables=None):
         override, targets, repository_options = found
         for directory, unreadable in places:
             for git_directory, git_unreadable in directory_with_override(directory, unreadable, override, variables):
-                for options in readings_of_words(repository_options, variables):
+                for options in shell_words_every_combination_of_variable_values_substituted_build(repository_options, variables):
                     for target in targets:
                         for reading in variables_substituted(target, variables):
                             reading_unreadable = git_unreadable or next(
@@ -338,7 +338,7 @@ def directory_with_override(directory, unreadable, override, variables):
         for reading in variables_substituted(override, variables))
 
 
-def worktree_directories(directory, word, runner, repository_options=()):
+def git_worktree_remove_target_word_candidate_worktree_directories_find(directory, word, runner, repository_options=()):
     """Return every worktree directory git may remove for word run in directory, resolved.
 
     Each of: the directory word names, if there is one, and every worktree the listing of git's
@@ -459,7 +459,7 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
         if unreadable is not None:
             unreadable_words.append(unreadable)
             continue
-        worktrees.extend(worktree_directories(directory, word, runner, repository_options))
+        worktrees.extend(git_worktree_remove_target_word_candidate_worktree_directories_find(directory, word, runner, repository_options))
     refusals = []
     for worktree in dict.fromkeys(worktrees):
         unshipped = unshipped_records(records_in(worktree, clean_worktrees), runner, clock, deadline)
