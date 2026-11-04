@@ -36,7 +36,7 @@ those with no dot, sit on any heading other than `##`, as in `## Part 2`
 headings over `### Item 2 of 3` items, has no unnumbered items: its `##`
 headings are parts or sections. A dotted count, as in a `### Item 1.1 of 3`
 sub-step, does not decide this. The answer program's close step numbers an
-unnumbered item when it is shown. M is display only: approval_walk_item_count counts it from the
+unnumbered item when it is shown. M is display only: approval_walk_item_total_shown_and_waiting_counted_from_walk_document counts it from the
 walk-document, the whole numbers its item headings hold, a dotted number
 counting as the item before its first dot, plus its unnumbered items, so an
 item added changes no other heading. The close step writes it into the
@@ -541,7 +541,7 @@ def approval_walk_unit_is_unnumbered_item(unit):
     return not numbers and problem is None
 
 
-def approval_walk_item_count(units):
+def approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units):
     """M, as a string: the whole numbers the numbered items of units hold, a dotted number such as 6.1 counting
     as its item 6, plus the unnumbered items; so it counts the items shown and the items waiting."""
     whole = {number.split(".")[0] for unit in units for number in unit[0]}
@@ -557,8 +557,8 @@ def approval_walk_next_unnumbered_item_number(units):
 def waiting_item_units(document, value, numbers, total, parser, all_units=None):
     """Return (M to show, the units of item_unit_spans that hold the waiting items) for the item numbers and
     total that parse_items read from the `#next_to_present` value, total None when it gives none. M to show is
-    total, which the close step writes as approval_walk_item_count counted it, or, when the value gives none,
-    approval_walk_item_count's.
+    total, which the close step writes as approval_walk_item_total_shown_and_waiting_counted_from_walk_document counted it, or, when the value gives none,
+    approval_walk_item_total_shown_and_waiting_counted_from_walk_document's.
 
     Each waiting item's unit is the one heading that names it, whatever M the heading gives; total is read only
     to choose between two headings that name the same item and are not revisions, as in a walk-document
@@ -605,5 +605,5 @@ def waiting_item_units(document, value, numbers, total, parser, all_units=None):
             f"walk-document, put `Withdrawn: ` just before `Item` in each heading you do not mean, as in "
             f"`## Withdrawn: Item 4 of 9: <the point>`, or, only when the heading you mean comes after every other "
             f"heading for that item, write `revised` right after its `of M` instead, as in `## Item 4 of 9 revised: <the point>`.")
-    shown_total = total if total is not None else approval_walk_item_count(all_units)
+    shown_total = total if total is not None else approval_walk_item_total_shown_and_waiting_counted_from_walk_document(all_units)
     return shown_total, [unit for unit in all_units if unit in chosen]
