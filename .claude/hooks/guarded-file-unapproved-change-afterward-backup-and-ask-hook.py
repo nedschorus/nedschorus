@@ -888,6 +888,12 @@ class Check:
         self.previous = previous
 
 
+def approval_takes(store, path, key, rule):
+    """Whether store_phase records an approval of key under rule: UNLESS_SEEN gives way to a
+    run that saw the version and did not approve it."""
+    return rule == APPROVE_ALWAYS or not seen_lines(store.log(path), key)
+
+
 def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, quiet):
     """Everything that touches the store. Returns (asks, reminders, settled paths).
 
@@ -897,12 +903,8 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
     unsettled_unchanged: [(path, key)] files left unsettled by an earlier run. quiet: a rebase,
     merge, cherry-pick or revert is stopped, so every version is copied and nothing is asked."""
     for path, key, how, rule in approvals:
-        approved = store.approved(path)
-        if key in approved:
+        if key in store.approved(path) or not approval_takes(store, path, key, rule):
             continue
-        if rule != APPROVE_ALWAYS:
-            if seen_lines(store.log(path), key):
-                continue
         store.approve(path, key)
         log_line(store, path, "approved", session, owner, key, how)
     asks, reminders, settled = [], [], {}
@@ -1219,8 +1221,11 @@ def run_hook(payload):
                 previous = state["files"].get(path)
                 checks.append(Check(path, data, key, copy_hash, how, (path, copy_hash) in held,
                                     previous and previous[4]))
-            approvals = first + approvals + renames(store, changed, state["files"],
-                                                    {path: blob for path, blob, _, _ in first})
+            # Only a first-run version store_phase will approve carries its approval to a rename.
+            approvals = first + approvals + renames(
+                store, changed, state["files"],
+                {path: blob for path, blob, _, rule in first
+                 if approval_takes(store, path, blob, rule)})
             asks, reminders, settled = store_phase(store, session, owner(), checks, unsettled,
                                                    approvals, quiet)
             settled.update({path: True for path in skipped})

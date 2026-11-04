@@ -888,6 +888,45 @@ def cases(scratch):
     message = world.run(cwd=world.agents / "fresh")
     check("a file renamed after that first run is not asked about", message == "", message)
 
+    # -- a version a run saw unapproved is not approved by a rename after the file went back to it
+    world = fresh(scratch, "rename-after-revert-to-unapproved-base")
+    skills = world.repo / ".claude" / "skills"
+    skills.mkdir(parents=True)
+    (skills / "a.md").write_text("skill\n")
+    world.git("add", ".")
+    world.git("commit", "-qm", "a skill")
+    world.git("worktree", "add", "-q", "-b", "dirty-checkout", str(world.agents / "dirty"))
+    dirty_skills = world.agents / "dirty" / ".claude" / "skills"
+    (dirty_skills / "a.md").write_text("skill, edited before the first run\n")
+    world.run(cwd=world.agents / "dirty")
+    (dirty_skills / "a.md").write_text("skill\n")
+    message = world.run(cwd=world.agents / "dirty")
+    check("the checkout's base version, written back after a first run stocked an edit, is asked "
+          "about", str(dirty_skills / "a.md") in message, message)
+    os.rename(dirty_skills / "a.md", dirty_skills / "b.md")
+    message = world.run(cwd=world.agents / "dirty")
+    check("a rename of that unapproved base version is asked about, not approved",
+          str(dirty_skills / "b.md") in message, message)
+
+    # -- a new checkout at a path whose store directory saw the HEAD version unapproved asks
+    world = fresh(scratch, "reused-checkout-path-seen-unapproved")
+    skills = world.repo / ".claude" / "skills"
+    skills.mkdir(parents=True)
+    (skills / "a.md").write_text("skill\n")
+    world.git("add", ".")
+    world.git("commit", "-qm", "a skill")
+    reused_skill = world.agents / "reused" / ".claude" / "skills" / "a.md"
+    log = world.store / str(reused_skill).lstrip("/") / "log"
+    log.parent.mkdir(parents=True)
+    head_version = world.key(skills / "a.md")
+    # As this session's run in the removed checkout wrote it, with no approval in the how field.
+    log.write_bytes(load_hook_in_this_process().checked_line("\t".join(
+        ["seen", "1", "session-a", "owner-a", head_version, head_version, ""])))
+    world.git("worktree", "add", "-q", "-b", "reused-checkout", str(world.agents / "reused"))
+    message = world.run(cwd=world.agents / "reused")
+    check("a new checkout's first run asks about the HEAD version when a run at the same path saw "
+          "it unapproved", str(reused_skill) in message, message)
+
     # -- unapproved commit, switch away and back
     world = fresh(scratch, "switch-back")
     claude = world.repo / "CLAUDE.md"
@@ -1557,6 +1596,22 @@ def durable_ref_cases(scratch):
     check("git symbolic-ref failing with 128 raises an error carrying git's stderr, not a detached HEAD",
           raised is not None and "exited 128" in raised
           and "stand-in symbolic-ref failure" in raised)
+
+    # A signal gives a negative exit code, which must not read as success.
+    killed = Path(scratch) / "head-commit-git-killed-by-signal"
+    killed.mkdir()
+    (killed / "git").write_text("#!/bin/sh\nkill -9 $$\n")
+    (killed / "git").chmod(0o755)
+    os.environ["PATH"] = f"{killed}:{path_before}"
+    try:
+        hook.head_commit(empty)
+        raised = None
+    except hook.BranchUnreadable as error:
+        raised = str(error)
+    finally:
+        os.environ["PATH"] = path_before
+    check("git rev-parse --verify killed by a signal raises an error, not an empty commit",
+          raised is not None and "exited -9" in raised, raised)
 
 
 def mac_cases(scratch):
