@@ -1499,7 +1499,7 @@ def walk_document_items(walk_finder, minutes, value, numbers, total, parser):
         if keys and SUMMARY_HEADING.search(
                 walk_finder.approval_walk_item_heading_with_deferred_note_removed(lines[first])):
             summary = keys[0]
-    return walk_finder.approval_walk_item_count(units), order, summary, units
+    return walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units), order, summary, units
 
 
 def numbered_heading(heading, number, total):
@@ -1510,12 +1510,12 @@ def numbered_heading(heading, number, total):
 
 def unnumbered_item_numbered(walk_finder, minutes, first, units):
     """Write the running count `Item K of M: ` into the unnumbered item heading on line first of the walk-document,
-    K and M as the walk finder's approval_walk_next_unnumbered_item_number and approval_walk_item_count give them for
+    K and M as the walk finder's approval_walk_next_unnumbered_item_number and approval_walk_item_total_shown_and_waiting_counted_from_walk_document give them for
     units, the walk-document's units; return K."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     lines = document.read_text(encoding="utf-8").split("\n")
     number = walk_finder.approval_walk_next_unnumbered_item_number(units)
-    lines[first] = numbered_heading(lines[first], number, walk_finder.approval_walk_item_count(units))
+    lines[first] = numbered_heading(lines[first], number, walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units))
     document.write_text("\n".join(lines), encoding="utf-8")
     return number
 
@@ -1548,7 +1548,7 @@ def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numb
         raise Failure(NO_UNNUMBERED_ITEM_AFTER.format(document=document, item=" and ".join(answered_numbers),
                                                       found=found))
     number = unnumbered_item_numbered(walk_finder, minutes, units[after][3], units)
-    return f"item {number} of {walk_finder.approval_walk_item_count(units)}"
+    return f"item {number} of {walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units)}"
 
 
 def deferred_item_heading_noted(walk_finder, minutes, numbers, total, parser, noted=True):
