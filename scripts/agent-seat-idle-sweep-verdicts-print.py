@@ -35,7 +35,7 @@ only ned-box's files, so it does not see the Mac's agent-seats.
 How it fails: when a file it must read cannot be read, or is not UTF-8 or JSON where a whole line
 is expected, or `gh` cannot answer, the agent-seat's line carries the failure under "errors" and
 "rule" is null, every other agent-seat is still reported, and the program exits 1. A task file
-that does not hold a task with an id is such a failure, when rules 3 to 5 read the task list. A
+that does not hold a task with an id is such a failure, when rule 4 reads the task list. A
 failure it does not expect, such as a file that changes between two reads of it, stops the program
 with a traceback and exit 1. A transcript's last line that Claude Code is still writing is
 skipped, except when it holds the key of a subagent or background-command launch: that is then a
@@ -413,30 +413,16 @@ def open_tasks_nothing_holds(task_directory, checker):
     tasks = due_task_hook.read_tasks(task_directory, unreadable)
     if unreadable:
         raise ReadFailure(f"{unreadable[0]} could not be read as a task with an id, so whether it "
-                          "holds the agent-seat's work is unknown")
-    consumed = AnswersConsumed(checker)
-    free, _ = due_task_hook.unheld_and_held_tasks(tasks, task_directory, consumed)
-    if consumed.failures:
-        kind, number, cause = consumed.failures[0]
+                          "holds the agent-seat's work is unknown. Repair the file so that it holds "
+                          "a task with an id, or remove it if it is not a task, then run this "
+                          "program again.")
+    # The checker is shared by every agent-seat, so only the failures appended here are this one's.
+    failures_before = len(checker.gh_failures)
+    free, _ = due_task_hook.unheld_and_held_tasks(tasks, task_directory, checker)
+    if len(checker.gh_failures) > failures_before:
+        kind, number, cause = checker.gh_failures[failures_before]
         raise ReadFailure(f"GitHub could not say whether {kind} {number} holds: {cause}")
     return [{"id": task_id, "subject": tasks[task_id].get("subject")} for task_id in free]
-
-
-class AnswersConsumed:
-    """Passes answers through from the checker and keeps the failed ones this agent-seat read.
-
-    The checker's own failure list holds only fresh gh calls; a failed answer another agent-seat
-    cached is returned again with nothing appended."""
-
-    def __init__(self, checker):
-        self.checker = checker
-        self.failures = []
-
-    def answer(self, kind, number):
-        answer = self.checker.answer(kind, number)
-        if "gh_failure" in answer:
-            self.failures.append((kind, number, answer["gh_failure"]))
-        return answer
 
 
 # --- One agent-seat's verdict ---
@@ -606,10 +592,12 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
             judged = [item for item in raised if item["code_reading"] == fields.JUDGE]
             verdict[fields.TOOL_CALLS_SINCE_START_OF_EARLIEST_TURN_WITH_SENTENCE_TO_JUDGE] = (
                 tool_calls_since_start_of_earliest_turn_with_sentence_to_judge(facts, judged))
-            # Only the judge can find every sentence backed, and then rules 3 to 5 decide.
-            fallback = rules_three_to_five(verdict, put_off_at, checker, task_directory)
-            verdict.update({fields.RULE: 2, fields.DECISION: fields.JUDGE,
-                            fields.IF_EVERY_SENTENCE_BACKED: fallback})
+            verdict.update({fields.RULE: 2, fields.DECISION: fields.JUDGE})
+            # Only the judge can find every sentence backed, and then rules 3 to 5 decide; a
+            # sentence code already found unbacked means that can never happen.
+            if not any(item["code_reading"] == fields.UNBACKED for item in raised):
+                verdict[fields.IF_EVERY_SENTENCE_BACKED] = rules_three_to_five(
+                    verdict, put_off_at, checker, task_directory)
         else:
             verdict.update({fields.RULE: 2, fields.DECISION: fields.SEND_UNBACKED})
     except ReadFailure as error:

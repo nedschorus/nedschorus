@@ -356,7 +356,12 @@ def write_state_atomically(path: Path, state: dict) -> None:
 
 
 class GitHubConditionChecker:
-    """Answers prerequisite conditions from the cache or from gh, within a budget."""
+    """Answers prerequisite conditions from the cache or from gh, within a budget.
+
+    `gh_failures` gets a (kind, number, cause) entry for every failed answer `answer` returns,
+    fresh or cached, so one condition answered twice is listed twice; a caller that answers
+    for several agent-seats reads the entries its own calls appended.
+    """
 
     def __init__(self, checks: dict, now_epoch: float):
         self.checks = checks
@@ -366,6 +371,12 @@ class GitHubConditionChecker:
         self.gh_failures = []
 
     def answer(self, kind: str, number: int) -> dict:
+        answer = self.cached_or_fresh_answer(kind, number)
+        if "gh_failure" in answer:
+            self.gh_failures.append((kind, number, answer["gh_failure"]))
+        return answer
+
+    def cached_or_fresh_answer(self, kind: str, number: int) -> dict:
         key = condition_key(kind, number)
         cached = self.checks.get(key)
         if (isinstance(cached, dict)
@@ -379,8 +390,6 @@ class GitHubConditionChecker:
             # run checks it.
             return {"met": False}
         fresh = self.ask_gh(kind, number, min(GH_CALL_TIMEOUT_SECONDS, remaining))
-        if "gh_failure" in fresh:
-            self.gh_failures.append((kind, number, fresh["gh_failure"]))
         fresh["checked_at_epoch"] = self.now_epoch
         previous = cached if isinstance(cached, dict) else {}
         for citation_field in ("title", "url"):
@@ -437,7 +446,7 @@ def gh_failure_line(kind: str, number: int, cause: str) -> str:
     _, _, id_type, met_word = CONDITION_KINDS[kind]
     return (f"This hook could not ask GitHub whether {id_type} {number} is {met_word}, so no "
             f"task waiting on it was raised: {cause}. It asks again at the first stop at least "
-            f"{CONDITION_RECHECK_INTERVAL_SECONDS // 60} minutes from now. If gh's error says "
+            f"{CONDITION_RECHECK_INTERVAL_SECONDS // 60} minutes after the failed call. If gh's error says "
             f"{id_type} {number} does not exist, correct the metadata.prerequisites that names it "
             f"with TaskUpdate. If it says gh is not logged in or its credentials are bad, ask "
             f"the user to run `gh auth login` on this machine.")
@@ -774,7 +783,7 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
         state_changed = state_changed or bool(next_action_lines)
     state_changed = state_changed or checker.changed
     gh_failure_lines = [gh_failure_line(kind, number, cause)
-                        for kind, number, cause in checker.gh_failures]
+                        for kind, number, cause in dict.fromkeys(checker.gh_failures)]
     if state_changed:
         try:
             write_state_atomically(state_path, state)

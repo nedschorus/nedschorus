@@ -237,8 +237,13 @@ FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_TEMPLATE = "You are {agent}. No ha
 # Claude Code records a prompt passed on its command line as typed by a person, so this line is the only mark
 # by which scripts/search-user-messages-in-transcripts.py tells the launch command's prompt from the user's words.
 FIRST_PROMPT_FROM_LAUNCH_COMMAND_NOT_TYPED_BY_THE_USER_LINE = (
-    "The handoff-supervisor was given this first prompt with --first-prompt-file or --first-prompt; "
+    "The text above this line came from the handoff-supervisor's --first-prompt-file or --first-prompt; "
     "the user did not type it.")
+# Transcripts already written end their launch command's prompt with these, so the reader must still know them.
+FIRST_PROMPT_FROM_LAUNCH_COMMAND_NOT_TYPED_BY_THE_USER_LINE_EARLIER_WORDINGS = (
+    "The handoff-supervisor was given this first prompt with --first-prompt-file or --first-prompt; "
+    "the user did not type it.",
+)
 
 
 def first_prompt_from_launch_command_marked_not_typed_by_the_user(first_prompt: str) -> str:
@@ -512,7 +517,9 @@ ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION = (
     "walk-minutes. Add new items just after the item it resumes at: the next "
     "step's own item first, when it needs him, then the rest in the order "
     "/walk-me-through gives. When nothing needs him, open no approval-walk. "
-    "2. While he answers, take the next step."
+    "2. While he answers, or at once when nothing needs him, take the next step, "
+    "then start each ready task on your task list: a task another agent-seat owns "
+    "goes to that agent-seat, any other to a background subagent or Codex."
 )
 
 # Subagent IDs resolve only within their session, so a successor must re-commission unfinished work.

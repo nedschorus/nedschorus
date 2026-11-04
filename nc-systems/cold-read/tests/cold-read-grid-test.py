@@ -59,8 +59,9 @@ WHAT IS PINNED HERE.
     `deep` tier of both, and the defect-hunt pass on agy, on Gemini Argon at
     high. The terminology cells and the agy cell run
     at the effort the grid pins, which the stub reads off its own command
-    line; the agy cell runs inside the real sandbox program, bwrap or
-    sandbox-exec, as in production.
+    line; the agy cell runs inside the fixture's pass-through stand-in for
+    the sandbox program, bwrap or sandbox-exec, so this suite runs inside
+    the nc-test-sandbox, where the real bwrap cannot start.
 
   - The model's echoed words are not the cell's status. The cell re-emits its
     runtime's stderr into the log the grid lifts from, and the Codex CLI
@@ -433,6 +434,7 @@ def run_grid(repository, stub_directory, environment_overrides=None,
         stub = stub_directory / runtime_name
         stub.write_text(STUB_MODEL_RUNTIME, encoding="utf-8")
         stub.chmod(0o755)
+    scratch_repository_fixture.install_fake_sandbox_programs(stub_directory)
     # Every Codex cell scans HOME for credential files at launch, and the
     # real home takes seconds to walk.
     scratch_home = repository.parent / "scratch-home"
@@ -1361,7 +1363,10 @@ with tempfile.TemporaryDirectory() as scratch:
     question_4_prompt_conditions = {
         "exactly one prompt asks it": len(question_4_prompts) == 1,
         "the template pieces in order": holds_in_order(question_4_prompt, template_pieces),
-        f"the report path {question_4_report}": str(question_4_report) in question_4_prompt,
+        # The grid names the resolved path, as its saved line does; the
+        # nc-test-sandbox's TMPDIR is a symlink, so the two spellings differ there.
+        f"the report path {question_4_report.resolve()}":
+            str(question_4_report.resolve()) in question_4_prompt,
         "'is a frozen copy of'": "is a frozen copy of" in question_4_prompt,
     }
     failed_question_4_prompt_conditions = [

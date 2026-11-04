@@ -412,6 +412,19 @@ try:
           status == 0 and "in-process: rows whose message differs and verdict does not: 1" in out
           and "Reworded at the end." in out, f"status {status}\n{out}\n{err}")
 
+    # The shell reader is loaded by file path, so its classes cannot be pickled by name between processes.
+    verdict_of_path_loaded_class = commit_with_guard_changed(
+        ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py", (
+            "_analyze_command_text_as_written = analyze_command_text\n"
+            "def analyze_command_text(command, payload_cwd, guard):\n"
+            "    if command == 'ls -la':\n"
+            "        return shell_reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand('~/refused'), None\n"
+            "    return _analyze_command_text_as_written(command, payload_cwd, guard)"), scratch)
+    status, out, err = run_replay(verdict_of_path_loaded_class, scratch, "--new-process-pairs", "none")
+    check("a verdict holding a value of a class from a path-loaded module crosses from the pool worker: exit 1",
+          status == 1 and "in-process: rows whose verdict differs: 1" in out and "~/refused" in out
+          and "PicklingError" not in out + err, f"status {status}\n{out}\n{err}")
+
     main_refusing_all = commit_with_guard_changed(SEARCH_FILE_GUARD, (
         "def main(stdin=sys.stdin, clock=time.monotonic):\n"
         "    if 'true' not in stdin.read():\n"

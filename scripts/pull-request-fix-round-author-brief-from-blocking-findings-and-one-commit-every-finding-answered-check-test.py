@@ -139,7 +139,7 @@ def routes_for(head, reviews, comments=BLOCKING_COMMENTS, review_id=11):
     }
 
 
-def run(root, repository, routes, *arguments, path_has_gh=True):
+def run(root, repository, routes, *arguments, path_has_gh=True, environment_extra=None):
     bin_directory = root / "bin"
     bin_directory.mkdir(exist_ok=True)
     (bin_directory / "gh").write_text(FAKE_GH)
@@ -154,6 +154,7 @@ def run(root, repository, routes, *arguments, path_has_gh=True):
         (git_only_directory / "git").symlink_to(shutil.which("git"))
     environment["PATH"] = (f"{bin_directory}{os.pathsep}{environment['PATH']}" if path_has_gh
                            else str(git_only_directory))
+    environment.update(environment_extra or {})
     completed = subprocess.run([sys.executable, str(PROGRAM), str(NUMBER), *arguments],
                                cwd=repository, capture_output=True, text=True, env=environment,
                                timeout=120)
@@ -217,6 +218,16 @@ def brief_cases(root, repository, base, frozen_head):
     check("brief: says what to do when the check refuses and when a step fails after the push",
           "git commit --amend is allowed before the push" in out
           and "do not push again or rewrite the branch" in out, out)
+    check("brief: step 3 lets a change that fails review move to its own pull request, answered by naming it",
+          "should not land with the rest, you may move that change to a pull request of its own" in out
+          and "entry that starts \"Moved to pull request \"" in out
+          and out.index("3. Change nothing else") < out.index("Moved to pull request")
+          < out.index("4. Put every change")
+          and "or, for a change moved as step 3 says, the new pull request." in out
+          and f"{NUMBER} --move-change-to-own-pull-request-cut-new-topic-branch <new topic branch> [<path> ...]" in out
+          and f"{NUMBER} --move-change-to-own-pull-request-finish --title <title> --body-file <description file>" in out
+          and f"puts you back on fix-round-pull-request-{NUMBER}-review-11." in out
+          and "git switch" not in out.split("3. Change nothing else")[1].split("4. Put every change")[0], out)
     check("brief: a conflict defers to the conflict check's report, and asks for no merge itself",
           "If it reports VERDICT: CONFLICT, do what its report says." in out
           and "merge origin/main as its report says" not in out and "merge nothing" not in out, out)
@@ -544,7 +555,7 @@ def brief_cases(root, repository, base, frozen_head):
           "headRefOid, headRefName. Run " in err
           and f"Run gh {PR_VIEW} yourself: if it now prints an object with all three fields filled in, "
           f"run python3 {PROGRAM} {NUMBER} again.\n" in err
-          and "This program stopped there: it printed no brief and checked no round." in err, err)
+          and "This program stopped at the step named above." in err, err)
 
     routes = routes_for(frozen_head, [review(commit_id=frozen_head)])
     routes[PR_VIEW] = {"stdout": json.dumps({"url": URL, "headRefOid": frozen_head})}
@@ -666,6 +677,47 @@ def check_cases(root, repository, base, frozen_head):
         code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                              "--check", "--answers", answers_file(root, text))
         check(f"check: answers file refused: {expected}", code == 1 and expected in err, err)
+
+    moved_answers = answers_file(root, "1. Fixed.\n2. Moved to pull request #41, which carries the timeout change.\n")
+    moved_routes = routes_for(frozen_head, reviews)
+    moved_routes["pr view 41 --json number"] = {"stdout": json.dumps({"number": 41})}
+    moved_routes["pr diff 41"] = {"stdout": ""}
+    code, out, err = run(root, repository, moved_routes, "--check", "--answers", moved_answers)
+    check("check: an entry naming an existing new pull request counts as answered",
+          code == 0 and "2. test.py: Moved to pull request #41" in out, out + err)
+    moved_by_url = answers_file(root, "1. Fixed.\n2. Moved to pull request https://github.com/o/r/pull/41\n")
+    moved_routes["pr view https://github.com/o/r/pull/41 --json number"] = {"stdout": json.dumps({"number": 41})}
+    moved_routes["pr diff https://github.com/o/r/pull/41"] = {"stdout": ""}
+    code, out, err = run(root, repository, moved_routes, "--check", "--answers", moved_by_url)
+    check("check: an entry naming an existing new pull request by URL counts as answered",
+          code == 0 and "Nothing pushed" in out, out + err)
+    # Lower case, so that an entry whose writer did not copy the prefix exactly is still checked.
+    moved_answers = answers_file(root, "1. Fixed.\n2. moved to pull request #41, which carries the timeout change.\n")
+    missing_routes = routes_for(frozen_head, reviews)
+    missing_routes["pr view 41 --json number"] = {
+        "exit": 1, "stderr": "GraphQL: Could not resolve to a PullRequest with the number of 41. "
+                             "(repository.pullRequest)\n"}
+    code, out, err = run(root, repository, missing_routes, "--check", "--answers", moved_answers)
+    check("check: an entry naming a pull request that does not exist refuses with exit 1, naming it",
+          code == 1 and "entry 2" in err and "pull request 41" in err and "no such pull request" in err
+          and "open it as CLAUDE.md says" in err and "correct it so that the entry starts" in err
+          and "If the change did not move after all" in err and "carries it, or" in err
+          and f"The check is: python3 {PROGRAM} {NUMBER} --check --answers {moved_answers}" in err, out + err)
+    failing_routes = routes_for(frozen_head, reviews)
+    failing_routes["pr view 41 --json number"] = {"exit": 1, "stderr": "error connecting to api.github.com\n"}
+    code, out, err = run(root, repository, failing_routes, "--check", "--answers", moved_answers)
+    check("check: gh failing for another cause while checking a moved entry fails with exit 2",
+          code == 2 and "error connecting" in err and "no such pull request" not in err, out + err)
+    for text in ("Moved to pull request soon, once it is opened", "Moved to pull request #",
+                 "Moved to pull request: #41"):
+        prefix_only = answers_file(root, f"1. Fixed.\n2. {text}\n")
+        code, out, err = run(root, repository, routes_for(frozen_head, reviews),
+                             "--check", "--answers", prefix_only)
+        check(f"check: a moved entry with no pull request number or URL refuses with exit 1: {text!r}",
+              code == 1 and "entry 2" in err and "no pull request number or URL follows" in err
+              and "open it as CLAUDE.md says" in err and "If the change did not move after all" in err
+              and f"The check is: python3 {PROGRAM} {NUMBER} --check --answers {prefix_only}" in err,
+              out + err)
 
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", str(root / "no-such-file"))
@@ -1000,7 +1052,349 @@ def gh_timeout_case():
         program.subprocess.run = original_run
 
 
+LOCAL_BRANCH = f"fix-round-pull-request-{NUMBER}-review-11"
+NEW_BRANCH = "moved-change-topic-branch"
+PARTLY_MAIN = "".join(f"line {n}\n" for n in range(1, 21))
+PARTLY_FROZEN = PARTLY_MAIN.replace("line 2\n", "line 2 kept\n").replace("line 18\n", "line 18 moved\n")
+PARTLY_KEPT_ONLY = PARTLY_MAIN.replace("line 2\n", "line 2 kept\n")
+PARTLY_MOVED_ONLY = PARTLY_MAIN.replace("line 18\n", "line 18 moved\n")
+ANSWERS_TEXT = "1. Fixed.\n2. Moved.\n"
+# Stands in for scripts/run-all-test-suites.py in the scratch repository.
+FAKE_TESTS = 'import os, sys\nsys.exit(int(os.environ.get("FAKE_TESTS_EXIT", "0")))\n'
+# A git that leaves a branch in place on git branch -D, so the program's check that the branch is gone can fail.
+GIT_KEEPING_DELETED_BRANCH = r'''#!/usr/bin/env python3
+import os, sys
+if "branch" in sys.argv and "-D" in sys.argv:
+    sys.exit(0)
+os.execv(os.environ["REAL_GIT"], ["git", *sys.argv[1:]])
+'''
+
+
+def move_repository(root):
+    """A repository with a bare origin; topic adds moved.py and changes two lines of partly.txt, and the round's
+    local branch undoes moved.py and the moved line, keeping the other."""
+    origin = root / "origin.git"
+    git(root, "init", "-q", "--bare", "-b", "main", str(origin))
+    repository = root / "move-repository"
+    repository.mkdir()
+    git(repository, "init", "-q", "-b", "main")
+    git(repository, "config", "user.email", "test@example.invalid")
+    git(repository, "config", "user.name", "test")
+    git(repository, "remote", "add", "origin", str(origin))
+    # No .gitignore: a branch cut before .gitignore named the answers file shows it as untracked.
+    (repository / "scripts").mkdir()
+    (repository / "scripts" / "run-all-test-suites.py").write_text(FAKE_TESTS)
+    (repository / "partly.txt").write_text(PARTLY_MAIN)
+    git(repository, "add", "-A")
+    git(repository, "commit", "-q", "-m", "main")
+    git(repository, "push", "-q", "origin", "main")
+    git(repository, "fetch", "-q", "origin")
+    git(repository, "switch", "-q", "-c", "topic")
+    (repository / "moved.py").write_text("moved\n")
+    (repository / "partly.txt").write_text(PARTLY_FROZEN)
+    git(repository, "add", "-A")
+    git(repository, "commit", "-q", "-m", "topic work")
+    frozen_head = git(repository, "rev-parse", "HEAD")
+    git(repository, "switch", "-q", "-c", LOCAL_BRANCH)
+    git(repository, "rm", "-q", "moved.py")
+    (repository / "partly.txt").write_text(PARTLY_KEPT_ONLY)
+    git(repository, "add", "-A")
+    git(repository, "commit", "-q", "-m", "fix-round: move the change out")
+    (repository / ANSWERS_NAME).write_text(ANSWERS_TEXT)
+    return repository, frozen_head
+
+
+def move_routes(frozen_head, body, pull_request_create=None):
+    routes = routes_for(frozen_head, [review(commit_id=frozen_head)])
+    routes[f"pr create --base main --head {NEW_BRANCH} --title Move it --body-file {body}"] = (
+        pull_request_create or {"stdout": "https://github.com/o/r/pull/41\n"})
+    return routes
+
+
+def move_cases(root, _repository, _base, _frozen_head):
+    repository, frozen_head = move_repository(root)
+    answers = repository / ANSWERS_NAME
+    body = root / "description.md"
+    body.write_text("Moves the timeout change.\n")
+    routes = move_routes(frozen_head, body)
+    finish = ("--move-change-to-own-pull-request-finish", "--title", "Move it", "--body-file", str(body))
+
+    code, out, err = run(root, repository, routes, *finish)
+    check("move-finish: refuses when no move is under way, exit 1", code == 1 and "No move is under way" in err, err)
+    (repository / "stray.txt").write_text("stray\n")
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    check("move-start: refuses a worktree with changes outside the round's commit, naming them",
+          code == 1 and "stray.txt" in err and git(repository, "branch", "--show-current") == LOCAL_BRANCH, err)
+    (repository / "stray.txt").unlink()
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "missing.py")
+    check("move-start: refuses a path the frozen-head does not hold",
+          code == 1 and f"frozen-head {frozen_head[:12]} has no file missing.py" in err, err)
+    git(repository, "switch", "-q", "topic")
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    check("move-start: refuses on any branch but the round's local branch",
+          code == 1 and f"runs on the round's local branch {LOCAL_BRANCH}, but this worktree is on topic" in err, err)
+    git(repository, "switch", "-q", LOCAL_BRANCH)
+    round_commit = git(repository, "rev-parse", "HEAD")
+    git(repository, "reset", "-q", "--keep", frozen_head)
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    check("move-start: refuses before the round's commit exists", code == 1 and "no commit on top of the frozen-head" in err, err)
+    git(repository, "reset", "-q", "--keep", round_commit)
+    state_file = repository / ".git" / "fix-round-move-to-own-pull-request.json"
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch",
+                         "bad..name", "moved.py")
+    check("move-start: a switch git refuses fails with exit 2, leaving nothing recorded and the answers file in place",
+          code == 2 and "bad..name" in err and answers.read_text() == ANSWERS_TEXT and not state_file.exists()
+          and git(repository, "branch", "--show-current") == LOCAL_BRANCH, out + err)
+    git(repository, "branch", NEW_BRANCH, "origin/main")
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch",
+                         NEW_BRANCH, "moved.py")
+    check("move-start: refuses a new topic branch that already exists, leaving the answers file in place",
+          code == 1 and f"A local branch {NEW_BRANCH} already exists" in err
+          and answers.read_text() == ANSWERS_TEXT and not state_file.exists()
+          and git(repository, "branch", "--show-current") == LOCAL_BRANCH, out + err)
+    git(repository, "branch", "-q", "-D", NEW_BRANCH)
+
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    check("move-start: switches to the new topic branch cut from origin/main, with the named file copied whole",
+          code == 0 and git(repository, "branch", "--show-current") == NEW_BRANCH
+          and f"copied from the frozen-head {frozen_head[:12]}." in out
+          and git(repository, "merge-base", "HEAD", "origin/main") == git(repository, "rev-parse", "origin/main")
+          and (repository / "moved.py").read_text() == "moved\n"
+          and (repository / "partly.txt").read_text() == PARTLY_MAIN, out + err)
+    check("move-start: sets the answers file aside, out of the new topic branch's worktree", not answers.exists(), err)
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", "another-branch")
+    check("move-start: refuses a second move while one is under way", code == 1 and "already under way" in err, err)
+    git(repository, "switch", "-q", "main")
+    code, out, err = run(root, repository, routes, *finish)
+    check("move-finish: refuses on any branch but the one --move-change-to-own-pull-request-cut-new-topic-branch made",
+          code == 1 and f"runs on {NEW_BRANCH}, which --move-change-to-own-pull-request-cut-new-topic-branch made, but this worktree is on main" in err, err)
+    git(repository, "switch", "-q", NEW_BRANCH)
+    (repository / "partly.txt").write_text(PARTLY_MOVED_ONLY)
+
+    answers.write_text("a new answers file\n")
+    code, out, err = run(root, repository, routes, *finish)
+    check("move-finish: refuses while an answers file is in the worktree, and commits nothing",
+          code == 1 and "would carry it" in err
+          and git(repository, "rev-parse", "HEAD") == git(repository, "rev-parse", "origin/main"), err)
+    answers.unlink()
+    inside = repository / "description-inside.md"
+    inside.write_text("inside\n")
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-finish", "--title", "Move it", "--body-file", str(inside))
+    check("move-finish: refuses a description file inside the worktree", code == 1 and "inside this worktree" in err, err)
+    inside.unlink()
+    code, out, err = run(root, repository, routes, *finish, environment_extra={"FAKE_TESTS_EXIT": "3"})
+    check("move-finish: a failing test command stops it before the commit",
+          code == 1 and "exited 3" in err
+          and git(repository, "rev-parse", "HEAD") == git(repository, "rev-parse", "origin/main"), err)
+
+    code, out, err = run(root, repository, routes, *finish)
+    pushed = git(repository, "ls-tree", "-r", "--name-only", f"origin/{NEW_BRANCH}").split("\n")
+    check("move-finish: pushes the moved change alone, without the answers file",
+          code == 0 and sorted(pushed) == sorted(["moved.py", "partly.txt", "scripts/run-all-test-suites.py"])
+          and git(repository, "show", f"origin/{NEW_BRANCH}:partly.txt") + "\n" == PARTLY_MOVED_ONLY, out + err)
+    check("move-finish: opens the pull request with the given title and description",
+          ["pr", "create", "--base", "main", "--head", NEW_BRANCH, "--title", "Move it", "--body-file", str(body)]
+          in gh_calls(root), str(gh_calls(root)))
+    check("move-finish: switches back to the round's branch and restores the answers file",
+          git(repository, "branch", "--show-current") == LOCAL_BRANCH and answers.read_text() == ANSWERS_TEXT, out + err)
+    check("move-finish: deletes the new topic branch's local branch",
+          git(repository, "branch", "--list", NEW_BRANCH) == "", git(repository, "branch"))
+    check("move-finish: prints the entry that answers the finding",
+          "Moved to pull request https://github.com/o/r/pull/41" in out, out)
+
+    patch = git(repository, "diff", "origin/main", f"origin/{NEW_BRANCH}") + "\n"
+    check_routes = routes_for(frozen_head, [review(commit_id=frozen_head)])
+    check_routes["pr view 41 --json number"] = {"stdout": json.dumps({"number": 41})}
+    check_routes["pr diff 41"] = {"stdout": patch}
+    moved_entry = answers_file(root, "1. Fixed.\n2. Moved to pull request #41\n")
+    code, out, err = run(root, repository, check_routes, "--check", "--answers", moved_entry)
+    check("check: a moved change undone here passes, with a partly moved file's kept part still here",
+          code == 0 and "PASS" in out, out + err)
+    corrupt_routes = dict(check_routes)
+    corrupt_routes["pr view 42 --json number"] = {"stdout": json.dumps({"number": 42})}
+    corrupt_routes["pr diff 42"] = {"stdout": "diff --git a/moved.py b/moved.py\n--- a/moved.py\n+++ b/moved.py\n"
+                                              "@@ -1,2 +1,2 @@\nnot a patch line\n"}
+    corrupt_entry = answers_file(root, "1. Fixed.\n2. Moved to pull request #42\n")
+    code, out, err = run(root, repository, corrupt_routes, "--check", "--answers", corrupt_entry)
+    check("check: a moved pull request's patch git cannot parse fails with exit 2, not a pass",
+          code == 2 and "on pull request 42's patch" in err and "PASS" not in out, out + err)
+    moved_entry = answers_file(root, "1. Fixed.\n2. Moved to pull request #41\n")
+    for name, moved_kept_here, partly_text, expected in (
+            ("a whole moved file", True, PARTLY_KEPT_ONLY, "moved.py"),
+            ("a partly moved file's moved part", False, PARTLY_FROZEN, "partly.txt")):
+        git(repository, "switch", "-q", "-c", f"not-undone-{expected}", frozen_head)
+        if not moved_kept_here:
+            git(repository, "rm", "-q", "moved.py")
+        (repository / "partly.txt").write_text(partly_text)
+        git(repository, "add", "-A")
+        git(repository, "commit", "-q", "-m", "round that forgot to undo")
+        code, out, err = run(root, repository, check_routes, "--check", "--answers", moved_entry)
+        check(f"check: refuses, exit 1, when {name} is still here, naming the commit and the file",
+              code == 1 and "would land twice" in err and expected in err
+              and f"but {git(repository, 'rev-parse', 'HEAD')[:12]} still holds" in err
+              and ("partly.txt" not in err if expected == "moved.py" else "moved.py" not in err), out + err)
+        git(repository, "switch", "-q", LOCAL_BRANCH)
+
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", "second-moved-change-topic-branch")
+    check("move-start: a second move in the same worktree sets the answers file aside again",
+          code == 0 and not answers.exists()
+          and git(repository, "branch", "--show-current") == "second-moved-change-topic-branch", out + err)
+    code, out, err = run(root, repository, routes, *finish)
+    check("move-finish: refuses a new topic branch that holds no change", code == 1 and "nothing to move" in err, err)
+
+
+def move_failure_after_push_cases(root, _repository, _base, _frozen_head):
+    for name, extra, create, expected in (
+            ("the local branch survives git branch -D", True, None, "left the branch in place"),
+            ("gh pr create fails", False, {"exit": 1, "stderr": "pull request create failed\n"}, "exited 1")):
+        case_root = root / name.replace(" ", "-")
+        case_root.mkdir()
+        repository, frozen_head = move_repository(case_root)
+        body = case_root / "description.md"
+        body.write_text("Moves the timeout change.\n")
+        routes = move_routes(frozen_head, body, create)
+        run(case_root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+        (repository / "partly.txt").write_text(PARTLY_MOVED_ONLY)
+        environment_extra = None
+        if extra:
+            wrapper_directory = case_root / "git-keeping-deleted-branch"
+            wrapper_directory.mkdir()
+            (wrapper_directory / "git").write_text(GIT_KEEPING_DELETED_BRANCH)
+            (wrapper_directory / "git").chmod(0o755)
+            environment_extra = {"REAL_GIT": shutil.which("git"),
+                                 "PATH": f"{wrapper_directory}{os.pathsep}{case_root / 'bin'}{os.pathsep}{os.environ['PATH']}"}
+        code, out, err = run(case_root, repository, routes, "--move-change-to-own-pull-request-finish", "--title", "Move it",
+                             "--body-file", str(body), environment_extra=environment_extra)
+        check(f"move-finish: when {name} after the push, exit 2 naming what failed and every step still to do",
+              code == 2 and expected in err and f"committed on {NEW_BRANCH} as" in err
+              and f"git switch {LOCAL_BRANCH}" in err and f"git branch -D {NEW_BRANCH}" in err
+              and "Do these by hand" in err and "resumes at the push" not in err, out + err)
+
+
+def move_push_failure_cases(root, _repository, _base, _frozen_head):
+    repository, frozen_head = move_repository(root)
+    answers = repository / ANSWERS_NAME
+    body = root / "description.md"
+    body.write_text("Moves the timeout change.\n")
+    routes = move_routes(frozen_head, body)
+    finish = ("--move-change-to-own-pull-request-finish", "--title", "Move it", "--body-file", str(body))
+    run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    (repository / "partly.txt").write_text(PARTLY_MOVED_ONLY)
+    origin, hidden = root / "origin.git", root / "origin-hidden.git"
+    origin.rename(hidden)
+    code, out, err = run(root, repository, routes, *finish)
+    commit = git(repository, "rev-parse", "HEAD")
+    check("move-finish: a failed push exits 2, naming the commit made and the push still to do, never 'pushed'",
+          code == 2 and f"committed on {NEW_BRANCH} as {commit[:12]}" in err
+          and f"push {NEW_BRANCH} with git push origin {NEW_BRANCH}" in err and "Do these by hand" in err
+          and "resumes at the push" not in err
+          and "is pushed" not in err and git(repository, "branch", "--show-current") == NEW_BRANCH, out + err)
+    hidden.rename(origin)
+    base = git(repository, "rev-parse", "origin/main")
+    code, out, err = run(root, repository, routes, *finish)
+    check("move-finish: a second run refuses the commit an earlier run made, naming the reset that undoes it",
+          code == 1 and f"already holds commit {commit[:12]}" in err and f"git reset --soft {base}" in err
+          and not git(repository, "ls-remote", "origin", NEW_BRANCH), out + err)
+    git(repository, "commit", "-q", "--amend", "--no-edit", "--allow-empty")
+    git(repository, "reset", "-q", "--soft", base)
+    code, out, err = run(root, repository, routes, *finish)
+    check("move-finish: after the reset the refusal names, even of an amended commit, a run tests, commits once and pushes",
+          code == 0 and git(repository, "rev-list", "--count", f"origin/main..origin/{NEW_BRANCH}") == "1"
+          and git(repository, "branch", "--show-current") == LOCAL_BRANCH and answers.read_text() == ANSWERS_TEXT
+          and "Moved to pull request https://github.com/o/r/pull/41" in out, out + err)
+
+
+def move_hand_commit_cases(root, _repository, _base, _frozen_head):
+    repository, frozen_head = move_repository(root)
+    body = root / "description.md"
+    body.write_text("Moves the timeout change.\n")
+    routes = move_routes(frozen_head, body)
+    finish = ("--move-change-to-own-pull-request-finish", "--title", "Move it", "--body-file", str(body))
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    check("move-start: says to leave the hand-made part uncommitted for the finish step",
+          code == 0 and "leave it uncommitted" in out, out + err)
+    base = git(repository, "rev-parse", "origin/main")
+    (repository / "partly.txt").write_text(PARTLY_MOVED_ONLY)
+    git(repository, "add", "-A")
+    git(repository, "commit", "-q", "-m", "committed by hand")
+    code, out, err = run(root, repository, routes, *finish)
+    pushed = git(repository, "ls-remote", "origin", NEW_BRANCH)
+    check("move-finish: refuses a commit it did not make and test, pushing nothing",
+          code == 1 and "already holds commit" in err and f"git reset --soft {base}" in err and not pushed, out + err)
+
+
+PRE_PUSH_CHECKED_LINES = ("pre-push: starting the selective test run on /x, which can take up to 480 seconds.",
+                          "pre-push: the selective test run passed. SUMMARY: 3 passed, 0 failed, 3 total")
+PRE_PUSH_SKIP_LINE = ("pre-push: the selective test run ran past its time limit, so this push goes ahead without "
+                      "the selective test run: topic.")
+# Worded as scripts/git-client-side-hooks-pre-push-conflict-check.py words them; neither holds a phrase the
+# selective test run's skip lines share.
+PRE_PUSH_CONFLICT_CHECK_SKIP_LINE = ("pre-push: branch topic was not checked for conflicts with origin/main, because "
+                                     "it had not finished when the 60-second time budget ran out, and was stopped.")
+PRE_PUSH_REVERT_CHECK_SKIP_LINE = ("pre-push: branch topic was not checked for files set back to a version that "
+                                   "origin/main has replaced, because it could not decide: no merge base.")
+
+
+def move_with_pre_push_hook(case_root, hook_lines, pull_request_create=None):
+    """Runs a whole move whose pre-push hook prints hook_lines on stderr and exits 0."""
+    repository, frozen_head = move_repository(case_root)
+    body = case_root / "description.md"
+    body.write_text("Moves the timeout change.\n")
+    routes = move_routes(frozen_head, body, pull_request_create)
+    hooks = case_root / "hooks"
+    hooks.mkdir()
+    (hooks / "pre-push").write_text("#!/bin/sh\n" + "".join(f"echo '{line}' >&2\n" for line in hook_lines) + "exit 0\n")
+    (hooks / "pre-push").chmod(0o755)
+    git(repository, "config", "core.hooksPath", str(hooks))
+    run(case_root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    (repository / "partly.txt").write_text(PARTLY_MOVED_ONLY)
+    return run(case_root, repository, routes, "--move-change-to-own-pull-request-finish", "--title", "Move it",
+               "--body-file", str(body))
+
+
+def move_pre_push_hook_output_cases(root, _repository, _base, _frozen_head):
+    checked_root = root / "checked"
+    checked_root.mkdir()
+    code, out, err = move_with_pre_push_hook(checked_root, PRE_PUSH_CHECKED_LINES)
+    check("move-finish: when the pre-push hook checks the push and prints its start and pass lines, exit 0 with "
+          "the success line, naming the answers file the entry goes in, and the hook's lines labelled after it",
+          code == 0 and "Moved to https://github.com/o/r/pull/41" in out
+          and "Answer the finding in the answers file, /" in out
+          and "printed the lines below on stderr during the push" in out
+          and all(line in out for line in PRE_PUSH_CHECKED_LINES), out + err)
+    for name, lines in (("selective-run-skip", (PRE_PUSH_SKIP_LINE,)),
+                        ("conflict-check-skip", (PRE_PUSH_CONFLICT_CHECK_SKIP_LINE, PRE_PUSH_CHECKED_LINES[1])),
+                        ("revert-check-skip", (PRE_PUSH_REVERT_CHECK_SKIP_LINE,))):
+        case_root = root / name
+        case_root.mkdir()
+        code, out, err = move_with_pre_push_hook(case_root, lines)
+        check(f"move-finish ({name}): when the pre-push hook lets the push through after skipping a check, exit 0 "
+              "with the success line and every line the hook printed, labelled, after it",
+              code == 0 and "Moved to https://github.com/o/r/pull/41" in out
+              and "printed the lines below on stderr during the push" in out
+              and all(line in out for line in lines), out + err)
+    silent_root = root / "silent"
+    silent_root.mkdir()
+    code, out, err = move_with_pre_push_hook(silent_root, ())
+    check("move-finish: when the pre-push hook prints nothing, exit 0 with the success line and no hook label",
+          code == 0 and "Moved to https://github.com/o/r/pull/41" in out and "printed the lines below" not in out,
+          out + err)
+    failed_root = root / "skip-then-gh-fails"
+    failed_root.mkdir()
+    code, out, err = move_with_pre_push_hook(failed_root, (PRE_PUSH_CONFLICT_CHECK_SKIP_LINE,),
+                                             {"exit": 1, "stderr": "pull request create failed\n"})
+    check("move-finish: when the pre-push hook skips a check and gh pr create then fails, exit 2 with the hook's "
+          "lines labelled in the failure report",
+          code == 2 and "Do these by hand" in err and PRE_PUSH_CONFLICT_CHECK_SKIP_LINE in err
+          and "printed the lines below on stderr during the push" in err, out + err)
+
+
 gh_timeout_case()
+case("move", move_cases)
+case("move hand commit", move_hand_commit_cases)
+case("move failure after push", move_failure_after_push_cases)
+case("move push failure", move_push_failure_cases)
+case("move pre-push hook output", move_pre_push_hook_output_cases)
 case("brief", brief_cases)
 case("check", check_cases)
 case("commissioned reviewer", commissioned_reviewer_cases)

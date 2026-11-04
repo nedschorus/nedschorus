@@ -36,7 +36,7 @@ those with no dot, sit on any heading other than `##`, as in `## Part 2`
 headings over `### Item 2 of 3` items, has no unnumbered items: its `##`
 headings are parts or sections. A dotted count, as in a `### Item 1.1 of 3`
 sub-step, does not decide this. The answer program's close step numbers an
-unnumbered item when it is shown. M is display only: approval_walk_item_count counts it from the
+unnumbered item when it is shown. M is display only: approval_walk_item_total_shown_and_waiting_counted_from_walk_document counts it from the
 walk-document, the whole numbers its item headings hold, a dotted number
 counting as the item before its first dot, plus its unnumbered items, so an
 item added changes no other heading. The close step writes it into the
@@ -66,7 +66,7 @@ number is read whole and so is not item 5's, a label whose bold ends before `of`
 or a line inside a quotation, a nested list or an HTML block. When an item of the unit
 has no opening, its items are not told apart, and the UserPromptSubmit hook
 says it cannot read their recommendations. A heading that says `revised` right after its
-count replaces the earlier units it names; the note `(deferred: moved to the end of
+`of M` replaces the earlier units it names; the note `(deferred: moved to the end of
 the walk)`, which the answer program's close step puts right after a deferred item's
 count, is read as absent, here and by every program that loads this module. A
 running count that names no item still ends the unit before it. A top-level heading that opens with
@@ -446,7 +446,7 @@ def item_unit_spans(document_text, parser):
     ends the unit before it; its unit has no numbers, and problem names the heading and
     says why. An unnumbered item, as the module docstring says, starts a unit with no numbers, M None and
     problem None; approval_walk_unit_is_unnumbered_item tells it apart. problem is None for every other
-    unit. A unit is left out when a later heading that says `revised` right after its count names all of its
+    unit. A unit is left out when a later heading that says `revised` right after its `of M` names all of its
     items, whatever M either heading gives.
     """
     lines = document_text.split("\n")
@@ -541,7 +541,7 @@ def approval_walk_unit_is_unnumbered_item(unit):
     return not numbers and problem is None
 
 
-def approval_walk_item_count(units):
+def approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units):
     """M, as a string: the whole numbers the numbered items of units hold, a dotted number such as 6.1 counting
     as its item 6, plus the unnumbered items; so it counts the items shown and the items waiting."""
     whole = {number.split(".")[0] for unit in units for number in unit[0]}
@@ -557,8 +557,8 @@ def approval_walk_next_unnumbered_item_number(units):
 def waiting_item_units(document, value, numbers, total, parser, all_units=None):
     """Return (M to show, the units of item_unit_spans that hold the waiting items) for the item numbers and
     total that parse_items read from the `#next_to_present` value, total None when it gives none. M to show is
-    total, which the close step writes as approval_walk_item_count counted it, or, when the value gives none,
-    approval_walk_item_count's.
+    total, which the close step writes as approval_walk_item_total_shown_and_waiting_counted_from_walk_document counted it, or, when the value gives none,
+    approval_walk_item_total_shown_and_waiting_counted_from_walk_document's.
 
     Each waiting item's unit is the one heading that names it, whatever M the heading gives; total is read only
     to choose between two headings that name the same item and are not revisions, as in a walk-document
@@ -600,10 +600,12 @@ def waiting_item_units(document, value, numbers, total, parser, all_units=None):
         raise UnusableRange(
             f"its walk-document has more than one heading for {named}, so the hook cannot tell "
             f"which one the minutes name: if those headings give different totals, as `of 9` and `of 10` do, end "
-            f"the minutes with the line `#next_to_present item N of M`, N and M copied from the heading you mean, "
-            f"as in `#next_to_present item 4 of 9` for `## Item 4 of 9: <the point>`; otherwise, in the "
-            f"walk-document, start the text of each heading you do not mean with `Withdrawn`, as in "
+            f"the minutes with the line `#next_to_present item N of M`, a new last line below any earlier `#next_to_present` "
+            f"line, N and M copied from the heading you mean, "
+            f"as in `#next_to_present item 4 of 9` for `## Item 4 of 9: <the point>`; if they give the same total, in the "
+            f"walk-document, put `Withdrawn: ` just before `Item` in each heading you do not mean, as in "
             f"`## Withdrawn: Item 4 of 9: <the point>`, or, only when the heading you mean comes after every other "
-            f"heading for that item, write `revised` right after its count instead, as in `## Item 4 of 9 revised: <the point>`.")
-    shown_total = total if total is not None else approval_walk_item_count(all_units)
+            f"heading for that item, write `revised` right after its `of M` instead of marking any heading `Withdrawn: `, "
+            f"the colon staying before `revised` or moving after it, as in `## Item 4 of 9 revised: <the point>`.")
+    shown_total = total if total is not None else approval_walk_item_total_shown_and_waiting_counted_from_walk_document(all_units)
     return shown_total, [unit for unit in all_units if unit in chosen]

@@ -517,7 +517,9 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               "walk-minutes. Add new items just after the item it resumes at: the next "
               "step's own item first, when it needs him, then the rest in the order "
               "/walk-me-through gives. When nothing needs him, open no approval-walk. "
-              "2. While he answers, take the next step."),
+              "2. While he answers, or at once when nothing needs him, take the next step, "
+              "then start each ready task on your task list: a task another agent-seat owns "
+              "goes to that agent-seat, any other to a background subagent or Codex."),
           repr(supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION))
     # This fixture passes no sync report and no roster, and its verbatim block
     # is not unterminated, so the one-approval-walk instruction is the last of
@@ -526,7 +528,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     check("the one-approval-walk instruction ends the preamble, and nothing is appended at the call site",
           nothing_is_appended_to(
               prompt,
-              "open no approval-walk. 2. While he answers, take the next step.",
+              "to a background subagent or Codex.",
               "\n\nThen take the next step:\nfinish the supervisor"),
           prompt[:800])
     check("the supervisor-pointer sentence is cut", "investigate the handoff mechanism" not in prompt
@@ -571,7 +573,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     check("the branch-state instruction follows the sync result, exactly, and nothing is appended at the call site",
           nothing_is_appended_to(
               synced_prompt,
-              "open no approval-walk. 2. While he answers, take the next step. "
+              "to a background subagent or Codex. "
               "launch-time-git-sync: fixture-branch is 3 commit(s) behind main — This "
               "branch has never been pushed: rebase it onto origin/main before your "
               "first substantive action and rerun the tests for what you touched.",
@@ -598,7 +600,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     check("a checkout on main gets the sync result and no branch-state instruction",
           nothing_is_appended_to(
               on_main_prompt,
-              "take the next step. launch-time-git-sync: main is current with main",
+              "to a background subagent or Codex. launch-time-git-sync: main is current with main",
               expected_rest_after_the_branch_state_line), on_main_prompt)
     # The supervisor's other ignition shape composes the same instruction at a
     # second call site (`IgnitionPlanWithoutConversationTail.compose`). The
@@ -3235,8 +3237,10 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     older_prompt = supervisor.build_ignition_prompt(
         Path("/tmp/d.md"), {"written-at": recent, "next-step": "merge the queue"},
         predecessor_directory)
+    # The roster's words, not "subagent": the opening names background subagents as where ready tasks go.
     check("ignition says nothing about subagents when the handoff has no roster",
-          "subagent" not in older_prompt, older_prompt)
+          "still working" not in older_prompt and "subagents/agent-" not in older_prompt,
+          older_prompt)
 
     # Order is the writer's, not the dict's or a string sort's: field 10 comes
     # after field 9, and the successor reads them in the order they were spawned.

@@ -100,40 +100,41 @@ def files(checkout):
 def run_one_alert_cases(root):
     checkout, home = walk_checkout(root, "one")
     claimed_alert(home, "alert-a", "merge-lane-2 is down, and recovery refuses it")
+    _, minutes_before = files(checkout)
     result = run(checkout, home, "alert-a")
     document, minutes = files(checkout)
     check("one alert is added and the program exits 0", result.returncode == 0, result.stderr)
     lines = document.split("\n")
-    added = "## Item 4.1 of 10: merge-lane-2 is down, and recovery refuses it"
-    check("the alert becomes item 4.1, right after waiting item 4 and before the next item",
-          added in lines and lines.index("## Item 4 of 9: a filter".replace("of 9", "of 10"))
-          < lines.index(added) < lines.index("## Items 5 and 6 of 10: two small corrections"), document)
+    added = "## merge-lane-2 is down, and recovery refuses it"
+    check("the alert becomes an unnumbered `## <title>` item, right after waiting item 4 and before the next item",
+          added in lines and lines.index("## Item 4 of 9: a filter")
+          < lines.index(added) < lines.index("## Items 5 and 6 of 9: two small corrections"), document)
     check("the added item holds the alert's text in a fence and what can be done",
           "```text\nmerge-lane-2 is down.\n  ssh -t nedlern@ned-box 'recover'\n```" in document
           and "What can be done: Restart it." in document, document)
-    check("every running count that opens a line outside code is raised to the new item count",
-          "## Item 3 of 10:" in document and "Item 5 of 10 fixes" in document
-          and "**Item 6 of 10** drops" in document and "## Item 9 of 10: summary" in document, document)
-    check("a count inside code, and one mentioned mid-sentence, keep their old item count",
-          "## Item 7 of 9: an example heading" in document and "mentions Item 4 of 9 in passing" in document,
-          document)
-    check("the walk-minutes get the `#user_alert` line and, last, the waiting item with the new item count",
-          "#user_alert alert-a\n#next_to_present item 4 of 10\n" in minutes
-          and minutes.rstrip("\n").endswith("#next_to_present item 4 of 10"), minutes)
-    check("the walk-minutes record the re-planning", "added item 4.1, from the alerts" in minutes, minutes)
+    check("no other heading or running count changes",
+          document.replace("\n" + "\n".join(lines[lines.index(added) - 1:lines.index(
+              "## Items 5 and 6 of 9: two small corrections") - 1]), "", 1) == WALK_DOCUMENT
+          and "of 10" not in document, document)
+    check("the walk-minutes get the re-planning line and the `#user_alert` line, and no new `#next_to_present` line",
+          minutes.startswith(minutes_before) and "#user_alert alert-a\n" in minutes
+          and "added 1 unnumbered item(s) right after item 4" in minutes
+          and minutes.count("#next_to_present") == 1, minutes)
     check("the output says what was added and tells the agent to write the case against and recommendation",
-          "Added item 4.1 of 10" in result.stdout and "Recommendation:" in result.stdout
-          and "now has 10 items" in result.stdout, result.stdout)
+          "Added the unnumbered item `## merge-lane-2 is down, and recovery refuses it`" in result.stdout
+          and "Recommendation:" in result.stdout and "`#case_against <rating>:" in result.stdout, result.stdout)
     parser = walk_finder.markdown_parser()
     value = walk_finder.open_walk(checkout / "docs" / "walk", parser)[1]
     numbers, total = walk_finder.parse_items(value)
     total, units = walk_finder.waiting_item_units(checkout / "docs/walk" / f"{WALK}.md", value, numbers, total,
                                                   parser)
-    order = [number for unit in walk_finder.item_unit_spans(document, parser) if unit[1] == "10"
-             for number in unit[0]]
-    check("the walk-me-through finder still finds the waiting item, and reads item 4.1 next after it",
-          total == "10" and units[0][0] == ["4"] and order == ["3", "4", "4.1", "5", "6", "9"],
-          repr((total, units, order)))
+    all_units = walk_finder.item_unit_spans(document, parser)
+    count_before = walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(walk_finder.item_unit_spans(WALK_DOCUMENT, parser))
+    check("the walk-me-through finder still finds waiting item 4, reads the added item as unnumbered, and counts "
+          "it in M",
+          units[0][0] == ["4"] and sum(map(walk_finder.approval_walk_unit_is_unnumbered_item, all_units)) == 1
+          and int(walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(all_units)) == int(count_before) + 1,
+          repr((units, all_units)))
 
 
 def run_several_alert_cases(root):
@@ -142,28 +143,33 @@ def run_several_alert_cases(root):
     claimed_alert(home, "alert-b", "second")
     result = run(checkout, home, "alert-a", "alert-b")
     document, minutes = files(checkout)
-    check("two alerts become items 4.1 and 4.2, in the order given, and the item count rises by two",
-          result.returncode == 0 and document.index("## Item 4.1 of 11: first")
-          < document.index("## Item 4.2 of 11: second") < document.index("## Items 5 and 6 of 11"),
+    check("two alerts become two unnumbered items, in the order given, right after waiting item 4",
+          result.returncode == 0 and document.index("## Item 4 of 9: a filter") < document.index("## first")
+          < document.index("## second") < document.index("## Items 5 and 6 of 9"),
           result.stderr + document)
     check("each alert gets its own `#user_alert` line",
-          "#user_alert alert-a\n#user_alert alert-b\n#next_to_present item 4 of 11" in minutes, minutes)
+          "#user_alert alert-a\n#user_alert alert-b\n" in minutes, minutes)
 
-    existing = WALK_DOCUMENT.replace("## Items 5 and 6", "## Item 4.1 of 9: added earlier\n\n## Items 5 and 6")
-    checkout, home = walk_checkout(root, "taken", document=existing)
-    claimed_alert(home, "alert-c", "third")
-    run(checkout, home, "alert-c")
-    document, _ = files(checkout)
-    check("an alert takes the lowest number after the waiting item's that no item uses",
-          "## Item 4.2 of 10: third" in document and "## Item 4.1 of 10: added earlier" in document, document)
-
-    sub_item = WALK_DOCUMENT.replace("## Items 5 and 6", "## Item 4.1 of 9: a part\n\n## Items 5 and 6")
+    sub_item = WALK_DOCUMENT.replace("## Items 5 and 6", "### Item 4.1 of 9: a part\n\n## Items 5 and 6")
     checkout, home = walk_checkout(root, "sub-item", waiting="item 4.1 of 9", document=sub_item)
     claimed_alert(home, "alert-d", "fourth")
-    run(checkout, home, "alert-d")
-    document, minutes = files(checkout)
-    check("while item 4.1 waits, the alert becomes item 4.1.1",
-          "## Item 4.1.1 of 10: fourth" in document and "#next_to_present item 4.1 of 10" in minutes, document)
+    result = run(checkout, home, "alert-d")
+    document, _ = files(checkout)
+    check("while sub-step 4.1 waits, the alert becomes an unnumbered item right after it",
+          result.returncode == 0
+          and document.index("### Item 4.1 of 9: a part") < document.index("## fourth")
+          < document.index("## Items 5 and 6 of 9"), result.stderr + document)
+
+    parts = ("# A walk\n\n## Part 1\n\n### Item 1 of 2: one\n\nRecommendation: go.\n\n"
+             "### Item 2 of 2: two\n\nRecommendation: stop.\n")
+    checkout, home = walk_checkout(root, "parts", waiting="item 1 of 2", document=parts)
+    claimed_alert(home, "alert-e", "fifth")
+    before = files(checkout)
+    result = run(checkout, home, "alert-e")
+    check("a walk-document whose items sit under `##` part headings makes the program exit 1, say to add the "
+          "alert by hand, and change nothing",
+          result.returncode == 1 and "`##` part headings" in result.stderr and "alert-e" in result.stderr
+          and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
 
 
 def run_refusal_cases(root):
@@ -182,6 +188,10 @@ def run_refusal_cases(root):
     check("an alert no longer in claimed/ makes the program exit 1, naming it in its refusal, and changes nothing",
           result.returncode == 1 and "the alert alert-gone cannot be read from" in result.stderr
           and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
+    check("an unreadable alert's refusal names the command to run again without it, and the pending/ it went back to",
+          f"leaving out alert-gone: python3 {PROGRAM.resolve()} --cwd {checkout} <the other ids>" in result.stderr
+          and f"gone back to {home / '.local/state/nedschorus/user-alerts/pending'}," in result.stderr,
+          result.stderr)
 
     checkout, home = walk_checkout(root, "not-an-object")
     (home / ".local/state/nedschorus/user-alerts/claimed" / "alert-list.json").write_text("[]", encoding="utf-8")
@@ -197,8 +207,16 @@ def run_refusal_cases(root):
     before = files(checkout)
     result = run(checkout, home, "alert-a")
     check("a waiting item the walk-document has no heading for makes the program exit 1 and change nothing",
-          result.returncode == 1 and "waiting item cannot be found" in result.stderr and "Item 8 of 9" in result.stderr
+          result.returncode == 1 and "waiting item cannot be found" in result.stderr
+          and "has no heading `Item 8`, which the minutes name" in result.stderr
           and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
+    check("an unfound waiting item's refusal names the whole command to run again, with the same alert ids",
+          f"then run again: python3 {PROGRAM.resolve()} --cwd {checkout} alert-a" in result.stderr, result.stderr)
+    # The program names the walk files under git's checkout top, which resolves a temporary directory's symlink.
+    walk = checkout.resolve() / "docs" / "walk"
+    check("an unfound waiting item's refusal names the walk-minutes and the walk-document to fix",
+          f"walk-minutes {walk / f'{WALK}-minutes.md'}" in result.stderr
+          and f"walk-document {walk / f'{WALK}.md'}" in result.stderr, result.stderr)
 
 
 with tempfile.TemporaryDirectory() as temporary_directory:
