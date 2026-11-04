@@ -86,6 +86,8 @@ class Harness:
         self.assess_as_though_leftover_shell_closed = None
         # Whether the seat's records say it stopped on purpose; a callable to raise instead.
         self.recorded_stop_on_purpose = False
+        # (title, notice text, action) -> alert id; None: the Watcher writes no alert.
+        self.user_alert_write_to_pending = None
 
     def assess(self, seat):
         if seat in self.assessment_errors:
@@ -125,7 +127,7 @@ class Harness:
             recover=self.recover, open_window=self.open_window,
             show_notice_words=lambda path: ["/usr/bin/python3", str(SCRIPT_PATH),
                                             "--show-notice", path],
-            open_page=self.open_page,
+            open_page=self.open_page, user_alert_write_to_pending=self.user_alert_write_to_pending,
             stopped_on_purpose=lambda seat, detail: self.on_purpose,
             recorded_exit_question=recovery_module.restart_question_for_a_seat_with_a_recorded_exit,
             open_seat_window=self.open_seat_window,
@@ -1087,6 +1089,8 @@ def run_report_run_failure_state_cases(root: Path):
         corrupt.mkdir()
         (corrupt / f"{watcher_module.PROGRAM}-state.json").write_text("{not json", encoding="utf-8")
         raised = None
+        pending_alerts = Path.home() / ".local/state/nedschorus/user-alerts/pending"
+        alerts_before = set(pending_alerts.glob("*.json"))
         try:
             watcher_module.report_run_failure("ValueError: bad state", corrupt, root / "corrupt-log")
         except Exception as error:  # noqa: BLE001 - the case checks that nothing escapes
@@ -1096,25 +1100,83 @@ def run_report_run_failure_state_cases(root: Path):
               raised is None and len(windows) == 1
               and list((root / "corrupt-log" / "notices").glob("*run-failed.txt")),
               repr((raised, windows)))
+        check("a failed run's notice is also written as an alert in the user-alerts pending directory",
+              len(set(pending_alerts.glob("*.json")) - alerts_before) == 1, repr(alerts_before))
         check("with an unreadable state, a notice the Mac missed is left for the next failing run",
               not reported.exists(), reported.read_text(encoding="utf-8") if reported.exists() else "")
+        windows_before_retry = len(windows)
+        watcher_module.report_run_failure("ValueError: bad state", corrupt, root / "corrupt-log")
+        check("a failed run retried with an unreadable state tries the Mac again but writes no second alert",
+              len(windows) > windows_before_retry
+              and len(set(pending_alerts.glob("*.json")) - alerts_before) == 1,
+              repr(sorted(set(pending_alerts.glob("*.json")) - alerts_before)))
 
         locked = root / "unsavable-state"
         locked.mkdir()
         (locked / f"{watcher_module.PROGRAM}-state.json").write_text("{}", encoding="utf-8")
-        locked.chmod(0o555)
         raised = None
+        alerts_before = set(pending_alerts.glob("*.json"))
+        state_file = locked / f"{watcher_module.PROGRAM}-state.json"
+        real_write_state = watcher_module.write_state
+
+        def write_state_refused(path, state):
+            if Path(path) == state_file:
+                raise PermissionError("state not writable")
+            return real_write_state(path, state)
+        watcher_module.write_state = write_state_refused
         try:
+            watcher_module.report_run_failure("OSError: disk", locked, root / "unsavable-log")
             watcher_module.report_run_failure("OSError: disk", locked, root / "unsavable-log")
         except Exception as error:  # noqa: BLE001 - the case checks that nothing escapes
             raised = error
         finally:
-            locked.chmod(0o755)
+            watcher_module.write_state = real_write_state
+        check("a failed run retried with a state that cannot be saved writes no second alert",
+              len(set(pending_alerts.glob("*.json")) - alerts_before) == 1,
+              repr(sorted(set(pending_alerts.glob("*.json")) - alerts_before)))
         decisions = (root / "unsavable-log" / "decisions.jsonl").read_text(encoding="utf-8")
         check("a state that cannot be saved is logged, and the error is not marked as reported",
               raised is None and "could not save the watcher's state" in decisions
               and not (locked / f"{watcher_module.PROGRAM}-reported-run-failures.txt").exists(),
               repr(raised))
+
+        unwritable = root / "unwritable-state"
+        unwritable.mkdir()
+        (unwritable / f"{watcher_module.PROGRAM}-state.json").write_text("{}", encoding="utf-8")
+        unwritable.chmod(0o555)
+        raised = None
+        try:
+            watcher_module.report_run_failure("OSError: read-only", unwritable, root / "unwritable-log")
+        except Exception as error:  # noqa: BLE001 - the case checks that nothing escapes
+            raised = error
+        finally:
+            unwritable.chmod(0o755)
+        decisions = (root / "unwritable-log" / "decisions.jsonl").read_text(encoding="utf-8")
+        check("a state directory where the alerted record cannot be written is logged, not raised",
+              raised is None and "could not record that the run failure's user alert was written"
+              in decisions, repr(raised))
+
+        flaky = root / "flaky-alert-state"
+        flaky.mkdir()
+        (flaky / f"{watcher_module.PROGRAM}-state.json").write_text("{not json", encoding="utf-8")
+        alerts_before = set(pending_alerts.glob("*.json"))
+        real_alert_writer = watcher_module.user_alerts.user_alert_write_to_pending
+        attempts = []
+
+        def alert_writer_failing_once(*arguments):
+            attempts.append(arguments)
+            if len(attempts) == 1:
+                raise OSError("user-alerts directory full")
+            return real_alert_writer(*arguments)
+        watcher_module.user_alerts.user_alert_write_to_pending = alert_writer_failing_once
+        try:
+            watcher_module.report_run_failure("OSError: x", flaky, root / "flaky-alert-log")
+            watcher_module.report_run_failure("OSError: x", flaky, root / "flaky-alert-log")
+        finally:
+            watcher_module.user_alerts.user_alert_write_to_pending = real_alert_writer
+        check("an alert write that fails is not recorded as alerted, so the next failing run writes it",
+              len(attempts) == 2 and len(set(pending_alerts.glob("*.json")) - alerts_before) == 1,
+              repr((len(attempts), sorted(set(pending_alerts.glob("*.json")) - alerts_before))))
     finally:
         watcher_module.open_mac_window = real_opener
         watcher_module.open_mac_browser_page = real_page_opener
@@ -1322,6 +1384,10 @@ def run_watch_wiring_cases(root: Path):
           and predicted[1][0] == "seat-a" and predicted[1][1] == root / "agents"
           and predicted[1][2] == root / "handoffs" and predicted[1][4] == [4242],
           repr(predicted))
+    check("watch() passes the shared user-alerts writer to the Watcher as user_alert_write_to_pending",
+          len(built) == 1
+          and built[0].get("user_alert_write_to_pending") is watcher_module.user_alerts.user_alert_write_to_pending,
+          repr(built))
     records = built[0].get("down_agent_seat_records_stopped_on_purpose") if len(built) == 1 else None
     check("watch() passes the Watcher a test of a refused seat's records that reads recovery's "
           "waiting handoff from the handoff directory",
@@ -1340,6 +1406,74 @@ def verdicts_assess_seat_returns_in_its_source():
             and isinstance(node.value.elts[0].value, str)}
 
 
+def run_user_alert_cases(root: Path):
+    """Each notice is also written as an alert for the user's approval-walk, beside its unchanged page."""
+    written = []
+    harness = Harness(root / "alert-written", recovery_result=(1, "merge-lane-2: REFUSED it"))
+    harness.user_alert_write_to_pending = lambda title, text, action: written.append((title, text, action)) or "alert-1"
+    crash_after_running(harness)
+    notices = harness.notices()
+    check("a notice is also written as one alert, titled by the notice's kind, holding the notice's text and "
+          "what an agent on ned-box can do",
+          len(written) == 1 and len(notices) == 1
+          and written[0] == ("merge-lane-2 is down: the crash watcher could not restart it",
+                             notices[0].read_text(encoding="utf-8"), watcher_module.FAILED_RESTART_NOTICE_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO),
+          repr(written))
+    check("the alert is logged with its id, and the notice's page still opens",
+          any(entry["decision"] == "user alert written" and entry["alert"] == "alert-1"
+              for entry in harness.decisions())
+          and [window[0] for window in harness.windows] == ["page"], repr(harness.windows))
+
+    written = []
+    harness = Harness(root / "alert-once-per-refusal")
+    harness.user_alert_write_to_pending = lambda title, text, action: written.append(title) or "alert-2"
+    refused_after_running(harness, "refuse", "a live process is rooted in /home/nedlern/agents/merge-lane-2")
+    check("a seat recovery keeps refusing gets one alert, as it gets one notice",
+          written == ["merge-lane-2 is down, and recovery refuses it"], repr(written))
+
+    def unwritable(title, text, action):
+        raise PermissionError(13, "Permission denied", "/home/nedlern/.local/state/nedschorus/user-alerts")
+    harness = Harness(root / "alert-not-written", recovery_result=(1, "merge-lane-2: REFUSED it"))
+    harness.user_alert_write_to_pending = unwritable
+    crash_after_running(harness)
+    check("an alert that cannot be written is logged, and the notice and its page still go to the Mac",
+          any(entry["decision"] == "user alert not written; the notice's page or window still opens"
+              and "PermissionError" in entry["error"] for entry in harness.decisions())
+          and len(harness.notices()) == 1 and [window[0] for window in harness.windows] == ["page"],
+          repr(harness.decisions()))
+    written = []
+    outside_line = ("recover-crashed-seats: merge-lane-2: "
+                    f"{recovery_module.AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER}"
+                    ": its tmux server could not be put in a scope, because systemd-run exited 1")
+    harness = Harness(root / "alert-not-for-a-restart", recovery_result=(0, f"{outside_line}\n"
+                                                                            "merge-lane-2: relaunched resuming x"))
+    harness.user_alert_write_to_pending = lambda title, text, action: written.append(title) or "alert-3"
+    try:
+        crash_after_running(harness)
+        raised = ""
+    except Exception as error:  # noqa: BLE001 - in production run_once turns this into a false run-failed alert
+        raised = f"{type(error).__name__}: {error}"
+    check("a restart recovery started outside the user's systemd manager gets its notice and no alert, "
+          "since only a failed restart needs the user",
+          not raised and written == [] and len(harness.notices()) == 1, repr((raised, written)))
+
+    written_kinds = notice_kinds_write_notice_is_called_with_in_the_watchers_source()
+    check("every kind of notice the watcher writes after a failed restart has an alert title, and every "
+          "title is for a kind the watcher writes",
+          set(watcher_module.FAILED_RESTART_NOTICE_KIND_TO_USER_ALERT_TITLE_TEMPLATE)
+          == written_kinds - {"started-outside-user-systemd-manager"}, repr(written_kinds))
+
+
+def notice_kinds_write_notice_is_called_with_in_the_watchers_source():
+    """The kind strings the crash watcher passes to write_notice, read from its source: the
+    second argument of each `.write_notice(...)` call."""
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    return {node.args[1].value for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "write_notice" and len(node.args) > 1
+            and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str)}
+
+
 def run_crashed_verdict_spelling_cases():
     returned = verdicts_assess_seat_returns_in_its_source()
     check("assess_seat's verdicts are found in recover-crashed-seats.py's source",
@@ -1351,6 +1485,8 @@ def run_crashed_verdict_spelling_cases():
 
 
 with tempfile.TemporaryDirectory() as temporary_directory:
+    # report_run_failure writes its alert under the home directory; this keeps the user's own alerts untouched.
+    os.environ["HOME"] = str(Path(temporary_directory) / "home")
     run_watch_wiring_cases(Path(temporary_directory))
     run_decision_cases(Path(temporary_directory))
     run_handled_crash_cases(Path(temporary_directory))
@@ -1365,6 +1501,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_report_run_failure_state_cases(Path(temporary_directory))
     run_state_cases(Path(temporary_directory))
     run_notice_page_cases(Path(temporary_directory))
+    run_user_alert_cases(Path(temporary_directory))
     run_crashed_verdict_spelling_cases()
 
 if failures:
