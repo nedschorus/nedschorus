@@ -637,12 +637,19 @@ def worker_start(checkout, new_process, search_file_directory, timeout,
     WORKER["search_file_directory"] = search_file_directory
 
 
+def rows_as_json_data(rows):
+    # A reading can hold a value of a class from a checkout's guard or shell reader, such as the reader's str
+    # subclass for a word that starts with ~. Those modules are loaded by file path, so pickle cannot name the
+    # class and a worker could not return the rows; the step writes them as JSON in any case.
+    return json.loads(json.dumps(rows))
+
+
 def worker_guard_rows(pairs):
     rows = []
     for command, working_directory in pairs:
         rows.append({key: list(value) for key, value in guard_readings(
             WORKER["guards"], command, working_directory, WORKER["search_file_directory"]).items()})
-    return rows, WORKER["switched"]
+    return rows_as_json_data(rows), WORKER["switched"]
 
 
 def search_file_main_outcome(guard, command, working_directory):
@@ -678,7 +685,7 @@ def worker_search_file_main_rows(pairs):
             # A failed reading; is_failed_reading() makes the run exit 2.
             row = list(failed_reading(error))
         rows.append(row)
-    return rows, WORKER["switched"]
+    return rows_as_json_data(rows), WORKER["switched"]
 
 
 def smoke_check(checkout, new_process, search_file_directory, timeout,
