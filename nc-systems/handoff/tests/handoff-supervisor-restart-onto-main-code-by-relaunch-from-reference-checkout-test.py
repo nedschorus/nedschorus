@@ -50,6 +50,8 @@ SCRIPT_PATH = SYSTEM_DIRECTORY / "handoff-supervisor-restart-onto-main-code-by-r
 _spec = importlib.util.spec_from_file_location("handoff_supervisor_restart", SCRIPT_PATH)
 program = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(program)
+# Every case runs as on ned-box, on either machine; the Mac's cases replace this with their own.
+program.on_the_mac = lambda: False
 
 SEAT = "restart-test-seat"
 AGENT_HOME = program.AGENTS_ROOT / SEAT
@@ -205,11 +207,10 @@ def start_fake_supervisor(under_shell=True, starts_claude=True, agent=SEAT, clau
 
 
 def running(process_id):
-    try:
-        state = Path(f"/proc/{process_id}/stat").read_text().rsplit(")", 1)[1].split()[0]
-        return state != "Z"
-    except OSError:
-        return program.process_command_line(process_id) is not None
+    # A fake ended while its parent lives stays a zombie, which ps still lists by its command line.
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(process_id)], capture_output=True,
+                           text=True).stdout.strip()
+    return bool(state) and not state.startswith("Z")
 
 
 def stop_fake(process_id):
