@@ -34,10 +34,12 @@ with the design:
      opens with, from both copies, and gives the `mv` and ship commands
      described below. Two machines reviewing one document on one day
      produce exactly this, and rsync alone would overwrite the first silently.
-     A store record holding any file the local directory does not hold is
-     refused the same way, before anything is copied: a record directory only
-     gains files, so that store record is another read's, and adding this
-     directory's files to it would file two reads under one name. Its one
+     A local directory with nothing to ship, no file the store lacks and no
+     changed triage file, is reported as nothing new, even when the store
+     holds files it lacks: it is a partial copy, such as one whose fast read
+     shipped from another checkout. One with something to ship is refused,
+     before anything is copied, when the store holds a file it lacks: that
+     store record is another read's. The refusal's one
      line gives the `mv` to the first name free in the checkout and in the
      store, and the command that ships the renamed directory. For a name
      that ends in its date the -N is counted from the date, so a second
@@ -50,7 +52,7 @@ with the design:
      (cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason), so this refusal is
      met only when the store could not be listed when the name was chosen,
      a directory was named by hand, or a file was removed from the local
-     directory after it shipped.
+     directory after it shipped and it then had something new to ship.
   3. FAIL LOUDLY. When ned-box cannot be reached the run prints a line
      opening FAILED and exits non-zero; the cold-read-record stays on disk,
      unshipped, for a later run; a shipment that stops after its copy has
@@ -70,8 +72,8 @@ with the design:
      store is left as it was. When that triage file is the only file the
      store holds and the record lacks, and the store does not also hold it
      under the record's name, the refusal prints the `mv` that renames the local
-     record's triage file to the store's name; otherwise it refuses the store's
-     record as another read's. It is the one file in a
+     record's triage file to the store's name; otherwise rule 2 applies as
+     for any other file. It is the one file in a
      cold-read-record written twice on purpose: the agent triages the
      reviewers' findings into it, and it is written again with the user's
      rulings once the approval-walk closes. Rules 1 and 2 refused that second
@@ -1250,8 +1252,12 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
 
     if differing:
         return refuse(differing)
-    # A record directory only ever gains files, so a store copy holding a file
-    # this directory lacks is another read that took the same name.
+    # A local copy can lack files the store holds, such as a fast read shipped
+    # from another checkout, so only a copy with something to ship is judged.
+    if not new_files and not triage_differs:
+        return nothing_new()
+    # Something to ship, and the store holds a file this directory lacks: two
+    # reads took the same name.
     held_only_in_store = sorted(set(in_store) - set(local))
     if held_only_in_store:
         local_triage_name = triage_file_name_held_only_locally_when_store_holds_it_only_under_the_other(
@@ -1270,8 +1276,6 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
               f"another read's: {', '.join(held_only_in_store)}. "
               f"{rename_and_ship_instruction()}")
         return EXIT_REFUSED
-    if not new_files and not triage_differs:
-        return nothing_new()
 
     # Copied beside the record's directory, then placed into it by the one
     # step: see ONE STEP, JUDGED BY WHAT THE STORE HOLDS in the docstring.
