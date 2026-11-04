@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for nc-systems/nc-shared-database/nc-shared-database-service-install-on-both-machines-from-the-mac.py
+"""Tests for nc-systems/nc-shared-database/nc-shared-database-service-on-ned-box-and-jobs-on-both-machines-install-from-the-mac.py
 
 The program's runner is replaced by a fake that records each (machine, command,
 standard input) and answers as each case asks, so nothing is installed and no
@@ -11,7 +11,7 @@ fails; a machine other than the Mac is refused; --print runs nothing. Two cases
 run the token and accepted-tokens commands in a real shell under a temporary
 HOME: a token is made once and kept, and the accepted-tokens file holds both.
 
-Run: python3 nc-systems/nc-shared-database/tests/nc-shared-database-service-install-on-both-machines-from-the-mac-test.py
+Run: python3 nc-systems/nc-shared-database/tests/nc-shared-database-service-on-ned-box-and-jobs-on-both-machines-install-from-the-mac-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -26,9 +26,9 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 PROGRAM_PATH = (REPOSITORY_ROOT / "nc-systems" / "nc-shared-database"
-                / "nc-shared-database-service-install-on-both-machines-from-the-mac.py")
+                / "nc-shared-database-service-on-ned-box-and-jobs-on-both-machines-install-from-the-mac.py")
 _spec = importlib.util.spec_from_file_location(
-    "nc_shared_database_service_install_on_both_machines_from_the_mac", PROGRAM_PATH)
+    "nc_shared_database_service_on_ned_box_and_jobs_on_both_machines_install_from_the_mac", PROGRAM_PATH)
 installer = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(installer)
 
@@ -61,7 +61,7 @@ class FakeRunner:
 
 
 def run_main(runner, arguments=(), platform="darwin"):
-    installer.PLATFORM = platform
+    installer.THIS_MACHINE_PLATFORM = platform
     out, err = io.StringIO(), io.StringIO()
     with redirect_stdout(out), redirect_stderr(err):
         code = installer.main(list(arguments), run=runner)
@@ -71,7 +71,7 @@ def run_main(runner, arguments=(), platform="darwin"):
 with tempfile.TemporaryDirectory() as directory:
     mac_token_file = Path(directory) / "mac.token"
     mac_token_file.write_text("mac-secret-token\n", encoding="utf-8")
-    installer.MAC_TOKEN_FILE_PATH = mac_token_file
+    installer.NC_SHARED_DATABASE_SERVICE_TOKEN_FILE_PATH = mac_token_file
     step_count = len(installer.install_steps())
 
     runner = FakeRunner()
@@ -89,13 +89,13 @@ with tempfile.TemporaryDirectory() as directory:
           and "accepted-tokens" in with_token_input[0][1]
           and not any("mac-secret-token" in c[1] for c in runner.calls), runner.calls)
     check("the reference-checkout steps test main's rename commit",
-          all(installer.FIRST_MAIN_COMMIT_WITH_THESE_FILES in runner.calls[i][1]
+          all(installer.MAIN_COMMIT_EACH_REFERENCE_CHECKOUT_MUST_HOLD in runner.calls[i][1]
               and "merge-base --is-ancestor" in runner.calls[i][1] for i in (0, 1)),
           runner.calls[:2])
     check("the unit enabled is the service's unit file, which exists in the repository",
           any("systemctl --user enable --now" in c[1] for c in runner.calls)
-          and (REPOSITORY_ROOT / installer.UNIT_FILE.replace(installer.REFERENCE_CHECKOUT + "/",
-                                                             "")).is_file(), installer.UNIT_FILE)
+          and (REPOSITORY_ROOT / installer.NC_SHARED_DATABASE_SERVICE_SYSTEMD_UNIT_FILE_PATH.replace(installer.REFERENCE_CHECKOUT + "/",
+                                                             "")).is_file(), installer.NC_SHARED_DATABASE_SERVICE_SYSTEMD_UNIT_FILE_PATH)
 
     runner = FakeRunner({7: (1, "", "sudo: a password is required")})
     code, out, err = run_main(runner)
@@ -104,7 +104,7 @@ with tempfile.TemporaryDirectory() as directory:
           code == 1 and len(runner.calls) == 7 and "stopped at step 7 on ned-box" in err
           and "sudo: a password is required" in err
           and installer.sudo_advice("ned-box", runner.calls[6][1]) in err
-          and installer.RERUN_LINE in err and installer.SUBAGENT_LINE in err
+          and installer.INSTALL_RERUN_INSTRUCTION_LINE in err and installer.SUBAGENT_REPORT_TO_DISPATCHING_AGENT_INSTRUCTION_LINE in err
           and "step 6 passed" in out, (code, out, err))
     sudo_line = next(part for part in err.split("`") if part.startswith("ssh -t "))
     check("the sudo advice gives the user an ssh -t command that hands ned-box the failed command, "
@@ -168,16 +168,16 @@ with tempfile.TemporaryDirectory() as home:
                               text=True, env=environment)
 
     token_path = Path(home) / ".config" / "nedschorus" / "nc-shared-database-service.token"
-    first = shell(installer.token_file_made_unless_present_command())
+    first = shell(installer.service_token_file_create_unless_present_shell_command())
     made = token_path.read_text(encoding="utf-8").strip() if token_path.exists() else ""
-    second = shell(installer.token_file_made_unless_present_command())
+    second = shell(installer.service_token_file_create_unless_present_shell_command())
     check("the token command makes a 64-character token, private to the user, and keeps it "
           "when run again",
           first.returncode == 0 and second.returncode == 0 and len(made) == 64
           and token_path.read_text(encoding="utf-8").strip() == made
           and (token_path.stat().st_mode & 0o077) == 0, (first, second, made))
 
-    written = shell(installer.accepted_tokens_file_written_command(), "mac-secret-token")
+    written = shell(installer.service_accepted_tokens_file_rewrite_shell_command(), "mac-secret-token")
     accepted_path = (Path(home) / ".config" / "nedschorus"
                      / "nc-shared-database-service-accepted-tokens")
     lines = accepted_path.read_text(encoding="utf-8").splitlines() if accepted_path.exists() else []
