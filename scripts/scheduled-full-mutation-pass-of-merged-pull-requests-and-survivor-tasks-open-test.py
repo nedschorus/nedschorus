@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
@@ -503,6 +504,63 @@ def run_cases():
         check("a completed task deleted later, as a session-handoff does, is not reported",
               completed.returncode == 0 and "TASK LOST" not in fixture.records()[-1].read_text(),
               (completed.returncode, completed.stderr))
+
+    # A run killed while mutation testing has already reported its lost task in a record; and
+    # a record that cannot be written leaves the lost task in the state for the next run.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        merge = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                               author="alpha")
+        completed = fixture.run({merge: {"json": verdict(survived=[survivor()])}})
+        key = job.mutant_key(survivor())
+        check("a survivor gets task 1", completed.returncode == 0
+              and task_files(alpha_list) == ["1.json"], (completed.returncode, completed.stderr))
+        (alpha_list / "1.json").unlink()
+        records_directory = fixture.log_store / job.RECORDS_DIRECTORY_NAME
+        held_aside = fixture.root / "records-held-aside"
+        records_directory.rename(held_aside)
+        records_directory.parent.joinpath(job.RECORDS_DIRECTORY_NAME).write_text("not a directory")
+        completed = fixture.run()
+        check("a record that cannot be written before the state forgets a lost task stops the "
+              "run, exit 5, with the state still naming the task",
+              completed.returncode == job.EXIT_RECORD_NOT_WRITTEN
+              and "TASK LOST: task #1" in completed.stdout
+              and "next run reports them again" in completed.stdout
+              and key in fixture.state_json()["tasks_opened"]
+              and "later runs do not report them again" not in completed.stderr,
+              (completed.returncode, completed.stdout, completed.stderr, fixture.state_json()))
+        (fixture.log_store / job.RECORDS_DIRECTORY_NAME).unlink()
+        held_aside.rename(records_directory)
+        check("no record names the lost task before the next run",
+              not any("TASK LOST" in path.read_text() for path in fixture.records()),
+              [path.read_text() for path in fixture.records()])
+        later = fixture.commit("scripts/other.py", "VALUE = 1\n", author="alpha")
+        fixture.plan_file.write_text(json.dumps({later: {"sleep": 60}}))
+        calls_before = len(fixture.calls())
+        process = subprocess.Popen(
+            [sys.executable, str(SCRIPT), "--clone", str(fixture.clone),
+             "--log-store-root", str(fixture.log_store), "--state-directory", str(fixture.state),
+             "--task-lists-directory", str(fixture.tasks),
+             "--agent-seats-directory", str(fixture.agents),
+             "--cosmic-ray-venv", str(fixture.venv),
+             "--mutation-testing-program", str(fixture.program)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env={**os.environ, PLAN_VARIABLE: str(fixture.plan_file)}, start_new_session=True)
+        deadline = time.monotonic() + 120
+        while len(fixture.calls()) == calls_before and time.monotonic() < deadline \
+                and process.poll() is None:
+            time.sleep(0.1)
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+        # Runs started in the same second share a record file, so look for the line, not a file.
+        recorded = [path.read_text() for path in fixture.records()]
+        check("a run killed while mutation testing, after the state stopped naming the lost "
+              "task, has already written a record naming it",
+              any("TASK LOST: task #1" in text for text in recorded)
+              and fixture.state_json()["tasks_opened"] == {},
+              (recorded, fixture.state_json()))
 
     # A state file that cannot be read, or names a commit not on origin/main.
     with tempfile.TemporaryDirectory() as scratch:

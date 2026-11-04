@@ -27,12 +27,15 @@ WHAT ONE RUN DOES, in order.
      names, and its description still names the mutant's diff file. A task
      marked completed is finished: the state stops naming it. Each other task
      that no longer holds its mutant, because its file is gone, cannot be
-     read or no longer names the mutant, is reported once: the record and
-     standard error name it, the state stops naming it, and the run goes on
-     and exits EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR. The run opens
-     no task in its place: it cannot tell a task lost from one deleted after
-     it was finished, such as by a session-handoff's removal of completed
-     tasks.
+     read or no longer names the mutant, is reported once: the record naming
+     it is written at once, and only then does the state stop naming it, so a
+     run killed later has still reported it; standard error names it at the
+     end, and the run goes on and exits
+     EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR. A record that cannot be
+     written then stops the run, with the state still naming the task. The
+     run opens no task in its place: it cannot tell a task lost from one
+     deleted after it was finished, such as by a session-handoff's removal of
+     completed tasks.
   5. For each commit on main's first-parent line after the last one tested,
      oldest first, which is each merge of a pull request, runs
      scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py
@@ -43,7 +46,8 @@ WHAT ONE RUN DOES, in order.
      program removes its scratch worktree.
   6. Opens a task for each surviving mutant (TASKS below), then records the
      commit as tested, so a merge is mutation-tested once.
-  7. Writes the record (THE RECORD below) and prints its citation.
+  7. Writes the record (THE RECORD below), in full over any written at step
+     4, and prints its citation.
 
 A step that fails stops the run there: a failed fetch, a state file that
 cannot be read or no longer names an ancestor of origin/main, a missing
@@ -274,13 +278,12 @@ def task_on_list_naming_mutant(list_directory, key):
     return None
 
 
-def lost_tasks_reported(state, state_file, arguments, record):
-    """Stop naming in the state each task that is completed or no longer holds its mutant.
+def lost_tasks_reported(state, arguments, record):
+    """Drop from the state in memory each task that is completed or no longer holds its mutant.
 
-    Return one line per task that no longer holds its mutant and is not completed. Raises
-    OSError when the state cannot be written."""
+    Return one line per task that no longer holds its mutant and is not completed; the caller
+    writes the state."""
     lost = []
-    tasks_before = len(state["tasks_opened"])
     for key, given in list(state["tasks_opened"].items()):
         task_file = (arguments.task_lists_directory / f"nedschorus-{given['agent_seat']}-tasks"
                      / f"{given['task_id']}.json")
@@ -300,9 +303,13 @@ def lost_tasks_reported(state, state_file, arguments, record):
                     f"{mutant_diff_file_path(arguments.log_store_root, key)}: {why}")
         record.append(f"TASK LOST: {lost[-1]}")
         del state["tasks_opened"][key]
-    if len(state["tasks_opened"]) != tasks_before:
-        write_state(state_file, state)
     return lost
+
+
+def record_write(record_path, record):
+    """Raises OSError."""
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text("\n".join(record) + "\n", encoding="utf-8")
 
 
 def agent_seat_task_list_new_pending_task_write(list_directory, subject, description):
@@ -566,7 +573,24 @@ def main_under_lock(arguments):
         else:
             last = state["last_tested_main_commit"]
             record.append(f"after: {last}")
-            lost_tasks = lost_tasks_reported(state, state_file, arguments, record)
+            tasks_before = len(state["tasks_opened"])
+            lost = lost_tasks_reported(state, arguments, record)
+            # A run killed later writes no record, so the lost tasks reach one before the
+            # state stops naming them.
+            if lost:
+                try:
+                    record_write(record_path, record)
+                except OSError as error:
+                    raise StepFailed(
+                        f"the record {record_citation} cannot be written "
+                        f"({type(error).__name__}: {error}), so the {len(lost)} lost task(s) "
+                        f"above are kept in the state, and the next run reports them again. "
+                        f"Nothing was tested.\n"
+                        f"Fix what the error names, then run this program again on ned-box: "
+                        f"{RUN_BY_HAND}") from error
+            if len(state["tasks_opened"]) != tasks_before:
+                write_state(state_file, state)
+            lost_tasks = lost
             if git(arguments.clone, "merge-base", "--is-ancestor", last,
                    main_commit).returncode:
                 raise StepFailed(
@@ -592,7 +616,6 @@ def main_under_lock(arguments):
         failure = str(error)
         record.append(f"FAILED: {failure}")
     record.append(f"wall-clock seconds: {time.monotonic() - started_monotonic:.0f}")
-    text = "\n".join(record) + "\n"
     if failure is not None:
         print(f"{PROGRAM}: {failure}", file=sys.stderr)
     if lost_tasks:
@@ -605,10 +628,9 @@ def main_under_lock(arguments):
               "Otherwise its mutant has no task: open one on the owner's task list that cites "
               "the mutant's diff file the line names.", file=sys.stderr)
     try:
-        record_path.parent.mkdir(parents=True, exist_ok=True)
-        record_path.write_text(text, encoding="utf-8")
+        record_write(record_path, record)
     except OSError as error:
-        print(text, end="")
+        print("\n".join(record) + "\n", end="")
         print(f"{PROGRAM}: the record above was not written to {record_citation} "
               f"({type(error).__name__}: {error}).\n"
               f"Fix what the error names; the next run writes its own record, and this one "
