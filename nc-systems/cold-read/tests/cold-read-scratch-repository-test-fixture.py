@@ -161,7 +161,7 @@ def cold_read_fast_read_scratch_repository_whose_stub_agy_answers_in_chat(scratc
 # A stand-in for bwrap and sandbox-exec, so a suite whose program starts one
 # of them can run inside the nc-test-sandbox, where the real bwrap cannot
 # start. It confines nothing: it checks the options it is given, applies
-# --chdir and --setenv, runs the command at the source of a bind whose
+# --chdir, --clearenv, --setenv and --unsetenv in order, runs the command at the source of a bind whose
 # destination is the command's path, and replaces itself with the command, so
 # exit codes, signals and child processes pass through as they would. An
 # option it does not know fails the run, so a sandbox prefix that gains one
@@ -196,6 +196,9 @@ elif name == "bwrap":
     while arguments and arguments[0].startswith("--"):
         option = arguments[0]
         if option in no_value:
+            # bwrap clears the environment where --clearenv stands, so a later --setenv still holds.
+            if option == "--clearenv":
+                environment.clear()
             arguments = arguments[1:]
         elif option in one_value and len(arguments) >= 2:
             if option == "--chdir":
