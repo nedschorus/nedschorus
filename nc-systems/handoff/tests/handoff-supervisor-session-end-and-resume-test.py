@@ -1383,6 +1383,19 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
           and not startup_working.overran,
           f"{startup_working.launches} {startup_working.overran} "
           f"{startup_working.printed[-400:]}")
+    # A checkout or handoff directory whose path holds a space must still give a command that runs.
+    with supervisor_names_replaced(
+            RECOVER_CRASHED_SEATS_SCRIPT=Path("/checkout with space/scripts/recover-crashed-seats.py")):
+        instruction = supervisor.unreadable_path_restart_instruction(
+            "spaced", Path("/handoffs with space"), "/transcripts/spaced.jsonl")
+    command_line = instruction.splitlines()[0].partition(
+        f"at a terminal on {supervisor.socket.gethostname()}: ")[2]
+    check("UNREADABLE TRANSCRIPT: the recovery command splits, as a shell splits it, into the "
+          "script, --handoff-dir with the supervisor's handoff directory, and the agent-seat, "
+          "when those paths hold spaces",
+          shlex.split(command_line) == ["python3", "/checkout with space/scripts/recover-crashed-seats.py",
+                                        "--handoff-dir", "/handoffs with space", "spaced"],
+          instruction)
     # 5c. A transcript that cannot be read is not a transcript with no work: reading it as
     # one would spend the resume budget on a guess, or resume a session the agent-binary
     # cannot read.
@@ -1403,8 +1416,9 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
               and f"{died_unreadable.launches[0][0]}.jsonl" in died_unreadable.errors
               and "Permission denied" in died_unreadable.errors, died_unreadable.errors)
         check("UNREADABLE TRANSCRIPT: and the stop names the recovery command for this "
-              "agent-seat, and no cause the error does not state",
-              f"{supervisor.RECOVER_CRASHED_SEATS_SCRIPT} deathdeathunreadable\n"
+              "agent-seat and its handoff directory, and no cause the error does not state",
+              shlex.join(["python3", str(supervisor.RECOVER_CRASHED_SEATS_SCRIPT), "--handoff-dir",
+                          str(directory / "deathunreadable"), "deathdeathunreadable"]) + "\n"
               in died_unreadable.errors
               and supervisor.RECOVER_CRASHED_SEATS_SCRIPT.is_file()
               and "permissions are fixed" not in died_unreadable.errors, died_unreadable.errors)
@@ -1420,6 +1434,12 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
               and "Permission denied" in resume_unreadable.errors,
               f"{resume_unreadable.exit_status} {resume_unreadable.launches} "
               f"{resume_unreadable.errors}")
+        check("UNREADABLE TRANSCRIPT: and that stop names the recovery command for this "
+              "agent-seat and its handoff directory",
+              shlex.join(["python3", str(supervisor.RECOVER_CRASHED_SEATS_SCRIPT), "--handoff-dir",
+                          str(directory / "startupresumeunreadable"),
+                          "deathstartupresumeunreadable"]) + "\n"
+              in resume_unreadable.errors, resume_unreadable.errors)
 
     # The by-hand resume: no first prompt, no handoff, no recorded exit, and a
     # real transcript on disk, so the first launch resumes it.
@@ -1617,9 +1637,11 @@ def run_by_hand_resume_cases(workspace: Path):
               "startup stopped" in errors.getvalue()
               and str(unreadable_projects) in errors.getvalue()
               and "Permission denied" in errors.getvalue(), errors.getvalue())
-        check("BY HAND: and the stop names the recovery command for this agent-seat, and no "
-              "cause the error does not state",
-              f"{supervisor.RECOVER_CRASHED_SEATS_SCRIPT} {settings.agent}\n" in errors.getvalue()
+        check("BY HAND: and the stop names the recovery command for this agent-seat and its "
+              "handoff directory, and no cause the error does not state",
+              shlex.join(["python3", str(supervisor.RECOVER_CRASHED_SEATS_SCRIPT), "--handoff-dir",
+                          str(settings.handoff_directory), settings.agent]) + "\n"
+              in errors.getvalue()
               and "permissions are fixed" not in errors.getvalue(), errors.getvalue())
 
     # 4. An unconsumed handoff is the fresher truth and boot-ignition takes it,

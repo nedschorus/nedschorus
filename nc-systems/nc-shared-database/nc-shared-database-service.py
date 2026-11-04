@@ -2,20 +2,20 @@
 """Keep one record of every agent-seat on both machines, behind a narrow JSON API over HTTP.
 
 Usage:
-  nc-systems/agent-seat-database/agent-seat-database-service.py
+  nc-systems/nc-shared-database/nc-shared-database-service.py
       [--database PATH] [--accepted-tokens-file PATH] [--host HOST] [--port N]
 
-  --database              default ~/.local/state/nedschorus/agent-seat-database.sqlite3,
+  --database              default ~/.local/state/nedschorus/nc-shared-database.sqlite3,
                           made with its schema and a new generation ID when absent
-  --accepted-tokens-file  default ~/.config/nedschorus/agent-seat-database-service-accepted-tokens,
+  --accepted-tokens-file  default ~/.config/nedschorus/nc-shared-database-service-accepted-tokens,
                           one token per line, read at every request
   --host, --port          default every address, port 8765
 
-On ned-box the systemd user unit agent-seat-database-service.service, beside
+On ned-box the systemd user unit nc-shared-database-service.service, beside
 this file, runs it. Callers never see the tables: they send named operations.
 
 EVERY REQUEST carries `Authorization: Bearer <token>` and the header
-Agent-Seat-Database-Generation-Id, the generation ID the caller's local events
+Nc-Shared-Database-Generation-Id, the generation ID the caller's local events
 file holds. A token that is no line of the accepted-tokens file is answered 401.
 A generation ID that differs from the database's, or none, is answered 412 with
 {"generation_id": <the database's>}, and nothing is stored.
@@ -60,24 +60,29 @@ Exit codes: 2 a bad invocation; otherwise the program runs until stopped.
 """
 
 import argparse
+import importlib.util
 import json
 import math
 import os
 import sqlite3
 import sys
 import uuid
-from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-DATABASE_PATH = Path.home() / ".local" / "state" / "nedschorus" / "agent-seat-database.sqlite3"
+NC_SHARED_DATABASE_FILE_PATH = Path.home() / ".local" / "state" / "nedschorus" / "nc-shared-database.sqlite3"
 ACCEPTED_TOKENS_FILE_PATH = (Path.home() / ".config" / "nedschorus"
-                             / "agent-seat-database-service-accepted-tokens")
+                             / "nc-shared-database-service-accepted-tokens")
 PORT = 8765
-GENERATION_HEADER = "Agent-Seat-Database-Generation-Id"
 MACHINES = ("mac", "ned-box")
 BUSY_TIMEOUT_SECONDS = 5
+
+_events_file_spec = importlib.util.spec_from_file_location(
+    "nc_shared_database_local_events_file_common",
+    Path(__file__).resolve().with_name("nc-shared-database-local-events-file-common.py"))
+events_file = importlib.util.module_from_spec(_events_file_spec)
+_events_file_spec.loader.exec_module(events_file)
 
 EVENT_KEYS = {"event_id", "machine", "operation", "occurred_at", "seat_id", "fields"}
 OPERATION_FIELDS = {
@@ -184,10 +189,6 @@ class Answer(Exception):
         self.body = body
 
 
-def utc_now():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
 def connect(database_path):
     connection = sqlite3.connect(str(database_path), timeout=BUSY_TIMEOUT_SECONDS,
                                  isolation_level=None)
@@ -195,7 +196,7 @@ def connect(database_path):
     return connection
 
 
-def create_database_if_absent(database_path):
+def create_nc_shared_database_if_absent(database_path):
     database_path = Path(database_path)
     if database_path.exists():
         return
@@ -281,7 +282,7 @@ def check_event_fits_its_operation(connection, event):
     wrong += [f"fields.{name}" for name, value in sorted(fields.items())
               if not sqlite_can_store(value)]
     if wrong:
-        raise Answer(422, {"error": f"agent-seat-database-service.py did not store event "
+        raise Answer(422, {"error": f"nc-shared-database-service.py did not store event "
                                     f"{event['event_id']} ({operation}, from {event['machine']}): "
                                     f"each of these holds a value it cannot store: "
                                     f"{', '.join(wrong)}. A name fields.<name> is the field "
@@ -295,7 +296,7 @@ def check_event_fits_its_operation(connection, event):
                                     f"UTF-8. Only "
                                     f"{', '.join(sorted(OPERATIONS_THAT_NAME_NO_AGENT_SEAT))} "
                                     f"takes a null seat_id; every other operation takes a string. "
-                                    f"agent-seat-database-local-events-file-sender.py "
+                                    f"nc-shared-database-local-events-file-sender.py "
                                     f"keeps this answer in the event's rejected column of the "
                                     f"outbox_event table in that machine's local events file, "
                                     f"and does not send the event again. Correct the program "
@@ -406,7 +407,7 @@ def store_event(connection, raw_body):
         "INSERT INTO event (event_id, machine, operation, occurred_at, received_at, body) "
         "VALUES (?, ?, ?, ?, ?, ?)",
         (event["event_id"], event["machine"], event["operation"], event["occurred_at"],
-         utc_now(), json.dumps(event, sort_keys=True))).lastrowid
+         events_file.utc_now(), json.dumps(event, sort_keys=True))).lastrowid
     try:
         apply_event(connection, event)
     except sqlite3.IntegrityError:
@@ -480,7 +481,7 @@ def make_request_handler(database_path, accepted_tokens_path):
                                             "<token>` with a line of the service's "
                                             "accepted-tokens file"})
             generation = database_generation(connection)
-            if self.headers.get(GENERATION_HEADER) != generation:
+            if self.headers.get(events_file.NC_SHARED_DATABASE_GENERATION_ID_HTTP_HEADER) != generation:
                 raise Answer(412, {"generation_id": generation})
             path = urlsplit(self.path)
             if raw_body is not None and path.path == "/events":
@@ -494,22 +495,22 @@ def make_request_handler(database_path, accepted_tokens_path):
     return RequestHandler
 
 
-def make_server(database_path, accepted_tokens_path, host, port):
-    create_database_if_absent(database_path)
+def make_nc_shared_database_service_http_server(database_path, accepted_tokens_path, host, port):
+    create_nc_shared_database_if_absent(database_path)
     return ThreadingHTTPServer((host, port),
                                make_request_handler(database_path, accepted_tokens_path))
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--database", default=str(DATABASE_PATH))
+    parser.add_argument("--database", default=str(NC_SHARED_DATABASE_FILE_PATH))
     parser.add_argument("--accepted-tokens-file", default=str(ACCEPTED_TOKENS_FILE_PATH))
     parser.add_argument("--host", default="")
     parser.add_argument("--port", type=int, default=PORT)
     arguments = parser.parse_args(argv)
     # Only nedlern may read or write the database, its WAL files included.
     os.umask(0o077)
-    server = make_server(arguments.database, arguments.accepted_tokens_file,
+    server = make_nc_shared_database_service_http_server(arguments.database, arguments.accepted_tokens_file,
                          arguments.host, arguments.port)
     server.serve_forever()
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -36,7 +37,8 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 
 
-CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify", "terminology"]
+# Built from the prompt files, so deleting a prompt also removes its --cell choice.
+CELL_CHOICES = sorted(path.name[:-len("-prompt.md")] for path in PROMPTS_DIR.glob("*-prompt.md"))
 # The judge reads four files per case and needs its own prompt and fixed tier.
 TIER_CHOICES = ["deep", "second-strongest-model", "fast"]
 
@@ -92,8 +94,50 @@ def credential_directories_present() -> list:
 CREDENTIAL_FILE_SCAN_ROOTS = (pathlib.Path.home(), REPO_ROOT)
 
 
+# One find over ned-box's home took 6-8 s per cell launch, most of it in the
+# log-store's 900,000 entries; several finds over parts of the tree at once
+# take a third of that.
+CREDENTIAL_FILE_SCAN_SPLIT_DEPTH = 3
+CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = 64
+CREDENTIAL_FILE_SCAN_PARALLEL_FINDS = 16
+
+
+def credential_file_scan_parts(root: pathlib.Path) -> tuple:
+    """Split root into directories to list one level deep and subtrees to walk whole.
+
+    The two together reach every directory find -xdev would reach from root:
+    the first CREDENTIAL_FILE_SCAN_SPLIT_DEPTH levels are listed here, and
+    each directory below them is a subtree root. A symlink is never entered,
+    and a directory on another filesystem than root is left out, as -xdev does.
+    """
+    device = root.stat().st_dev
+    shallow, frontier = [], [str(root)]
+    for _level in range(CREDENTIAL_FILE_SCAN_SPLIT_DEPTH):
+        shallow += frontier
+        below = []
+        for directory in frontier:
+            try:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        try:
+                            if (entry.is_dir(follow_symlinks=False)
+                                    and entry.stat(follow_symlinks=False).st_dev == device):
+                                below.append(entry.path)
+                        except OSError:
+                            pass
+            except OSError:
+                pass
+        frontier = below
+    return shallow, frontier
+
+
 def credential_files_found_now() -> list:
-    """Return credential-named files outside directories already withheld whole."""
+    """Return credential-named files outside directories already withheld whole.
+
+    Finds the same files one `find <roots> -xdev` would, by running several
+    finds at once over parts of each root's tree, which credential_file_scan_parts
+    splits off. Unreadable directories are skipped, as find skips them.
+    """
     # find is faster over large homes; unreadable directories are expected, so errors are ignored.
     name_tests = []
     for pattern in CREDENTIAL_FILE_NAME_PATTERNS:
@@ -103,11 +147,22 @@ def credential_files_found_now() -> list:
         if root.is_dir() and not any(root == kept or kept in root.parents
                                      for kept in roots):
             roots.append(root)
-    completed = subprocess.run(
-        ["find", *map(str, roots), "-xdev", "(", *name_tests, ")", "-type", "f"],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False)
+    match = ["(", *name_tests, ")", "-type", "f"]
+    commands = []
+    for root in roots:
+        shallow, subtrees = credential_file_scan_parts(root)
+        commands.append(["find", *shallow, "-maxdepth", "1", *match])
+        commands += [["find", *subtrees[start::CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT], "-xdev", *match]
+                     for start in range(min(len(subtrees), CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT))]
+
+    def run(command):
+        return subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              text=True, check=False).stdout.splitlines()
+
+    with concurrent.futures.ThreadPoolExecutor(CREDENTIAL_FILE_SCAN_PARALLEL_FINDS) as pool:
+        found = {path for lines in pool.map(run, commands) for path in lines}
     return sorted(
-        path for path in set(completed.stdout.splitlines())
+        path for path in found
         if path and not any(directory == pathlib.Path(path)
                             or directory in pathlib.Path(path).parents
                             for directory in CREDENTIAL_DIRECTORIES))
@@ -206,6 +261,24 @@ def build_argument_parser(
 
 def validate_cell(cell: str, prompt_file_argument) -> None:
     if not prompt_file_argument:
+        if not CELL_CHOICES:
+            raise CellRefusal(
+                f"no cold-read-cell to run: each --cell choice is the name of "
+                f"a *-prompt.md file in {PROMPTS_DIR} without -prompt.md, as "
+                "defect-hunt is the choice for defect-hunt-prompt.md, and that "
+                "directory holds no *-prompt.md file.\n"
+                "To get the *-prompt.md files back from main, run "
+                f"`git -C {REPO_ROOT} restore --source=origin/main --staged "
+                "--worktree .claude/skills/cold-read/prompts`, then rerun this "
+                "command.\n"
+                "To run a prompt template of your own instead, rerun this "
+                "command with --prompt-file <path to the template, relative to "
+                "the current directory unless absolute>; the template names the "
+                "target as {TARGET_PATH} and the report as {REPORT_PATH}, as "
+                "the *-prompt.md files do. --cell is still required then, as a "
+                "label of lowercase letters and digits joined by single "
+                "hyphens, such as terminology-v9; a --cell you already passed "
+                "in that form can stay.")
         if cell not in CELL_CHOICES:
             raise CellRefusal(
                 f"--cell must be one of {', '.join(CELL_CHOICES)} (got {cell!r}); "

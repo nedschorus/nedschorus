@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Define shared cold-read-record names and paths."""
+"""Define shared cold-read-record names and paths, and the one rewrite both cold reads apply to the copy a reviewer reads."""
 
 import datetime
+import importlib.util
 import json
+import os
 import pathlib
 import re
 
@@ -169,14 +171,73 @@ def record_directory_name_for_target(
 
 def fresh_record_directory(base: pathlib.Path, names_taken_in_log_store) -> pathlib.Path:
     """Return the first of base, base-2, base-3 ... that is neither a path on
-    disk nor one of names_taken_in_log_store, the record directory names the
+    disk, a symlink included, nor one of names_taken_in_log_store, the record directory names the
     log-store holds, without creating the directory."""
     # Each read needs its own directory so a same-day rerun cannot overwrite earlier reports.
     # A name free only on disk can be another checkout's record in the store,
     # and shipping would then put two reads in one record.
     record_directory = base
     suffix = 2
-    while record_directory.exists() or record_directory.name in names_taken_in_log_store:
+    # lexists, not exists: a dangling symlink or a symlink loop is false for exists(), and mkdir on it fails.
+    while os.path.lexists(record_directory) or record_directory.name in names_taken_in_log_store:
         record_directory = base.with_name(f"{base.name}-{suffix}")
         suffix += 1
     return record_directory
+
+
+def cold_read_record_directory_at_first_free_name_created_atomically(base: pathlib.Path, names_taken_in_log_store) -> pathlib.Path:
+    """Create and return the directory fresh_record_directory names; when
+    another run creates that name first, take the next free one, so two runs
+    started at once never share a record directory."""
+    # Choosing a free name and creating it later lets two runs choose the same
+    # name; mkdir without exist_ok is the atomic claim.
+    base.parent.mkdir(parents=True, exist_ok=True)
+    while True:
+        record_directory = fresh_record_directory(base, names_taken_in_log_store)
+        try:
+            record_directory.mkdir()
+        except FileExistsError:
+            continue
+        return record_directory
+
+
+_ned_box_home_spec = importlib.util.spec_from_file_location(
+    "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+_ned_box_home = importlib.util.module_from_spec(_ned_box_home_spec)
+_ned_box_home_spec.loader.exec_module(_ned_box_home)
+MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY = _ned_box_home.MAC_MOUNT_OF_NED_BOX_HOME
+MAC_MOUNT_OF_NED_BOX_HOME_LINK_PREFIX = f"file://{MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY}/"
+NED_BOX_HOME_PATH_PREFIX = f"{_ned_box_home.NED_BOX_HOME}/"
+# Names the directory probed in place of MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY,
+# so a test can run either machine's case on either machine.
+MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE = (
+    "COLD_READ_MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE")
+
+
+def text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths(text: str) -> str:
+    """Return text with each file:///Volumes/nedhome/ link prefix replaced by /home/nedlern/.
+
+    A bare /Volumes/nedhome/ path without file:// is left alone. This is the
+    rewrite on every machine; a program that compares a frozen copy with its
+    document applies it whichever machine made the copy.
+    """
+    return text.replace(MAC_MOUNT_OF_NED_BOX_HOME_LINK_PREFIX, NED_BOX_HOME_PATH_PREFIX)
+
+
+def cold_read_reviewer_copy_text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths_where_mac_mount_absent(
+        text: str) -> str:
+    """Return the text a reviewer on this machine reads, for a cold read run here.
+
+    Reviewers run on the machine that runs the cold read. Where the Mac's mount
+    of ned-box's home is not a directory, as on ned-box, a file:///Volumes/nedhome/
+    link does not open, so it is rewritten to the /home/nedlern/ path that does;
+    where the mount is a directory, as on the Mac, the text is returned unchanged.
+    Apply it only to the copy a reviewer reads, never to the user's document.
+    """
+    mount = (os.environ.get(MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE)
+             or MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY)
+    if pathlib.Path(mount).is_dir():
+        return text
+    return text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths(text)

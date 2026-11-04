@@ -114,6 +114,22 @@ def test_a_held_answer_whose_new_item_is_decided_takes_that_items_outcome():
                   f"{outcome}"], described(result))
 
 
+def test_a_chain_of_held_answers_is_converted_in_one_run():
+    text = ("# Minutes\n\nitem 5 of 29: answer held: item 6 of 29, raised by a fast-read finding, waits for the "
+            "user's answer. <open>\nitem 6 of 29: answer held: item 6.1 of 30, raised by a fast-read finding, waits "
+            "for the user's answer. <open>\nitem 6.1 of 30: approved; every text the change adds has had a fast "
+            "read. <accepted>\n#next_to_present item 7 of 30\n")
+    path = minutes_file("held-chain", text)
+    result = run("--minutes", str(path))
+    proposed = [line[len("  append: "):] for line in result.stdout.split("\n") if line.startswith("  append: ")]
+    check("item 5, held for item 6, held for the decided item 6.1, is proposed already decided along with item 6, "
+          "though its held-answer line comes first",
+          result.returncode == 0 and len(proposed) == 2
+          and proposed[0].startswith("item 5 of 30: already decided by the user's answer to item 6 of 29")
+          and proposed[1].startswith("item 6 of 30: already decided by the user's answer to item 6.1 of 30")
+          and all(line.endswith("<accepted>") for line in proposed), described(result))
+
+
 def test_a_held_answer_whose_new_item_only_a_hand_written_line_decides_is_converted_in_the_same_run():
     for outcome in ("<accepted>", "<rejected>"):
         word = "approved" if outcome == "<accepted>" else "disapproved"
@@ -208,6 +224,24 @@ def test_a_hand_written_move_on_that_a_later_revision_undid_is_proposed_as_a_mov
     check("a move-on line undone, then a later hand-written approval, proposes the approval, not the move on",
           result.returncode == 0 and 'append: item 3.1 of 29: already decided by the hand-written minutes line 5'
           in result.stdout and "moved on, no decision: the hand-written" not in result.stdout, described(result))
+    text = ("# Minutes\n\nItem 3.1 of 29: shown; it needs no answer. <moved on, no decision>\n"
+            "- Item 3.1 of 29 rewritten; it now asks for a decision. <revised, awaiting ruling>\n"
+            "Item 3.1 of 29: deferred until the redraft is read.\n#next_to_present item 3.2 of 29\n")
+    path = minutes_file("revised-then-deferred", text)
+    result = run("--minutes", str(path))
+    proposed = [line[len("  append: "):] for line in result.stdout.split("\n") if line.startswith("  append: ")]
+    check("a move-on line undone, then a later hand-written deferral, proposes the deferral, not the move on: the "
+          "deferral shows the rewrite made the item one that asks for a decision",
+          result.returncode == 0
+          and proposed == ["item 3.1 of 29: deferred; it moves to just before the summary item. <open>"],
+          described(result))
+    path = minutes_file("revised-then-deferred-skipped", text)
+    result = run("--minutes", str(path), "--skip", f"{path}:5")
+    proposed = [line[len("  append: "):] for line in result.stdout.split("\n") if line.startswith("  append: ")]
+    check("--skip on the deferral after the rewrite leaves it no evidence, so the undone move on is proposed again",
+          result.returncode == 0 and len(proposed) == 1
+          and proposed[0].startswith("item 3.1 of 29: moved on, no decision: the hand-written minutes line 3"),
+          described(result))
 
 
 def test_a_skipped_line_proposes_nothing():

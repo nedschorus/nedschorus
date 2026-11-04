@@ -48,8 +48,14 @@ number is read whole and so is not item 5's, a label whose bold ends before `of`
 or a line inside a quotation, a nested list or an HTML block. When an item of the unit
 has no opening, its items are not told apart, and the UserPromptSubmit hook
 says it cannot read their recommendations. A heading that says `revised` right after its
-count replaces the earlier units it names. A running count that names no
-item still ends the unit before it. Every search of a walk file for its
+count replaces the earlier units it names; the note `(deferred: moved to the end of
+the walk)`, which the answer program's close step puts right after a deferred item's
+count, is read as absent, here and by every program that loads this module. A
+running count that names no item still ends the unit before it. A top-level heading that opens with
+`Withdrawn`, as in `#### Withdrawn version 1 of item 4.1`, ends the unit it
+falls in; in a unit that names several items it ends only the item it falls
+in, and the unit's next opening starts the next item, so a version the walk-document keeps after replacing it is never
+read for the item's recommendation, its `#new` lines or its parts. Every search of a walk file for its
 structure, here and in the programs that load this module, reads the lines
 prose_lines returns, in which fenced and indented code and HTML comment blocks
 are empty, or the parser's own tokens, as item starts are, so a line in code or
@@ -113,6 +119,7 @@ NUMBER_JOINER = r"\s*(?:,|&|\band\b|\bto\b|-|\u2013)\s*"
 NUMBER_LIST = rf"{NUMBER}(?:{NUMBER_JOINER}{NUMBER})*(?![\d.]\d)"
 VALUE_COUNT = re.compile(rf"^items?\s+({NUMBER_LIST})(?:\s+of\s+(\d+)\b)?", re.I)
 HEADING_COUNT = re.compile(rf"^[*_\s]*items?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
+WITHDRAWN_HEADING_ITEMS = re.compile(rf"\bitems?\s+({NUMBER_LIST})", re.I)
 # Atomic, so a label's number is never shortened to fit what follows it: `**Item 6.2** shows` cannot be read as
 # `**Item 6` followed by `.`. Every label reads its number through this one piece.
 WHOLE_NUMBER = rf"(?>{NUMBER})"
@@ -129,6 +136,10 @@ SUB_STEP_NO_DECISION_CLOSING_LINE = re.compile(
 CLOSING_LINE_LABEL = re.compile(rf"Items?\s+({NUMBER_LIST})\s+of\s+(\d+)(?:,\s.*)?", re.S)
 # Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
 REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
+WITHDRAWN_HEADING = re.compile(r"^[*_\s(]*withdrawn\b", re.I)
+# The close step of the answer program puts this right after a deferred item's running count. It holds a colon, so
+# every pattern that reads a heading past its count reads approval_walk_item_heading_with_deferred_note_removed's line.
+APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT = "(deferred: moved to just before the summary item)"
 NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
 # A link is one run of non-space characters, so `publish failed: <reason>` can never be read as a link. Spaces
 # only, never a newline, so a line that ends short is not completed by the line below it.
@@ -167,6 +178,12 @@ def checkout_top(directory):
     return Path(os.fsdecode(output).rstrip("\n"))
 
 
+def approval_walk_item_heading_with_deferred_note_removed(line):
+    """The heading line with its first APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT, and the spaces
+    before it, taken out."""
+    return re.sub(r"\s*" + re.escape(APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT), "", line, count=1)
+
+
 def markdown_parser():
     return load_module("markdown_commonmark_parser_with_tables_common",
                        MARKDOWN_PARSER_MODULE_FILE).markdown_parser()
@@ -190,10 +207,25 @@ def prose_lines(text, parser, tokens=None):
 def item_opening_lines(text, parser, tokens=None):
     """Return {line: (item numbers, M or None)} for each opening the module docstring lists: on the first line
     of a top-level paragraph, a label ITEM_LABEL reads or a running count `Item N of M` after any emphasis; on
-    the first line of an item of a top-level list, a label in bold. M is None when the label gives no `of M`."""
+    the first line of an item of a top-level list, a label in bold. M is None when the label gives no `of M`.
+    A top-level heading WITHDRAWN_HEADING reads is an opening that names no item, ([], None): it ends the item
+    it falls in. A label or count after it, before the next running count that starts a unit as
+    item_unit_spans reads them, is the Withdrawn version's own, and no opening, when it names only items a
+    Withdrawn heading since that start names; after a Withdrawn heading that names no item, every label and
+    count stays an opening. A heading or paragraph that starts no unit, such as `## Notes`, keeps them."""
     openings = {}
     tokens = parser.parse(text) if tokens is None else tokens
+    unit_starts = {start[0] for start in item_unit_starts(tokens, text.split("\n"))}
+    # The items the Withdrawn headings since the last unit start name.
+    withdrawn_items = set()
     for index, token in enumerate(tokens):
+        if index in unit_starts:
+            withdrawn_items = set()
+        if token.type == "heading_open" and token.map is not None and token.level == 0:
+            if index + 1 < len(tokens) and WITHDRAWN_HEADING.match(tokens[index + 1].content):
+                openings[token.map[0]] = ([], None)
+                withdrawn_items |= withdrawn_heading_items(tokens[index + 1].content)
+                continue
         if token.type != "paragraph_open" or token.map is None:
             continue
         # A paragraph at level 2 straight after an item's start is that item's first paragraph; an item of a
@@ -205,16 +237,30 @@ def item_opening_lines(text, parser, tokens=None):
         label = ITEM_LABEL.match(first_line)
         # In a list only in bold, since a plain list item such as `- Item 7: which follows` mentions an item.
         if label and (label["bold"] or not top_level_list_item):
-            openings[token.map[0]] = ([label["bold_number"] or label["plain_number"]], label["total"])
-            continue
-        count = None if top_level_list_item else HEADING_COUNT.match(first_line)
-        if not count:
-            continue
-        try:
-            openings[token.map[0]] = (expand_numbers(count[1]), count[2])
-        except UnusableRange:
-            continue
+            found = ([label["bold_number"] or label["plain_number"]], label["total"])
+        else:
+            count = None if top_level_list_item else HEADING_COUNT.match(first_line)
+            if not count:
+                continue
+            try:
+                found = (expand_numbers(count[1]), count[2])
+            except UnusableRange:
+                continue
+        if not (withdrawn_items and set(found[0]) <= withdrawn_items):
+            openings[token.map[0]] = found
     return openings
+
+
+def withdrawn_heading_items(heading):
+    """Return the set of item numbers a Withdrawn heading names after `item` or `items`, as in `Withdrawn version 1
+    of item 6`, or an empty set when it names none that expand_numbers can read."""
+    named = WITHDRAWN_HEADING_ITEMS.search(heading)
+    if not named:
+        return set()
+    try:
+        return set(expand_numbers(named[1]))
+    except UnusableRange:
+        return set()
 
 
 def next_to_present(minutes_text, parser):
@@ -366,7 +412,10 @@ def item_unit_spans(document_text, parser):
     """Return [(item numbers, M, problem, first line, end line)] for each running count that starts an item.
 
     The lines are 0-based; a unit runs from its first line up to, not including, its end
-    line, which is where the next running count starts, or the document's line count.
+    line, which is where the next running count starts, or the document's line count, or, in a unit that
+    names at most one item, the next heading WITHDRAWN_HEADING reads, if sooner. In a unit that names several
+    items, such a heading ends only the item it falls in, as
+    approval_walk_item_line_range_within_heading_shared_by_several_items reads it.
 
     A count starts an item on a top-level heading, or on a top-level paragraph opening with `**`, outside
     any list or quotation, except a
@@ -377,15 +426,37 @@ def item_unit_spans(document_text, parser):
     heading that says `revised` right after its count names all of its items.
     """
     lines = document_text.split("\n")
+    tokens = parser.parse(document_text)
+    withdrawn = [token.map[0] for index, token in enumerate(tokens)
+                 if token.type == "heading_open" and token.map is not None and token.level == 0
+                 and index + 1 < len(tokens) and WITHDRAWN_HEADING.match(tokens[index + 1].content)]
+    starts = [start[1:] for start in item_unit_starts(tokens, lines)]
+    ends = [min([start[4] for start in starts[position + 1:position + 2]] + [len(lines)]
+                + [line for line in withdrawn if line > first and len(numbers) <= 1])
+            for position, (numbers, _, _, _, first) in enumerate(starts)]
+    return [(numbers, total, problem, first, ends[index])
+            for index, (numbers, total, problem, _, first) in enumerate(starts)
+            if not (numbers and any(revised and later_total == total and set(numbers) <= set(later_numbers)
+                                    for later_numbers, later_total, _, revised, _ in starts[index + 1:]))]
+
+
+def item_unit_starts(tokens, lines):
+    """Return [(token index, item numbers, M, problem, revised, first line)] for each running count that
+    starts a unit, as item_unit_spans' docstring says, before it leaves out the units a later revised heading
+    replaces; a Withdrawn heading starts none. item_opening_lines reads the same starts, so a Withdrawn
+    version's labels stop being dropped exactly where a unit starts."""
     starts = []
     group = None
-    tokens = parser.parse(document_text)
     for index, token in enumerate(tokens):
         if token.map is None or token.level != 0 or token.type not in ("heading_open", "paragraph_open"):
+            continue
+        if (token.type == "heading_open" and index + 1 < len(tokens)
+                and WITHDRAWN_HEADING.match(tokens[index + 1].content)):
             continue
         if token.type == "paragraph_open" and not lines[token.map[0]].lstrip().startswith("**"):
             continue
         content = tokens[index + 1].content.split("\n")[0] if index + 1 < len(tokens) else ""
+        content = approval_walk_item_heading_with_deferred_note_removed(content)
         match = HEADING_COUNT.match(content)
         if not match:
             continue
@@ -400,28 +471,26 @@ def item_unit_spans(document_text, parser):
         else:
             group = None
         revised = bool(REVISED.match(content[match.end():]))
-        starts.append((numbers, match[2], problem, revised, token.map[0]))
-    ends = [start[4] for start in starts[1:]] + [len(lines)]
-    return [(numbers, total, problem, first, ends[index])
-            for index, (numbers, total, problem, _, first) in enumerate(starts)
-            if not (numbers and any(revised and later_total == total and set(numbers) <= set(later_numbers)
-                                    for later_numbers, later_total, _, revised, _ in starts[index + 1:]))]
+        starts.append((index, numbers, match[2], problem, revised, token.map[0]))
+    return starts
 
 
 def approval_walk_item_line_range_within_heading_shared_by_several_items(openings, first, end, number, numbers, total):
     """Return (first, end) of the lines, of the unit from line first up to end that names several items, that
     belong to item number: from the first of item_opening_lines' openings that names that item alone, with
-    the unit's total or none, up to the next that names another of the unit's items alone, or every line of
-    the unit when none names it."""
+    the unit's total or none, up to the next that names another of the unit's items alone or the next
+    Withdrawn heading, an opening that names no item; or, when none names it, from the unit's first line up to
+    its first Withdrawn heading or its end."""
     starts = {}
+    withdrawn = [line for line in openings if first <= line < end and not openings[line][0]]
     for line in sorted(openings):
         named, opening_total = openings[line]
         if first <= line < end and opening_total in (total, None) and len(named) == 1 and named[0] in numbers:
             starts.setdefault(named[0], line)
     if number not in starts:
-        return first, end
-    later = [line for line in starts.values() if line > starts[number]]
-    return starts[number], min(later) if later else end
+        return first, min(withdrawn + [end])
+    later = [line for line in withdrawn + list(starts.values()) if line > starts[number]]
+    return starts[number], min(later + [end])
 
 
 def waiting_item_units(document, value, numbers, total, parser, all_units=None):

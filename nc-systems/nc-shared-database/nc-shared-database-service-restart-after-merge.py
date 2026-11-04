@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Restart the agent-seat database service when a merge into ned-box's reference-checkout changes it.
+"""Restart the nc-shared-database service when a merge into ned-box's reference-checkout changes it.
 
 Usage (git runs it from scripts/git-client-side-hooks/post-merge, in the
 checkout's top directory, after every merge, a fast-forward included):
-  nc-systems/agent-seat-database/agent-seat-database-service-restart-after-merge.py
+  nc-systems/nc-shared-database/nc-shared-database-service-restart-after-merge.py
       [--reference-checkout DIR]
 
   --reference-checkout  default /home/nedlern/Projects/nedschorus, ned-box's
                         reference-checkout, from which the systemd user unit
-                        agent-seat-database-service.service runs the service
+                        nc-shared-database-service.service runs the service
 
 Every checkout of the clone on both machines runs the same post-merge hook,
 because core.hooksPath names the reference-checkout's hook directory. In any
 checkout but ned-box's reference-checkout this program does nothing. There,
-when `git diff ORIG_HEAD HEAD` names a file of SERVICE_FILES, it runs
-`systemctl --user restart agent-seat-database-service.service`, so the
+when `git diff ORIG_HEAD HEAD` names a file of NC_SHARED_DATABASE_SERVICE_RESTART_AFTER_MERGE_TRIGGER_FILES, it runs
+`systemctl --user restart nc-shared-database-service.service`, so the
 service runs the merged code and no person has to restart it. When the caller
 has no XDG_RUNTIME_DIR, systemctl is given /run/user/<uid>, where the user
 bus lives. A change to the unit file itself is not picked up this way: run the
@@ -36,9 +36,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-PROGRAM = "nc-systems/agent-seat-database/agent-seat-database-service-restart-after-merge.py"
-UNIT_NAME = "agent-seat-database-service.service"
-SERVICE_FILES = ("nc-systems/agent-seat-database/agent-seat-database-service.py",)
+PROGRAM = "nc-systems/nc-shared-database/nc-shared-database-service-restart-after-merge.py"
+UNIT_NAME = "nc-shared-database-service.service"
+NC_SHARED_DATABASE_SERVICE_RESTART_AFTER_MERGE_TRIGGER_FILES = ("nc-systems/nc-shared-database/nc-shared-database-service.py",)
 EXIT_DONE = 0
 EXIT_FAILED = 1
 
@@ -63,11 +63,11 @@ def main(argv=None):
     # Spelled out, not $(id -u): run over ssh from the Mac, $(id -u) expands on the Mac.
     runtime_directory = f"XDG_RUNTIME_DIR=/run/user/{os.getuid()}"
     changed = subprocess.run(["git", "diff", "--name-only", "ORIG_HEAD", "HEAD", "--",
-                              *SERVICE_FILES], capture_output=True, text=True)
+                              *NC_SHARED_DATABASE_SERVICE_RESTART_AFTER_MERGE_TRIGGER_FILES], capture_output=True, text=True)
     if changed.returncode != 0:
         print(f"{PROGRAM}: FAILED — `git diff --name-only ORIG_HEAD HEAD` in "
               f"{arguments.reference_checkout} exited {changed.returncode}, so this merge's "
-              f"changes to the agent-seat database service are unknown and the service was not "
+              f"changes to the nc-shared-database service are unknown and the service was not "
               f"restarted: {changed.stderr.strip()}\n"
               f"Every command below runs on ned-box; from the Mac, run it as "
               f"ssh nedlern@ned-box '<the command>'.\n"
@@ -80,7 +80,7 @@ def main(argv=None):
               f"If systemctl fails for any other reason, run "
               f"`{runtime_directory} journalctl --user -u {UNIT_NAME} -n 50`. Then, if you are a "
               f"subagent, tell the agent that dispatched you; otherwise tell the user. Say that "
-              f"the agent-seat database service could not be restarted after a merge, and quote "
+              f"the nc-shared-database service could not be restarted after a merge, and quote "
               f"three things: the lines of this message above the line that starts "
               f"\"Every command below\"; what your restart command printed; and what journalctl "
               f"printed.",
@@ -95,14 +95,14 @@ def main(argv=None):
     restarted = subprocess.run(["systemctl", "--user", "restart", UNIT_NAME],
                                capture_output=True, text=True, env=environment)
     if restarted.returncode != 0:
-        print(f"{PROGRAM}: FAILED — the merge changed the agent-seat database service, and "
+        print(f"{PROGRAM}: FAILED — the merge changed the nc-shared-database service, and "
               f"`systemctl --user restart {UNIT_NAME}` exited {restarted.returncode}, so the "
               f"service may still run the code from before the merge, or not run at all. "
               f"systemctl said: {restarted.stderr.strip()}\n"
               f"If systemctl said the unit was not found, the unit's install step has not "
               f"run on ned-box yet; it is the user's, so do nothing.\n"
               f"Otherwise run `journalctl --user -u {UNIT_NAME} -n 50` on ned-box and tell the "
-              f"user that the agent-seat database service failed to restart after a merge, "
+              f"user that the nc-shared-database service failed to restart after a merge, "
               f"quoting systemctl's line above and journalctl's last lines. If you are a "
               f"subagent, tell the agent that dispatched you instead, with the same quotes.",
               file=sys.stderr)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for the local events file and its sender:
-nc-systems/agent-seat-database/agent-seat-database-local-events-file-common.py and
-nc-systems/agent-seat-database/agent-seat-database-local-events-file-sender.py.
+nc-systems/nc-shared-database/nc-shared-database-local-events-file-common.py and
+nc-systems/nc-shared-database/nc-shared-database-local-events-file-sender.py.
 
 The cases run the real service on a loopback port, and fake services that give
 one fixed answer, and read the local events file back: an event queued and
@@ -12,7 +12,7 @@ cannot be opened, a missing token file, the deletion
 of sent rows a backup holds, and the stop report a stopped sender leaves for
 the next event's writer to print.
 
-Run: python3 nc-systems/agent-seat-database/tests/agent-seat-database-local-events-file-sender-test.py
+Run: python3 nc-systems/nc-shared-database/tests/nc-shared-database-local-events-file-sender-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -41,11 +41,11 @@ def load(name, file_name):
     return module
 
 
-service = load("agent_seat_database_service", "agent-seat-database-service.py")
-events_file = load("agent_seat_database_local_events_file_common",
-                   "agent-seat-database-local-events-file-common.py")
-sender = load("agent_seat_database_local_events_file_sender",
-              "agent-seat-database-local-events-file-sender.py")
+service = load("nc_shared_database_service", "nc-shared-database-service.py")
+events_file = load("nc_shared_database_local_events_file_common",
+                   "nc-shared-database-local-events-file-common.py")
+sender = load("nc_shared_database_local_events_file_sender",
+              "nc-shared-database-local-events-file-sender.py")
 
 failures = 0
 
@@ -112,7 +112,7 @@ def rows(path):
 
 
 def stop_report_text(path):
-    report = events_file.local_events_file_sender_stop_report_path(path)
+    report = events_file.nc_shared_database_local_events_file_sender_stop_report_path(path)
     return report.read_text(encoding="utf-8") if report.exists() else None
 
 
@@ -156,7 +156,7 @@ with tempfile.TemporaryDirectory() as scratch:
     accepted = scratch / "accepted"
     accepted.write_text(TOKEN + "\n", encoding="utf-8")
     database = scratch / "service.sqlite3"
-    url = serve(service.make_server(database, accepted, "127.0.0.1", 0))
+    url = serve(service.make_nc_shared_database_service_http_server(database, accepted, "127.0.0.1", 0))
     service_db = sqlite3.connect(str(database), isolation_level=None)
 
     def service_generation():
@@ -182,7 +182,7 @@ with tempfile.TemporaryDirectory() as scratch:
           sqlite3.connect(str(fresh)).execute(
               "SELECT count(*) FROM database_generation_seen").fetchone()[0] == 1)
     check("the sender's lock file is the second file beside the local events file",
-          events_file.local_events_file_sender_lock_file_path(fresh)
+          events_file.nc_shared_database_local_events_file_sender_lock_file_path(fresh)
           == fresh.with_name("agent-seat-events-sender.sqlite"))
 
     # Queued, then sent by the sender the writer starts; the first answer is 412.
@@ -296,7 +296,7 @@ with tempfile.TemporaryDirectory() as scratch:
             "agent-seat-created", str(uuid.uuid4()), SEAT_FIELDS, local_events_file=stopped_file,
             sender_arguments=("--service-url", url, "--token-file", str(scratch / "no-token")))
     check("the next event's writer prints the stop report an automatically started sender left",
-          "not reaching the agent-seat database service" in printed.getvalue()
+          "not reaching the nc-shared-database service" in printed.getvalue()
           and "answer 412" in printed.getvalue(), printed.getvalue())
     # The sender the writer started finds no token and rewrites the report;
     # waiting for that keeps it from racing the sender run below.
@@ -345,14 +345,14 @@ with tempfile.TemporaryDirectory() as scratch:
     # One sender at a time
     held_file = local_events_file("held")
     held_row = queue(held_file)
-    holder = sqlite3.connect(str(events_file.local_events_file_sender_lock_file_path(held_file)),
+    holder = sqlite3.connect(str(events_file.nc_shared_database_local_events_file_sender_lock_file_path(held_file)),
                              timeout=0, isolation_level=None)
     holder.execute("BEGIN EXCLUSIVE")
     code, errors = run_sender(held_file, url, token_file)
     check("a sender that cannot take the transaction exits 0 at once and sends nothing",
           code == 0 and rows(held_file) == [(held_row, 0, None, None)] and errors == "",
           (code, errors))
-    report = events_file.local_events_file_sender_stop_report_path(held_file)
+    report = events_file.nc_shared_database_local_events_file_sender_stop_report_path(held_file)
     report.write_text("the holder's reason\n", encoding="utf-8")
     run_sender(held_file, url, token_file)
     check("a sender that cannot take the transaction leaves the holder's stop report alone",
@@ -386,7 +386,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     broken_lock_file = local_events_file("broken_lock")
     queue(broken_lock_file)
-    events_file.local_events_file_sender_lock_file_path(broken_lock_file).mkdir()
+    events_file.nc_shared_database_local_events_file_sender_lock_file_path(broken_lock_file).mkdir()
     try:
         run_sender(broken_lock_file, url, token_file)
         raised = None
@@ -410,11 +410,11 @@ with tempfile.TemporaryDirectory() as scratch:
     race_row = queue(race_file)
     connection = events_file.open_local_events_file(race_file)
     connection.execute("UPDATE database_generation_seen SET generation_id = 'new'")
-    sender.record_sent(connection, 1, {"sequence": 9, "generation_id": "ancient",
+    sender.mark_outbox_event_sent_and_delete_events_the_newest_backup_holds(connection, 1, {"sequence": 9, "generation_id": "ancient",
                                        "newest_backup": None})
     check("an answer under a generation ID the file no longer holds is dropped, and the row "
           "stays queued", rows(race_file) == [(race_row, 0, None, None)], rows(race_file))
-    sender.record_sent(connection, 1, {"sequence": 9, "generation_id": "new",
+    sender.mark_outbox_event_sent_and_delete_events_the_newest_backup_holds(connection, 1, {"sequence": 9, "generation_id": "new",
                                        "newest_backup": None})
     events_file.requeue_sent_events_for_new_database_generation_id(connection, "old", "newer")
     check("the 412 step changes nothing while the file no longer holds the old generation ID",
@@ -428,7 +428,7 @@ with tempfile.TemporaryDirectory() as scratch:
     for name, step in (
             ("the 412 step", lambda: events_file.requeue_sent_events_for_new_database_generation_id(
                 connection, "newer", "newest")),
-            ("the 2xx write", lambda: sender.record_sent(
+            ("the 2xx write", lambda: sender.mark_outbox_event_sent_and_delete_events_the_newest_backup_holds(
                 connection, 1, {"sequence": 1, "generation_id": "newer", "newest_backup": None}))):
         try:
             step()

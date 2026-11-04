@@ -16,35 +16,40 @@ walk/, each named by the walk's name and a role suffix
 (.claude/skills/walk-me-through/SKILL.md):
 
   <name>-draft.md          the walk as first written, before the fast read
-  <name>-suggestions.md    the fast read's suggestions on the draft
+  <name>-cold-read-fast-read.md
+                           the fast read's report on the draft; a walk
+                           started before that name holds it as
+                           <name>-suggestions.md, which ships under its own
+                           name in this role's place
   <name>.md                the walk text presented to the user
   <name>-minutes.md        the rulings and the recovery position, written as
                            the walk proceeds
   <name>-dispositions.md   a cold-read walk's fifth file, written at its close
                            and updated after it as the findings' status moves
 
-The five paths are built from the name, never found by a glob of
+The paths are built from the name, never found by a glob of
 docs/walk/<name>*, because one walk's name can be a prefix of another's; a
 glob of <name>-*.md is used only for the stderr note below. A walk lacking its walk
-text or its minutes is not shippable (exit 64). A missing draft or suggestions
-file is noted on stderr and the rest ships. Dispositions ships when present,
+text or its minutes is not shippable (exit 64). A missing draft, or a fast
+read's report missing under both its names, is noted on stderr and the rest
+ships. Dispositions ships when present,
 and its absence is not noted.
 Every other file in the walk's directory whose name is the walk's name, a
 hyphen, anything, then .md -- what the glob <name>-*.md matches -- is noted on
-stderr and not shipped; it is either another walk's or a file none of the five
+stderr and not shipped; it is either another walk's or a file none of the
 roles covers.
 
 In the store, and only there, the walk text can also have revised copies,
 <name>-revised-<n>.md, which REVISED COPIES below describes.
 
 THE RULES. The minutes and the dispositions are replaced in the store; the
-draft, the suggestions and the walk text are add-only, as a
+draft, the fast read's report and the walk text are add-only, as a
 cold-read-record's files are, and a walk text the store would refuse ships
 as a revised copy instead. The dispositions are replaced because a
 cold-read walk's dispositions file is a status file updated after the walk
 closes, not only a record kept as first written. The rules are PER FILE:
 
-  ADD-ONLY: draft, suggestions, walk text. A file not yet in the
+  ADD-ONLY: draft, fast read's report, walk text. A file not yet in the
     store is added; one already there with the same bytes is left alone; one
     already there with DIFFERENT bytes is refused BY NAME -- the one stdout line
     opens REFUSED:, names each such file with the store's sha256 and the local
@@ -57,7 +62,7 @@ closes, not only a record kept as first written. The rules are PER FILE:
     thing the second shipment exists for, the minutes. The walk text has two
     exceptions, APPENDED TO and REVISED COPIES below, so it is never refused
     except when another shipment changes the store while this one runs;
-    draft and suggestions have none.
+    draft and the fast read's report have none.
   APPENDED TO: the walk text, and it alone. A stored walk text whose bytes
     are an exact PREFIX of the local one -- the local file only had content
     added after the stored bytes -- is replaced instead of refused. A walk text grows as
@@ -261,18 +266,32 @@ EXIT_REFUSED = shipper.EXIT_REFUSED
 EXIT_BAD_INVOCATION = shipper.EXIT_BAD_INVOCATION
 
 # (role suffix, role name) in the order the skill names them; "" is the walk
-# text. The suffixes are also what walk_name_and_directory strips from a path.
+# text.
 WALK_FILE_ROLES = (
     ("-draft", "draft"),
-    ("-suggestions", "suggestions"),
+    ("-cold-read-fast-read", "cold-read-fast-read report"),
     ("", "walk text"),
     ("-minutes", "minutes"),
     ("-dispositions", "dispositions"),
 )
+# A walk started before the skill named the fast read's report
+# <name>-cold-read-fast-read.md holds it as <name>-suggestions.md. The skill no
+# longer names this ending, so it stays out of WALK_FILE_ROLES, which
+# scripts/walk-file-endings-match-the-skill-test.py holds to the skill.
+APPROVAL_WALK_COLD_READ_FAST_READ_REPORT_FILE_SUFFIX_IN_WALKS_STARTED_BEFORE_ITS_RENAME = "-suggestions"
+# Every file this program ships, in the order it lists them; the suffixes are
+# also what walk_name_and_directory strips from a path.
+APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX = (
+    WALK_FILE_ROLES[:2]
+    + ((APPROVAL_WALK_COLD_READ_FAST_READ_REPORT_FILE_SUFFIX_IN_WALKS_STARTED_BEFORE_ITS_RENAME, "cold-read-fast-read report"),)
+    + WALK_FILE_ROLES[2:])
 MINUTES_ROLE_SUFFIX = "-minutes"
 WALK_TEXT_ROLE_SUFFIX = ""
 REQUIRED_ROLE_SUFFIXES = (WALK_TEXT_ROLE_SUFFIX, MINUTES_ROLE_SUFFIX)
-NOTED_WHEN_ABSENT_ROLE_SUFFIXES = ("-draft", "-suggestions")
+# Each group is noted on stderr, by its first suffix, when none of its files is present.
+NOTED_WHEN_ABSENT_ROLE_SUFFIX_GROUPS = (
+    ("-draft",),
+    ("-cold-read-fast-read", APPROVAL_WALK_COLD_READ_FAST_READ_REPORT_FILE_SUFFIX_IN_WALKS_STARTED_BEFORE_ITS_RENAME))
 # The files a walk replaces in the store (see REPLACED in the docstring); every
 # other role is add-only.
 REPLACED_ROLE_SUFFIXES = (MINUTES_ROLE_SUFFIX, "-dispositions")
@@ -332,7 +351,7 @@ def walk_name_and_directory(argument: str):
         directory = path.parent.resolve()
         stem = path.name[:-3] if path.name.endswith(".md") else path.name
         candidates = [stem]
-        for suffix, _ in WALK_FILE_ROLES:
+        for suffix, _ in APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX:
             if suffix and stem.endswith(suffix):
                 candidates.append(stem[:-len(suffix)])
         for candidate in candidates:
@@ -406,10 +425,10 @@ def store_file_role_rank(name: str, file_name: str) -> int:
     """The place of a store file of this walk in the roles' order, a revised
     copy taking the walk text's place, so the stdout line and the stderr
     announcements list files in one order."""
-    for rank, (suffix, _) in enumerate(WALK_FILE_ROLES):
+    for rank, (suffix, _) in enumerate(APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX):
         if file_name == walk_file_name(name, suffix):
             return rank
-    return [suffix for suffix, _ in WALK_FILE_ROLES].index(WALK_TEXT_ROLE_SUFFIX)
+    return [suffix for suffix, _ in APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX].index(WALK_TEXT_ROLE_SUFFIX)
 
 
 def sha256_of(path: pathlib.Path) -> str:
@@ -575,6 +594,19 @@ def staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_
             f"of its own; delete it with `{command}`.")
 
 
+def walk_files_ship_rerun_command(name: str, directory: pathlib.Path) -> str:
+    """The command that ships walk `name` in `directory` again: this
+    program by its resolved path, and the walk by its name or its minutes'
+    resolved path, so it runs from any working directory, however the
+    program was started."""
+    # A name that begins with a dash would be read by argparse as an option,
+    # so such a walk is rerun by its minutes' path, as a walk elsewhere is.
+    walk_argument = (name if directory == WALK_DIRECTORY and not name.startswith("-")
+                     else str(directory / walk_file_name(name, MINUTES_ROLE_SUFFIX)))
+    return (f"{shlex.quote(str(REPO_ROOT / 'scripts' / 'walk-files-ship.py'))} "
+            f"{shlex.quote(walk_argument)}")
+
+
 def walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
         copy_host, name: str, directory: pathlib.Path, staging_dir,
         what_failed: str, why: typing.Optional[str]) -> str:
@@ -582,12 +614,7 @@ def walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_b
     command that reruns this shipment, after the deletion of this run's
     staging directory when that could not be removed, since the rerun's
     replace step would stop on it."""
-    # A name that begins with a dash would be read by argparse as an option,
-    # so such a walk is rerun by its minutes' path, as a walk elsewhere is.
-    walk_argument = (name if directory == WALK_DIRECTORY and not name.startswith("-")
-                     else str(directory / walk_file_name(name, MINUTES_ROLE_SUFFIX)))
-    rerun = (f"{shlex.quote(str(REPO_ROOT / 'scripts' / 'walk-files-ship.py'))} "
-             f"{shlex.quote(walk_argument)}")
+    rerun = walk_files_ship_rerun_command(name, directory)
     if why:
         return (f"FAILED: {name} — {what_failed}. "
                 f"{staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(copy_host, staging_dir, why)} "
@@ -610,7 +637,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                                             name: str, directory: pathlib.Path,
                                             revised_copies: pathlib.Path) -> int:
     present = {suffix: directory / walk_file_name(name, suffix)
-               for suffix, _ in WALK_FILE_ROLES
+               for suffix, _ in APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX
                if (directory / walk_file_name(name, suffix)).is_file()}
     missing_required = [walk_file_name(name, suffix)
                         for suffix in REQUIRED_ROLE_SUFFIXES if suffix not in present]
@@ -618,16 +645,41 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
         print(f"FAILED: {name} — not a walk that can be shipped: "
               f"{', '.join(missing_required)} not found in {directory}")
         return EXIT_BAD_INVOCATION
-    for suffix in NOTED_WHEN_ABSENT_ROLE_SUFFIXES:
-        if suffix not in present:
-            print(f"{PROGRAM}: no {walk_file_name(name, suffix)} in {directory}; "
+    for group in NOTED_WHEN_ABSENT_ROLE_SUFFIX_GROUPS:
+        if not any(suffix in present for suffix in group):
+            print(f"{PROGRAM}: no {walk_file_name(name, group[0])} in {directory}; "
                   f"shipping the walk without it", file=sys.stderr)
-    role_names = {walk_file_name(name, suffix) for suffix, _ in WALK_FILE_ROLES}
+    role_names = [walk_file_name(name, suffix) for suffix, _ in APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX]
     others = sorted(p.name for p in directory.glob(f"{name}-*.md")
                     if p.name not in role_names)
     if others:
-        print(f"{PROGRAM}: not shipped, not one of the walk's five roles (another "
-              f"walk's, or a shape the ruling did not name): {', '.join(others)}",
+        # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md
+        print(f"{PROGRAM}: not shipped: {', '.join(others)}. Each of these names "
+              f"begins with \"{name}-\", but none is a name a file of walk {name} "
+              f"can have, so this run does not ship them and leaves them in "
+              f"{directory}; the stdout line reports what it did with the walk's "
+              f"own files. A file of walk {name} has one of the names "
+              f".claude/skills/walk-me-through/SKILL.md gives a walk's files: "
+              f"{', '.join(walk_file_name(name, suffix) for suffix, _ in WALK_FILE_ROLES)}; "
+              f"or, in a walk started before its fast read's report took the name "
+              f"{walk_file_name(name, '-cold-read-fast-read')}, that report's earlier name "
+              f"{walk_file_name(name, APPROVAL_WALK_COLD_READ_FAST_READ_REPORT_FILE_SUFFIX_IN_WALKS_STARTED_BEFORE_ITS_RENAME)}.\n"
+              f"For a file of another walk, which it is when {directory} holds that "
+              f"walk's minutes, such as {name}-x-minutes.md for {name}-x-draft.md "
+              f"or for {name}-x.md: do nothing; it "
+              f"ships when that walk is shipped.\n"
+              f"For a file of walk {name} that fills one of those roles under "
+              f"another name, when {directory} has no file of that role's name: "
+              f"rename it to that name; once every such file is renamed, run "
+              f"`{walk_files_ship_rerun_command(name, directory)}` again, because the log-store keeps no copy "
+              f"of a file this program does not ship.\n"
+              f"For any other file, one whose role's name is already taken included: "
+              f"tell the user, in one sentence for each such "
+              f"file, with its name in place of <file name>: \"<file name> is "
+              f"not named as a walk's file is, so scripts/walk-files-ship.py did not ship it; the "
+              f"log-store has no copy of it; it is in {directory} on "
+              f"{os.uname().nodename}.\" A subagent passes those sentences to the "
+              f"agent that dispatched it instead.",
               file=sys.stderr)
 
     minutes_target = destination.walk_path / walk_file_name(name, MINUTES_ROLE_SUFFIX)
@@ -669,7 +721,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
     # Each file's plan is decided on the listing; its outcome on what the
     # store holds after the copy (see TWO SHIPMENTS OF ONE WALK AT ONCE).
     to_place, to_replace, unchanged, refused = [], [], [], []
-    role_name_of = dict(WALK_FILE_ROLES)
+    role_name_of = dict(APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX)
     local_digests = {}
     for suffix, source in present.items():
         local_digest = sha256_of(source)

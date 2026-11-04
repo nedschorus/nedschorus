@@ -242,6 +242,14 @@ def main():
            case.run("Updated docs/plan-of-record.md."), None)
 
     case = Case()
+    document = case.document("docs/plan-of-record.md", modified=3_000_000,
+                             text="See file:///Volumes/nedhome/agents/x/log.md.\n")
+    case.record("plan-of-record-2026-10-08", 2_000_000, "docs/plan-of-record.md",
+                "See /home/nedlern/agents/x/log.md.\n")
+    expect("a frozen copy whose Mac links a cold read on ned-box rewrote matches its document despite file times",
+           case.run("Updated docs/plan-of-record.md."), None)
+
+    case = Case()
     document = case.document("docs/plan-of-record.md", text="same\n", modified=3_000_000)
     absolute_form = Path(*document.resolve().parts[1:])
     case.record("plan-of-record-2026-10-08", 2_000_000, absolute_form, "same\n")
@@ -277,9 +285,9 @@ def main():
     draft = case.document("docs/walk/naming-rules-draft.md", modified=2_000_000)
     expect("a walk-document without a suggestions file is reported",
            case.run("The walk-document is docs/walk/naming-rules-draft.md."), [draft])
-    case.document("docs/walk/naming-rules-suggestions.md", modified=3_000_000)
+    case.document("docs/walk/naming-rules-cold-read-fast-read.md", modified=3_000_000)
     expect("a walk-document with a newer suggestions file is silent, and the suggestions file is skipped",
-           case.run("See docs/walk/naming-rules-draft.md and docs/walk/naming-rules-suggestions.md."),
+           case.run("See docs/walk/naming-rules-draft.md and docs/walk/naming-rules-cold-read-fast-read.md."),
            None)
 
     case = Case()
@@ -457,7 +465,7 @@ def main():
 
     case = Case()
     draft = case.document("docs/walk/naming-rules-draft.md", modified=5_000_000)
-    suggestions = case.document("docs/walk/naming-rules-suggestions.md", modified=4_000_000)
+    suggestions = case.document("docs/walk/naming-rules-cold-read-fast-read.md", modified=4_000_000)
     expect("a walk-document changed after another agent-session's read is raised",
            case.run("The walk-document is docs/walk/naming-rules-draft.md."), [draft])
     name_agent_session(suggestions, "s1", draft)
@@ -466,7 +474,7 @@ def main():
 
     case = Case()
     draft = case.document("docs/walk/naming-rules-draft.md", modified=4_000_000)
-    suggestions = case.document("docs/walk/naming-rules-suggestions.md", modified=5_000_000)
+    suggestions = case.document("docs/walk/naming-rules-cold-read-fast-read.md", modified=5_000_000)
     malformed = suggestions.parent / (suggestions.name + ".agent-session.json")
     malformed.write_text("not json\n")
     completed = case.run("The walk-document is docs/walk/naming-rules-draft.md.")
