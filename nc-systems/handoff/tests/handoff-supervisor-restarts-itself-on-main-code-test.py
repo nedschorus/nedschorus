@@ -175,6 +175,40 @@ def run_dont_restart_case(workspace: Path):
           str(run.events))
 
 
+def run_not_restarted_notice_names_the_tool_cases(workspace: Path):
+    """The notice names the user when the reference-checkout will not fast-forward,
+    since the restart program would fail the same way, and the restart program for an
+    os.execv failure or a handoff-supervisor running from another checkout."""
+    run_command = ("run `python3 ~/Projects/nedschorus/nc-systems/handoff/handoff-supervisor-"
+                   "restart-onto-main-code-by-relaunch-from-reference-checkout.py seatname`")
+    ssh_command = ("run `ssh nedlern@ned-box 'python3 ~/Projects/nedschorus/nc-systems/handoff/"
+                   "handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout.py "
+                   "seatname'`")
+    cannot_fast_forward = "launch-time-git-sync: main left as is — 2 uncommitted tracked change(s)"
+    for case, report, checkout, on_the_mac, expected_command in (
+            ("reference-checkout will not fast-forward", cannot_fast_forward,
+             supervisor.REFERENCE_CHECKOUT, False, None),
+            ("os.execv failed on ned-box",
+             "os.execv failed: PermissionError: [Errno 13] Permission denied",
+             supervisor.REFERENCE_CHECKOUT, False, ssh_command),
+            ("os.execv returned on the Mac",
+             "os.execv returned without replacing the process", supervisor.REFERENCE_CHECKOUT,
+             True, run_command),
+            ("another checkout will not fast-forward on the Mac", cannot_fast_forward,
+             workspace / "agent-home", True, run_command)):
+        notice = supervisor.handoff_supervisor_not_restarted_on_main_code_notice(
+            report, "seatname", checkout, on_the_mac)
+        check(f"NOTICE TOOL ({case}): the notice names "
+              + (expected_command if expected_command else "the user, not the restart program"),
+              f'reason: "{report}". Tell the user now' in notice
+              and f"name the checkout {checkout}. " in notice
+              and (expected_command is None or expected_command in notice)
+              and (run_command in notice) == (expected_command == run_command)
+              and (ssh_command in notice) == (expected_command == ssh_command)
+              and ("Do not run the restart program" in notice) == (expected_command is None),
+              notice)
+
+
 def run_restart_failure_cases(workspace: Path):
     for case, report, exec_raises, exec_returns, expected in (
             ("cannotfastforward",
@@ -641,6 +675,7 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_restart_placement_cases(workspace)
     run_dont_restart_case(workspace)
     run_restart_failure_cases(workspace)
+    run_not_restarted_notice_names_the_tool_cases(workspace)
     run_restarted_process_cases(workspace)
     run_missing_transcript_cases(workspace)
     run_restart_arguments_cases(workspace)
