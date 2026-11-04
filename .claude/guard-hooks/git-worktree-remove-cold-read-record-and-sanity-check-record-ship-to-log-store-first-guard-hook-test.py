@@ -461,6 +461,46 @@ check("a worktree named through ~/ has its records shipped and the removal let t
       code == 0 and output is None
       and (STORE / "cold-read-records" / "tilde-doc-2026-11-03" / "fast-read.md").is_file(), (code, output, stderr))
 
+# Readings are bounded only where variables multiply them, and a cut is reported, never silent.
+many_removals = "; ".join(f"git worktree remove wt{number}" for number in range(40))
+check("every one of 40 written-out removals is read",
+      removals(many_removals) == [("/work", f"wt{number}", None) for number in range(40)],
+      len(removals(many_removals)))
+cap = hook.MAXIMUM_ALTERNATIVE_SHELL_VARIABLE_VALUE_READINGS_PER_WORD
+two_names_six_values_each = "; ".join([f"A=a{number}" for number in range(6)] + [f"B=b{number}" for number in range(6)])
+cut = removals(f"{two_names_six_values_each}; git worktree remove $A$B")
+check("readings of one worktree word past the limit are cut, and the cut is an unreadable reading",
+      len([removal for removal in cut if removal[2] is None]) == cap and cut[-1] == ("/work", "$A$B", "$A$B"), cut)
+one_name_too_many_values = "; ".join(f"W=/w{number}" for number in range(cap + 1))
+cut = removals(f"{one_name_too_many_values}; git worktree remove $W")
+check("values of one name past the limit are cut, and the cut is an unreadable reading",
+      len([removal for removal in cut if removal[2] is None]) == cap and cut[-1] == ("/work", "$W", "$W"), cut)
+cut = removals(f"{two_names_six_values_each}; W=/$A$B; git worktree remove $W")
+check("values an assignment builds past the limit are cut, and the cut is an unreadable reading",
+      len([removal for removal in cut if removal[2] is None]) == cap and cut[-1] == ("/work", "$W", "$W"), cut)
+cut = removals(f"{one_name_too_many_values}; cd $W; git worktree remove wt")
+check("cd directories past the limit are cut, and the cut is an unreadable reading",
+      len([removal for removal in cut if removal[2] is None]) == cap and cut[-1] == ("/work", "wt", "$W"), cut)
+cut = removals(f"{one_name_too_many_values}; git -C $W worktree remove wt")
+check("git -C directories past the limit are cut, and the cut is an unreadable reading",
+      len([removal for removal in cut if removal[2] is None]) == cap and cut[-1] == ("/work", "wt", "$W"), cut)
+cut = removals(f"{one_name_too_many_values}; git --git-dir=$W worktree remove wt")
+check("repository option readings past the limit are cut, and the cut is an unreadable reading",
+      len([removal for removal in cut if removal[2] is None]) == cap and cut[-1] == ("/work", "wt", "--git-dir=$W"),
+      cut)
+cut = removals("D=/x; D=/y; " + "; ".join(f"A=a{number}" for number in range(20))
+               + "; cd $D && git worktree remove $A")
+check("removals one worktree word gives in several directories past the limit are cut, and the cut is unreadable",
+      len([removal for removal in cut if removal[2] is None]) == cap and cut[-1][2] is not None, cut)
+code, output = run_hook({"tool_name": "Bash", "cwd": "/nonexistent",
+                         "tool_input": {"command": f"{two_names_six_values_each}; git worktree remove $A$B"}},
+                        runner=runner_failing_listing)
+check("a removal whose readings were cut is let through with the not-checked notice naming the word",
+      code == 0 and output is not None and "permissionDecision" not in output["hookSpecificOutput"]
+      and output["hookSpecificOutput"].get("additionalContext", "").startswith(
+          "Not checked: the hook that ships a worktree's cold-read-records and sanity-check records to the "
+          "log-store before `git worktree remove` could not read $A$B in this command"), output)
+
 # A slow shipment must be refused by the hook, not cut off by Claude Code, which lets the command through.
 settings = json.loads((hook.REPOSITORY_ROOT / ".claude" / "settings.json").read_text())
 hook_timeouts = [entry.get("timeout") for group in settings["hooks"]["PreToolUse"] for entry in group["hooks"]

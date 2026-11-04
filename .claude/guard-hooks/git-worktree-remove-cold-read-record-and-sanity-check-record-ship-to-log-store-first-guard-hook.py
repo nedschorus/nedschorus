@@ -37,7 +37,10 @@ list`, run with the command's --git-dir and --work-tree, names whose path
 ends in the word, the match git tries first. A path that holds an expansion
 in every reading, such as a loop variable or a command substitution, or a
 value that cannot be read whole, such as one holding a backslash, cannot be
-read: the command is let through, and the agent is told in
+read; nor can the readings past
+MAXIMUM_ALTERNATIVE_SHELL_VARIABLE_VALUE_READINGS_PER_WORD when variables give
+one word, or one removal across its directories and options, more readings
+than that. Where a path cannot be read, the command is let through, and the agent is told in
 additionalContext that its records were not shipped. Refusing it instead
 would stop the many scripted removals of scratch worktrees agents run. Not
 read: the remote command of ssh, commands run by eval or a script file,
@@ -54,6 +57,7 @@ docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-h
 """
 
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -98,7 +102,8 @@ ASSIGNMENT_VALUE_PIECE_PATTERN = re.compile(r""""([^"`\\]*)"|'([^']*)'|([^\s;&|`
 WHOLE_ASSIGNMENT_VALUE_PATTERN = re.compile(
     r"""(?:"[^"`\\]*"|'[^']*'|[^\s;&|`'"()<>\\])*(?=$|[\s;&|)<>])""")
 VARIABLE_REFERENCE_PATTERN = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
-# Bounds the readings of one word when several names each have several values.
+# Bounds the readings of one word, and of one removal across its directories and options, when several
+# names each have several values: each reading past it costs a worktree listing within the hook's timeout.
 MAXIMUM_ALTERNATIVE_SHELL_VARIABLE_VALUE_READINGS_PER_WORD = 32
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
@@ -157,28 +162,45 @@ PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
     "which worktree is kept, quoting each line that begins FAILED or REFUSED.")
 
 
-def distinct(values):
-    """Return values in their first order, each once, at most MAXIMUM_ALTERNATIVE_SHELL_VARIABLE_VALUE_READINGS_PER_WORD of them."""
-    return list(dict.fromkeys(values))[:MAXIMUM_ALTERNATIVE_SHELL_VARIABLE_VALUE_READINGS_PER_WORD]
+def readings_capped(readings, reading_when_cut, counted=lambda reading: True):
+    """Return readings in their first order, each once.
+
+    Past MAXIMUM_ALTERNATIVE_SHELL_VARIABLE_VALUE_READINGS_PER_WORD counted readings, the rest are
+    dropped and reading_when_cut, which the caller makes a reading the hook cannot read, ends the
+    list, so the agent is told the removal was not checked. readings is read lazily, and no further
+    than the cut.
+    """
+    kept, count = {}, 0
+    for reading in readings:
+        if reading in kept:
+            continue
+        if counted(reading):
+            count += 1
+            if count > MAXIMUM_ALTERNATIVE_SHELL_VARIABLE_VALUE_READINGS_PER_WORD:
+                kept[reading_when_cut] = None
+                break
+        kept[reading] = None
+    return list(kept)
 
 
 def variables_substituted(word, variables):
     """Return every reading of word with each $NAME and ${NAME} replaced by each value variables gives
-    the name; a name not there, or a value that cannot be read, stays as written.
+    the name; a name not there, or a value that cannot be read, stays as written, as does the whole
+    word for the readings past the limit.
 
     Each reading keeps the word's tilde mark, so directory_joined expands a ~ the shell would; a ~
     a value brings in stays as written, as the shell leaves it.
     """
-    readings, position = [""], 0
+    pieces, position = [], 0
     for match in VARIABLE_REFERENCE_PATTERN.finditer(word):
         values = [match.group(0) if value is None else value
                   for value in variables.get(match.group(1) or match.group(2), [None])]
-        readings = distinct(reading + word[position:match.start()] + value
-                            for reading in readings for value in values)
+        pieces += [[word[position:match.start()]], values]
         position = match.end()
+    pieces.append([word[position:]])
     tilde_marked = isinstance(word, shell_reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand)
-    return distinct(shell_reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand(reading + word[position:])
-                    if tilde_marked else reading + word[position:] for reading in readings)
+    return readings_capped((shell_reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand("".join(parts))
+                            if tilde_marked else "".join(parts) for parts in itertools.product(*pieces)), word)
 
 
 def literal_shell_variables(command):
@@ -193,12 +215,13 @@ def literal_shell_variables(command):
         name = name_match.group(1)
         whole = WHOLE_ASSIGNMENT_VALUE_PATTERN.match(command, name_match.end())
         values = [None] if whole is None else assignment_values(whole.group(0), variables)
-        variables[name] = distinct(variables.get(name, []) + values)
+        variables[name] = readings_capped(variables.get(name, []) + values, None)
     return variables
 
 
 def assignment_values(text, variables):
-    """Return each value the shell may give an assignment written as text; None for one holding an expansion."""
+    """Return each value the shell may give an assignment written as text; None for one holding an
+    expansion, and for the values past the limit."""
     readings = [""]
     for double_quoted, single_quoted, bare in ASSIGNMENT_VALUE_PIECE_PATTERN.findall(text):
         if not double_quoted and not bare:
@@ -209,8 +232,8 @@ def assignment_values(text, variables):
                 piece = os.path.expanduser(bare)
             options = [None if UNREADABLE_WORD_PATTERN.search(option) else option
                        for option in variables_substituted(piece, variables)]
-        readings = distinct(None if reading is None or option is None else reading + option
-                            for reading in readings for option in options)
+        readings = readings_capped((None if reading is None or option is None else reading + option
+                                    for reading in readings for option in options), None)
     return readings
 
 
@@ -265,12 +288,10 @@ def worktree_remove_directory_and_targets(words):
 
 
 def shell_words_every_combination_of_variable_values_substituted_build(words, variables):
-    """Return every reading of the list of words, as tuples, each word read as variables_substituted reads it."""
-    readings = [()]
-    for word in words:
-        readings = distinct(reading + (option,) for reading in readings
-                            for option in variables_substituted(word, variables))
-    return readings
+    """Return every reading of the list of words, as tuples, each word read as variables_substituted
+    reads it; past the limit, the words as written."""
+    return readings_capped(itertools.product(*(variables_substituted(word, variables) for word in words)),
+                           tuple(words))
 
 
 def worktree_removals_in_command(command, working_directory, variables=None):
@@ -283,7 +304,7 @@ def worktree_removals_in_command(command, working_directory, variables=None):
     """
     variables = dict(variables or {})
     for name, values in literal_shell_variables(command).items():
-        variables[name] = distinct(variables.get(name, []) + values)
+        variables[name] = readings_capped(variables.get(name, []) + values, None)
     # A child shell's cd does not change the directory of the shell around it.
     directories = {(): [(working_directory, None)]}
     removals = []
@@ -300,10 +321,11 @@ def worktree_removals_in_command(command, working_directory, variables=None):
         if is_program(program, "cd"):
             # The last word, so that an option such as -P is not read as the directory.
             targets = variables_substituted(arguments[-1], variables) if arguments else [os.path.expanduser("~")]
-            directories[shells] = distinct(
-                (directory, str(target)) if UNREADABLE_WORD_PATTERN.search(target)
-                else (os.path.normpath(directory_joined(directory, target)), None)
-                for directory, _ in places for target in targets)
+            directories[shells] = readings_capped(
+                ((directory, str(target)) if UNREADABLE_WORD_PATTERN.search(target)
+                 else (os.path.normpath(directory_joined(directory, target)), None)
+                 for directory, _ in places for target in targets),
+                (places[0][0], str(arguments[-1]) if arguments else "~"))
             continue
         if any(is_program(program, runner) for runner in shell_reader.SHELL_STRING_RUNNERS):
             inner = shell_reader.shell_command_string(arguments)
@@ -320,26 +342,31 @@ def worktree_removals_in_command(command, working_directory, variables=None):
         if found is None:
             continue
         override, targets, repository_options = found
-        for directory, unreadable in places:
-            for git_directory, git_unreadable in directory_with_override(directory, unreadable, override, variables):
-                for options in shell_words_every_combination_of_variable_values_substituted_build(repository_options, variables):
-                    for target in targets:
-                        for reading in variables_substituted(target, variables):
-                            reading_unreadable = git_unreadable or next(
-                                (word for word in (reading, *options) if UNREADABLE_WORD_PATTERN.search(word)), None)
-                            removals.append((str(git_directory), str(directory_joined(None, reading)),
-                                             reading_unreadable, options))
-    return distinct(removals)
+        # Each worktree word is bounded on its own, so written-out removals are never cut; only the
+        # readings the hook would list worktrees for count towards the bound.
+        for target in targets:
+            removals.extend(readings_capped(
+                ((str(git_directory), str(directory_joined(None, reading)), git_unreadable or next(
+                    (word for word in (reading, *options) if UNREADABLE_WORD_PATTERN.search(word)), None), options)
+                 for directory, unreadable in places
+                 for git_directory, git_unreadable in directory_with_override(directory, unreadable, override, variables)
+                 for options in shell_words_every_combination_of_variable_values_substituted_build(
+                     repository_options, variables)
+                 for reading in variables_substituted(target, variables)),
+                (str(places[0][0]), str(target), str(target), ()),
+                counted=lambda removal: removal[2] is None))
+    return list(dict.fromkeys(removals))
 
 
 def directory_with_override(directory, unreadable, override, variables):
     """Return each (directory, unreadable word or None) once a wrapper's or git's -C directory override applies."""
     if override is None:
         return [(directory, unreadable)]
-    return distinct(
-        (directory, unreadable or str(reading)) if UNREADABLE_WORD_PATTERN.search(reading)
-        else (os.path.normpath(directory_joined(directory, reading)), unreadable)
-        for reading in variables_substituted(override, variables))
+    return readings_capped(
+        ((directory, unreadable or str(reading)) if UNREADABLE_WORD_PATTERN.search(reading)
+         else (os.path.normpath(directory_joined(directory, reading)), unreadable)
+         for reading in variables_substituted(override, variables)),
+        (directory, unreadable or str(override)))
 
 
 def git_worktree_remove_target_word_candidate_worktree_directories_find(directory, word, runner, repository_options=()):
