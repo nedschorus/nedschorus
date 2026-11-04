@@ -4,7 +4,7 @@
 Usage:
   scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py [seams below]
   scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py --record-follow-up-request-sent
-  scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py --print-merge-gate-notice
+  scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py --print-merge-gate-notice-of-last-failed-or-stopped-run
 
 The design is GHI "Test suites that run without a sandbox leave per-change test
 runs and run apart, when their own files change or in a quiet gap",
@@ -29,7 +29,7 @@ WHAT ONE RUN DOES, in order:
      left, and runs the worktree's runner once with --only-suites-named and the
      no-sandbox suites that worktree's runner lists, plus
      --only-suites-whose-recorded-inputs-changed-since <passing commit> when
-     there is one. The runner gets RUNNER_TIME_LIMIT_SECONDS; past it, its
+     there is one. The runner gets RUNNER_TIMEOUT_SECONDS; past it, its
      process group gets SIGTERM, then SIGKILL after RUNNER_STOP_GRACE_SECONDS.
   7. Removes the worktree, writes the run's record to the log-store and the
      state file. Runner exit 0 is passed, and the commit becomes the passing
@@ -52,7 +52,7 @@ with each failing suite's log beside it as <HHMMSS>Z-<suite, / as __>.log.
 merge-lane-2 has sent the follow-up request for a failed or stopped run; it
 refuses, exit 2, when the last run passed or there is none.
 
---print-merge-gate-notice prints, on stdout, the notice scripts/merge-gate.sh
+--print-merge-gate-notice-of-last-failed-or-stopped-run prints, on stdout, the notice scripts/merge-gate.sh
 puts on its stderr: nothing when the state file is missing or the last run
 passed; for a failed run each failing suite, its log, the commit range and the
 pull requests merged in it, read from the clone's first-parent merge commits;
@@ -103,14 +103,14 @@ RUNNER_PATH_IN_WORKTREE = Path("scripts") / "run-all-test-suites.py"
 
 # Read at run time, so the tests can shorten them.
 RETRY_FAILED_RUN_AFTER_SECONDS = 3600
-RUNNER_TIME_LIMIT_SECONDS = 3600
+RUNNER_TIMEOUT_SECONDS = 3600
 RUNNER_STOP_GRACE_SECONDS = 60
-GIT_FETCH_TIME_LIMIT_SECONDS = 300
-GIT_READ_TIME_LIMIT_SECONDS = 60
+GIT_FETCH_TIMEOUT_SECONDS = 300
+GIT_READ_TIMEOUT_SECONDS = 60
 
 EXIT_DONE = 0
 EXIT_REFUSED = 2
-EXIT_STOPPED = 4
+EXIT_RUN_STOPPED_BY_A_FAILED_STEP = 4
 
 RESULT_PASSED = "passed"
 RESULT_FAILED = "failed"
@@ -134,7 +134,7 @@ git_redirecting_environment = module_loaded_by_path(
 
 def runner_module():
     """scripts/run-all-test-suites.py beside this program, loaded by path when first needed,
-    so --print-merge-gate-notice, which the merge gate runs, never loads it."""
+    so --print-merge-gate-notice-of-last-failed-or-stopped-run, which the merge gate runs, never loads it."""
     spec = importlib.util.spec_from_file_location(
         "run_all_test_suites", Path(__file__).resolve().with_name("run-all-test-suites.py"))
     module = importlib.util.module_from_spec(spec)
@@ -203,7 +203,7 @@ def take_lock_without_waiting(path):
 
 def git(clone, *arguments, time_limit=None):
     """git's completed process; a run past its time limit reads as exit 124 with the reason."""
-    limit = GIT_READ_TIME_LIMIT_SECONDS if time_limit is None else time_limit
+    limit = GIT_READ_TIMEOUT_SECONDS if time_limit is None else time_limit
     environment = git_redirecting_environment.environment_without_git_redirecting_variables()
     try:
         return subprocess.run(["git", "-C", str(clone), *arguments], env=environment,
@@ -254,7 +254,7 @@ def run_runner_with_time_limit(command, worktree):
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                errors="replace", start_new_session=True)
     try:
-        out, err = process.communicate(timeout=RUNNER_TIME_LIMIT_SECONDS)
+        out, err = process.communicate(timeout=RUNNER_TIMEOUT_SECONDS)
         return process.returncode, out, err
     except subprocess.TimeoutExpired:
         # The group may have ended between the time limit and the signal.
@@ -316,7 +316,7 @@ def write_record(log_store_root, started, last_run, stdout_tail, failing):
 
 
 def stopped(state_file, state, commit, started, reason, compared_with=None):
-    """Record a stopped run where the state file can be written, print why, return EXIT_STOPPED."""
+    """Record a stopped run where the state file can be written, print why, return EXIT_RUN_STOPPED_BY_A_FAILED_STEP."""
     print(f"{PROGRAM}: stopped — {reason}", file=sys.stderr)
     state = dict(state)
     state["last_run"] = {"commit": commit, "compared_with": compared_with,
@@ -328,7 +328,7 @@ def stopped(state_file, state, commit, started, reason, compared_with=None):
     except OSError as error:
         print(f"{PROGRAM}: the state file {state_file} could not be written either: {error}",
               file=sys.stderr)
-    return EXIT_STOPPED
+    return EXIT_RUN_STOPPED_BY_A_FAILED_STEP
 
 
 def run(arguments):
@@ -338,7 +338,7 @@ def run(arguments):
     except OSError as error:
         print(f"{PROGRAM}: stopped — its lock {state_file}.lock could not be taken: {error}",
               file=sys.stderr)
-        return EXIT_STOPPED
+        return EXIT_RUN_STOPPED_BY_A_FAILED_STEP
     if lock is None:
         print(f"{PROGRAM}: another run holds {state_file}.lock; nothing to do")
         return EXIT_DONE
@@ -356,7 +356,7 @@ def run_under_lock(arguments, state_file):
         print(f"{PROGRAM}: {error}; it counts as empty", file=sys.stderr)
         state = {}
     clone = Path(arguments.clone)
-    fetched = git(clone, "fetch", "origin", time_limit=GIT_FETCH_TIME_LIMIT_SECONDS)
+    fetched = git(clone, "fetch", "origin", time_limit=GIT_FETCH_TIMEOUT_SECONDS)
     if fetched.returncode != 0:
         return stopped(state_file, state, None, started,
                        f"git fetch origin failed: {first_line(fetched.stderr)}")
@@ -425,7 +425,7 @@ def run_under_lock(arguments, state_file):
         failing = failing_suites_and_logs(out, runner.FAILED_SUITE_LINE_PREFIX,
                                           runner.SUITE_LINE_LOG_MARK)
     elif code is None:
-        result, reason = RESULT_STOPPED, (f"the runner ran past {RUNNER_TIME_LIMIT_SECONDS:g} s "
+        result, reason = RESULT_STOPPED, (f"the runner ran past {RUNNER_TIMEOUT_SECONDS:g} s "
                                           f"and was stopped")
     else:
         refusal = [line for line in err.splitlines() if line.strip()]
@@ -451,9 +451,9 @@ def run_under_lock(arguments, state_file):
     except OSError as error:
         print(f"{PROGRAM}: stopped — the state file {state_file} could not be written: {error}",
               file=sys.stderr)
-        return EXIT_STOPPED
+        return EXIT_RUN_STOPPED_BY_A_FAILED_STEP
     print(f"{PROGRAM}: {result} at {commit[:12]}; record {record}")
-    return EXIT_STOPPED if result == RESULT_STOPPED else EXIT_DONE
+    return EXIT_RUN_STOPPED_BY_A_FAILED_STEP if result == RESULT_STOPPED else EXIT_DONE
 
 
 def record_follow_up_request_sent(arguments):
@@ -547,7 +547,7 @@ def parse_arguments(argv):
     parser.add_argument("--test-suite-runner-program")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--record-follow-up-request-sent", action="store_true")
-    mode.add_argument("--print-merge-gate-notice", action="store_true")
+    mode.add_argument("--print-merge-gate-notice-of-last-failed-or-stopped-run", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -555,7 +555,7 @@ def main(argv=None):
     arguments = parse_arguments(argv)
     if arguments.record_follow_up_request_sent:
         return record_follow_up_request_sent(arguments)
-    if arguments.print_merge_gate_notice:
+    if arguments.print_merge_gate_notice_of_last_failed_or_stopped_run:
         for line in merge_gate_notice(Path(arguments.state_file).expanduser(),
                                       Path(arguments.clone)):
             print(line)

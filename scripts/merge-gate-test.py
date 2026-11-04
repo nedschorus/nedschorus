@@ -558,7 +558,7 @@ def case_no_sandbox_notice_program_failing_is_said_and_the_gate_goes_on(gate):
     (copy.parent / NO_SANDBOX_SUITES_PROGRAM.name).write_text("raise SystemExit(3)\n")
     run = run_gate(copy, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes())
     return (passed_pinned_to(run, BASE_PR, BASE_APPROVAL["commit_id"])
-            and "--print-merge-gate-notice failed" in run.stderr), run.summary()
+            and "--print-merge-gate-notice-of-last-failed-or-stopped-run failed" in run.stderr), run.summary()
 
 
 def case_live_chain_merge_account_only_approval(gate):
@@ -1901,11 +1901,11 @@ MUTATIONS = [
        'not_fixed_count=$(jq length <<<"$not_fixed")                    || true || cannot')],
      [case_not_fixed_line_read_fails]),
     ("without the no-sandbox notice",
-     [('if ! python3 "$NO_SANDBOX_SUITES_PROGRAM" --print-merge-gate-notice',
-       'if false && python3 "$NO_SANDBOX_SUITES_PROGRAM" --print-merge-gate-notice')],
+     [('if ! python3 "$NO_SANDBOX_SUITES_PROGRAM" --print-merge-gate-notice-of-last-failed-or-stopped-run',
+       'if false && python3 "$NO_SANDBOX_SUITES_PROGRAM" --print-merge-gate-notice-of-last-failed-or-stopped-run')],
      [case_no_sandbox_notice_for_a_failed_run_and_the_gate_still_passes]),
     ("the no-sandbox notice program's failure not said",
-     [("--print-merge-gate-notice failed; its error", "--print-merge-gate-notice x; its error")],
+     [("--print-merge-gate-notice-of-last-failed-or-stopped-run failed; its error", "--print-merge-gate-notice-of-last-failed-or-stopped-run x; its error")],
      [case_no_sandbox_notice_program_failing_is_said_and_the_gate_goes_on]),
     ("without the description parse check",
      [('<<<"$body_read")\n[ $? -eq 0 ] || cannot "$DESCRIPTION_UNPARSABLE"',

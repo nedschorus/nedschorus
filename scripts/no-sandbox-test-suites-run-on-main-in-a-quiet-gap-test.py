@@ -154,7 +154,7 @@ class Scratch:
     def notice(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            program.main(self.arguments("--print-merge-gate-notice"))
+            program.main(self.arguments("--print-merge-gate-notice-of-last-failed-or-stopped-run"))
         return out.getvalue()
 
 
@@ -260,7 +260,7 @@ with tempfile.TemporaryDirectory() as directory:
     code, printed, calls = s.run("refuse")
     state = s.state()
     check("a runner that exits 2 makes a stopped run with its refusal, exit 4",
-          code == program.EXIT_STOPPED and state["last_run"]["result"] == "stopped"
+          code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and state["last_run"]["result"] == "stopped"
           and "a refusal for the test" in state["last_run"]["reason"], (code, printed, state))
     code, printed, calls = s.run()
     check("after a stop, a run is due at the same commit, and its pass moves the passing commit",
@@ -270,20 +270,20 @@ with tempfile.TemporaryDirectory() as directory:
 
     s.merge_on_origin(43)
     began = time.monotonic()
-    with constants(RUNNER_TIME_LIMIT_SECONDS=1, RUNNER_STOP_GRACE_SECONDS=5):
+    with constants(RUNNER_TIMEOUT_SECONDS=1, RUNNER_STOP_GRACE_SECONDS=5):
         code, printed, calls = s.run("sleep")
     took = time.monotonic() - began
     state = s.state()
     check("a runner past its time limit is stopped by SIGTERM within the grace, and the run "
           "recorded as stopped",
-          code == program.EXIT_STOPPED and state["last_run"]["result"] == "stopped"
+          code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and state["last_run"]["result"] == "stopped"
           and "ran past" in state["last_run"]["reason"] and took < 30, (code, printed, state, took))
     began = time.monotonic()
-    with constants(RUNNER_TIME_LIMIT_SECONDS=2, RUNNER_STOP_GRACE_SECONDS=1):
+    with constants(RUNNER_TIMEOUT_SECONDS=2, RUNNER_STOP_GRACE_SECONDS=1):
         code, printed, calls = s.run("ignore-sigterm-then-sleep")
     took = time.monotonic() - began
     check("a runner that ignores SIGTERM is killed after the grace, and the run recorded as "
-          "stopped", code == program.EXIT_STOPPED and s.state()["last_run"]["result"] == "stopped"
+          "stopped", code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and s.state()["last_run"]["result"] == "stopped"
           and took < 30, (code, printed, took))
 
     s.merge_on_origin(44)
@@ -345,7 +345,7 @@ with tempfile.TemporaryDirectory() as directory:
     s.log_store = real_log_store
     state = s.state()
     check("a record that cannot be written to the log-store stops the run, exit 4, recorded",
-          code == program.EXIT_STOPPED and state["last_run"]["result"] == "stopped"
+          code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and state["last_run"]["result"] == "stopped"
           and "could not be written to the log-store" in state["last_run"]["reason"],
           (code, printed, state))
 
@@ -355,7 +355,7 @@ with tempfile.TemporaryDirectory() as directory:
     code, printed, calls = s.run()
     state = s.state()
     check("a runner whose suite lists cannot be read stops the run, exit 4, recorded",
-          code == program.EXIT_STOPPED and calls == []
+          code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and calls == []
           and "the no-sandbox suites could not be read" in state["last_run"]["reason"],
           (code, printed, state))
     (s.origin / "scripts" / "run-all-test-suites.py").write_text(RUNNER_LISTS)
@@ -374,7 +374,7 @@ with tempfile.TemporaryDirectory() as directory:
     state = s.state()
     head = git(s.origin, "rev-parse", "HEAD")
     check("a worktree that cannot be made stops the run, exit 4, recorded with git's error",
-          code == program.EXIT_STOPPED and calls == []
+          code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and calls == []
           and f"the worktree of {head[:12]} could not be made: fatal: injected failure"
           == state["last_run"]["reason"], (code, printed, state))
 
@@ -386,14 +386,14 @@ with tempfile.TemporaryDirectory() as directory:
     with constants(git=rev_parse_fails):
         code, printed, calls = s.run()
     check("an origin/main that cannot be resolved stops the run, exit 4, recorded",
-          code == program.EXIT_STOPPED and calls == []
+          code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and calls == []
           and "origin/main could not be resolved: fatal: no such ref"
           in s.state()["last_run"]["reason"], (code, printed))
 
-    with constants(GIT_FETCH_TIME_LIMIT_SECONDS=0.001):
+    with constants(GIT_FETCH_TIMEOUT_SECONDS=0.001):
         code, printed, calls = s.run()
     check("a fetch past its time limit stops the run, exit 4, naming the git command",
-          code == program.EXIT_STOPPED and calls == []
+          code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and calls == []
           and "git fetch ran past" in s.state()["last_run"]["reason"], (code, printed))
 
     real_state_file = s.state_file
@@ -401,13 +401,13 @@ with tempfile.TemporaryDirectory() as directory:
     s.state_file.mkdir()
     code, printed, calls = s.run()
     check("a state file that cannot be written stops the run with exit 4 and says so",
-          code == program.EXIT_STOPPED and "could not be written" in printed, (code, printed))
+          code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and "could not be written" in printed, (code, printed))
     s.state_file = s.root / "a-file" / "state.json"
     (s.root / "a-file").write_text("x\n")
     code, printed, calls = s.run()
     s.state_file = real_state_file
     check("a lock that cannot be taken stops the program with exit 4 and says why",
-          code == program.EXIT_STOPPED and "could not be taken" in printed and calls == [],
+          code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and "could not be taken" in printed and calls == [],
           (code, printed))
 
     # --- A failed fetch -----------------------------------------------------------
@@ -416,7 +416,7 @@ with tempfile.TemporaryDirectory() as directory:
     code, printed, calls = s.run()
     state = s.state()
     check("a failed fetch exits 4 and records a stopped run with the reason",
-          code == program.EXIT_STOPPED and calls == []
+          code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and calls == []
           and state["last_run"]["result"] == "stopped"
           and "git fetch origin failed" in state["last_run"]["reason"], (code, printed, state))
     s.state_file.unlink()
@@ -427,7 +427,7 @@ with tempfile.TemporaryDirectory() as directory:
     code, printed, calls = s.run()
     s.state_file = real_state_file
     check("when the fetch fails and the state file cannot be written either, both are said",
-          code == program.EXIT_STOPPED and "git fetch origin failed" in printed
+          code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and "git fetch origin failed" in printed
           and "could not be written either" in printed, (code, printed))
 
 print(f"{len(failures)} failed" if failures else "all cases passed")
