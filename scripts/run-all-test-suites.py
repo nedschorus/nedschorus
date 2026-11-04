@@ -631,7 +631,7 @@ where suites run in nc-test-sandboxes (Linux with bwrap), leaves out every
 suite in SUITES_RUN_WITHOUT_ANY_SANDBOX, whatever changed, its own file
 included, because those suites share one machine-wide lock and a run for one
 change would otherwise wait for it. Such a suite the selection would have
-picked gets a line opening LEFT OUT NO-SANDBOX SUITE, in place of its
+picked gets a line opening NO-SANDBOX SUITE LEFT OUT OF SELECTIVE TEST RUN, in place of its
 SELECTED line, with the command that runs it by hand; it counts as neither
 failed nor not run, and the SUMMARY line counts it.
 scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py runs those
@@ -902,7 +902,7 @@ ADMISSION_WAITED_LINE_PREFIX = "seconds suites waited for admission: "
 # Readers of the runner's output pick its lines apart by these.
 FAILED_SUITE_LINE_PREFIX = "FAIL "
 NOT_RUN_SUITE_LINE_PREFIX = "NOT RUN "
-LEFT_OUT_NO_SANDBOX_SUITE_LINE_PREFIX = "LEFT OUT NO-SANDBOX SUITE "
+NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX = "NO-SANDBOX SUITE LEFT OUT OF SELECTIVE TEST RUN "
 SUITE_LINE_LOG_MARK = " — log "
 SUMMARY_LINE_PREFIX = "SUMMARY:"
 FIRST_REPORT_LINE_LOG_DIRECTORY_MARK = "; logs in "
@@ -3688,7 +3688,7 @@ def suites_selected_since(top, suites, recordings, commit, files_only_strace_saw
             for suite in suites]
 
 
-def selection_without_no_sandbox_suites_in_a_run_for_one_change(selection, applies):
+def selective_test_run_selection_without_no_sandbox_suites(selection, applies):
     """(the selection with every selected no-sandbox suite taken out, [(suite, why) left out]).
 
     The one place a run for one change leaves those suites out, so an exception,
@@ -3986,7 +3986,7 @@ def main(argv=None, platform=None):
         except CouldNotRun as refusal:
             print(refusal, file=sys.stderr)
             return EXIT_COULD_NOT_RUN
-        selection, left_out = selection_without_no_sandbox_suites_in_a_run_for_one_change(
+        selection, left_out = selective_test_run_selection_without_no_sandbox_suites(
             selection, applies=(changed_since is not None and arguments.only_suites_named is None
                                 and in_test_sandboxes))
         chosen = suites_longest_recorded_first(
@@ -4072,7 +4072,7 @@ def main(argv=None, platform=None):
             for suite, selected, why in selection:
                 report.line(f"{'SELECTED' if selected else 'NOT SELECTED'} {suite}: {why}")
             for suite, why in left_out:
-                report.line(f"{LEFT_OUT_NO_SANDBOX_SUITE_LINE_PREFIX}{suite}: {why}; it runs "
+                report.line(f"{NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX}{suite}: {why}; it runs "
                             f"without a sandbox, so a run for one change leaves it out and "
                             f"scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py runs "
                             f"it on main. To run it now: python3 scripts/run-all-test-suites.py "

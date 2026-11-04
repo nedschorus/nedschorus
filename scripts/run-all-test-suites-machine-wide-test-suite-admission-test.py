@@ -1171,13 +1171,13 @@ with tempfile.TemporaryDirectory() as scratch_name:
         code, printed = left_out_run("selective", "--only-suites-whose-recorded-inputs-changed-since",
                                      "HEAD")
         left_out_lines = [line for line in printed.splitlines()
-                          if line.startswith(runner.LEFT_OUT_NO_SANDBOX_SUITE_LINE_PREFIX)]
+                          if line.startswith(runner.NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX)]
         check("a selective run in nc-test-sandboxes leaves out a no-sandbox suite whose own file "
               "changed, prints its LEFT OUT line with the command that runs it by hand, counts "
               "it in the SUMMARY, and exits 0 on the suites it ran",
               code == runner.EXIT_ALL_PASSED and suites_started == ["a-test.py"]
               and len(left_out_lines) == 1 and left_out_lines[0].startswith(
-                  f"{runner.LEFT_OUT_NO_SANDBOX_SUITE_LINE_PREFIX}outside-test.py: ")
+                  f"{runner.NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX}outside-test.py: ")
               and "--only-suites-named outside-test.py" in left_out_lines[0]
               and "SELECTED outside-test.py" not in printed
               and "1 no-sandbox suites left out" in printed
@@ -1187,7 +1187,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
                                      "HEAD", "--only-suites-named", "outside-test.py")
         check("a selective run given --only-suites-named runs a named no-sandbox suite, as before",
               code == runner.EXIT_ALL_PASSED and suites_started == ["outside-test.py"]
-              and runner.LEFT_OUT_NO_SANDBOX_SUITE_LINE_PREFIX not in printed,
+              and runner.NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX not in printed,
               (code, suites_started, printed[-800:]))
 
         code, printed = left_out_run(
@@ -1197,14 +1197,14 @@ with tempfile.TemporaryDirectory() as scratch_name:
               "lock, still runs a selected no-sandbox suite",
               code == runner.EXIT_ALL_PASSED
               and sorted(suites_started) == ["a-test.py", "outside-test.py"]
-              and runner.LEFT_OUT_NO_SANDBOX_SUITE_LINE_PREFIX not in printed,
+              and runner.NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX not in printed,
               (code, suites_started, printed[-800:]))
 
         code, printed = left_out_run("full")
         check("a run with no selection runs the no-sandbox suites, as before",
               code == runner.EXIT_ALL_PASSED
               and sorted(suites_started) == ["a-test.py", "outside-test.py"]
-              and runner.LEFT_OUT_NO_SANDBOX_SUITE_LINE_PREFIX not in printed,
+              and runner.NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX not in printed,
               (code, suites_started, printed[-800:]))
 
         two_suites = scratch / "two-suites-repository"
