@@ -139,9 +139,10 @@ class World:
         return any(line.startswith("seen\t") and f"\t{key}\t" in line
                    for line in self.store_file(path, "log").splitlines())
 
-    def failing_git(self, arguments):
+    def failing_git(self, arguments, failure="echo 'fatal: injected failure' >&2; exit 128"):
         """Make every git whose command line holds arguments fail as a broken repository does,
-        for the hook's runs and commands until failing_git(None)."""
+        or by the shell commands in failure, for the hook's runs and commands until
+        failing_git(None)."""
         if arguments is None:
             self.extra_environment.pop("PATH", None)
             return
@@ -150,7 +151,7 @@ class World:
         wrapper = directory / "git"
         wrapper.write_text(
             "#!/bin/sh\n"
-            f"case \" $* \" in *\"{arguments}\"*) echo 'fatal: injected failure' >&2; exit 128;; esac\n"
+            f"case \" $* \" in *\"{arguments}\"*) {failure};; esac\n"
             f"exec {shutil.which('git')} \"$@\"\n")
         wrapper.chmod(0o755)
         self.extra_environment["PATH"] = f"{directory}:{os.environ['PATH']}"
@@ -966,6 +967,46 @@ def cases(scratch):
           "does not fail",
           message == "" and "base_commit" not in state
           and state.get("first_run_versions") == {}, (message, state))
+    # Exit 1 with nothing on stderr is git's missing-object answer; each other failure is not.
+    for name, failure in [("with an error", None),
+                          ("silently with exit 2", "exit 2"),
+                          ("by a signal", "kill -9 $$")]:
+        world = fresh(scratch, "old-state-first-run-commit-lookup-fails-" + name.replace(" ", "-"))
+        first_run_commit = world.git("rev-parse", "HEAD").stdout.strip()
+        state_file = old_state(world, first_run_commit)
+        if failure is None:
+            world.failing_git(f"cat-file -e {first_run_commit}")
+        else:
+            world.failing_git(f"cat-file -e {first_run_commit}", failure)
+        message = world.run()
+        world.failing_git(None)
+        state = json.loads(state_file.read_text())
+        check(f"a first-run commit lookup that fails {name} is reported, and the old state is "
+              "left as it is",
+              "did not run" in message and first_run_commit in message
+              and state.get("base_commit") == first_run_commit
+              and "first_run_versions" not in state, (message, state))
+
+    # -- a first-run version git has since pruned is reported and kept, not dropped
+    world = World(Path(scratch) / "first-run-version-pruned")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project rebased away\n")
+    world.git("commit", "-qam", "dropped by the rebase")
+    rebased_away = world.key(claude)
+    world.run()
+    world.git("reset", "-q", "--hard", "HEAD~1")
+    (world.repo / ".git" / "ORIG_HEAD").unlink(missing_ok=True)
+    world.git("reflog", "expire", "--expire=now", "--expire-unreachable=now", "--all")
+    world.git("gc", "-q", "--prune=now")
+    check("the fixture pruned the first run's version of CLAUDE.md",
+          not world.git_holds(rebased_away))
+    message = world.run()
+    state = json.loads(next((world.repo / ".git").glob("*-state.json")).read_text())
+    check("a first-run version git has pruned is reported, with a warning against --restore",
+          "git no longer holds it" in message and rebased_away in message
+          and f"Do not run --restore on {claude}" in message, message)
+    check("and stays recorded, so the next change reports it again",
+          state.get("first_run_versions") == {str(claude): rebased_away}, state)
 
     # -- a version a run saw unapproved is not approved by a rename after the file went back to it
     world = fresh(scratch, "rename-after-revert-to-unapproved-base")

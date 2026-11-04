@@ -176,6 +176,19 @@ STORE_FAILED = (
     "checked against the versions the user approved: {reason}.\n"
     "Tell the user what failed, with this remedy: {remedy}\n"
     "Once the store can be reached, the next tool call checks the files again.")
+FIRST_RUN_VERSION_LOST = (
+    "The guarded-file backup could not approve version {blob} of {path}, the version this "
+    "checkout held when the backup first ran here: git no longer holds it, most likely pruned "
+    "after a reset or a rebase. {path} has no other approved version, so python3 {program} "
+    "--restore on it would delete the file.\n"
+    "If you are a subagent, do not run --restore on {path}; pass this message to the agent "
+    "that dispatched you, and do none of the steps below.\n"
+    "Do not run --restore on {path}, even if the user declines its change.\n"
+    "When you ask the user about {path}'s change, as this hook's message about that change "
+    "says, tell him first: \"The guarded-file backup lost the approved version of {path}, "
+    "because git pruned it, so {path} has no version to go back to if you decline.\" If he "
+    "declines, ask him what {path} should hold instead, and make that edit.\n"
+    "This message comes again with each change to {path} until a version of it is approved.")
 REMEDY_NED_BOX = "check that {store} exists and that nedlern can write to it."
 REMEDY_MAC = ("check that ned-box is up and that the Mac has mounted ned-box's home share at "
               "/Volumes/nedhome with {store} in it.")
@@ -1115,9 +1128,18 @@ def run_hook(payload):
             # run's version are the ones it left unstored. A commit git has pruned since names
             # none, and is not looked up, since git ls-tree fails on it.
             files_then = checkout_state["files"]
-            present = old_base and subprocess.run(
-                ["git", "-C", str(checkout), "cat-file", "-e", old_base + "^{commit}"],
-                capture_output=True, timeout=60, check=False).returncode == 0
+            present = False
+            if old_base:
+                lookup = subprocess.run(["git", "-C", str(checkout), "cat-file", "-e", old_base],
+                                        capture_output=True, timeout=60, check=False)
+                # git cat-file -e exits 1, silently, for an object the repository does not hold;
+                # any other failure leaves the state file as it is, since the run stops here.
+                if lookup.returncode != 0 and (lookup.returncode != 1 or lookup.stderr):
+                    raise RuntimeError(
+                        f"git cat-file -e {old_base} in {checkout} exited {lookup.returncode}: "
+                        f"{lookup.stderr.decode(errors='replace').strip()}; the first run's "
+                        f"deferred approvals in {checkout_path} were left unconverted")
+                present = lookup.returncode == 0
             checkout_state[FIRST_RUN_VERSIONS_KEY] = {
                 path: blob for path, blob in (blobs_at_commit(checkout, old_base, list(files_then))
                                               if present else {}).items()
@@ -1213,12 +1235,16 @@ def run_hook(payload):
              held, on_main, repository, at_base, base_versions) = plan
             # Approved before git's own work and the change, so each of those is recorded after
             # it, and --restore and the diff go back to the newest of them, not to this one.
-            first = []
+            first, unreadable = [], []
             for path, blob in base_versions.items():
                 data = version_from_git(path, blob)
-                if data is not None:
-                    store.copy(path, blob, data)
-                    first.append((path, blob, HOW_STOCK, UNLESS_SEEN))
+                if data is None:
+                    # With another approved version, --restore has one to go back to.
+                    if not store.approved(path):
+                        unreadable.append((path, blob))
+                    continue
+                store.copy(path, blob, data)
+                first.append((path, blob, HOW_STOCK, UNLESS_SEEN))
             skipped = set()
             if at_base:
                 # One failed open of the checkout's directory tells the store that every path
@@ -1256,7 +1282,7 @@ def run_hook(payload):
             asks, reminders, settled = store_phase(store, session, owner(), checks, unsettled,
                                                    approvals, quiet)
             settled.update({path: True for path in skipped})
-            results.append((asks, reminders, settled, skipped))
+            results.append((asks, reminders, settled, skipped, unreadable))
         return results
 
     try:
@@ -1266,13 +1292,15 @@ def run_hook(payload):
             store=store_directory(machine))
         return [STORE_FAILED.format(reason=str(error).rstrip("."), remedy=remedy)]
 
-    asks, reminders = [], []
-    for plan, (plan_asks, plan_reminders, settled, skipped) in zip(plans, results):
+    asks, reminders, lost = [], [], []
+    for plan, (plan_asks, plan_reminders, settled, skipped, unreadable) in zip(plans, results):
         state, changed = plan[2], plan[4]
         if plan[13] is not None:
             first_run = state[FIRST_RUN_VERSIONS_KEY]
-            for path in plan[15]:
+            # A version git no longer holds stays recorded, so each later change reports it.
+            for path in set(plan[15]) - {path for path, _ in unreadable}:
                 del first_run[path]
+            lost += unreadable
             first_run.update({path: changed[path][2] for path in skipped})
         for path, (now, _, key, copy_hash) in changed.items():
             if now is None:
@@ -1292,7 +1320,8 @@ def run_hook(payload):
         write_state(plan[1], state)
         asks += plan_asks
         reminders += plan_reminders
-    return messages(asks, reminders)
+    return [FIRST_RUN_VERSION_LOST.format(path=path, blob=blob, program=HOOK_PATH)
+            for path, blob in lost] + messages(asks, reminders)
 
 
 def seat_briefs():
