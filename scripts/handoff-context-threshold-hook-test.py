@@ -1215,6 +1215,8 @@ with tempfile.TemporaryDirectory() as workspace:
                   result.stderr[:250])
             check("the deferral tells the agent to start no new background tasks",
                   "start no new background tasks" in result.stderr, result.stderr[:250])
+            check("the deferral tells the agent to start no new workflows",
+                  "start no new workflows" in result.stderr, result.stderr[-300:])
             check("the deferral names the wait as a way the handoff fires",
                   "75 minute" in result.stderr, result.stderr[:300])
             check("a background-task deferral writes the deferral marker and not the fired one",
@@ -1341,6 +1343,8 @@ with tempfile.TemporaryDirectory() as workspace:
         flight = flight_of([list_entry("w1", "workflow")])
         check("a listed running workflow holds the handoff", flight.workflow_ids == ["w1"],
               str(flight.workflow_ids))
+        check("a list holding only a running workflow counts as work in flight", bool(flight),
+              f"{flight.subagent_ids} {flight.background_task_ids} {flight.workflow_ids}")
         flight = flight_of([list_entry("bshellyoung", "shell")])
         check("a shell task launched within the wait holds the handoff",
               flight.background_task_ids == ["bshellyoung"], str(flight.background_task_ids))
@@ -1378,6 +1382,29 @@ with tempfile.TemporaryDirectory() as workspace:
             handle.write('{"toolUseResult": {"backgroundTaskId": "bshellyoung"\n')
         check("a line naming a listed shell task that does not parse cannot be read past",
               raises_list_could_not_read([list_entry("bshellyoung", "shell")], torn))
+        try:
+            hook.work_in_flight_from_background_tasks(
+                [list_entry("bshellyoung", "shell")], str(torn),
+                hook.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60)
+            torn_message = ""
+        except hook.TranscriptCouldNotBeFullyRead as problem:
+            torn_message = str(problem)
+        check("the unparsable line is named by its number and text",
+              ", line 2:" in torn_message and '"bshellyoung"' in torn_message, torn_message)
+        long_torn = transcript_of(workspace, "background-tasks-list-long-torn.jsonl", [
+            usage_record(100_000, cache_read=450_000)])
+        long_line = '{"toolUseResult": {"backgroundTaskId": "bshellyoung", "x": "' + "a" * 300
+        with long_torn.open("a", encoding="utf-8") as handle:
+            handle.write(long_line + "\n")
+        try:
+            hook.work_in_flight_from_background_tasks(
+                [list_entry("bshellyoung", "shell")], str(long_torn),
+                hook.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60)
+            long_message = ""
+        except hook.TranscriptCouldNotBeFullyRead as problem:
+            long_message = str(problem)
+        check("the unparsable line's text is cut at exactly its first 200 characters",
+              repr(long_line[:200]) in long_message, long_message[-260:])
         unreadable_subagents = transcript_of(
             workspace, "background-tasks-list-unreadable-subagent.jsonl",
             [usage_record(100_000, cache_read=450_000)])

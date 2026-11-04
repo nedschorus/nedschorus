@@ -106,8 +106,9 @@ HANDOFF_DEFERRED_NOTICE = (
     "finished or run for {wait_minutes:g} minutes since its launch, or once "
     "this session's context reaches the {ceiling:g}% ceiling; a handoff then "
     "stops whatever is still running.\n"
-    "Spawn no new subagents and start no new background tasks, because each "
-    "one delays the handoff and is stopped if still running at the ceiling."
+    "Spawn no new subagents, start no new workflows (runs of the Workflow tool) and "
+    "start no new background tasks, because each one delays the handoff and is "
+    "stopped if still running at the ceiling."
 )
 
 HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE = (
@@ -118,8 +119,9 @@ HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE = (
     "the hook can read the whole transcript and finds nothing running, or "
     "once this session's context reaches the {ceiling:g}% ceiling; a handoff "
     "then stops whatever is still running.\n"
-    "Spawn no new subagents and start no new background tasks, because each "
-    "one delays the handoff and is stopped if still running at the ceiling."
+    "Spawn no new subagents, start no new workflows (runs of the Workflow tool) and "
+    "start no new background tasks, because each one delays the handoff and is "
+    "stopped if still running at the ceiling."
 )
 
 # Allow a slow cold-read cell plus one retry; the context ceiling still bounds deferral.
@@ -431,7 +433,7 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
     for path in paths:
         try:
             with path.open("r", encoding="utf-8", errors="replace") as handle:
-                for line in handle:
+                for line_number, line in enumerate(handle, start=1):
                     if not any(task_id in line for task_id in shell_ids):
                         continue
                     if BACKGROUND_TASK_LAUNCH_KEY not in line and MONITOR_LAUNCH_KEY not in line:
@@ -440,7 +442,9 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
                         record = json.loads(line)
                     except json.JSONDecodeError as problem:
                         raise TranscriptCouldNotBeFullyRead(
-                            f"{path}: a line naming a listed shell task did not parse"
+                            f"{path}, line {line_number}: this line names a shell task on "
+                            f"Claude Code's background_tasks list but is not valid JSON "
+                            f"({problem}); its first 200 characters: {line[:200].rstrip()!r}"
                         ) from problem
                     tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
                     if not isinstance(tool_result, dict):
