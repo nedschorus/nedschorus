@@ -53,9 +53,9 @@ WALK_OPEN_LINES = (
     "Before you act on the user's prompt, add the alerts to approval-walk {walk} as items right after its "
     "waiting item, by running:",
     "  python3 {program} --cwd {cwd} {ids}",
-    "It numbers each item as the walk-me-through skill's Re-planning section says, raises the walk's item count, "
-    "and writes each alert's `#user_alert <id>` line into the walk-minutes, which keeps the alert from being "
-    "offered again. Then do what it prints, and act on the user's prompt.",
+    "That program adds each alert as an unnumbered `## <title>` item, as the walk-me-through skill's Re-planning "
+    "section says, and writes each alert's `#user_alert <id>` line into the walk-minutes, which keeps the alert "
+    "from being offered again. Then do what it prints, and act on the user's prompt.",
 )
 NO_WALK_LINES = (
     "No approval-walk is open in this checkout. First answer the user's prompt. Then open an approval-walk, as "

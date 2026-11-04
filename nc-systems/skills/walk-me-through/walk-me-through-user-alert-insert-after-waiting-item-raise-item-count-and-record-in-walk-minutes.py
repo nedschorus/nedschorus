@@ -6,21 +6,19 @@ Usage:
 
 The walk-me-through UserPromptSubmit hook that claims alerts prints this command with the ids it claimed. For
 each alert, read from user-alerts/claimed/<id>.json under ALERTS_MODULE_FILE's directory, in the order given:
-- the walk-document gets a new item right after the unit holding the last waiting item N, which the walk-minutes'
-  last `#next_to_present` line names, numbered N.K with K the lowest number no item of the walk uses, as the
-  walk-me-through skill's Re-planning section says; its heading copies the waiting item's heading level and
-  reads `Item N.K of M: <the alert's title>`, and its body holds the alert's text in a fence and what can
-  be done about it;
-- every running count `Item ... of M` that opens a line outside code in the walk-document gets M raised by one;
-- the walk-minutes get a re-planning line, the line `#user_alert <id>`, and, below every earlier one, a
-  `#next_to_present` line naming the same waiting items with the new M.
+- the walk-document gets a new unnumbered item, `## <the alert's title>`, right after the unit holding the last
+  waiting item, which the walk-minutes' last `#next_to_present` line names, as the walk-me-through skill's
+  Re-planning section says; its body holds the alert's text in a fence and what can be done about it. The
+  walk check program's close step numbers it when it is shown, and counts M, so no other heading changes;
+- the walk-minutes get a re-planning line and the line `#user_alert <id>`.
 The open approval-walk is found with WALK_FINDER_FILE, in the checkout --cwd names, as the other walk-me-through
 programs find it. The item gets no recommendation: the agent writes the case against and the `Recommendation:`
 line, as the program's output says.
 
 Exit 0 when every alert was added; 1, before changing any file, when no approval-walk is open, its waiting item
-cannot be found in its walk-document, or an alert's file is missing or unreadable, with one line on stderr
-saying which and what to do.
+cannot be found in its walk-document, the walk-document's items sit under `##` part headings, where a `##`
+heading is not an item, or an alert's file is missing or unreadable, with a message on stderr saying which and
+what to do.
 
 Agent-facing messages follow
 docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
@@ -40,8 +38,6 @@ PROGRAM = Path(__file__).stem
 WALK_FINDER_FILE = HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
 ALERTS_MODULE_FILE = (CHECKOUT / "nc-systems" / "general-tools"
                       / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
-LINE_OPENING = re.compile(r"^(?:#{1,6}\s+|[-*+]\s+)?")
-HEADING_LEVEL = re.compile(r"^(#{1,6})\s")
 
 NO_WALK_MESSAGE = (
     "no approval-walk is open in {walk_directory}, so the alerts were not added. Open an approval-walk whose "
@@ -60,17 +56,23 @@ ALERT_UNREADABLE_MESSAGE = (
     "user's next prompt, or was recorded in walk-minutes and deleted; nothing more is needed for it.\n"
     "If {path} is still there, it holds no readable alert: tell the user its path, because nobody else will see "
     "it.")
-REPLANNED_MINUTES_LINE = ("- Re-planned {date}: added {items}, from the alerts a program wrote for the user, "
-                          "right after item {waiting}; the walk now has {total} items.")
-ADDED_LINE = "Added item {number} of {total}, {title}, to {document}."
+NO_UNNUMBERED_ITEMS_MESSAGE = (
+    "the walk-document {document} holds its items under `##` part headings, so a `##` heading added there is "
+    "not an item, and no file was changed. Add each alert to the walk-document by hand, as an item right after "
+    "the waiting item, with the alert's title, its text and what can be done about it from its file under "
+    "{claimed_directory}, and write a line `#user_alert <id>` into the walk-minutes {minutes} for each of these "
+    "alerts: {ids}")
+REPLANNED_MINUTES_LINE = ("- Re-planned {date}: added {count} unnumbered item(s) right after item {waiting}, from "
+                          "the alerts a program wrote for the user: {titles}.")
+ADDED_LINE = "Added the unnumbered item `## {title}` to {document}, right after item {waiting}."
 NEXT_STEPS_LINES = (
     "Under each added item, write a line `#case_against <rating>: <the strongest case against your "
     "recommendation>`, the rating one of none, weak, medium, strong or very strong, and a line `Recommendation: "
     "<what you will do on ned-box, or what the user does and where>`, as the walk-me-through skill's section "
     "\"Each item\" says; until the `Recommendation:` line is there, the short-answer hook finds no recommendation "
     "for the item.",
-    "In your next message to the user, say that you added the items and that the walk now has {total} items, as "
-    "the skill's section \"Re-planning\" says. Present each added item when its turn comes, as for any item.",
+    "In your next message to the user, say that you added the items, as the skill's section \"Re-planning\" "
+    "says. Present each added item when its turn comes, as for any item; the walk check program numbers it then.",
 )
 
 
@@ -90,26 +92,12 @@ def fence_for(text):
     return "`" * max(3, longest + 1)
 
 
-def item_lines(heading_hashes, number, total, alert):
+def item_lines(alert):
     notice = str(alert.get("alert_text", "")).rstrip("\n")
     fence = fence_for(notice)
-    return ["", f"{heading_hashes} Item {number} of {total}: {alert.get('title')}", "",
+    return ["", f"## {alert.get('title')}", "",
             f"A program on ned-box wrote this alert for the user at {alert.get('written_at')}:", "",
             fence + "text", notice, fence, "", f"What can be done: {alert.get('action')}", ""]
-
-
-def raised_counts(text, total, new_total, walk_finder, parser):
-    """text with M raised to new_total in every running count `Item ... of M` that opens a line outside code."""
-    lines = text.split("\n")
-    prose = walk_finder.prose_lines(text, parser)
-    count = re.compile(rf"(items?\s+{walk_finder.NUMBER_LIST}\s+of\s+){total}\b", re.I)
-    for index, line in enumerate(prose):
-        rest = line[LINE_OPENING.match(line).end():]
-        match = walk_finder.HEADING_COUNT.match(rest)
-        if match and match[2] == total:
-            start = len(line) - len(rest)
-            lines[index] = lines[index][:start] + count.sub(rf"\g<1>{new_total}", rest, count=1)
-    return "\n".join(lines)
 
 
 def rerun_command(cwd, alert_ids):
@@ -150,37 +138,27 @@ def insert(cwd, alert_ids, now=None):
     unit = next(unit for unit in units if waiting in unit[0])
     text = document.read_text(encoding="utf-8")
     lines = text.split("\n")
-    level = HEADING_LEVEL.match(lines[unit[3]])
-    heading_hashes = level[1] if level else "##"
-    used = {number for each in walk_finder.item_unit_spans(text, parser) for number in each[0]}
-    new_total = str(int(total) + len(alerts))
-    added, new_lines = [], []
-    for alert in alerts:
-        index = 1
-        while f"{waiting}.{index}" in used:
-            index += 1
-        number = f"{waiting}.{index}"
-        used.add(number)
-        added.append((number, alert))
-        new_lines += item_lines(heading_hashes, number, new_total, alert)
+    new_lines = [line for alert in alerts for line in item_lines(alert)]
     end = unit[4]
     while end > unit[3] + 1 and not lines[end - 1].strip():
         end -= 1
-    text = "\n".join(lines[:end] + new_lines + lines[end:])
-    document.write_text(raised_counts(text, total, new_total, walk_finder, parser), encoding="utf-8")
-    count = walk_finder.VALUE_COUNT.match(value)
-    named = f"item{'s' if len(numbers) > 1 else ''} {count[1]} of {new_total}"
+    new_text = "\n".join(lines[:end] + new_lines + lines[end:])
+    unnumbered = walk_finder.approval_walk_unit_is_unnumbered_item
+    if (sum(map(unnumbered, walk_finder.item_unit_spans(new_text, parser)))
+            != sum(map(unnumbered, walk_finder.item_unit_spans(text, parser))) + len(alerts)):
+        raise Refused(NO_UNNUMBERED_ITEMS_MESSAGE.format(
+            document=document, minutes=minutes, ids=" ".join(alert_ids),
+            claimed_directory=user_alerts.user_alerts_directory() / "claimed"))
+    document.write_text(new_text, encoding="utf-8")
     date = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
     minutes_lines = [REPLANNED_MINUTES_LINE.format(
-        date=date, items=", ".join(f"item {number}" for number, _ in added), waiting=waiting, total=new_total)]
-    minutes_lines += [f"#user_alert {alert.get('id')}" for _, alert in added]
-    minutes_lines.append(f"#next_to_present {named}")
+        date=date, count=len(alerts), waiting=waiting, titles="; ".join(str(alert.get("title")) for alert in alerts))]
+    minutes_lines += [f"#user_alert {alert.get('id')}" for alert in alerts]
     existing = minutes.read_text(encoding="utf-8")
     separator = "" if existing.endswith("\n") or not existing else "\n"
     minutes.write_text(existing + separator + "\n".join(minutes_lines) + "\n", encoding="utf-8")
-    output = [ADDED_LINE.format(number=number, total=new_total, title=alert.get("title"), document=document)
-              for number, alert in added]
-    return output + [line.format(total=new_total) for line in NEXT_STEPS_LINES]
+    output = [ADDED_LINE.format(title=alert.get("title"), document=document, waiting=waiting) for alert in alerts]
+    return output + list(NEXT_STEPS_LINES)
 
 
 def main(argv=None):
