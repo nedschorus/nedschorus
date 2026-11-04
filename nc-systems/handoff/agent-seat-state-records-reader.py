@@ -191,13 +191,13 @@ def waiting_handoff_verdict(handoff_directory: Path, name: str, state_path: Path
     if counter is None:
         # The supervisor cannot consume a handoff without a valid counter; resuming would discard its request.
         return "refuse", (
-            f"a handoff exists at {handoff_path} but its restart-counter is "
+            f"a handoff exists at {handoff_path} but its session-handoff-sequence-number is "
             "missing or unreadable, so no supervisor would ever consume it. "
-            "Read it: if it is real, fix its restart-counter and relaunch "
+            "Read it: if it is real, fix its session-handoff-sequence-number and relaunch "
             "plain; if it is scrap, delete it and rerun this recovery"
         )
     if consumed is None or counter > consumed:
-        dont_restart = fields.get("dont-restart")
+        dont_restart = fields.get(supervisor.DONT_RESTART_FIELD)
         if dont_restart:
             # Leave the handoff unconsumed so a by-hand launch still asks the supervisor’s restart question.
             return "seat-asked-to-be-consulted", (counter, dont_restart)

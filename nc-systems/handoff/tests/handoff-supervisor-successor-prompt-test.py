@@ -100,17 +100,21 @@ def run_offline_cases(workspace: Path):
         "written-at: 2026-08-06T12:00:00Z\n"
         "read-starting-here: the prompt that opened this topic\n"
         "next-step: land the supervisor tests\n"
-        "restart-counter: 7\n"
+        "session-handoff-sequence-number: 7\n"
         "\n"
         "Prose below the fields: next-step: this later line must not win.\n",
         encoding="utf-8",
     )
     fields = supervisor.parse_handoff_file(handoff_path)
-    check("parses each handoff field", fields["restart-counter"] == "7", str(fields))
+    check("parses each handoff field", fields["session-handoff-sequence-number"] == "7", str(fields))
     check("first occurrence of a field wins", fields["next-step"] == "land the supervisor tests", fields["next-step"])
     check("reads the counter as an integer", supervisor.counter_from(fields) == 7)
     check("a missing counter reads as None", supervisor.counter_from({}) is None)
-    check("a non-numeric counter reads as None", supervisor.counter_from({"restart-counter": "soon"}) is None)
+    check("a non-numeric counter reads as None", supervisor.counter_from({"session-handoff-sequence-number": "soon"}) is None)
+    check("a session-handoff written before the rename is read by its restart-counter",
+          supervisor.counter_from({"restart-counter": "6"}) == 6)
+    check("the new name wins when a session-handoff carries both",
+          supervisor.counter_from({"restart-counter": "6", "session-handoff-sequence-number": "9"}) == 9)
 
     # --- Consumed-marker semantics ---------------------------------------
     state_path = workspace / "agent-supervisor-state.json"
@@ -328,23 +332,23 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
     handoff.write_text(
         "written-at: " + recent + "\n"
         "next-step: FIRST ACTION: run it. THEN: fix the locale case.\n"
-        "restart-counter: 7\n"
+        "session-handoff-sequence-number: 7\n"
         "written-in: /Users/el/agents/git-infra\n"
         "next-step-verbatim: <<END-OF-NEXT-STEP\n"
         "FIRST ACTION: run it.\n"
         "\n"
         "THEN: fix the locale case.\n"
-        "restart-counter: 999\n"
+        "session-handoff-sequence-number: 999\n"
         "END-OF-NEXT-STEP\n",
         encoding="utf-8")
     fields = supervisor.parse_handoff_file(handoff)
 
     check("the verbatim block is parsed with its line breaks intact",
           fields.get("next-step-verbatim")
-          == "FIRST ACTION: run it.\n\nTHEN: fix the locale case.\nrestart-counter: 999",
+          == "FIRST ACTION: run it.\n\nTHEN: fix the locale case.\nsession-handoff-sequence-number: 999",
           repr(fields.get("next-step-verbatim")))
     check("a field-shaped line INSIDE the block does not shadow the real field",
-          fields.get("restart-counter") == "7", fields.get("restart-counter"))
+          fields.get("session-handoff-sequence-number") == "7", fields.get("session-handoff-sequence-number"))
     check("the collapsed next-step is still parsed alongside the block",
           fields.get("next-step", "").startswith("FIRST ACTION: run it. THEN:"),
           fields.get("next-step"))
@@ -2346,7 +2350,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     handoff_directory = workspace / "overview-refresh-due-handoffs"
     handoff_directory.mkdir()
     (handoff_directory / "agent-instructions-editor-handoff.md").write_text(
-        "written-at: 2026-09-28T00:00:00Z\nnext-step: resume the audit\nrestart-counter: 5\n",
+        "written-at: 2026-09-28T00:00:00Z\nnext-step: resume the audit\nsession-handoff-sequence-number: 5\n",
         encoding="utf-8")
     supervisor.write_supervisor_state(
         handoff_directory / "agent-instructions-editor-supervisor-state.json",
@@ -2389,7 +2393,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
         agent="merge-lane-2", working_directory=seat, handoff_directory=other_seat_directory,
         agent_command="unused-stub-agent", first_prompt="")
     other_seat_settings.handoff_path.write_text(
-        "written-at: 2026-09-28T00:00:00Z\nnext-step: resume the audit\nrestart-counter: 5\n",
+        "written-at: 2026-09-28T00:00:00Z\nnext-step: resume the audit\nsession-handoff-sequence-number: 5\n",
         encoding="utf-8")
     supervisor.write_supervisor_state(
         other_seat_settings.state_path,
@@ -2434,7 +2438,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     unread_directory = workspace / "overview-refresh-marks-unread-handoffs"
     unread_directory.mkdir()
     (unread_directory / "agent-instructions-editor-handoff.md").write_text(
-        "written-at: 2026-09-28T00:00:00Z\nnext-step: resume the audit\nrestart-counter: 5\n",
+        "written-at: 2026-09-28T00:00:00Z\nnext-step: resume the audit\nsession-handoff-sequence-number: 5\n",
         encoding="utf-8")
     supervisor.write_supervisor_state(
         unread_directory / "agent-instructions-editor-supervisor-state.json",
@@ -2867,7 +2871,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
         handoff_directory=handoff_directory,
         agent_command="unused-stub-agent", first_prompt="")
     settings.handoff_path.write_text(
-        "written-at: 2026-09-30T00:00:00Z\nnext-step: resume the audit\nrestart-counter: 5\n",
+        "written-at: 2026-09-30T00:00:00Z\nnext-step: resume the audit\nsession-handoff-sequence-number: 5\n",
         encoding="utf-8")
     # No earlier session recorded, so the recovery note is the one without a transcript.
     supervisor.write_supervisor_state(
@@ -2907,7 +2911,7 @@ def run_boot_ignition_case(workspace: Path):
     handoff_directory = workspace / "bootignite"
     handoff_directory.mkdir(parents=True, exist_ok=True)
     (handoff_directory / "bootignite-handoff.md").write_text(
-        "written-at: 2026-08-14T00:00:00Z\nnext-step: resume the audit\nrestart-counter: 5\n",
+        "written-at: 2026-08-14T00:00:00Z\nnext-step: resume the audit\nsession-handoff-sequence-number: 5\n",
         encoding="utf-8",
     )
     supervisor.write_supervisor_state(
@@ -2991,7 +2995,7 @@ def run_boot_ignition_without_a_conversation_tail_cases(workspace: Path):
             agent_command="unused-stub-agent", first_prompt="")
         settings.handoff_path.write_text(
             "written-at: 2026-10-20T00:00:00Z\nnext-step: resume the audit\n"
-            "restart-counter: 5\n" + written_by_session_line, encoding="utf-8")
+            "session-handoff-sequence-number: 5\n" + written_by_session_line, encoding="utf-8")
         supervisor.write_supervisor_state(settings.state_path, state)
         extracted_from, launched_prompts = [], []
 
@@ -3077,7 +3081,7 @@ def run_generation_continues_past_numbered_files_on_disk_cases(workspace: Path):
                                                             encoding="utf-8")
     settings.handoff_path.write_text(
         "written-at: 2026-10-26T00:00:00Z\nnext-step: resume the audit\n"
-        "restart-counter: 5\nwritten-by-session: retiring-session\n", encoding="utf-8")
+        "session-handoff-sequence-number: 5\nwritten-by-session: retiring-session\n", encoding="utf-8")
     supervisor.write_supervisor_state(
         settings.state_path,
         {"consumed_counter": 4, "launched_session_id": "retiring-session", "generation": 3})
@@ -3219,7 +3223,7 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     handoff_path.write_text(
         "written-at: 2026-08-23T22:00:00Z\n"
         "next-step: merge the queue\n"
-        "restart-counter: 3\n"
+        "session-handoff-sequence-number: 3\n"
         "spawned-subagent-1: afixture0cutoff01 \"Fix ignored-path\"\n"
         "next-step-verbatim: <<END-OF-NEXT-STEP\n"
         "merge the queue\n"
@@ -3261,7 +3265,7 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
     settings.handoff_path.write_text(
         "written-at: " + recent + "\n"
         "next-step: keep composing\n"
-        "restart-counter: 2\n"
+        "session-handoff-sequence-number: 2\n"
         "spawned-subagent-1: afixture0cutoff01 \"Fix ignored-path write blind spot\"\n",
         encoding="utf-8")
     handoff_fields = supervisor.parse_handoff_file(settings.handoff_path)
@@ -3346,7 +3350,7 @@ def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str)
         settings.handoff_path.write_text(
             "written-at: " + recent + "\n"
             "next-step: keep carrying\n"
-            "restart-counter: 4\n"
+            "session-handoff-sequence-number: 4\n"
             + written_by_session_line,
             encoding="utf-8")
         handoff_fields = supervisor.parse_handoff_file(settings.handoff_path)

@@ -16,7 +16,7 @@ a day. This script is that procedure, performed the same way every time.
 WHAT IT DOES -- it retires the unsupervised session rather than adopting it:
 
   1. Refuse unless the seat's handoff file is genuinely waiting to be acted on
-     (present, and carrying a restart-counter the supervisor has not consumed).
+     (present, and carrying a session-handoff-sequence-number the supervisor has not consumed).
      The agent writes that file by running handoff-write-and-check-supervisor.py;
      ask it to hand off first, then run this.
   2. Refuse if a supervisor is already alive on the seat -- there is nothing to
@@ -136,7 +136,7 @@ def handoff_is_waiting(handoff_path: Path, state_path: Path):
     counter = supervisor.counter_from(fields)
     if counter is None:
         return False, None, (
-            f"{handoff_path} carries no readable restart-counter, so the supervisor would "
+            f"{handoff_path} carries no readable session-handoff-sequence-number, so the supervisor would "
             "not start a fresh agent-session from it. Leaving the seat alone."
         )
 
@@ -144,12 +144,12 @@ def handoff_is_waiting(handoff_path: Path, state_path: Path):
     consumed = state.get("consumed_counter")
     if consumed is not None and counter <= consumed:
         return False, counter, (
-            f"the handoff at {handoff_path} (restart-counter {counter}) was already consumed "
+            f"the handoff at {handoff_path} (session-handoff-sequence-number {counter}) was already consumed "
             f"by a supervisor (it recorded {consumed}). Nothing is waiting; ask the agent to "
             "hand off again if it needs reincarnating."
         )
 
-    if fields.get("dont-restart"):
+    if fields.get(supervisor.DONT_RESTART_FIELD):
         return True, counter, (
             "the handoff carries dont-restart: the supervisor will ask on the seat's terminal "
             "before starting a successor"
@@ -447,7 +447,7 @@ def main(argv=None) -> int:
         print(f"resupervise-seat: {note}")
     print(f"resupervise-seat: {explanation}")
     print(f"resupervise-seat: an unconsumed handoff is waiting at {handoff_path} "
-          f"(restart-counter {counter})")
+          f"(session-handoff-sequence-number {counter})")
 
     occupancy_note = directory_occupancy_keep_reason(seat_directory)
     if occupancy_note is None:

@@ -633,7 +633,7 @@ def run_reach_clause_cases(root: Path):
             workspace = Workspace(root / f"reach-defer-{slug}")
             all_dead()
             (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-                "# Handoff\nrestart-counter: 9\nnext-step: go\n", encoding="utf-8")
+                "# Handoff\nsession-handoff-sequence-number: 9\nnext-step: go\n", encoding="utf-8")
             capture_launches(workspace)
             report = workspace.recover()
             check(f"REACH ({machine}): a relaunch without resuming: its line ends with the reach clause",
@@ -663,7 +663,7 @@ def run_seat_listing_cases(root: Path):
     recovery.supervisor.supervisor_state_path(handoff_directory, "had-a-supervisor").write_text(
         "{}", encoding="utf-8")
     recovery.supervisor.handoff_file_path(handoff_directory, "had-a-handoff").write_text(
-        "restart-counter: 1\n", encoding="utf-8")
+        "session-handoff-sequence-number: 1\n", encoding="utf-8")
     recovery.harness_project_directory(agents_root / "had-transcripts", projects_root).mkdir(
         parents=True)
     (agents_root / "topic-worktree" / ".git").write_text(
@@ -1557,7 +1557,7 @@ with tempfile.TemporaryDirectory() as temporary:
     workspace = Workspace(root / "w3")
     all_dead()
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-        "# Handoff\nrestart-counter: 5\nnext-step: continue\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: 5\nnext-step: continue\n", encoding="utf-8")
     verdict, detail = workspace.assess()
     check("an unconsumed handoff defers to the supervisor's boot-ignition",
           verdict == "defer-to-boot-ignition" and "counter 5" in detail,
@@ -1575,7 +1575,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # once, and this tool then waited out its deadline and offered the forced
     # restart the seat had declined.
     consulted_handoff_text = (
-        "# Handoff\nrestart-counter: 11\nnext-step: wait for the user\n"
+        "# Handoff\nsession-handoff-sequence-number: 11\nnext-step: wait for the user\n"
         "dont-restart: the user asked to be consulted before a relaunch\n")
     workspace = Workspace(root / "w3-consulted", name="seat-consulted")
     all_dead()
@@ -1682,7 +1682,7 @@ with tempfile.TemporaryDirectory() as temporary:
     workspace = Workspace(root / "w10")
     all_dead()
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-        "# Handoff\nrestart-counter: 9\nnext-step: go\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: 9\nnext-step: go\n", encoding="utf-8")
     capture_launches(workspace)
     report = workspace.recover()
     check("the defer path relaunches without resuming (no extra supervisor arguments)",
@@ -1921,10 +1921,10 @@ with tempfile.TemporaryDirectory() as temporary:
     workspace = Workspace(root / "r7")
     all_dead()
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-        "# Handoff\nrestart-counter: not-a-number\nnext-step: x\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: not-a-number\nnext-step: x\n", encoding="utf-8")
     verdict, detail = workspace.assess()
-    check("Q2: an unreadable restart-counter refuses, naming fix and delete paths",
-          verdict == "refuse" and "restart-counter" in detail
+    check("Q2: an unreadable session-handoff-sequence-number refuses, naming fix and delete paths",
+          verdict == "refuse" and "session-handoff-sequence-number" in detail
           and "delete it" in detail, (verdict, detail))
 
     # Q3: a supervisor lock held by a live supervisor stops the recovery: the
@@ -2055,7 +2055,7 @@ with tempfile.TemporaryDirectory() as temporary:
         state_seen_at_launch["resume_flag"] = resume
         raise StopLoop()
     (workspace.handoffs / "seat-a-handoff.md").write_text(
-        "# Handoff\nrestart-counter: 7\nnext-step: stale\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: 7\nnext-step: stale\n", encoding="utf-8")
     sup = supervisor_module
     original_launch = sup.launch_agent_session
     original_sync = sup.launch_time_git_sync
@@ -2251,7 +2251,7 @@ with tempfile.TemporaryDirectory() as temporary:
     workspace = Workspace(root / "r23")
     all_dead()
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-        "# Handoff\nrestart-counter: 16\nnext-step: continue\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: 16\nnext-step: continue\n", encoding="utf-8")
     (workspace.handoffs / f"{workspace.name}-supervisor-state.json").write_text(
         json.dumps({"consumed_counter": 16,
                     "launched_session_id": "successor-hit-session-limit",
@@ -2526,7 +2526,7 @@ with tempfile.TemporaryDirectory() as temporary:
         workspace = Workspace(root / "window-defer")
         all_dead()
         (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-            "# Handoff\nrestart-counter: 5\nnext-step: continue\n", encoding="utf-8")
+            "# Handoff\nsession-handoff-sequence-number: 5\nnext-step: continue\n", encoding="utf-8")
         report = recovery.recover_seat(workspace.name, workspace.agents_root,
                                        workspace.handoffs, workspace.projects,
                                        False, False, open_iterm_window=True)
@@ -2778,7 +2778,7 @@ with tempfile.TemporaryDirectory() as temporary:
     workspace = Workspace(root / "r17")
     all_dead()
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-        "# Handoff\nrestart-counter: 3\nnext-step: go\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: 3\nnext-step: go\n", encoding="utf-8")
     captured_run = {}
     def capture_subprocess_run(command, env=None, check=False):
         captured_run["command"] = command
@@ -3459,7 +3459,7 @@ with tempfile.TemporaryDirectory() as temporary:
         capture_launches(workspace)
         seat_comes_up(False, "no supervisor appeared within 120s")
         (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-            "# Handoff\nrestart-counter: 5\nnext-step: continue\n", encoding="utf-8")
+            "# Handoff\nsession-handoff-sequence-number: 5\nnext-step: continue\n", encoding="utf-8")
         report = workspace.recover(fresh_session_from_conversation_tail=used_the_flag)
         check("a relaunch without resuming that did not come up offers the degraded restart "
               f"only to an operator who has not just used it (--fresh-session-from-conversation-tail: {used_the_flag})",
@@ -3587,12 +3587,12 @@ with tempfile.TemporaryDirectory() as temporary:
     # Refused for a reason that still means something is wrong. This case used
     # to refuse a live tmux session, which is ALREADY RUNNING since 2026-09-16
     # when a supervisor of the seat is confirmed and REFUSED when none is (cases
-    # below); a handoff whose restart-counter nobody can read is refused still.
+    # below); a handoff whose session-handoff-sequence-number nobody can read is refused still.
     workspace = Workspace(root / "exit-refused", name="exit-refused-seat")
     all_dead()
     capture_launches(workspace)
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-        "# Handoff\nrestart-counter: not-a-number\nnext-step: x\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: not-a-number\nnext-step: x\n", encoding="utf-8")
     a_real_failure_path_does_not_exit_zero("a seat that was refused", workspace)
 
     # Left down on purpose, but down: counted, or the login restart would list
@@ -3627,7 +3627,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     def refused_for_an_unreadable_restart_counter(workspace):
         (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-            "# Handoff\nrestart-counter: not-a-number\nnext-step: x\n", encoding="utf-8")
+            "# Handoff\nsession-handoff-sequence-number: not-a-number\nnext-step: x\n", encoding="utf-8")
 
     for refusal in (refused_for_no_seat_directory, refused_for_tmux_that_cannot_be_asked,
                     refused_for_an_occupied_seat_directory, refused_for_an_unprovable_vacancy,
@@ -4177,7 +4177,7 @@ with tempfile.TemporaryDirectory() as temporary:
     all_dead()
     record_an_agent_exit(workspace, 0)
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-        "# Handoff\nrestart-counter: 5\nnext-step: continue\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: 5\nnext-step: continue\n", encoding="utf-8")
     verdict, detail = workspace.assess()
     check("EXIT RECORD: a waiting handoff still defers to boot-ignition over the record",
           verdict == "defer-to-boot-ignition", (verdict, detail))
@@ -4974,7 +4974,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     def a_seat_behind_a_leftover_shell_with_an_unreadable_handoff(directory_name):
         """Its reassessment refuses whatever happens to the window: a handoff
-        whose restart-counter no supervisor could ever read."""
+        whose session-handoff-sequence-number no supervisor could ever read."""
         workspace = a_seat_behind_a_leftover_shell(directory_name)
         handoff_path = workspace.handoffs / "seat-a-handoff.md"
         handoff_path.write_text("# Handoff\nnext-step: go\n", encoding="utf-8")
@@ -5004,7 +5004,7 @@ with tempfile.TemporaryDirectory() as temporary:
           (prompts, retired, workspace.launches, report_refused, seen))
     check("LEFTOVER SHELL: and is REFUSED with the predicted reason, the window left open",
           report_refused.startswith(f"seat-a: REFUSED — a handoff exists at {handoff_path} "
-                                    "but its restart-counter is missing or unreadable")
+                                    "but its session-handoff-sequence-number is missing or unreadable")
           and report_refused.endswith(reported_straight_away)
           and "never touches a live tmux session" not in report_refused
           and any(marker in report_refused
@@ -5021,7 +5021,7 @@ with tempfile.TemporaryDirectory() as temporary:
           and report_refused_dry.startswith(
               "seat-a: with an operator at a terminal would ask nothing, leave the window "
               "open (it is one pane at a shell) and report straight away: REFUSED — a "
-              f"handoff exists at {handoff_path} but its restart-counter is missing")
+              f"handoff exists at {handoff_path} but its session-handoff-sequence-number is missing")
           and report_refused_dry.endswith("With no terminal it refuses")
           and "would ask an operator at a terminal —" not in report_refused_dry,
           (prompts, retired, report_refused_dry))
@@ -5402,7 +5402,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # Every verdict the question is asked for, through main, byte for byte.
     def write_a_waiting_handoff(workspace):
         (workspace.handoffs / "seat-a-handoff.md").write_text(
-            "# Handoff\nrestart-counter: 5\nnext-step: continue\n", encoding="utf-8")
+            "# Handoff\nsession-handoff-sequence-number: 5\nnext-step: continue\n", encoding="utf-8")
 
     def write_a_handoff_asking_to_be_consulted(workspace):
         (workspace.handoffs / "seat-a-handoff.md").write_text(consulted_handoff_text,

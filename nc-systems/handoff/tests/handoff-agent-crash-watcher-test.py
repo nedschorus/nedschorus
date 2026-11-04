@@ -856,7 +856,7 @@ def run_stopped_on_purpose_cases(root: Path):
           not predicate("seat-a", (1, "t", None)))
     state_path = supervisor.supervisor_state_path(handoff_directory, "seat-a")
     supervisor.handoff_file_path(handoff_directory, "seat-a").write_text(
-        "restart-counter: 7\ndont-restart: the user asked to be consulted before a relaunch\n"
+        "session-handoff-sequence-number: 7\ndont-restart: the user asked to be consulted before a relaunch\n"
         "next-step: stop\n", encoding="utf-8")
     supervisor.record_agent_exit_in_supervisor_state(
         state_path, {"consumed_counter": 7}, None,
@@ -893,11 +893,11 @@ def run_stopped_on_purpose_cases(root: Path):
           not records(seat_with("records-none")))
     check("a refused seat with a dont-restart handoff waiting stopped on purpose",
           records(seat_with("records-dont-restart",
-                            handoff="restart-counter: 3\ndont-restart: consult the user\n")))
+                            handoff="session-handoff-sequence-number: 3\ndont-restart: consult the user\n")))
     check("a refused seat with an ordinary handoff waiting did not stop on purpose, though an "
           "older clean exit is recorded",
           not records(seat_with("records-waiting-handoff", exit_code=0,
-                                handoff="restart-counter: 3\nnext-step: go on\n", consumed=2)))
+                                handoff="session-handoff-sequence-number: 3\nnext-step: go on\n", consumed=2)))
 
 
 def run_path_on_the_mac_cases():

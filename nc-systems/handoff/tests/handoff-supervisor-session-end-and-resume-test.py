@@ -71,7 +71,7 @@ def run_exit_handoff_cases(workspace: Path):
     state_path = workspace / "exitcase-supervisor-state.json"
 
     handoff_path.write_text(
-        "written-at: 2026-08-06T12:00:00Z\nnext-step: drain the tasks\nrestart-counter: 8\n",
+        "written-at: 2026-08-06T12:00:00Z\nnext-step: drain the tasks\nsession-handoff-sequence-number: 8\n",
         encoding="utf-8",
     )
     fields = supervisor.wait_for_handoff(stub_process(0), handoff_path, 7, state_path, {})
@@ -107,7 +107,7 @@ def run_dont_restart_without_a_terminal_case(workspace: Path):
     (handoff_directory / "noterm-handoff.md").write_text(
         "written-at: 2026-08-06T12:00:00Z\n"
         "next-step: should not relaunch\n"
-        "restart-counter: 1\n"
+        "session-handoff-sequence-number: 1\n"
         "dont-restart: the user asked to be consulted\n",
         encoding="utf-8",
     )
@@ -154,7 +154,7 @@ def run_no_seat_recycle_refusal_case(workspace: Path):
         "#!/bin/sh\n"
         "exec >/dev/null 2>&1\n"  # release the supervisor's pipes, or the test waits out the sleep
         f"echo $$ > '{session_process_id_path}'\n"
-        "printf 'written-at: 2026-08-14T00:00:00Z\\nnext-step: recycle me\\nrestart-counter: 9\\n' "
+        "printf 'written-at: 2026-08-14T00:00:00Z\\nnext-step: recycle me\\nsession-handoff-sequence-number: 9\\n' "
         f"> '{handoff_directory}/noseat-handoff.md'\n"
         "exec sleep 30\n",
         encoding="utf-8",
@@ -239,7 +239,7 @@ def run_agent_exit_record_cases(workspace: Path):
         "#!/bin/sh\n"
         "exec >/dev/null 2>&1\n"
         "printf 'written-at: 2026-09-17T00:00:00Z\\nnext-step: stand down\\n"
-        "restart-counter: 1\\ndont-restart: the user closes this seat\\n' "
+        "session-handoff-sequence-number: 1\\ndont-restart: the user closes this seat\\n' "
         f"> '{handoff_directory}/{name}-handoff.md'\n"
         "exec sleep 30\n",
         encoding="utf-8",
@@ -351,7 +351,7 @@ def run_agent_exit_record_cases(workspace: Path):
     with supervisor_names_replaced(
             launch_agent_session=launch_writing_a_handoff(
                 settings, StubLaunchedSession(-15, ended=False),
-                "restart-counter: 2\nnext-step: stand down\ndont-restart: closing\n"),
+                "session-handoff-sequence-number: 2\nnext-step: stand down\ndont-restart: closing\n"),
             launch_time_git_sync=no_launch_time_git_sync,
             input=lambda prompt: "n", stdin_isatty=True), \
             contextlib.redirect_stdout(io.StringIO()):
@@ -369,7 +369,7 @@ def run_agent_exit_record_cases(workspace: Path):
     settings = settings_for("bootanswerednonlaunch")
     supervisor.write_supervisor_state(settings.state_path, {"consumed_counter": 1})
     settings.handoff_path.write_text(
-        "restart-counter: 2\nnext-step: stand down\ndont-restart: closing\n", encoding="utf-8")
+        "session-handoff-sequence-number: 2\nnext-step: stand down\ndont-restart: closing\n", encoding="utf-8")
     launched = []
     with supervisor_names_replaced(
             launch_agent_session=lambda *arguments, **keywords: launched.append(1),
@@ -393,7 +393,7 @@ def run_agent_exit_record_cases(workspace: Path):
 
     def launch_writing_a_handoff_once(agent_command, session_id, working_directory, prompt, **_):
         if len(sessions) == 2:
-            settings.handoff_path.write_text("restart-counter: 2\nnext-step: carry on\n",
+            settings.handoff_path.write_text("session-handoff-sequence-number: 2\nnext-step: carry on\n",
                                              encoding="utf-8")
         return sessions.pop(0)
 
@@ -446,10 +446,10 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
         (project_directory / f"{writer_in_two_project_folders}.jsonl").write_text(
             "{}\n", encoding="utf-8")
     handoffs_to_write = [
-        f"restart-counter: 1\nwritten-by-session: {writer_session_id}\nnext-step: carry on\n",
-        f"restart-counter: 2\nwritten-by-session: {writer_without_a_transcript}\n"
+        f"session-handoff-sequence-number: 1\nwritten-by-session: {writer_session_id}\nnext-step: carry on\n",
+        f"session-handoff-sequence-number: 2\nwritten-by-session: {writer_without_a_transcript}\n"
         "next-step: carry on further\n",
-        f"restart-counter: 3\nwritten-by-session: {writer_in_two_project_folders}\n"
+        f"session-handoff-sequence-number: 3\nwritten-by-session: {writer_in_two_project_folders}\n"
         "next-step: carry on still\n",
     ]
 
@@ -1030,7 +1030,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
         events.append("launch")
         if events.count("launch") == 1:
             settings.handoff_path.write_text(
-                "restart-counter: 1\nnext-step: carry on\n", encoding="utf-8")
+                "session-handoff-sequence-number: 1\nnext-step: carry on\n", encoding="utf-8")
             return StubLaunchedSession(-15, ended=False)
         return StubLaunchedSession(0)
 
@@ -1201,7 +1201,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
 
         def wait_for_handoff(process, *arguments):
             if len(launches) in handoffs_after_launches:
-                return {"restart-counter": str(len(launches))}
+                return {"session-handoff-sequence-number": str(len(launches))}
             return real_wait_for_handoff(process, *arguments)
 
         def launch(agent_command, session_id, working_directory, prompt, **kwargs):
@@ -1649,7 +1649,7 @@ def run_by_hand_resume_cases(workspace: Path):
     settings = settings_for("waiting-handoff")
     supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
     settings.handoff_path.write_text(
-        "# Handoff\nrestart-counter: 4\nnext-step: carry on\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: 4\nnext-step: carry on\n", encoding="utf-8")
     session_id, prompt, resume = launch_once(settings)
     check("BY HAND: a waiting handoff still wins, and is not resumed over",
           resume is not True and session_id != crashed.stem,
@@ -1710,7 +1710,7 @@ def run_by_hand_resume_cases(workspace: Path):
     settings.first_prompt = founding_prompt
     supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
     settings.handoff_path.write_text(
-        "# Handoff\nrestart-counter: 4\nnext-step: carry on\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: 4\nnext-step: carry on\n", encoding="utf-8")
     (session_id, prompt, resume), printed = launch_once_printing(settings, projects)
     check("FIRST PROMPT: a waiting handoff still wins over the transcript and the first prompt",
           resume is not True and session_id != crashed.stem
@@ -1809,7 +1809,7 @@ def run_by_hand_resume_cases(workspace: Path):
     settings.resume_session_id = "session-named-by-recovery"
     supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
     settings.handoff_path.write_text(
-        "# Handoff\nrestart-counter: 4\nnext-step: carry on\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: 4\nnext-step: carry on\n", encoding="utf-8")
     session_id, prompt, resume = launch_once(settings)
     check("RESUME-SESSION-ID: the first launch resumes the session the flag names",
           session_id == "session-named-by-recovery" and resume is True,
