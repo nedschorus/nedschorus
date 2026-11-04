@@ -255,8 +255,12 @@ def stopped_run_failed_suite_lines(stdout):
             and FAILED_SUITE_LINE_KILLED_WHEN_RUN_STOPPED_MARK not in line]
 
 
-def say_refusal(stream, stdout, budget=None):
-    """Refuse for a run that ended with a SUMMARY, or, given its budget, for one stopped at it."""
+def say_refusal(stream, stdout, budget=None, listing_error=None):
+    """Refuse for a run that ended with a SUMMARY, or, given its budget, for one stopped at it.
+
+    A listing_error from the stop is reported with the refusal, and the user is told, because the
+    suites' processes it could not list may still be running.
+    """
     if budget is None:
         lines = stdout.splitlines()
         summary = next((line for line in reversed(lines)
@@ -266,9 +270,9 @@ def say_refusal(stream, stdout, budget=None):
         suite_lines = suite_lines_with_logs(stdout, (FAILED_SUITE_LINE_PREFIX,
                                                      NOT_RUN_SUITE_LINE_PREFIX))
     else:
-        say(stream, MESSAGE_PREFIX + "an nc-test-suite failed in the selective test run before its "
-            "%d-second time budget ran out, so this push is refused; the run was stopped there."
-            % budget)
+        say(stream, MESSAGE_PREFIX + "an nc-test-suite failed in the selective test run before the "
+            "run's %d-second time budget ran out, so this push is refused; the run was stopped "
+            "when the budget ran out." % budget)
         suite_lines = stopped_run_failed_suite_lines(stdout)
     for line in suite_lines:
         say(stream, line)
@@ -279,6 +283,12 @@ def say_refusal(stream, stdout, budget=None):
         "push again once without changing anything, since some suites fail only when the "
         "machine is busy.")
     say(stream, "If it fails a second time, tell the user which suite fails and where its log is.")
+    if listing_error:
+        say(stream, MESSAGE_PREFIX + "the processes the run's suites started in their own sessions "
+            "could not be listed when the run was stopped, so some may still be running: %s"
+            % listing_error)
+        say(stream, "Tell the user this line and the error in it, since those processes may keep "
+            "running on the machine.")
 
 
 def main(stream, environment):
@@ -317,7 +327,7 @@ def main(stream, environment):
         # The runner exits 1 after a stop only when a suite had already failed.
         if process.returncode == RUNNER_EXIT_SOME_FAILED and any(
                 line.startswith(RUNNER_STOPPED_LINE_PREFIX) for line in stdout.splitlines()):
-            say_refusal(stream, stdout, budget=budget)
+            say_refusal(stream, stdout, budget=budget, listing_error=listing_error)
             return EXIT_REFUSE_PUSH
         log_directory = log_directory_named_in(stdout)
         cause = ("the selective test run had not finished when the %d-second time budget ran "

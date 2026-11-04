@@ -238,8 +238,8 @@ SELECTIVE_TEST_RUN_PASSED = "pre-push: the selective test run passed. "
 SELECTIVE_TEST_RUN_REFUSED = ("pre-push: an nc-test-suite failed in the selective test run, so this "
                               "push is refused. ")
 SELECTIVE_TEST_RUN_REFUSED_BEFORE_BUDGET_RAN_OUT = (
-    "pre-push: an nc-test-suite failed in the selective test run before its 1-second time budget "
-    "ran out, so this push is refused; the run was stopped there.")
+    "pre-push: an nc-test-suite failed in the selective test run before the run's 1-second time "
+    "budget ran out, so this push is refused; the run was stopped when the budget ran out.")
 SELECTIVE_TEST_RUN_NOT_RUN_END = ", so this push goes ahead without the selective test run"
 SELECTIVE_TEST_RUN_HAND_RUN_LINE = (
     "Run it by hand from your worktree: python3 scripts/run-all-test-suites.py "
@@ -396,6 +396,16 @@ def _on_stop(_signal_number, _frame):
 signal.signal(signal.SIGTERM, _on_stop)
 time.sleep(FAKE_HANG_SECONDS)
 """ % (FAKE_STOPPED_SUITE_LINE, FAKE_RUNNER_STOPPED_LINE)
+
+# A run that dies of an uncaught exception when the stop reaches it: it exits 1, as a run stopped
+# after a failure does, but prints no stop line, so no suite is known to have failed.
+FAKE_TEST_SUITES_RUNNER_CRASHES_ON_STOP = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+import signal, time
+def _on_stop(_signal_number, _frame):
+    raise OSError(28, "No space left on device", "/fake/logs")
+signal.signal(signal.SIGTERM, _on_stop)
+time.sleep(FAKE_HANG_SECONDS)
+"""
 
 # A run killed while it reports its stop: it printed the stop line but never its exit status.
 FAKE_TEST_SUITES_RUNNER_KILLED_WHILE_STOPPING = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
@@ -1574,6 +1584,38 @@ def run_selective_test_run_cases(scratch):
           refusal[1:3] == [FAKE_FAILED_BEFORE_STOP_SUITE_LINE,
                            "The whole report: %s/test-run-report.txt" % FAKE_LOG_DIRECTORY]
           and FAKE_STOPPED_SUITE_LINE not in refusal, result.describe())
+
+    failing_stop_ps_bin = scratch / "failed-before-overrun-failing-ps-bin"
+    failing_stop_ps_bin.mkdir()
+    (failing_stop_ps_bin / "ps").write_text(
+        "#!/bin/sh\necho 'ps: cannot read the process table' >&2\nexit 1\n")
+    (failing_stop_ps_bin / "ps").chmod(0o755)
+    hooks = make_layout(scratch, "layout-selective-failed-before-overrun-ps-fails",
+                        test_suites_runner_text=FAKE_TEST_SUITES_RUNNER_STOPPED_AFTER_A_FAILURE)
+    unlisted_refusal = Scenario(scratch, "selective-failed-before-overrun-ps-fails", hooks)
+    unlisted_refusal.extra_environment[SELECTIVE_TEST_RUN_BUDGET_VARIABLE] = (
+        HANGING_CHECK_BUDGET_SECONDS)
+    unlisted_refusal.extra_environment["PATH"] = "%s%s%s" % (
+        failing_stop_ps_bin, os.pathsep, os.environ.get("PATH", ""))
+    result = unlisted_refusal.push("origin", "clean")
+    check("a suite failed before the budget ran out and ps fails: the push is still refused",
+          was_refused(result) and unlisted_refusal.origin_ref("clean") is None, result.describe())
+    check("a suite failed before the budget ran out and ps fails: the refusal says the suites' "
+          "processes could not be listed, with ps's error, and tells the user",
+          "pre-push: the processes the run's suites started in their own sessions could not be "
+          "listed when the run was stopped, so some may still be running: ps -A -o pid=,ppid= "
+          "exited 1: ps: cannot read the process table" in result.stderr
+          and "Tell the user this line and the error in it, since those processes may keep "
+          "running on the machine." in result.stderr, result.describe())
+
+    _, outcome = not_run_case(
+        "crashed when the stop reached it", FAKE_TEST_SUITES_RUNNER_CRASHES_ON_STOP,
+        "the selective test run had not finished when the 1-second time budget ran out, and "
+        "was stopped; the logs of the suites it ran are in " + FAKE_LOG_DIRECTORY,
+        tell_user=False, budget=HANGING_CHECK_BUDGET_SECONDS)
+    check("crashed when the stop reached it: an exit 1 with no stop line refuses nothing",
+          SELECTIVE_TEST_RUN_REFUSED_BEFORE_BUDGET_RAN_OUT not in outcome.stderr,
+          outcome.describe())
 
     _, outcome = not_run_case(
         "killed while it reported its stop", FAKE_TEST_SUITES_RUNNER_KILLED_WHILE_STOPPING,
