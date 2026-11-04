@@ -370,12 +370,23 @@ GH_COMMAND_103 = "`gh pr view 103 --repo nedschorus/nedschorus --json state,titl
 GH_FAILURE_103 = ("This hook could not ask GitHub whether PR 103 is merged, so no task "
                   f"waiting on it was raised: {GH_COMMAND_103} exited 1: gh stand-in: "
                   "failing on purpose. It asks again at the first stop at least 5 minutes "
-                  "from now.")
+                  "after the failed call.")
 check("gh failing: reported on stderr with gh's command and error, exit 1, nothing raised",
       reported(result, GH_FAILURE_103), result)
 check("gh failing: it was asked", len(seat.gh_calls()) == 1, seat.gh_calls())
-check("gh failing: the next stop within five minutes is silent and does not ask again",
-      silent(seat.run()) and len(seat.gh_calls()) == 1, seat.gh_calls())
+result = seat.run()
+check("gh failing: the next stop within five minutes reports the same failure from the cache "
+      "and does not ask gh again",
+      reported(result, GH_FAILURE_103) and len(seat.gh_calls()) == 1, (result, seat.gh_calls()))
+
+seat = Seat()
+seat.task("43", metadata={"prerequisites": [{"pr_merged": 103}]})
+seat.task("44", metadata={"prerequisites": [{"pr_merged": 103}]})
+seat.respond({"pr:103": "fail"})
+result = seat.run()
+check("gh failing for a condition two tasks name: one gh call, the failure reported once",
+      reported(result, GH_FAILURE_103) and result.stderr.count(GH_COMMAND_103) == 1
+      and len(seat.gh_calls()) == 1, (result, seat.gh_calls()))
 
 seat = Seat()
 seat.task("40", metadata=MET, subject="Met anyway")

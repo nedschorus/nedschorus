@@ -22,7 +22,21 @@ WHAT ONE RUN DOES, in order.
      mutation-tested, and a key for each surviving mutant given a task. With
      no state file, it writes one naming origin/main and tests nothing: the
      merges after that commit are tested from the next run on.
-  4. For each commit on main's first-parent line after the last one tested,
+  4. Checks that each task it opened in an earlier run still holds its
+     surviving mutant: the task file is still on the task list the state
+     names, and its description still names the mutant's diff file. A task
+     marked completed is finished: the state stops naming it. Each other task
+     that no longer holds its mutant, because its file is gone, cannot be
+     read or no longer names the mutant, is reported once: the record naming
+     it is written at once, and only then does the state stop naming it, so a
+     run killed later has still reported it; standard error names it at the
+     end, and the run goes on and exits
+     EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR. A record that cannot be
+     written then stops the run, with the state still naming the task. The
+     run opens no task in its place: it cannot tell a task lost from one
+     deleted after it was finished, such as by a session-handoff's removal of
+     completed tasks.
+  5. For each commit on main's first-parent line after the last one tested,
      oldest first, which is each merge of a pull request, runs
      scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py
      with --full-mutation-pass, --head the commit and --base its first
@@ -30,9 +44,10 @@ WHAT ONE RUN DOES, in order.
      --cosmic-ray-venv and --survived-and-errored-mutants-json-file. A run
      still going after --merge-timeout-seconds is sent SIGTERM, on which that
      program removes its scratch worktree.
-  5. Opens a task for each surviving mutant (TASKS below), then records the
+  6. Opens a task for each surviving mutant (TASKS below), then records the
      commit as tested, so a merge is mutation-tested once.
-  6. Writes the record (THE RECORD below) and prints its citation.
+  7. Writes the record (THE RECORD below), in full over any written at step
+     4, and prints its citation.
 
 A step that fails stops the run there: a failed fetch, a state file that
 cannot be read or no longer names an ancestor of origin/main, a missing
@@ -40,7 +55,10 @@ cosmic-ray venv, a mutation testing run that exits other than 0 or 1, runs
 past the limit or writes no readable JSON, and a mutant's diff or task that
 cannot be written.
 The commit it stopped at is not recorded as tested, so the next run tries it
-again; a task already opened for one of its mutants is not opened twice. The
+again; a task already opened for one of its mutants is not opened twice,
+since a mutant counts as given a task when the state says so or when a task
+on its list names the mutant's diff file, which covers a task opened just
+before a write of the state or the `.highwatermark` failed. The
 record names the failure, and the run exits EXIT_STEP_FAILED. A mutant the
 mutation testing program reports ERRORED, and a changed file with no suite,
 are named in the record and get no task.
@@ -85,7 +103,10 @@ Exit codes: 0 every merge since the last run was mutation-tested and its
 survivors given tasks, or the first run wrote the state file;
 EXIT_STEP_FAILED (4) a step failed, as above; EXIT_RECORD_NOT_WRITTEN (5) the
 record could not be written;
-EXIT_ANOTHER_RUN_HOLDS_THE_LOCK (6).
+EXIT_ANOTHER_RUN_HOLDS_THE_LOCK (6);
+EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR (7) no step failed, but a task
+an earlier run opened, and not marked completed, no longer holds its
+surviving mutant (step 4).
 """
 
 # Messages here follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
@@ -133,6 +154,7 @@ EXIT_ALL_DONE = 0
 EXIT_STEP_FAILED = 4
 EXIT_RECORD_NOT_WRITTEN = 5
 EXIT_ANOTHER_RUN_HOLDS_THE_LOCK = 6
+EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR = 7
 MUTATION_TESTING_EXITS_WITH_A_VERDICT = (0, 1)
 
 
@@ -225,6 +247,69 @@ def task_list_owner(author, task_lists_directory, agent_seats_directory):
         return author, None
     return (SURVIVOR_TASK_AGENT_SEAT_WHEN_LINE_AUTHOR_IS_RETIRED_OR_UNKNOWN,
             f"its author, {author}, has no task list or no checkout on ned-box")
+
+
+def mutant_diff_file_path(log_store_root, key):
+    return (Path(log_store_root) / RECORDS_DIRECTORY_NAME
+            / SURVIVING_MUTANT_DIFFS_DIRECTORY_NAME / f"{key}.diff")
+
+
+def task_file_read(task_file):
+    """The task as a dict, or None when the file is not a JSON object. Raises OSError."""
+    try:
+        task = json.loads(task_file.read_text(encoding="utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return task if isinstance(task, dict) else None
+
+
+def task_names_mutant(task, key):
+    return task is not None and f"{key}.diff" in str(task.get("description", ""))
+
+
+def task_on_list_naming_mutant(list_directory, key):
+    """The id of a task on the list whose description names the mutant's diff file, or None."""
+    if not list_directory.is_dir():
+        return None
+    for path in sorted(list_directory.iterdir()):
+        if TASK_FILE_NAME_PATTERN.fullmatch(path.name) and task_names_mutant(
+                task_file_read(path), key):
+            return int(path.stem)
+    return None
+
+
+def lost_tasks_reported(state, arguments, record):
+    """Drop from the state in memory each task that is completed or no longer holds its mutant.
+
+    Return one line per task that no longer holds its mutant and is not completed; the caller
+    writes the state."""
+    lost = []
+    for key, given in list(state["tasks_opened"].items()):
+        task_file = (arguments.task_lists_directory / f"nedschorus-{given['agent_seat']}-tasks"
+                     / f"{given['task_id']}.json")
+        try:
+            task = task_file_read(task_file)
+        except OSError as error:
+            why = f"the task file cannot be read ({type(error).__name__}: {error})"
+        else:
+            if task is not None and task.get("status") == "completed":
+                del state["tasks_opened"][key]
+                continue
+            if task_names_mutant(task, key):
+                continue
+            why = "its description no longer names the mutant's diff file"
+        lost.append(f"task #{given['task_id']} on {given['agent_seat']}'s task list "
+                    f"({task_file}) no longer holds the surviving mutant "
+                    f"{mutant_diff_file_path(arguments.log_store_root, key)}: {why}")
+        record.append(f"TASK LOST: {lost[-1]}")
+        del state["tasks_opened"][key]
+    return lost
+
+
+def record_write(record_path, record):
+    """Raises OSError."""
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text("\n".join(record) + "\n", encoding="utf-8")
 
 
 def agent_seat_task_list_new_pending_task_write(list_directory, subject, description):
@@ -385,11 +470,19 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
                        if line.startswith("author ")), "")
         owner, owner_reason = task_list_owner(author, arguments.task_lists_directory,
                                               arguments.agent_seats_directory)
-        mutant_diff_file = (Path(arguments.log_store_root) / RECORDS_DIRECTORY_NAME
-                            / SURVIVING_MUTANT_DIFFS_DIRECTORY_NAME / f"{key}.diff")
+        mutant_diff_file = mutant_diff_file_path(arguments.log_store_root, key)
         subject, description = task_text(mutant, merge, merge_subject, author, owner_reason,
                                          record_citation, mutant_diff_file)
         list_directory = arguments.task_lists_directory / f"nedschorus-{owner}-tasks"
+        # A run stopped after the task was linked into place, but before the state was written,
+        # leaves the task on the list and not in the state.
+        found = task_on_list_naming_mutant(list_directory, key)
+        if found is not None:
+            state["tasks_opened"][key] = {"agent_seat": owner, "task_id": found}
+            write_state(state_file, state)
+            record.append(f"  SURVIVED {place}: already given task #{found} on {owner}'s task "
+                          f"list")
+            continue
         try:
             mutant_diff_file.parent.mkdir(parents=True, exist_ok=True)
             mutant_diff_file.write_text(mutant["diff"], encoding="utf-8")
@@ -465,6 +558,7 @@ def main_under_lock(arguments):
     record = [f"{PROGRAM}: started {started.strftime('%Y-%m-%dT%H:%M:%SZ')}"]
     state_file = arguments.state_directory / STATE_FILE_NAME
     failure = None
+    lost_tasks = []
     try:
         git_or_raise(arguments.clone, "fetch", "--quiet", "origin", "main")
         main_commit = git_or_raise(arguments.clone, "rev-parse", "--verify",
@@ -479,6 +573,24 @@ def main_under_lock(arguments):
         else:
             last = state["last_tested_main_commit"]
             record.append(f"after: {last}")
+            tasks_before = len(state["tasks_opened"])
+            lost = lost_tasks_reported(state, arguments, record)
+            # A run killed later writes no record, so the lost tasks reach one before the
+            # state stops naming them.
+            if lost:
+                try:
+                    record_write(record_path, record)
+                except OSError as error:
+                    raise StepFailed(
+                        f"the record {record_citation} cannot be written "
+                        f"({type(error).__name__}: {error}), so the {len(lost)} lost task(s) "
+                        f"above are kept in the state, and the next run reports them again. "
+                        f"Nothing was tested.\n"
+                        f"Fix what the error names, then run this program again on ned-box: "
+                        f"{RUN_BY_HAND}") from error
+            if len(state["tasks_opened"]) != tasks_before:
+                write_state(state_file, state)
+            lost_tasks = lost
             if git(arguments.clone, "merge-base", "--is-ancestor", last,
                    main_commit).returncode:
                 raise StepFailed(
@@ -504,21 +616,30 @@ def main_under_lock(arguments):
         failure = str(error)
         record.append(f"FAILED: {failure}")
     record.append(f"wall-clock seconds: {time.monotonic() - started_monotonic:.0f}")
-    text = "\n".join(record) + "\n"
     if failure is not None:
         print(f"{PROGRAM}: {failure}", file=sys.stderr)
+    if lost_tasks:
+        print(f"{PROGRAM}: {len(lost_tasks)} task(s) that an earlier run opened for a surviving "
+              f"mutant, and that are not marked completed, no longer hold it:\n"
+              + "".join(f"  {line}\n" for line in lost_tasks)
+              + "This run opened no task in their place, and later runs do not report them "
+              "again.\n"
+              "If a task above was finished and then deleted, nothing needs doing.\n"
+              "Otherwise its mutant has no task: open one on the owner's task list that cites "
+              "the mutant's diff file the line names.", file=sys.stderr)
     try:
-        record_path.parent.mkdir(parents=True, exist_ok=True)
-        record_path.write_text(text, encoding="utf-8")
+        record_write(record_path, record)
     except OSError as error:
-        print(text, end="")
+        print("\n".join(record) + "\n", end="")
         print(f"{PROGRAM}: the record above was not written to {record_citation} "
               f"({type(error).__name__}: {error}).\n"
               f"Fix what the error names; the next run writes its own record, and this one "
               f"stays only in this output.", file=sys.stderr)
         return EXIT_RECORD_NOT_WRITTEN
     print(f"{PROGRAM}: record written to {record_citation}")
-    return EXIT_STEP_FAILED if failure is not None else EXIT_ALL_DONE
+    if failure is not None:
+        return EXIT_STEP_FAILED
+    return EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR if lost_tasks else EXIT_ALL_DONE
 
 
 if __name__ == "__main__":

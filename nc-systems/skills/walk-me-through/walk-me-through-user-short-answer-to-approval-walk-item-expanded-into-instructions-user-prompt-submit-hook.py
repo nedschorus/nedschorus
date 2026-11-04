@@ -508,24 +508,23 @@ def read_walk(cwd):
     text = document.read_text(encoding="utf-8")
     tokens = parser.parse(text)
     spans = walk_finder.item_unit_spans(text, parser)
-    if total is None:
-        totals = {span[1] for span in spans}
-        total = totals.pop() if len(totals) == 1 else None
     recommendations, problems, parts = recommendations_in(
         walk_finder.prose_lines(text, parser, tokens), walk_finder.item_opening_lines(text, parser, tokens),
-        spans, total, walk_finder, part_starts(tokens))
+        spans, walk_finder, part_starts(tokens))
+    if total is None:
+        total = walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(spans)
     return WalkState(name, count[0], numbers, total, recommendations, None, problems, parts, pages,
-                     heading_points(text.split("\n"), spans, total, parser), minutes)
+                     heading_points(text.split("\n"), spans, parser), minutes)
 
 
-def heading_points(lines, spans, total, parser):
+def heading_points(lines, spans, parser):
     """{item number: the point its heading states after the running count's colon, without its links} for the
     walk's items; a deferred item's note is not part of its point."""
     points = {}
     walk_finder = load_walk_finder()
-    for numbers, unit_total, _, first, _ in spans:
+    for numbers, _, _, first, _ in spans:
         match = HEADING_POINT.match(walk_finder.approval_walk_item_heading_with_deferred_note_removed(lines[first]))
-        if match and match[1] and (total is None or unit_total == total):
+        if match and match[1]:
             points.update({number: without_links(match[1], parser) for number in numbers})
     return points
 
@@ -598,7 +597,7 @@ def part_numbers(starts, first, end):
     return sorted(found) if 1 < len(found) <= MOST_PARTS and found == set(range(1, len(found) + 1)) else []
 
 
-def recommendations_in(lines, openings, spans, total, walk_finder, starts):
+def recommendations_in(lines, openings, spans, walk_finder, starts):
     """Return ({item number: recommendation text or None} for every item of the walk-document, {item number:
     why its recommendation is None} for the items whose reason is not NO_RECOMMENDATION_PROBLEM, {item number:
     its part numbers} for the items that hold parts), from its prose_lines, item_opening_lines and
@@ -609,8 +608,6 @@ def recommendations_in(lines, openings, spans, total, walk_finder, starts):
     item's opening, since an opening missed leaves the part before it running on into the next item's text."""
     found, problems, parts = {}, {}, {}
     for numbers, unit_total, _, first, end in spans:
-        if total is not None and unit_total != total:
-            continue
         ranges = {number: (first, end) for number in numbers}
         if len(numbers) > 1:
             ranges = {number: walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(

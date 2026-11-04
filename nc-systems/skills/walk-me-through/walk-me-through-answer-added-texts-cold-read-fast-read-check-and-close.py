@@ -13,6 +13,7 @@ Usage, from the agent-session's checkout:
        | --already-decided USER_RULING | --moved-on REASON]
       --user-reply-as-typed REPLY    (every answer but --not-asked, --already-decided and --moved-on)
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py close
+      [--hold-answer-until-new-item-answered]
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py approval-walk-waiting-item-cold-read-fast-read
       [--after-fixes-reread-only-when-facts-change]
 
@@ -181,9 +182,17 @@ leaves the heading as it is when it holds the note already, or when it names mor
 than the deferred ones, such as `Items 3 to 5 of 9`; for the second, CLOSE
 prints that it gave the heading no note. It then writes a `#next_to_present` line as the
 minutes' last line, naming the next item: walking the walk-document's items in
-order, a once-deferred item placed just before the summary item, from the item
-after the answered one, and round again from the first, the first item the
-minutes do not record; `none, closed` when there is none. Only a line CLOSE
+order, unnumbered items included, a once-deferred item placed just before the
+summary item, from the item after the answered one, and round again from the
+first, the first item the minutes do not record; `none, closed` when there is
+none. The summary item is the one whose heading's point, after its running
+count, or its whole title when it has no number, opens with "summary". When
+the next item is unnumbered, a `## <title>` heading as the walk finder reads
+one, CLOSE first writes its running count into that heading, `## Item K of M:
+<title>`, K one more than the highest whole number any item heading holds and
+M the walk finder's count of the items shown and waiting, and names it with
+the same K and M. The line naming the next item gives that counted M,
+whatever M the walk-document's headings give. Only a line CLOSE
 writes records anything: a line for an answer that took effect, for answers to
 parts, for --moved-on-no-decision, for --already-decided or for --moved-on
 decides its items; a line for a
@@ -197,7 +206,12 @@ every line close writes for an answer does: that answer was closed already, and
 no check has run since. When the `#next_to_present` line names other items than
 the answer line, a new item a finding raised is waiting: the answer is recorded
 as held until the user answers the new item, and the `#next_to_present` line is
-written again, unchanged, as the minutes' last line. When CLOSE later records
+written again, unchanged, as the minutes' last line. With
+--hold-answer-until-new-item-answered, CLOSE first numbers the unnumbered item
+right after the answered item's heading, as it numbers the next item, and
+holds the answer for it the same way, its `#next_to_present` line naming it;
+when the heading right after is not an unnumbered item's, or there is none,
+CLOSE refuses, writing nothing. When CLOSE later records
 the new item approved, disapproved or already decided, it also writes the
 already-decided line, with the same outcome, for each item a held-answer line
 holds for it that no close line decides yet; after a deferral, a move on or
@@ -351,14 +365,15 @@ STATUS_FAST_READ_NOTE = " The fast read also said: {note}"
 FAST_READ_RECORD_NOT_SHIPPED_MARKERS = ("cold-read-fast-read: record: FAILED",
                                         "cold-read-fast-read: record: REFUSED")
 FAST_READ_NOTE_MARKERS = FAST_READ_RECORD_NOT_SHIPPED_MARKERS + ("#cold_read_target_changed_during_run",)
+HOLD_ANSWER_FLAG = "--hold-answer-until-new-item-answered"
 CHECK_JUDGEMENT_LINES = (
     "Read the fast-read report of each text above whose status line says \"fast read had to be run\".",
     "If a finding holds and changes how a text is understood but not what the item decides, "
     "apply it to that text's marked line in the walk-document {document}.",
     "If a finding would change what the item decides, write that change as a new item right "
-    "after {item} in the walk-document, numbered as the walk-me-through skill's Re-planning section "
-    "says, and set the minutes' `#next_to_present` line to the new item; "
-    "the close step says when to present it.",
+    "after {item} in the walk-document, headed `## <the point>` with no number, and give the close step below "
+    "the flag `" + HOLD_ANSWER_FLAG + "`: it numbers the new item, holds {item}'s answer until the user answers "
+    "it, and says when to present it.",
 )
 CHECK_CLOSE_LINE = "Then run `python3 {program} close --cwd {top}` and do what it prints."
 COUNTS_NOT_LOGGED = (
@@ -510,7 +525,16 @@ DEFERRING_LINES = tuple(after_the_items_pattern(template)
 HEADING_COUNT_IN_LINE = re.compile(r"items?\s+\d+(?:\.\d+)*\s+of\s+\d+\b", re.I)
 CLOSE_DEFERRED_HEADING_NOT_NOTED = ("Its heading in {document} names other items too, so it is not given the "
                                     "note {note}.")
-SUMMARY_HEADING = re.compile(r"\bof\s+\d+\b[*_\s:.\-\u2013\u2014]*summary\b", re.I)
+SUMMARY_HEADING = re.compile(r"\bof\s+\d+\b[*_\s:.\-\u2013\u2014]*summary\b|^\s*##\s+[*_\s]*summary\b", re.I)
+NEWLINE = "\n"
+UNNUMBERED_HEADING_PARTS = re.compile(r"^(\s*##[ \t]+)(.*?)(?:[ \t]+#+)?[ \t]*$")
+NUMBERED_HEADING = "{marks}Item {number} of {total}: {title}"
+NO_UNNUMBERED_ITEM_AFTER = (
+    "nothing written: close was given " + HOLD_ANSWER_FLAG + ", but in {document} the heading right after "
+    "{item}'s is {found}, not a new item's heading `## <the point>` with no number.\n"
+    "If a fast-read finding would change what {item} decides, write that change as a new item right after "
+    "{item}, headed `## <the point>`, then run close with " + HOLD_ANSWER_FLAG + " again.\n"
+    "If no finding does, run close without " + HOLD_ANSWER_FLAG + ".")
 CLOSE_HELD_NEXT = ("Then run `{command}`, which gives {new_item} its cold-read-fast-read, do what it prints, and "
                    "present {new_item}. When the close step records the user's approval or disapproval of "
                    "{new_item}, it records the same outcome for {item}; after a deferral, a move on or answers to "
@@ -1327,18 +1351,24 @@ def start_read_ahead(reads, item, text, name, fast_read_program, top):
 
 def start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, total, fast_read_program):
     """Start the read ahead of the item the walk would present after the items numbered, if there is one.
+    An unnumbered item is read as close will number it, with the number and M close would give it then.
     Return None, or a line saying why no read ahead could be started: the read ahead is a guess, so its
     failure never stops close or the read step."""
     named = items_named(numbers, total)
     try:
-        _, order, summary = walk_document_items(walk_finder, minutes, named, numbers, total, parser)
+        count, order, summary, units = walk_document_items(walk_finder, minutes, named, numbers, total, parser)
         decided, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
         after = next_item(order, summary, numbers, numbers, decided | set(numbers), deferrals)
         if not after:
             return None
-        after_named = items_named(after, total)
-        _, text = item_text(walk_finder, minutes, after_named, after, total, parser,
-                            named_by=f"the item after {named}")
+        if isinstance(after[0], int):
+            number = walk_finder.approval_walk_next_unnumbered_item_number(units)
+            after_named = items_named([number], count)
+            text = unnumbered_item_text_once_numbered(walk_finder, minutes, after[0], units, number, count)
+        else:
+            after_named = items_named(after, total)
+            _, text = item_text(walk_finder, minutes, after_named, after, total, parser,
+                                named_by=f"the item after {named}")
         walk_name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
         start_read_ahead(item_reads_directory(walk_finder, minutes), after_named, text,
                          f"{walk_name}-{file_name_part(after_named)}", fast_read_program, top)
@@ -1405,7 +1435,8 @@ def waiting_item_read(arguments):
     walk_finder = load_walk_finder()
     top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
     _, numbers, total = waiting_items(walk_finder, value, minutes)
-    total, _, _ = walk_document_items(walk_finder, minutes, value, numbers, total, parser)
+    count, _, _, _ = walk_document_items(walk_finder, minutes, value, numbers, total, parser)
+    total = total or count
     item = items_named(numbers, total)
     document, text = item_text(walk_finder, minutes, value, numbers, total, parser)
     reads = item_reads_directory(walk_finder, minutes)
@@ -1476,37 +1507,90 @@ def last_answer(walk_finder, minutes, parser):
 
 
 def walk_document_items(walk_finder, minutes, value, numbers, total, parser):
-    """Return (M, the walk-document's item numbers of total M in order, the summary item's number or None)."""
+    """Return (M as the walk finder counts it, the walk-document's items in order, the summary item or None, its
+    units), an item being its number, or, for an unnumbered item, its heading's line index, an int, which
+    unnumbered_item_numbered numbers when it is shown."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     text = document.read_text(encoding="utf-8") if document.is_file() else ""
     units = walk_finder.item_unit_spans(text, parser) if document.is_file() else None
     try:
-        total, _ = walk_finder.waiting_item_units(document, value, numbers, total, parser, units)
+        walk_finder.waiting_item_units(document, value, numbers, total, parser, units)
     except walk_finder.UnusableRange as problem:
         raise Failure(f"the last `#next_to_present` line in {minutes}, `{value}`: {problem}")
     lines = text.split("\n")
     order, summary = [], None
-    for unit_numbers, unit_total, _, first, _ in units:
-        if unit_total != total:
-            continue
-        order += [number for number in unit_numbers if number not in order]
-        if unit_numbers and SUMMARY_HEADING.search(
+    for unit in units:
+        unit_numbers, first = unit[0], unit[3]
+        keys = [first] if walk_finder.approval_walk_unit_is_unnumbered_item(unit) else unit_numbers
+        order += [key for key in keys if key not in order]
+        if keys and SUMMARY_HEADING.search(
                 walk_finder.approval_walk_item_heading_with_deferred_note_removed(lines[first])):
-            summary = unit_numbers[0]
-    return total, order, summary
+            summary = keys[0]
+    return walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units), order, summary, units
+
+
+def numbered_heading(heading, number, total):
+    """The unnumbered item heading `## <title>` with the running count `Item number of total: ` before its title."""
+    marks, title = UNNUMBERED_HEADING_PARTS.match(heading).groups()
+    return NUMBERED_HEADING.format(marks=marks, number=number, total=total, title=title)
+
+
+def unnumbered_item_numbered(walk_finder, minutes, first, units):
+    """Write the running count `Item K of M: ` into the unnumbered item heading on line first of the walk-document,
+    K and M as the walk finder's approval_walk_next_unnumbered_item_number and approval_walk_item_total_shown_and_waiting_counted_from_walk_document give them for
+    units, the walk-document's units; return K."""
+    document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
+    lines = document.read_text(encoding="utf-8").split("\n")
+    number = walk_finder.approval_walk_next_unnumbered_item_number(units)
+    lines[first] = numbered_heading(lines[first], number, walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units))
+    document.write_text("\n".join(lines), encoding="utf-8")
+    return number
+
+
+def unnumbered_item_text_once_numbered(walk_finder, minutes, first, units, number, total):
+    """Return the text of the unnumbered item whose heading is on line first of the walk-document, as item_text
+    will give it once unnumbered_item_numbered has written `Item number of total: ` into that heading."""
+    document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
+    lines = document.read_text(encoding="utf-8").split("\n")
+    end = next(unit[4] for unit in units if unit[3] == first)
+    lines[first] = numbered_heading(lines[first], number, total)
+    return "\n".join(lines[first:end]).strip()
+
+
+def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numbers, parser):
+    """Number the unnumbered item right after the answered items' unit in the walk-document, as the close step's
+    HOLD_ANSWER_FLAG asks, and return the `#next_to_present` value naming it; raise Failure, writing nothing, when
+    the unit right after is not unnumbered."""
+    document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
+    text = document.read_text(encoding="utf-8")
+    units = walk_finder.item_unit_spans(text, parser)
+    try:
+        _, answered_units = walk_finder.waiting_item_units(document, value, answered_numbers, None, parser, units)
+    except walk_finder.UnusableRange as problem:
+        raise Failure(f"the last `#next_to_present` line in {minutes}, `{value}`: {problem}")
+    after = units.index(answered_units[-1]) + 1
+    if after == len(units) or not walk_finder.approval_walk_unit_is_unnumbered_item(units[after]):
+        found = (f"`{text.split(NEWLINE)[units[after][3]].strip()}`" if after < len(units)
+                 else "none, since it is the last item")
+        raise Failure(NO_UNNUMBERED_ITEM_AFTER.format(document=document, item=" and ".join(answered_numbers),
+                                                      found=found))
+    number = unnumbered_item_numbered(walk_finder, minutes, units[after][3], units)
+    return f"item {number} of {walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units)}"
 
 
 def deferred_item_heading_noted(walk_finder, minutes, numbers, total, parser, noted=True):
     """With noted, put the deferred note right after the running count of the walk-document heading that names
-    exactly the items numbered, unless it already holds the note; return the lines to print when no such heading
-    exists. Without noted, take the note out of that heading, if it holds it, and return no lines."""
+    exactly the items numbered, whatever M it gives, unless it already holds the note; return the lines to print
+    when no such heading exists. Without noted, take the note out of that heading, if it holds it, and return no
+    lines. Of two such headings, as in a walk-document renumbered before numbers were never reused, the one whose
+    M is total, the `#next_to_present` line's, is taken, or the first when none or both are."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     text = document.read_text(encoding="utf-8")
     lines = text.split("\n")
     note = walk_finder.APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT
-    for unit_numbers, unit_total, _, first, _ in walk_finder.item_unit_spans(text, parser):
-        if unit_total != total or unit_numbers != numbers:
-            continue
+    naming = [unit for unit in walk_finder.item_unit_spans(text, parser) if unit[0] == numbers]
+    picked = [unit for unit in naming if unit[1] == total]
+    for _, _, _, first, _ in (picked if len(picked) == 1 else naming)[:1]:
         heading = lines[first]
         if noted and note not in heading:
             end = HEADING_COUNT_IN_LINE.search(heading).end()
@@ -1547,7 +1631,8 @@ def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferr
     every item.
 
     Items shown with the answered one that the minutes do not record yet stay waiting. Otherwise the walk
-    goes through the walk-document's items in order, an item deferred once and not decided moved to just
+    goes through the walk-document's items in order, as walk_document_items gives them, unnumbered ones
+    included, an item deferred once and not decided moved to just
     before the summary item, or to the end when there is none, and names the first item the minutes do
     not record. It starts at the last answered item, or, when that item was just deferred, at the first
     item after it in the walk-document that is not deferred, and goes round once.
@@ -1606,6 +1691,9 @@ def close(arguments):
         answered_numbers, _ = walk_finder.parse_items(item)
     except walk_finder.UnusableRange as problem:
         raise Failure(f"the last answer line in {minutes}, `{item}`, {problem}.")
+    if arguments.hold_answer_until_new_item_answered:
+        value = new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numbers, parser)
+        waiting, waiting_numbers, total = waiting_items(walk_finder, value, minutes)
     if not set(answered_numbers) <= set(waiting_numbers):
         append_to_minutes(minutes, [CLOSE_HELD_MINUTES.format(item=item, new_item=waiting),
                                     NEXT_MARKER_LINE.format(value=value)])
@@ -1614,7 +1702,7 @@ def close(arguments):
                       program=Path(__file__).resolve(), flags="", top=shlex.quote(str(top))))])
         print("\n".join(output))
         return 0
-    total, order, summary = walk_document_items(walk_finder, minutes, value, waiting_numbers, total, parser)
+    count, order, summary, units = walk_document_items(walk_finder, minutes, value, waiting_numbers, total, parser)
     # Only a plain decision passes to the items held for this one; after a deferral, a move on or answers to parts
     # they stay waiting, so the walk shows them to the user.
     held_outcome = None
@@ -1664,10 +1752,12 @@ def close(arguments):
         output += [CLOSE_HELD_DECIDED.format(item=item, held=line.split(": ")[0]) for line in held]
     decided, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
     numbers = next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals)
-    named = items_named(numbers, total)
+    if numbers and isinstance(numbers[0], int):
+        numbers = [unnumbered_item_numbered(walk_finder, minutes, numbers[0], units)]
+    named = items_named(numbers, count)
     append_to_minutes(minutes, [NEXT_MARKER_LINE.format(value=named if numbers else CLOSED_MARKER_VALUE)])
     if numbers:
-        not_started = start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, total,
+        not_started = start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, count,
                                                      arguments.fast_read_program)
         output += [not_started] if not_started else []
     output.append(CLOSE_READ_NEXT_ITEM.format(next_item=named, command=READ_STEP_COMMAND.format(
@@ -1703,6 +1793,9 @@ def main(argv=None):
     parser.add_argument("--user-reply-as-typed", metavar="REPLY",
                         help="check: the user's reply exactly as he typed it, written into the minutes beside the "
                              "answer; needed for every answer but --not-asked, --already-decided and --moved-on")
+    parser.add_argument(HOLD_ANSWER_FLAG, action="store_true",
+                        help="close: a fast-read finding raised the new item written right after the answered "
+                             "one; number it and hold the answer until the user answers it")
     parser.add_argument(AFTER_FIXES_FLAG, action="store_true",
                         help=f"{WAITING_ITEM_READ_STEP}: you changed the item since its last cold-read-fast-read; "
                              "read it again only when the change touches a fact")

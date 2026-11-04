@@ -31,12 +31,15 @@ the Mac's agent-seats.
 
 How it fails: when a file it must read cannot be read, or is not UTF-8 or JSON where a whole line
 is expected, or `gh` cannot answer, the agent-seat's line carries the failure under "errors" and
-"rule" is null, every other agent-seat is still reported, and the program exits 1. A failure it
-does not expect, such as a file that changes between two reads of it, stops the program with a
-traceback and exit 1. A transcript's last line that Claude Code is still writing is skipped,
-except when it holds the key of a subagent or background-command launch: that is then a failure
-as above, under "errors" with exit 1, and the next run reads the finished line. A transcript that
-does not exist is not a failure: the line says so under "not_checked".
+"rule" is null, every other agent-seat is still reported, and the program exits 1. A task file
+that does not hold a task with an id is such a failure, when rule 4 reads the task list. A
+failure it does not expect, such as a file that changes between two reads of it, stops the program
+with a traceback and exit 1. A transcript's last line that Claude Code is still writing is
+skipped, except when it holds the key of a subagent or background-command launch: that is then a
+failure as above, under "errors" with exit 1, and the next run reads the finished line. A
+transcript whose last line holds such a key and never gets its newline, as when Claude Code died
+while writing it, fails every run in the same way. A transcript that does not exist is not a
+failure: the line says so under "not_checked".
 
 Run time: it reads whole transcripts, which grow to tens of megabytes, so one run takes seconds.
 """
@@ -398,29 +401,23 @@ def logged_in_account(claude_json):
 
 
 def open_tasks_nothing_holds(task_directory, checker):
-    """Open tasks whose blockedBy tasks are all done and whose prerequisites all hold."""
+    """Open tasks nothing recorded holds back, as the due-task hook counts them for its idle check."""
     if not task_directory.is_dir():
         return []
-    tasks = due_task_hook.read_tasks(task_directory)
-    free = []
-    for task_id, task in tasks.items():
-        if task.get("status") not in due_task_hook.OPEN_TASK_STATUSES:
-            continue
-        if due_task_hook.is_held_by_blockers(task, tasks, task_directory):
-            continue
-        prerequisites = (task.get("metadata") or {}).get(due_task_hook.PREREQUISITES_KEY)
-        if prerequisites:
-            conditions = due_task_hook.parse_prerequisites(prerequisites)
-            if conditions is None:
-                continue
-            answers = [checker.answer(kind, number) for kind, number in conditions]
-            if checker.gh_failures:
-                kind, number, cause = checker.gh_failures[0]
-                raise ReadFailure(f"GitHub could not say whether {kind} {number} holds: {cause}")
-            if not all(answer.get("met") for answer in answers):
-                continue
-        free.append({"id": task_id, "subject": task.get("subject")})
-    return free
+    unreadable = []
+    tasks = due_task_hook.read_tasks(task_directory, unreadable)
+    if unreadable:
+        raise ReadFailure(f"{unreadable[0]} could not be read as a task with an id, so whether it "
+                          "holds the agent-seat's work is unknown. Repair the file so that it holds "
+                          "a task with an id, or remove it if it is not a task, then run this "
+                          "program again.")
+    # The checker is shared by every agent-seat, so only the failures appended here are this one's.
+    failures_before = len(checker.gh_failures)
+    free, _ = due_task_hook.unheld_and_held_tasks(tasks, task_directory, checker)
+    if len(checker.gh_failures) > failures_before:
+        kind, number, cause = checker.gh_failures[failures_before]
+        raise ReadFailure(f"GitHub could not say whether {kind} {number} holds: {cause}")
+    return [{"id": task_id, "subject": tasks[task_id].get("subject")} for task_id in free]
 
 
 # --- One agent-seat's verdict ---
@@ -433,8 +430,7 @@ def code_reading_of_sentence(kind, turn_started_at, task_tool_calls):
         return fields.NOT_RAISED
     if kind in (PROMISE_AFTER_EVENT, HOLD):
         backing_candidates = [call for call in task_tool_calls
-                              if call[0] and turn_started_at and call[0] >= turn_started_at.replace(
-                                  microsecond=0)
+                              if call[0] and turn_started_at and call[0] >= turn_started_at
                               and ((call[2].get("metadata") or {}).get("prerequisites")
                                    or call[2].get("addBlockedBy"))]
         return fields.JUDGE if backing_candidates else fields.UNBACKED
@@ -519,13 +515,14 @@ def verdict_for_seat(seat, paths, now, since, checker, parser):
         quiet = last_spend is None or (now - last_spend).total_seconds() >= IDLE_AFTER_SECONDS
         verdict.update(turn_ended=turn_ended, walk_items_waiting=walk_waiting)
         verdict["idle"] = quiet and turn_ended and not walk_waiting
-        # Reading the transcript above already refused bytes this second read could not decode.
+        # The read above refused every complete line that does not parse and every byte that is
+        # not UTF-8, so this read can fail only on the last line, still being written.
         try:
             flight = threshold_hook.work_in_flight(
                 str(transcript), background_task_wait_seconds=float("inf"), now=now)
         except threshold_hook.TranscriptCouldNotBeFullyRead as error:
-            raise ReadFailure(f"{error}; it is likely the last line, still being written, which "
-                              "the next run reads") from error
+            raise ReadFailure(f"{error}: it is the last line, still being written, which the next "
+                              "run reads") from error
         verdict["running"] = {
             "subagents": [{"id": agent_id, "started": iso(facts.launch_times.get(agent_id))}
                           for agent_id in flight.subagent_ids],
@@ -559,14 +556,18 @@ def verdict_for_seat(seat, paths, now, since, checker, parser):
 
         verdict["sentences"] = matched_sentences(facts, since)
         raised = [item for item in verdict["sentences"] if item["code_reading"] != fields.NOT_RAISED]
-        fallback = rules_three_to_five(verdict, put_off_at, checker, paths.tasks_root
-                                       / f"nedschorus-{seat}-tasks")
-        if raised:
-            verdict.update({fields.RULE: 2, fields.DECISION: fields.JUDGE if any(
-                item["code_reading"] == fields.JUDGE for item in raised) else fields.SEND_UNBACKED,
-                fields.IF_EVERY_SENTENCE_BACKED: fallback})
+        task_directory = paths.tasks_root / f"nedschorus-{seat}-tasks"
+        if not raised:
+            verdict.update(rules_three_to_five(verdict, put_off_at, checker, task_directory))
+        elif any(item["code_reading"] == fields.JUDGE for item in raised):
+            verdict.update({fields.RULE: 2, fields.DECISION: fields.JUDGE})
+            # Only the judge can find every sentence backed, and then rules 3 to 5 decide; a
+            # sentence code already found unbacked means that can never happen.
+            if not any(item["code_reading"] == fields.UNBACKED for item in raised):
+                verdict[fields.IF_EVERY_SENTENCE_BACKED] = rules_three_to_five(
+                    verdict, put_off_at, checker, task_directory)
         else:
-            verdict.update(fallback)
+            verdict.update({fields.RULE: 2, fields.DECISION: fields.SEND_UNBACKED})
     except ReadFailure as error:
         verdict["errors"].append(str(error))
     return verdict

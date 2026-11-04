@@ -443,6 +443,26 @@ check("gh fails: the agent-seat carries the error, the other is still reported, 
       code == 1 and verdicts["alpha"]["rule"] is None
       and "GitHub could not say" in verdicts["alpha"]["errors"][0]
       and verdicts["beta"]["rule"] == 4, verdicts)
+machine = Machine()
+for seat in ("alpha", "beta"):
+    machine.seat(seat, [user("go"), assistant("Done."), turn_end()])
+    machine.task(seat, "1", metadata={"prerequisites": [{"pr_merged": 50}]})
+machine.gh_responses.write_text("{}")
+code, verdicts, _ = machine.run()
+check("two agent-seats share one prerequisite gh fails on: both carry the error, though the "
+      "second reads the failed answer from the cache",
+      code == 1 and all(verdicts[seat]["rule"] is None
+                        and "GitHub could not say whether pr_merged 50" in verdicts[seat]["errors"][0]
+                        for seat in ("alpha", "beta")), verdicts)
+machine = Machine()
+for seat, number in (("alpha", 50), ("beta", 51)):
+    machine.seat(seat, [user("go"), assistant("Done."), turn_end()])
+    machine.task(seat, "1", metadata={"prerequisites": [{"pr_merged": number}]})
+machine.gh_responses.write_text("{}")
+code, verdicts, _ = machine.run()
+check("two agent-seats whose prerequisites gh fails on: each carries the error for its own",
+      code == 1 and "GitHub could not say whether pr_merged 50" in verdicts["alpha"]["errors"][0]
+      and "GitHub could not say whether pr_merged 51" in verdicts["beta"]["errors"][0], verdicts)
 
 # --- read failures and what is not a failure -------------------------------------------------
 machine = Machine()
@@ -544,6 +564,58 @@ check("the newest spend across subagent transcripts, whatever their order, is th
       verdicts["alpha"]["last_activity"] == {"time": "2026-11-02T11:59:00Z",
                                              "source": str(subagents / "agent-a.jsonl")},
       verdicts["alpha"])
+
+# --- the task list is read as the due-task hook reads it ------------------------------------
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant("Done."), turn_end()])
+machine.task("alpha", "1", metadata={"waits_on": [{"pr_merged": 50}]})
+machine.gh_responses.write_text(json.dumps({"pr:50": {"state": "OPEN"}}))
+code, verdicts, _ = machine.run()
+check("a task still under the old waits_on key, unmet, is held: rule 4, no wake",
+      code == 0 and verdicts["alpha"]["rule"] == 4, verdicts["alpha"])
+(machine.tasks / "nedschorus-alpha-tasks" / "2.json").write_text("{not json")
+code, verdicts, _ = machine.run()
+check("a task file that will not read: an error and exit 1, not rule 4",
+      code == 1 and verdicts["alpha"]["rule"] is None
+      and "2.json could not be read as a task" in verdicts["alpha"]["errors"][0]
+      and "then run this program again" in verdicts["alpha"]["errors"][0], verdicts["alpha"])
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant("Done."), turn_end()])
+machine.seat("beta", [user("go"), assistant("Done."), turn_end()])
+machine.task("alpha", "1", metadata={"prerequisites": [{"pr_merged": 51}]})
+machine.task("beta", "1", metadata={"prerequisites": [{"pr_merged": 50}]})
+machine.gh_responses.write_text(json.dumps({"pr:50": {"state": "MERGED"}}))
+code, verdicts, _ = machine.run("--agent-seat", "alpha", "--agent-seat", "beta")
+check("one agent-seat's gh failure is not reported for the next agent-seat",
+      code == 1 and "pr_merged 51" in verdicts["alpha"]["errors"][0]
+      and verdicts["beta"]["errors"] == [] and verdicts["beta"]["rule"] == 5, verdicts)
+
+# --- rule 2 settled by code reads no task list ---------------------------------------------
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.task("alpha", "1", metadata={"prerequisites": [{"pr_merged": 51}]})
+code, verdicts, _ = machine.run()
+check("an unbacked promise is sent although a task's gh query would fail",
+      code == 0 and verdicts["alpha"]["decision"] == "send_unbacked"
+      and "if_every_sentence_backed" not in verdicts["alpha"], (code, verdicts["alpha"]))
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE + " " + ANNOUNCED), turn_end()])
+machine.task("alpha", "1", metadata={"prerequisites": [{"pr_merged": 51}]})
+code, verdicts, _ = machine.run()
+check("an unbacked promise beside a sentence for the judge: rule 2, no task list read",
+      code == 0 and verdicts["alpha"]["rule"] == 2 and verdicts["alpha"]["decision"] == "judge"
+      and "if_every_sentence_backed" not in verdicts["alpha"], (code, verdicts["alpha"]))
+
+# --- the turn start keeps its fraction of a second -----------------------------------------
+machine = Machine()
+machine.seat("alpha", [user("a", at="2026-11-02T11:48:00Z"),
+                       assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
+                           {"pr_merged": 927}]}}), at="2026-11-02T11:49:00.200Z"),
+                       turn_end(at="2026-11-02T11:49:00.300Z"),
+                       user("go", at="2026-11-02T11:49:00.500Z"), assistant(PROMISE), turn_end()])
+_, verdicts, _ = machine.run()
+check("a task the previous turn made in the same second as the next prompt does not back it",
+      verdicts["alpha"]["sentences"][0]["code_reading"] == "unbacked", verdicts["alpha"])
 
 # --- the fields module finds what departs from it -------------------------------------------
 good = {"agent_seat": "a", "session_id": None, "transcript_path": None, "checked_at": NOW,

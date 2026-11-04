@@ -39,6 +39,7 @@ _spec.loader.exec_module(claim_check)
 OVERVIEW = "docs/nedschorus-wiki/nedschorus-example-architecture-overview.md"
 CONTROL_VARIABLE = "OVERVIEW_CLAIM_CHECK_TEST_CONTROL_DIRECTORY"
 TIMEOUT_SECONDS = 120
+RECHECK_SLEEP_SECONDS = 3
 failures = []
 
 STAND_IN_CLAUDE = f"""#!{sys.executable}
@@ -46,7 +47,7 @@ import json, os, pathlib, sys
 control = pathlib.Path(os.environ[{CONTROL_VARIABLE!r}])
 prompt = sys.stdin.read()
 with (control / "claude-calls.jsonl").open("a", encoding="utf-8") as log:
-    log.write(json.dumps({{"argv": sys.argv[1:], "stdin": prompt, "cwd": os.getcwd(),
+    log.write(json.dumps({{"argv": sys.argv[1:], "stdin": prompt, "cwd": os.getcwd(), "started": __import__("time").time(),
                           "overview_there": pathlib.Path({OVERVIEW!r}).read_text(encoding="utf-8")}}) + "\\n")
 answer = json.loads((control / "claude.json").read_text(encoding="utf-8"))
 for assertion, recheck in answer.get("rechecks", {{}}).items():
@@ -348,10 +349,16 @@ def run_ranked_claim_cases(fixture, blob):
 
     fixture.answer(claude_stdout="VERDICT 1 contradicted must-fix: alpha claim\nVERDICT 2 unsupported must-fix: beta claim\n"
                                  "COUNTS supported=0 contradicted=1 unsupported=1\n",
-                   rechecks={"alpha claim": {"stdout": recheck("contradicted must-fix", "alpha claim")},
-                             "beta claim": {"stdout": recheck("unsupported fix-later", "beta claim")}})
+                   rechecks={"alpha claim": {"stdout": recheck("contradicted must-fix", "alpha claim"),
+                                             "sleep_seconds": RECHECK_SLEEP_SECONDS},
+                             "beta claim": {"stdout": recheck("unsupported fix-later", "beta claim"),
+                                            "sleep_seconds": RECHECK_SLEEP_SECONDS}})
     result = fixture.run()
     rechecks = fixture.claude_calls()[1:]
+    starts = sorted(call["started"] for call in rechecks)
+    # Run one after the other, the second recheck would start only after the first's sleep ended.
+    check("the rechecks run in parallel: the second starts before the first has finished",
+          len(starts) == 2 and starts[1] - starts[0] < RECHECK_SLEEP_SECONDS, starts)
     check("each must-fix claim gets its own recheck, which names only that claim",
           result.returncode == 5 and len(rechecks) == 2
           and sorted(("alpha claim" in call["stdin"], "beta claim" in call["stdin"]) for call in rechecks)

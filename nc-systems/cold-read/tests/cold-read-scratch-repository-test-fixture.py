@@ -36,6 +36,7 @@ import importlib.util
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 # This fixture sits in nc-systems/cold-read/tests/; the system it copies is
@@ -145,6 +146,7 @@ def cold_read_fast_read_scratch_repository_whose_stub_agy_answers_in_chat(scratc
     for name, text in (("agy", STUB_AGY_ANSWERING_IN_CHAT), ("claude", STUB_CLAUDE_FAILING)):
         (stubs / name).write_text(text, encoding="utf-8")
         (stubs / name).chmod(0o755)
+    install_fake_sandbox_programs(stubs)
     # The agy cell scans HOME for credential files at launch, and the real home takes seconds to walk.
     home = scratch / "fast-read-scratch-home"
     home.mkdir()
@@ -154,3 +156,87 @@ def cold_read_fast_read_scratch_repository_whose_stub_agy_answers_in_chat(scratc
     # A suite run inside an agent-session must not write that session's ID beside the report.
     environment.pop("CLAUDE_CODE_SESSION_ID", None)
     return repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py", environment
+
+
+# A stand-in for bwrap and sandbox-exec, so a suite whose program starts one
+# of them can run inside the nc-test-sandbox, where the real bwrap cannot
+# start. It confines nothing: it checks the options it is given, applies
+# --chdir, --clearenv, --setenv and --unsetenv in order, runs the command at the source of a bind whose
+# destination is the command's path, and replaces itself with the command, so
+# exit codes, signals and child processes pass through as they would. An
+# option it does not know fails the run, so a sandbox prefix that gains one
+# shows up here. Whether the real sandbox keeps a file out is tested only by
+# the suites in SUITES_RUN_WITHOUT_ANY_SANDBOX that run the real program.
+# FAKE_SANDBOX_PROGRAM_ARGV_LOG, when set, is a file each launch appends its
+# argv to, one JSON list per line.
+FAKE_SANDBOX_PROGRAM_PASSING_THE_COMMAND_THROUGH = r'''import json, os, sys
+name = os.path.basename(sys.argv[0])
+arguments = sys.argv[1:]
+log = os.environ.get("FAKE_SANDBOX_PROGRAM_ARGV_LOG")
+if log:
+    with open(log, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps([name, *arguments]) + "\n")
+environment = dict(os.environ)
+binds = {}
+directory = None
+if name == "sandbox-exec":
+    taking_value = {"-p", "-f", "-n", "-D"}
+    while arguments and arguments[0] in taking_value:
+        arguments = arguments[2:]
+elif name == "bwrap":
+    no_value = {"--unshare-user", "--unshare-user-try", "--unshare-ipc", "--unshare-pid",
+                "--unshare-net", "--unshare-uts", "--unshare-cgroup", "--unshare-cgroup-try",
+                "--unshare-all", "--share-net", "--clearenv", "--new-session",
+                "--die-with-parent", "--as-pid-1"}
+    one_value = {"--tmpfs", "--dev", "--proc", "--dir", "--chdir", "--remount-ro",
+                 "--mqueue", "--unsetenv", "--hostname", "--uid", "--gid", "--perms", "--size",
+                 "--cap-add", "--cap-drop", "--argv0", "--lock-file"}
+    two_values = {"--bind", "--bind-try", "--dev-bind", "--dev-bind-try", "--ro-bind",
+                  "--ro-bind-try", "--symlink", "--setenv", "--chmod"}
+    while arguments and arguments[0].startswith("--"):
+        option = arguments[0]
+        if option in no_value:
+            # bwrap clears the environment where --clearenv stands, so a later --setenv still holds.
+            if option == "--clearenv":
+                environment.clear()
+            arguments = arguments[1:]
+        elif option in one_value and len(arguments) >= 2:
+            if option == "--chdir":
+                directory = arguments[1]
+            elif option == "--unsetenv":
+                environment.pop(arguments[1], None)
+            arguments = arguments[2:]
+        elif option in two_values and len(arguments) >= 3:
+            if option == "--setenv":
+                environment[arguments[1]] = arguments[2]
+            elif option != "--symlink" and option != "--chmod":
+                binds[arguments[2]] = arguments[1]
+            arguments = arguments[3:]
+        else:
+            sys.exit(f"fake {name}: option {option} is unknown to this test stand-in, "
+                     "or lacks its values; add it to the fake's option lists")
+else:
+    sys.exit(f"fake sandbox program: started as {name!r}, expected bwrap or sandbox-exec")
+if not arguments:
+    sys.exit(f"fake {name}: no command after the options")
+command = [binds.get(arguments[0], arguments[0]), *arguments[1:]]
+if directory is not None:
+    os.makedirs(directory, exist_ok=True)
+    os.chdir(directory)
+os.execvpe(command[0], command, environment)
+'''
+
+
+def install_fake_sandbox_programs(directory):
+    """Write the pass-through stand-ins for bwrap and sandbox-exec into
+    `directory`, which the caller puts on PATH ahead of the real ones.
+    Returns `directory`. The first line names this Python by its full path,
+    so a stand-in started with a PATH that holds no python3 still runs."""
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    for name in ("bwrap", "sandbox-exec"):
+        (directory / name).write_text(
+            f"#!{sys.executable}\n" + FAKE_SANDBOX_PROGRAM_PASSING_THE_COMMAND_THROUGH,
+            encoding="utf-8")
+        (directory / name).chmod(0o755)
+    return directory

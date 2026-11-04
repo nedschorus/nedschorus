@@ -14,7 +14,7 @@ which finds the open walk, its waiting items and its walk-document's items. It
 also loads the answer hook,
 walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py,
 for the closing line's answer letters, ANSWER_LETTERS_TEXT, and for its
-closing_line, which builds the closing line the refusal's step 4 gives.
+closing_line, which builds the closing line the refusal's step 3 gives.
 
 EVERY TURN is checked, whoever started it: the user, another agent-seat, a
 background-task notice. THE REPLY is the text of every assistant message
@@ -41,8 +41,9 @@ THE TEXT CHECKED is the reply, line by line, without:
 - quoted text, `"..."`, `“...”` or a `>` line, that the walk-document holds;
 - a waiting item's closing line, the line the walk-me-through skill ends
   every message with, `[Item 4 of 9, <the point>](<page link>) · ` and then
-  the answer hook's ANSWER_LETTERS_TEXT, when every item it names is waiting
-  and its total is the open walk's. The line is what the approval-walk
+  the answer hook's ANSWER_LETTERS_TEXT, when every item it names is waiting,
+  whatever M it gives, since M is display only, as the approval-walk finder's
+  docstring says. The line is what the approval-walk
   finder's approval_walk_closing_line_read reads, as the finder's docstring
   says, the reader the current-item Stop hook uses too, so a point holding
   brackets, escaped or not, still makes one link. The point and the link
@@ -53,7 +54,7 @@ THE TEXT CHECKED is the reply, line by line, without:
   `#item_page` line of every item it names records a failed publish, because
   the current-item Stop hook then requires that form. A line with anything
   outside the link but the answer letters, such as a list mark, bold marks or
-  a sentence, or that names another item or total, is checked;
+  a sentence, or that names another item, is checked;
 - the line a sub-step that asks for no decision ends with, `[No decision
   here; type N or next to continue.](<page link>)` or the same line without
   its link, alone on its line, whatever item waits: it only tells the user
@@ -62,10 +63,9 @@ THE TEXT CHECKED is the reply, line by line, without:
   such as `Item 4.1 of 9`;
 - a sentence that only names waiting items, `Item 4 of 9 is waiting for your
   answer.`, the line the walk-me-through skill ended every message with before
-  the closing line, when every item it names is waiting and its total is the
-  open walk's or one an item heading of the walk-document carries; one that
-  names another item or total, as an agent does when it numbers its own
-  questions as items, is checked.
+  the closing line, when every item it names is waiting, whatever M it
+  gives; one that names another item, as an agent does when it numbers its
+  own questions as items, is checked.
 `**` and `__` are dropped before the tests, so a bold question is read.
 
 EACH LINE is question-like when it holds a `?` or a phrase in ASK_PHRASE,
@@ -99,8 +99,10 @@ question scrolls away, a false block costs one reworded line.
 AN INTERRUPTION ITEM'S TEXT is not checked either: a line of the text
 checked, a list joined to its lead-in included, is left out when the
 walk-document, as it stands when the hook runs, holds each line of it, as
-the agent wrote it, as a whole line of one interruption item, one numbered
-`W.n` after a waiting item W and not itself waiting, whatever its total.
+the agent wrote it, as a whole line of one interruption item: an unnumbered
+item, as the approval-walk finder reads one, which the refusal's step 1 has
+the agent add, or, in a walk opened before items were added unnumbered, one
+numbered `W.n` after a waiting item W and not itself waiting, whatever its M.
 Lines are compared whole and equal once `normalized` has dropped their marks,
 so a leading `>` or list mark, a hashtag marker opening the line, bold,
 italic and code-span marks, link targets,
@@ -238,7 +240,7 @@ MODEL_SCHEMA = {"type": "object",
                     "required": ["line_number", *MODEL_ANSWERS], "additionalProperties": False}}},
                 "required": ["lines"], "additionalProperties": False}
 MODEL_SYSTEM_PROMPT = "You classify text. Answer only through the structured output."
-MODEL_PROMPT_TEMPLATE = """An agent is taking the user through an approval-walk: numbered items, each of which he answers with a letter. While the walk is open, the agent must ask him nothing outside the items waiting for his answer, because his next letter could then answer either question. This walk's items are named `Item N of {total}`, or `item N` for short, and {waiting_phrase} for his answer; an item numbered some other way, such as a "side item" or an item with another total, is not one of the walk's items.
+MODEL_PROMPT_TEMPLATE = """An agent is taking the user through an approval-walk: numbered items, each of which he answers with a letter. While the walk is open, the agent must ask him nothing outside the items waiting for his answer, because his next letter could then answer either question. This walk's items are named `Item N of {total}`, or `item N` for short, and {waiting_phrase} for his answer; an item numbered some other way, such as a "side item", is not one of the walk's items.
 
 The text of each waiting item, as the walk-document holds it:
 <waiting_items>
@@ -271,9 +273,13 @@ DECIDED_BY_MODEL_NOTICE = "the model judged that it asks him something other tha
 MODEL_CHECK_FAILED_NOTICE = ("the hook's `claude -p` call that has the model judge this question-like text failed, "
                              "{failure}, so the hook treats the text as a question")
 REFUSAL_INSTRUCTIONS = (
-    "If the flagged text asks the user to decide or answer something, do these four steps:",
-    "1. Add it to the walk-document {document} as an interruption item headed `## Item {new_item} of "
-    "{new_total}: <the point of the question>`, placed right after item {last_waiting}. Quote the question whole "
+    "If the flagged text asks the user to decide or answer something, do these three steps:",
+    "1. Add it to the walk-document {document} as an interruption item headed `## <the point of the question>`, "
+    "with no number, placed right after item {last_waiting}. Do not number it yourself: when the user answers item "
+    "{last_waiting}, the close step of "
+    "nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py "
+    "writes the next number into this heading. "
+    "Quote the question whole "
     "in the item, as its asker wrote it, whether you or another agent, giving each line of the flagged text a "
     "line of its own, word for word, and putting the rest of the question on other lines of the item. This hook passes the "
     "question only when the item in the walk-document holds every flagged line that way, and refuses again until "
@@ -282,13 +288,9 @@ REFUSAL_INSTRUCTIONS = (
     "Give the item one recommendation and one alternative, and end it with the recommendation stated as an "
     "action, as in `Recommendation: <what you recommend doing>.` State the alternative before it, as in "
     "`The alternative: <what D does instead>.`",
-    "2. Change the walk's item count M from {total} to {new_total} in every item heading of {document} that "
-    "carries `of {total}`, and in "
-    "the last `#next_to_present` line of {minutes}, which then reads `#next_to_present {waiting_value} of "
-    "{new_total}`.",
-    "3. Do not show the new item now: it is shown after item {waiting} is answered.",
-    "4. The flagged text has already reached the user, so leave it. End the message you write next with the line "
-    "`I added the question as Item {new_item} of {new_total}.` and then {closing_lines_named}, as the "
+    "2. Do not show the new item now: it is shown after item {waiting} is answered.",
+    "3. The flagged text has already reached the user, so leave it. End the message you write next with the line "
+    "`I added the question as a new item after item {last_waiting}.` and then {closing_lines_named}, as the "
     "walk-me-through skill writes it, as the last text of that message:\n{closing_lines}{no_page}",
     "If the flagged text does not ask the user anything, reword it in your reply so that it no longer reads "
     "as a question for him, and end the turn.",
@@ -382,12 +384,14 @@ def turn_assistant_texts(records):
 
 
 def interruption_item_texts(document_text, units, waiting_numbers, parser):
-    """The set of normalized lines of every item numbered W.n, for W a waiting item, not itself waiting: its lines as the
-    approval-walk finder's line-range helper gives them, or nothing when they start at the heading of a unit of
-    several items, because that unit's items have no openings."""
+    """The set of normalized lines of every unnumbered item, its whole unit, and of every item numbered W.n, for W a
+    waiting item, not itself waiting: its lines as the approval-walk finder's line-range helper gives them, or
+    nothing when they start at the heading of a unit of several items, because that unit's items have no
+    openings."""
     document_lines = document_text.split("\n")
     openings = walk_finder.item_opening_lines(document_text, parser)
-    texts = []
+    texts = [normalized_lines(document_lines[unit[3]:unit[4]])
+             for unit in units if walk_finder.approval_walk_unit_is_unnumbered_item(unit)]
     for numbers, total, _, first, end in units:
         for number in numbers:
             if number in waiting_numbers or not any(re.fullmatch(rf"{re.escape(waiting)}\.\d+", number)
@@ -430,22 +434,22 @@ def shown_item_lines(reply_lines, document_lines, units, openings):
     return shown
 
 
-def is_closing_line(line, waiting_numbers, total, pages):
-    """Whether line is the closing line of waiting items of the open walk, whose total is total, as the module
+def is_closing_line(line, waiting_numbers, pages):
+    """Whether line is the closing line of waiting items of the open walk, whatever M it gives, as the module
     docstring's THE TEXT CHECKED says; pages are the walk-minutes' newest `#item_page` link per item."""
     closing = walk_finder.approval_walk_closing_line_read(line, closing_line_parser(), answer_hook.ANSWER_LETTERS_TEXT)
     if closing is None:
         return False
-    numbers, line_total, link = closing
-    return (line_total == total and set(numbers) <= set(waiting_numbers)
+    numbers, _, link = closing
+    return (set(numbers) <= set(waiting_numbers)
             and (link is not None or all(pages.get(number) == walk_finder.ITEM_PAGE_PUBLISH_FAILED
                                          for number in numbers)))
 
 
-def is_waiting_reminder(sentence, waiting_numbers, totals):
-    """Whether sentence only says that waiting items of the open walk, with one of its totals, wait for an answer."""
+def is_waiting_reminder(sentence, waiting_numbers):
+    """Whether sentence only says that waiting items of the open walk, whatever M it gives, wait for an answer."""
     reminder = WAITING_REMINDER.match(sentence.strip(TRAILING_MARKS))
-    if not reminder or reminder["total"] not in totals:
+    if not reminder:
         return False
     try:
         return set(walk_finder.expand_numbers(reminder["numbers"])) <= set(waiting_numbers)
@@ -453,19 +457,18 @@ def is_waiting_reminder(sentence, waiting_numbers, totals):
         return False
 
 
-def checked_lines(reply, document_text, units, parser, waiting_numbers, total, pages):
+def checked_lines(reply, document_text, units, parser, waiting_numbers, pages):
     """The reply's lines as the module docstring's THE TEXT CHECKED says, emphasis dropped, empty ones left out,
     and each list joined to the line ending in `:` that introduces it, so the list is judged with its lead-in;
     then those an interruption item holds, compared as the reply wrote them, left out. Each comes as (the line
     checked, the lines as the reply wrote them)."""
-    totals = {total} | {unit[1] for unit in units}
     document_lines = document_text.split("\n")
     normalized_document = normalized(" ".join(document_lines))
     lines = walk_finder.prose_lines(reply, parser)
     shown = shown_item_lines(lines, document_lines, units, walk_finder.item_opening_lines(document_text, parser))
     kept, written, introduced_list = [], [], False
     for line in lines:
-        if (normalized(line) in shown or is_closing_line(line, waiting_numbers, total, pages)
+        if (normalized(line) in shown or is_closing_line(line, waiting_numbers, pages)
                 or walk_finder.approval_walk_sub_step_no_decision_closing_line_page_link_or_none(line) is not None):
             continue
         if line.lstrip().startswith(">") and normalized(line) in normalized_document:
@@ -475,7 +478,7 @@ def checked_lines(reply, document_text, units, parser, waiting_numbers, total, p
         line = QUOTED.sub(lambda quote: " " if normalized(quote[0][1:-1]) in normalized_document else quote[0], line)
         line = line.replace("**", "").replace("__", "")
         sentences = [sentence for sentence in SENTENCE_END.split(line.strip())
-                     if not is_waiting_reminder(sentence, waiting_numbers, totals)]
+                     if not is_waiting_reminder(sentence, waiting_numbers)]
         line = " ".join(sentences).strip()
         if not line:
             continue
@@ -586,21 +589,14 @@ def log_refusal(environment, entry):
     return None
 
 
-def next_free_item(waiting, held):
-    suffix = 1
-    while f"{waiting}.{suffix}" in held:
-        suffix += 1
-    return f"{waiting}.{suffix}"
-
-
-def closing_lines(pages, name, document_text, units, parser, numbers, total, new_total):
+def closing_lines(pages, name, document_text, units, parser, numbers, new_total):
     """(each waiting item's closing line, in code marks, once the walk's count M is new_total, built by the answer
     hook's closing_line with the link of the item's newest `#item_page` line in pages, or NO_PAGE_LINK when the minutes
     record no page for it; the numbers of the items the minutes record no page for)."""
     pages = dict(pages)
     without_page = [number for number in numbers if number not in pages]
     pages.update(dict.fromkeys(without_page, NO_PAGE_LINK))
-    points = answer_hook.heading_points(document_text.split("\n"), units, total, parser)
+    points = answer_hook.heading_points(document_text.split("\n"), units, parser)
     walk = answer_hook.WalkState(name, None, numbers, new_total, {}, None, pages=pages, points=points)
     return [f"`{answer_hook.closing_line(number, walk)}`" for number in numbers], without_page
 
@@ -682,7 +678,7 @@ def output_for(payload, environment, model=model_judgement):
     except walk_finder.UnusableRange:
         return None
     pages = walk_finder.newest_item_page_link_per_item_from_walk_minutes(minutes.read_text(encoding="utf-8"), parser)
-    checked = checked_lines(reply, document_text, units, parser, numbers, total, pages)
+    checked = checked_lines(reply, document_text, units, parser, numbers, pages)
     lines = [line for line, _ in checked]
     question_like = [line for line in lines if is_question_like(line)]
     if not question_like:
@@ -700,15 +696,12 @@ def output_for(payload, environment, model=model_judgement):
         decided, decided_by = DECIDED_BY_MODEL_NOTICE, "model"
     # The agent copies the flagged text into the item, so it is named as written, not as checked.
     sentence = "\n".join(next(written for line, written in checked if line == sentence))
-    held = {number for unit in units for number in unit[0]}
     waiting = numbers[-1]
     waiting_label = " and ".join(numbers)
     new_total = str(int(total) + 1)
-    closing, without_page = closing_lines(pages, name, document_text, units, parser, numbers, total, new_total)
+    closing, without_page = closing_lines(pages, name, document_text, units, parser, numbers, new_total)
     values = {"walk": name, "last_waiting": waiting, "sentence": sentence, "decided": decided, "waiting": waiting_label,
-              "document": document, "minutes": minutes, "total": total, "new_total": new_total,
-              "new_item": next_free_item(waiting, held),
-              "waiting_value": ("item " if len(numbers) == 1 else "items ") + waiting_label,
+              "document": document,
               "closing_lines_named": SEVERAL_CLOSING_LINES_NAMED if numbers[1:] else ONE_CLOSING_LINE_NAMED,
               "closing_lines": "\n".join(closing), "no_page": NO_PAGE_TEMPLATE.format(
                   items=("items " if without_page[1:] else "item ") + " and ".join(without_page),

@@ -226,27 +226,27 @@ with tempfile.TemporaryDirectory() as scratch:
     check("waiting handoff: none written means none waits",
           reader.waiting_handoff_verdict(handoffs, "seat", state) is None)
     got = handoff("next-step: carry on\n")
-    check("waiting handoff: one with no restart-counter is refused, with the fix",
-          got is not None and got[0] == "refuse" and "restart-counter" in got[1], got)
-    got = handoff("restart-counter: three\n")
-    check("waiting handoff: an unreadable restart-counter is refused",
+    check("waiting handoff: one with no session-handoff-sequence-number is refused, with the fix",
+          got is not None and got[0] == "refuse" and "session-handoff-sequence-number" in got[1], got)
+    got = handoff("session-handoff-sequence-number: three\n")
+    check("waiting handoff: an unreadable session-handoff-sequence-number is refused",
           got is not None and got[0] == "refuse", got)
-    got = handoff("restart-counter: 3\n")
+    got = handoff("session-handoff-sequence-number: 3\n")
     check("waiting handoff: with no state file, the handoff waits for boot-ignition",
           got is not None and got[0] == "defer-to-boot-ignition" and "counter 3" in got[1], got)
-    got = handoff("restart-counter: 3\n", consumed=2)
+    got = handoff("session-handoff-sequence-number: 3\n", consumed=2)
     check("waiting handoff: a counter above the consumed one waits",
           got is not None and got[0] == "defer-to-boot-ignition", got)
     check("waiting handoff: a counter equal to the consumed one is spent",
-          handoff("restart-counter: 3\n", consumed=3) is None)
+          handoff("session-handoff-sequence-number: 3\n", consumed=3) is None)
     check("waiting handoff: a counter below the consumed one is spent",
-          handoff("restart-counter: 3\n", consumed=5) is None)
-    got = handoff("restart-counter: 4\ndont-restart: user asked for a pause\n", consumed=3)
+          handoff("session-handoff-sequence-number: 3\n", consumed=5) is None)
+    got = handoff("session-handoff-sequence-number: 4\ndont-restart: user asked for a pause\n", consumed=3)
     check("waiting handoff: a dont-restart handoff asks to be consulted, with its counter "
           "and reason", got == ("seat-asked-to-be-consulted", (4, "user asked for a pause")),
           got)
     check("waiting handoff: a spent dont-restart handoff no longer waits",
-          handoff("restart-counter: 4\ndont-restart: pause\n", consumed=4) is None)
+          handoff("session-handoff-sequence-number: 4\ndont-restart: pause\n", consumed=4) is None)
 
     # seat_of
     for list_id, expected in (("nedschorus-reboot-test-tasks", "reboot-test"),

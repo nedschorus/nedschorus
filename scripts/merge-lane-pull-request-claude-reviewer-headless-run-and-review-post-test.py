@@ -152,6 +152,10 @@ atexit.register(stall)
 failures = []
 
 
+def review_worktrees_directory(helpers):
+    return helpers.parent / f"{helpers.name}-review-worktrees"
+
+
 def check(name, condition, detail=""):
     """Report one case; condition is a callable, so an error in it fails only this case."""
     try:
@@ -216,9 +220,9 @@ class Case:
             git(repository, "add", ".")
             git(repository, "commit", "-q", "-m", name)
         self.head = git(repository, "rev-parse", "HEAD")
-        self.head_worktree = self.helpers / "wt" / "pr7-head"
+        self.head_worktree = review_worktrees_directory(self.helpers) / "pr7-head"
         git(repository, "worktree", "add", "-q", "--detach", str(self.head_worktree), self.head)
-        (self.helpers / "briefs").mkdir()
+        (self.helpers / "briefs").mkdir(parents=True)
         (self.helpers / "briefs" / "brief-7a-mac-claude.md").write_text(BRIEF)
         (home / ".config" / "nedschorus").mkdir(parents=True)
         (home / ".config" / "nedschorus" / "mac-claude.token").write_text("stand-in-token\n")
@@ -237,7 +241,7 @@ class Case:
     def command(self, tag, head, options):
         return [sys.executable, str(PROGRAM), "7", tag, head or self.head, *options,
                 "--merge-lane-worktrees-and-outputs-directory", str(self.helpers),
-                "--merge-lane-review-worktrees-directory", str(self.helpers / "wt"),
+                "--merge-lane-review-worktrees-directory", str(review_worktrees_directory(self.helpers)),
                 "--review-tools-worktree-at-main", str(self.helpers / "wt" / "main")]
 
     def run(self, mode="valid", *options, tag="7a", head=None, **environment):
@@ -381,7 +385,7 @@ def main():
               lambda: not case.reviewer_worktree_left(), case.detail)
 
         case = Case(scratch)
-        others = [case.helpers / "wt" / name for name in
+        others = [review_worktrees_directory(case.helpers) / name for name in
                   ("mac-claude-pr70-mutation", "mac-claude-pr8-mutation")]
         for other in others:
             git(case.head_worktree, "worktree", "add", "-q", "--detach", str(other), "HEAD")

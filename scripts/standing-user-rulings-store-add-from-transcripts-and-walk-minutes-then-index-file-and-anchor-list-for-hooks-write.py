@@ -93,9 +93,14 @@ tags are fixed when an entry is added and would be lost, or a store of schema ve
 version 2 (the move is one transaction, so the store is left at version 1 as it was); 3 when another run holds
 the lock, which is expected when a run outlasts the minute between two runs.
 
-WHAT IT DOES NOT HANDLE. A prompt an agent wrote and passed with --first-prompt-file, such as a new
-agent-seat's founding prompt, is stored as his words: TurnReader knows only the prompts the handoff-supervisor
-and crash recovery write. A turn the transcript marks as not typed by a person (isMeta, a program entrypoint
+A prompt passed to the handoff-supervisor with --first-prompt-file or --first-prompt, such as a new agent-seat's
+founding prompt, ends with the handoff-supervisor's FIRST_PROMPT_FROM_LAUNCH_COMMAND_NOT_TYPED_BY_THE_USER_LINE,
+by which the reader tells it is a program's prompt. Such prompts launched before the handoff-supervisor added that
+line have no mark in the transcript; those found in the store are listed by duplicate_key in
+FIRST_PROMPTS_FROM_LAUNCH_COMMANDS_STORED_WITHOUT_THE_SUPERVISORS_LINE, and are checked again as the reader's are.
+
+WHAT IT DOES NOT HANDLE. A prompt passed with --first-prompt-file before the handoff-supervisor marked it, and not
+in that list, is stored as his words. A turn the transcript marks as not typed by a person (isMeta, a program entrypoint
 or a non-human origin) is not stored. Only standing and
 not-the-user's-words entries are checked again; a superseded or lapsed entry keeps its state. Words he typed only on the Mac reach the store once mirrored. A tag is only as
 good as the name matched: a GHI named without "GHI", "issue" or a link, or a system named without its
@@ -147,6 +152,17 @@ KIND_USER_WORDS = "user-words"
 KIND_WALK_MINUTES_USER_RULING = "walk-minutes-user-ruling"
 STATE_STANDING = "standing"
 STATE_NOT_THE_USERS_WORDS = "not-the-user's-words"
+# Each is the first prompt of an agent-session, passed with --first-prompt-file before the handoff-supervisor marked
+# such prompts; the comment names the agent-seat it started.
+FIRST_PROMPTS_FROM_LAUNCH_COMMANDS_STORED_WITHOUT_THE_SUPERVISORS_LINE = frozenset({
+    "9b3f95c71f0ad298392d4b233c06ee0b735a5ab2223e139319ae69fbe32634c8",  # git-infra
+    "f9f4cc5ca327571f7da9ed4d64328cdca0fdb1565700804fea8331ebca0eafbd",  # repo-hygiene
+    "1ef688bcc8b8f9c8b49220e0c3e0cd8475b6203f8ebf2d4177107c012b6eced5",  # merge-lane
+    "884ce3c2449776ffeedf97910786018ebef9c7007e8f5c294c5e9848dedf69b5",  # doctrine-queue-drain
+    "e6dca31bbe64a1e909c5f023b06107d76ac1064b3c4d419886edd233f06ac19d",  # fleet-restart-at-login
+    "64910ac3f90dd347926fdfcc362edc50f17fb39657cd405d3308e3dd7174fae5",  # reboot-test
+    "1f9416b4fa409a10e9f23763d02e78b9932bd0f77954b453966c7d9c87dbbf65",  # MD-skills
+})
 EXIT_OK, EXIT_SOURCE_OR_OUTPUT_FAILED, EXIT_COULD_NOT_RUN, EXIT_LOCK_HELD = 0, 1, 2, 3
 
 SCHEMA_VERSION = 2
@@ -467,11 +483,13 @@ def store_schema_version_1_to_2_move(connection):
 
 def user_words_entries_not_the_users_words_status_set_and_clear(connection):
     """Set not-the-user's-words on each standing user-words entry whose text the reader tells is a program's
-    prompt, and set back to standing each such entry whose text it no longer tells is one; return both counts."""
+    prompt, or that FIRST_PROMPTS_FROM_LAUNCH_COMMANDS_STORED_WITHOUT_THE_SUPERVISORS_LINE lists, and set back to
+    standing each such entry that is neither; return both counts."""
     to_set, to_clear = [], []
-    for entry_id, state, text in connection.execute(
-            "SELECT entry_id, state, text FROM entries WHERE kind = ?", (KIND_USER_WORDS,)).fetchall():
-        is_prompt = transcript_reader.user_turn_text_is_compaction_summary_or_launch_prompt(text)
+    for entry_id, state, text, key in connection.execute(
+            "SELECT entry_id, state, text, duplicate_key FROM entries WHERE kind = ?", (KIND_USER_WORDS,)).fetchall():
+        is_prompt = (key in FIRST_PROMPTS_FROM_LAUNCH_COMMANDS_STORED_WITHOUT_THE_SUPERVISORS_LINE
+                     or transcript_reader.user_turn_text_is_compaction_summary_or_launch_prompt(text))
         if is_prompt and state == STATE_STANDING:
             to_set.append(entry_id)
         elif not is_prompt and state == STATE_NOT_THE_USERS_WORDS:
