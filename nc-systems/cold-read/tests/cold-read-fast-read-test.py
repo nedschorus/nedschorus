@@ -91,7 +91,11 @@ read's repository root -- and with it the docs/walk and cold-read-records
 paths the rule names -- is the scratch tree. The one exception is the case
 that compares the embedded template against the skill's prompt file: both of
 those files live in the real checkout, so it reads them there. A stub `agy`
-first on PATH stands in for the model, driven by
+first on PATH stands in for the model, beside the fixture's pass-through
+stand-in for the sandbox program, so this suite runs inside the
+nc-test-sandbox, where the real bwrap cannot start. The stand-in confines
+nothing; nc-systems/cold-read/tests/cold-read-agy-cell-test.py's
+real-sandbox case tests the confinement. The stub `agy` is driven by
 COLD_READ_AGY_CELL_TEST_STUB_PLAN the way nc-systems/cold-read/tests/cold-read-agy-cell-test.py
 drives its stub, plus a counter file so the stub can fail the first N
 launches and succeed after.
@@ -370,6 +374,7 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     stub_claude = stub_directory / "claude"
     stub_claude.write_text(STUB_CLAUDE, encoding="utf-8")
     stub_claude.chmod(0o755)
+    scratch_repository_fixture.install_fake_sandbox_programs(stub_directory)
     counter_path.unlink(missing_ok=True)
     claude_counter_path(counter_path).unlink(missing_ok=True)
     # The agy cell scans HOME for credential files at launch, and the real

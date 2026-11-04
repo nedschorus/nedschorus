@@ -454,6 +454,15 @@ check("two agent-seats share one prerequisite gh fails on: both carry the error,
       code == 1 and all(verdicts[seat]["rule"] is None
                         and "GitHub could not say whether pr_merged 50" in verdicts[seat]["errors"][0]
                         for seat in ("alpha", "beta")), verdicts)
+machine = Machine()
+for seat, number in (("alpha", 50), ("beta", 51)):
+    machine.seat(seat, [user("go"), assistant("Done."), turn_end()])
+    machine.task(seat, "1", metadata={"prerequisites": [{"pr_merged": number}]})
+machine.gh_responses.write_text("{}")
+code, verdicts, _ = machine.run()
+check("two agent-seats whose prerequisites gh fails on: each carries the error for its own",
+      code == 1 and "GitHub could not say whether pr_merged 50" in verdicts["alpha"]["errors"][0]
+      and "GitHub could not say whether pr_merged 51" in verdicts["beta"]["errors"][0], verdicts)
 
 # --- read failures and what is not a failure -------------------------------------------------
 machine = Machine()

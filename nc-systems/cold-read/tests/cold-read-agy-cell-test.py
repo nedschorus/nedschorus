@@ -43,8 +43,13 @@ WHAT IS PINNED HERE.
     directly reads all six, which is what shows the check can fail.
     Claude's and Codex's login files in the scratch home are kept out too,
     and agy's own is still read, since masking it would log agy out
-    (user-ruled 2026-09-29). With no sandbox program on PATH the launcher
-    refuses, exit 64, and never starts agy.
+    (user-ruled 2026-09-29). These cases need the real sandbox program,
+    which cannot start inside the nc-test-sandbox, so they run only with
+    --real-sandbox-cases-only, which
+    nc-systems/cold-read/tests/cold-read-agy-cell-real-sandbox-test.py
+    passes; every other case runs with the fixture's pass-through stand-in
+    for the sandbox program on PATH. With no sandbox program on PATH the
+    launcher refuses, exit 64, and never starts agy.
 
   - The Gemini API key. With GEMINI_API_KEY unset, agy is given the key
     read from .config/nedschorus/gemini-api.key in the scratch home, with
@@ -175,6 +180,26 @@ sys.exit(step.get("exit", 0))
 
 failures = []
 
+# With this flag the suite runs only the cases that need the real sandbox
+# program, with no stand-in on PATH; REAL_SANDBOX_CASES_SUITE runs it so, and
+# is listed in scripts/run-all-test-suites.py's SUITES_RUN_WITHOUT_ANY_SANDBOX.
+# Without it every other case runs, with the fixture's pass-through stand-in
+# for the sandbox program on PATH, so this suite runs inside the nc-test-sandbox.
+REAL_SANDBOX_CASES_ONLY_FLAG = "--real-sandbox-cases-only"
+REAL_SANDBOX_CASES_ONLY = REAL_SANDBOX_CASES_ONLY_FLAG in sys.argv[1:]
+REAL_SANDBOX_CASES_SUITE = "nc-systems/cold-read/tests/cold-read-agy-cell-real-sandbox-test.py"
+
+
+def path_with_stub_agy_first(stub_directory, environment):
+    """PATH with the stub agy first, then, unless only the real-sandbox cases
+    run, the stand-in sandbox programs, kept apart from the stub so a case can
+    put the stub alone on PATH."""
+    parts = [str(stub_directory)]
+    if not REAL_SANDBOX_CASES_ONLY:
+        parts.append(str(scratch_repository_fixture.install_fake_sandbox_programs(
+            stub_directory.parent / "fake-sandbox-programs")))
+    return os.pathsep.join([*parts, environment.get("PATH", "")])
+
 
 def check(case_name, condition, detail=""):
     if condition:
@@ -237,7 +262,7 @@ def run_agy_cell(repository, stub_directory, plan, report_path, *arguments,
         environment["GEMINI_API_KEY"] = gemini_api_key
     environment["HOME"] = str(scratch_home_for(stub_directory))
     environment["PATH"] = (path_override if path_override is not None else
-                           f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}")
+                           path_with_stub_agy_first(stub_directory, environment))
     environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
     environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
     return subprocess.run(
@@ -256,7 +281,7 @@ def start_agy_cell_in_own_session(repository, stub_directory, plan, report_path)
     environment = dict(os.environ)
     environment.pop("GEMINI_API_KEY", None)
     environment["HOME"] = str(scratch_home_for(stub_directory))
-    environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
+    environment["PATH"] = path_with_stub_agy_first(stub_directory, environment)
     environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
     environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
     return subprocess.Popen(
@@ -334,9 +359,101 @@ def provenance_stamp_of(report):
     return report.read_text(encoding="utf-8").splitlines()[0]
 
 
+
+def credential_files_unreadable_inside_the_real_sandbox_cases(scratch, stubs):
+    """The cases that need the real bwrap or sandbox-exec: run only under
+    REAL_SANDBOX_CASES_ONLY_FLAG."""
+    # --- No credential file is readable from inside the cell -------------
+    # The canaries sit in the scratch home the launcher is given as HOME.
+    # The two in the credential directories carry no credential suffix, so
+    # only the directory rule -- bwrap's --tmpfs, sandbox-exec's subpath --
+    # keeps them out; the .token and .env files are kept out by the file
+    # rule -- the launch-time scan of the home on Linux, the pattern on macOS.
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "credential-files")
+    scratch_home = scratch_home_for(stubs)
+    canary_text = "CANARY-NOT-A-SECRET-cold-read-agy-cell-test\n"
+    nedschorus_canary = scratch_home / ".config" / "nedschorus" / "probe-canary"
+    gh_canary = scratch_home / ".config" / "gh" / "hosts.yml"
+    ssh_canary = scratch_home / ".ssh" / "id_canary"
+    token_canary = scratch_home / "projects" / "probe.token"
+    env_canary = scratch_home / "projects" / ".env"
+    ordinary_file = scratch_home / "projects" / "ordinary.txt"
+    # The scratch repository is outside the scratch home, so on Linux only
+    # the repository scan root reaches these two.
+    repository_token_canary = repository / "credential-canaries" / "probe.token"
+    repository_env_canary = repository / "credential-canaries" / ".env"
+    # The other reviewer programs' login files are credentials too; agy's own
+    # is not masked, because agy runs whole inside the sandbox and would lose
+    # its login (user-ruled 2026-09-29).
+    claude_login_canary = scratch_home / ".claude" / ".credentials.json"
+    codex_login_canary = scratch_home / ".codex" / "auth.json"
+    agy_login_canary = scratch_home / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
+    credential_canaries = (nedschorus_canary, gh_canary, ssh_canary,
+                           token_canary, env_canary,
+                           repository_token_canary, repository_env_canary,
+                           claude_login_canary, codex_login_canary)
+    for canary in (*credential_canaries, ordinary_file, agy_login_canary):
+        canary.parent.mkdir(parents=True, exist_ok=True)
+        canary.write_text(canary_text, encoding="utf-8")
+    read_step = {"report": "STUB AGY REVIEW: canaries\n",
+                 "read_paths": [str(path) for path in
+                                (*credential_canaries, ordinary_file, agy_login_canary)]}
+
+    # The control: the stub on its own reads every one of them.
+    direct_reads_dump = scratch / "credential-reads-direct.json"
+    stub = install_stub_agy(stubs)
+    direct_environment = dict(os.environ)
+    direct_environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(
+        {"*": dict(read_step, dump_reads=str(direct_reads_dump))})
+    direct_environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(
+        scratch / "credential-direct-report.md")
+    subprocess.run([str(stub), "--model", "any"], env=direct_environment,
+                   capture_output=True, text=True, check=False)
+    direct_reads = (json.loads(direct_reads_dump.read_text(encoding="utf-8"))
+                    if direct_reads_dump.is_file() else {})
+    check("the control: the stub run directly reads all nine credential canaries",
+          all(direct_reads.get(str(path)) == canary_text
+              for path in credential_canaries),
+          repr(direct_reads))
+
+    cell_reads_dump = scratch / "credential-reads-in-cell.json"
+    result = run_agy_cell(repository, stubs,
+                          {"*": dict(read_step, dump_reads=str(cell_reads_dump))},
+                          report)
+    cell_reads = (json.loads(cell_reads_dump.read_text(encoding="utf-8"))
+                  if cell_reads_dump.is_file() else {})
+    check("a cell whose agy tries the canaries still exits 0",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    for label, canary in (("a file in .config/nedschorus/", nedschorus_canary),
+                          ("a file in gh's login directory .config/gh/", gh_canary),
+                          ("a file in .ssh/", ssh_canary),
+                          ("a .token file", token_canary),
+                          ("a .env file", env_canary),
+                          ("a .token file in the repository", repository_token_canary),
+                          ("a .env file in the repository", repository_env_canary),
+                          ("Claude's login file", claude_login_canary),
+                          ("Codex's login file", codex_login_canary)):
+        check(f"inside the cell, {label} cannot be read",
+              str(canary) in cell_reads
+              and "CANARY" not in cell_reads[str(canary)], repr(cell_reads))
+    check("inside the cell, an ordinary file beside them is still read",
+          cell_reads.get(str(ordinary_file)) == canary_text, repr(cell_reads))
+    check("inside the cell, agy's own login file is still read",
+          cell_reads.get(str(agy_login_canary)) == canary_text, repr(cell_reads))
+
+
 with tempfile.TemporaryDirectory() as scratch:
     scratch = Path(scratch).resolve()  # macOS: /var is a link to /private/var, and the scripts resolve
     stubs = scratch / "stub-bin"
+    if REAL_SANDBOX_CASES_ONLY:
+        credential_files_unreadable_inside_the_real_sandbox_cases(scratch, stubs)
+        print()
+        if failures:
+            print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
+            sys.exit(1)
+        print("all cases passed")
+        sys.exit(0)
 
     # --- The fast tier's pin, and the invocation -------------------------
     repository = build_scratch_repository(scratch)
@@ -496,84 +613,8 @@ with tempfile.TemporaryDirectory() as scratch:
           and " model=gemini-3.8-flash-high " in stamp and " effort=high " in stamp,
           f"exit {result.returncode}; stamp={stamp!r}; stderr={result.stderr!r}")
 
-    # --- No credential file is readable from inside the cell -------------
-    # The canaries sit in the scratch home the launcher is given as HOME.
-    # The two in the credential directories carry no credential suffix, so
-    # only the directory rule -- bwrap's --tmpfs, sandbox-exec's subpath --
-    # keeps them out; the .token and .env files are kept out by the file
-    # rule -- the launch-time scan of the home on Linux, the pattern on macOS.
-    repository = build_scratch_repository(scratch)
-    report = report_path_for(repository, "credential-files")
-    scratch_home = scratch_home_for(stubs)
-    canary_text = "CANARY-NOT-A-SECRET-cold-read-agy-cell-test\n"
-    nedschorus_canary = scratch_home / ".config" / "nedschorus" / "probe-canary"
-    gh_canary = scratch_home / ".config" / "gh" / "hosts.yml"
-    ssh_canary = scratch_home / ".ssh" / "id_canary"
-    token_canary = scratch_home / "projects" / "probe.token"
-    env_canary = scratch_home / "projects" / ".env"
-    ordinary_file = scratch_home / "projects" / "ordinary.txt"
-    # The scratch repository is outside the scratch home, so on Linux only
-    # the repository scan root reaches these two.
-    repository_token_canary = repository / "credential-canaries" / "probe.token"
-    repository_env_canary = repository / "credential-canaries" / ".env"
-    # The other reviewer programs' login files are credentials too; agy's own
-    # is not masked, because agy runs whole inside the sandbox and would lose
-    # its login (user-ruled 2026-09-29).
-    claude_login_canary = scratch_home / ".claude" / ".credentials.json"
-    codex_login_canary = scratch_home / ".codex" / "auth.json"
-    agy_login_canary = scratch_home / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
-    credential_canaries = (nedschorus_canary, gh_canary, ssh_canary,
-                           token_canary, env_canary,
-                           repository_token_canary, repository_env_canary,
-                           claude_login_canary, codex_login_canary)
-    for canary in (*credential_canaries, ordinary_file, agy_login_canary):
-        canary.parent.mkdir(parents=True, exist_ok=True)
-        canary.write_text(canary_text, encoding="utf-8")
-    read_step = {"report": "STUB AGY REVIEW: canaries\n",
-                 "read_paths": [str(path) for path in
-                                (*credential_canaries, ordinary_file, agy_login_canary)]}
-
-    # The control: the stub on its own reads every one of them.
-    direct_reads_dump = scratch / "credential-reads-direct.json"
-    stub = install_stub_agy(stubs)
-    direct_environment = dict(os.environ)
-    direct_environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(
-        {"*": dict(read_step, dump_reads=str(direct_reads_dump))})
-    direct_environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(
-        scratch / "credential-direct-report.md")
-    subprocess.run([str(stub), "--model", "any"], env=direct_environment,
-                   capture_output=True, text=True, check=False)
-    direct_reads = (json.loads(direct_reads_dump.read_text(encoding="utf-8"))
-                    if direct_reads_dump.is_file() else {})
-    check("the control: the stub run directly reads all nine credential canaries",
-          all(direct_reads.get(str(path)) == canary_text
-              for path in credential_canaries),
-          repr(direct_reads))
-
-    cell_reads_dump = scratch / "credential-reads-in-cell.json"
-    result = run_agy_cell(repository, stubs,
-                          {"*": dict(read_step, dump_reads=str(cell_reads_dump))},
-                          report)
-    cell_reads = (json.loads(cell_reads_dump.read_text(encoding="utf-8"))
-                  if cell_reads_dump.is_file() else {})
-    check("a cell whose agy tries the canaries still exits 0",
-          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
-    for label, canary in (("a file in .config/nedschorus/", nedschorus_canary),
-                          ("a file in gh's login directory .config/gh/", gh_canary),
-                          ("a file in .ssh/", ssh_canary),
-                          ("a .token file", token_canary),
-                          ("a .env file", env_canary),
-                          ("a .token file in the repository", repository_token_canary),
-                          ("a .env file in the repository", repository_env_canary),
-                          ("Claude's login file", claude_login_canary),
-                          ("Codex's login file", codex_login_canary)):
-        check(f"inside the cell, {label} cannot be read",
-              str(canary) in cell_reads
-              and "CANARY" not in cell_reads[str(canary)], repr(cell_reads))
-    check("inside the cell, an ordinary file beside them is still read",
-          cell_reads.get(str(ordinary_file)) == canary_text, repr(cell_reads))
-    check("inside the cell, agy's own login file is still read",
-          cell_reads.get(str(agy_login_canary)) == canary_text, repr(cell_reads))
+    print("SKIP  the credential-file cases: they need the real sandbox program, "
+          f"which cannot start in the nc-test-sandbox; {REAL_SANDBOX_CASES_SUITE} runs them")
 
     # --- The Gemini API key ---------------------------------------------------
     gemini_api_key_file = scratch_home_for(stubs) / ".config" / "nedschorus" / "gemini-api.key"

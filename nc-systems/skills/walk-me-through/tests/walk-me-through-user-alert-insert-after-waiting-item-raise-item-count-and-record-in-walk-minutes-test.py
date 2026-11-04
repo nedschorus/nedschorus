@@ -197,7 +197,8 @@ def run_refusal_cases(root):
     before = files(checkout)
     result = run(checkout, home, "alert-a")
     check("a waiting item the walk-document has no heading for makes the program exit 1 and change nothing",
-          result.returncode == 1 and "waiting item cannot be found" in result.stderr and "Item 8 of 9" in result.stderr
+          result.returncode == 1 and "waiting item cannot be found" in result.stderr
+          and "has no heading `Item 8`, which the minutes name" in result.stderr
           and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
 
 
