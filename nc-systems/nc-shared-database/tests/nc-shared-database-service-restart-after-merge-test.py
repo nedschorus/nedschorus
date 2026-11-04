@@ -39,6 +39,7 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
+SERVICE_FILE = "nc-systems/nc-shared-database/nc-shared-database-service.py"
 failures = 0
 
 
@@ -129,7 +130,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a merge that does not change the service restarts nothing",
           code == 0 and calls == [] and errors == "", (code, calls, errors))
 
-    commit_on_branch("service", restarter.NC_SHARED_DATABASE_SERVICE_RESTART_AFTER_MERGE_TRIGGER_FILES[0], "print('new')")
+    commit_on_branch("service", SERVICE_FILE, "print('new')")
     git("merge", "-q", "--ff-only", "service")
     code, calls, printed, errors = run(reference=scratch / "elsewhere")
     check("in a checkout that is not the reference-checkout nothing is restarted",
@@ -180,16 +181,21 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the reference-checkout by default is ned-box's",
           restarter.NED_BOX_REFERENCE_CHECKOUT == "/home/nedlern/Projects/nedschorus")
 
-    # The cases above commit to the tuple's own path, so they pass whatever path it names.
-    service_path = "nc-systems/nc-shared-database/nc-shared-database-service.py"
     trigger_files = restarter.NC_SHARED_DATABASE_SERVICE_RESTART_AFTER_MERGE_TRIGGER_FILES
     check("the merge restarts the service when the service file changes: the trigger files "
           "name it, and each is a file of the repository",
-          service_path in trigger_files
+          SERVICE_FILE in trigger_files
           and all((REPOSITORY_ROOT / f).is_file() for f in trigger_files),
           trigger_files)
 
-    commit_on_branch("service-again", restarter.NC_SHARED_DATABASE_SERVICE_RESTART_AFTER_MERGE_TRIGGER_FILES[0], "print('newer')")
+    unit_text = (REPOSITORY_ROOT / "nc-systems" / "nc-shared-database"
+                 / "nc-shared-database-service.service").read_text(encoding="utf-8")
+    exec_start = [line for line in unit_text.splitlines() if line.startswith("ExecStart=")]
+    check("the unit's ExecStart runs the service file in ned-box's reference-checkout",
+          exec_start == [f"ExecStart=/usr/bin/python3 {restarter.NED_BOX_REFERENCE_CHECKOUT}/"
+                         f"{SERVICE_FILE}"], exec_start)
+
+    commit_on_branch("service-again", SERVICE_FILE, "print('newer')")
     if systemctl_log.exists():
         systemctl_log.unlink()
     merged = git("merge", "--ff-only", "service-again", hooks=str(HOOKS_DIRECTORY))
