@@ -24,26 +24,27 @@ git with the subcommand `worktree remove`; the directory git runs in is the
 hook's cwd, changed by a literal cd before it, an env -C or sudo -D wrapper,
 and git's -C. The command string of bash, sh or zsh -c is read the same way,
 in the directory the wrappers in front of that shell set.
-A `$NAME` or `${NAME}` in the worktree path, a cd directory or a -C
-directory is replaced by the value a literal NAME=value anywhere in the
-command text gives it, the last such assignment winning, since the shell
-reader does not return bare assignments; this ignores order and scope, so a
-variable assigned twice can be read as the wrong path, which ships the
-wrong worktree's records and leaves the removed one's unshipped. A value
-the hook cannot read whole, such as one holding a backslash, unsets the
-name. A path still holding an expansion, such as a loop variable or a
-command substitution, cannot be read: the command is let through, and the
-agent is told in additionalContext that its records were not shipped.
-Refusing it instead would stop the many scripted removals of scratch
-worktrees agents run. The worktree word is resolved in git's order: first
-as the last path components of exactly one worktree `git worktree list`
-names, then as the path of a listed worktree; a word that matches neither
-is let through, since git refuses it too. When the listing fails, a word
-naming a directory is taken as that directory. Not read:
-the remote command of ssh, commands run by eval or a script file, removals a
-program makes itself, and removals typed in a terminal or by a Codex agent.
-Walk files under docs/walk/, which scripts/clean-worktrees.py also ships,
-are not shipped here.
+
+The hook reads shell text without running it, so where it cannot be sure
+which worktree a command removes, it ships the records of every worktree the
+command could mean: shipping an extra worktree's records is harmless, and
+missing the removed one loses them for good. So a `$NAME` or `${NAME}` in the
+worktree path, a cd directory or a -C directory is read once with each value
+a literal NAME=value anywhere in the command text gives NAME, whatever its
+order, scope or quoting; and a worktree word stands for each of: the
+directory it names, if there is one, and every worktree that `git worktree
+list`, run with the command's --git-dir and --work-tree, names whose path
+ends in the word, the match git tries first. A path that holds an expansion
+in every reading, such as a loop variable or a command substitution, or a
+value that cannot be read whole, such as one holding a backslash, cannot be
+read: the command is let through, and the agent is told in
+additionalContext that its records were not shipped. Refusing it instead
+would stop the many scripted removals of scratch worktrees agents run. Not
+read: the remote command of ssh, commands run by eval or a script file,
+GIT_DIR and the other variables that point git at another repository,
+removals a program makes itself, and removals typed in a terminal or by a
+Codex agent. Walk files under docs/walk/, which scripts/clean-worktrees.py
+also ships, are not shipped here.
 
 When the shell reader cannot run, the command is let through unchecked and
 the hook says so in additionalContext.
@@ -85,6 +86,8 @@ GIT_TIMEOUT_SECONDS = 10
 
 GIT_GLOBAL_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
                             "--exec-path"}
+# The global options that point git at another repository; the worktree listing is given them too.
+GIT_REPOSITORY_OPTIONS = ("--git-dir", "--work-tree")
 WRAPPER_DIRECTORY_OPTIONS = {("env", "-C"), ("env", "--chdir"), ("sudo", "-D"), ("sudo", "--chdir")}
 # A word the shell expands at run time; the reader keeps it as written.
 UNREADABLE_WORD_PATTERN = re.compile(r"[$`*?\[]")
@@ -95,6 +98,8 @@ ASSIGNMENT_VALUE_PIECE_PATTERN = re.compile(r""""([^"`\\]*)"|'([^']*)'|([^\s;&|`
 WHOLE_ASSIGNMENT_VALUE_PATTERN = re.compile(
     r"""(?:"[^"`\\]*"|'[^']*'|[^\s;&|`'"()<>\\])*(?=$|[\s;&|)<>])""")
 VARIABLE_REFERENCE_PATTERN = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+# Bounds the readings of one word when several names each have several values.
+MAXIMUM_READINGS = 32
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
     "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
@@ -152,47 +157,57 @@ PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
     "which worktree is kept, quoting each line that begins FAILED or REFUSED.")
 
 
+def distinct(values):
+    """Return values in their first order, each once, at most MAXIMUM_READINGS of them."""
+    return list(dict.fromkeys(values))[:MAXIMUM_READINGS]
+
+
 def variables_substituted(word, variables):
-    """Return word with each $NAME and ${NAME} replaced from variables; a name not there stays as written."""
-    substituted = VARIABLE_REFERENCE_PATTERN.sub(
-        lambda match: variables.get(match.group(1) or match.group(2), match.group(0)), word)
-    if substituted == word:
-        return word
-    # A ~ the shell would expand stays marked only on a word nothing was put into.
-    return os.path.expanduser(substituted) if substituted.startswith("~/") else substituted
+    """Return every reading of word with each $NAME and ${NAME} replaced by each value variables gives
+    the name; a name not there, or a value that cannot be read, stays as written."""
+    readings, position = [""], 0
+    for match in VARIABLE_REFERENCE_PATTERN.finditer(word):
+        values = [match.group(0) if value is None else value
+                  for value in variables.get(match.group(1) or match.group(2), [None])]
+        readings = distinct(reading + word[position:match.start()] + value
+                            for reading in readings for value in values)
+        position = match.end()
+    # A ~ the shell would expand stays marked only on a word something was put into.
+    return distinct(os.path.expanduser(reading) if reading != word and reading.startswith("~/") else reading
+                    for reading in (reading + word[position:] for reading in readings))
 
 
 def literal_shell_variables(command):
-    """Return {NAME: value} for each NAME=value in the command text whose value can be read whole and
-    holds no expansion once the earlier assignments are put in; a later assignment wins, and one that
-    cannot be read removes the name."""
+    """Return {NAME: [value, ...]}, every value a NAME=value in the command text may give NAME, None
+    for one that cannot be read whole or holds an expansion.
+
+    The text is scanned, not run, so an assignment inside another value's quotes, or one the shell
+    never reaches, is one more value the name may have.
+    """
     variables = {}
     for name_match in ASSIGNMENT_NAME_PATTERN.finditer(command):
         name = name_match.group(1)
         whole = WHOLE_ASSIGNMENT_VALUE_PATTERN.match(command, name_match.end())
-        value = None if whole is None else assignment_value(whole.group(0), variables)
-        if value is None:
-            variables.pop(name, None)
-        else:
-            variables[name] = value
+        values = [None] if whole is None else assignment_values(whole.group(0), variables)
+        variables[name] = distinct(variables.get(name, []) + values)
     return variables
 
 
-def assignment_value(text, variables):
-    """Return the value the shell gives an assignment written as text, or None when it holds an expansion."""
-    pieces = []
+def assignment_values(text, variables):
+    """Return each value the shell may give an assignment written as text; None for one holding an expansion."""
+    readings = [""]
     for double_quoted, single_quoted, bare in ASSIGNMENT_VALUE_PIECE_PATTERN.findall(text):
         if not double_quoted and not bare:
-            pieces.append(single_quoted)
-            continue
-        piece = double_quoted or bare
-        if bare and not pieces and (bare == "~" or bare.startswith("~/")):
-            piece = os.path.expanduser(bare)
-        piece = variables_substituted(piece, variables)
-        if UNREADABLE_WORD_PATTERN.search(piece):
-            return None
-        pieces.append(piece)
-    return "".join(pieces)
+            options = [single_quoted]
+        else:
+            piece = double_quoted or bare
+            if bare and readings == [""] and (bare == "~" or bare.startswith("~/")):
+                piece = os.path.expanduser(bare)
+            options = [None if UNREADABLE_WORD_PATTERN.search(option) else option
+                       for option in variables_substituted(piece, variables)]
+        readings = distinct(None if reading is None or option is None else reading + option
+                            for reading in readings for option in options)
+    return readings
 
 
 def directory_joined(base, target):
@@ -212,11 +227,13 @@ def directory_a_wrapper_sets(words):
 
 
 def worktree_remove_directory_and_targets(words):
-    """For `git ... worktree remove ...`, return (directory override or None, [worktree word]); else None."""
+    """For `git ... worktree remove ...`, return (directory override or None, [worktree word],
+    [repository option word]); else None."""
     index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
     if index is None or not is_program(words[index], "git"):
         return None
     directory = directory_a_wrapper_sets(words)
+    repository_options = []
     index += 1
     while index < len(words) and words[index].startswith("-"):
         word = words[index]
@@ -226,6 +243,10 @@ def worktree_remove_directory_and_targets(words):
             directory = directory_joined(directory, word[2:])
             index += 1
             continue
+        if word in GIT_REPOSITORY_OPTIONS:
+            repository_options.extend(words[index:index + 2])
+        elif word.startswith(tuple(f"{option}=" for option in GIT_REPOSITORY_OPTIONS)):
+            repository_options.append(word)
         index += 2 if word in GIT_GLOBAL_VALUE_OPTIONS else 1
     if words[index:index + 2] != ["worktree", "remove"]:
         return None
@@ -236,91 +257,107 @@ def worktree_remove_directory_and_targets(words):
             options_ended = True
         elif options_ended or not word.startswith("-"):
             targets.append(word)
-    return directory, targets
+    return directory, targets, repository_options
+
+
+def readings_of_words(words, variables):
+    """Return every reading of the list of words, as tuples, each word read as variables_substituted reads it."""
+    readings = [()]
+    for word in words:
+        readings = distinct(reading + (option,) for reading in readings
+                            for option in variables_substituted(word, variables))
+    return readings
 
 
 def worktree_removals_in_command(command, working_directory, variables=None):
-    """Return (directory, worktree word, unreadable word or None) for each worktree the command removes.
+    """Return (directory, worktree word, unreadable word or None, repository options) for each worktree
+    the command may remove, once for each reading of its variables.
 
     Reads only the command text: nothing here touches the file system, so a replay of recorded
-    commands gives the same answer on any machine. directory is where git runs; every value is a
-    plain str.
+    commands gives the same answer on any machine. directory is where git runs; repository options
+    is a tuple of git's --git-dir and --work-tree words; every value is a plain str.
     """
-    variables = {**(variables or {}), **literal_shell_variables(command)}
+    variables = dict(variables or {})
+    for name, values in literal_shell_variables(command).items():
+        variables[name] = distinct(variables.get(name, []) + values)
     # A child shell's cd does not change the directory of the shell around it.
-    directories = {(): (working_directory, None)}
+    directories = {(): [(working_directory, None)]}
     removals = []
     for words in shell_reader.simple_commands(command):
         shells = words.child_shell
         enclosing = shells
         while enclosing not in directories:
             enclosing = enclosing[:-1]
-        directory, unreadable = directories[enclosing]
+        places = directories[enclosing]
         index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
         if index is None:
             continue
         program, arguments = words[index], words[index + 1:]
         if is_program(program, "cd"):
             # The last word, so that an option such as -P is not read as the directory.
-            target = variables_substituted(arguments[-1], variables) if arguments else "~"
-            if UNREADABLE_WORD_PATTERN.search(target):
-                directories[shells] = (directory, str(target))
-            else:
-                directories[shells] = (os.path.normpath(directory_joined(directory, target)), None)
+            targets = variables_substituted(arguments[-1], variables) if arguments else ["~"]
+            directories[shells] = distinct(
+                (directory, str(target)) if UNREADABLE_WORD_PATTERN.search(target)
+                else (os.path.normpath(directory_joined(directory, target)), None)
+                for directory, _ in places for target in targets)
             continue
         if any(is_program(program, runner) for runner in shell_reader.SHELL_STRING_RUNNERS):
             inner = shell_reader.shell_command_string(arguments)
             if inner is not None:
-                shell_directory, shell_unreadable = directory_with_override(
-                    directory, unreadable, directory_a_wrapper_sets(words), variables)
-                removals.extend((inner_directory, word, shell_unreadable or inner_unreadable)
-                                for inner_directory, word, inner_unreadable
-                                in worktree_removals_in_command(inner, shell_directory, variables))
+                for directory, unreadable in places:
+                    for shell_directory, shell_unreadable in directory_with_override(
+                            directory, unreadable, directory_a_wrapper_sets(words), variables):
+                        removals.extend(
+                            (inner_directory, word, shell_unreadable or inner_unreadable, options)
+                            for inner_directory, word, inner_unreadable, options
+                            in worktree_removals_in_command(inner, shell_directory, variables))
             continue
         found = worktree_remove_directory_and_targets(words)
         if found is None:
             continue
-        override, targets = found
-        git_directory, git_unreadable = directory_with_override(directory, unreadable, override, variables)
-        for target in targets:
-            target = variables_substituted(target, variables)
-            target_unreadable = git_unreadable or (str(target) if UNREADABLE_WORD_PATTERN.search(target) else None)
-            removals.append((str(git_directory), str(directory_joined(None, target)), target_unreadable))
-    return removals
+        override, targets, repository_options = found
+        for directory, unreadable in places:
+            for git_directory, git_unreadable in directory_with_override(directory, unreadable, override, variables):
+                for options in readings_of_words(repository_options, variables):
+                    for target in targets:
+                        for reading in variables_substituted(target, variables):
+                            reading_unreadable = git_unreadable or next(
+                                (word for word in (reading, *options) if UNREADABLE_WORD_PATTERN.search(word)), None)
+                            removals.append((str(git_directory), str(directory_joined(None, reading)),
+                                             reading_unreadable, options))
+    return distinct(removals)
 
 
 def directory_with_override(directory, unreadable, override, variables):
-    """Return (directory, unreadable word or None) once a wrapper's or git's -C directory override applies."""
+    """Return each (directory, unreadable word or None) once a wrapper's or git's -C directory override applies."""
     if override is None:
-        return directory, unreadable
-    override = variables_substituted(override, variables)
-    if UNREADABLE_WORD_PATTERN.search(override):
-        return directory, unreadable or str(override)
-    return os.path.normpath(directory_joined(directory, override)), unreadable
+        return [(directory, unreadable)]
+    return distinct(
+        (directory, unreadable or str(reading)) if UNREADABLE_WORD_PATTERN.search(reading)
+        else (os.path.normpath(directory_joined(directory, reading)), unreadable)
+        for reading in variables_substituted(override, variables))
 
 
-def worktree_directory(directory, word, runner):
-    """Return the worktree directory git would remove for word run in directory, or None.
+def worktree_directories(directory, word, runner, repository_options=()):
+    """Return every worktree directory git may remove for word run in directory, resolved.
 
-    git's own order: the last path components of exactly one listed worktree, then the path of a
-    listed worktree. Without a listing, a word naming a directory is taken as that directory.
+    Each of: the directory word names, if there is one, and every worktree the listing of git's
+    worktrees, given the command's repository options, names whose path ends in /word, the match
+    git tries first. git removes one of them, or refuses; shipping the others' records is harmless.
     """
-    path = Path(directory_joined(directory, word))
+    candidates = []
+    path = directory_joined(directory, word)
+    if os.path.isdir(path):
+        candidates.append(os.path.realpath(path))
     try:
-        listing = runner(["git", "-C", str(directory), "worktree", "list", "--porcelain", "-z"],
+        listing = runner(["git", "-C", str(directory), *repository_options, "worktree", "list", "--porcelain", "-z"],
                          capture_output=True, timeout=GIT_TIMEOUT_SECONDS, check=False)
     except (OSError, subprocess.TimeoutExpired):
         listing = None
-    if listing is None or listing.returncode != 0:
-        return path.resolve() if path.is_dir() else None
-    listed = [Path(record.path) for record in git_output.worktree_records(listing.stdout)]
-    suffix = "/" + word.strip("/")
-    by_suffix = [worktree for worktree in listed if str(worktree).endswith(suffix)]
-    if len(by_suffix) == 1:
-        return by_suffix[0] if by_suffix[0].is_dir() else None
-    resolved = os.path.realpath(path)
-    by_path = [worktree for worktree in listed if os.path.realpath(worktree) == resolved]
-    return by_path[0] if by_path and by_path[0].is_dir() else None
+    if listing is not None and listing.returncode == 0 and not word.startswith("/"):
+        candidates.extend(os.path.realpath(record.path) for record in git_output.worktree_records(listing.stdout)
+                          if record.path.endswith("/" + word))
+    return [Path(candidate) for candidate in dict.fromkeys(candidates) if os.path.isdir(candidate)]
 
 
 def clean_worktrees_module():
@@ -416,15 +453,15 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
         return 0
     deadline = clock() + SHIPPING_BUDGET_SECONDS
     clean_worktrees = clean_worktrees_module()
-    refusals = []
+    worktrees = []
     unreadable_words = []
-    for directory, word, unreadable in removals:
+    for directory, word, unreadable, repository_options in removals:
         if unreadable is not None:
             unreadable_words.append(unreadable)
             continue
-        worktree = worktree_directory(directory, word, runner)
-        if worktree is None:
-            continue
+        worktrees.extend(worktree_directories(directory, word, runner, repository_options))
+    refusals = []
+    for worktree in dict.fromkeys(worktrees):
         unshipped = unshipped_records(records_in(worktree, clean_worktrees), runner, clock, deadline)
         if unshipped:
             refusals.append(shipment_failed_refusal(worktree, unshipped))

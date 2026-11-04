@@ -500,8 +500,10 @@ try:
         def worktree_removals_in_command(self, command, working_directory):
             return self.removals
 
-    for removals, expected in (([("/c", "wt", None)], (["ships the records first", [["/c", "wt"]]], None)),
-                               ([("/c", "$WT", "$WT")], (["unchecked", "$WT"], "cannot read $WT")),
+    for removals, expected in (([("/c", "wt", None, ())], (["ships the records first", [["/c", "wt"]]], None)),
+                               ([("/c", "wt", None, ("--git-dir=/b/.git",))],
+                                (["ships the records first", [["/c", "wt", "--git-dir=/b/.git"]]], None)),
+                               ([("/c", "$WT", "$WT", ())], (["unchecked", "$WT"], "cannot read $WT")),
                                ([], ("passed", None))):
         reading = replay.read_git_worktree_remove_records_ship_first(
             WorktreeRemoveGuardReading(removals), "git worktree remove wt", "/c", None)

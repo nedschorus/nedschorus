@@ -116,7 +116,7 @@ def refusal(output):
 
 def removals(command, cwd="/work"):
     return [(directory, word, unreadable)
-            for directory, word, unreadable in hook.worktree_removals_in_command(command, cwd)]
+            for directory, word, unreadable, _ in hook.worktree_removals_in_command(command, cwd)]
 
 
 # An unshipped record reaches the log-store before the removal, and the removal is let through.
@@ -291,38 +291,76 @@ def runner_raising(error):
 
 
 check("a worktree word that matches no worktree is let through",
-      hook.worktree_directory(str(checkout), "no-such-worktree", subprocess.run) is None)
+      hook.worktree_directories(str(checkout), "no-such-worktree", subprocess.run) == [])
 check("a failing worktree listing finds no worktree",
-      hook.worktree_directory("/nonexistent", "x", runner_failing_listing) is None)
+      hook.worktree_directories("/nonexistent", "x", runner_failing_listing) == [])
 listing_naming_a_worktree = f"worktree {worktree}\0HEAD {'0' * 40}\0detached\0\0".encode()
 for code_given in (128, -9):
     check(f"a worktree listing that exits {code_given} is not read, though it names a matching worktree",
-          hook.worktree_directory("/nonexistent", worktree.name,
-                                  runner_answering(code_given, listing_naming_a_worktree)) is None)
+          hook.worktree_directories("/nonexistent", worktree.name,
+                                    runner_answering(code_given, listing_naming_a_worktree)) == [])
 check("a worktree listing that exits 0 is read",
-      hook.worktree_directory("/nonexistent", worktree.name, runner_answering(0, listing_naming_a_worktree))
-      == worktree)
+      hook.worktree_directories("/nonexistent", worktree.name, runner_answering(0, listing_naming_a_worktree))
+      == [worktree])
 check("a worktree listing that cannot run finds no worktree",
-      hook.worktree_directory("/nonexistent", "x", runner_raising(OSError("no git"))) is None)
+      hook.worktree_directories("/nonexistent", "x", runner_raising(OSError("no git"))) == [])
 check("a worktree listing that times out finds no worktree",
-      hook.worktree_directory("/nonexistent", "x", runner_raising(subprocess.TimeoutExpired("git", 10))) is None)
+      hook.worktree_directories("/nonexistent", "x", runner_raising(subprocess.TimeoutExpired("git", 10))) == [])
 second_checkout, second_worktree = checkout_with_worktree("ambiguous")
-git(second_checkout, "worktree", "add", "-q", "--detach", str(second_checkout.parent / "other" / second_worktree.name))
-check("a last path component two worktrees share finds no worktree",
-      hook.worktree_directory(str(second_checkout), second_worktree.name, subprocess.run) is None)
+other_worktree = second_checkout.parent / "other" / second_worktree.name
+git(second_checkout, "worktree", "add", "-q", "--detach", str(other_worktree))
+check("a last path component two worktrees share finds both, since git may remove either",
+      sorted(hook.worktree_directories(str(second_checkout), second_worktree.name, subprocess.run))
+      == sorted([second_worktree, other_worktree]))
 check("a last path component one worktree has finds that worktree",
-      hook.worktree_directory(str(second_checkout), f"other/{second_worktree.name}", subprocess.run)
-      == (second_checkout.parent / "other" / second_worktree.name))
+      hook.worktree_directories(str(second_checkout), f"other/{second_worktree.name}", subprocess.run)
+      == [other_worktree])
 # git matches a word against the worktrees' last path components before it reads the word as a path.
 suffix_checkout, suffix_worktree = checkout_with_worktree("suffix-first")
 (suffix_checkout / suffix_worktree.name).mkdir()
-check("a word that is both an ordinary directory and one worktree's last path component finds the worktree",
-      hook.worktree_directory(str(suffix_checkout), suffix_worktree.name, subprocess.run) == suffix_worktree)
-check("a directory that is no listed worktree finds no worktree, since git refuses it",
-      hook.worktree_directory(str(suffix_checkout), ".git", subprocess.run) is None)
+check("a word that is both an ordinary directory and one worktree's last path component finds both",
+      sorted(hook.worktree_directories(str(suffix_checkout), suffix_worktree.name, subprocess.run))
+      == sorted([suffix_worktree, suffix_checkout / suffix_worktree.name]))
 check("a failing worktree listing takes a word naming a directory as that directory",
-      hook.worktree_directory(str(suffix_checkout), suffix_worktree.name, runner_failing_listing)
-      == (suffix_checkout / suffix_worktree.name))
+      hook.worktree_directories(str(suffix_checkout), suffix_worktree.name, runner_failing_listing)
+      == [suffix_checkout / suffix_worktree.name])
+
+# Review 5768090675, finding 1: a removal pointed at another repository by --git-dir ships that worktree's records.
+other_repository_checkout, other_repository_worktree = checkout_with_worktree("git-dir-elsewhere")
+unrelated_checkout, _ = checkout_with_worktree("git-dir-from-here")
+code, output, stderr = run_hook_process(
+    f"git --git-dir={other_repository_checkout}/.git worktree remove --force {other_repository_worktree}",
+    unrelated_checkout)
+check("a removal given --git-dir of another repository ships that worktree's records",
+      code == 0 and output is None
+      and (STORE / "cold-read-records" / "git-dir-elsewhere-doc-2026-11-03" / "fast-read.md").is_file(),
+      (code, output, stderr))
+(other_repository_worktree / "cold-read-records" / "git-dir-by-name").mkdir()
+(other_repository_worktree / "cold-read-records" / "git-dir-by-name" / "triage.md").write_text("by name\n")
+code, output, stderr = run_hook_process(
+    f"git --git-dir {other_repository_checkout}/.git worktree remove --force {other_repository_worktree.name}",
+    unrelated_checkout)
+check("a worktree named by its last path component in a repository --git-dir names is found and shipped",
+      code == 0 and output is None
+      and (STORE / "cold-read-records" / "git-dir-by-name" / "triage.md").is_file(), (code, output, stderr))
+check("--git-dir and --work-tree, joined or apart, are carried to the worktree listing",
+      [options for _, _, _, options in hook.worktree_removals_in_command(
+          "git --git-dir=/b/.git --work-tree /b worktree remove wt", "/work")]
+      == [("--git-dir=/b/.git", "--work-tree", "/b")])
+
+# Review 5768090675, finding 3: a symlink with a trailing slash names the worktree it points to, which git removes.
+alias_checkout, alias_target = checkout_with_worktree("alias-target")
+alias_other = alias_checkout.parent / "elsewhere" / "alias"
+git(alias_checkout, "worktree", "add", "-q", "--detach", str(alias_other))
+(alias_checkout / "alias").symlink_to(alias_target)
+check("a word through a symlink finds the worktree it points to, beside any worktree whose path ends in it",
+      alias_target in hook.worktree_directories(str(alias_checkout), "alias/", subprocess.run),
+      hook.worktree_directories(str(alias_checkout), "alias/", subprocess.run))
+code, output, stderr = run_hook_process("git worktree remove alias/", alias_checkout)
+check("removing a worktree through a symlink ships the records of the worktree it points to",
+      code == 0 and output is None
+      and (STORE / "cold-read-records" / "alias-target-doc-2026-11-03" / "fast-read.md").is_file(),
+      (code, output, stderr))
 
 # Reading the command.
 check("a plain removal", removals("git worktree remove wt") == [("/work", "wt", None)], removals("git worktree remove wt"))
@@ -362,16 +400,32 @@ check("NAME=value sets a cd directory and git's -C, quoted, exported or built fr
       removals('S="/s"; export T=$S/t; cd "$S/x" && git -C $T worktree remove wt') == [("/s/t", "wt", None)])
 check("a value starting with ~ is expanded",
       removals("W=~/wt; git worktree remove $W") == [("/work", os.path.expanduser("~/wt"), None)])
-check("a later assignment holding an expansion unsets the name",
-      removals("W=/a; W=$(pwd); git worktree remove $W") == [("/work", "$W", "$W")])
+check("a later assignment holding an expansion adds an unreadable reading beside the earlier value",
+      removals("W=/a; W=$(pwd); git worktree remove $W") == [("/work", "/a", None), ("/work", "$W", "$W")],
+      removals("W=/a; W=$(pwd); git worktree remove $W"))
+# Review 5768090675, finding 2: text inside another value's quotes may look like an assignment.
+check("an assignment-like text inside another value's quotes adds a reading and keeps the real one",
+      removals("W=/a; NOTE='example W=/b here'; git worktree remove \"$W\"")
+      == [("/work", "/a", None), ("/work", "/b", None)],
+      removals("W=/a; NOTE='example W=/b here'; git worktree remove \"$W\""))
+check("each value of each name gives its own reading, as in a cd and a worktree word",
+      removals("D=/x; D=/y; W=a; cd $D && git worktree remove $W")
+      == [("/x", "a", None), ("/y", "a", None)],
+      removals("D=/x; D=/y; W=a; cd $D && git worktree remove $W"))
 check("a value in single quotes is taken as written",
       removals("W='/a b'; git worktree remove \"$W\"") == [("/work", "/a b", None)])
 check("a value of quoted and bare pieces run together is read whole",
       removals('W="/repo"/wt; git worktree remove "$W"') == [("/work", "/repo/wt", None)],
       removals('W="/repo"/wt; git worktree remove "$W"'))
-check("a value with a backslash cannot be read, and unsets an earlier value of the name",
-      removals('W=/a; W=/b\\ c; git worktree remove "$W"') == [("/work", "$W", "$W")],
+check("a value with a backslash cannot be read, and is an unreadable reading beside an earlier value",
+      removals('W=/a; W=/b\\ c; git worktree remove "$W"') == [("/work", "/a", None), ("/work", "$W", "$W")],
       removals('W=/a; W=/b\\ c; git worktree remove "$W"'))
+quoted_checkout, quoted_worktree = checkout_with_worktree("quoted-lookalike")
+code, output = run_hook({"tool_name": "Bash", "cwd": str(quoted_checkout), "tool_input": {
+    "command": f"W={quoted_worktree}; NOTE='example W=/nonexistent here'; git worktree remove --force \"$W\""}})
+check("a worktree set by NAME=value has its records shipped though quoted text assigns the name too",
+      code == 0 and output is None
+      and (STORE / "cold-read-records" / "quoted-lookalike-doc-2026-11-03" / "fast-read.md").is_file(), output)
 check("a wrapper's directory applies to the command string of bash -c",
       removals("env -C /b/checkout bash -c 'git worktree remove ../wt'", "/a/checkout")
       == [("/b/checkout", "../wt", None)],
