@@ -14,18 +14,20 @@ An agent puts a rule that code, a schema, a state machine or a test can hold rel
 
 ### 2. Put every finding in one of four categories
 
-The statement says "three categories" and lists four; this page uses the four. Every finding, from a review, a test or an approval-walk, goes in one:
+The statement says "three categories" and lists four; this page uses four, defined in the user's later words (S35). Every finding, from a review, a test or an approval-walk, goes in one:
 
-1. Must fix before proceeding: the finding prevents the next step from being completed or validated correctly. Only this category holds the work back.
-2. Fix in the next appropriate pull request or approval-walk: the finding deserves a correction soon, but does not block the current step.
-3. Fix during regular maintenance: the finding can wait for scheduled cleanup or a broader improvement.
-4. Defer to a later approval-walk, a task or a GHI: a task for smaller or sooner work, a GHI for larger or later work. A deferred finding stays visible, with the reason for deferring it, a defined follow-up, its prerequisites, and what it unblocks. Prerequisites are done first.
+1. Must fix now: the finding prevents the next step from being completed or validated correctly. Only this category holds the work back.
+2. Fix next: in the next pull request, or as the next item in the approval-walk.
+3. Fix during maintenance: a nit, or another maintenance kind of thing.
+4. File an improvement, a feature or a change: as a task if it is short term and of smaller scope, or as a GHI if it is longer term or of larger scope.
 
-An agent fixes what must be fixed and leaves the rest to its category, because an agent that works on a few things does them well. On a file with the -nbd suffix, only a failing test and the four kinds of finding that `CLAUDE.md`'s -nbd bullet names are must fix. The agent that runs a review or a test files what it defers. Where maintenance findings are held, and how a finding is placed among categories 2 to 4, are listed among the deferred-decisions of the implementing GHI named in the last section. Sources: S6 to S9.
+A finding filed in category 4 stays visible, with the reason for filing it rather than fixing it, a defined follow-up, its prerequisites, and what it unblocks; prerequisites are done first. An improvement or an addition a review finds, rather than a defect, is a finding like any other, and usually falls in category 4: the user's words in S35 answer the question he asked in S34.
+
+An agent fixes what must be fixed and leaves the rest to its category, because an agent that works on a few things does them well. On a file with the -nbd suffix, only a failing test and the four kinds of finding that `CLAUDE.md`'s -nbd bullet names are must fix. The agent that runs a review or a test files what it defers. Where maintenance findings are held, and how a finding is placed among categories 2 to 4, are listed among the deferred-decisions of the implementing GHI named in the last section. Sources: S6 to S9, S34, S35.
 
 ### 3. Keep a checked claim, and reopen it only for a reason
 
-An agent keeps a checked and supported claim with its evidence and the conditions under which it stays valid, and reopens it only when an input changes, an assumption fails, or contradictory evidence appears, because a repeated prose review gives inconsistent verdicts. Code is still tested on every change. A change to the text a claim rests on reopens that claim, as Standing decision 5 says. Source: S10.
+An agent keeps a checked and supported claim with its evidence and the conditions under which it stays valid, and reopens it only when an input changes, an assumption fails, or contradictory evidence appears, because a repeated prose review gives inconsistent verdicts. Code is still tested on every change. A change to the text a claim rests on reopens that claim, as Standing decision 5 says; a finding on text the user has already decided is not reported again, as Standing decision 25 says. Source: S10.
 
 ### 4. Give every review, test and approval a purpose, and fix the process behind a recurring failure
 
@@ -81,10 +83,6 @@ Before an agent tells the user something is fixed, it tests the fix on the real 
 
 An agent keeps a file for what the file is worth; a file nothing builds on may still be a first step. Source: S33.
 
-## Open question for the user
-
-The user has not decided whether an improvement or an addition that a review finds, rather than a defect, is a finding ranked in the four categories of principle 2, or a separate kind routed to a test, a task or a GHI. Source: S34.
-
 ## What implementing the philosophy changes
 
 GHI [Implementing the project's goals and philosophy: every finding sorted into four categories, checked claims kept with their evidence, and one standard in every agent's instructions](https://github.com/nedschorus/nedschorus/issues/2522) lists each place that produces findings, from pull request reviews to approval-walks, says how far each agrees, and carries the work. The enforcement path is GHI [Pull requests, their reviews and approval-walks held as one state machine over one schema and one store, so code tracks their state and agents are handed only the steps that need judgment](https://github.com/nedschorus/nedschorus/issues/2505).
@@ -127,3 +125,4 @@ A transcript is cited with the UTC time of the user's message in it. Walk-minute
 - S32. 2026-09-13T22:56:21Z, merge-lane's agent-session on the Mac: "did you test on both mac and nedbox - ubuntu". Transcript `nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/projects/-Users-el-agents-merge-lane/0c00f893-d3ef-4f96-bcf1-bbc4d3afd116.jsonl`.
 - S33. 2026-08-31, items 2 and 3 of approval-walk retired-seat-cleanup-and-reboot-open-questions: "dont save junk becuase it's easy to save." and "Not everything that has no decendents is junk. Some are first steps". Walk-minutes `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/retired-seat-cleanup-and-reboot-open-questions-minutes.md`, lines 6 and 7.
 - S34. 2026-11-03 ~23:00Z, to cold-read-improvement on item 2.1.1 of the approval-walk of S2, not an answer to the item: "But sometimes these reviews can come up with items which aren't fixes, they're improvements, say, or additions or changes, and those could be tests or GHIs, but maybe irrelevant here. So there's really I don't know if it fits in this schema because agents, if we're asking agents to report problems, is something an improvement to problem? Anyway, you can continue." Walk-minutes of S2, line 65.
+- S35. 2026-11-03 ~23:45Z, to merge-lane-2 on item 7.1.4.3.2 of the approval-walk of S1, direction rather than an answer to the item: "talking to you and other agents about coming up with a gradation system of must fix now, fix next release, or next item in the walk. Nit fix during maintenance or other maintenance-y kind of things. And then finally, for things which are more improvement features, changes, file as a task if it's relative, if it's short term and relatively smaller scope, or a GHI if it's longer term and or larger scope." merge-lane-2 recorded "next release" as the next pull request. Walk-minutes of S1, line 290.
