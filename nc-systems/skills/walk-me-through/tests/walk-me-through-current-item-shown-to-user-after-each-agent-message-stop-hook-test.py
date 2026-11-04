@@ -935,14 +935,14 @@ def test_where_the_minutes_line_sits():
                     document=WALK_DOCUMENT + "\n## Item 2 of 10: a re-planned copy\n\nText.\n")
     case.reply("Recorded.")
     check_blocked("a line without `of M` over two headings for its item, of different M, is sent back", case.run(),
-                  "more than one heading for `Item 2`", "write the minutes' last `#next_to_present` line as `item N of M`")
+                  "more than one heading for `Item 2`", "end the minutes with the line `#next_to_present item N of M`")
     case = Case()
     case.walk_files(minutes="#next_to_present item 2.",
                     document="# A walk\n\n## The poem page\n\nText.\n\n## The summary\n\nText.\n")
     case.reply("Recorded.")
     result = case.run()
     check_blocked("a line without `of M` over headings with no running count is told the headings "
-                  "lack counts", result, "has no heading with a running count", "`Item N of M`",
+                  "lack counts", result, "has no heading with a running count", "add the count to the heading of the item",
                   "lacks its running count `of M`")
     check("a walk-document with no counted heading is not told it has more than one total",
           "more than one total" not in (blocked_reason(result) or ""), result.stdout)

@@ -348,9 +348,12 @@ def test_the_block_message_says_what_to_do():
              "waiting item's decision). "
              "The flagged text: \"Should I merge the pull request now?\""),
             ("the message names the waiting item", "goes to the waiting item, item 2,"),
-            ("the message gives the interruption item a heading with no number, which the walk check program numbers",
-             "headed `## <the point of the question>`, with no number, placed right after item 2; the walk check "
-             "program numbers it when it is shown."),
+            ("the message gives the interruption item a heading with no number, and names the script whose close "
+             "step numbers it",
+             "headed `## <the point of the question>`, with no number, placed right after item 2. Do not number it "
+             "yourself: when the user answers item 2, the close step of "
+             "nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py "
+             "writes the next number into this heading."),
             ("the message says to quote the question whole with a recommendation",
              "Quote the question whole in the item, as its asker wrote it, whether you or another agent, giving each "
              "line of the flagged text a line of its own, word for word, and putting the rest of the question on "
@@ -929,7 +932,7 @@ def test_two_waiting_items():
     case = Case(minutes="#next_to_present items 2 and 3 of 10")
     case.reply("Should I merge the pull request now?")
     check_blocked("with two items waiting, the interruption item follows the later one and both are named",
-                  case.run(), "`## <the point of the question>`, with no number, placed right after item 3;",
+                  case.run(), "`## <the point of the question>`, with no number, placed right after item 3. Do not number it yourself: when the user answers item 3,",
                   "`I added the question as a new item after item 3.`",
                   "and then each waiting item's closing line, on a line of its own, as the walk-me-through skill "
                   f"writes it, as the last text of that message:\n`[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the "

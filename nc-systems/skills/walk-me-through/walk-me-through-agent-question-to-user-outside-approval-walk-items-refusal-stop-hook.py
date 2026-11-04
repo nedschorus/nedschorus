@@ -273,7 +273,10 @@ MODEL_CHECK_FAILED_NOTICE = ("the hook's `claude -p` call that has the model jud
 REFUSAL_INSTRUCTIONS = (
     "If the flagged text asks the user to decide or answer something, do these three steps:",
     "1. Add it to the walk-document {document} as an interruption item headed `## <the point of the question>`, "
-    "with no number, placed right after item {last_waiting}; the walk check program numbers it when it is shown. "
+    "with no number, placed right after item {last_waiting}. Do not number it yourself: when the user answers item "
+    "{last_waiting}, the close step of "
+    "nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py "
+    "writes the next number into this heading. "
     "Quote the question whole "
     "in the item, as its asker wrote it, whether you or another agent, giving each line of the flagged text a "
     "line of its own, word for word, and putting the rest of the question on other lines of the item. This hook passes the "

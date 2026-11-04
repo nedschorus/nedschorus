@@ -31,7 +31,9 @@ count or unnumbered item. An unnumbered item is a waiting item that has only
 a title: a top-level `## <title>` heading, ATX-style, after the first running
 count, that holds no running count, does not open with `Withdrawn`, and does
 not open with an item label such as `Item 3:`, which in older walks groups
-the sub-steps under it. The answer program's close step numbers it when it is
+the sub-steps under it. A walk-document whose running counts sit on any
+heading other than `##`, as in `## Part 2` headings over `### Item 2 of 3`
+items, has no unnumbered items: its `##` headings are parts or sections. The answer program's close step numbers it when it is
 shown. M is display only: approval_walk_item_count counts it from the
 walk-document, the whole numbers its item headings hold, a dotted number
 counting as the item before its first dot, plus its unnumbered items, so an
@@ -467,6 +469,13 @@ def item_unit_starts(tokens, lines):
     version's labels stop being dropped exactly where a unit starts."""
     starts = []
     group = None
+    # A walk-document with `##` part or section headings over `###` items: its `##` headings are not items.
+    count_heading_markups = {
+        token.markup for index, token in enumerate(tokens)
+        if token.type == "heading_open" and token.map is not None and token.level == 0 and index + 1 < len(tokens)
+        and HEADING_COUNT.match(approval_walk_item_heading_with_deferred_note_removed(
+            tokens[index + 1].content.split("\n")[0]))}
+    unnumbered_items_possible = count_heading_markups <= {UNNUMBERED_ITEM_HEADING_MARKUP}
     for index, token in enumerate(tokens):
         if token.map is None or token.level != 0 or token.type not in ("heading_open", "paragraph_open"):
             continue
@@ -480,7 +489,8 @@ def item_unit_starts(tokens, lines):
         match = HEADING_COUNT.match(content)
         if not match:
             # Before the first item, a `##` heading is the walk-document's own, such as its introduction's.
-            if (starts and token.type == "heading_open" and token.markup == UNNUMBERED_ITEM_HEADING_MARKUP
+            if (starts and unnumbered_items_possible and token.type == "heading_open"
+                    and token.markup == UNNUMBERED_ITEM_HEADING_MARKUP
                     and not ITEM_LABEL_WITHOUT_COUNT.match(content)):
                 group = None
                 starts.append((index, [], None, None, False, token.map[0]))
@@ -558,7 +568,9 @@ def waiting_item_units(document, value, numbers, total, parser, all_units=None):
         raise UnusableRange(
             f"its walk-document {document} has no heading with a running count, such "
             f"as `## Item 3 of 9: <the point>`, so the hook cannot find the item the "
-            f"minutes name: give the item shown now its count `Item N of M`.")
+            f"minutes name: add the count to the heading of the item that the minutes' last "
+            f"`#next_to_present` line names: for `#next_to_present item 3 of 9`, write "
+            f"`## Item 3 of 9: <the point>`.")
     chosen, missing, repeated = [], [], []
     for number in numbers:
         naming = [unit for unit in all_units if number in unit[0]]
@@ -581,7 +593,10 @@ def waiting_item_units(document, value, numbers, total, parser, all_units=None):
         named = ", ".join(f"`Item {number}`" for number in repeated)
         raise UnusableRange(
             f"its walk-document has more than one heading for {named}, so the hook cannot tell "
-            f"which one the minutes name: write the minutes' last `#next_to_present` line as `item N of M`, "
-            f"with M the one the heading meant gives, or make the other heading a revision or Withdrawn.")
+            f"which one the minutes name: if those headings give different totals, as `of 9` and `of 10` do, end "
+            f"the minutes with the line `#next_to_present item N of M`, N and M copied from the heading you mean, "
+            f"as in `#next_to_present item 4 of 9` for `## Item 4 of 9: <the point>`; otherwise, in the "
+            f"walk-document, mark each heading you do not mean, either by writing `revised` right after the count of the one that replaces it, as "
+            f"in `## Item 4 of 9 revised: <the point>`, or by starting its heading with `Withdrawn`.")
     shown_total = total if total is not None else approval_walk_item_count(all_units)
     return shown_total, [unit for unit in all_units if unit in chosen]

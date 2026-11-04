@@ -1519,6 +1519,37 @@ def test_a_heading_that_opens_with_an_item_label_and_no_m_is_not_an_unnumbered_i
           described(closed) + walk_document(case))
 
 
+PART_HEADINGS_OVER_ITEMS_DOCUMENT = """# A walk with `##` part headings over `###` items
+
+## Part 1: conflicts
+
+### Item 1 of 3: one
+
+#case_against none.
+
+## Part 2: names
+
+### Item 2 of 3: two
+
+#case_against none.
+
+### Item 3 of 3: three
+
+#case_against none.
+"""
+
+
+def test_a_part_heading_over_items_one_level_down_is_not_an_unnumbered_item():
+    case = Case(next_to_present="item 1 of 3", document=PART_HEADINGS_OVER_ITEMS_DOCUMENT)
+    before = walk_document(case)
+    case.run("check")
+    closed = case.run("close")
+    check("in a walk-document whose items are `###` headings, a `## Part 2` heading is not numbered as an item, "
+          "and the walk goes on to item 2",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 2 of 3" and walk_document(case) == before,
+          described(closed) + walk_document(case))
+
+
 def test_close_numbers_the_new_item_a_finding_raised_and_holds_the_answer():
     case = Case(next_to_present="item 1 of 4", document=UNNUMBERED_ITEMS_DOCUMENT)
     case.run("check")
