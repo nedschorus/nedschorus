@@ -390,10 +390,11 @@ def suites_named(control):
 
 
 def run_recorded_mutant_killed_check(scratch_name, head_files, diff_text, *flags,
-                                     origin_main_files=None):
+                                     origin_main_files=None, before_run=None):
     """Run --recorded-mutant-killed-check on a scratch repository holding head_files.
 
     With origin_main_files, refs/remotes/origin/main names a commit on the base holding them.
+    before_run, given the repository, runs just before the check.
     The suites are real fixture suites, run by the real suite runner; no cosmic-ray is given."""
     survivors = load_script_module()
     repository, base, head = scratch_repository(scratch_name, head_files)
@@ -412,6 +413,8 @@ def run_recorded_mutant_killed_check(scratch_name, head_files, diff_text, *flags
     if diff_text is not None:
         diff_file.write_text(diff_text)
     worktrees_before = worktrees_of(repository)
+    if before_run is not None:
+        before_run(repository)
     completed = run_script(repository, control,
                            survivors.RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG,
                            str(diff_file), *flags)
@@ -498,6 +501,33 @@ def run_recorded_mutant_killed_check_cases():
             check(f"a recorded mutant that does not apply at the head: {case_name}",
                   completed.returncode == 2 and wanted in completed.stderr,
                   f"rc={completed.returncode} err={completed.stderr}")
+    both_cases = "If the line the diff changes is no longer at your head"
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, branch_changed_files, SURVIVOR_DIFF, origin_main_files={
+                "scripts/thing.py": "def double(x):\n    # doubled\n    return x + x\n"})
+        check("a recorded mutant that does not apply at the head, where origin/main changed "
+              "only a context line beside the replaced line: it does not say the mutant is "
+              "gone, and gives both cases",
+              completed.returncode == 2 and "gone from main" not in completed.stderr
+              and both_cases in completed.stderr,
+              f"rc={completed.returncode} err={completed.stderr}")
+
+    def origin_main_file_unreadable(repository):
+        blob = git(repository, "rev-parse", "refs/remotes/origin/main:scripts/thing.py").strip()
+        (repository / ".git" / "objects" / blob[:2] / blob[2:]).unlink()
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, branch_changed_files, SURVIVOR_DIFF, origin_main_files={
+                "scripts/thing.py": "def double(x):\n    return x + x\n# on main only\n"},
+            before_run=origin_main_file_unreadable)
+        check("a recorded mutant that does not apply at the head, where git cannot read "
+              "origin/main's file: it does not say the mutant is gone, and gives both cases",
+              completed.returncode == 2 and "gone from main" not in completed.stderr
+              and both_cases in completed.stderr,
+              f"rc={completed.returncode} err={completed.stderr}")
+
     with tempfile.TemporaryDirectory() as scratch_name:
         completed, _, _, _ = run_recorded_mutant_killed_check(
             scratch_name, branch_changed_files, SURVIVOR_DIFF)

@@ -734,22 +734,44 @@ def source_with_recorded_mutant_applied(source, hunks):
     return "\n".join(lines)
 
 
+def hunk_replaced_lines(old, new):
+    """The lines a hunk replaces: its old lines without the context lines it shares with its
+    new lines at the start and the end."""
+    start = 0
+    while start < min(len(old), len(new)) and old[start] == new[start]:
+        start += 1
+    end = 0
+    while (end < min(len(old), len(new)) - start
+           and old[len(old) - 1 - end] == new[len(new) - 1 - end]):
+        end += 1
+    return old[start:len(old) - end]
+
+
 def recorded_mutant_lines_on_main(checkout, path, hunks, environment):
-    """"applies" when origin/main's file takes the mutant, "gone" when some hunk's old lines
-    are nowhere in it or the file is not there, None when it cannot tell (no origin/main, or
-    the old lines appear more than once)."""
+    """"applies" when origin/main's file takes the mutant, "gone" when the file is not in
+    origin/main's tree or some hunk's replaced lines are nowhere in it, None when it cannot
+    tell: no origin/main, git fails to read the tree or the file, or only context lines
+    changed. Context lines alone never make "gone", since a change beside the mutated lines
+    leaves the survivor live."""
     if run(["git", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/main^{commit}"],
            checkout, environment).returncode:
         return None
+    listed = run(["git", "ls-tree", "refs/remotes/origin/main", "--", path], checkout,
+                 environment)
+    if listed.returncode:
+        return None
+    if not listed.stdout.strip():
+        return "gone"
     shown = run(["git", "show", f"refs/remotes/origin/main:{path}"], checkout, environment)
     if shown.returncode:
-        return "gone"
+        return None
     if source_with_recorded_mutant_applied(shown.stdout, hunks) is not None:
         return "applies"
     lines = shown.stdout.split("\n")
-    for _, old, _ in hunks:
-        if not any(lines[place:place + len(old)] == old
-                   for place in range(len(lines) - len(old) + 1)):
+    for _, old, new in hunks:
+        replaced = hunk_replaced_lines(old, new)
+        if replaced and not any(lines[place:place + len(replaced)] == replaced
+                                for place in range(len(lines) - len(replaced) + 1)):
             return "gone"
     return None
 
