@@ -409,29 +409,13 @@ def open_tasks_nothing_holds(task_directory, checker):
     if unreadable:
         raise ReadFailure(f"{unreadable[0]} could not be read as a task with an id, so whether it "
                           "holds the agent-seat's work is unknown")
-    consumed = AnswersConsumed(checker)
-    free, _ = due_task_hook.unheld_and_held_tasks(tasks, task_directory, consumed)
-    if consumed.failures:
-        kind, number, cause = consumed.failures[0]
+    # The checker is shared by every agent-seat, so only the failures appended here are this one's.
+    failures_before = len(checker.gh_failures)
+    free, _ = due_task_hook.unheld_and_held_tasks(tasks, task_directory, checker)
+    if len(checker.gh_failures) > failures_before:
+        kind, number, cause = checker.gh_failures[failures_before]
         raise ReadFailure(f"GitHub could not say whether {kind} {number} holds: {cause}")
     return [{"id": task_id, "subject": tasks[task_id].get("subject")} for task_id in free]
-
-
-class AnswersConsumed:
-    """Passes answers through from the checker and keeps the failed ones this agent-seat read.
-
-    The checker's own failure list holds only fresh gh calls; a failed answer another agent-seat
-    cached is returned again with nothing appended."""
-
-    def __init__(self, checker):
-        self.checker = checker
-        self.failures = []
-
-    def answer(self, kind, number):
-        answer = self.checker.answer(kind, number)
-        if "gh_failure" in answer:
-            self.failures.append((kind, number, answer["gh_failure"]))
-        return answer
 
 
 # --- One agent-seat's verdict ---
