@@ -510,7 +510,7 @@ def read_walk(cwd):
         walk_finder.prose_lines(text, parser, tokens), walk_finder.item_opening_lines(text, parser, tokens),
         spans, walk_finder, part_starts(tokens))
     if total is None:
-        total = walk_finder.approval_walk_item_count(spans)
+        total = walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(spans)
     return WalkState(name, count[0], numbers, total, recommendations, None, problems, parts, pages,
                      heading_points(text.split("\n"), spans, parser), minutes)
 

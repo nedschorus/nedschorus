@@ -611,12 +611,22 @@ for suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX:
     check(f"the suite listed to run outside the sandbox exists: {suite}",
           (SCRIPTS_DIR.parent / suite).is_file())
 
-# Each of these runs the real agy cell launcher, whose bwrap cannot start inside bwrap.
+# Each of these starts the real bwrap, which cannot start inside bwrap.
+for suite in ("nc-systems/cold-read/tests/cold-read-agy-cell-real-sandbox-test.py",
+              "nc-systems/general-tools/tests/agy-print-prompt-run-in-empty-home-sandbox-real-sandbox-test.py"):
+    check(f"a suite that starts the real bwrap runs outside the sandbox: {suite}",
+          suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX)
+# Each of these starts a program's bwrap through the cold-read fixture's
+# pass-through stand-in, so it runs inside the sandbox like any other suite.
 for suite in ("nc-systems/cold-read/tests/cold-read-agy-cell-test.py",
               "nc-systems/cold-read/tests/cold-read-fast-read-test.py",
-              "nc-systems/cold-read/tests/cold-read-grid-test.py"):
-    check(f"a suite that starts the agy cell's bwrap runs outside the sandbox: {suite}",
-          suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX)
+              "nc-systems/cold-read/tests/cold-read-grid-test.py",
+              "nc-systems/general-tools/tests/agy-print-prompt-run-in-empty-home-sandbox-test.py",
+              "nc-systems/skills/explain/tests/explain-reply-cold-read-fast-read-test.py",
+              "nc-systems/skills/walk-me-through/tests/"
+              "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close-test.py"):
+    check(f"a suite whose bwrap is the stand-in runs inside the sandbox: {suite}",
+          suite not in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX)
 
 
 # --- Covers over listening sockets that vanish or cannot be reached -----------

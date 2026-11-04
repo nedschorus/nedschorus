@@ -129,11 +129,11 @@ def run_one_alert_cases(root):
     total, units = walk_finder.waiting_item_units(checkout / "docs/walk" / f"{WALK}.md", value, numbers, total,
                                                   parser)
     all_units = walk_finder.item_unit_spans(document, parser)
-    count_before = walk_finder.approval_walk_item_count(walk_finder.item_unit_spans(WALK_DOCUMENT, parser))
+    count_before = walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(walk_finder.item_unit_spans(WALK_DOCUMENT, parser))
     check("the walk-me-through finder still finds waiting item 4, reads the added item as unnumbered, and counts "
           "it in M",
           units[0][0] == ["4"] and sum(map(walk_finder.approval_walk_unit_is_unnumbered_item, all_units)) == 1
-          and int(walk_finder.approval_walk_item_count(all_units)) == int(count_before) + 1,
+          and int(walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(all_units)) == int(count_before) + 1,
           repr((units, all_units)))
 
 

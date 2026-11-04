@@ -512,7 +512,9 @@ ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION = (
     "walk-minutes. Add new items just after the item it resumes at: the next "
     "step's own item first, when it needs him, then the rest in the order "
     "/walk-me-through gives. When nothing needs him, open no approval-walk. "
-    "2. While he answers, take the next step."
+    "2. While he answers, or at once when nothing needs him, take the next step, "
+    "then start each ready task on your task list: a task another agent-seat owns "
+    "goes to that agent-seat, any other to a background subagent or Codex."
 )
 
 # Subagent IDs resolve only within their session, so a successor must re-commission unfinished work.
