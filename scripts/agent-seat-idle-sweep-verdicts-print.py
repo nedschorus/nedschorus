@@ -5,8 +5,9 @@ idle and, when it is, which rule of the idle sweep decides what happens next.
 This is the first build-slice of the idle sweep (docs/issues/940-tasks-raise-themselves-when-their-
 due-time-passes.md, § The idle sweep). It decides only what code decides, and it acts on nothing:
 it sends no message, starts no headless agent-session, writes no alert and keeps no log, so a
-verdict here changes nothing on the machine. A later slice reads these verdicts, judges the cases
-marked "judge", sends, and runs on a schedule.
+verdict here changes nothing on the machine. The second build-slice,
+scripts/agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write.py, calls
+verdict_for_seat itself, judges the cases marked "judge", sends, and runs on a schedule.
 
 What it reads, for each agent-seat that has a handoff-supervisor state file
 (`<handoff directory>/<seat>-supervisor-state.json`):
@@ -20,13 +21,15 @@ What it reads, for each agent-seat that has a handoff-supervisor state file
 It prints one JSON object per agent-seat, one per line. Each holds what the later slice needs
 without reading anything again: the session id, the transcript path, the last time a token was
 spent and the file that showed it, what is running and since when, the matched sentences with the
-code's reading of each, the rule that applies and its decision.
+code's reading of each, the agent-seat's last message, the tool calls a judge of the sentences
+looks through, the rule that applies and its decision.
 
 What it does not handle: it keeps no record of earlier runs, so it cannot tell which turn-ending
 messages it has already checked; by default it checks only the last one, and
 --turn-ending-messages-since widens that. It does not know whether a usage limit ended by an
 account change, since that needs the account recorded when the limit was first seen; it reports
-the account now logged in. It runs on ned-box and reads only ned-box's files, so it does not see
+the account now logged in; --skip-usage-limit-record names a limit record rule 1 no longer applies
+to, which the second build-slice decides from its log. It runs on ned-box and reads only ned-box's files, so it does not see
 the Mac's agent-seats.
 
 How it fails: when a file it must read cannot be read, or is not UTF-8 or JSON where a whole line
@@ -316,6 +319,7 @@ class TranscriptFacts:
         self.turn_ended_after_last_model_turn_record = False
         self.turn_ending_messages = []   # (record, time, time of the prompt that began its turn)
         self.task_tool_calls = []        # (time, name, input)
+        self.tool_calls = []             # (time, name, input), every tool call
         self.launch_times = {}           # subagent or background task id -> time
 
 
@@ -346,6 +350,7 @@ def read_main_transcript(path):
                 facts.turn_ending_messages.append(newest_text_record)
                 newest_text_record = None
         for block in tool_uses(record):
+            facts.tool_calls.append((moment, block.get("name"), block.get("input") or {}))
             if block.get("name") in TASK_TOOL_NAMES:
                 facts.task_tool_calls.append((moment, block.get("name"), block.get("input") or {}))
         result = record.get("toolUseResult")
@@ -470,6 +475,27 @@ def matched_sentences(facts, since):
     return found
 
 
+def last_message_of(facts):
+    if not facts.turn_ending_messages:
+        return None
+    record, moment, _ = facts.turn_ending_messages[-1]
+    return {"record_uuid": record.get("uuid"), "time": iso(moment), "text": message_text(record)}
+
+
+def tool_calls_since_judged_sentences(facts, judged):
+    """Every tool call from the start of the earliest turn that ended on a judged sentence's
+    message: the judge looks there for the call, the task or the file that backs a sentence."""
+    uuids = {item["record_uuid"] for item in judged}
+    starts = [turn_started_at or moment for record, moment, turn_started_at
+              in facts.turn_ending_messages if record.get("uuid") in uuids and (turn_started_at or moment)]
+    if not starts:
+        return []
+    earliest = min(starts)
+    return [{"time": iso(moment), "name": name,
+             "input": json.dumps(tool_input, ensure_ascii=False)[:fields.TOOL_CALL_INPUT_CHARACTERS]}
+            for moment, name, tool_input in facts.tool_calls if moment and moment >= earliest]
+
+
 def rules_three_to_five(verdict, put_off_at, checker, task_directory):
     running = verdict["running"]["subagents"] or verdict["running"]["background_commands"]
     if verdict["handoff_deferred_marker"] and not running:
@@ -482,7 +508,9 @@ def rules_three_to_five(verdict, put_off_at, checker, task_directory):
     return {fields.RULE: 5, fields.DECISION: fields.JUDGE}
 
 
-def verdict_for_seat(seat, paths, now, since, checker, parser):
+def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_records_skipped=()):
+    """usage_limit_records_skipped: the uuids of usage-limit records rule 1 no longer applies to,
+    so rules 2 to 5 decide an agent-seat still idle at one of them."""
     verdict = {"agent_seat": seat, "session_id": None, "transcript_path": None,
                "checked_at": iso(now), "errors": [], "rule": None}
     try:
@@ -557,7 +585,7 @@ def verdict_for_seat(seat, paths, now, since, checker, parser):
                 if holds]
             return verdict
 
-        if limit:
+        if limit and last.get("uuid") not in usage_limit_records_skipped:
             quota = last.get("quotaLimits") or {}
             resets_at = quota.get("resetsAt")
             verdict["usage_limit"] = {
@@ -568,12 +596,15 @@ def verdict_for_seat(seat, paths, now, since, checker, parser):
             verdict.update({fields.RULE: 1, fields.DECISION: fields.SESSION_LIMIT})
             return verdict
 
+        verdict[fields.LAST_MESSAGE] = last_message_of(facts)
         verdict["sentences"] = matched_sentences(facts, since)
         raised = [item for item in verdict["sentences"] if item["code_reading"] != fields.NOT_RAISED]
         task_directory = paths.tasks_root / f"nedschorus-{seat}-tasks"
         if not raised:
             verdict.update(rules_three_to_five(verdict, put_off_at, checker, task_directory))
         elif any(item["code_reading"] == fields.JUDGE for item in raised):
+            verdict[fields.TOOL_CALLS_SINCE_JUDGED_SENTENCES] = tool_calls_since_judged_sentences(
+                facts, [item for item in raised if item["code_reading"] == fields.JUDGE])
             # Only the judge can find every sentence backed, and then rules 3 to 5 decide.
             fallback = rules_three_to_five(verdict, put_off_at, checker, task_directory)
             verdict.update({fields.RULE: 2, fields.DECISION: fields.JUDGE,
@@ -613,6 +644,8 @@ def main(argv=None):
     parser.add_argument("--projects-root", default="~/.claude/projects")
     parser.add_argument("--tasks-root", default="~/.claude/tasks")
     parser.add_argument("--claude-json", default="~/.claude.json")
+    parser.add_argument("--skip-usage-limit-record", action="append", default=[],
+                        help="uuid of a usage-limit record rule 1 no longer applies to; may repeat")
     arguments = parser.parse_args(argv)
     now = parse_time(arguments.now) if arguments.now else datetime.now(timezone.utc)
     since = None
@@ -628,7 +661,8 @@ def main(argv=None):
     parser = walk_finder.markdown_parser()
     failed = False
     for seat in seats:
-        verdict = verdict_for_seat(seat, paths, now, since, checker, parser)
+        verdict = verdict_for_seat(seat, paths, now, since, checker, parser,
+                                   set(arguments.skip_usage_limit_record))
         failed = failed or bool(verdict["errors"])
         print(json.dumps(verdict, sort_keys=True), flush=True)
     return 1 if failed else 0
