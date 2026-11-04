@@ -250,7 +250,15 @@ with tempfile.TemporaryDirectory(prefix="cold-read-reviewer-score-test-") as nam
     check("an UNFIXED placement against a list with no declined table is "
           "refused, saying the table is missing",
           result.returncode == 64
-          and "has no declined table" in result.stderr, result.stderr)
+          and "has no declined table" in result.stderr
+          and "`UNFIXED U<n>` for" not in result.stderr, result.stderr)
+    result = run("--placements", str(wrong_u), "--defect-list", str(ruler))
+    check("the UNFIXED refusal names the placement file by its path, offers "
+          "UNFIXED while the declined table exists, and prints the command to "
+          "rerun",
+          str(wrong_u / "eps--placement.md") in result.stderr
+          and "`UNFIXED U<n>` for" in result.stderr
+          and "Scorer command: python3 " in result.stderr, result.stderr)
 
     # --- Fault: two readers' files were merged into one --------------------
     two_runs_old_style = write_placements(scratch / "old-style-runs", {
@@ -274,7 +282,19 @@ with tempfile.TemporaryDirectory(prefix="cold-read-reviewer-score-test-") as nam
           "files, instead of one replacing the other",
           result.returncode == 64 and "zeta.md" in result.stderr
           and "zeta--placement.md" in result.stderr
-          and "nothing was scored" in result.stderr,
+          and "nothing was scored" in result.stderr
+          and "The two files are different." in result.stderr
+          and "Then run the scorer again: python3 " in result.stderr,
+          result.stdout + result.stderr)
+    identical_copies = write_placements(scratch / "identical-copies", {
+        "theta.md": [("1", "ROW 1", "sure", "x")],
+        "theta--placement.md": [("1", "ROW 1", "sure", "x")],
+    })
+    result = run("--placements", str(identical_copies), "--defect-list", str(ruler))
+    check("two byte-identical files that name one reviewer are refused, saying "
+          "they are byte-identical",
+          result.returncode == 64
+          and "The two files are byte-identical." in result.stderr,
           result.stdout + result.stderr)
     check("a reviewer's name is the file name before '--placement.md'",
           scorer.reviewer_name_from_placement_file_name(pathlib.Path("a--b--placement.md")) == "a--b"

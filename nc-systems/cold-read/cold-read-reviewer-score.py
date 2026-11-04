@@ -22,6 +22,7 @@ import argparse
 import itertools
 import pathlib
 import re
+import shlex
 import statistics
 import sys
 
@@ -173,16 +174,21 @@ def classify_placement(placement: str, source: str, finding_id: str,
                 f"hold would make that finding count as neither hit nor false "
                 f"without anyone seeing it.\n"
                 f"Place that finding again in {source} with one of the forms the "
-                f"scorer reads: `UNFIXED U<n>` for a U-number the declined table "
-                f"holds, `ROW <n>` for the Table 1 row whose fault the finding "
-                f"names, `{PLACEMENT_TRUE_ONLY_OF_READER_CHECKOUT_NOT_OF_DRAFT}` when the finding is true "
-                f"only of the reader's checkout and tools, or `FALSE`; then run "
-                f"the same scorer command again. The scorer stops at the first "
-                f"such placement, so the rerun may show another.\n"
+                f"scorer reads: "
+                + ("`UNFIXED U<n>` for a U-number the declined table holds, "
+                   if held else "")
+                + f"`ROW <n>` for the Table 1 row whose fault the finding "
+                f"names, `{PLACEMENT_TRUE_ONLY_OF_READER_CHECKOUT_NOT_OF_DRAFT}` "
+                f"when the finding is true only of the reader's checkout and "
+                f"tools, or `FALSE` when it names no fault the defect list holds; "
+                f"then run the scorer command printed below again. The scorer "
+                f"stops at the first such placement, so the rerun may show "
+                f"another.\n"
                 f"When the finding names a declined entry this list does not "
-                f"hold, the form is `FALSE`: say so to the agent or person who "
-                f"asked for the score, and do not edit the defect list, whose rows "
-                f"every published score was measured against.")
+                f"hold, the form is `FALSE`: tell the agent or person who asked "
+                f"for the score which finding that was and which entry it names, "
+                f"and do not edit the defect list, whose rows every published "
+                f"score was measured against.")
         return set(), "UNFIXED"
     if placement == PLACEMENT_TRUE_ONLY_OF_READER_CHECKOUT_NOT_OF_DRAFT:
         return set(), "TRUE_ONLY_OF_READER_CHECKOUT_NOT_OF_DRAFT"
@@ -217,7 +223,7 @@ def parse_one_placement_file(path: pathlib.Path, row_total: int, declined: set):
         # Markdown emphasis is formatting, not a judgment.
         placement = placement_as_written.strip("`* ")
         rows, category = classify_placement(
-            placement, path.name, finding_id, row_total, declined)
+            placement, str(path), finding_id, row_total, declined)
         if len(rows) > 1 and rows != {2, 3}:
             anomalies.append(
                 f"finding {finding_id}: two-row placement {placement!r} outside "
@@ -488,6 +494,7 @@ def main() -> int:
     parser.add_argument("--hand-check-depth", type=int, default=10,
                         help="how many placements to rank for hand-checking")
     arguments = parser.parse_args()
+    rerun_command = shlex.join(["python3", *sys.argv])
 
     if not arguments.defect_list.is_file():
         print(f"{PROGRAM}: no defect list at {arguments.defect_list}", file=sys.stderr)
@@ -522,26 +529,29 @@ def main() -> int:
             reviewer, findings, anomalies = parse_one_placement_file(
                 path, row_total, declined)
         except PlacementParseError as problem:
-            print(f"{PROGRAM}: {problem}\nDefect list: {arguments.defect_list}",
-                  file=sys.stderr)
+            print(f"{PROGRAM}: {problem}\nDefect list: {arguments.defect_list}\n"
+                  f"Scorer command: {rerun_command}", file=sys.stderr)
             return EXIT_BAD_INVOCATION
         if reviewer in files_by_reviewer:
+            earlier = files_by_reviewer[reviewer]
+            identical = earlier.read_bytes() == path.read_bytes()
             print(f"{PROGRAM}: nothing was scored, because the placement files "
-                  f"{files_by_reviewer[reviewer].name} and {path.name}, in the "
-                  f"directory {arguments.placements}, both give the reviewer name "
+                  f"{earlier.name} and {path.name}, in the directory "
+                  f"{arguments.placements}, map to the same reviewer name "
                   f"{reviewer!r}, and scoring both would let one file's findings "
                   f"replace the other's. The scorer takes a reviewer's name from "
                   f"the file name, before '{PLACEMENT_FILE_SUFFIX}' or else before "
-                  f"'.md'.\n"
-                  f"When the two files are the same placement twice, delete one.\n"
-                  f"When they are two runs of one model or reviewer, name them "
-                  f"<name>-run-1{PLACEMENT_FILE_SUFFIX}, <name>-run-2"
-                  f"{PLACEMENT_FILE_SUFFIX} and so on, after any runs already "
-                  f"numbered.\n"
-                  f"When they are two different reviewers, rename one of them "
-                  f"<another name>{PLACEMENT_FILE_SUFFIX}, naming the reviewer "
-                  f"whose report it places.\n"
-                  f"Then run the same scorer command again.", file=sys.stderr)
+                  f"'.md'. The two files are "
+                  f"{'byte-identical' if identical else 'different'}.\n"
+                  f"When they are byte-identical, delete one.\n"
+                  f"When they are two runs of one model or reviewer, rename them "
+                  f"<name>-run-<k>{PLACEMENT_FILE_SUFFIX}, numbering k on from the "
+                  f"highest -run-<k> that name already has in that directory, or "
+                  f"from 1.\n"
+                  f"When they are two different reviewers, rename the one whose "
+                  f"name is not its reviewer's to <its reviewer's name>"
+                  f"{PLACEMENT_FILE_SUFFIX}.\n"
+                  f"Then run the scorer again: {rerun_command}", file=sys.stderr)
             return EXIT_BAD_INVOCATION
         files_by_reviewer[reviewer] = path
         summaries[reviewer] = summarize(findings, weights, total_weight, row_total,
