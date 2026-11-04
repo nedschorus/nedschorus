@@ -27,7 +27,7 @@ COMMENT, and merge-lane-2 records the verdict itself.
 
 With --github-account ned-review-merge, the file is merge-lane-2's own review,
 which restates every finding the round's reviewers raised, each comment with
-exactly "path", "line", "body" and "category", one of FINDING_CATEGORIES, the
+exactly "path", "line", "body" and "finding_category", one of FINDING_CATEGORIES, the
 four categories of the goals and philosophy page. It is posted with the merge
 account's token, read as
 merge-lane-pull-request-helpers-common-options-paths-and-token.py reads it,
@@ -179,7 +179,7 @@ def read_review_file(path, account):
     if not isinstance(body, str) or not body.strip():
         raise ReviewFileUnusable("has no \"body\" text")
     categorized = account == MERGE_LANE_ACCOUNT
-    keys = {"path", "line", "body", "category"} if categorized else {"path", "line", "body"}
+    keys = {"path", "line", "body", "finding_category"} if categorized else {"path", "line", "body"}
     if not isinstance(comments, list) or not all(
             isinstance(comment, dict) and set(comment) == keys
             and isinstance(comment["path"], str)
@@ -188,15 +188,15 @@ def read_review_file(path, account):
             for comment in comments):
         raise ReviewFileUnusable(
             "has a \"comments\" entry that is not exactly a text \"path\", a number \"line\" and "
-            "a text \"body\"" + (", and a \"category\"," if categorized else ",")
+            "a text \"body\"" + (", and a \"finding_category\"," if categorized else ",")
             + " with no other keys")
     if not categorized:
         return verdict, body, comments
     for comment in comments:
         where = f"{comment['path']}:{comment['line']}"
-        if comment["category"] not in FINDING_CATEGORIES:
+        if comment["finding_category"] not in FINDING_CATEGORIES:
             raise ReviewFileUnusable(
-                f"has a comment on {where} whose \"category\" is {comment['category']!r}, not one "
+                f"has a comment on {where} whose \"finding_category\" is {comment['finding_category']!r}, not one "
                 f"of {', '.join(FINDING_CATEGORIES)}")
         mark = fix_round.BLOCKING_MARKER_PATTERN.match(comment["body"].lstrip())
         if mark:
@@ -205,18 +205,18 @@ def read_review_file(path, account):
                 f"{mark.group(0)}; this program writes that mark for each {BLOCKING_CATEGORY} "
                 f"comment, so leave it out of the body")
     if verdict == "REQUEST_CHANGES" and not any(
-            comment["category"] == BLOCKING_CATEGORY for comment in comments):
+            comment["finding_category"] == BLOCKING_CATEGORY for comment in comments):
         raise ReviewFileUnusable(
-            f"has the verdict 'REQUEST_CHANGES' but no comment whose \"category\" is "
+            f"has the verdict 'REQUEST_CHANGES' but no comment whose \"finding_category\" is "
             f"{BLOCKING_CATEGORY}, so it would be posted as an approval")
     return verdict, body, comments
 
 
 def with_blocking_marks(body, comments):
     """Return (verdict, body, comments) as posted for categorized comments: the verdict set by
-    the must-fix-now ones, their count in the body, each opened with the mark, and no category
+    the must-fix-now ones, their count in the body, each opened with the mark, and no finding_category
     key left."""
-    blocking = [comment["category"] == BLOCKING_CATEGORY for comment in comments]
+    blocking = [comment["finding_category"] == BLOCKING_CATEGORY for comment in comments]
     count = sum(blocking)
     verdict = "REQUEST_CHANGES" if count else "APPROVE"
     if count:

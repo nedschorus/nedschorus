@@ -163,7 +163,7 @@ def review(verdict, body="The review body.", comments=None):
 
 def finding(line, category, body=None):
     return {"path": "scripts/thing.py", "line": line, "body": body or f"Finding on line {line}.",
-            "category": category}
+            "finding_category": category}
 
 
 MERGE_LANE_ARGUMENTS = ("--pull-request", "7", "--head-commit", HEAD,
@@ -200,7 +200,7 @@ def merge_lane_cases(scratch):
                          arguments=MERGE_LANE_ARGUMENTS)
     check("merge-lane-2's file is posted as REQUEST_CHANGES with the merge account's token, the "
           "must-fix-now count in the body, each must-fix-now comment opened with the mark, the "
-          "others unmarked, and no category key sent",
+          "others unmarked, and no finding_category key sent",
           result.code == 0 and result.posted == {
               "commit_id": HEAD, "event": "REQUEST_CHANGES",
               "body": "REQUEST_CHANGES\n\n**Blocking: 2**\n\nThe review body.",
@@ -232,12 +232,12 @@ def merge_lane_cases(scratch):
 
     for name, comments, verdict, reason in (
             ("a finding without a category", [{"path": "p", "line": 1, "body": "b"}], "APPROVE",
-             "and a \"category\", with no other keys"),
+             "and a \"finding_category\", with no other keys"),
             ("a finding whose category is not one of the four", [finding(2, "blocking")],
-             "APPROVE", "whose \"category\" is 'blocking', not one of must-fix-now, fix-next, "
+             "APPROVE", "whose \"finding_category\" is 'blocking', not one of must-fix-now, fix-next, "
                         "fix-in-maintenance, file-for-later"),
             ("a finding whose category is not text", [finding(2, ["must-fix-now"])],
-             "REQUEST_CHANGES", "whose \"category\" is ['must-fix-now'], not one of"),
+             "REQUEST_CHANGES", "whose \"finding_category\" is ['must-fix-now'], not one of"),
             ("a finding opening with a hand-written blocking mark",
              [finding(2, "must-fix-now", "**Blocks** b")], "REQUEST_CHANGES",
              "comment on scripts/thing.py:2 whose body already opens with the blocking mark "
@@ -247,7 +247,7 @@ def merge_lane_cases(scratch):
              "already opens with the blocking mark **Blocks:**"),
             ("a REQUEST_CHANGES verdict with nothing must-fix-now", [finding(2, "fix-next")],
              "REQUEST_CHANGES", "has the verdict 'REQUEST_CHANGES' but no comment whose "
-                                "\"category\" is must-fix-now"),
+                                "\"finding_category\" is must-fix-now"),
             ("a COULD_NOT_REVIEW verdict", [], "COULD_NOT_REVIEW",
              "has the verdict 'COULD_NOT_REVIEW'")):
         result = run_program(scratch, review(verdict, comments=comments),
@@ -305,7 +305,7 @@ def merge_lane_cases(scratch):
           f"{found}\n{approving.detail}")
     moved = run_program(scratch, review("REQUEST_CHANGES", comments=[
         finding(2, "must-fix-now"),
-        {"path": "scripts/other.py", "line": 1, "body": "Outside.", "category": "must-fix-now"}]),
+        {"path": "scripts/other.py", "line": 1, "body": "Outside.", "finding_category": "must-fix-now"}]),
         arguments=MERGE_LANE_ARGUMENTS)
     found = fix_round_blocking_findings(fix_round, [moved.posted])
     check("round trip: a must-fix-now comment moved into the body counts in the posted count, "
