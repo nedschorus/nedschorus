@@ -10,7 +10,10 @@ stay out of recall and precision alike.
 A placement file is named `<reviewer>--placement.md`. Repeated reads of one
 reader are named `<reader>-run-<k>--placement.md`: each file is scored on its
 own, and sets of readers are scored once per run index k from the k-th run of
-each member, reporting the median over the run indices every member has.
+each member, reporting the median over the run indices every member has. A
+file with no `-run-<k>` is run 1 of its reader, and two files that give one
+reader the same run index, such as `ann--placement.md` and
+`ann-run-1--placement.md`, are refused with exit 64.
 
 When the defect list has a `## Sentences with no defect` section, a FALSE
 finding whose quote, whitespace normalised, lies inside one of its sentences
@@ -523,6 +526,7 @@ def main() -> int:
         return EXIT_BAD_INVOCATION
 
     summaries, all_findings, anomalies_by_reviewer, files_by_reviewer = {}, [], {}, {}
+    files_by_reader_run = {}
     for path in placement_files:
         # Report malformed input without a traceback that would obscure the actionable error.
         try:
@@ -553,6 +557,36 @@ def main() -> int:
                   f"{PLACEMENT_FILE_SUFFIX}.\n"
                   f"Then run the scorer again: {rerun_command}", file=sys.stderr)
             return EXIT_BAD_INVOCATION
+        reader, run = reader_and_run_index_from_reviewer_name(reviewer)
+        if (reader, run) in files_by_reader_run:
+            earlier = files_by_reader_run[(reader, run)]
+            identical = earlier.read_bytes() == path.read_bytes()
+            next_run = 1 + max(
+                reader_and_run_index_from_reviewer_name(
+                    reviewer_name_from_placement_file_name(other))[1]
+                for other in placement_files
+                if reader_and_run_index_from_reviewer_name(
+                    reviewer_name_from_placement_file_name(other))[0] == reader)
+            new_path = path.with_name(f"{reader}-run-{next_run}{PLACEMENT_FILE_SUFFIX}")
+            remedy = (f"The two files are byte-identical, so they are one run "
+                      f"saved twice: delete {path}." if identical else
+                      f"The two files are different. If they are two runs, "
+                      f"rename {path} to {new_path}, the next run number free "
+                      f"for reader {reader!r} in that directory. If one of "
+                      f"them is not a run of {reader!r}, rename it after the "
+                      f"reader it is.")
+            print(f"{PROGRAM}: nothing was scored, because the placement files "
+                  f"{earlier.name} and {path.name}, in the directory "
+                  f"{arguments.placements}, are both run {run} of reader "
+                  f"{reader!r}. Had it gone on, it would have scored that "
+                  f"reader's runs with {path.name}'s findings in place of "
+                  f"{earlier.name}'s, and dropped {earlier.name}'s. A file "
+                  f"with no -run-<k> in its name is run 1 of its reader, and "
+                  f"-run-01 is the same run as -run-1.\n"
+                  f"{remedy}\n"
+                  f"Then run the scorer again: {rerun_command}", file=sys.stderr)
+            return EXIT_BAD_INVOCATION
+        files_by_reader_run[(reader, run)] = path
         files_by_reviewer[reviewer] = path
         summaries[reviewer] = summarize(findings, weights, total_weight, row_total,
                                         clean_sentences)

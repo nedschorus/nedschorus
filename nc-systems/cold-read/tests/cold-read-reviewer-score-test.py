@@ -296,6 +296,35 @@ with tempfile.TemporaryDirectory(prefix="cold-read-reviewer-score-test-") as nam
           result.returncode == 64
           and "The two files are byte-identical." in result.stderr,
           result.stdout + result.stderr)
+    same_run = write_placements(scratch / "same-reader-run", {
+        "ann--placement.md": [("1", "ROW 1", "sure", "x")],
+        "ann-run-1--placement.md": [("1", "ROW 2", "sure", "x")],
+        "ann-run-2--placement.md": [("1", "ROW 3", "sure", "x")],
+    })
+    result = run("--placements", str(same_run), "--defect-list", str(ruler))
+    check("an unsuffixed file and a -run-1 file of one reader are refused, exit 64, "
+          "naming both files, instead of one run replacing the other",
+          result.returncode == 64 and "ann--placement.md" in result.stderr
+          and "ann-run-1--placement.md" in result.stderr
+          and "both run 1 of reader 'ann'" in result.stderr
+          and "The two files are different." in result.stderr
+          and f"rename {same_run / 'ann-run-1--placement.md'} to "
+              f"{same_run / 'ann-run-3--placement.md'}" in result.stderr
+          and "delete" not in result.stderr
+          and "Then run the scorer again: python3 " in result.stderr,
+          result.stdout + result.stderr)
+    padded_run = write_placements(scratch / "padded-run-number", {
+        "ann-run-01--placement.md": [("1", "ROW 1", "sure", "x")],
+        "ann-run-1--placement.md": [("1", "ROW 1", "sure", "x")],
+    })
+    result = run("--placements", str(padded_run), "--defect-list", str(ruler))
+    check("-run-01 and -run-1 of one reader are refused as the same run, and "
+          "byte-identical copies are told to delete one",
+          result.returncode == 64 and "both run 1 of reader 'ann'" in result.stderr
+          and "The two files are byte-identical" in result.stderr
+          and f"delete {padded_run / 'ann-run-1--placement.md'}." in result.stderr
+          and "rename" not in result.stderr,
+          result.stdout + result.stderr)
     check("a reviewer's name is the file name before '--placement.md'",
           scorer.reviewer_name_from_placement_file_name(pathlib.Path("a--b--placement.md")) == "a--b"
           and scorer.reviewer_name_from_placement_file_name(pathlib.Path("a--b.md")) == "a--b")
