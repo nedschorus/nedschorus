@@ -1525,6 +1525,19 @@ def test_unreadable_minutes_still_expand_and_say_so():
           f"lines {lines!r}")
 
 
+def test_two_unclosed_approval_walks_are_reported_naming_both():
+    case = Case(next_to_present="item 3 of 9")
+    second = case.minutes("#next_to_present item 5 of 9\n#approval_walk_paused stop order", name="a-second-walk")
+    lines = case.lines("a")
+    check("with two unclosed approval-walks the hook takes neither and names both walk-minutes files",
+          lines is not None
+          and lines[0].startswith("The user answered \"a\"; the hook could not tell whether an approval-walk "
+                                  "is open, because reading the approval-walk state failed: "
+                                  "MoreThanOneUnclosedApprovalWalk")
+          and str(second) in lines[0] and str(case.walk / f"{WALK_NAME}-minutes.md") in lines[0]
+          and "If an approval-walk is open:" in lines, f"lines {lines!r}")
+
+
 def test_missing_walk_document_is_reported_for_a():
     case = Case(next_to_present="item 4 of 9", document=None)
     lines = case.lines("a")

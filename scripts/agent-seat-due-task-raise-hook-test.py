@@ -863,6 +863,8 @@ seat.minutes("live-walk", "#next_to_present item 1 of 3\n")
 check("next-action: silent while an approval-walk is open", silent(seat.stop()))
 seat.minutes("live-walk", "#next_to_present item 1 of 3\n#approval_walk_paused lunch\n")
 check("next-action: silent while the newest walk is paused", silent(seat.stop()))
+seat.minutes("second-walk", "#next_to_present item 2 of 4\n")
+check("next-action: silent while two approval-walks are unclosed", silent(seat.stop()))
 
 seat = IdleSeat()
 handoffs = seat.home / ".claude" / "handoffs"

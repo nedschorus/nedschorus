@@ -13,15 +13,21 @@ backticks, and a colon after the hashtag is read as the old form's colon was.
 The old marker `Next to present:` is read too, so that a caller can migrate
 it. A value is `none` or `closed` for a closed walk, or opens with a running
 count, `item N`, `item 4.1`, `items 5 and 6`, `items 10 to 12`, with or
-without `of M`. Among the minutes files in docs/walk/, the open approval-walk
-is the most recently modified one whose value is not closed.
+without `of M`. An agent-seat keeps at most one approval-walk unclosed, open or
+paused, so the unclosed approval-walk is the one minutes file in docs/walk/
+whose value is not closed. When more than one is, the_one_unclosed_approval_walk_including_paused
+and open_walk raise MoreThanOneUnclosedApprovalWalk naming every such minutes
+file, and no walk is guessed: the answer program refuses, the Stop hooks stay
+silent, and the short-answer hook says it could not read the approval-walk
+state, naming each file. Every minutes file is read, so a minutes file that
+cannot be read is a fault even when another walk is open.
 
 A PAUSED APPROVAL-WALK. A `#approval_walk_paused <reason>` line, found as the
 marker is, pauses the walk when it comes after the minutes' last marker; a
-later `#next_to_present` line resumes it. A paused walk is still the newest
-open one, so no older walk is taken for it, but open_walk returns None for it,
-so the hooks treat it as no open walk. newest_unclosed_approval_walk_including_paused returns it
-with its pause, so the check program can say how to resume it.
+later `#next_to_present` line resumes it. A paused walk is still unclosed, so
+it counts toward the one, but open_walk returns None for it, so the hooks
+treat it as no open walk. the_one_unclosed_approval_walk_including_paused
+returns it with its pause, so the check program can say how to resume it.
 
 ITEMS IN THE WALK-DOCUMENT. An item starts at its running count, `Item N of
 M`, `Items 5 and 6 of M`, `Items 10 to 12 of M` or `Items 12 to 12.3 of M`,
@@ -151,6 +157,16 @@ ITEM_PAGE_PUBLISH_FAILED = "publish failed"
 NOT_A_FORM_PROBLEM = (
     "does not open with an item in one of the forms `item N of M`, `item N.K of M`, "
     "`items N and P of M` or `items N to P of M`")
+
+
+class MoreThanOneUnclosedApprovalWalk(Exception):
+    """More than one approval-walk of the checkout is open or paused; minutes_paths holds the minutes file of
+    each, in file-name order."""
+
+    def __init__(self, minutes_paths):
+        self.minutes_paths = minutes_paths
+        super().__init__("more than one approval-walk is open or paused, so none is taken for the waiting item: "
+                         + ", ".join(str(path) for path in minutes_paths))
 
 
 class UnusableRange(ValueError):
@@ -387,22 +403,32 @@ def parse_items(value):
     return expand_numbers(match[1]), match[2]
 
 
-def newest_unclosed_approval_walk_including_paused(walk_directory, parser):
-    """Return (minutes path, value, whether the marker is the old form, whether the walk is paused) for the
-    newest minutes whose value is not closed, or None when there are none."""
-    newest_first = sorted(walk_directory.glob("*" + MINUTES_SUFFIX),
-                          key=lambda minutes: minutes.stat().st_mtime, reverse=True)
-    for minutes in newest_first:
+def unclosed_approval_walks_including_paused(walk_directory, parser):
+    """Return [(minutes path, value, whether the marker is the old form, whether the walk is paused)] for every
+    minutes file whose value is not closed, in file-name order."""
+    walks = []
+    for minutes in sorted(walk_directory.glob("*" + MINUTES_SUFFIX)):
         marker = next_to_present(minutes.read_text(encoding="utf-8"), parser)
         if marker is not None and not is_closed(marker[0]):
-            return (minutes, *marker)
-    return None
+            walks.append((minutes, *marker))
+    return walks
+
+
+def the_one_unclosed_approval_walk_including_paused(walk_directory, parser):
+    """Return (minutes path, value, whether the marker is the old form, whether the walk is paused) for the one
+    unclosed approval-walk, or None when there is none. Raise MoreThanOneUnclosedApprovalWalk when there are
+    more."""
+    walks = unclosed_approval_walks_including_paused(walk_directory, parser)
+    if len(walks) > 1:
+        raise MoreThanOneUnclosedApprovalWalk([walk[0] for walk in walks])
+    return walks[0] if walks else None
 
 
 def open_walk(walk_directory, parser):
     """Return (minutes path, value, whether the marker is the old form) for the open approval-walk, or None
-    when none is open or the open one is paused."""
-    walk = newest_unclosed_approval_walk_including_paused(walk_directory, parser)
+    when none is open or the open one is paused. Raise MoreThanOneUnclosedApprovalWalk as
+    the_one_unclosed_approval_walk_including_paused does."""
+    walk = the_one_unclosed_approval_walk_including_paused(walk_directory, parser)
     if walk is None or walk[3]:
         return None
     return walk[:3]

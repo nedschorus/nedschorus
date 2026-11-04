@@ -59,8 +59,8 @@ hook blocks with the line to add instead of checking the reply. Its value is `no
 `item 4.1`, `items 5 and 6`, `items 10 to 12`, with or without `of M`, and
 anything after the count, such as `(awaiting answer), then item 24`, is
 ignored. Among the minutes files in docs/walk/ at the top of the checkout
-named by the payload's cwd, the open approval-walk is the most recently
-modified one whose value is not closed. Minutes with no such line, as every
+named by the payload's cwd, the open approval-walk is the one whose value is
+not closed; an agent-seat keeps at most one. Minutes with no such line, as every
 walk before the line existed, are not open walks. A walk whose minutes hold a
 `#approval_walk_paused` line after their last marker is paused, as when the
 user paused it or a stop order forbids showing its items, and is not checked.
@@ -112,7 +112,9 @@ Stop-hook silence rule's module requires, when the agent-session is a
 headless `claude -p` child (its last words are its caller's answer), when the
 transcript is missing, when the turn wrote no text to the user, when the cwd is
 not in a git checkout, when no approval-walk is open or the open one is paused,
-and when the reply passes.
+when more than one approval-walk is open or paused, since no waiting item is
+known, which the answer program refuses, naming each, and when the reply
+passes.
 
 OUTPUT: {"decision": "block", "reason": <message>}, which keeps the agent
 going with the message as its next instruction: when the walk-minutes hold no
@@ -386,7 +388,10 @@ def output_for(payload, environment):
     if top is None or not (top / walk_finder.WALK_DIRECTORY).is_dir():
         return None
     parser = walk_finder.markdown_parser()
-    walk = walk_finder.open_walk(top / walk_finder.WALK_DIRECTORY, parser)
+    try:
+        walk = walk_finder.open_walk(top / walk_finder.WALK_DIRECTORY, parser)
+    except walk_finder.MoreThanOneUnclosedApprovalWalk:
+        return None  # no waiting item is known; the answer program refuses and names both approval-walks
     if walk is None:
         return None
     records = transcript_records(Path(transcript_path).expanduser())

@@ -38,9 +38,11 @@ paragraph; O2 and O3 approve one of them, through the check step with
 --option.
 
 THE OPEN APPROVAL-WALK is found with WALK_FINDER_FILE, the module the
-walk-me-through Stop hook uses too, loaded by path: the most recently modified
+walk-me-through Stop hook uses too, loaded by path: the one
 docs/walk/*-minutes.md, in the checkout the payload's cwd names, whose last
-`#next_to_present` line is not `none` or `closed`. The waiting items are that
+`#next_to_present` line is not `none` or `closed`. When more than one is, the
+hook reads that as reading the approval-walk state failing, and its context
+names each walk-minutes file in the error. The waiting items are that
 line's running count, such as `item 4.1 of 6`. An item's recommendation is the
 rest of the line after the last `Recommendation:` in its part of the
 walk-document, emphasis and one trailing period aside; an item with none
