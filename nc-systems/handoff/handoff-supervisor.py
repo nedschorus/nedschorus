@@ -237,7 +237,7 @@ FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_TEMPLATE = "You are {agent}. No ha
 # Claude Code records a prompt passed on its command line as typed by a person, so this line is the only mark
 # by which scripts/search-user-messages-in-transcripts.py tells the launch command's prompt from the user's words.
 FIRST_PROMPT_FROM_LAUNCH_COMMAND_NOT_TYPED_BY_THE_USER_LINE = (
-    "The handoff-supervisor was given this first prompt with --first-prompt-file or --first-prompt; "
+    "The text above this line came from the handoff-supervisor's --first-prompt-file or --first-prompt; "
     "the user did not type it.")
 
 
