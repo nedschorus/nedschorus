@@ -197,8 +197,12 @@ def start_fake_supervisor(under_shell=True, starts_claude=True, agent=SEAT, clau
     claude_id = None
     while starts_claude and time.monotonic() < deadline:
         table = program.process_table()
-        children = [process_id for process_id, (parent, _) in table.items() if parent == supervisor_id]
-        if children:
+        # Between fork and exec a child still shows the fake handoff-supervisor's command line;
+        # recorded then, step 4 takes the claude, once it has exec'd, for a reused process ID.
+        children = [process_id for process_id, (parent, command) in table.items()
+                    if parent == supervisor_id and command.split()
+                    and Path(command.split()[0]).name == "claude"]
+        if len(children) == claude_count:
             claude_id = children[0]
             started_process_ids.append(claude_id)
             break
