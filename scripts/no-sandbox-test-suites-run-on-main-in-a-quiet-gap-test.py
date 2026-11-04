@@ -56,6 +56,8 @@ GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign
 STAND_IN_RUNNER = '''import json, os, sys, time
 with open(os.environ["QUIET_GAP_TEST_CALLS"], "a") as calls:
     calls.write(json.dumps(sys.argv[1:]) + "\\n")
+with open(os.environ["QUIET_GAP_TEST_CALLS"] + ".xdg", "w") as seen:
+    seen.write(os.environ.get("XDG_RUNTIME_DIR", "unset"))
 log_dir = sys.argv[sys.argv.index("--log-dir") + 1]
 os.makedirs(log_dir, exist_ok=True)
 mode = os.environ.get("QUIET_GAP_TEST_RUNNER", "pass")
@@ -74,6 +76,8 @@ if mode == "fail":
     log = os.path.join(log_dir, "outside-a-test.py.log")
     with open(log, "w") as written:
         written.write("the suite's own output\\n")
+    # The runner's real output: a progress line without a log, then the closing list's line.
+    print("FAIL outside-a-test.py exit 1 (1.0s)")
     print(f"FAIL outside-a-test.py exit 1 — log {log}")
     print("SUMMARY: 1 passed, 1 failed, 2 total")
     sys.exit(1)
@@ -217,6 +221,21 @@ with tempfile.TemporaryDirectory() as directory:
     check("at the same commit after a pass, no run is due", code == 0 and calls == []
           and "no run due" in printed, (code, printed))
 
+    saved_xdg = os.environ.pop("XDG_RUNTIME_DIR", None)
+    s.commit_on_origin("cron starts the program without the user's session bus")
+    code, printed, calls = s.run()
+    if saved_xdg is not None:
+        os.environ["XDG_RUNTIME_DIR"] = saved_xdg
+    daily = program.module_loaded_by_path(
+        "daily_full_test_run_of_main", PROGRAM_PATH.with_name("daily-full-test-run-of-main.py"))
+    wanted = daily.environment_with_user_runtime_directory_when_the_user_session_bus_exists(
+        {}).get("XDG_RUNTIME_DIR", "unset")
+    seen = Path(f"{s.calls}.xdg").read_text()
+    check("started without XDG_RUNTIME_DIR, as under cron, the runner is given the user's "
+          "runtime directory as the daily full run gives it",
+          code == 0 and len(calls) == 1 and seen == wanted, (code, printed, seen, wanted))
+    first_commit = s.state()["passing_commit"]
+
     # --- main moves, and the run fails -------------------------------------------
     merged = s.merge_on_origin(41)
     code, printed, calls = s.run("fail")
@@ -247,6 +266,14 @@ with tempfile.TemporaryDirectory() as directory:
     check("a failure is tried again once the hour has passed", len(calls) == 1, (code, printed))
 
     # --- Following a failure up ---------------------------------------------------
+    own = held(Path(f"{s.state_file}.lock"))
+    before = s.state_file.read_text()
+    code, printed, _ = s.run("pass", "--record-follow-up-request-sent")
+    own.close()
+    check("--record-follow-up-request-sent refuses while a run holds the program's lock, and "
+          "leaves the state file as that run will write it",
+          code == program.EXIT_REFUSED and "Run again in 10 minutes" in printed
+          and s.state_file.read_text() == before, (code, printed))
     code, printed, _ = s.run("pass", "--record-follow-up-request-sent")
     check("--record-follow-up-request-sent writes the time into the failed last run",
           code == 0 and s.state()["last_run"]["follow_up_request_sent"], (code, printed))
@@ -389,6 +416,11 @@ with tempfile.TemporaryDirectory() as directory:
           code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and calls == []
           and "origin/main could not be resolved: fatal: no such ref"
           in s.state()["last_run"]["reason"], (code, printed))
+    code, printed, _ = s.run("pass", "--record-follow-up-request-sent")
+    check("--record-follow-up-request-sent after a run stopped before main was resolved records "
+          "the follow-up and says so, with no commit",
+          code == 0 and "recorded for the run at no commit" in printed
+          and s.state()["last_run"]["follow_up_request_sent"], (code, printed))
 
     with constants(GIT_FETCH_TIMEOUT_SECONDS=0.001):
         code, printed, calls = s.run()

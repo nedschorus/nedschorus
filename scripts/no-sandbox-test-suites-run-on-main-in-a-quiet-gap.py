@@ -50,7 +50,11 @@ with each failing suite's log beside it as <HHMMSS>Z-<suite, / as __>.log.
 
 --record-follow-up-request-sent writes the time into the last run, once
 merge-lane-2 has sent the follow-up request for a failed or stopped run; it
-refuses, exit 2, when the last run passed or there is none.
+refuses, exit 2, when the last run passed or there is none, or while a run holds
+the program's lock, since that run rewrites the state file when it ends.
+
+The runner is started with XDG_RUNTIME_DIR added as scripts/daily-full-test-run-of-main.py
+adds it, because cron gives this program no user session bus.
 
 --print-merge-gate-notice-of-last-failed-or-stopped-run prints, on stdout, the notice scripts/merge-gate.sh
 puts on its stderr: nothing when the state file is missing or the last run
@@ -248,9 +252,20 @@ def remove_worktree(clone, worktree):
     return None
 
 
+def runner_environment():
+    """This process's environment, with XDG_RUNTIME_DIR added as the daily full run adds it,
+    because cron starts this program without the user's session bus and the runner's
+    `systemd-run --user --scope` then puts no CPU weight or memory ceiling on any suite."""
+    daily = module_loaded_by_path("daily_full_test_run_of_main",
+                                  Path(__file__).resolve().with_name("daily-full-test-run-of-main.py"))
+    return daily.environment_with_user_runtime_directory_when_the_user_session_bus_exists(
+        dict(os.environ))
+
+
 def run_runner_with_time_limit(command, worktree):
     """(exit code or None when stopped at the time limit, stdout, stderr)."""
-    process = subprocess.Popen(command, cwd=str(worktree), stdin=subprocess.DEVNULL,
+    process = subprocess.Popen(command, cwd=str(worktree), env=runner_environment(),
+                               stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                errors="replace", start_new_session=True)
     try:
@@ -270,15 +285,17 @@ def run_runner_with_time_limit(command, worktree):
 
 
 def failing_suites_and_logs(stdout, fail_prefix, log_mark):
-    """[(suite, log path)] from the runner's FAIL lines."""
+    """[(suite, log path)] from the runner's FAIL lines that carry a log.
+
+    The runner prints each failing suite twice: a progress line without a log, then one in
+    its closing list with the log; only the second is read."""
     found = []
     for line in stdout.splitlines():
-        if not line.startswith(fail_prefix):
+        if not line.startswith(fail_prefix) or log_mark not in line:
             continue
         rest = line[len(fail_prefix):]
         suite = rest.split(" ", 1)[0]
-        log = rest.split(log_mark, 1)[1].strip() if log_mark in rest else ""
-        found.append((suite, log))
+        found.append((suite, rest.split(log_mark, 1)[1].strip()))
     return found
 
 
@@ -457,7 +474,35 @@ def run_under_lock(arguments, state_file):
 
 
 def record_follow_up_request_sent(arguments):
+    """Under the run's own lock, so a run that ends meanwhile cannot have its result overwritten."""
     state_file = Path(arguments.state_file).expanduser()
+    try:
+        lock = take_lock_without_waiting(f"{state_file}.lock")
+    except OSError as error:
+        print(f"{PROGRAM}: the follow-up request was not recorded — the lock file "
+              f"{state_file}.lock could not be opened: {error}.\n"
+              f"If the error names a cause you can fix, such as a missing directory, fix it, "
+              f"then run again: python3 scripts/{PROGRAM}.py --record-follow-up-request-sent\n"
+              f"If you cannot fix it, or the rerun fails again, send agent-seat reboot-test "
+              f"these lines with SendMessage, since it owns this program.", file=sys.stderr)
+        return EXIT_REFUSED
+    if lock is None:
+        print(f"{PROGRAM}: the follow-up request was not recorded — a run of the test "
+              f"suites that run without a sandbox holds {state_file}.lock, and that run "
+              f"rewrites the state file when it ends.\n"
+              f"Run again in 10 minutes: python3 scripts/{PROGRAM}.py "
+              f"--record-follow-up-request-sent\n"
+              f"While the run still holds the lock, this refusal repeats; once it ends, the "
+              f"command records the follow-up if the run that held the lock failed or "
+              f"stopped, and says no follow-up is owed if it passed.", file=sys.stderr)
+        return EXIT_REFUSED
+    try:
+        return record_follow_up_request_sent_under_lock(state_file)
+    finally:
+        lock.close()
+
+
+def record_follow_up_request_sent_under_lock(state_file):
     try:
         state = read_state(state_file)
     except StateUnreadable as error:
@@ -472,7 +517,9 @@ def record_follow_up_request_sent(arguments):
         return EXIT_REFUSED
     last["follow_up_request_sent"] = stamp(utc_now())
     write_state(state_file, state)
-    print(f"{PROGRAM}: follow-up request recorded for the run at {last.get('commit', '')[:12]}")
+    # A run stopped before it resolved main records commit null.
+    print(f"{PROGRAM}: follow-up request recorded for the run at "
+          f"{(last.get('commit') or 'no commit')[:12]}")
     return EXIT_DONE
 
 
