@@ -546,26 +546,30 @@ WALK_ORDER_REFUSED = (
     "nothing written: {problem}\n"
     "Every item of the walk-document not yet shown to the user, headed `## <the point>` with no number, needs "
     "exactly one category line, so that this program can choose which of them he sees next: the items each "
-    "waits on first, then by category, then by the day each first entered a walk, then in walk-document order. "
+    "waits on first, then by category, then by the day each first entered a walk, earlier first, then in "
+    "walk-document order. "
     "The categories are the four of section 2 of "
     "docs/nedschorus-wiki/queue/nedschorus-goals-and-philosophy-founding-statement-and-agent-working-principles.md, "
     "shown in this order:\n"
     + "\n".join(f"  `{WALK_CATEGORY_TAG}{category}`" for category in WALK_CATEGORIES) + "\n"
-    "If an item has no category line, more than one category tag, or a tag not in this list: give it one line "
-    "under its heading holding only the tag for how soon its work must happen.\n"
+    "If an item has no category line, more than one category tag, or a tag not in this list: leave it exactly one "
+    "tag from this list, the one for how soon its work must happen, on a line of its own under its heading.\n"
     f"If an item must not be shown before another item: give it a line `{WALK_WAITS_ON_TAG} <the other item's "
-    "title>`, the title as the other item's heading gives it, after any `Item N of M: `, one line for each item it "
-    "waits on, with no circle of items waiting on each other.\n"
-    "Then run `python3 {program} {step} --cwd {top}` again.")
+    "title>`, the other item's heading without its `##` and any `Item N of M: `, one line for each item it waits "
+    "on; an item already decided counts as done. If items wait on each other in a circle, take out the waits-on "
+    "line that is not a real prerequisite.\n"
+    "Then run `python3 {program} {step} --cwd {top}` again.\n"
+    "From now on, write the category line, and a waits-on line for each item it waits on, into every item when you "
+    "add it to a walk-document.")
 CATEGORY_MISSING = "{item} has no `" + WALK_CATEGORY_TAG + "<category>` line."
 CATEGORY_DOUBLED = "{item} has more than one category tag: {tags}."
 CATEGORY_UNKNOWN = "{item} has the category tag `{tag}`, which is not one of the four categories."
 WAITS_ON_UNKNOWN = "{item} waits on `{title}`, which is the title of no other item heading."
 WAITS_ON_CIRCLE = "the items {items} wait on each other in a circle, so none of them can come first."
 FIRST_ENTERED_UNREADABLE = (
-    "{item} has the line `{line}`, whose date is not a date written YYYY-MM-DD. This program writes that line on "
-    "the day it first finds the item; give the day the item first entered an approval-walk, or delete the line, "
-    "and this program writes today's date.")
+    "{item} has the line `{line}`, whose date is not a date written YYYY-MM-DD. This program writes a line "
+    f"`{WALK_FIRST_ENTERED_TAG} YYYY-MM-DD` on the day it first finds the item; write in it the day the item first "
+    "entered an approval-walk, or delete the line, and this program writes today's date.")
 NUMBERED_HEADING = "{marks}Item {number} of {total}: {title}"
 NO_UNNUMBERED_ITEM_AFTER = (
     "nothing written: close was given " + HOLD_ANSWER_FLAG + ", but in {document} the heading right after "
@@ -1601,7 +1605,7 @@ def unshown_units(walk_finder, units, lines):
 
 def heading_title(walk_finder, line):
     """The title of an item heading: its text after the `##` marks and any running count, deferred note left out,
-    with its spaces squeezed, in lower case, as a `#approval_walk_item_waits_on` line names it."""
+    with its spaces squeezed, in lower case; a `#approval_walk_item_waits_on` line's title is read the same way."""
     heading = walk_finder.approval_walk_item_heading_with_deferred_note_removed(line)
     parts = UNNUMBERED_HEADING_PARTS.match(heading)
     title = parts[2] if parts else heading.lstrip("#")
@@ -1655,7 +1659,8 @@ def unshown_items_placing(walk_finder, text, units, parser, document, today):
             raise WalkOrderUnusable(FIRST_ENTERED_UNREADABLE.format(item=item, line=entered[0].strip()))
         waits_on = set()
         for match in filter(None, map(WALK_WAITS_ON_LINE.match, prose[first + 1:end])):
-            named = [other for other in titles.get(squeezed(match[1]).lower(), []) if other != first]
+            title = heading_title(walk_finder, "## " + match[1].lstrip("# "))
+            named = [other for other in titles.get(title, []) if other != first]
             if not named:
                 raise WalkOrderUnusable(WAITS_ON_UNKNOWN.format(item=item, title=match[1]))
             waits_on.update(named)

@@ -3091,10 +3091,10 @@ def test_an_item_comes_after_the_items_it_waits_on_and_an_item_that_unblocks_ano
     case = Case(next_to_present="item 1 of 9", document=ordered_walk(
         unshown_item("next", f"{CATEGORY_TAG}fix_next"),
         unshown_item("urgent but blocked", f"{CATEGORY_TAG}must_fix_now",
-                     "#approval_walk_item_waits_on The Prerequisite"),
+                     "#approval_walk_item_waits_on ## Item 9 of 9: The  Prerequisite"),
         unshown_item("the prerequisite", f"{CATEGORY_TAG}fix_during_maintenance")))
     shown = titles_shown_in_turn(case)
-    check("an item comes after the item it waits on, named by its title in any case, and an item waited on comes as "
+    check("an item comes after the item it waits on, named by its heading in any case, count or spacing, and an item waited on comes as "
           "early as the item waiting on it would, so a maintenance item that unblocks a must-fix-now item comes "
           "before a fix-next item",
           shown == ["the prerequisite", "urgent but blocked", "next", "Summary"], f"{shown}\n{walk_document(case)}")
