@@ -4,9 +4,10 @@
 Usage, on the machine the agent-seat runs on:
   python3 ~/Projects/nedschorus/nc-systems/handoff/handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout.py <seat>
 
-This program does the operator's steps 0 and 2 to 7 of
-docs/nedschorus-wiki/nedschorus-handoff-supervisor-restart-onto-main-code-by-hand-procedure.md.
-The agent-seat being restarted does steps 1 and 3 itself: it gets ready (no subagent and no
+Run it for a handoff-supervisor that is running and will not restart itself, as
+docs/nedschorus-wiki/nedschorus-handoff-supervisor-restart-onto-main-code-when-it-will-not-restart-itself.md
+says. This program does steps 0, 2 and 4 to 7 of the restart, listed below. The agent-seat
+being restarted does steps 1 and 3 itself: it gets ready (no subagent and no
 test run of its own still running, its work committed, its walk-minutes written), runs this
 program, and, when the program prints that the handoff-supervisor is frozen, writes its
 session-handoff with the /handoff skill, without --dont-restart, naming in its next step the
