@@ -56,7 +56,7 @@ Options 3 and 4 below are ruled out because each would ask an agent to sync a de
 
 ## Options for the user
 
-Options 3 and 4 are ruled out by the user's ruling of 2026-11-01 above. Options 1, 2 and 5 are not decided; the user chooses among them.
+Options 3 and 4 are ruled out by the user's ruling of 2026-11-01 above. The user chose options 1 and 2 together on 2026-11-04, in the ruling below the options; option 5 waits for refresh-design.
 
 1. **Build nothing now.** A pull request reviewer caught this case without being asked to look, and PR [Handoff design drops the walk-close threshold clause, and the walk shipper's test checks a close writes no walk-closed marker](https://github.com/nedschorus/nedschorus/pull/2073) fixed the line; it merged on 2026-10-29 as commit 55895b0.
 2. **Remove the prose that restates the code.** The header of `nc-systems/handoff/handoff-design.md` says the document "was gutted to that charter on 2026-08-12 (user-ruled: there is no utility in prose that documents what is better understood by reading the code — mechanism prose drifts)", and that each script's module docstring says what it does. Line 20 is one of the bullets that still say what each script does. Replacing those bullets with the file names alone, pointing at the docstrings, leaves fewer sentences that can go false. The same could be done in other designs.
@@ -66,9 +66,19 @@ Options 3 and 4 are ruled out by the user's ruling of 2026-11-01 above. Options 
 
 Recommendation: options 1 and 2 together, and not option 5: remove the prose that restates the code in `nc-systems/handoff/handoff-design.md` (option 2), because that removes the kind of line that went false, and build no program and no refresh-design step for this (option 1), because CLAUDE.md's rule on proposing a validation is not met for a new program.
 
+## The user's ruling of 2026-11-04
+
+On 2026-11-04 the user answered "A" at item 3 of cold-read-research's approval-walk cold-read-research-fast-read-speed-and-design-drift-2026-11-02 (minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/cold-read-research-fast-read-speed-and-design-drift-2026-11-02-minutes.md` once shipped), approving its recommendation:
+
+> options 1 and 2 together: build no program, and replace the mechanism bullets in `nc-systems/handoff/handoff-design.md` with each file's path and short name, the /handoff skill's included, showing you the old and new bullets as a walk item before the pull request; option 5 waits for refresh-design; record the choice in `docs/issues/2078-nothing-checks-that-a-design-document-still-describes.md`.
+
+The draft of the old and new bullets is at `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-research/item-3-handoff-design-bullets-2026-11-04/handoff-design-bullets-old-and-new.md`: six bullets, lines 20 to 25 of the section "The components". For five of them, the file's module docstring, or the /handoff skill itself, already says what the bullet says. For line 20, the threshold hook, it does not: the hook's docstring does not hold the `--ceiling-used-percentage` flag and its default, the deferral when the transcript scan cannot read every record, the `<session>-handoff-deferred` file kept across a compaction, or that the hook never fires for subagents.
+
+The flaw this fixes, under the 2026-10-29 rule quoted above, is the mechanism prose itself, which the design's own header says drifts. The ruling covers `nc-systems/handoff/handoff-design.md` only; it changes no other design.
+
 ## Next action
 
-cold-read-research, the agent-seat that held the 2026-11-01 approval-walk, brings options 1, 2 and 5 to the user as one item of a later approval-walk, with the recommendation above, and records his choice in this GHI-MD.
+cold-read-research shows the user the old and new bullets from the draft above as an item of the approval-walk named above, recommending that the same pull request move line 20's facts into the threshold hook's module docstring, and, once he approves, opens the pull request that changes `nc-systems/handoff/handoff-design.md`. Option 5 is left to GHI [refresh-design: when a system's code lands, bring its design, build-slice plan and overview into line — removing, never revising](https://github.com/nedschorus/nedschorus/issues/670). When that pull request merges, this GHI-MD records the outcome and the issue closes.
 
 ## Related, not parents
 
