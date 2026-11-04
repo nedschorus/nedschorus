@@ -481,10 +481,11 @@ def record_follow_up_request_sent(arguments):
     except OSError as error:
         print(f"{PROGRAM}: the follow-up request was not recorded — the lock file "
               f"{state_file}.lock could not be opened: {error}.\n"
-              f"If the error names a cause you can fix, such as a missing directory, fix it, "
-              f"then run again: python3 scripts/{PROGRAM}.py --record-follow-up-request-sent\n"
-              f"If you cannot fix it, or the rerun fails again, send agent-seat reboot-test "
-              f"these lines with SendMessage, since it owns this program.", file=sys.stderr)
+              f"If the error names a cause you can fix, such as a missing directory, fix that "
+              f"cause, then run again: python3 scripts/{PROGRAM}.py --record-follow-up-request-sent\n"
+              f"If you cannot fix the cause, or the rerun fails again, send agent-seat "
+              f"reboot-test, with SendMessage, the whole error message your latest attempt printed, since "
+              f"it owns this program.", file=sys.stderr)
         return EXIT_REFUSED
     if lock is None:
         print(f"{PROGRAM}: the follow-up request was not recorded — a run of the test "
@@ -494,7 +495,7 @@ def record_follow_up_request_sent(arguments):
               f"--record-follow-up-request-sent\n"
               f"While the run still holds the lock, this refusal repeats; once it ends, the "
               f"command records the follow-up if the run that held the lock failed or "
-              f"stopped, and says no follow-up is owed if it passed.", file=sys.stderr)
+              f"stopped, and says no follow-up is owed if that run passed.", file=sys.stderr)
         return EXIT_REFUSED
     try:
         return record_follow_up_request_sent_under_lock(state_file)
