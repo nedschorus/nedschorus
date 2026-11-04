@@ -143,7 +143,7 @@ next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
 _session_handoff_field_names_spec = importlib.util.spec_from_file_location(
-    "session_handoff_field_names", Path(__file__).with_name("session-handoff-field-names.py"))
+    "session_handoff_field_names", Path(__file__).with_name("session-handoff-field-names-common.py"))
 session_handoff_field_names = importlib.util.module_from_spec(_session_handoff_field_names_spec)
 _session_handoff_field_names_spec.loader.exec_module(session_handoff_field_names)
 

@@ -219,8 +219,19 @@ def run_session_handoff_round_trip_cases(workspace: Path):
     check("round trip: the session-handoff-sequence-number comes back as the number written",
           writer.supervisor.counter_from(fields) == 12
           and fields.get(names.SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD) == "12", str(fields))
-    check("round trip: no field is written under the retired restart-counter name",
-          names.LEGACY_RESTART_COUNTER_FIELD not in fields, str(fields))
+    check("round trip: the number is also written under the retired restart-counter name",
+          fields.get(names.LEGACY_RESTART_COUNTER_FIELD) == "12", str(fields))
+    # The counter_from of handoff-supervisors started before the rename, which they keep running until their next handoff.
+    def pre_rename_counter_from(fields: dict):
+        raw = fields.get("restart-counter")
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+    check("a handoff-supervisor running pre-rename code reads the new writer's session-handoff",
+          pre_rename_counter_from(fields) == 12, str(fields))
     check("round trip: written-at, written-in and written-by-session come back",
           all(fields.get(name) for name in (names.WRITTEN_AT_FIELD, names.WRITTEN_IN_FIELD,
                                             names.WRITTEN_BY_SESSION_FIELD)), str(fields))

@@ -322,7 +322,7 @@ def run_missing_launcher_case(workspace: Path):
     # file directly or through a path constant.
     supervisor_home = workspace / "nc-systems" / "handoff"
     supervisor_home.mkdir(parents=True)
-    for supervisor_file in ("handoff-supervisor.py", "session-handoff-field-names.py",
+    for supervisor_file in ("handoff-supervisor.py", "session-handoff-field-names-common.py",
                             "handoff-user-review-of-agent-memory-stores-mark.py",
                             "handoff-architecture-overview-refresh-user-shown-mark.py",
                             "uncommitted-work-snapshots.py",

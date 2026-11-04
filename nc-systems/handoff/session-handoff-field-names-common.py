@@ -9,7 +9,7 @@ LEGACY_ names below.
 WRITTEN_AT_FIELD = "written-at"
 NEXT_STEP_FIELD = "next-step"
 SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD = "session-handoff-sequence-number"
-# Session-handoffs written before the rename carry this name; readers accept it until none is left on either machine.
+# Session-handoffs written before the rename carry only this name, and the writer still writes it beside the new one for handoff-supervisors running pre-rename code; readers accept it until none is left on either machine.
 LEGACY_RESTART_COUNTER_FIELD = "restart-counter"
 WRITTEN_IN_FIELD = "written-in"
 WRITTEN_BY_SESSION_FIELD = "written-by-session"

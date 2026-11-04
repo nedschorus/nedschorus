@@ -89,7 +89,7 @@ supervisor = importlib.util.module_from_spec(_supervisor_spec)
 _supervisor_spec.loader.exec_module(supervisor)
 
 _session_handoff_field_names_spec = importlib.util.spec_from_file_location(
-    "session_handoff_field_names", Path(__file__).with_name("session-handoff-field-names.py")
+    "session_handoff_field_names", Path(__file__).with_name("session-handoff-field-names-common.py")
 )
 field_names = importlib.util.module_from_spec(_session_handoff_field_names_spec)
 _session_handoff_field_names_spec.loader.exec_module(field_names)
@@ -371,6 +371,8 @@ def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_re
         f"{field_names.WRITTEN_AT_FIELD}: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
         f"{field_names.NEXT_STEP_FIELD}: {next_step}",
         f"{field_names.SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD}: {counter}",
+        # A handoff-supervisor still running pre-rename code reads only this name, and would never take over without it.
+        f"{field_names.LEGACY_RESTART_COUNTER_FIELD}: {counter}",
         # Compare directories, not session IDs: reincarnations share a directory but have distinct sessions.
         f"{field_names.WRITTEN_IN_FIELD}: {seat_directory}",
         f"{field_names.WRITTEN_BY_SESSION_FIELD}: {os.environ.get('CLAUDE_CODE_SESSION_ID', 'unknown')}",
