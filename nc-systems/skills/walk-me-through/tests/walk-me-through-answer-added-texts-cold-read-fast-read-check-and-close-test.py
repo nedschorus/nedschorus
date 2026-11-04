@@ -13,6 +13,7 @@ program's own output. The exit code is asserted on every case.
 """
 
 import contextlib
+import datetime
 import importlib.util
 import io
 import json
@@ -1405,6 +1406,7 @@ def test_the_summary_item_picks_the_order_and_headings_of_another_m_are_walked()
           closed.returncode == 0 and marker(case) == "#next_to_present item 7 of 8", case.minutes.read_text())
 
 
+FIX_NEXT_LINE = "#approval_walk_item_in_category_fix_next"
 UNNUMBERED_ITEMS_DOCUMENT = """# A walk whose waiting items have only titles
 
 ## Introduction
@@ -1419,11 +1421,15 @@ Recommendation: approve.
 
 ## two
 
+#approval_walk_item_in_category_fix_next
+
 #case_against none.
 
 Recommendation: approve.
 
 ## three
+
+#approval_walk_item_in_category_fix_next
 
 #case_against none.
 
@@ -1447,7 +1453,8 @@ def test_an_unnumbered_item_is_numbered_when_it_is_shown_and_nothing_else_is_ren
           and "\n## Item 2 of 4: two\n" in walk_document(case) and "\n## three\n" in walk_document(case)
           and "\n## Introduction\n" in walk_document(case)
           and "which gives item 2 of 4, the item" in closed.stdout, described(closed) + walk_document(case))
-    document = walk_document(case).replace("## three", "## a case the walk missed\n\n#case_against none.\n\n## three")
+    document = walk_document(case).replace("## three", f"## a case the walk missed\n\n"
+        f"{FIX_NEXT_LINE}\n\n#case_against none.\n\n## three")
     (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").write_text(document)
     case.run("check")
     closed = case.run("close")
@@ -1479,7 +1486,8 @@ def test_an_unnumbered_summary_heading_is_the_summary_item():
 
 
 def test_an_unnumbered_item_skips_a_number_a_waiting_item_already_holds():
-    document = SUMMARY_DOCUMENT.replace("## Item 2 of 5: two", "## a case the walk missed\n\n## Item 2 of 5: two")
+    document = SUMMARY_DOCUMENT.replace("## Item 2 of 5: two", f"## a case the walk missed\n\n"
+        f"{FIX_NEXT_LINE}\n\n## Item 2 of 5: two")
     case = summary_case(next_to_present="item 1 of 5")
     (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").write_text(rated(document))
     case.run("check")
@@ -1564,6 +1572,8 @@ No decision here.
 
 ## a case the walk missed
 
+#approval_walk_item_in_category_fix_next
+
 #case_against none.
 
 ## Item 2 of 3: two
@@ -1586,7 +1596,8 @@ def test_dotted_sub_step_headings_one_level_down_do_not_stop_an_added_item_being
 def test_close_numbers_the_new_item_a_finding_raised_and_holds_the_answer():
     case = Case(next_to_present="item 1 of 4", document=UNNUMBERED_ITEMS_DOCUMENT)
     case.run("check")
-    document = walk_document(case).replace("## two", "## the change a finding raised\n\n#case_against none.\n\n## two")
+    document = walk_document(case).replace("## two", f"## the change a finding raised\n\n"
+        f"{FIX_NEXT_LINE}\n\n#case_against none.\n\n## two")
     (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").write_text(document)
     closed = case.run("close", "--hold-answer-until-new-item-answered")
     check("close --hold-answer-until-new-item-answered numbers the item right after the answered one and holds the answer for it",
@@ -3014,6 +3025,176 @@ def test_a_file_or_path_git_lists_counts_as_a_fact_and_git_failing_counts_every_
           len(facts) == 1 and facts[0].startswith("every changed word, since `git ls-files` failed in "), repr(facts))
     check("an unchanged text touches no fact even when git ls-files fails",
           program.approval_walk_item_before_and_after_fixes_compare_for_changed_fact_words_needing_another_cold_read_fast_read("It runs a tool.", "It runs a tool.", not_a_checkout) == [], "")
+
+
+
+CATEGORY_TAG = "#approval_walk_item_in_category_"
+WAITING_ITEM_READ_STEP_NAME = "approval-walk-waiting-item-cold-read-fast-read"
+
+
+def unshown_item(title, *lines):
+    """An unnumbered walk-document item headed `## title`, with lines under it, rated and recommended."""
+    return "\n\n".join([f"## {title}", *lines, "#case_against none.", "Recommendation: approve."]) + "\n\n"
+
+
+def ordered_walk(*items):
+    """A walk-document whose item 1 is shown, then items, then an unnumbered summary item."""
+    return ("# A walk in which code picks the order\n\n## Item 1 of 9: one\n\n#case_against none.\n\n"
+            "Recommendation: approve.\n\n" + "".join(items) + "## Summary\n\nThe walk in short.\n")
+
+
+def titles_shown_in_turn(case, answers=None):
+    """Approve each waiting item in turn, or answer it with the check flags answers gives for the k-th close, and
+    return the title of the item close names next each time, until it names the summary item or close fails."""
+    shown = []
+    for turn in range(12):
+        case.run("check", *(answers or {}).get(turn, ()))
+        closed = case.run("close")
+        if closed.returncode != 0:
+            return shown + [f"close failed: {closed.stderr}"]
+        named = re.search(r"#next_to_present item ([\d.]+) of", marker(case))
+        if not named:
+            return shown
+        heading = re.search(rf"^## Item {re.escape(named[1])} of \d+(?: \(deferred[^)]*\))?: (.*)$",
+                            walk_document(case), re.M)
+        shown.append(heading[1] if heading else f"no heading for item {named[1]}")
+        if shown[-1] == "Summary":
+            return shown
+    return shown
+
+
+def test_unshown_items_are_shown_by_category_then_first_entered_day_then_walk_document_order():
+    case = Case(next_to_present="item 1 of 9", document=ordered_walk(
+        unshown_item("maintenance", f"{CATEGORY_TAG}fix_during_maintenance"),
+        unshown_item("an improvement", f"{CATEGORY_TAG}file_an_improvement_feature_or_change"),
+        unshown_item("next, entered later", f"{CATEGORY_TAG}fix_next", "#approval_walk_item_first_entered 2026-11-04"),
+        unshown_item("next, entered first", f"- **{CATEGORY_TAG}fix_next**",
+                     "#approval_walk_item_first_entered 2026-10-30"),
+        unshown_item("must fix, entered later", f"{CATEGORY_TAG}must_fix_now",
+                     "#approval_walk_item_first_entered 2026-11-02"),
+        unshown_item("must fix, same day, written first", f"{CATEGORY_TAG}must_fix_now",
+                     "#approval_walk_item_first_entered 2026-11-01"),
+        unshown_item("must fix, same day, written second", f"{CATEGORY_TAG}must_fix_now",
+                     "#approval_walk_item_first_entered 2026-11-01")))
+    shown = titles_shown_in_turn(case)
+    check("unshown items come by category, must fix now first and file an improvement last, then by the day each "
+          "first entered a walk, then in walk-document order, and the summary item stays last",
+          shown == ["must fix, same day, written first", "must fix, same day, written second",
+                    "must fix, entered later", "next, entered first", "next, entered later", "maintenance",
+                    "an improvement", "Summary"], f"{shown}\n{walk_document(case)}")
+    check("each item is numbered in the order it is shown, so no number is skipped or used twice",
+          sorted(int(number) for number in re.findall(r"^## Item (\d+) of", walk_document(case), re.M))
+          == list(range(1, 10)), walk_document(case))
+
+
+def test_an_item_comes_after_the_items_it_waits_on_and_an_item_that_unblocks_another_comes_as_early():
+    case = Case(next_to_present="item 1 of 9", document=ordered_walk(
+        unshown_item("next", f"{CATEGORY_TAG}fix_next"),
+        unshown_item("urgent but blocked", f"{CATEGORY_TAG}must_fix_now",
+                     "#approval_walk_item_waits_on The Prerequisite"),
+        unshown_item("the prerequisite", f"{CATEGORY_TAG}fix_during_maintenance")))
+    shown = titles_shown_in_turn(case)
+    check("an item comes after the item it waits on, named by its title in any case, and an item waited on comes as "
+          "early as the item waiting on it would, so a maintenance item that unblocks a must-fix-now item comes "
+          "before a fix-next item",
+          shown == ["the prerequisite", "urgent but blocked", "next", "Summary"], f"{shown}\n{walk_document(case)}")
+
+
+def test_an_unshown_item_waiting_on_a_deferred_item_comes_after_it():
+    case = Case(next_to_present="item 1 of 9", document=ordered_walk(
+        unshown_item("two", f"{CATEGORY_TAG}must_fix_now"),
+        unshown_item("three", f"{CATEGORY_TAG}must_fix_now", "#approval_walk_item_waits_on two"),
+        unshown_item("four", f"{CATEGORY_TAG}fix_next")))
+    shown = titles_shown_in_turn(case, answers={1: ("--deferred",)})
+    check("an item waiting on a shown item the user deferred is passed over until that item is decided, and the "
+          "shown item keeps its number",
+          shown == ["two", "four", "two", "three", "Summary"]
+          and re.search(r"^## Item 2 of \d+: two$", walk_document(case), re.M) is not None,
+          f"{shown}\n{walk_document(case)}")
+
+
+def test_close_writes_the_first_entered_day_once_into_each_unshown_item_that_has_none():
+    case = Case(next_to_present="item 1 of 9", document=ordered_walk(
+        unshown_item("two", f"{CATEGORY_TAG}fix_next"),
+        unshown_item("three", f"{CATEGORY_TAG}fix_next", "#approval_walk_item_first_entered 2026-10-01")))
+    before = datetime.date.today().isoformat()
+    case.run("check")
+    closed = case.run("close")
+    days = {before, datetime.date.today().isoformat()}
+    document = walk_document(case)
+    check("close writes `#approval_walk_item_first_entered <today>` under the heading of an unshown item with no "
+          "such line, leaves an item's own date alone, and shows the item first entered earlier first",
+          closed.returncode == 0
+          and any(f"## two\n\n#approval_walk_item_first_entered {day}\n\n{CATEGORY_TAG}fix_next" in document
+                  for day in days)
+          and document.count("#approval_walk_item_first_entered") == 2
+          and "#approval_walk_item_first_entered 2026-10-01" in document
+          and marker(case) == "#next_to_present item 2 of 4" and "\n## Item 2 of 4: three\n" in document,
+          described(closed) + document)
+    case.run("check")
+    case.run("close")
+    check("a later close writes no second date", walk_document(case).count("#approval_walk_item_first_entered") == 2,
+          walk_document(case))
+
+
+def refused_walk_order(name, *items, expected):
+    case = Case(next_to_present="item 1 of 9", document=ordered_walk(*items))
+    case.run("check")
+    document, minutes = walk_document(case), case.minutes.read_text()
+    closed = case.run("close")
+    check(f"close refuses, writing nothing, {name}",
+          closed.returncode == 1 and expected in closed.stderr and "nothing written" in closed.stderr
+          and "`#approval_walk_item_in_category_must_fix_now`" in closed.stderr and " close --cwd " in closed.stderr
+          and "Traceback" not in closed.stderr
+          and walk_document(case) == document and case.minutes.read_text() == minutes, described(closed))
+
+
+def test_close_refuses_an_unshown_item_it_cannot_place():
+    refused_walk_order("when an unshown item has no category line", unshown_item("two"),
+                       expected="the item `## two` in ")
+    refused_walk_order("when an unshown item names its category only inside its prose",
+                       unshown_item("two", f"The tag `{CATEGORY_TAG}fix_next` is not on a line of its own."),
+                       expected="has no `#approval_walk_item_in_category_<category>` line")
+    refused_walk_order("when an unshown item has two category lines",
+                       unshown_item("two", f"{CATEGORY_TAG}fix_next", f"{CATEGORY_TAG}must_fix_now"),
+                       expected="more than one category tag: `#approval_walk_item_in_category_fix_next`, "
+                                "`#approval_walk_item_in_category_must_fix_now`")
+    refused_walk_order("when an unshown item has two category tags on one line",
+                       unshown_item("two", f"{CATEGORY_TAG}fix_next {CATEGORY_TAG}fix_next"),
+                       expected="more than one category tag")
+    refused_walk_order("when an unshown item's category tag is not one of the four",
+                       unshown_item("two", f"{CATEGORY_TAG}soon"),
+                       expected="the category tag `#approval_walk_item_in_category_soon`, which is not one of the four")
+    refused_walk_order("when an unshown item waits on a title no item heading has",
+                       unshown_item("two", f"{CATEGORY_TAG}fix_next", "#approval_walk_item_waits_on tree"),
+                       expected="waits on `tree`, which is the title of no other item heading")
+    refused_walk_order("when an unshown item waits on itself",
+                       unshown_item("two", f"{CATEGORY_TAG}fix_next", "#approval_walk_item_waits_on two"),
+                       expected="waits on `two`, which is the title of no other item heading")
+    refused_walk_order("when unshown items wait on each other in a circle",
+                       unshown_item("two", f"{CATEGORY_TAG}fix_next", "#approval_walk_item_waits_on four"),
+                       unshown_item("three", f"{CATEGORY_TAG}fix_next", "#approval_walk_item_waits_on two"),
+                       unshown_item("four", f"{CATEGORY_TAG}fix_next", "#approval_walk_item_waits_on three"),
+                       expected="the items `## two`, `## three`, `## four` in ")
+    refused_walk_order("when an unshown item's first-entered date is not written YYYY-MM-DD",
+                       unshown_item("two", f"{CATEGORY_TAG}fix_next", "#approval_walk_item_first_entered 4 Nov"),
+                       expected="the line `#approval_walk_item_first_entered 4 Nov`, whose date is not a date")
+
+
+def test_the_read_step_refuses_an_unshown_item_it_cannot_place_and_close_goes_on_once_it_is_tagged():
+    case = Case(next_to_present="item 1 of 9", document=ordered_walk(unshown_item("two")))
+    read = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("the waiting item's read step refuses while an unshown item has no category, so the agent tags it before "
+          "the user answers",
+          read.returncode == 1 and "has no `#approval_walk_item_in_category_<category>` line" in read.stderr
+          and f" {WAITING_ITEM_READ_STEP_NAME} --cwd " in read.stderr, described(read))
+    document = walk_document(case).replace(
+        "## two\n", f"## two\n\n{CATEGORY_TAG}file_an_improvement_feature_or_change\n")
+    (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").write_text(document)
+    case.run("check")
+    closed = case.run("close")
+    check("once the item is tagged as the refusal says, close shows it",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 2 of 3", described(closed))
 
 
 
