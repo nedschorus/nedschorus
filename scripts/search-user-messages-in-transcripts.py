@@ -13,9 +13,11 @@ sdk-cli and whose prompts a program wrote, nor the summary Claude Code writes
 when it compacts a conversation, nor a prompt that the handoff-supervisor or
 crash recovery (scripts/recover-crashed-seats.py) starts or resumes an
 agent-session with, which this reader recognizes by those programs' own
-constants. A prompt an agent wrote and passed with --first-prompt-file, such as
-a new agent-seat's founding prompt, has no such text and is read as his. Turns
-written before Claude Code recorded an origin are read by their text alone."""
+constants. That includes a prompt passed to the handoff-supervisor with
+--first-prompt-file or --first-prompt, such as a new agent-seat's founding
+prompt, which the handoff-supervisor ends with a line of its own; such a prompt
+written before it did so has no such line and is read as his. Turns written
+before Claude Code recorded an origin are read by their text alone."""
 
 import argparse
 import glob
@@ -53,6 +55,7 @@ FRESH_SESSION_FROM_CONVERSATION_TAIL_PROMPT_PATTERN = re.compile(
 LAUNCH_PROMPT_PHRASES = (
     crash_recovery.IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER,
     crash_recovery.FIRST_PROMPT_AFTER_RECORDED_EXIT_MARKER,
+    handoff_supervisor.FIRST_PROMPT_FROM_LAUNCH_COMMAND_NOT_TYPED_BY_THE_USER_LINE,
 )
 
 
