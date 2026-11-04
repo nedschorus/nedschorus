@@ -177,11 +177,12 @@ def classify_placement(placement: str, source: str, finding_id: str,
                 f"holds, `ROW <n>` for the Table 1 row whose fault the finding "
                 f"names, `{PLACEMENT_TEST_SETUP_ARTIFACT}` when the finding is true "
                 f"only of the reader's checkout and tools, or `FALSE`; then run "
-                f"the scorer again.\n"
-                f"When the finding names a declined entry the list does not hold, "
-                f"place it FALSE and tell whoever asked for the score; do not edit "
-                f"the defect list, whose rows every published score was measured "
-                f"against.")
+                f"the same scorer command again. The scorer stops at the first "
+                f"such placement, so the rerun may show another.\n"
+                f"When the finding names a declined entry this list does not "
+                f"hold, the form is `FALSE`: say so to the agent or person who "
+                f"asked for the score, and do not edit the defect list, whose rows "
+                f"every published score was measured against.")
         return set(), "UNFIXED"
     if placement == PLACEMENT_TEST_SETUP_ARTIFACT:
         return set(), "TEST_SETUP_ARTIFACT"
@@ -538,8 +539,8 @@ def main() -> int:
                   f"{PLACEMENT_FILE_SUFFIX} and so on, after any runs already "
                   f"numbered.\n"
                   f"When they are two different reviewers, rename one of them "
-                  f"<another name>{PLACEMENT_FILE_SUFFIX}, using the reviewer named "
-                  f"inside the file.\n"
+                  f"<another name>{PLACEMENT_FILE_SUFFIX}, naming the reviewer "
+                  f"whose report it places.\n"
                   f"Then run the same scorer command again.", file=sys.stderr)
             return EXIT_BAD_INVOCATION
         files_by_reviewer[reviewer] = path
