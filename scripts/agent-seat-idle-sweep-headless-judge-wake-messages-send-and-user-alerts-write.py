@@ -406,7 +406,9 @@ def send_problems(outcome, seats, text):
     problems = [f"sent to {send['to']!r}, which is not {', '.join(seats)}"
                 for send in outcome.sends if entry_seat(send["to"]) not in seats]
     for send in outcome.sends:
-        if entry_seat(send["to"]) in seats and text is not None and send["message"].strip() != text:
+        # Compared as the delivery check compares: a sender may reflow the lines of the text.
+        if (entry_seat(send["to"]) in seats and text is not None
+                and " ".join(send["message"].split()) != " ".join(text.split())):
             problems.append(f"sent {entry_seat(send['to'])} a text other than the one code wrote")
     for seat in seats:
         if not any(send["succeeded"] and entry_seat(send["to"]) == seat for send in outcome.sends):

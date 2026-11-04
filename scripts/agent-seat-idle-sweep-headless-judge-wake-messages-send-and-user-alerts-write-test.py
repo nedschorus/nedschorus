@@ -537,6 +537,34 @@ machine.run(2)
 check("the message not yet in the transcript of a busy agent-seat: the delivery check waits",
       not machine.events("delivery_checked") and not machine.alerts(), machine.events())
 
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.script(sent_ok())
+machine.run(0)
+machine.transcripts["alpha"].write_text("{not json\n" + json.dumps(turn_end()) + "\n")
+machine.script()
+code, _ = machine.run(2)
+check("a transcript the delivery check cannot read: a read failure logged, the check left pending",
+      not machine.events("delivery_checked") and not machine.alerts()
+      and any("s-1.jsonl line 1" in event["error"] for event in machine.events("read_failure")),
+      machine.events())
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.script({"sends": [send_to("alpha", "Your handoff was put off\n at")],
+                "answer": {"sent": True, "reason": "r"}})
+machine.run(0)
+text = machine.claude_calls()[0]["prompt"].split("----------\n", 1)[1].rsplit("\n----------", 1)[0]
+machine.script({"sends": [send_to("alpha", text.replace(" ", "\n", 3))],
+                "answer": {"sent": True, "reason": "r"}})
+machine.run(1, "--state-directory", str(machine.root / "state-2"), "--log-file",
+            str(machine.root / "log-2.jsonl"))
+check("a sender that reflows the lines of code's text: no failure",
+      not [event for event in map(json.loads, (machine.root / "log-2.jsonl").read_text().splitlines())
+           if event["event"] == "headless_failed"], (machine.root / "log-2.jsonl").read_text())
+
 # --- read failures, the lock, and a failed invocation -----------------------------------------------
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
