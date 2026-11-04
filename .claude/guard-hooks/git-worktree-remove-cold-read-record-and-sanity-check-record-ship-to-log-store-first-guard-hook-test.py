@@ -204,6 +204,15 @@ shutil.rmtree(worktree / "sanity-check-records")
 shipper_calls = []
 
 
+def shippers_only(runner):
+    """Return a runner that injects runner into shipper calls only; the worktree listing runs real git."""
+    def runner_for_shippers(argv, **keywords):
+        if argv[0] == "git":
+            return subprocess.run(argv, **keywords)
+        return runner(argv, **keywords)
+    return runner_for_shippers
+
+
 def runner_recording_shipper_calls(argv, **keywords):
     shipper_calls.append(argv)
     return subprocess.run(argv, **keywords)
@@ -211,7 +220,7 @@ def runner_recording_shipper_calls(argv, **keywords):
 
 code, output = run_hook({"tool_name": "Bash", "cwd": str(checkout),
                          "tool_input": {"command": f"git worktree remove {worktree}"}},
-                        runner_recording_shipper_calls)
+                        shippers_only(runner_recording_shipper_calls))
 check("a worktree holding no records is let through silently, with no shipper run",
       code == 0 and output is None and shipper_calls == [], (code, output, shipper_calls))
 
@@ -227,20 +236,21 @@ def runner_answering(returncode, stdout, stderr=""):
     return runner
 
 
-code, output = run_hook(payload, runner_answering(0, ""))
+code, output = run_hook(payload, shippers_only(runner_answering(0, "")))
 check("a shipper that exits 0 and prints nothing refuses the removal, with its exit code",
       "Record " in (refusal(output) or "") and ": the shipper printed nothing (exit 0)\n" in refusal(output),
       output)
-code, output = run_hook(payload, runner_answering(1, "", "Traceback ...\nOSError: disk full\n"))
+code, output = run_hook(payload, shippers_only(runner_answering(1, "", "Traceback ...\nOSError: disk full\n")))
 check("a shipper that dies printing nothing refuses the removal, with its last stderr line",
       ": the shipper printed nothing (exit 1): OSError: disk full\n" in (refusal(output) or ""), output)
-code, output = run_hook(payload, runner_answering(2, "REFUSED: x — already in the store with different content"))
+code, output = run_hook(payload, shippers_only(
+    runner_answering(2, "REFUSED: x — already in the store with different content")))
 check("a shipper's REFUSED line refuses the removal and is quoted",
       ": REFUSED: x — already in the store with different content\n" in (refusal(output) or ""), output)
-code, output = run_hook(payload, runner_answering(-9, "shipped: x — 1 file added"))
+code, output = run_hook(payload, shippers_only(runner_answering(-9, "shipped: x — 1 file added")))
 check("a shipper killed by a signal refuses the removal, though it printed shipped:",
       "Refused on purpose:" in (refusal(output) or ""), output)
-code, output = run_hook(payload, runner_answering(0, "shipped: x — 1 file added"))
+code, output = run_hook(payload, shippers_only(runner_answering(0, "shipped: x — 1 file added")))
 check("shippers that print shipped: let the removal through", code == 0 and output is None, output)
 
 
@@ -250,7 +260,7 @@ def runner_timing_out(argv, **keywords):
 
 
 budget_line = f"not shipped: this hook's limit of {hook.SHIPPING_BUDGET_SECONDS} seconds for shipping ran out first"
-code, output = run_hook(payload, runner_timing_out)
+code, output = run_hook(payload, shippers_only(runner_timing_out))
 check("a shipper past the time limit refuses the removal",
       (refusal(output) or "").count(f": {budget_line}\n") == 2, output)
 times = iter([0, 0, hook.SHIPPING_BUDGET_SECONDS])
@@ -262,7 +272,7 @@ def runner_recording_timeout(argv, **keywords):
     return subprocess.CompletedProcess(argv, 0, "shipped: x", "")
 
 
-code, output = run_hook(payload, runner_recording_timeout, clock=lambda: next(times))
+code, output = run_hook(payload, shippers_only(runner_recording_timeout), clock=lambda: next(times))
 check("a record reached after the time limit ran out is not shipped and refuses the removal",
       timeouts_given == [hook.SHIPPING_BUDGET_SECONDS]
       and (refusal(output) or "").count(f": {budget_line}\n") == 1
@@ -303,6 +313,16 @@ check("a last path component two worktrees share finds no worktree",
 check("a last path component one worktree has finds that worktree",
       hook.worktree_directory(str(second_checkout), f"other/{second_worktree.name}", subprocess.run)
       == (second_checkout.parent / "other" / second_worktree.name))
+# git matches a word against the worktrees' last path components before it reads the word as a path.
+suffix_checkout, suffix_worktree = checkout_with_worktree("suffix-first")
+(suffix_checkout / suffix_worktree.name).mkdir()
+check("a word that is both an ordinary directory and one worktree's last path component finds the worktree",
+      hook.worktree_directory(str(suffix_checkout), suffix_worktree.name, subprocess.run) == suffix_worktree)
+check("a directory that is no listed worktree finds no worktree, since git refuses it",
+      hook.worktree_directory(str(suffix_checkout), ".git", subprocess.run) is None)
+check("a failing worktree listing takes a word naming a directory as that directory",
+      hook.worktree_directory(str(suffix_checkout), suffix_worktree.name, runner_failing_listing)
+      == (suffix_checkout / suffix_worktree.name))
 
 # Reading the command.
 check("a plain removal", removals("git worktree remove wt") == [("/work", "wt", None)], removals("git worktree remove wt"))
@@ -346,6 +366,26 @@ check("a later assignment holding an expansion unsets the name",
       removals("W=/a; W=$(pwd); git worktree remove $W") == [("/work", "$W", "$W")])
 check("a value in single quotes is taken as written",
       removals("W='/a b'; git worktree remove \"$W\"") == [("/work", "/a b", None)])
+check("a value of quoted and bare pieces run together is read whole",
+      removals('W="/repo"/wt; git worktree remove "$W"') == [("/work", "/repo/wt", None)],
+      removals('W="/repo"/wt; git worktree remove "$W"'))
+check("a value with a backslash cannot be read, and unsets an earlier value of the name",
+      removals('W=/a; W=/b\\ c; git worktree remove "$W"') == [("/work", "$W", "$W")],
+      removals('W=/a; W=/b\\ c; git worktree remove "$W"'))
+check("a wrapper's directory applies to the command string of bash -c",
+      removals("env -C /b/checkout bash -c 'git worktree remove ../wt'", "/a/checkout")
+      == [("/b/checkout", "../wt", None)],
+      removals("env -C /b/checkout bash -c 'git worktree remove ../wt'", "/a/checkout"))
+check("a variable in a wrapper's directory before bash -c cannot be read",
+      removals("env -C \"$D\" bash -c 'git worktree remove wt'") == [("/work", "wt", "$D")])
+
+# A slow shipment must be refused by the hook, not cut off by Claude Code, which lets the command through.
+settings = json.loads((hook.REPOSITORY_ROOT / ".claude" / "settings.json").read_text())
+hook_timeouts = [entry.get("timeout") for group in settings["hooks"]["PreToolUse"] for entry in group["hooks"]
+                 if HOOK_SCRIPT.name in entry.get("command", "")]
+check("the hook's timeout in .claude/settings.json exceeds its shipping limit plus its worktree listing",
+      len(hook_timeouts) == 1 and isinstance(hook_timeouts[0], (int, float))
+      and hook_timeouts[0] > hook.SHIPPING_BUDGET_SECONDS + hook.GIT_TIMEOUT_SECONDS, hook_timeouts)
 
 # A worktree path set by NAME=value has its records shipped before the removal.
 checkout, worktree = checkout_with_worktree("assigned")
@@ -378,7 +418,7 @@ check("the notice's W=<path> form is read",
       removals('W=/a/wt; git worktree remove "$W"') == [("/work", "/a/wt", None)])
 code, output = run_hook({"tool_name": "Bash", "cwd": str(checkout), "tool_input": {
     "command": f"for w in x; do git worktree remove $w; done; git worktree remove {worktree}"}},
-    runner_answering(1, "FAILED: unread-doc-2026-11-03 — ned-box unreachable"))
+    shippers_only(runner_answering(1, "FAILED: unread-doc-2026-11-03 — ned-box unreachable")))
 check("a failed shipment is refused even when another removal in the command cannot be read",
       (refusal(output) or "").startswith("Refused on purpose:"), output)
 for shipper in ("nc-systems/cold-read/cold-read-record-ship.py", "scripts/sanity-check-record-ship.py"):

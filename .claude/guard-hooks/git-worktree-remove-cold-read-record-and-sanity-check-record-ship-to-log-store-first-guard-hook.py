@@ -22,20 +22,24 @@ What it reads: every simple command, through the shared shell module on
 tree-sitter-bash, whose program, after wrappers such as env and timeout, is
 git with the subcommand `worktree remove`; the directory git runs in is the
 hook's cwd, changed by a literal cd before it, an env -C or sudo -D wrapper,
-and git's -C. The command string of bash, sh or zsh -c is read the same way.
+and git's -C. The command string of bash, sh or zsh -c is read the same way,
+in the directory the wrappers in front of that shell set.
 A `$NAME` or `${NAME}` in the worktree path, a cd directory or a -C
 directory is replaced by the value a literal NAME=value anywhere in the
 command text gives it, the last such assignment winning, since the shell
 reader does not return bare assignments; this ignores order and scope, so a
 variable assigned twice can be read as the wrong path, which ships the
-wrong worktree's records and leaves the removed one's unshipped. A path
-still holding an expansion, such as a loop variable or a command
-substitution, cannot be read: the command is let through, and the agent is
-told in additionalContext that its records were not shipped. Refusing it
-instead would stop the many scripted removals of scratch worktrees agents
-run. A worktree path that is not a directory is looked up as git does, as
-the last path components of one worktree `git worktree list` names; a path
-that names no worktree is let through, since git refuses it too. Not read:
+wrong worktree's records and leaves the removed one's unshipped. A value
+the hook cannot read whole, such as one holding a backslash, unsets the
+name. A path still holding an expansion, such as a loop variable or a
+command substitution, cannot be read: the command is let through, and the
+agent is told in additionalContext that its records were not shipped.
+Refusing it instead would stop the many scripted removals of scratch
+worktrees agents run. The worktree word is resolved in git's order: first
+as the last path components of exactly one worktree `git worktree list`
+names, then as the path of a listed worktree; a word that matches neither
+is let through, since git refuses it too. When the listing fails, a word
+naming a directory is taken as that directory. Not read:
 the remote command of ssh, commands run by eval or a script file, removals a
 program makes itself, and removals typed in a terminal or by a Codex agent.
 Walk files under docs/walk/, which scripts/clean-worktrees.py also ships,
@@ -84,9 +88,12 @@ GIT_GLOBAL_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace
 WRAPPER_DIRECTORY_OPTIONS = {("env", "-C"), ("env", "--chdir"), ("sudo", "-D"), ("sudo", "--chdir")}
 # A word the shell expands at run time; the reader keeps it as written.
 UNREADABLE_WORD_PATTERN = re.compile(r"[$`*?\[]")
-LITERAL_ASSIGNMENT_PATTERN = re.compile(
-    r"""(?:^|(?<=[\s;&|(]))(?:export\s+|declare\s+-x\s+|local\s+)?([A-Za-z_][A-Za-z0-9_]*)="""
-    r"""("[^"`]*"|'[^']*'|[^\s;&|`'"()<>]*)""")
+ASSIGNMENT_NAME_PATTERN = re.compile(
+    r"""(?:^|(?<=[\s;&|(]))(?:export\s+|declare\s+-x\s+|local\s+)?([A-Za-z_][A-Za-z0-9_]*)=""")
+# Quoted and bare pieces run together into one value, as in "/repo"/wt, up to where the shell word ends.
+ASSIGNMENT_VALUE_PIECE_PATTERN = re.compile(r""""([^"`\\]*)"|'([^']*)'|([^\s;&|`'"()<>\\]+)""")
+WHOLE_ASSIGNMENT_VALUE_PATTERN = re.compile(
+    r"""(?:"[^"`\\]*"|'[^']*'|[^\s;&|`'"()<>\\])*(?=$|[\s;&|)<>])""")
 VARIABLE_REFERENCE_PATTERN = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
@@ -156,24 +163,36 @@ def variables_substituted(word, variables):
 
 
 def literal_shell_variables(command):
-    """Return {NAME: value} for each NAME=value in the command text whose value holds no expansion once
-    the earlier assignments are put in; a later assignment wins, and one left holding an expansion
-    removes the name."""
+    """Return {NAME: value} for each NAME=value in the command text whose value can be read whole and
+    holds no expansion once the earlier assignments are put in; a later assignment wins, and one that
+    cannot be read removes the name."""
     variables = {}
-    for name, value in LITERAL_ASSIGNMENT_PATTERN.findall(command):
-        if value.startswith("'"):
-            variables[name] = value[1:-1]
-            continue
-        if value.startswith('"'):
-            value = value[1:-1]
-        elif value == "~" or value.startswith("~/"):
-            value = os.path.expanduser(value)
-        value = variables_substituted(value, variables)
-        if UNREADABLE_WORD_PATTERN.search(value):
+    for name_match in ASSIGNMENT_NAME_PATTERN.finditer(command):
+        name = name_match.group(1)
+        whole = WHOLE_ASSIGNMENT_VALUE_PATTERN.match(command, name_match.end())
+        value = None if whole is None else assignment_value(whole.group(0), variables)
+        if value is None:
             variables.pop(name, None)
         else:
             variables[name] = value
     return variables
+
+
+def assignment_value(text, variables):
+    """Return the value the shell gives an assignment written as text, or None when it holds an expansion."""
+    pieces = []
+    for double_quoted, single_quoted, bare in ASSIGNMENT_VALUE_PIECE_PATTERN.findall(text):
+        if not double_quoted and not bare:
+            pieces.append(single_quoted)
+            continue
+        piece = double_quoted or bare
+        if bare and not pieces and (bare == "~" or bare.startswith("~/")):
+            piece = os.path.expanduser(bare)
+        piece = variables_substituted(piece, variables)
+        if UNREADABLE_WORD_PATTERN.search(piece):
+            return None
+        pieces.append(piece)
+    return "".join(pieces)
 
 
 def directory_joined(base, target):
@@ -252,47 +271,56 @@ def worktree_removals_in_command(command, working_directory, variables=None):
         if any(is_program(program, runner) for runner in shell_reader.SHELL_STRING_RUNNERS):
             inner = shell_reader.shell_command_string(arguments)
             if inner is not None:
-                removals.extend((inner_directory, word, unreadable or inner_unreadable)
+                shell_directory, shell_unreadable = directory_with_override(
+                    directory, unreadable, directory_a_wrapper_sets(words), variables)
+                removals.extend((inner_directory, word, shell_unreadable or inner_unreadable)
                                 for inner_directory, word, inner_unreadable
-                                in worktree_removals_in_command(inner, directory, variables))
+                                in worktree_removals_in_command(inner, shell_directory, variables))
             continue
         found = worktree_remove_directory_and_targets(words)
         if found is None:
             continue
         override, targets = found
-        git_directory = directory
-        if override is not None:
-            override = variables_substituted(override, variables)
-            if UNREADABLE_WORD_PATTERN.search(override):
-                unreadable = unreadable or str(override)
-            else:
-                git_directory = os.path.normpath(directory_joined(directory, override))
+        git_directory, git_unreadable = directory_with_override(directory, unreadable, override, variables)
         for target in targets:
             target = variables_substituted(target, variables)
-            target_unreadable = unreadable or (str(target) if UNREADABLE_WORD_PATTERN.search(target) else None)
+            target_unreadable = git_unreadable or (str(target) if UNREADABLE_WORD_PATTERN.search(target) else None)
             removals.append((str(git_directory), str(directory_joined(None, target)), target_unreadable))
     return removals
+
+
+def directory_with_override(directory, unreadable, override, variables):
+    """Return (directory, unreadable word or None) once a wrapper's or git's -C directory override applies."""
+    if override is None:
+        return directory, unreadable
+    override = variables_substituted(override, variables)
+    if UNREADABLE_WORD_PATTERN.search(override):
+        return directory, unreadable or str(override)
+    return os.path.normpath(directory_joined(directory, override)), unreadable
 
 
 def worktree_directory(directory, word, runner):
     """Return the worktree directory git would remove for word run in directory, or None.
 
-    git takes a path, or the last path components of one worktree's path.
+    git's own order: the last path components of exactly one listed worktree, then the path of a
+    listed worktree. Without a listing, a word naming a directory is taken as that directory.
     """
     path = Path(directory_joined(directory, word))
-    if path.is_dir():
-        return path.resolve()
     try:
         listing = runner(["git", "-C", str(directory), "worktree", "list", "--porcelain", "-z"],
                          capture_output=True, timeout=GIT_TIMEOUT_SECONDS, check=False)
     except (OSError, subprocess.TimeoutExpired):
-        return None
-    if listing.returncode != 0:
-        return None
+        listing = None
+    if listing is None or listing.returncode != 0:
+        return path.resolve() if path.is_dir() else None
+    listed = [Path(record.path) for record in git_output.worktree_records(listing.stdout)]
     suffix = "/" + word.strip("/")
-    matches = [record.path for record in git_output.worktree_records(listing.stdout)
-               if record.path.endswith(suffix)]
-    return Path(matches[0]) if len(matches) == 1 and Path(matches[0]).is_dir() else None
+    by_suffix = [worktree for worktree in listed if str(worktree).endswith(suffix)]
+    if len(by_suffix) == 1:
+        return by_suffix[0] if by_suffix[0].is_dir() else None
+    resolved = os.path.realpath(path)
+    by_path = [worktree for worktree in listed if os.path.realpath(worktree) == resolved]
+    return by_path[0] if by_path and by_path[0].is_dir() else None
 
 
 def clean_worktrees_module():
