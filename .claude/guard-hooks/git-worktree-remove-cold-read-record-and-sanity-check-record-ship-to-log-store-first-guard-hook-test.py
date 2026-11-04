@@ -433,6 +433,34 @@ check("a wrapper's directory applies to the command string of bash -c",
 check("a variable in a wrapper's directory before bash -c cannot be read",
       removals("env -C \"$D\" bash -c 'git worktree remove wt'") == [("/work", "wt", "$D")])
 
+# The shell expands the leading ~ of an unquoted word before git sees it.
+check("a worktree word starting with ~/ is expanded",
+      removals("git worktree remove ~/wt") == [("/work", os.path.expanduser("~/wt"), None)],
+      removals("git worktree remove ~/wt"))
+check("a worktree word starting with ~user/ is expanded",
+      removals("git worktree remove ~root/wt") == [("/work", os.path.expanduser("~root/wt"), None)],
+      removals("git worktree remove ~root/wt"))
+check("a cd to a directory starting with ~/ is expanded",
+      removals("cd ~/repo; git worktree remove wt") == [(os.path.expanduser("~/repo"), "wt", None)],
+      removals("cd ~/repo; git worktree remove wt"))
+check("a cd with no directory goes to the home directory",
+      removals("cd; git worktree remove wt") == [(os.path.expanduser("~"), "wt", None)],
+      removals("cd; git worktree remove wt"))
+check("a ~ before a variable is expanded and the variable read",
+      removals("X=wt; git worktree remove ~/$X") == [("/work", os.path.expanduser("~/wt"), None)],
+      removals("X=wt; git worktree remove ~/$X"))
+check("a quoted ~ is kept as written",
+      removals('git worktree remove "~/wt"') == [("/work", "~/wt", None)], removals('git worktree remove "~/wt"'))
+check("a ~ that a variable's value brings in is kept as written, as the shell keeps it",
+      removals("W='~/wt'; git worktree remove $W") == [("/work", "~/wt", None)],
+      removals("W='~/wt'; git worktree remove $W"))
+tilde_checkout, tilde_worktree = checkout_with_worktree("tilde")
+code, output, stderr = run_hook_process(f"git worktree remove ~/{tilde_worktree.name}", tilde_checkout,
+                                        dict(os.environ, HOME=str(tilde_worktree.parent)))
+check("a worktree named through ~/ has its records shipped and the removal let through",
+      code == 0 and output is None
+      and (STORE / "cold-read-records" / "tilde-doc-2026-11-03" / "fast-read.md").is_file(), (code, output, stderr))
+
 # A slow shipment must be refused by the hook, not cut off by Claude Code, which lets the command through.
 settings = json.loads((hook.REPOSITORY_ROOT / ".claude" / "settings.json").read_text())
 hook_timeouts = [entry.get("timeout") for group in settings["hooks"]["PreToolUse"] for entry in group["hooks"]

@@ -164,7 +164,11 @@ def distinct(values):
 
 def variables_substituted(word, variables):
     """Return every reading of word with each $NAME and ${NAME} replaced by each value variables gives
-    the name; a name not there, or a value that cannot be read, stays as written."""
+    the name; a name not there, or a value that cannot be read, stays as written.
+
+    Each reading keeps the word's tilde mark, so directory_joined expands a ~ the shell would; a ~
+    a value brings in stays as written, as the shell leaves it.
+    """
     readings, position = [""], 0
     for match in VARIABLE_REFERENCE_PATTERN.finditer(word):
         values = [match.group(0) if value is None else value
@@ -172,9 +176,9 @@ def variables_substituted(word, variables):
         readings = distinct(reading + word[position:match.start()] + value
                             for reading in readings for value in values)
         position = match.end()
-    # A ~ the shell would expand stays marked only on a word something was put into.
-    return distinct(os.path.expanduser(reading) if reading != word and reading.startswith("~/") else reading
-                    for reading in (reading + word[position:] for reading in readings))
+    tilde_marked = isinstance(word, shell_reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand)
+    return distinct(shell_reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand(reading + word[position:])
+                    if tilde_marked else reading + word[position:] for reading in readings)
 
 
 def literal_shell_variables(command):
@@ -295,7 +299,7 @@ def worktree_removals_in_command(command, working_directory, variables=None):
         program, arguments = words[index], words[index + 1:]
         if is_program(program, "cd"):
             # The last word, so that an option such as -P is not read as the directory.
-            targets = variables_substituted(arguments[-1], variables) if arguments else ["~"]
+            targets = variables_substituted(arguments[-1], variables) if arguments else [os.path.expanduser("~")]
             directories[shells] = distinct(
                 (directory, str(target)) if UNREADABLE_WORD_PATTERN.search(target)
                 else (os.path.normpath(directory_joined(directory, target)), None)
