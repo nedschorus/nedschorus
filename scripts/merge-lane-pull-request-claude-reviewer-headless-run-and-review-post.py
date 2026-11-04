@@ -21,7 +21,7 @@ under the worktrees and outputs directory, given on stdin, because
 reviewer runs as
 
   claude -p --json-schema <schema> --output-format json --permission-mode dontAsk
-      --allowedTools Read Grep Glob Bash WebFetch WebSearch
+      --settings '{"advisorModel": ""}' --allowedTools Read Grep Glob Bash WebFetch WebSearch
 
 in pr<n>-head, which step 1 built detached at the nc-head-commit; a refused
 tool call does not wait for anyone, and is listed in the output's
@@ -99,6 +99,13 @@ _common_spec = importlib.util.spec_from_file_location(
         "merge-lane-pull-request-helpers-common-options-paths-and-token.py"))
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
+
+_advisor_settings_spec = importlib.util.spec_from_file_location(
+    "claude_headless_run_settings_with_advisor_turned_off_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "claude-headless-run-settings-with-advisor-turned-off-common.py")
+advisor_settings = importlib.util.module_from_spec(_advisor_settings_spec)
+_advisor_settings_spec.loader.exec_module(advisor_settings)
 run_all_test_suites = common.run_all_test_suites
 
 REFUSED = ("PR {number}: Claude review not run: {reason}.\n"
@@ -216,7 +223,9 @@ def run_reviewer(schema_text, brief, head_worktree, environment, time_limit):
     """Return (exit code or None when killed at the time limit, stdout, stderr)."""
     process = subprocess.Popen(
         ["claude", "-p", "--json-schema", schema_text, "--output-format", "json",
-         "--permission-mode", "dontAsk", "--allowedTools", *ALLOWED_TOOLS],
+         "--permission-mode", "dontAsk",
+         "--settings", advisor_settings.claude_headless_run_settings_json_with_advisor_turned_off(),
+         "--allowedTools", *ALLOWED_TOOLS],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         cwd=head_worktree, env=environment, start_new_session=True)
     timed_out = False
@@ -262,6 +271,7 @@ def remove_reviewer_worktrees(head_worktree, number):
 
 def resume_command(session_id):
     return shlex.join(["claude", "-p", "--resume", session_id, "--permission-mode", "dontAsk",
+                       "--settings", advisor_settings.claude_headless_run_settings_json_with_advisor_turned_off(),
                        "--allowedTools", *ALLOWED_TOOLS])
 
 

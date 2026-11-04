@@ -39,7 +39,6 @@ it up with no change here.
 """
 
 import importlib.util
-import json
 import pathlib
 import sys
 
@@ -48,6 +47,13 @@ _common_spec = importlib.util.spec_from_file_location(
 )
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
+
+_advisor_settings_spec = importlib.util.spec_from_file_location(
+    "claude_headless_run_settings_with_advisor_turned_off_common",
+    pathlib.Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+    / "claude-headless-run-settings-with-advisor-turned-off-common.py")
+advisor_settings = importlib.util.module_from_spec(_advisor_settings_spec)
+_advisor_settings_spec.loader.exec_module(advisor_settings)
 
 PROGRAM = "cold-read-claude-cell"
 
@@ -81,8 +87,8 @@ CREDENTIAL_READ_DENY_RULES = (
     + [f"Read(//**/{pattern})" for pattern in common.CREDENTIAL_FILE_NAME_PATTERNS]
     + [f"Read(/{path})" for path in common.reviewer_program_login_files()]
 )
-SETTINGS = json.dumps({"disableAllHooks": True,
-                       "permissions": {"deny": CREDENTIAL_READ_DENY_RULES}})
+SETTINGS = advisor_settings.claude_headless_run_settings_json_with_advisor_turned_off(
+    {"disableAllHooks": True, "permissions": {"deny": CREDENTIAL_READ_DENY_RULES}})
 
 
 def invocation_builder(effort: str):

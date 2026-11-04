@@ -170,6 +170,13 @@ _git_output_spec = importlib.util.spec_from_file_location(
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
+_advisor_settings_spec = importlib.util.spec_from_file_location(
+    "claude_headless_run_settings_with_advisor_turned_off_common",
+    SCRIPT_DIRECTORY.parent / "nc-systems" / "general-tools"
+    / "claude-headless-run-settings-with-advisor-turned-off-common.py")
+advisor_settings = importlib.util.module_from_spec(_advisor_settings_spec)
+_advisor_settings_spec.loader.exec_module(advisor_settings)
+
 AGENT_BOX = os.environ.get("NEDSCHORUS_AGENT_BOX", "ned")
 # AGENT_BOX is the Mac's ssh alias for the box, which the box itself cannot resolve.
 NED_BOX_HOSTNAME = "ned-box"
@@ -564,6 +571,7 @@ def run_claude(prompt: str, resume_session_id, seat_dir: Path, timeout_seconds: 
     # The prompt goes on stdin: one argument may not exceed 128 KiB on
     # Linux, and a draft GHI-MD with its diff can be larger.
     command = ["claude", "-p", "--output-format", "json",
+              "--settings", advisor_settings.claude_headless_run_settings_json_with_advisor_turned_off(),
               "--setting-sources", "user",
               "--permission-mode", "bypassPermissions", "--model", GHI_GUIDE_AGENT_MODEL]
     if resume_session_id:

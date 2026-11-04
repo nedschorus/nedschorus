@@ -340,7 +340,7 @@ def main():
               "and no prompt argument after them",
               lambda: call.get("argv") == ["-p", "--json-schema", SCHEMA.read_text(),
                                            "--output-format", "json", "--permission-mode",
-                                           "dontAsk", "--allowedTools", "Read", "Grep", "Glob",
+                                           "dontAsk", "--settings", '{"advisorModel": ""}', "--allowedTools", "Read", "Grep", "Glob",
                                            "Bash", "WebFetch", "WebSearch"],
               case.detail)
         check("the brief is the reviewer's standard input, and it runs in the head worktree",
@@ -372,7 +372,8 @@ def main():
               == f"session-77\n{case.head_worktree}\n", case.detail)
         check("the follow-up command is printed whole, with where to run it",
               lambda: f"run from {case.head_worktree}" in case.stdout
-              and "claude -p --resume session-77 --permission-mode dontAsk --allowedTools Read "
+              and "claude -p --resume session-77 --permission-mode dontAsk "
+              "--settings '{\"advisorModel\": \"\"}' --allowedTools Read "
                   "Grep Glob Bash WebFetch WebSearch" in case.stdout, case.detail)
         check("each refused tool call is printed",
               lambda: "the reviewer was refused a Bash call it asked for: rm -rf /tmp/x"

@@ -322,6 +322,13 @@ _next_step_lines_spec = importlib.util.spec_from_file_location(
     / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
+
+_advisor_settings_spec = importlib.util.spec_from_file_location(
+    "claude_headless_run_settings_with_advisor_turned_off_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "claude-headless-run-settings-with-advisor-turned-off-common.py")
+advisor_settings = importlib.util.module_from_spec(_advisor_settings_spec)
+_advisor_settings_spec.loader.exec_module(advisor_settings)
 # The Codex cells' permission profile, as it appears in their sessions.
 CODEX_CREDENTIAL_DENYING_PERMISSION_PROFILE = "sanity-check-no-credentials"
 
@@ -624,6 +631,7 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
             "--model", model,
             "--effort", REASONING_EFFORT,
             "--output-format", "text",
+            "--settings", advisor_settings.claude_headless_run_settings_json_with_advisor_turned_off(),
             "--allowedTools", "Read,Grep,Glob,WebSearch,WebFetch,Write",
             # User settings only: this repository's .claude/settings.json wires
             # Stop hooks such as checkout-freshness-catch-up.py, which speak

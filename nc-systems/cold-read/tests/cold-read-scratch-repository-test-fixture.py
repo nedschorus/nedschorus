@@ -96,6 +96,9 @@ def commit_seeded_cold_read_scratch_repository(repository):
     # the shared removal module.
     (repository / "nc-systems" / "general-tools").mkdir(parents=True)
     shutil.copy2(GIT_OUTPUT_MODULE, repository / "nc-systems" / "general-tools")
+    shutil.copy2(SYSTEM_DIRECTORY.parent / "general-tools"
+                 / "claude-headless-run-settings-with-advisor-turned-off-common.py",
+                 repository / "nc-systems" / "general-tools")
     shutil.copy2(GIT_REDIRECTING_REMOVAL_MODULE, repository / "nc-systems" / "general-tools")
     shutil.copy2(NED_BOX_HOME_MODULE, repository / "nc-systems" / "general-tools")
     # The records tree is gitignored in the real repository, which is what

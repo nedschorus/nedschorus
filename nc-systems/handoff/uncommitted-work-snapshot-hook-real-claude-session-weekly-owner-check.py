@@ -97,6 +97,11 @@ def module_loaded_by_path(name, path):
     return module
 
 
+advisor_settings = module_loaded_by_path(
+    "claude_headless_run_settings_with_advisor_turned_off_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "claude-headless-run-settings-with-advisor-turned-off-common.py")
+
 mark = module_loaded_by_path("handoff_user_review_of_agent_memory_stores_mark",
                              SYSTEM_DIRECTORY / "handoff-user-review-of-agent-memory-stores-mark.py")
 runner = module_loaded_by_path("run_all_test_suites",
@@ -134,7 +139,7 @@ def make_scratch_clone(clone):
 
 def hook_settings_json(clone):
     command = f"{shlex.quote(sys.executable)} {shlex.quote(str(clone / HOOK_RELATIVE))}"
-    return json.dumps({"hooks": {"PostToolUse": [
+    return advisor_settings.claude_headless_run_settings_json_with_advisor_turned_off({"hooks": {"PostToolUse": [
         {"matcher": "Bash", "hooks": [{"type": "command", "command": command}]}]}})
 
 

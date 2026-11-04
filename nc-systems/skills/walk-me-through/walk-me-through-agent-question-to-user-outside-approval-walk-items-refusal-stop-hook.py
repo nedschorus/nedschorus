@@ -330,6 +330,11 @@ def load_module(name, path):
     return module
 
 
+advisor_settings = load_module(
+    "claude_headless_run_settings_with_advisor_turned_off_common",
+    REPOSITORY_TOP / "nc-systems" / "general-tools"
+    / "claude-headless-run-settings-with-advisor-turned-off-common.py")
+
 walk_finder = load_module("walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
                           WALK_FINDER_FILE)
 current_item_hook = load_module("walk_me_through_current_item_shown_to_user_after_each_agent_message_stop_hook",
@@ -508,7 +513,7 @@ def model_judgement(message_lines, question_like_lines, total, waiting, waiting_
         lines="\n".join(f"{number}. {line}" for number, line in enumerate(question_like_lines, 1)))
     command = ["claude", "-p", "--model", MODEL, "--output-format", "json",
                "--json-schema", json.dumps(MODEL_SCHEMA), "--system-prompt", MODEL_SYSTEM_PROMPT,
-               "--tools", "", "--settings", json.dumps({"disableAllHooks": True}),
+               "--tools", "", "--settings", advisor_settings.claude_headless_run_settings_json_with_advisor_turned_off({"disableAllHooks": True}),
                # Without this every check would leave a session file behind.
                "--no-session-persistence"]
     try:
