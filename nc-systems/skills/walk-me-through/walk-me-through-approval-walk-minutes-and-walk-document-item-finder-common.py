@@ -602,8 +602,8 @@ def waiting_item_units(document, value, numbers, total, parser, all_units=None):
             f"which one the minutes name: if those headings give different totals, as `of 9` and `of 10` do, end "
             f"the minutes with the line `#next_to_present item N of M`, N and M copied from the heading you mean, "
             f"as in `#next_to_present item 4 of 9` for `## Item 4 of 9: <the point>`; otherwise, in the "
-            f"walk-document, either write `revised` right after the count of the heading you mean, as in "
-            f"`## Item 4 of 9 revised: <the point>`, or start the text of each heading you do not mean with "
-            f"`Withdrawn`, as in `## Withdrawn: Item 4 of 9: <the point>`.")
+            f"walk-document, start the text of each heading you do not mean with `Withdrawn`, as in "
+            f"`## Withdrawn: Item 4 of 9: <the point>`, or, only when the heading you mean comes after every other "
+            f"heading for that item, write `revised` right after its count instead, as in `## Item 4 of 9 revised: <the point>`.")
     shown_total = total if total is not None else approval_walk_item_count(all_units)
     return shown_total, [unit for unit in all_units if unit in chosen]

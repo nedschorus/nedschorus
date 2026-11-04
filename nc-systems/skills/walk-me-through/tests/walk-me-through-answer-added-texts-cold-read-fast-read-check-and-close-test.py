@@ -1986,6 +1986,25 @@ def test_check_refuses_a_walk_document_close_would_refuse_before_any_fast_read()
               and case.minutes.read_text() == before, described(result))
 
 
+def test_following_the_repeated_heading_refusal_clears_it_whichever_heading_is_meant():
+    first, second = "## Item 2 of 3: first", "## Item 2 of 3: second"
+    layout = ("# W\n\n## Item 1 of 3: one\n\n{first}\n\n#new \"First.\"\n\n{second}\n\n#new \"Second.\"\n\n"
+              "## Item 3 of 3: summary\n")
+    refused = Case(next_to_present="item 2 of 3", document=layout.format(first=first, second=second)).run("check")
+    check("the repeated-heading refusal offers `revised` only for the last of the headings",
+          refused.returncode == 1 and "only when the heading you mean comes after every other heading for that item" in refused.stderr,
+          described(refused))
+    for meant, first_heading, second_heading, read in (
+            ("the first, the second withdrawn", first, "## Withdrawn: Item 2 of 3: second", "First.\n"),
+            ("the second, the first withdrawn", "## Withdrawn: Item 2 of 3: first", second, "Second.\n"),
+            ("the second, marked revised", first, "## Item 2 of 3 revised: second", "Second.\n")):
+        case = Case(next_to_present="item 2 of 3",
+                    document=layout.format(first=first_heading, second=second_heading))
+        result = case.run("check")
+        check(f"an agent that means {meant} and does as the refusal says is not refused again",
+              result.returncode == 0 and case.calls.read_text() == read, described(result))
+
+
 def test_each_parts_answer_is_recorded_and_close_records_each_parts_outcome():
     for flags, answered, recorded in (
             (("--part-answer", "2=d", "--part-answer", "1=AO"), "part 1 approved #approved_obvious, part 2 disapproved",
