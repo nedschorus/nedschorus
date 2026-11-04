@@ -20,7 +20,7 @@ _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 HERE = Path(__file__).resolve().parents[1]
-PROGRAM = HERE / "walk-me-through-user-alert-insert-after-waiting-item-raise-item-count-and-record-in-walk-minutes.py"
+PROGRAM = HERE / "walk-me-through-user-alert-insert-as-unnumbered-item-after-waiting-item-and-record-in-walk-minutes.py"
 _finder_spec = importlib.util.spec_from_file_location(
     "walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
     HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py")
@@ -122,7 +122,10 @@ def run_one_alert_cases(root):
           and minutes.count("#next_to_present") == 1, minutes)
     check("the output says what was added and tells the agent to write the case against and recommendation",
           "Added the unnumbered item `## merge-lane-2 is down, and recovery refuses it`" in result.stdout
-          and "Recommendation:" in result.stdout and "`#case_against <rating>:" in result.stdout, result.stdout)
+          and "Recommendation:" in result.stdout and "`#case_against <rating>:" in result.stdout
+          and "`#case_against none.`" in result.stdout, result.stdout)
+    check("an alert title that reads as no item heading keeps its words, with no prefix",
+          "User alert: " not in document, document)
     parser = walk_finder.markdown_parser()
     value = walk_finder.open_walk(checkout / "docs" / "walk", parser)[1]
     numbers, total = walk_finder.parse_items(value)
@@ -149,6 +152,19 @@ def run_several_alert_cases(root):
           result.stderr + document)
     check("each alert gets its own `#user_alert` line",
           "#user_alert alert-a\n#user_alert alert-b\n" in minutes, minutes)
+
+    for name, title in (("numbered-title", "Item 3 of 9: reboot"), ("label-title", "Item 3 reboot"),
+                        ("withdrawn-title", "Withdrawn backups on the Mac")):
+        checkout, home = walk_checkout(root, name)
+        claimed_alert(home, "alert-c", title)
+        result = run(checkout, home, "alert-c")
+        document, minutes = files(checkout)
+        units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+        check(f"an alert titled {title!r} becomes the unnumbered item `## User alert: {title}`, not a refusal",
+              result.returncode == 0 and f"\n## User alert: {title}\n" in document
+              and sum(map(walk_finder.approval_walk_unit_is_unnumbered_item, units)) == 1
+              and f"`## User alert: {title}`" in result.stdout and f"User alert: {title}." in minutes,
+              result.stderr + document)
 
     sub_item = WALK_DOCUMENT.replace("## Items 5 and 6", "### Item 4.1 of 9: a part\n\n## Items 5 and 6")
     checkout, home = walk_checkout(root, "sub-item", waiting="item 4.1 of 9", document=sub_item)
@@ -188,10 +204,18 @@ def run_refusal_cases(root):
     check("an alert no longer in claimed/ makes the program exit 1, naming it in its refusal, and changes nothing",
           result.returncode == 1 and "the alert alert-gone cannot be read from" in result.stderr
           and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
-    check("an unreadable alert's refusal names the command to run again without it, and the pending/ it went back to",
-          f"leaving out alert-gone: python3 {PROGRAM.resolve()} --cwd {checkout} <the other ids>" in result.stderr
-          and f"gone back to {home / '.local/state/nedschorus/user-alerts/pending'}," in result.stderr,
-          result.stderr)
+    check("an unreadable alert given alone gets no command to run again, and is told to the user while its file "
+          "exists", "Run again" not in result.stderr
+          and "still exists, it holds no readable alert: tell the user its path" in result.stderr, result.stderr)
+
+    checkout, home = walk_checkout(root, "missing-among-others")
+    claimed_alert(home, "alert-a", "first")
+    claimed_alert(home, "alert-z", "second")
+    result = run(checkout, home, "alert-a", "alert-gone", "alert-z")
+    check("an unreadable alert's refusal gives the whole command to run again with the other ids, leaving it out",
+          result.returncode == 1
+          and f"leaving out alert-gone: python3 {PROGRAM.resolve()} --cwd {checkout} alert-a alert-z\n"
+          in result.stderr, result.stderr)
 
     checkout, home = walk_checkout(root, "not-an-object")
     (home / ".local/state/nedschorus/user-alerts/claimed" / "alert-list.json").write_text("[]", encoding="utf-8")
