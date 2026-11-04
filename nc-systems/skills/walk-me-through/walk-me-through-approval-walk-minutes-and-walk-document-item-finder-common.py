@@ -31,10 +31,12 @@ count or unnumbered item. An unnumbered item is a waiting item that has only
 a title: a top-level `## <title>` heading, ATX-style, after the first running
 count, that holds no running count, does not open with `Withdrawn`, and does
 not open with an item label such as `Item 3:`, which in older walks groups
-the sub-steps under it. A walk-document whose running counts sit on any
-heading other than `##`, as in `## Part 2` headings over `### Item 2 of 3`
-items, has no unnumbered items: its `##` headings are parts or sections. The answer program's close step numbers it when it is
-shown. M is display only: approval_walk_item_count counts it from the
+the sub-steps under it. A walk-document whose whole-number running counts,
+those with no dot, sit on any heading other than `##`, as in `## Part 2`
+headings over `### Item 2 of 3` items, has no unnumbered items: its `##`
+headings are parts or sections. A dotted count, as in a `### Item 1.1 of 3`
+sub-step, does not decide this. The answer program's close step numbers an
+unnumbered item when it is shown. M is display only: approval_walk_item_count counts it from the
 walk-document, the whole numbers its item headings hold, a dotted number
 counting as the item before its first dot, plus its unnumbered items, so an
 item added changes no other heading. The close step writes it into the
@@ -470,11 +472,15 @@ def item_unit_starts(tokens, lines):
     starts = []
     group = None
     # A walk-document with `##` part or section headings over `###` items: its `##` headings are not items.
-    count_heading_markups = {
-        token.markup for index, token in enumerate(tokens)
-        if token.type == "heading_open" and token.map is not None and token.level == 0 and index + 1 < len(tokens)
-        and HEADING_COUNT.match(approval_walk_item_heading_with_deferred_note_removed(
-            tokens[index + 1].content.split("\n")[0]))}
+    # Only whole-number counts decide, so `### Item 1.1 of 3` sub-steps under `##` items change nothing.
+    count_heading_markups = set()
+    for index, token in enumerate(tokens):
+        if (token.type == "heading_open" and token.map is not None and token.level == 0
+                and index + 1 < len(tokens)):
+            count = HEADING_COUNT.match(approval_walk_item_heading_with_deferred_note_removed(
+                tokens[index + 1].content.split("\n")[0]))
+            if count and "." not in count[1]:
+                count_heading_markups.add(token.markup)
     unnumbered_items_possible = count_heading_markups <= {UNNUMBERED_ITEM_HEADING_MARKUP}
     for index, token in enumerate(tokens):
         if token.map is None or token.level != 0 or token.type not in ("heading_open", "paragraph_open"):
@@ -596,7 +602,8 @@ def waiting_item_units(document, value, numbers, total, parser, all_units=None):
             f"which one the minutes name: if those headings give different totals, as `of 9` and `of 10` do, end "
             f"the minutes with the line `#next_to_present item N of M`, N and M copied from the heading you mean, "
             f"as in `#next_to_present item 4 of 9` for `## Item 4 of 9: <the point>`; otherwise, in the "
-            f"walk-document, mark each heading you do not mean, either by writing `revised` right after the count of the one that replaces it, as "
-            f"in `## Item 4 of 9 revised: <the point>`, or by starting its heading with `Withdrawn`.")
+            f"walk-document, either write `revised` right after the count of the heading you mean, as in "
+            f"`## Item 4 of 9 revised: <the point>`, or start the text of each heading you do not mean with "
+            f"`Withdrawn`, as in `## Withdrawn: Item 4 of 9: <the point>`.")
     shown_total = total if total is not None else approval_walk_item_count(all_units)
     return shown_total, [unit for unit in all_units if unit in chosen]

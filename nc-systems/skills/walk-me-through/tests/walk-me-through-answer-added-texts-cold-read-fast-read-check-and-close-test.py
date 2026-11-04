@@ -1550,6 +1550,39 @@ def test_a_part_heading_over_items_one_level_down_is_not_an_unnumbered_item():
           described(closed) + walk_document(case))
 
 
+DOTTED_SUB_STEP_HEADINGS_ONE_LEVEL_DOWN_DOCUMENT = """# A walk with `###` sub-steps under `##` items
+
+## Item 1 of 3: one
+
+### Item 1.1 of 3
+
+No decision here.
+
+### Item 1.2 of 3
+
+#case_against none.
+
+## a case the walk missed
+
+#case_against none.
+
+## Item 2 of 3: two
+
+#case_against none.
+"""
+
+
+def test_dotted_sub_step_headings_one_level_down_do_not_stop_an_added_item_being_numbered():
+    case = Case(next_to_present="item 1.2 of 3", document=DOTTED_SUB_STEP_HEADINGS_ONE_LEVEL_DOWN_DOCUMENT)
+    case.run("check")
+    closed = case.run("close")
+    check("`### Item 1.1 of 3` sub-steps under `##` items do not stop the `##` item added after them from being numbered "
+          "and shown next",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 3 of 3"
+          and "\n## Item 3 of 3: a case the walk missed\n" in walk_document(case),
+          described(closed) + walk_document(case))
+
+
 def test_close_numbers_the_new_item_a_finding_raised_and_holds_the_answer():
     case = Case(next_to_present="item 1 of 4", document=UNNUMBERED_ITEMS_DOCUMENT)
     case.run("check")
