@@ -390,7 +390,8 @@ def suites_named(control):
 
 
 def run_recorded_mutant_killed_check(scratch_name, head_files, diff_text, *flags,
-                                     origin_main_files=None, before_run=None):
+                                     origin_main_files=None, before_run=None,
+                                     extra_environment=None):
     """Run --recorded-mutant-killed-check on a scratch repository holding head_files.
 
     With origin_main_files, refs/remotes/origin/main names a commit on the base holding them.
@@ -417,7 +418,7 @@ def run_recorded_mutant_killed_check(scratch_name, head_files, diff_text, *flags
         before_run(repository)
     completed = run_script(repository, control,
                            survivors.RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG,
-                           str(diff_file), *flags)
+                           str(diff_file), *flags, extra_environment=extra_environment)
     return completed, repository, worktrees_before, head
 
 
@@ -456,16 +457,21 @@ def run_recorded_mutant_killed_check_cases():
                         "    py_compile.compile('scripts/thing.py', cfile=cache, doraise=True,\n"
                         "        invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)\n"
                         + killing_test.split("\n", 1)[1])
-    with tempfile.TemporaryDirectory() as scratch_name:
-        completed, _, _, _ = run_recorded_mutant_killed_check(
-            scratch_name, {**HEAD_FILES, "scripts/thing-test.py": stale_cache_test},
-            SURVIVOR_DIFF)
-        last = completed.stdout.strip().splitlines()[-1] if completed.stdout.strip() else ""
-        check("the recorded mutant killed check removes the scratch worktree's bytecode caches "
-              "before the run with the mutant, so a cache the run without it left cannot hide "
-              "the mutant",
-              completed.returncode == 0 and last.startswith(survivors.MUTANT_KILLED_LINE_PREFIX),
-              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+    # The signal-sandbox runner's --mutant run sets PYTHONPYCACHEPREFIX for this file's suite.
+    for prefix_note, with_prefix in (("", False), (", with PYTHONPYCACHEPREFIX inherited", True)):
+        with tempfile.TemporaryDirectory() as scratch_name:
+            completed, _, _, _ = run_recorded_mutant_killed_check(
+                scratch_name, {**HEAD_FILES, "scripts/thing-test.py": stale_cache_test},
+                SURVIVOR_DIFF,
+                extra_environment=({"PYTHONPYCACHEPREFIX": str(Path(scratch_name) / "bytecode")}
+                                   if with_prefix else None))
+            last = completed.stdout.strip().splitlines()[-1] if completed.stdout.strip() else ""
+            check("the recorded mutant killed check removes the scratch worktree's bytecode "
+                  "caches before the run with the mutant, so a cache the run without it left "
+                  "cannot hide the mutant" + prefix_note,
+                  completed.returncode == 0
+                  and last.startswith(survivors.MUTANT_KILLED_LINE_PREFIX),
+                  f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
         # double(2) is 4 under x + x and x * x alike.

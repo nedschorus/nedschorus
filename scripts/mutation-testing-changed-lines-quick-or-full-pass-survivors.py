@@ -831,6 +831,10 @@ def recorded_mutant_killed_check(arguments, checkout, environment, runner):
             f"scripts/run-all-test-suites.py --only-suites-named <the suite's path>, which "
             f"records what it reads, so this program finds it.\n"
             + rerun)
+    # An inherited PYTHONPYCACHEPREFIX, as the signal-sandbox runner's --mutant run sets, would
+    # put the suites' bytecode where removing the worktree's __pycache__ cannot reach it.
+    environment = {name: value for name, value in environment.items()
+                   if name != "PYTHONPYCACHEPREFIX"}
     with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as scratch_name:
         worktree = Path(scratch_name).resolve() / "worktree"
         try:
