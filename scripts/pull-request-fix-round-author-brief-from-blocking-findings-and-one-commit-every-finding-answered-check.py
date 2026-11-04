@@ -877,8 +877,12 @@ def move_finish(number, title, body_file):
         if not hook_output:
             return ""
         return ("\n\nThe pre-push hook, scripts/git-client-side-hooks/pre-push, printed the lines below on stderr "
-                "during the push. If they say a check did not run, as in \"was not checked\" or \"goes ahead "
-                "without\", run the check they name, as they say:\n" + "\n".join(hook_output))
+                "during the push. If they say a check did not run, as in \"was not checked\", \"goes ahead "
+                "without\" or \"lets the push through without checking\", run the check they name, as they say. "
+                "When the check that did not run is the one for mutation-testing worktrees or the one for open pull "
+                "requests' head branches, there is nothing to run: this push came from the pull request's own "
+                "worktree and pushed a new branch, so neither check would have refused it. Either way, tell the "
+                "user, as those lines say:\n" + "\n".join(hook_output))
 
     for index, (_description, step) in enumerate(steps):
         try:
@@ -886,13 +890,14 @@ def move_finish(number, title, body_file):
         except (StepFailed, OSError) as failure:
             done = "".join(f"; {description}" for description, _step in steps[:index])
             still_to_do = "; ".join(description for description, _step in steps[index:])
-            raise StepFailed(f"{failure}. Nothing is undone. Done: the moved change is committed on {new_branch} as "
+            raise StepFailed(f"{failure}. Nothing was rolled back. Done: the moved change is committed on {new_branch} as "
                              f"{commit[:12]}{done}. Still to do, in order: {still_to_do}. Do these by hand; running "
                              "the program again refuses, because the branch already holds the commit."
                              + labelled_hook_output()) from None
     url = created["url"]
     print(f"Moved to {url}; you are back on {return_branch}.\n"
-          f"Answer the finding with an entry that starts: {MOVED_TO_PULL_REQUEST_PREFIX}{url}"
+          f"Answer the finding in the answers file, {answers}, with an entry that starts: "
+          f"{MOVED_TO_PULL_REQUEST_PREFIX}{url}"
           + labelled_hook_output())
 
 

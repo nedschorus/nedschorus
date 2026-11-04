@@ -1357,8 +1357,9 @@ def move_pre_push_hook_output_cases(root, _repository, _base, _frozen_head):
     checked_root.mkdir()
     code, out, err = move_with_pre_push_hook(checked_root, PRE_PUSH_CHECKED_LINES)
     check("move-finish: when the pre-push hook checks the push and prints its start and pass lines, exit 0 with "
-          "the success line and the hook's lines labelled after it",
+          "the success line, naming the answers file the entry goes in, and the hook's lines labelled after it",
           code == 0 and "Moved to https://github.com/o/r/pull/41" in out
+          and "Answer the finding in the answers file, /" in out
           and "printed the lines below on stderr during the push" in out
           and all(line in out for line in PRE_PUSH_CHECKED_LINES), out + err)
     for name, lines in (("selective-run-skip", (PRE_PUSH_SKIP_LINE,)),
