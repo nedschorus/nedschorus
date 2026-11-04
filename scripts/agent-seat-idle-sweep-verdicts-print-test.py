@@ -167,8 +167,8 @@ check("announced action: session id, transcript path, last activity and its sour
 check("announced action: rules 3 to 5 also decided, for when the judge finds it backed",
       alpha.get("if_every_sentence_backed") == {"rule": 4, "decision": "no_wake"}, alpha)
 check("announced action: the last message, for the judge",
-      (alpha.get("last_message") or {}).get("text") == ANNOUNCED
-      and alpha["last_message"]["time"] == LONG_AGO, alpha.get("last_message"))
+      (alpha.get("last_turn_ending_message") or {}).get("text") == ANNOUNCED
+      and alpha["last_turn_ending_message"]["time"] == LONG_AGO, alpha.get("last_turn_ending_message"))
 machine = Machine()
 machine.seat("alpha", [user("a", at="2026-11-02T11:20:00Z"),
                        assistant(tool=("Edit", {"file_path": "old.py"}), at="2026-11-02T11:21:00Z"),
@@ -177,10 +177,10 @@ machine.seat("alpha", [user("a", at="2026-11-02T11:20:00Z"),
                        assistant(tool=("Bash", {"command": "x" * 5000}), at="2026-11-02T11:42:00Z"),
                        turn_end(at="2026-11-02T11:43:00Z")])
 _, verdicts, _ = machine.run()
-calls = verdicts["alpha"].get("tool_calls_since_judged_sentences")
+calls = verdicts["alpha"].get("tool_calls_since_start_of_earliest_turn_with_sentence_to_judge")
 check("the judge is handed the tool calls from the judged sentence's turn on, inputs cut short",
       calls is not None and [call["name"] for call in calls] == ["Bash"]
-      and len(calls[0]["input"]) == fields.TOOL_CALL_INPUT_CHARACTERS, calls)
+      and len(calls[0]["input"]) == fields.TOOL_CALL_INPUT_CHARACTERS_KEPT, calls)
 
 # --- rule 2: a promise after an event, unbacked, then backed by a task with prerequisites ---
 PROMISE = "I'll report when PR 927 merges."
@@ -384,7 +384,7 @@ check("usage limit: rule 1, with the reset time passed and the account logged in
       verdicts["alpha"].get("rule") == 1 and verdicts["alpha"].get("decision") == "session_limit"
       and limit.get("reset_time_passed") is True and limit.get("account_now_logged_in")
       == "account-1" and limit.get("record_uuid") == "limit-record", verdicts["alpha"])
-code, verdicts, _ = machine.run("--skip-usage-limit-record", "limit-record")
+code, verdicts, _ = machine.run("--usage-limit-record-uuid-to-ignore", "limit-record")
 check("a usage-limit record rule 1 no longer applies to: rules 2 to 5 decide",
       code == 0 and verdicts["alpha"].get("rule") in (2, 3, 4, 5)
       and "usage_limit" not in verdicts["alpha"], verdicts["alpha"])

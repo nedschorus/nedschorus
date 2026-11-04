@@ -36,7 +36,6 @@ answer = answers[len(calls)] if len(calls) < len(answers) else {{"exit": 3}}
 time.sleep(answer.get("sleep", 0))
 def emit(event):
     print(json.dumps(event), flush=True)
-emit({{"type": "system", "subtype": "init", "session_id": "fake"}})
 text = prompt.split("----------\n", 1)[-1].rsplit("\n----------", 1)[0]
 for number, send in enumerate(answer.get("sends", [])):
     message = text if send.get("message") == "@prompt-text" else send.get("message", "")
@@ -566,7 +565,7 @@ machine.log.parent.mkdir(parents=True)
 machine.log.write_text("{not json\n{}\n")
 code, output = machine.run(0)
 check("an unreadable log: a traceback, exit 1, and a user-alert",
-      code == 1 and "LogUnreadable" in output and len(machine.alerts()) == 1, (code, output))
+      code == 1 and "IdleSweepLogLineNotUtf8Json" in output and len(machine.alerts()) == 1, (code, output))
 machine.run(1)
 check("the same failed invocation is alerted once", len(machine.alerts()) == 1, machine.alerts())
 machine = Machine()

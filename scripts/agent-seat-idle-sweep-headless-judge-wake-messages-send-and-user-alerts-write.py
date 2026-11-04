@@ -218,7 +218,7 @@ Answer, for every sentence by its index, backed true or false, and reason, one s
 
 # --- The log, and the state derived from it ---
 
-class LogUnreadable(Exception):
+class IdleSweepLogLineNotUtf8Json(Exception):
     pass
 
 
@@ -240,7 +240,8 @@ class SweepLog:
                     # A last line with no newline is one an invocation was stopped while writing.
                     if number == len(lines):
                         continue
-                    raise LogUnreadable(f"{path} line {number} is not UTF-8 JSON: {error}") from error
+                    raise IdleSweepLogLineNotUtf8Json(
+                        f"{path} line {number} is not UTF-8 JSON: {error}") from error
                 if isinstance(event, dict):
                     self.events.append(event)
 
@@ -641,12 +642,12 @@ class Sweep:
         def with_minutes(items):
             return [{**item, "minutes_running": int(seconds_between(item["started"], self.now) // 60)
                      if item.get("started") else None} for item in items]
-        last_message = dict(verdict.get(fields.LAST_MESSAGE) or {})
+        last_message = dict(verdict.get(fields.LAST_TURN_ENDING_MESSAGE) or {})
         if last_message.get("text"):
             last_message["text"] = last_message["text"][-JUDGED_TEXT_CHARACTERS:]
         return {"agent_seat": seat, "tmux_session": seat, "now": iso(self.now),
                 "last_token_spent_at": (verdict.get(fields.LAST_ACTIVITY) or {}).get("time"),
-                "last_message": last_message or None,
+                "last_turn_ending_message": last_message or None,
                 "open_tasks_nothing_holds": verdict.get(fields.OPEN_TASKS_NOTHING_HOLDS),
                 "handoff_deferral_marker_file": verdict.get(fields.HANDOFF_DEFERRED_MARKER),
                 "running_subagents": with_minutes(running.get("subagents", [])),
@@ -700,8 +701,8 @@ class Sweep:
                          sentences=[{"index": index, "time": item["time"], "kind": item["kind"],
                                      "sentence": item["sentence"]}
                                     for index, item in enumerate(judged)],
-                         tool_calls_since_judged_sentences=verdict.get(
-                             fields.TOOL_CALLS_SINCE_JUDGED_SENTENCES, []))
+                         tool_calls_since_start_of_earliest_turn_with_sentence_to_judge=verdict.get(
+                             fields.TOOL_CALLS_SINCE_START_OF_EARLIEST_TURN_WITH_SENTENCE_TO_JUDGE, []))
             prompt = SENTENCES_JUDGE_PROMPT.format(
                 seat=seat, facts=json.dumps(facts, indent=1, ensure_ascii=False))
             outcome = run_headless(prompt, SENTENCES_ANSWER_SCHEMA, "", self.working_directory,

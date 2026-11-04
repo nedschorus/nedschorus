@@ -28,9 +28,9 @@ What it does not handle: it keeps no record of earlier runs, so it cannot tell w
 messages it has already checked; by default it checks only the last one, and
 --turn-ending-messages-since widens that. It does not know whether a usage limit ended by an
 account change, since that needs the account recorded when the limit was first seen; it reports
-the account now logged in; --skip-usage-limit-record names a limit record rule 1 no longer applies
-to, which the second build-slice decides from its log. It runs on ned-box and reads only ned-box's files, so it does not see
-the Mac's agent-seats.
+the account now logged in; --usage-limit-record-uuid-to-ignore names a limit record rule 1 no
+longer applies to, which the second build-slice decides from its log. It runs on ned-box and reads
+only ned-box's files, so it does not see the Mac's agent-seats.
 
 How it fails: when a file it must read cannot be read, or is not UTF-8 or JSON where a whole line
 is expected, or `gh` cannot answer, the agent-seat's line carries the failure under "errors" and
@@ -482,7 +482,7 @@ def last_message_of(facts):
     return {"record_uuid": record.get("uuid"), "time": iso(moment), "text": message_text(record)}
 
 
-def tool_calls_since_judged_sentences(facts, judged):
+def tool_calls_since_start_of_earliest_turn_with_sentence_to_judge(facts, judged):
     """Every tool call from the start of the earliest turn that ended on a judged sentence's
     message: the judge looks there for the call, the task or the file that backs a sentence."""
     uuids = {item["record_uuid"] for item in judged}
@@ -492,7 +492,7 @@ def tool_calls_since_judged_sentences(facts, judged):
         return []
     earliest = min(starts)
     return [{"time": iso(moment), "name": name,
-             "input": json.dumps(tool_input, ensure_ascii=False)[:fields.TOOL_CALL_INPUT_CHARACTERS]}
+             "input": json.dumps(tool_input, ensure_ascii=False)[:fields.TOOL_CALL_INPUT_CHARACTERS_KEPT]}
             for moment, name, tool_input in facts.tool_calls if moment and moment >= earliest]
 
 
@@ -596,15 +596,16 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
             verdict.update({fields.RULE: 1, fields.DECISION: fields.SESSION_LIMIT})
             return verdict
 
-        verdict[fields.LAST_MESSAGE] = last_message_of(facts)
+        verdict[fields.LAST_TURN_ENDING_MESSAGE] = last_message_of(facts)
         verdict["sentences"] = matched_sentences(facts, since)
         raised = [item for item in verdict["sentences"] if item["code_reading"] != fields.NOT_RAISED]
         task_directory = paths.tasks_root / f"nedschorus-{seat}-tasks"
         if not raised:
             verdict.update(rules_three_to_five(verdict, put_off_at, checker, task_directory))
         elif any(item["code_reading"] == fields.JUDGE for item in raised):
-            verdict[fields.TOOL_CALLS_SINCE_JUDGED_SENTENCES] = tool_calls_since_judged_sentences(
-                facts, [item for item in raised if item["code_reading"] == fields.JUDGE])
+            judged = [item for item in raised if item["code_reading"] == fields.JUDGE]
+            verdict[fields.TOOL_CALLS_SINCE_START_OF_EARLIEST_TURN_WITH_SENTENCE_TO_JUDGE] = (
+                tool_calls_since_start_of_earliest_turn_with_sentence_to_judge(facts, judged))
             # Only the judge can find every sentence backed, and then rules 3 to 5 decide.
             fallback = rules_three_to_five(verdict, put_off_at, checker, task_directory)
             verdict.update({fields.RULE: 2, fields.DECISION: fields.JUDGE,
@@ -644,7 +645,7 @@ def main(argv=None):
     parser.add_argument("--projects-root", default="~/.claude/projects")
     parser.add_argument("--tasks-root", default="~/.claude/tasks")
     parser.add_argument("--claude-json", default="~/.claude.json")
-    parser.add_argument("--skip-usage-limit-record", action="append", default=[],
+    parser.add_argument("--usage-limit-record-uuid-to-ignore", action="append", default=[],
                         help="uuid of a usage-limit record rule 1 no longer applies to; may repeat")
     arguments = parser.parse_args(argv)
     now = parse_time(arguments.now) if arguments.now else datetime.now(timezone.utc)
@@ -662,7 +663,7 @@ def main(argv=None):
     failed = False
     for seat in seats:
         verdict = verdict_for_seat(seat, paths, now, since, checker, parser,
-                                   set(arguments.skip_usage_limit_record))
+                                   set(arguments.usage_limit_record_uuid_to_ignore))
         failed = failed or bool(verdict["errors"])
         print(json.dumps(verdict, sort_keys=True), flush=True)
     return 1 if failed else 0

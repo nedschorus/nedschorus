@@ -3,9 +3,9 @@
 prints for each agent-seat, and the values its rule, decision and sentences may take.
 
 Not a program to run. The printing program takes six field names from here, rule, decision,
-text, if_every_sentence_backed, last_message and tool_calls_since_judged_sentences, and every
-value it prints for decision, kind and code_reading;
-it writes the other field names as literals. Its test checks every verdict it prints with
+text, if_every_sentence_backed, last_turn_ending_message and
+tool_calls_since_start_of_earliest_turn_with_sentence_to_judge, and every value it prints for
+decision, kind and code_reading; it writes the other field names as literals. Its test checks every verdict it prints with
 verdict_field_problems(), and the program that judges and sends reads verdicts by these names, so
 a field renamed in one place and not the other fails a test instead of being read as missing.
 """
@@ -31,17 +31,20 @@ SENTENCES = "sentences"
 OPEN_TASKS_NOTHING_HOLDS = "open_tasks_nothing_holds"  # [{"id", "subject"}]
 TEXT = "text"                              # code's text to send as written, at rule 3
 IF_EVERY_SENTENCE_BACKED = "if_every_sentence_backed"  # {"rule", "decision", maybe "text"}
-LAST_MESSAGE = "last_message"              # {"record_uuid", "time", "text"} or null, at rules 2 to 5
-# [{"time", "name", "input"}]: each tool call from the start of the earliest judged sentence's turn,
-# with its input cut to TOOL_CALL_INPUT_CHARACTERS characters of JSON, at rule 2 when the judge decides
-TOOL_CALLS_SINCE_JUDGED_SENTENCES = "tool_calls_since_judged_sentences"
-TOOL_CALL_INPUT_CHARACTERS = 1500
+# {"record_uuid", "time", "text"} or null, at rules 2 to 5
+LAST_TURN_ENDING_MESSAGE = "last_turn_ending_message"
+# [{"time", "name", "input"}]: each tool call from the start of the earliest turn holding a sentence
+# the judge decides, with its input cut to TOOL_CALL_INPUT_CHARACTERS_KEPT characters of JSON
+TOOL_CALLS_SINCE_START_OF_EARLIEST_TURN_WITH_SENTENCE_TO_JUDGE = (
+    "tool_calls_since_start_of_earliest_turn_with_sentence_to_judge")
+TOOL_CALL_INPUT_CHARACTERS_KEPT = 1500
 
 ALWAYS_PRESENT = (AGENT_SEAT, SESSION_ID, TRANSCRIPT_PATH, CHECKED_AT, ERRORS, RULE)
 OPTIONAL = (DECISION, NOT_CHECKED, SUPERVISOR_LAST_POLL_AT, LAST_ACTIVITY, TURN_ENDED,
             WALK_ITEMS_WAITING, IDLE, NOT_IDLE_BECAUSE, RUNNING, HANDOFF_DEFERRED_MARKER,
             USAGE_LIMIT, SENTENCES, OPEN_TASKS_NOTHING_HOLDS, TEXT, IF_EVERY_SENTENCE_BACKED,
-            LAST_MESSAGE, TOOL_CALLS_SINCE_JUDGED_SENTENCES)
+            LAST_TURN_ENDING_MESSAGE,
+            TOOL_CALLS_SINCE_START_OF_EARLIEST_TURN_WITH_SENTENCE_TO_JUDGE)
 
 USAGE_LIMIT_FIELDS = ("record_uuid", "resets_at", "reset_time_passed", "account_now_logged_in")
 SENTENCE_FIELDS = ("record_uuid", "time", "sentence", "kind", "code_reading")
