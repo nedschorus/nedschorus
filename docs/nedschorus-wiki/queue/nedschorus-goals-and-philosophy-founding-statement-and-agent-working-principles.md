@@ -8,9 +8,9 @@ The user gave merge-lane-2 a statement of the project's philosophy on 2026-11-03
 
 ## What the statement asks of an agent
 
-### 1. Encode each repeatable rule, and keep judgment for the steps that need it
+### 1. Encode each repeatable rule wherever practical, and keep judgment for the steps that need it
 
-An agent puts a rule that code, a schema, a state machine or a test can hold reliably into one of them, because agents debug and test code well and judge prose poorly. Each step that needs judgment gets clear questions, inputs and expected decisions, as the bullet of `CLAUDE.md` that begins "Build code-prompt-code" says. Design stays prose and comes before code, as Standing decision 22 says. Fresh readers, not the writing agent, test whether prose is clear, and the user reviews prose, as Standing decision 19 says; an obvious-error-fix stays an agent's to make. Sources: S2 to S5.
+Wherever practical, an agent puts a rule that code, a schema, a state machine or a test can hold reliably into one of them, because agents debug and test code well and judge prose poorly; a guard still meets the two conditions of the bullet of `CLAUDE.md` that begins "Propose a guard". Each step that needs judgment gets clear questions, inputs and expected decisions, as S1 says. Standing decision 22, "Prose always precedes code", applies. Fresh-readers, not the writing agent, test whether prose is clear, and the user reviews the final prose that Standing decision 19 names; an obvious-error-fix stays an agent's to make. Sources: S1 to S5.
 
 ### 2. Put every finding in one of four categories
 
@@ -23,33 +23,33 @@ The statement says "three categories" and lists four; this page uses four, defin
 
 A finding filed in category 4 stays visible, with the reason for filing it rather than fixing it, a defined follow-up, its prerequisites, and what it unblocks; prerequisites are done first. An improvement or an addition a review finds, rather than a defect, is a finding like any other, and falls in category 4: the user's words in S35 answer the question he asked in S34.
 
-An agent fixes what must be fixed and leaves the rest to its category, because an agent that works on a few things does them well. On a file with the -nbd suffix, only a failing test and the four kinds of finding that `CLAUDE.md`'s -nbd bullet names are must fix. The agent that runs a review or a test files what it defers. Where maintenance findings are held, and how a finding is placed among categories 2 to 4, are listed among the deferred-decisions of the implementing GHI named in the last section. Sources: S6 to S9, S34, S35.
+An agent fixes what must be fixed and leaves the rest to its category, because an agent that works on a few things does them well. In a pull request review, a finding that the review-scope bullet of `CLAUDE.md` says blocks the merge is must fix now. The agent that runs a review or a test files what it defers. Where maintenance findings are held, and how a finding is placed among categories 2 to 4, are still open, listed in the section Deferred-decisions of [GHI 2522](https://github.com/nedschorus/nedschorus/issues/2522). Sources: S6 to S9, S34, S35.
 
 ### 3. Keep a checked claim, and reopen it only for a reason
 
-An agent keeps a checked and supported claim with its evidence and the conditions under which it stays valid, and reopens it only when an input changes, an assumption fails, or contradictory evidence appears, because a repeated prose review gives inconsistent verdicts. Code is still tested on every change. A change to the text a claim rests on reopens that claim, as Standing decision 5 says; a finding on text the user has already decided is not reported again, as Standing decision 25 says. Source: S10.
+An agent keeps a checked and supported claim with its evidence and the conditions under which it stays valid, and reopens it only when an input changes, an assumption fails, or contradictory evidence appears, because a repeated prose review gives inconsistent verdicts. Code is still tested on every change. Standing decision 5, "Creation alternates with independent review", applies. A finding on text the user has already decided is quoted with his user-ruling and not reported again, as Standing decision 25 says, unless a real defect needs that user-ruling changed, as /walk-me-through says. Source: S10.
 
 ### 4. Give every review, test and approval a purpose, and fix the process behind a recurring failure
 
-When a failure recurs, or the user is asked to step in, an agent finds the root cause in the process and changes the process: a better rule, a clearer interface, an executable check, or a more precise boundary for judgment, so that fewer places need the user's judgment. Source: S1.
+Every review, test and approval serves a clear purpose. When a failure recurs, or the user is asked to step in, an agent investigates the root cause and improves the process; where possible, the result is a better rule, a clearer interface, an executable check, or a more precise boundary for judgment, so that fewer places need the user's judgment. Source: S1.
 
 ### 5. Every named agent works from the same standards
 
-Every named, long-lived agent works from the same standards for evidence, progression and deferred work: `CLAUDE.md` carries them, and so do the seat-briefs and every `-instructions.md` file under `docs/agents/`. Source: S1.
+Every named, long-lived agent is to work from the same standards for evidence, progression and deferred work: `CLAUDE.md` is to carry them, and then the seat-briefs and every `-instructions.md` file under `docs/agents/`. Source: S1.
 
 ## How agents work with the user
 
-### 6. Do trusted work without telling him, and ask him only what needs him
+### 6. Do trusted work without asking him, and ask him only what needs him
 
 An agent does work the user trusts agents with without asking him or explaining it at length, so his attention goes only to what needs him. [nedschorus-which-changes-need-the-users-approval.md](../nedschorus-which-changes-need-the-users-approval.md) says which changes need his approval. Sources: S11, S12.
 
 ### 7. Count more work as a win when the result works better
 
-More code, more steps, or simple changes such as renames count as a win when the result works better. The limit is real: a step that goes from a millisecond to a week is a cost. Standing decision 26, "Evidence first; cost is a bound", states the same for the system. Sources: S13 to S16.
+More code, more steps, or simple changes such as renames count as a win when the result works better. The limit is real: a step that goes from a millisecond to a week is a cost. Standing decision 26, "Evidence first; cost is a bound", applies. Sources: S13 to S16.
 
 ### 8. State the case against as it is, even when it is weak
 
-An agent states the strongest case against its recommendation that it has, and calls it weak when it is. The user accepts that about 5% of his decisions on such recommendations turn out wrong. An approval-walk item needs no answer from him only when its change is of a kind that the paragraph of `.claude/skills/walk-me-through/SKILL.md` beginning "An item needs no answer from the user" lists, and its case against is rated none, or rated weak and names only cost. Widening that rule is the subject of GHI [Approve obvious approval-walk items automatically, by criteria drawn from the user's tracked obvious approvals, after the advisor checks each one](https://github.com/nedschorus/nedschorus/issues/1809). Sources: S17, S18.
+An agent states the strongest case against its recommendation that it has, and calls it weak when it is. The user accepts that about 5% of the items settled without him would have had a different answer from him. An approval-walk item that proposes a change needs no answer from him when its change is of a kind that the paragraph of `.claude/skills/walk-me-through/SKILL.md` beginning "An item needs no answer from the user" lists, and its case against is rated none, or rated weak and names only cost. Widening that rule is the subject of GHI [Approve obvious approval-walk items automatically, by criteria drawn from the user's tracked obvious approvals, after the advisor checks each one](https://github.com/nedschorus/nedschorus/issues/1809). Sources: S17, S18.
 
 ### 9. A case against that says only "this takes work" is not a real case
 
@@ -57,23 +57,23 @@ An agent still states such a case, and the user reads it as no case. Sources: S1
 
 ### 10. Search for his earlier user-ruling before asking him
 
-Before an agent asks the user to decide something, it searches for his earlier user-ruling with the /find-info skill and builds on one that answers the same case; Standing decision 25 says the same for a finding on text he has already decided. Source: S20.
+Before an agent asks the user to decide something, it searches for his earlier user-ruling with the /find-info skill and builds on one that answers the same case; Standing decision 25 also applies. Source: S20.
 
-### 11. Bring him one thing at a time, in an approval-walk
+### 11. Bring him one decision at a time
 
-Anything that needs the user reaches him one item at a time in an approval-walk, as Standing decision 20 says. Sources: S21, S22.
+Anything that needs the user reaches him one decision at a time, as Standing decision 20 says, in an approval-walk when the trigger of /walk-me-through is met. Sources: S21, S22.
 
 ### 12. Give him the essence, and keep the details for agents
 
-What the user reads says what changes and why, distilled, with anything he must see one click away; paths, program names and formats go in records for agents. Sources: S23, S24.
+What the user reads says what changes and why, distilled, with anything he must see one click away as a clickable link, as /walk-me-through requires; other paths, program names and formats go in records for agents. Sources: S23, S24.
 
 ### 13. Bring in an advisor for a hard question, and an arbitrator for a disagreement
 
 An agent consults the advisor, the stronger model Claude Code's advisor tool asks, on a complicated question before it recommends; an agent-arbitrator decides a disagreement between agents. Sources: S25, S26.
 
-### 14. Back each promise to him with a hook, a program or a skill
+### 14. Back each promise to him with a hook or a program
 
-When an agent tells the user that something will not happen again, a hook, a program or a skill makes sure of it, not a sentence in `CLAUDE.md` or a note in Claude Code's auto-memory. Standing decision 13 says which tier carries a rule. Sources: S27, S28.
+When an agent tells the user that something will not happen again, a hook or a program makes sure of it, not a sentence in `CLAUDE.md` or a note in Claude Code's auto-memory. Standing decision 13 says which tier carries a rule. Sources: S27, S28.
 
 ### 15. Say how you know a fix works
 
