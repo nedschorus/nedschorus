@@ -375,14 +375,27 @@ BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION = (
 )
 
 
+# Printed to the handoff-supervisor's console, which the agent-session never reads.
+BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE = (
+    "handoff-supervisor: could not tell whether the branch checked out in the agent-home is pushed, "
+    "so the new agent-session's initial-agent-instructions tell it neither to rebase that branch onto "
+    "origin/main nor to leave the branch's head as it is.\n"
+    "handoff-supervisor: why: {cause}\n"
+    "handoff-supervisor: if this message comes back at the next launch, fix the git error on the why "
+    "line; until then nobody needs to act on it, and this launch goes ahead without either instruction."
+)
+
+
 def choose_branch_state_instruction_from_working_directory_push_state(working_directory: Path) -> str:
     """The one branch-state instruction that applies to the checkout's branch, or "" on
     main, on a detached HEAD, or when git cannot tell, which it prints. Call it after
     launch_time_git_sync, whose fetch brings origin's branches up to date."""
     branch = run_git_here(["rev-parse", "--abbrev-ref", "HEAD"], working_directory, timeout=15)
     if branch.returncode != 0:
-        print("handoff-supervisor: branch-state instruction left out, the branch is unreadable: "
-              f"{branch.stderr.strip() or 'no detail'}")
+        command = shlex.join(["git", "-C", str(working_directory), "rev-parse", "--abbrev-ref", "HEAD"])
+        print(BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE.format(
+            cause=f"`{command}` failed (exit {branch.returncode}): "
+                  f"{branch.stderr.strip() or 'git printed no error'}"))
         return ""
     name = branch.stdout.strip()
     # head_state reads main as pushed, since origin/main equals it.
@@ -395,7 +408,8 @@ def choose_branch_state_instruction_from_working_directory_push_state(working_di
     if key == "detached":
         return ""
     if key == "unknown":
-        print(f"handoff-supervisor: branch-state instruction left out, {name}'s {text}")
+        print(BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE.format(
+            cause=f"git could not tell whether branch {name} in {working_directory} is pushed to origin: {text}"))
         return ""
     return BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION
 

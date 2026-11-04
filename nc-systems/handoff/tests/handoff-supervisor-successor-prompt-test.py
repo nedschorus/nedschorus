@@ -1021,6 +1021,7 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
         "#!/bin/sh\n"
         'case "$*" in\n'
         '  *"$FAIL_GIT_CALL_CONTAINING"*)\n'
+        '    [ -n "$FAIL_GIT_BY_SIGNAL" ] && kill -KILL $$\n'
         '    echo "${FAIL_GIT_STDERR:-fatal: stub failure}" >&2; exit 128 ;;\n'
         "esac\n"
         f'exec "{real_git}" "$@"\n',
@@ -1079,9 +1080,11 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
     git_in(["clone", "--quiet", str(remote), str(topic_home)], root)
     git_in(["checkout", "--quiet", "-b", "topic-branch"], topic_home)
     for call, what_is_printed in (
-            ("rev-parse --abbrev-ref HEAD", "the branch is unreadable: fatal: stub failure"),
+            ("rev-parse --abbrev-ref HEAD",
+             f"why: `git -C {topic_home} rev-parse --abbrev-ref HEAD` failed (exit 128): fatal: stub failure\n"),
             ("--verify --quiet origin/topic-branch",
-             "topic-branch's head state unknowable (git rev-parse exited 128: fatal: stub failure)")):
+             f"why: git could not tell whether branch topic-branch in {topic_home} is pushed to origin: "
+             "head state unknowable (git rev-parse exited 128: fatal: stub failure)\n")):
         original_path = os.environ.get("PATH", "")
         os.environ["PATH"] = f"{stub_directory}{os.pathsep}{original_path}"
         os.environ["FAIL_GIT_CALL_CONTAINING"] = call
@@ -1093,8 +1096,28 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
             os.environ["PATH"] = original_path
             del os.environ["FAIL_GIT_CALL_CONTAINING"]
         check(f"a failed `git {call}` leaves the branch-state instruction out and prints why",
-              instruction == "" and "handoff-supervisor: branch-state instruction left out, "
-              + what_is_printed in console.getvalue(), (instruction, console.getvalue()))
+              instruction == "" and what_is_printed in console.getvalue()
+              and "handoff-supervisor: if this message comes back at the next launch, fix the git error "
+              "on the why line; until then nobody needs to act on it" in console.getvalue(),
+              (instruction, console.getvalue()))
+
+    # A git killed by a signal exits with a negative returncode and prints nothing.
+    original_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = f"{stub_directory}{os.pathsep}{original_path}"
+    os.environ["FAIL_GIT_CALL_CONTAINING"] = "rev-parse --abbrev-ref HEAD"
+    os.environ["FAIL_GIT_BY_SIGNAL"] = "1"
+    console = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(console):
+            instruction = supervisor.choose_branch_state_instruction_from_working_directory_push_state(topic_home)
+    finally:
+        os.environ["PATH"] = original_path
+        del os.environ["FAIL_GIT_CALL_CONTAINING"]
+        del os.environ["FAIL_GIT_BY_SIGNAL"]
+    check("a `git rev-parse --abbrev-ref HEAD` killed by a signal leaves the branch-state instruction "
+          "out and says git printed no error",
+          instruction == "" and "failed (exit -9): git printed no error\n" in console.getvalue(),
+          (instruction, console.getvalue()))
 
     class SpacedFailure:
         directory = Path("/tmp/checkout with spaces")
