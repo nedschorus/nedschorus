@@ -14,7 +14,7 @@ The section "Standing decisions" in `docs/nedschorus-wiki/nedschorus-ai-native-s
 
 ## The principles
 
-The page pending approval, `docs/nedschorus-wiki/queue/nedschorus-goals-and-philosophy-founding-statement-and-agent-working-principles.md`, which reaches main through PR [Wiki queue: the project's goals-and-philosophies page for GHI 2411, pending the user's approval](https://github.com/nedschorus/nedschorus/pull/2513), holds fourteen principles, each followed by the user-rulings it comes from, gathered from the walk-minutes and his typed messages.
+The page pending approval, `docs/nedschorus-wiki/queue/nedschorus-goals-and-philosophy-founding-statement-and-agent-working-principles.md`, which reached the wiki queue on main through PR [Wiki queue: the project's goals-and-philosophies page for GHI 2411, pending the user's approval](https://github.com/nedschorus/nedschorus/pull/2513), holds the fourteen principles below and two more drawn from the user's founding statement of 2026-11-03, sixteen in all. The page numbers them differently: the list's principles 1 to 11 are the page's 6 to 16; the list's 13, 12 and 14 are the page's 1, 2 and 3; the page's 4 and 5 are the two from the founding statement. Each principle cites the user-rulings it comes from, which the page's section Sources quotes, gathered from the walk-minutes and his typed messages.
 
 How agents work with the user:
 
@@ -38,7 +38,7 @@ How agents build and finish work, the three principles he gave on 2026-11-03:
 
 ## What the page is, and how it avoids drifting
 
-- It is a wiki page named `nedschorus-goals-and-philosophy-founding-statement-and-agent-working-principles.md`, a name a fresh subagent read correctly from the name alone. Each principle is one short paragraph, followed by the user-rulings it comes from.
+- It is a wiki page named `nedschorus-goals-and-philosophy-founding-statement-and-agent-working-principles.md`, a name a fresh subagent read correctly from the name alone. Each principle is one short paragraph that cites the user-rulings it comes from, quoted in the page's section Sources.
 - A principle is a rule for how agents work with the user, or build and finish work, across tasks. A user-ruling on one task's content is not a principle.
 - The page's goal section links to the section "What the project is" of the objective page, the user's own statement of the goal, in place of restating it.
 - The objective page links to the new page from the section "Standing decisions", and the new page links back to that section.
