@@ -241,12 +241,15 @@ with tempfile.TemporaryDirectory() as scratch:
           handoff("restart-counter: 3\n", consumed=3) is None)
     check("waiting handoff: a counter below the consumed one is spent",
           handoff("restart-counter: 3\n", consumed=5) is None)
-    got = handoff("restart-counter: 4\ndont-restart: user asked for a pause\n", consumed=3)
-    check("waiting handoff: a dont-restart handoff asks to be consulted, with its counter "
+    got = handoff("restart-counter: 4\nask-user-before-restart: user asked for a pause\n", consumed=3)
+    check("waiting handoff: an ask-user-before-restart handoff asks to be consulted, with its counter "
           "and reason", got == ("seat-asked-to-be-consulted", (4, "user asked for a pause")),
           got)
-    check("waiting handoff: a spent dont-restart handoff no longer waits",
-          handoff("restart-counter: 4\ndont-restart: pause\n", consumed=4) is None)
+    got = handoff("restart-counter: 4\ndont-restart: written under the old name\n", consumed=3)
+    check("waiting handoff: a handoff carrying only the old name dont-restart asks to be consulted",
+          got == ("seat-asked-to-be-consulted", (4, "written under the old name")), got)
+    check("waiting handoff: a spent ask-user-before-restart handoff no longer waits",
+          handoff("restart-counter: 4\nask-user-before-restart: pause\n", consumed=4) is None)
 
     # seat_of
     for list_id, expected in (("nedschorus-reboot-test-tasks", "reboot-test"),

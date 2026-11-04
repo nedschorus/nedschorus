@@ -9,7 +9,7 @@ docs/nedschorus-wiki/nedschorus-handoff-supervisor-restart-onto-main-code-by-han
 The agent-seat being restarted does steps 1 and 3 itself: it gets ready (no subagent and no
 test run of its own still running, its work committed, its walk-minutes written), runs this
 program, and, when the program prints that the handoff-supervisor is frozen, writes its
-session-handoff with the /handoff skill, without --dont-restart, naming in its next step the
+session-handoff with the /handoff skill, without --ask-user-before-restart, naming in its next step the
 result file this program prints, and stops working. On ned-box it runs this program through
 `ssh nedlern@ned-box '<command>'`, because the Bash sandbox cannot signal the
 handoff-supervisor.
@@ -52,7 +52,7 @@ Failures, keyed on the agent-seat's state:
   handoff-supervisor carries on as before, consuming a session-handoff already written. The
   foreground sends the SIGCONT when the freeze did not hold or the second half could not start;
   the second half sends it when no new session-handoff came within the limit, when it was
-  written with --dont-restart, which would make the new handoff-supervisor wait for an answer on
+  written with --ask-user-before-restart, which would make the new handoff-supervisor wait for an answer on
   a terminal nobody watches, or when step 4's ps check could not answer or its SIGKILL was
   refused;
 - after step 4, while no new handoff-supervisor runs: the program removes the processes left
@@ -409,7 +409,7 @@ def foreground(seat: str, start_second_half=start_second_half, sleep=time.sleep)
           f"handoff-supervisor from {REFERENCE_CHECKOUT}; the second half writes what it prints to "
           f"{log_directory / 'detached-output.log'}.\n"
           f"If you are the agent-seat {seat}: write your session-handoff now with the /handoff skill, "
-          f"without --dont-restart, because that flag makes the new handoff-supervisor wait for an "
+          f"without --ask-user-before-restart, because that flag makes the new handoff-supervisor wait for an "
           f"answer on the terminal. Add this sentence to the session-handoff's next step, keeping "
           f"what the next step already says: \"Read {result_path} and tell the user the restart's "
           f"result it reports.\" Then end your turn and start no new work: the second half ends "
@@ -575,10 +575,10 @@ class SecondHalf:
                 f"{unfreeze(supervisor_id, supervisor_command)}.")
         self.record(f"step 4: the session-handoff of {self.seat} was written after the freeze")
         handoff_path = supervisor.handoff_file_path(HANDOFF_DIRECTORY, self.seat)
-        if supervisor.parse_handoff_file(handoff_path).get("dont-restart"):
+        if supervisor.ask_user_before_restart_reason(supervisor.parse_handoff_file(handoff_path)):
             # A new handoff-supervisor would wait for an answer on a terminal nobody watches.
             return self.fail(
-                f"the session-handoff {handoff_path} was written with --dont-restart, so a new "
+                f"the session-handoff {handoff_path} was written with --ask-user-before-restart, so a new "
                 f"handoff-supervisor would wait for an answer on the agent-seat's terminal. "
                 f"{unfreeze(supervisor_id, supervisor_command)}.")
         try:

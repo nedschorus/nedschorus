@@ -223,15 +223,17 @@ def run_invocation_cases(workspace: Path):
     check("the timestamp is UTC ISO 8601",
           fields["written-at"].endswith("Z") and fields["written-at"][4] == "-",
           fields["written-at"])
-    check("dont-restart is absent unless asked", "dont-restart" not in fields, str(fields))
+    check("ask-user-before-restart is absent unless asked", "ask-user-before-restart" not in fields, str(fields))
 
     result = run_writer(workspace, "Continue from the trial.")
     fields = writer.supervisor.parse_handoff_file(handoff_path)
     check("a second write increments the counter", fields["restart-counter"] == "2", result.stdout)
 
-    result = run_writer(workspace, "Stop and ask first.", "--dont-restart")
+    result = run_writer(workspace, "Stop and ask first.", "--ask-user-before-restart")
     fields = writer.supervisor.parse_handoff_file(handoff_path)
-    check("dont-restart is written when asked", "dont-restart" in fields, str(fields))
+    check("ask-user-before-restart is written when asked", "ask-user-before-restart" in fields, str(fields))
+    check("the old name dont-restart is written beside it, for a handoff-supervisor that reads "
+          "only the old name", "dont-restart" in fields, str(fields))
 
     result = run_writer(workspace, "   \n\t  ")
     check("an empty next step is refused", result.returncode == 2, result.stdout)

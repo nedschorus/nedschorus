@@ -12,7 +12,7 @@ for it.
 
 Usage:
   handoff-write-and-check-supervisor.py --agent <name> --next-step-file <path>
-                                        [--dont-restart] [--claim]
+                                        [--ask-user-before-restart] [--claim]
 
 `--claim` is for two situations, and both are worth knowing before you meet
 them: this seat's FIRST handoff under a name that a handoff file already holds
@@ -359,7 +359,7 @@ def spawned_subagent_roster_for_this_session(working_directory: Path):
             f"recorded for the successor, of {len(roster)} spawned")
 
 
-def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_restart: bool,
+def write_handoff_file(handoff_path: Path, next_step: str, counter: int, ask_user_before_restart: bool,
                        seat_directory: Path, spawned_subagent_lines=(), verbatim_lines=()) -> None:
     """Write the handoff atomically so readers cannot see a partial file."""
     lines = [
@@ -370,8 +370,10 @@ def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_re
         f"written-in: {seat_directory}",
         f"written-by-session: {os.environ.get('CLAUDE_CODE_SESSION_ID', 'unknown')}",
     ]
-    if dont_restart:
-        lines.append("dont-restart: the user asked to be consulted before a relaunch")
+    if ask_user_before_restart:
+        reason = "the user asked to be consulted before a relaunch"
+        lines.append(f"{supervisor.ASK_USER_BEFORE_RESTART_FIELD}: {reason}")
+        lines.append(f"{supervisor.ASK_USER_BEFORE_RESTART_FIELD_OLD_NAME}: {reason}")
 
     lines.extend(spawned_subagent_lines)
 
@@ -657,7 +659,7 @@ def main(argv=None) -> int:
              "also verbatim when it spans several lines",
     )
     parser.add_argument(
-        "--dont-restart", action="store_true",
+        "--ask-user-before-restart", action="store_true",
         help="ask the supervisor to confirm before relaunching, instead of relaunching automatically",
     )
     parser.add_argument("--handoff-dir", default="~/.claude/handoffs", help="handoff directory on this machine only, not committed")
@@ -748,7 +750,7 @@ def main(argv=None) -> int:
     counter = next_restart_counter(handoff_path, state_path)
     spawned_subagent_lines, roster_report = spawned_subagent_roster_for_this_session(seat_directory)
     prune_report = prune_completed_tasks(next_step_text)
-    write_handoff_file(handoff_path, next_step, counter, arguments.dont_restart, seat_directory,
+    write_handoff_file(handoff_path, next_step, counter, arguments.ask_user_before_restart, seat_directory,
                        spawned_subagent_lines=spawned_subagent_lines,
                        verbatim_lines=verbatim_lines)
     # Flushed at once: the supervisor may end this session soon after the handoff file appears.

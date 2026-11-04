@@ -197,10 +197,10 @@ def waiting_handoff_verdict(handoff_directory: Path, name: str, state_path: Path
             "plain; if it is scrap, delete it and rerun this recovery"
         )
     if consumed is None or counter > consumed:
-        dont_restart = fields.get("dont-restart")
-        if dont_restart:
+        ask_user_before_restart = supervisor.ask_user_before_restart_reason(fields)
+        if ask_user_before_restart:
             # Leave the handoff unconsumed so a by-hand launch still asks the supervisor’s restart question.
-            return "seat-asked-to-be-consulted", (counter, dont_restart)
+            return "seat-asked-to-be-consulted", (counter, ask_user_before_restart)
         return "defer-to-boot-ignition", (
             f"an unconsumed handoff waits (counter {counter}, consumed "
             f"{consumed}) — relaunching without resuming is correct; the supervisor's "
