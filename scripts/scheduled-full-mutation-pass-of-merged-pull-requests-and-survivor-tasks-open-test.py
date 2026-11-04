@@ -504,6 +504,30 @@ def run_cases():
         check("a completed task deleted later, as a session-handoff does, is not reported",
               completed.returncode == 0 and "TASK LOST" not in fixture.records()[-1].read_text(),
               (completed.returncode, completed.stderr))
+        (alpha_list / "3.json").write_text(
+            json.dumps({"id": "3", "status": "completed", "description": "rewritten"}))
+        completed = fixture.run()
+        check("a completed task whose description no longer names its mutant is dropped from "
+              "the state without a report, and the run exits 0",
+              completed.returncode == 0 and "TASK LOST" not in fixture.records()[-1].read_text()
+              and fixture.state_json()["tasks_opened"] == {},
+              (completed.returncode, completed.stderr, fixture.state_json()))
+
+    # A task file holding JSON that is not an object is a task that no longer holds its mutant.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        merge = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                               author="alpha")
+        completed = fixture.run({merge: {"json": verdict(survived=[survivor()])}})
+        (alpha_list / "1.json").write_text("[]")
+        completed = fixture.run()
+        check("a task file holding a JSON list is reported as lost, and the run exits 7",
+              completed.returncode == job.EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR
+              and "TASK LOST: task #1 on alpha's task list" in fixture.records()[-1].read_text()
+              and fixture.state_json()["tasks_opened"] == {},
+              (completed.returncode, completed.stderr))
 
     # A run killed while mutation testing has already reported its lost task in a record; and
     # a record that cannot be written leaves the lost task in the state for the next run.

@@ -292,10 +292,10 @@ def lost_tasks_reported(state, arguments, record):
         except OSError as error:
             why = f"the task file cannot be read ({type(error).__name__}: {error})"
         else:
-            if task_names_mutant(task, key):
-                if task.get("status") != "completed":
-                    continue
+            if task is not None and task.get("status") == "completed":
                 del state["tasks_opened"][key]
+                continue
+            if task_names_mutant(task, key):
                 continue
             why = "its description no longer names the mutant's diff file"
         lost.append(f"task #{given['task_id']} on {given['agent_seat']}'s task list "
