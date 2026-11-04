@@ -600,10 +600,12 @@ def waiting_item_units(document, value, numbers, total, parser, all_units=None):
         raise UnusableRange(
             f"its walk-document has more than one heading for {named}, so the hook cannot tell "
             f"which one the minutes name: if those headings give different totals, as `of 9` and `of 10` do, end "
-            f"the minutes with the line `#next_to_present item N of M`, N and M copied from the heading you mean, "
+            f"the minutes with the line `#next_to_present item N of M`, a new last line below any earlier `#next_to_present` "
+            f"line, N and M copied from the heading you mean, "
             f"as in `#next_to_present item 4 of 9` for `## Item 4 of 9: <the point>`; if they give the same total, in the "
             f"walk-document, put `Withdrawn: ` just before `Item` in each heading you do not mean, as in "
             f"`## Withdrawn: Item 4 of 9: <the point>`, or, only when the heading you mean comes after every other "
-            f"heading for that item, write `revised` right after its `of M` instead, as in `## Item 4 of 9 revised: <the point>`.")
+            f"heading for that item, write `revised` right after its `of M` instead of marking any heading `Withdrawn: `, "
+            f"the colon staying before `revised` or moving after it, as in `## Item 4 of 9 revised: <the point>`.")
     shown_total = total if total is not None else approval_walk_item_total_shown_and_waiting_counted_from_walk_document(all_units)
     return shown_total, [unit for unit in all_units if unit in chosen]
