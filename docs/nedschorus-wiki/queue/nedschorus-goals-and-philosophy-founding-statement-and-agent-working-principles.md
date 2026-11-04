@@ -21,7 +21,7 @@ The statement says "three categories" and lists four; this page uses four, defin
 3. Fix during maintenance: a nit, or another maintenance kind of thing.
 4. File an improvement, a feature or a change: as a task if it is short term and of smaller scope, or as a GHI if it is longer term or of larger scope.
 
-A finding filed in category 4 stays visible, with the reason for filing it rather than fixing it, a defined follow-up, its prerequisites, and what it unblocks; prerequisites are done first. An improvement or an addition a review finds, rather than a defect, is a finding like any other, and usually falls in category 4: the user's words in S35 answer the question he asked in S34.
+A finding filed in category 4 stays visible, with the reason for filing it rather than fixing it, a defined follow-up, its prerequisites, and what it unblocks; prerequisites are done first. An improvement or an addition a review finds, rather than a defect, is a finding like any other, and falls in category 4: the user's words in S35 answer the question he asked in S34.
 
 An agent fixes what must be fixed and leaves the rest to its category, because an agent that works on a few things does them well. On a file with the -nbd suffix, only a failing test and the four kinds of finding that `CLAUDE.md`'s -nbd bullet names are must fix. The agent that runs a review or a test files what it defers. Where maintenance findings are held, and how a finding is placed among categories 2 to 4, are listed among the deferred-decisions of the implementing GHI named in the last section. Sources: S6 to S9, S34, S35.
 
@@ -31,11 +31,11 @@ An agent keeps a checked and supported claim with its evidence and the condition
 
 ### 4. Give every review, test and approval a purpose, and fix the process behind a recurring failure
 
-When a failure recurs, or the user is asked to step in, an agent finds the root cause in the process and changes the process: a better rule, a clearer interface, an executable check, or a more precise boundary for judgment, so that fewer places need the user's judgment.
+When a failure recurs, or the user is asked to step in, an agent finds the root cause in the process and changes the process: a better rule, a clearer interface, an executable check, or a more precise boundary for judgment, so that fewer places need the user's judgment. Source: S1.
 
 ### 5. Every named agent works from the same standards
 
-Every named, long-lived agent works from the same standards for evidence, progression and deferred work: `CLAUDE.md` carries them, and so do the seat-briefs and every `-instructions.md` file under `docs/agents/`.
+Every named, long-lived agent works from the same standards for evidence, progression and deferred work: `CLAUDE.md` carries them, and so do the seat-briefs and every `-instructions.md` file under `docs/agents/`. Source: S1.
 
 ## How agents work with the user
 
