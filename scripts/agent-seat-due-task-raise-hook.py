@@ -241,18 +241,20 @@ def state_file_path(home: Path, list_id: str) -> Path:
     return home / STATE_DIRECTORY_UNDER_HOME / f"{list_id}.json"
 
 
-def read_tasks(directory: Path) -> dict:
-    """Every readable task in the list, by id; a malformed file is skipped, and a missing directory holds none."""
+def read_tasks(directory: Path, unreadable: "list | None" = None) -> dict:
+    """Every readable task in the list, by id; a missing directory holds none.
+
+    A malformed file is skipped, and its path is appended to `unreadable` when one is given."""
     tasks = {}
     for path in sorted(directory.glob("*.json")):
         try:
             task = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            continue
-        if not isinstance(task, dict):
-            continue
-        task_id = task.get("id")
+            task = None
+        task_id = task.get("id") if isinstance(task, dict) else None
         if not isinstance(task_id, str) or not task_id:
+            if unreadable is not None:
+                unreadable.append(path)
             continue
         tasks[task_id] = task
     return tasks
@@ -632,7 +634,7 @@ def open_outcome_lines(walk_directory: Path) -> list:
 
 
 def unheld_and_held_tasks(tasks: dict, directory: Path, checker) -> "tuple[list, int]":
-    """Open tasks nothing recorded holds back, oldest first, and the count of those held."""
+    """The ids of open tasks nothing recorded holds back, oldest first, and the count of those held."""
     unheld = []
     held = 0
     for task_id in sorted(tasks, key=lambda text: (len(text), text)):
@@ -652,7 +654,7 @@ def unheld_and_held_tasks(tasks: dict, directory: Path, checker) -> "tuple[list,
                     checker.answer(kind, number).get("met") is True for kind, number in conditions):
                 held += 1
                 continue
-        unheld.append(f'task {task_id} "{shortened(task.get("subject", ""))}"')
+        unheld.append(task_id)
     return unheld, held
 
 
@@ -716,6 +718,7 @@ def next_action_prompt_lines(payload: dict, tasks: dict, directory: Path, state:
     state[NEXT_ACTION_STATE_KEY] = this_prompt
 
     unheld, held = unheld_and_held_tasks(tasks, directory, checker)
+    unheld = [f'task {task_id} "{shortened(tasks[task_id].get("subject", ""))}"' for task_id in unheld]
     lines = list(NEXT_ACTION_INSTRUCTIONS)
     lines += listed_with_limit(NEXT_ACTION_UNHELD_TASKS_HEADER, unheld,
                                NEXT_ACTION_LISTED_TASKS_LIMIT)
