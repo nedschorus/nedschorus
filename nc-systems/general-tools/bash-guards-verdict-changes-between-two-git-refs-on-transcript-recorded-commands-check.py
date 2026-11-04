@@ -539,14 +539,9 @@ def read_ghi_md_whole_file_replacement(guard, command, working_directory, search
 
 
 def read_git_worktree_remove_records_ship_first(guard, command, working_directory, search_file_directory):
-    # Only what the command removes is read: running the shippers would copy real records during a replay.
-    removals = guard.worktree_removals_in_command(command, working_directory)
-    unreadable = next((word for _, _, word, _ in removals if word is not None), None)
-    if unreadable is not None:
-        # The hook lets such a command run, with a notice in the agent's context.
-        return ["unchecked", unreadable], guard.UNREADABLE_WORKTREE_PATH_NOTICE.format(word=unreadable)
-    if removals:
-        return ["ships the records first", [[directory, word, *options] for directory, word, _, options in removals]], None
+    # Only whether the command removes a worktree is read: running the shippers would copy real records during a replay.
+    if guard.command_runs_git_worktree_remove(command):
+        return "ships every worktree's records first", None
     return "passed", None
 
 

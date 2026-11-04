@@ -2,14 +2,14 @@
 """Tests for git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py.
 
 The shipping cases run the hook end to end as a subprocess, the way Claude
-Code does, on a real git worktree in a scratch directory, with the real
+Code does, on real git worktrees in a scratch directory, with the real
 shippers pointed at a scratch log-store by COLD_READ_RECORD_SHIP_DESTINATION,
 as the shippers' own tests do. A failed shipment is a stub ssh and rsync that
 exit 255 first on PATH, with the destination given a host, so the shippers
 take ned-box to be unreachable. The cases for a shipper that prints nothing,
 a shipment past the hook's time limit, and a failing worktree listing inject
 those failures in-process through main's runner and clock. The command
-reading cases call main in-process.
+reading cases call command_runs_git_worktree_remove in-process.
 
 Run: python3 .claude/guard-hooks/git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -22,7 +22,6 @@ import io
 import json
 import os
 import shutil
-import site
 import subprocess
 import sys
 import tempfile
@@ -115,35 +114,72 @@ def refusal(output):
     return output["hookSpecificOutput"].get("permissionDecisionReason")
 
 
-def removals(command, cwd="/work"):
-    return [(directory, word, unreadable)
-            for directory, word, unreadable, _ in hook.worktree_removals_in_command(command, cwd)]
+def shippers_only(runner):
+    """Return a runner that injects runner into shipper calls only; the worktree listing runs real git."""
+    def runner_for_shippers(argv, **keywords):
+        if argv[0] == "git":
+            return subprocess.run(argv, **keywords)
+        return runner(argv, **keywords)
+    return runner_for_shippers
 
 
-# An unshipped record reaches the log-store before the removal, and the removal is let through.
+def runner_answering(returncode, stdout, stderr=""):
+    def runner(argv, **keywords):
+        return subprocess.CompletedProcess(argv, returncode, stdout, stderr)
+    return runner
+
+
+def runner_raising(error):
+    def runner(argv, **keywords):
+        raise error
+    return runner
+
+
+def payload_for(command, cwd):
+    return {"tool_name": "Bash", "cwd": str(cwd), "tool_input": {"command": command}}
+
+
+# Every worktree's unshipped records reach the log-store before the removal, which is let through.
 checkout, worktree = checkout_with_worktree("shipped")
-code, output, stderr = run_hook_process(f"git worktree remove {worktree}", checkout)
+other_worktree = checkout.parent / "shipped-other-worktree"
+git(checkout, "worktree", "add", "-q", "--detach", str(other_worktree))
+other_record = other_worktree / "cold-read-records" / "shipped-other-doc-2026-11-03"
+other_record.mkdir(parents=True)
+(other_record / "fast-read.md").write_text("other report\n")
+code, output, stderr = run_hook_process("git worktree remove some-worktree", checkout)
 cold_read_copy = STORE / "cold-read-records" / "shipped-doc-2026-11-03" / "fast-read.md"
 sanity_check_copy = STORE / "sanity-check-records" / "2026-11-03-shipped-doc" / "finding-dispositions.md"
 check("unshipped records reach the log-store and the removal is let through silently",
       code == 0 and output is None and cold_read_copy.is_file() and sanity_check_copy.is_file()
       and cold_read_copy.read_text() == "shipped report\n",
       (code, output, stderr, sorted(str(path) for path in STORE.rglob("*"))))
+check("the records of a worktree the command does not name ship too",
+      (STORE / "cold-read-records" / other_record.name / "fast-read.md").is_file())
 check("an empty record directory is not shipped",
       not (STORE / "cold-read-records" / "empty-record").exists())
-code, output, stderr = run_hook_process(f"git worktree remove {worktree}", checkout)
-check("records already in the log-store ship as nothing new and the removal is let through",
-      code == 0 and output is None, (code, output, stderr))
 
-# The removal is named by the worktree path's last component, as git allows.
-(worktree / "cold-read-records" / "later-record").mkdir()
-(worktree / "cold-read-records" / "later-record" / "triage.md").write_text("later\n")
-code, output, stderr = run_hook_process(f"git worktree remove --force {worktree.name}", checkout)
-check("a worktree named by its last path component is found through git worktree list and shipped",
-      code == 0 and output is None
-      and (STORE / "cold-read-records" / "later-record" / "triage.md").is_file(), (code, output, stderr))
+# A record the store already holds whole is skipped without running its shipper.
+shipper_calls = []
 
-# A failed shipment refuses the removal, naming each record and the command that ships it again.
+
+def runner_recording_shipper_calls(argv, **keywords):
+    shipper_calls.append(argv)
+    return subprocess.run(argv, **keywords)
+
+
+code, output = run_hook(payload_for(f"git worktree remove {worktree}", checkout),
+                        shippers_only(runner_recording_shipper_calls))
+check("records the store already holds are not shipped again, and the removal is let through",
+      code == 0 and output is None and shipper_calls == [], (code, output, shipper_calls))
+(worktree / "cold-read-records" / "shipped-doc-2026-11-03" / "cold-read-triage.md").write_text("ruled\n")
+code, output = run_hook(payload_for(f"git worktree remove {worktree}", checkout),
+                        shippers_only(runner_recording_shipper_calls))
+check("a record with a file the store lacks is shipped",
+      code == 0 and output is None and len(shipper_calls) == 1
+      and (STORE / "cold-read-records" / "shipped-doc-2026-11-03" / "cold-read-triage.md").is_file(),
+      (code, output, shipper_calls))
+
+# A failed shipment refuses the removal, naming each record, its worktree and the command that ships it again.
 checkout, worktree = checkout_with_worktree("unreachable")
 stubs = _scratch / "unreachable-stubs"
 stubs.mkdir()
@@ -153,8 +189,7 @@ for tool in ("ssh", "rsync"):
 unreachable_environment = dict(os.environ)
 unreachable_environment[SHIP_DESTINATION_VARIABLE] = "nedlern@ned-box:/nonexistent-test-log-store/cold-read-records"
 unreachable_environment["PATH"] = f"{stubs}{os.pathsep}{os.environ['PATH']}"
-code, output, stderr = run_hook_process(f"cd {checkout} && git worktree remove ../{worktree.name}",
-                                        _scratch, unreachable_environment)
+code, output, stderr = run_hook_process(f"git worktree remove {worktree}", checkout, unreachable_environment)
 reason = refusal(output) or ""
 cold_read_record = worktree / "cold-read-records" / "unreachable-doc-2026-11-03"
 sanity_check_record = worktree / "sanity-check-records" / "2026-11-03-unreachable-doc"
@@ -162,31 +197,35 @@ cold_read_rerun = f"python3 {hook.REPOSITORY_ROOT}/nc-systems/cold-read/cold-rea
 sanity_check_rerun = f"python3 {hook.REPOSITORY_ROOT}/scripts/sanity-check-record-ship.py {sanity_check_record}"
 check("a failed shipment refuses the removal",
       code == 0 and output["hookSpecificOutput"]["permissionDecision"] == "deny", (code, output, stderr))
-check("the refusal opens by saying it refused on purpose and names the worktree and how many records",
-      reason.startswith(f"Refused on purpose: this `git worktree remove` would delete 2 record(s) in {worktree} "),
-      reason)
-check("the refusal names each record with the shipper's own FAILED line",
-      f"Record {cold_read_record}: FAILED:" in reason and f"Record {sanity_check_record}: FAILED:" in reason
+check("the refusal opens by saying it refused on purpose, that every worktree's records are shipped, and how many failed",
+      reason.startswith("Refused on purpose: before any `git worktree remove`, this hook ships the cold-read-records "
+                        "and sanity-check records of every worktree of this repository to the log-store, and 2 "
+                        "record(s) did not reach it."), reason)
+check("the refusal names each record and its worktree with the shipper's own FAILED line",
+      f"Record {cold_read_record} (worktree {worktree}): FAILED:" in reason
+      and f"Record {sanity_check_record} (worktree {worktree}): FAILED:" in reason
       and "could not reach the log-store" in reason, reason)
 check("the refusal gives each record's ship command",
       f"  Shipped with: {cold_read_rerun}\n" in reason and f"  Shipped with: {sanity_check_rerun}\n" in reason,
       reason)
 for line in (f"If a Record line says the log-store or ned-box could not be reached, leave the worktree in place, "
-             f"stop, and {hook.TELL_THE_USER_OR_DISPATCHING_AGENT} that the worktree "
-             f"{worktree} is kept because records in it could not be shipped to the log-store, quoting each Record "
-             f"line above word for word.",
-             "Otherwise, first run any command a Record line gives, such as an `mv` to a free name; you need not run "
-             "the \"Shipped with\" commands, because this hook runs them itself. Then run your `git worktree remove` "
-             "command again, once.",
-             f"If this hook refuses it again, leave the worktree in place, stop, and "
-             f"{hook.TELL_THE_USER_OR_DISPATCHING_AGENT} that the worktree {worktree} is kept because records in it "
+             f"stop, and {hook.TELL_THE_USER_OR_DISPATCHING_AGENT} that `git worktree remove` is refused because "
+             f"records could not be shipped to the log-store, quoting each Record line above word for word.",
+             "If a Record line gives an `mv` to a free name and its worktree is one your agent-seat made or owns, "
+             "run that `mv`; you need not run the \"Shipped with\" commands, because this hook runs them itself. "
+             "Then run your `git worktree remove` command again, once.",
+             "If a Record line's worktree belongs to another agent-seat, leave that record as it is, stop, and "
+             f"{hook.TELL_THE_USER_OR_DISPATCHING_AGENT} that `git worktree remove` is refused until that record "
+             "is renamed and shipped, quoting its Record line word for word.",
+             f"If this hook refuses your command again, leave the worktree in place, stop, and "
+             f"{hook.TELL_THE_USER_OR_DISPATCHING_AGENT} that `git worktree remove` is refused because records "
              f"could not be shipped to the log-store, quoting each Record line of the second refusal word for "
              f"word."):
     check(f"the refusal carries the instruction {line[:50]!r}...", line in reason, reason)
 check("the refused removal leaves the records in place", cold_read_record.is_dir() and sanity_check_record.is_dir())
 
-# Run again once ned-box can be reached, as the refusal says, the removal ships the records and is let through.
-code, output, stderr = run_hook_process(f"cd {checkout} && git worktree remove ../{worktree.name}", _scratch)
+# Run again once ned-box can be reached, the removal ships the records and is let through.
+code, output, stderr = run_hook_process(f"git worktree remove {worktree}", checkout)
 check("the removal run again ships the records and is let through",
       code == 0 and output is None
       and (STORE / "cold-read-records" / cold_read_record.name / "fast-read.md").is_file()
@@ -198,45 +237,37 @@ check("each ship command the refusal gives runs and ships its record",
       all(rerun.returncode == 0 and rerun.stdout.startswith("shipped:") for rerun in reruns),
       [(rerun.returncode, rerun.stdout, rerun.stderr) for rerun in reruns])
 
-# A worktree with no records is let through silently, without loading a shipper.
+# A record whose name the store holds with other content is refused by the real shipper, and the refusal quotes its mv.
+checkout, worktree = checkout_with_worktree("clash")
+clashing_store_copy = STORE / "cold-read-records" / "clash-doc-2026-11-03"
+clashing_store_copy.mkdir(parents=True)
+(clashing_store_copy / "fast-read.md").write_text("another read's report\n")
+code, output, stderr = run_hook_process("git worktree remove anything", checkout)
+reason = refusal(output) or ""
+check("a record in any worktree that the shipper refuses refuses the removal, quoting the shipper's mv",
+      f"Record {worktree / 'cold-read-records' / 'clash-doc-2026-11-03'} (worktree {worktree}): REFUSED:" in reason
+      and "`mv " in reason and "clash-doc-2026-11-03-2" in reason, (code, output, stderr))
+subprocess.run(["mv", str(worktree / "cold-read-records" / "clash-doc-2026-11-03"),
+                str(worktree / "cold-read-records" / "clash-doc-2026-11-03-2")], check=True)
+code, output, stderr = run_hook_process("git worktree remove anything", checkout)
+check("once the refused record is renamed as the refusal says, the removal ships it and is let through",
+      code == 0 and output is None
+      and (STORE / "cold-read-records" / "clash-doc-2026-11-03-2" / "fast-read.md").read_text()
+      == "clash report\n", (code, output, stderr))
+
+# A worktree with no records is let through silently, without running a shipper.
 checkout, worktree = checkout_with_worktree("no-records")
 shutil.rmtree(worktree / "cold-read-records")
 shutil.rmtree(worktree / "sanity-check-records")
-shipper_calls = []
-
-
-def shippers_only(runner):
-    """Return a runner that injects runner into shipper calls only; the worktree listing runs real git."""
-    def runner_for_shippers(argv, **keywords):
-        if argv[0] == "git":
-            return subprocess.run(argv, **keywords)
-        return runner(argv, **keywords)
-    return runner_for_shippers
-
-
-def runner_recording_shipper_calls(argv, **keywords):
-    shipper_calls.append(argv)
-    return subprocess.run(argv, **keywords)
-
-
-code, output = run_hook({"tool_name": "Bash", "cwd": str(checkout),
-                         "tool_input": {"command": f"git worktree remove {worktree}"}},
+shipper_calls.clear()
+code, output = run_hook(payload_for(f"git worktree remove {worktree}", checkout),
                         shippers_only(runner_recording_shipper_calls))
-check("a worktree holding no records is let through silently, with no shipper run",
+check("a repository whose worktrees hold no records is let through silently, with no shipper run",
       code == 0 and output is None and shipper_calls == [], (code, output, shipper_calls))
-
 
 # A shipper that exits 0 but prints nothing, or exits nonzero, refuses the removal.
 checkout, worktree = checkout_with_worktree("injected")
-payload = {"tool_name": "Bash", "cwd": str(checkout), "tool_input": {"command": f"git worktree remove {worktree}"}}
-
-
-def runner_answering(returncode, stdout, stderr=""):
-    def runner(argv, **keywords):
-        return subprocess.CompletedProcess(argv, returncode, stdout, stderr)
-    return runner
-
-
+payload = payload_for(f"git worktree remove {worktree}", checkout)
 code, output = run_hook(payload, shippers_only(runner_answering(0, "")))
 check("a shipper that exits 0 and prints nothing refuses the removal, with its exit code",
       "Record " in (refusal(output) or "") and ": the shipper printed nothing (exit 0)\n" in refusal(output),
@@ -277,232 +308,54 @@ code, output = run_hook(payload, shippers_only(runner_recording_timeout), clock=
 check("a record reached after the time limit ran out is not shipped and refuses the removal",
       timeouts_given == [hook.SHIPPING_BUDGET_SECONDS]
       and (refusal(output) or "").count(f": {budget_line}\n") == 1
-      and "would delete 1 record(s)" in refusal(output), (timeouts_given, output))
+      and "and 1 record(s) did not reach it" in refusal(output), (timeouts_given, output))
 
+# A worktree listing that fails, cannot run or runs out of time lets the command through with a notice.
+not_checked_opening = ("Not checked: the hook that ships every worktree's cold-read-records and sanity-check "
+                       "records to the log-store before `git worktree remove` could not list this repository's "
+                       "worktrees (")
+for name, runner, said in (
+        ("exits nonzero", runner_answering(128, b"", b"fatal: not a git repository\n"),
+         "`git worktree list` exited 128: fatal: not a git repository"),
+        ("is killed by a signal", runner_answering(-9, b"worktree /x\0\0", b"warning: first\nkilled: last\n"),
+         "`git worktree list` exited -9: killed: last"),
+        ("exits nonzero and says nothing", runner_answering(1, b"", b""), "`git worktree list` exited 1"),
+        ("cannot run", runner_raising(OSError("no git")), "`git worktree list` could not run: no git"),
+        ("runs out of time", runner_raising(subprocess.TimeoutExpired("git", hook.GIT_TIMEOUT_SECONDS)),
+         f"`git worktree list` ran past {hook.GIT_TIMEOUT_SECONDS} seconds")):
+    code, output = run_hook(payload_for("git worktree remove wt", "/nonexistent"), runner)
+    specific = (output or {}).get("hookSpecificOutput", {})
+    notice = specific.get("additionalContext", "")
+    check(f"a worktree listing that {name} lets the command through with the not-checked notice and its reason",
+          code == 0 and "permissionDecision" not in specific and notice.startswith(not_checked_opening + said + ")")
+          and hook.SHIP_RECORDS_YOURSELF_NEXT_STEP_LINES in notice, output)
+code, output = run_hook(payload_for("git worktree remove wt", _scratch / "not-a-repository-at-all"))
+check("a hook run outside any repository lets the command through with the not-checked notice",
+      code == 0 and (output or {}).get("hookSpecificOutput", {}).get("additionalContext", "")
+      .startswith(not_checked_opening + "`git worktree list` exited "), output)
 
-# A worktree word that names no directory and no worktree is let through, since git refuses it too.
-def runner_failing_listing(argv, **keywords):
-    return subprocess.CompletedProcess(argv, 128, b"", b"fatal: not a git repository")
-
-
-def runner_raising(error):
-    def runner(argv, **keywords):
-        raise error
-    return runner
-
-
-check("a worktree word that matches no worktree is let through",
-      hook.git_worktree_remove_target_word_candidate_worktree_directories_find(str(checkout), "no-such-worktree", subprocess.run) == [])
-check("a failing worktree listing finds no worktree",
-      hook.git_worktree_remove_target_word_candidate_worktree_directories_find("/nonexistent", "x", runner_failing_listing) == [])
-listing_naming_a_worktree = f"worktree {worktree}\0HEAD {'0' * 40}\0detached\0\0".encode()
-for code_given in (128, -9):
-    check(f"a worktree listing that exits {code_given} is not read, though it names a matching worktree",
-          hook.git_worktree_remove_target_word_candidate_worktree_directories_find("/nonexistent", worktree.name,
-                                    runner_answering(code_given, listing_naming_a_worktree)) == [])
-check("a worktree listing that exits 0 is read",
-      hook.git_worktree_remove_target_word_candidate_worktree_directories_find("/nonexistent", worktree.name, runner_answering(0, listing_naming_a_worktree))
-      == [worktree])
-check("a worktree listing that cannot run finds no worktree",
-      hook.git_worktree_remove_target_word_candidate_worktree_directories_find("/nonexistent", "x", runner_raising(OSError("no git"))) == [])
-check("a worktree listing that times out finds no worktree",
-      hook.git_worktree_remove_target_word_candidate_worktree_directories_find("/nonexistent", "x", runner_raising(subprocess.TimeoutExpired("git", 10))) == [])
-second_checkout, second_worktree = checkout_with_worktree("ambiguous")
-other_worktree = second_checkout.parent / "other" / second_worktree.name
-git(second_checkout, "worktree", "add", "-q", "--detach", str(other_worktree))
-check("a last path component two worktrees share finds both, since git may remove either",
-      sorted(hook.git_worktree_remove_target_word_candidate_worktree_directories_find(str(second_checkout), second_worktree.name, subprocess.run))
-      == sorted([second_worktree, other_worktree]))
-check("a last path component one worktree has finds that worktree",
-      hook.git_worktree_remove_target_word_candidate_worktree_directories_find(str(second_checkout), f"other/{second_worktree.name}", subprocess.run)
-      == [other_worktree])
-# git matches a word against the worktrees' last path components before it reads the word as a path.
-suffix_checkout, suffix_worktree = checkout_with_worktree("suffix-first")
-(suffix_checkout / suffix_worktree.name).mkdir()
-check("a word that is both an ordinary directory and one worktree's last path component finds both",
-      sorted(hook.git_worktree_remove_target_word_candidate_worktree_directories_find(str(suffix_checkout), suffix_worktree.name, subprocess.run))
-      == sorted([suffix_worktree, suffix_checkout / suffix_worktree.name]))
-check("a failing worktree listing takes a word naming a directory as that directory",
-      hook.git_worktree_remove_target_word_candidate_worktree_directories_find(str(suffix_checkout), suffix_worktree.name, runner_failing_listing)
-      == [suffix_checkout / suffix_worktree.name])
-
-# Review 5768090675, finding 1: a removal pointed at another repository by --git-dir ships that worktree's records.
-other_repository_checkout, other_repository_worktree = checkout_with_worktree("git-dir-elsewhere")
-unrelated_checkout, _ = checkout_with_worktree("git-dir-from-here")
-code, output, stderr = run_hook_process(
-    f"git --git-dir={other_repository_checkout}/.git worktree remove --force {other_repository_worktree}",
-    unrelated_checkout)
-check("a removal given --git-dir of another repository ships that worktree's records",
-      code == 0 and output is None
-      and (STORE / "cold-read-records" / "git-dir-elsewhere-doc-2026-11-03" / "fast-read.md").is_file(),
-      (code, output, stderr))
-(other_repository_worktree / "cold-read-records" / "git-dir-by-name").mkdir()
-(other_repository_worktree / "cold-read-records" / "git-dir-by-name" / "triage.md").write_text("by name\n")
-code, output, stderr = run_hook_process(
-    f"git --git-dir {other_repository_checkout}/.git worktree remove --force {other_repository_worktree.name}",
-    unrelated_checkout)
-check("a worktree named by its last path component in a repository --git-dir names is found and shipped",
-      code == 0 and output is None
-      and (STORE / "cold-read-records" / "git-dir-by-name" / "triage.md").is_file(), (code, output, stderr))
-check("--git-dir and --work-tree, joined or apart, are carried to the worktree listing",
-      [options for _, _, _, options in hook.worktree_removals_in_command(
-          "git --git-dir=/b/.git --work-tree /b worktree remove wt", "/work")]
-      == [("--git-dir=/b/.git", "--work-tree", "/b")])
-
-# Review 5768090675, finding 3: a symlink with a trailing slash names the worktree it points to, which git removes.
-alias_checkout, alias_target = checkout_with_worktree("alias-target")
-alias_other = alias_checkout.parent / "elsewhere" / "alias"
-git(alias_checkout, "worktree", "add", "-q", "--detach", str(alias_other))
-(alias_checkout / "alias").symlink_to(alias_target)
-check("a word through a symlink finds the worktree it points to, beside any worktree whose path ends in it",
-      alias_target in hook.git_worktree_remove_target_word_candidate_worktree_directories_find(str(alias_checkout), "alias/", subprocess.run),
-      hook.git_worktree_remove_target_word_candidate_worktree_directories_find(str(alias_checkout), "alias/", subprocess.run))
-code, output, stderr = run_hook_process("git worktree remove alias/", alias_checkout)
-check("removing a worktree through a symlink ships the records of the worktree it points to",
-      code == 0 and output is None
-      and (STORE / "cold-read-records" / "alias-target-doc-2026-11-03" / "fast-read.md").is_file(),
-      (code, output, stderr))
-
-# Reading the command.
-check("a plain removal", removals("git worktree remove wt") == [("/work", "wt", None)], removals("git worktree remove wt"))
-check("--force and -f are options, and a word after -- is a worktree",
-      removals("git worktree remove --force -f -- -odd") == [("/work", "-odd", None)])
-check("a cd before the removal changes its directory",
-      removals("cd /repo && git worktree remove ../wt") == [("/repo", "../wt", None)])
-check("a cd inside ( ) does not change the directory after it",
-      removals("(cd /elsewhere) && git worktree remove wt") == [("/work", "wt", None)])
-check("git -C, joined or apart, changes the directory",
-      removals("git -C /repo worktree remove wt; git -C/repo2 worktree remove wt2")
-      == [("/repo", "wt", None), ("/repo2", "wt2", None)])
-check("git's other global options are skipped",
-      removals("git -c core.x=y --no-pager worktree remove wt") == [("/work", "wt", None)])
-check("env -C changes the directory", removals("env -C /repo git worktree remove wt") == [("/repo", "wt", None)])
-check("a removal inside bash -c is read",
-      removals("cd /repo && bash -c 'git worktree remove wt'") == [("/repo", "wt", None)])
-check("other worktree subcommands are not removals",
-      removals("git worktree list; git worktree add x; git worktree prune") == [])
-check("echo of a removal is data", removals("echo git worktree remove wt") == [])
-check("a removal on another machine through ssh is not read",
-      removals("ssh nedlern@ned-box 'git worktree remove wt'") == [])
-check("a variable no NAME=value sets cannot be read",
-      removals('git worktree remove "$WT"') == [("/work", "$WT", "$WT")])
-check("a variable in a cd before the removal cannot be read",
-      removals('cd "$REPO" && git worktree remove wt') == [("/work", "wt", "$REPO")])
-check("a variable in git's -C cannot be read",
-      removals('git -C "$REPO" worktree remove wt') == [("/work", "wt", "$REPO")])
-check("a cd to a written-out path after a variable one is read again",
-      removals('cd "$REPO"; cd /repo && git worktree remove wt') == [("/repo", "wt", None)])
-check("a loop variable cannot be read, though the variable before it can",
-      removals("S=/s; for w in a b; do git worktree remove $S/$w; done") == [("/work", "/s/$w", "/s/$w")])
-check("NAME=value sets the worktree path, in both $NAME and ${NAME} forms",
-      removals('W=/a/b; git worktree remove "$W"; git worktree remove ${W}2') == [("/work", "/a/b", None),
-                                                                                    ("/work", "/a/b2", None)])
-check("NAME=value sets a cd directory and git's -C, quoted, exported or built from another variable",
-      removals('S="/s"; export T=$S/t; cd "$S/x" && git -C $T worktree remove wt') == [("/s/t", "wt", None)])
-check("a value starting with ~ is expanded",
-      removals("W=~/wt; git worktree remove $W") == [("/work", os.path.expanduser("~/wt"), None)])
-check("a later assignment holding an expansion adds an unreadable reading beside the earlier value",
-      removals("W=/a; W=$(pwd); git worktree remove $W") == [("/work", "/a", None), ("/work", "$W", "$W")],
-      removals("W=/a; W=$(pwd); git worktree remove $W"))
-# Review 5768090675, finding 2: text inside another value's quotes may look like an assignment.
-check("an assignment-like text inside another value's quotes adds a reading and keeps the real one",
-      removals("W=/a; NOTE='example W=/b here'; git worktree remove \"$W\"")
-      == [("/work", "/a", None), ("/work", "/b", None)],
-      removals("W=/a; NOTE='example W=/b here'; git worktree remove \"$W\""))
-check("each value of each name gives its own reading, as in a cd and a worktree word",
-      removals("D=/x; D=/y; W=a; cd $D && git worktree remove $W")
-      == [("/x", "a", None), ("/y", "a", None)],
-      removals("D=/x; D=/y; W=a; cd $D && git worktree remove $W"))
-check("a value in single quotes is taken as written",
-      removals("W='/a b'; git worktree remove \"$W\"") == [("/work", "/a b", None)])
-check("a value of quoted and bare pieces run together is read whole",
-      removals('W="/repo"/wt; git worktree remove "$W"') == [("/work", "/repo/wt", None)],
-      removals('W="/repo"/wt; git worktree remove "$W"'))
-check("a value with a backslash cannot be read, and is an unreadable reading beside an earlier value",
-      removals('W=/a; W=/b\\ c; git worktree remove "$W"') == [("/work", "/a", None), ("/work", "$W", "$W")],
-      removals('W=/a; W=/b\\ c; git worktree remove "$W"'))
-quoted_checkout, quoted_worktree = checkout_with_worktree("quoted-lookalike")
-code, output = run_hook({"tool_name": "Bash", "cwd": str(quoted_checkout), "tool_input": {
-    "command": f"W={quoted_worktree}; NOTE='example W=/nonexistent here'; git worktree remove --force \"$W\""}})
-check("a worktree set by NAME=value has its records shipped though quoted text assigns the name too",
-      code == 0 and output is None
-      and (STORE / "cold-read-records" / "quoted-lookalike-doc-2026-11-03" / "fast-read.md").is_file(), output)
-check("a wrapper's directory applies to the command string of bash -c",
-      removals("env -C /b/checkout bash -c 'git worktree remove ../wt'", "/a/checkout")
-      == [("/b/checkout", "../wt", None)],
-      removals("env -C /b/checkout bash -c 'git worktree remove ../wt'", "/a/checkout"))
-check("a variable in a wrapper's directory before bash -c cannot be read",
-      removals("env -C \"$D\" bash -c 'git worktree remove wt'") == [("/work", "wt", "$D")])
-
-# The shell expands the leading ~ of an unquoted word before git sees it.
-check("a worktree word starting with ~/ is expanded",
-      removals("git worktree remove ~/wt") == [("/work", os.path.expanduser("~/wt"), None)],
-      removals("git worktree remove ~/wt"))
-check("a worktree word starting with ~user/ is expanded",
-      removals("git worktree remove ~root/wt") == [("/work", os.path.expanduser("~root/wt"), None)],
-      removals("git worktree remove ~root/wt"))
-check("a cd to a directory starting with ~/ is expanded",
-      removals("cd ~/repo; git worktree remove wt") == [(os.path.expanduser("~/repo"), "wt", None)],
-      removals("cd ~/repo; git worktree remove wt"))
-check("a cd with no directory goes to the home directory",
-      removals("cd; git worktree remove wt") == [(os.path.expanduser("~"), "wt", None)],
-      removals("cd; git worktree remove wt"))
-check("a ~ before a variable is expanded and the variable read",
-      removals("X=wt; git worktree remove ~/$X") == [("/work", os.path.expanduser("~/wt"), None)],
-      removals("X=wt; git worktree remove ~/$X"))
-check("a quoted ~ is kept as written",
-      removals('git worktree remove "~/wt"') == [("/work", "~/wt", None)], removals('git worktree remove "~/wt"'))
-check("a ~ that a variable's value brings in is kept as written, as the shell keeps it",
-      removals("W='~/wt'; git worktree remove $W") == [("/work", "~/wt", None)],
-      removals("W='~/wt'; git worktree remove $W"))
-tilde_checkout, tilde_worktree = checkout_with_worktree("tilde")
-# The user base is kept, because the shell reader's tree-sitter is installed under the real home.
-code, output, stderr = run_hook_process(f"git worktree remove ~/{tilde_worktree.name}", tilde_checkout,
-                                        dict(os.environ, HOME=str(tilde_worktree.parent),
-                                             PYTHONUSERBASE=site.getuserbase()))
-check("a worktree named through ~/ has its records shipped and the removal let through",
-      code == 0 and output is None
-      and (STORE / "cold-read-records" / "tilde-doc-2026-11-03" / "fast-read.md").is_file(), (code, output, stderr))
-
-# Readings are bounded only where variables multiply them, and a cut is reported, never silent.
-many_removals = "; ".join(f"git worktree remove wt{number}" for number in range(40))
-check("every one of 40 written-out removals is read",
-      removals(many_removals) == [("/work", f"wt{number}", None) for number in range(40)],
-      len(removals(many_removals)))
-cap = hook.MAXIMUM_ALTERNATIVE_SHELL_VARIABLE_VALUE_READINGS_PER_WORD
-two_names_six_values_each = "; ".join([f"A=a{number}" for number in range(6)] + [f"B=b{number}" for number in range(6)])
-cut = removals(f"{two_names_six_values_each}; git worktree remove $A$B")
-check("readings of one worktree word past the limit are cut, and the cut is an unreadable reading",
-      len([removal for removal in cut if removal[2] is None]) == cap and cut[-1] == ("/work", "$A$B", "$A$B"), cut)
-one_name_too_many_values = "; ".join(f"W=/w{number}" for number in range(cap + 1))
-cut = removals(f"{one_name_too_many_values}; git worktree remove $W")
-check("values of one name past the limit are cut, and the cut is an unreadable reading",
-      len([removal for removal in cut if removal[2] is None]) == cap and cut[-1] == ("/work", "$W", "$W"), cut)
-cut = removals(f"{two_names_six_values_each}; W=/$A$B; git worktree remove $W")
-check("values an assignment builds past the limit are cut, and the cut is an unreadable reading",
-      len([removal for removal in cut if removal[2] is None]) == cap and cut[-1] == ("/work", "$W", "$W"), cut)
-cut = removals(f"{one_name_too_many_values}; cd $W; git worktree remove wt")
-check("cd directories past the limit are cut, and the cut is an unreadable reading",
-      len([removal for removal in cut if removal[2] is None]) == cap and cut[-1] == ("/work", "wt", "$W"), cut)
-cut = removals(f"{one_name_too_many_values}; git -C $W worktree remove wt")
-check("git -C directories past the limit are cut, and the cut is an unreadable reading",
-      len([removal for removal in cut if removal[2] is None]) == cap and cut[-1] == ("/work", "wt", "$W"), cut)
-cut = removals(f"{one_name_too_many_values}; git --git-dir=$W worktree remove wt")
-check("repository option readings past the limit are cut, and the cut is an unreadable reading",
-      len([removal for removal in cut if removal[2] is None]) == cap and cut[-1] == ("/work", "wt", "--git-dir=$W"),
-      cut)
-cut = removals("D=/x; D=/y; " + "; ".join(f"A=a{number}" for number in range(20))
-               + "; cd $D && git worktree remove $A")
-check("removals one worktree word gives in several directories past the limit are cut, and the cut is unreadable",
-      len([removal for removal in cut if removal[2] is None]) == cap and cut[-1][2] is not None, cut)
-code, output = run_hook({"tool_name": "Bash", "cwd": "/nonexistent",
-                         "tool_input": {"command": f"{two_names_six_values_each}; git worktree remove $A$B"}},
-                        runner=runner_failing_listing)
-check("a removal whose readings were cut is let through with the not-checked notice naming the word",
-      code == 0 and output is not None and "permissionDecision" not in output["hookSpecificOutput"]
-      and output["hookSpecificOutput"].get("additionalContext", "").startswith(
-          "Not checked: the hook that ships a worktree's cold-read-records and sanity-check records to the "
-          "log-store before `git worktree remove` could not read $A$B in this command"), output)
+# Reading the command: whether it runs git worktree remove.
+for command, expected in (
+        ("git worktree remove wt", True),
+        ("git worktree remove --force wt", True),
+        ("cd /x && git worktree remove wt", True),
+        ("git -C /repo worktree remove wt", True),
+        ("git --git-dir ~/r/.git -c a=b worktree remove wt", True),
+        ("env -C /repo git worktree remove wt", True),
+        ("timeout 60 git worktree remove wt", True),
+        ('W=/a/wt; git worktree remove "$W"', True),
+        ("for w in a b; do git worktree remove $w; done", True),
+        ("cd $(pwd)/x && cd .. && git worktree remove wt", True),
+        ("bash -c 'git worktree remove wt'", True),
+        ("sh -c \"cd /x; git worktree remove wt\"", True),
+        ("git worktree list", False),
+        ("git worktree add wt", False),
+        ("echo git worktree remove wt", False),
+        ("git log --grep 'worktree remove'", False),
+        ("ssh host git worktree remove wt", False),
+        ("ls", False)):
+    check(f"{command!r} {'runs' if expected else 'does not run'} git worktree remove",
+          hook.command_runs_git_worktree_remove(command) == expected)
 
 # A slow shipment must be refused by the hook, not cut off by Claude Code, which lets the command through.
 settings = json.loads((hook.REPOSITORY_ROOT / ".claude" / "settings.json").read_text())
@@ -512,49 +365,14 @@ check("the hook's timeout in .claude/settings.json exceeds its shipping limit pl
       len(hook_timeouts) == 1 and isinstance(hook_timeouts[0], (int, float))
       and hook_timeouts[0] > hook.SHIPPING_BUDGET_SECONDS + hook.GIT_TIMEOUT_SECONDS, hook_timeouts)
 
-# A worktree path set by NAME=value has its records shipped before the removal.
-checkout, worktree = checkout_with_worktree("assigned")
-code, output = run_hook({"tool_name": "Bash", "cwd": str(checkout),
-                         "tool_input": {"command": f'W={worktree}; git worktree remove --force "$W"'}})
-check("a worktree named through NAME=value has its records shipped and the removal let through",
-      code == 0 and output is None
-      and (STORE / "cold-read-records" / "assigned-doc-2026-11-03" / "fast-read.md").is_file(), output)
-
-# A path the hook cannot read is let through, unshipped, with a notice for the agent.
-checkout, worktree = checkout_with_worktree("unread")
-code, output = run_hook({"tool_name": "Bash", "cwd": str(checkout),
-                         "tool_input": {"command": f"for w in {worktree.name}; do git worktree remove $w; done"}})
-specific = (output or {}).get("hookSpecificOutput", {})
-notice = specific.get("additionalContext", "")
-check("a removal whose worktree path cannot be read is let through, with no permission decision",
-      code == 0 and "permissionDecision" not in specific, output)
-check("the notice says the path could not be read and the records were not shipped",
-      notice.startswith("Not checked: the hook that ships a worktree's cold-read-records and sanity-check records "
-                        "to the log-store before `git worktree remove` could not read $w in this command, so it did "
-                        "not ship them, and let the command run.")
-      and not (STORE / "cold-read-records" / "unread-doc-2026-11-03").exists(), notice)
-check("the notice says what to do from now on",
-      "From now on, write out the path of the worktree each `git worktree remove` removes, one command per "
-      "worktree rather than a loop, or set the path earlier in the same command, as in "
-      "`W=<path>; git worktree remove \"$W\"`, with no variable in <path>, so this hook can ship the "
-      "worktree's records first." in notice, notice)
-# The form the notice recommends is one this hook reads.
-check("the notice's W=<path> form is read",
-      removals('W=/a/wt; git worktree remove "$W"') == [("/work", "/a/wt", None)])
-code, output = run_hook({"tool_name": "Bash", "cwd": str(checkout), "tool_input": {
-    "command": f"for w in x; do git worktree remove $w; done; git worktree remove {worktree}"}},
-    shippers_only(runner_answering(1, "FAILED: unread-doc-2026-11-03 — ned-box unreachable")))
-check("a failed shipment is refused even when another removal in the command cannot be read",
-      (refusal(output) or "").startswith("Refused on purpose:"), output)
 for shipper in ("nc-systems/cold-read/cold-read-record-ship.py", "scripts/sanity-check-record-ship.py"):
     usage = subprocess.run([sys.executable, str(hook.REPOSITORY_ROOT / shipper), "--help"],
                            capture_output=True, text=True, check=False)
-    check(f"{shipper}, which the parser-unavailable lines name, takes --all",
-          f"python3 {shipper} --all" in hook.PARSER_UNAVAILABLE_NEXT_STEP_LINES and "--all" in usage.stdout,
+    check(f"{shipper}, which the ship-them-yourself lines name, takes --all",
+          f"python3 {shipper} --all" in hook.SHIP_RECORDS_YOURSELF_NEXT_STEP_LINES and "--all" in usage.stdout,
           (usage.returncode, usage.stdout[-300:], usage.stderr))
 
-check("a command with no removal is let through", run_hook({"tool_name": "Bash", "cwd": "/work",
-                                                            "tool_input": {"command": "ls"}}) == (0, None))
+check("a command with no removal is let through", run_hook(payload_for("ls", "/work")) == (0, None))
 check("another tool is let through", run_hook({"tool_name": "Write", "tool_input": {"file_path": "x"}}) == (0, None))
 check("unreadable hook input is let through", run_hook("not json") == (0, None))
 
@@ -568,7 +386,7 @@ def unavailable(command, *arguments):
 
 hook.shell_reader.simple_commands = unavailable
 try:
-    code, output = run_hook({"tool_name": "Bash", "cwd": "/work", "tool_input": {"command": "git worktree remove wt"}})
+    code, output = run_hook(payload_for("git worktree remove wt", "/work"))
 finally:
     hook.shell_reader.simple_commands = readings_as_written
 specific = (output or {}).get("hookSpecificOutput", {})
