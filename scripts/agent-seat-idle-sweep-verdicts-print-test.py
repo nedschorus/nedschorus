@@ -443,6 +443,17 @@ check("gh fails: the agent-seat carries the error, the other is still reported, 
       code == 1 and verdicts["alpha"]["rule"] is None
       and "GitHub could not say" in verdicts["alpha"]["errors"][0]
       and verdicts["beta"]["rule"] == 4, verdicts)
+machine = Machine()
+for seat in ("alpha", "beta"):
+    machine.seat(seat, [user("go"), assistant("Done."), turn_end()])
+    machine.task(seat, "1", metadata={"prerequisites": [{"pr_merged": 50}]})
+machine.gh_responses.write_text("{}")
+code, verdicts, _ = machine.run()
+check("two agent-seats share one prerequisite gh fails on: both carry the error, though the "
+      "second reads the failed answer from the cache",
+      code == 1 and all(verdicts[seat]["rule"] is None
+                        and "GitHub could not say whether pr_merged 50" in verdicts[seat]["errors"][0]
+                        for seat in ("alpha", "beta")), verdicts)
 
 # --- read failures and what is not a failure -------------------------------------------------
 machine = Machine()
