@@ -358,6 +358,40 @@ check("rule 2: the sentence is logged as checked, and the message is the nudge",
 machine.script()
 machine.run(3)
 check("rule 2: a sentence is raised once only", not machine.claude_calls(), machine.claude_calls())
+check("rule 2: nothing to do does not end the wait a promise message started",
+      not machine.events("wait_ended"), machine.events("wait_ended"))
+machine.script(sent_ok())
+machine.run(16)
+calls = machine.claude_calls()
+check("rule 2: still idle 15 minutes after the promise message: the escalation is sent",
+      len(calls) == 1 and "please check" in calls[0]["prompt"]
+      and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
+      machine.events("wait_step"))
+machine.script()
+machine.run(32)
+check("rule 2: idle 15 minutes after the escalation: the user is told",
+      [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate", "tell_user"]
+      and any("after a nudge and an escalation" in alert["title"] for alert in machine.alerts()),
+      (machine.events("wait_step"), machine.alerts()))
+
+SECOND_PROMISE = "I'll fix it after lunch."
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.script(sent_ok())
+machine.run(0)
+machine.append("alpha", cross_session("You promised", at(0.5)), assistant(SECOND_PROMISE, at(1)),
+               turn_end(at(1)))
+machine.script(sent_ok())
+machine.run(7)
+check("rule 2: a promise given in answer to the message is raised on the open wait",
+      len(machine.claude_calls()) == 1 and SECOND_PROMISE in machine.claude_calls()[0]["prompt"]
+      and [event["step"] for event in machine.events("wait_step")] == ["nudge"]
+      and machine.events("wait_step")[0]["at"] == at(0), machine.events("wait_step"))
+machine.script(sent_ok())
+machine.run(16)
+check("rule 2: the second promise did not put off the escalation",
+      [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
+      machine.events("wait_step"))
 
 ANNOUNCED = "I'm starting the PR 1633 work now."
 machine = Machine()
@@ -657,6 +691,13 @@ machine.log.write_text('{"event": "account_seen", "account": "account-1", "at": 
                        + '"}\n{"event": "acc')
 code, output = machine.run(0)
 check("a log whose last line was cut short: the line is skipped, exit 0", code == 0, output)
+code, output = machine.run(1)
+check("a log whose last line was cut short: later runs still read the log, exit 0",
+      code == 0 and "IdleSweepLogLineNotUtf8Json" not in output, (code, output))
+check("a log whose last line was cut short: the skipped line is dropped before the next event",
+      '{"event": "acc' not in machine.log.read_text().splitlines()
+      and all(json.loads(line) for line in machine.log.read_text().splitlines()),
+      machine.log.read_text())
 
 if failures:
     print(f"{len(failures)} case(s) failed")

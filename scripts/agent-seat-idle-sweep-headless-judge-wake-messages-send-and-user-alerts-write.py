@@ -21,9 +21,10 @@ Each invocation, under a lock that keeps two from overlapping:
    the agent-seat's turn has ended, and writes a user-alert when it is not there.
 5. For each idle agent-seat, applies the verdict's rule: rule 1 wakes it once its limit has ended;
    rule 2 has unbacked promises and announced actions judged and named to it; rule 3 sends the
-   handoff text; rule 4 ends any wait; rule 5 has the judge decide whether to message it. A
-   message starts a wait: 15 minutes later, if the agent-seat is idle, code sends the escalation,
-   and 15 minutes after that writes the user a user-alert, once.
+   handoff text; rule 4 ends a wait that a rule 3 or rule 5 message started; rule 5 has the judge
+   decide whether to message it. A message starts a wait, unless a wait is already open: 15 minutes
+   later, if the agent-seat is idle, code sends the escalation, and 15 minutes after that writes the
+   user a user-alert, once.
 
 Headless agent-sessions: `claude -p --model sonnet` in an empty working directory under the state
 directory, allowed only SendMessage, ListAgents and ToolSearch, or no tool for the rule 2 judge,
@@ -248,6 +249,12 @@ class SweepLog:
     def append(self, event, now):
         event = {"at": iso(now), **event}
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.path.exists():
+            data = self.path.read_bytes()
+            if data and not data.endswith(b"\n"):
+                # The read skipped this cut-short last line; an event written after it would
+                # join it into a line that, no longer last, would stop every later read.
+                os.truncate(self.path, data.rfind(b"\n") + 1)
         with self.path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
         self.events.append(event)
@@ -268,7 +275,7 @@ class SweepLog:
                 wait = None
             elif event["step"] == NUDGE:
                 wait = {"session_id": event["session_id"], "first_idle_at": event["first_idle_at"],
-                        NUDGE: event["at"]}
+                        "rule": event.get("rule"), NUDGE: event["at"]}
             elif wait is not None:
                 wait[event["step"]] = event["at"]
         return wait
@@ -583,7 +590,7 @@ class Sweep:
             self.usage_limit(seat, verdict)
             return
         if rule == 2:
-            outcome = self.sentences(seat, verdict)
+            outcome = self.sentences(seat, verdict, wait)
             if outcome != "all backed":
                 return
             fallback = verdict.get(fields.IF_EVERY_SENTENCE_BACKED)
@@ -591,7 +598,11 @@ class Sweep:
                 return
             rule, text = fallback[fields.RULE], fallback.get(fields.TEXT)
         if rule == 4:
-            if wait:
+            # Nothing to do settles the open tasks a rule 3 or 5 message was about, but not a
+            # promise a rule 2 message named, whose wait goes on while the agent-seat stays idle.
+            if wait and wait["rule"] == 2:
+                self.wait_step(seat, verdict, wait, stretch, rule, text)
+            elif wait:
                 self.end_wait(seat, "nothing to do")
             return
         if wait:
@@ -602,8 +613,8 @@ class Sweep:
     def end_wait(self, seat, why):
         self.record({"event": "wait_ended", "agent_seat": seat, "why": why})
 
-    def start_wait(self, seat, verdict, stretch, step_text):
-        self.record({"event": "wait_step", "agent_seat": seat, "step": NUDGE,
+    def start_wait(self, seat, verdict, stretch, step_text, rule):
+        self.record({"event": "wait_step", "agent_seat": seat, "step": NUDGE, "rule": rule,
                      "session_id": verdict[fields.SESSION_ID], "first_idle_at": stretch,
                      "text": step_text})
 
@@ -634,7 +645,7 @@ class Sweep:
 
     def nudge(self, seat, verdict, rule, text, stretch):
         if rule == 3:
-            self.start_wait(seat, verdict, stretch, text)
+            self.start_wait(seat, verdict, stretch, text, 3)
             self.send(seat, verdict, text, NUDGE)
         elif rule == 5:
             self.judge_idle_seat(seat, verdict, stretch)
@@ -684,10 +695,10 @@ class Sweep:
             self.headless_failed(seat, "judge whether it could act now", "; ".join(problems))
         if sends and not any(problem.startswith("sent to") for problem in problems):
             text = sends[-1]["message"]
-            self.start_wait(seat, verdict, stretch, text)
+            self.start_wait(seat, verdict, stretch, text, 5)
             self.message_sent(seat, verdict, text, NUDGE)
 
-    def sentences(self, seat, verdict):
+    def sentences(self, seat, verdict, wait):
         """Rule 2: judge what code could not settle, then name every unbacked sentence to the
         agent-seat in one message. Returns "sent", "failed" or "all backed"."""
         checked = self.log.checked_sentences(seat)
@@ -733,7 +744,10 @@ class Sweep:
             minutes=int(seconds_between(item["time"], self.now) // 60) if item["time"] else "some")
             for item in unbacked)
         stretch = (verdict.get(fields.LAST_ACTIVITY) or {}).get("time")
-        self.start_wait(seat, verdict, stretch, text)
+        # A promise given in answer to a message goes on the open wait, so that repeated promises
+        # cannot put off its escalation and the user-alert.
+        if not wait:
+            self.start_wait(seat, verdict, stretch, text, 2)
         self.send(seat, verdict, text, NUDGE)
         return "sent"
 
