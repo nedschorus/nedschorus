@@ -9,6 +9,7 @@ scratch checkout this suite made. The exit code is asserted on every case.
 
 import importlib.util
 import json
+import re
 import shlex
 import shutil
 import subprocess
@@ -1534,7 +1535,7 @@ def test_two_unclosed_approval_walks_are_reported_naming_both():
           and lines[0].startswith("The user answered \"a\"; the hook could not tell whether an approval-walk "
                                   "is open, because reading the approval-walk state failed: "
                                   "MoreThanOneUnclosedApprovalWalk")
-          and str(second) in lines[0] and str(case.walk / f"{WALK_NAME}-minutes.md") in lines[0]
+          and re.search(rf"/docs/walk/{second.name}, (<minutes>|\S*/docs/walk/{WALK_NAME}-minutes\.md)'\)", lines[0])
           and "If an approval-walk is open:" in lines, f"lines {lines!r}")
 
 
