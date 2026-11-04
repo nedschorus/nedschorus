@@ -538,6 +538,18 @@ def read_ghi_md_whole_file_replacement(guard, command, working_directory, search
     return ("refused", f"replaces {replaced}") if replaced else ("passed", None)
 
 
+def read_git_worktree_remove_records_ship_first(guard, command, working_directory, search_file_directory):
+    # Only what the command removes is read: running the shippers would copy real records during a replay.
+    removals = guard.worktree_removals_in_command(command, working_directory)
+    unreadable = next((word for _, _, word in removals if word is not None), None)
+    if unreadable is not None:
+        # The hook lets such a command run, with a notice in the agent's context.
+        return ["unchecked", unreadable], guard.UNREADABLE_WORKTREE_PATH_NOTICE.format(word=unreadable)
+    if removals:
+        return ["ships the records first", [[directory, word] for directory, word, _ in removals]], None
+    return "passed", None
+
+
 class MarkdownChangingCheckoutProbeRunner(StubbedProbeRunner):
     """Answers the Markdown push reminder's git as a checkout whose every ref changes one Markdown file.
 
@@ -603,6 +615,8 @@ GUARDS = {
     "nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py":
         read_markdown_push_reminder,
     ".claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py": read_ghi_md_whole_file_replacement,
+    ".claude/guard-hooks/git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py":
+        read_git_worktree_remove_records_ship_first,
 }
 SEARCH_FILE_GUARD = ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py"
 
