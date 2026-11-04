@@ -236,6 +236,7 @@ def run(root, *arguments, checkout=None, lock_file=None, rendezvous_seconds="20"
                "--log-dir", str(root / "logs"),
                "--lock-file", str(lock_file if lock_file is not None else root / "run.lock"),
                "--recorded-inputs-directory", str(root / "recordings"),
+               "--files-only-strace-saw-directory", str(root / "recordings"),
                *arguments]
     return subprocess.run(command, capture_output=True, text=True, env=environment,
                           stdin=subprocess.DEVNULL, check=False)
@@ -1287,6 +1288,151 @@ with tempfile.TemporaryDirectory() as scratch:
           "recorders recorded it",
           ran(root) == ["runs-git-show-test.py"] and result.returncode == 1,
           (ran(root), result.stdout))
+
+# --- strace only where asked, and the files only it saw kept for later runs --
+# A stand-in strace runs each suite, and writes one trace line saying STRACE_ONLY_SUITE opened
+# data.txt, as a git command or a shell script would, unseen by the audit hook. Real strace
+# cannot attach inside the daily full run, which traces this suite, so it is not used here.
+FAKE_STRACE_SOURCE = r'''import os, subprocess, sys
+arguments = sys.argv[1:]
+trace = arguments[arguments.index("-o") + 1]
+command = arguments[arguments.index("-o") + 2:]
+with open(os.environ["FAKE_STRACE_CALLED_FILE"], "a") as called:
+    called.write("called\n")
+code = subprocess.call(command)
+seen = os.environ["FAKE_STRACE_SAW"]
+with open(trace + ".1", "w") as written:
+    if any(argument.endswith(os.environ["FAKE_STRACE_SUITE"]) for argument in command):
+        written.write(f'openat(AT_FDCWD</>, "{seen}", O_RDONLY) = 3<{seen}>\n')
+sys.exit(code)
+'''
+FAKE_STRACE_DRIVER = r'''
+import importlib.util, os, sys
+program_path, *arguments = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("run_all_test_suites", program_path)
+program = importlib.util.module_from_spec(spec)
+sys.argv = [program_path, *arguments]
+spec.loader.exec_module(program)
+program.strace_usable = lambda: os.environ["FAKE_STRACE_PROGRAM"]
+sys.exit(program.main(arguments))
+'''
+STRACE_ONLY_SUITE = "reads-data-through-git-test.py"
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {STRACE_ONLY_SUITE: PASSES, "reads-nothing-else-test.py": PASSES})
+    base = commit_files(repo, {"data.txt": "a\n"}, "data")
+    fake_strace = root / "fake-strace.py"
+    fake_strace.write_text(f"#!{sys.executable}\n" + FAKE_STRACE_SOURCE)
+    fake_strace.chmod(0o755)
+    called = root / "fake-strace-called.txt"
+    fake = {"FAKE_STRACE_PROGRAM": str(fake_strace), "FAKE_STRACE_CALLED_FILE": str(called),
+            "FAKE_STRACE_SAW": os.path.realpath(repo / "data.txt"),
+            "FAKE_STRACE_SUITE": STRACE_ONLY_SUITE}
+
+    def kept_list(store):
+        found = list(store.glob(f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json"))
+        return json.loads(found[0].read_text()) if found else None
+
+    hook_alone = run(root, environment_extra=fake, driver=FAKE_STRACE_DRIVER)
+    check("a run not given --record-inputs-with-strace records with the audit hook alone, "
+          "where strace is usable too",
+          hook_alone.returncode == 0 and not called.exists()
+          and recording(root, STRACE_ONLY_SUITE).get("recorded_by") == ["python-audit-hook"]
+          and kept_list(root / "recordings") is None
+          and any(line.startswith("inputs recorded by python-audit-hook, kept in")
+                  for line in lines(hook_alone.stdout)), hook_alone.stdout)
+
+    traced = run(root, "--record-inputs-with-strace", environment_extra=fake,
+                 driver=FAKE_STRACE_DRIVER)
+    kept = kept_list(root / "recordings")
+    check("a run given --record-inputs-with-strace records with strace too, and keeps the "
+          "files only strace saw, without those the audit hook saw",
+          traced.returncode == 0 and called.exists()
+          and recording(root, STRACE_ONLY_SUITE).get("recorded_by")
+          == ["python-audit-hook", "strace"]
+          and kept is not None and kept["files_only_strace_saw"] == ["data.txt"]
+          and kept["suite"] == STRACE_ONLY_SUITE
+          and f"and strace ({fake_strace})" in traced.stdout, (traced.stdout, kept))
+
+    run(root, environment_extra=fake, driver=FAKE_STRACE_DRIVER)
+    check("a later run with the audit hook alone replaces the recording and leaves the list "
+          "of files only strace saw as it was",
+          recording(root, STRACE_ONLY_SUITE).get("recorded_by") == ["python-audit-hook"]
+          and kept_list(root / "recordings") == kept, kept_list(root / "recordings"))
+
+    other_store = root / "another-store"
+    run(root, "--recorded-inputs-directory", str(other_store))
+    commit_files(repo, {"data.txt": "b\n"}, "change data")
+    for store, where in ((root / "recordings", "the run's own recordings directory"),
+                         (other_store, "another directory than the run's recordings")):
+        (root / "ran.txt").unlink(missing_ok=True)
+        selected = run(root, CHANGED_SINCE, base, "--recorded-inputs-directory", str(store))
+        check(f"a change to a file only strace saw selects the suite, with its list read from "
+              f"{where}",
+              ran(root) == [STRACE_ONLY_SUITE]
+              and f"SELECTED {STRACE_ONLY_SUITE}: it reads data.txt, which differs, as only the "
+                  f"strace run of {kept['recorded_at']} saw" in lines(selected.stdout),
+              (ran(root), selected.stdout))
+    (root / "ran.txt").unlink(missing_ok=True)
+    unlisted = run(root, CHANGED_SINCE, base, "--files-only-strace-saw-directory",
+                   str(root / "no-lists-here"))
+    check("without that list, the same change does not select the suite",
+          ran(root) == [], (ran(root), unlisted.stdout))
+    check("a selective run says, on Linux only, that suites have no list of files only strace "
+          "saw",
+          any(line.startswith("run-all-test-suites: 2 of 2 suites have no list of the files "
+                              "only strace saw them read from the last 36 hours")
+              for line in lines(unlisted.stdout)) == sys.platform.startswith("linux"),
+          unlisted.stdout)
+
+    a_file = root / "a-file-not-a-directory"
+    a_file.write_text("")
+    unsaved = run(root, "--record-inputs-with-strace", "--files-only-strace-saw-directory",
+                  str(a_file), environment_extra=fake, driver=FAKE_STRACE_DRIVER)
+    check("a list of files only strace saw that cannot be saved is reported, and the "
+          "suite's recording is removed, so the next selective run selects the suite",
+          f"inputs of {STRACE_ONLY_SUITE} not recorded:" in unsaved.stdout
+          and recording(root, STRACE_ONLY_SUITE) == {}, unsaved.stdout)
+
+# Only the daily full run records these lists, once a day; a list older than the limit, or
+# none, means a daily run was missed, and the run says so.
+NOW = datetime.datetime(2026, 11, 4, 12, 0, tzinfo=datetime.timezone.utc)
+
+
+def kept_hours_before_now(hours):
+    return {"recorded_at": (NOW - datetime.timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "files_only_strace_saw": []}
+
+
+notice = module.suites_without_recent_files_only_strace_saw_list_notice_or_none(
+    ["a-test.py", "b-test.py", "c-test.sh"],
+    {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(35)},
+    pathlib.Path("/store"), NOW)
+check("no notice when every recorded suite's list is younger than the limit, a shell suite, "
+      "which is never recorded, aside", notice is None, notice)
+notice = module.suites_without_recent_files_only_strace_saw_list_notice_or_none(
+    ["a-test.py", "b-test.py"],
+    {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(37)},
+    pathlib.Path("/store"), NOW)
+check("a list older than the limit is named, with the time it was recorded",
+      notice is not None and notice.startswith("run-all-test-suites: 1 of 2 suites")
+      and "has not recorded every suite since 2026-11-02T23:00:00Z" in notice
+      and "If you have not yet told the user in this agent-session that the daily full test "
+          "run's lists are stale: tell him" in notice,
+      notice)
+notice = module.suites_without_recent_files_only_strace_saw_list_notice_or_none(
+    ["a-test.py"], {}, pathlib.Path("/store"), NOW)
+check("a missing list is named, with the directory it was looked for in",
+      notice is not None and notice.startswith("run-all-test-suites: 1 of 1 suites")
+      and "36 hours in /store," in notice
+      and "has not recorded every suite at all," in notice, notice)
+with tempfile.TemporaryDirectory() as scratch:
+    store = pathlib.Path(scratch)
+    for name, body in (("not-json", "{"), ("no-list", '{"recorded_at": "2026-11-04T00:00:00Z"}'),
+                       ("no-time", '{"files_only_strace_saw": []}')):
+        (store / f"{name}-test.py.files-only-strace-saw.json").write_text(body)
+        check(f"a list that is {name.replace('-', ' ')} is not used",
+              module.load_files_only_strace_saw(store, f"{name}-test.py") is None, name)
 
 # --- Saving recordings while runs in other checkouts save them too -----------
 # A sitecustomize.py on the program's PYTHONPATH holds each run at a barrier

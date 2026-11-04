@@ -477,11 +477,13 @@ def run_cases_on_ned_box(workspace: Path):
           result.stdout == "daily-full-test-run-of-main: record written to nedlern@ned-box:"
           f"{fixture.log_store}/daily-full-test-runs/ned-box/2026-09-30.txt\n", result.stdout)
     check("the runner is run once, by the Python running this program, as the worktree's "
-          "scripts/run-all-test-suites.py --log-dir <logs> --wait-for-lock-seconds 3600, with "
-          "no selection option, no -j and no --recorded-inputs-directory",
+          "scripts/run-all-test-suites.py --log-dir <logs> --record-inputs-with-strace "
+          "--wait-for-lock-seconds 3600, with no selection option, no -j and no "
+          "--recorded-inputs-directory",
           len(result.runner_calls) == 1
           and call.get("argv") == [str(fixture.worktree / "scripts" / "run-all-test-suites.py"),
                                    "--log-dir", str(fixture.logs),
+                                   "--record-inputs-with-strace",
                                    "--wait-for-lock-seconds", "3600"]
           and os.path.realpath(call.get("executable", "")) == os.path.realpath(sys.executable),
           repr(result))
@@ -619,9 +621,11 @@ def run_cases_on_ned_box(workspace: Path):
     # --- The seams -------------------------------------------------------------
     recorded_inputs = workspace / "a-recorded-inputs-directory"
     result = fixture.run(extra_arguments=["--recorded-inputs-directory", str(recorded_inputs)])
-    check("--recorded-inputs-directory is passed through to the runner",
-          result.code == 0 and result.runner_calls[0]["argv"][-4:-2]
-          == ["--recorded-inputs-directory", str(recorded_inputs)]
+    check("--recorded-inputs-directory is passed through to the runner, as its "
+          "--recorded-inputs-directory and its --files-only-strace-saw-directory",
+          result.code == 0 and result.runner_calls[0]["argv"][-6:-2]
+          == ["--recorded-inputs-directory", str(recorded_inputs),
+              "--files-only-strace-saw-directory", str(recorded_inputs)]
           and not recorded_inputs.exists(), repr(result))
     stand_in_elsewhere = workspace / "a-stand-in-runner-outside-the-worktree.py"
     stand_in_elsewhere.write_text(STAND_IN_RUNNER_SOURCE, encoding="utf-8")
@@ -631,7 +635,7 @@ def run_cases_on_ned_box(workspace: Path):
           "worktree, with the same arguments",
           result.code == 0 and result.runner_calls[0]["argv"]
           == [str(stand_in_elsewhere), "--log-dir", str(fixture.logs),
-              "--wait-for-lock-seconds", "3600"]
+              "--record-inputs-with-strace", "--wait-for-lock-seconds", "3600"]
           and result.runner_calls[0]["checkout"] == str(fixture.worktree), repr(result))
 
     # --- What a killed run left -------------------------------------------------
