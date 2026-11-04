@@ -20,7 +20,11 @@ and the round's reviews, because nothing else on GitHub tells that round's revie
 of a later round on the same head. The round's number counts merge-lane-2's changes-requested
 reviews, taking as one those of the same commit that no round record tells apart. The blocking
 findings are the round's reviews' inline comments whose body starts with a match of
-BLOCKING_MARKER_PATTERN; the bodies' free text is never parsed for findings. A blocker re-posted
+BLOCKING_MARKER_PATTERN; the bodies' free text is never parsed for findings. When one of
+merge-lane-2's reviews of the round carries such a comment and states a **Blocking: N** count, as
+merge-lane-pull-request-reviewer-review-post-and-read-back.py posts it from categorized findings,
+only the marked comments of such reviews block, since that review grades every finding of the
+round. A blocker re-posted
 with the same path, line and body counts once. A review's stated **Blocking: N** is checked against
 its own marked comments, or, when it has none, against those of the round's other reviews, such as
 the commissioned reviewer's Blocks it grades or a later review that re-posts its blockers.
@@ -331,12 +335,20 @@ def latest_first(anchor, reviews):
     return [anchor, *(review for review in reviews if review is not anchor)]
 
 
-def blocking_findings(number, anchor, reviews):
+def blocking_findings(number, anchor, reviews, reviewer_login=MERGE_LANE_2_REVIEWER_LOGIN):
     comments_by_review = [gh_json_lines(["api", "--paginate",
                                          f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews/{review['id']}/comments",
                                          "--jq", ".[]"]) for review in reviews]
     marked_by_review = [marked(comments) for comments in comments_by_review]
-    findings = without_reposts([comment for found in marked_by_review for comment in found])
+    # A merge-lane-2 review with its own marks and a stated count was posted from categorized
+    # findings, so it grades every finding of the round, and another reviewer's Blocks it graded
+    # below must-fix-now does not block. A review without the count may leave some blockers
+    # marked only in the commissioned reviewer's comments.
+    graded = [found for review, found in zip(reviews, marked_by_review)
+              if (review.get("user") or {}).get("login") == reviewer_login and found
+              and BLOCKING_COUNT_PATTERN.search(review.get("body") or "")]
+    deciding = graded or marked_by_review
+    findings = without_reposts([comment for found in deciding for comment in found])
     named = review_links(latest_first(anchor, reviews))
     asked_about = anchor.get("html_url")
     whose = "its" if len(reviews) == 1 else f"the reviews {named}'"
@@ -377,7 +389,7 @@ def round_facts(number, reviewer_login):
     if not frozen_head:
         raise StepFailed(f"merge-lane-2's review {anchor.get('html_url')} carries no commit_id")
     return (url, head, branch, review_links(latest_first(anchor, reviews)), anchor.get("id"), frozen_head,
-            blocking_findings(number, anchor, reviews), fix_round_number,
+            blocking_findings(number, anchor, reviews, reviewer_login), fix_round_number,
             None if recorded else [review.get("id") for review in reviews])
 
 

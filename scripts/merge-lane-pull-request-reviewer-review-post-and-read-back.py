@@ -38,6 +38,8 @@ pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-
 reads blocking findings by, using that program's BLOCKING_MARKER_PATTERN:
 - each must-fix-now comment is posted opening with "**Blocks** ", and a
   comment whose body already opens with a blocking mark is refused;
+- a comment with the same path, line and posted body as an earlier one is
+  dropped, since the fix-round program counts such a repost once;
 - when N comments are must-fix-now, N at least 1, the body carries
   "**Blocking: N**". No count is written when N is 0, because the fix-round
   program checks a stated count on every review of the frozen-head, a
@@ -208,22 +210,27 @@ def read_review_file(path, account):
             comment["finding_category"] == BLOCKING_CATEGORY for comment in comments):
         raise ReviewFileUnusable(
             f"has the verdict 'REQUEST_CHANGES' but no comment whose \"finding_category\" is "
-            f"{BLOCKING_CATEGORY}, so it would be posted as an approval")
+            f"{BLOCKING_CATEGORY}; this program posts REQUEST_CHANGES only for a must-fix-now "
+            f"comment, so it refuses the file rather than post it as an approval. Give the "
+            f"category {BLOCKING_CATEGORY} to each comment that blocks the merge; if no comment "
+            f"blocks it, make the verdict APPROVE")
     return verdict, body, comments
 
 
 def with_blocking_marks(body, comments):
-    """Return (verdict, body, comments) as posted for categorized comments: the verdict set by
-    the must-fix-now ones, their count in the body, each opened with the mark, and no finding_category
-    key left."""
-    blocking = [comment["finding_category"] == BLOCKING_CATEGORY for comment in comments]
-    count = sum(blocking)
+    """Return (verdict, body, comments) as posted for categorized comments: each must-fix-now one
+    opened with the mark, no finding_category key left, a comment repeating an earlier one's path,
+    line and body dropped, as the fix-round program counts it once, and the verdict and the body's
+    count set by the must-fix-now ones left."""
+    comments = fix_round.without_reposts([
+        {"path": comment["path"], "line": comment["line"],
+         "body": (BLOCKING_MARK if comment["finding_category"] == BLOCKING_CATEGORY else "")
+         + comment["body"]}
+        for comment in comments])
+    count = len(fix_round.marked(comments))
     verdict = "REQUEST_CHANGES" if count else "APPROVE"
     if count:
         body = BLOCKING_COUNT_FORMAT.format(count=count) + "\n\n" + body
-    comments = [{"path": comment["path"], "line": comment["line"],
-                 "body": (BLOCKING_MARK if blocks else "") + comment["body"]}
-                for comment, blocks in zip(comments, blocking)]
     return verdict, body, comments
 
 
@@ -322,7 +329,10 @@ def main(argv=None):
     try:
         verdict, body, comments = read_review_file(arguments.review_file, account)
     except ReviewFileUnusable as error:
-        print(REVIEW_FILE_UNUSABLE.format(path=arguments.review_file, reason=error),
+        # merge-lane-2 writes its own file, so no reviewer's run is to blame and it can fix the file.
+        print(NOT_POSTED.format(reason=f"the review file {arguments.review_file} {error}")
+              if account == MERGE_LANE_ACCOUNT
+              else REVIEW_FILE_UNUSABLE.format(path=arguments.review_file, reason=error),
               file=sys.stderr)
         return EXIT_NOT_POSTED
     try:
