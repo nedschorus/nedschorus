@@ -902,8 +902,8 @@ def recorded_mutant_killed_check(arguments, checkout, environment, runner):
         print(mutated.stdout, end="")
         print(f"{MUTANT_SURVIVED_LINE_PREFIX}: at head {head[:12]}, every suite for {path} "
               f"passes with the mutant in {diff_file} applied: {' '.join(suites)}\n"
-              f"Write or change a test that fails with the mutant and passes without it, commit "
-              f"it, and run this again.")
+              f"Write or change a test that fails with the mutant and passes without it, and "
+              f"commit the test.\n" + rerun)
         return EXIT_SURVIVORS_OR_UNTESTED_FILES
     if verdict is None:
         raise CouldNotRun(
