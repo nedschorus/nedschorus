@@ -67,8 +67,8 @@ NO_WALK_LINES = (
 USER_ALERT_LINE = "  #user_alert {id}"
 WALK_UNKNOWN_LINE = ("The hook could not tell whether an approval-walk is open in this checkout, because reading "
                      "the walk files failed: {error}. Look yourself: the last `#next_to_present` line in each "
-                     "docs/walk/*-minutes.md names its waiting item, and a value other than `none` or `closed` "
-                     "marks the approval-walk open.")
+                     "docs/walk/*-minutes.md names its waiting item, and a value that opens with neither `none` "
+                     "nor `closed` marks the approval-walk open.")
 IF_WALK_OPEN = "If an approval-walk is open:"
 IF_NO_WALK = "If no approval-walk is open:"
 CLAIM_FAILED_LINES = (

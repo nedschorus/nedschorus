@@ -123,6 +123,7 @@ def run_one_alert_cases(root):
     check("the walk-minutes record the re-planning", "added item 4.1, from the alerts" in minutes, minutes)
     check("the output says what was added and tells the agent to write the case against and recommendation",
           "Added item 4.1 of 10" in result.stdout and "Recommendation:" in result.stdout
+          and "`#case_against <rating>:" in result.stdout
           and "now has 10 items" in result.stdout, result.stdout)
     parser = walk_finder.markdown_parser()
     value = walk_finder.open_walk(checkout / "docs" / "walk", parser)[1]
@@ -182,6 +183,10 @@ def run_refusal_cases(root):
     check("an alert no longer in claimed/ makes the program exit 1, naming it in its refusal, and changes nothing",
           result.returncode == 1 and "the alert alert-gone cannot be read from" in result.stderr
           and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
+    check("an unreadable alert's refusal names the command to run again without it, and the pending/ it went back to",
+          f"leaving out alert-gone: python3 {PROGRAM.resolve()} --cwd {checkout} <the other ids>" in result.stderr
+          and f"gone back to {home / '.local/state/nedschorus/user-alerts/pending'}," in result.stderr,
+          result.stderr)
 
     checkout, home = walk_checkout(root, "not-an-object")
     (home / ".local/state/nedschorus/user-alerts/claimed" / "alert-list.json").write_text("[]", encoding="utf-8")
@@ -199,6 +204,13 @@ def run_refusal_cases(root):
     check("a waiting item the walk-document has no heading for makes the program exit 1 and change nothing",
           result.returncode == 1 and "waiting item cannot be found" in result.stderr and "Item 8 of 9" in result.stderr
           and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
+    check("an unfound waiting item's refusal names the whole command to run again, with the same alert ids",
+          f"then run again: python3 {PROGRAM.resolve()} --cwd {checkout} alert-a" in result.stderr, result.stderr)
+    # The program names the walk files under git's checkout top, which resolves a temporary directory's symlink.
+    walk = checkout.resolve() / "docs" / "walk"
+    check("an unfound waiting item's refusal names the walk-minutes and the walk-document to fix",
+          f"walk-minutes {walk / f'{WALK}-minutes.md'}" in result.stderr
+          and f"walk-document {walk / f'{WALK}.md'}" in result.stderr, result.stderr)
 
 
 with tempfile.TemporaryDirectory() as temporary_directory:

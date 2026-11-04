@@ -29,6 +29,7 @@ import argparse
 import importlib.util
 import os
 import re
+import shlex
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,19 +48,27 @@ NO_WALK_MESSAGE = (
     "items are these alerts alone, as the walk-me-through skill says, and write a line `#user_alert <id>` into "
     "its walk-minutes for each alert as soon as you create them.")
 UNUSABLE_WALK_MESSAGE = (
-    "the open approval-walk's waiting item cannot be found, so no file was changed: {problem} Fix the walk-minutes' "
-    "last `#next_to_present` line or the walk-document's heading as that says, then run this command again.")
+    "the open approval-walk's waiting item cannot be found, so no file was changed: {problem} Fix, as that problem "
+    "says, the last `#next_to_present` line of the walk-minutes {minutes} or the item's heading in the "
+    "walk-document {document}, then run again: {rerun}")
 ALERT_UNREADABLE_MESSAGE = (
-    "the alert {alert_id} cannot be read from {path}, so no file was changed: {error}. Run this command again "
-    "with only the ids the user-alerts hook printed on the user's latest prompt; an alert that is no longer in "
-    "claimed/ has gone back to pending/ or been recorded, and is offered again on his next prompt.")
+    "the alert {alert_id} cannot be read from {path}, so no file was changed: {error}.\n"
+    "If the user-alerts hook printed other alert ids on the user's latest prompt, run again with those ids, "
+    "leaving out {alert_id}: {rerun_without_ids} <the other ids>\n"
+    "If it printed no other id, run nothing more.\n"
+    "If {path} is gone, {alert_id} has either gone back to {pending_directory}, and is offered again on the "
+    "user's next prompt, or was recorded in walk-minutes and deleted; nothing more is needed for it.\n"
+    "If {path} is still there, it holds no readable alert: tell the user its path, because nobody else will see "
+    "it.")
 REPLANNED_MINUTES_LINE = ("- Re-planned {date}: added {items}, from the alerts a program wrote for the user, "
                           "right after item {waiting}; the walk now has {total} items.")
 ADDED_LINE = "Added item {number} of {total}, {title}, to {document}."
 NEXT_STEPS_LINES = (
-    "Under each added item, write the strongest case against your recommendation and a line `Recommendation: "
+    "Under each added item, write a line `#case_against <rating>: <the strongest case against your "
+    "recommendation>`, the rating one of none, weak, medium, strong or very strong, and a line `Recommendation: "
     "<what you will do on ned-box, or what the user does and where>`, as the walk-me-through skill's section "
-    "\"Each item\" says; until you do, the short-answer hook finds no recommendation for the item.",
+    "\"Each item\" says; until the `Recommendation:` line is there, the short-answer hook finds no recommendation "
+    "for the item.",
     "In your next message to the user, say that you added the items and that the walk now has {total} items, as "
     "the skill's section \"Re-planning\" says. Present each added item when its turn comes, as for any item.",
 )
@@ -103,6 +112,11 @@ def raised_counts(text, total, new_total, walk_finder, parser):
     return "\n".join(lines)
 
 
+def rerun_command(cwd, alert_ids):
+    return " ".join(["python3", shlex.quote(str(Path(__file__).resolve())), "--cwd", shlex.quote(str(cwd)),
+                     *(shlex.quote(alert_id) for alert_id in alert_ids)])
+
+
 def insert(cwd, alert_ids, now=None):
     walk_finder = load_module("walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
                               WALK_FINDER_FILE)
@@ -120,14 +134,18 @@ def insert(cwd, alert_ids, now=None):
         numbers, total = walk_finder.parse_items(value)
         total, units = walk_finder.waiting_item_units(document, value, numbers, total, parser)
     except walk_finder.UnusableRange as problem:
-        raise Refused(UNUSABLE_WALK_MESSAGE.format(problem=f"its `#next_to_present` line, `{value}`, {problem}"))
+        raise Refused(UNUSABLE_WALK_MESSAGE.format(problem=f"its `#next_to_present` line, `{value}`, {problem}",
+                                                   minutes=minutes, document=document,
+                                                   rerun=rerun_command(cwd, alert_ids)))
     alerts = []
     for alert_id in alert_ids:
         path = user_alerts.user_alerts_directory() / "claimed" / f"{alert_id}.json"
         try:
             alerts.append(user_alerts.user_alert_read_from_json_file(path))
         except (OSError, ValueError) as error:
-            raise Refused(ALERT_UNREADABLE_MESSAGE.format(alert_id=alert_id, path=path, error=error))
+            raise Refused(ALERT_UNREADABLE_MESSAGE.format(alert_id=alert_id, path=path, error=error,
+                                                          pending_directory=path.parent.parent / "pending",
+                                                          rerun_without_ids=rerun_command(cwd, [])))
     waiting = numbers[-1]
     unit = next(unit for unit in units if waiting in unit[0])
     text = document.read_text(encoding="utf-8")
