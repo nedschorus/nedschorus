@@ -64,9 +64,13 @@ agent = sys.argv[sys.argv.index("--agent") + 1]
 lock = Path(os.environ["HOME"]) / ".claude" / "handoffs" / f"{agent}-supervisor.lock"
 lock.parent.mkdir(parents=True, exist_ok=True)
 lock.write_text(f"{os.getpid()}\n")
+# On the Mac, framework Python's bin/python3 is a launcher that runs this interpreter with argv[0]
+# replaced by the interpreter's path; on Linux sys.executable is the interpreter itself.
+interpreter = Path(sys.prefix, "Resources", "Python.app", "Contents", "MacOS", "Python")
+interpreter = str(interpreter) if interpreter.is_file() else sys.executable
 for _ in range(int(os.environ["FAKE_SUPERVISOR_CLAUDE_COUNT"])):
     # argv[0] is claude, as ps shows the real one: `claude --session-id ...`.
-    subprocess.Popen(["claude", "-c", "import time; time.sleep(600)"], executable=sys.executable,
+    subprocess.Popen(["claude", "-c", "import time; time.sleep(600)"], executable=interpreter,
                      cwd=os.environ["FAKE_AGENT_HOME"])
 time.sleep(600)
 '''
