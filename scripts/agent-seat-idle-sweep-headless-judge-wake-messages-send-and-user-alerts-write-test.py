@@ -45,15 +45,23 @@ for number, send in enumerate(answer.get("sends", [])):
     emit({{"type": "user", "message": {{"content": [
         {{"type": "tool_result", "tool_use_id": f"t{{number}}", "content": "sent",
          "is_error": send.get("is_error", False)}}]}}}})
+sys.stderr.write(answer.get("stderr", ""))
+sys.stderr.flush()
 if answer.get("garbage"):
-    print("not json")
-elif "result" in answer:
-    emit(dict({{"type": "result"}}, **answer["result"]))
-elif "answer" in answer:
-    emit({{"type": "result", "subtype": "success", "is_error": False,
-          "structured_output": answer["answer"]}})
+    print(answer.get("garbage") if isinstance(answer["garbage"], str) else "not json")
+if answer.get("garbage_then_result") or not answer.get("garbage"):
+    if "result" in answer:
+        emit(dict({{"type": "result"}}, **answer["result"]))
+    elif "answer" in answer:
+        emit({{"type": "result", "subtype": "success", "is_error": False,
+              "structured_output": answer["answer"]}})
+if answer.get("signal"):
+    import signal
+    os.kill(os.getpid(), signal.SIGTERM)
 sys.exit(answer.get("exit", 0))
 '''
+# Long texts of distinct characters, so a cut one character off shows in an exact comparison.
+LONG_TEXT = "".join(f"{number:05d}" for number in range(400))
 
 failures = []
 SUITE_ROOT = Path(tempfile.mkdtemp(prefix="agent-seat-idle-sweep-slice-2-test-"))
@@ -483,16 +491,39 @@ FAILURES = (
     ("has its send fail", {"sends": [send_to("alpha", is_error=True)],
                            "answer": {"sent": False, "reason": "r"}}, "no SendMessage to alpha"),
     ("runs past its time", {"sleep": 5, "answer": {"sent": True, "reason": "r"}}, "stopped after"),
+    ("is killed by a signal", {"signal": True, "answer": {"sent": True, "reason": "r"}},
+     "claude exited -15"),
+    ("ends without success", {"result": {"subtype": "error_max_turns", "is_error": False,
+                                         "structured_output": {"sent": True, "reason": "r"}}},
+     "claude reported an error"),
+    ("ends with a result of an unknown kind",
+     {"result": {"subtype": "unknown_subtype", "is_error": False,
+                 "structured_output": {"sent": True, "reason": "r"}}}, "claude reported an error"),
+    ("reports an error on a result marked success",
+     {"result": {"subtype": "success", "is_error": True,
+                 "structured_output": {"sent": True, "reason": "r"}}}, "claude reported an error"),
 )
-for case, answer, words in FAILURES:
+# The error text keeps the end of stderr, the end of stdout, or the start of the result's text.
+EXACT_FAILURES = (
+    ("exits nonzero with a long stderr", {"exit": 1, "stderr": LONG_TEXT},
+     f"claude exited 1: {LONG_TEXT[-500:]}"),
+    ("gives a long output with no result event", {"garbage": LONG_TEXT},
+     f"claude gave no result event: {(LONG_TEXT + chr(10))[-500:]!r}"),
+    ("reports a long error", {"result": {"subtype": "error_during_execution", "is_error": True,
+                                         "result": LONG_TEXT}},
+     f"claude reported an error: {LONG_TEXT[:500]}"),
+)
+for case, answer, words in FAILURES + EXACT_FAILURES:
     machine = Machine()
     machine.seat("alpha", DONE_TURN)
     machine.handoff_put_off()
     machine.script(answer)
     code, output = machine.run(0, "--headless-timeout-seconds", "1")
     failed = machine.events("headless_failed")
+    exact = (case, answer, words) in EXACT_FAILURES
     check(f"a sender that {case}: logged, a user-alert, exit 1, no delivery check pending",
-          code == 1 and len(failed) == 1 and words in failed[0]["problem"]
+          code == 1 and len(failed) == 1
+          and (failed[0]["problem"] == words if exact else words in failed[0]["problem"])
           and len(machine.alerts()) == 1 and not machine.events("message_sent"),
           (code, output, failed, machine.alerts()))
     if case == "exits nonzero":
@@ -548,6 +579,29 @@ code, _ = machine.run(2)
 check("a transcript the delivery check cannot read: a read failure logged, the check left pending",
       not machine.events("delivery_checked") and not machine.alerts()
       and any("s-1.jsonl line 1" in event["error"] for event in machine.events("read_failure")),
+      machine.events())
+
+machine = Machine()
+machine.seat("alpha", [user("go"), usage_limit(RESET_PASSED + 86400)])
+machine.seat("beta", DONE_TURN)
+machine.run(0)
+machine.account("account-2")
+machine.script({"sends": [send_to("alpha"), send_to("beta")], "answer": {"sent": True, "reason": "r"}})
+machine.run(1)
+machine.transcripts["alpha"].write_text("{not json\n" + json.dumps(turn_end()) + "\n")
+machine.script()
+machine.run(3)
+check("an unreadable transcript at one delivery check does not stop the next agent-seat's check",
+      [(event["agent_seat"], event["found"]) for event in machine.events("delivery_checked")]
+      == [("beta", False)], machine.events("delivery_checked"))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.script(dict(sent_ok(), garbage="a line that is not JSON", garbage_then_result=True))
+code, _ = machine.run(0)
+check("a line of output that is not JSON, before the result: skipped, the send stands",
+      code == 0 and not machine.events("headless_failed") and machine.events("message_sent"),
       machine.events())
 
 machine = Machine()
