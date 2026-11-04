@@ -79,7 +79,7 @@ SUMMARY_LINE_PREFIX = "SUMMARY:"
 SUMMARY_FAILED_COUNT_PATTERN = re.compile(r"\b(\d+) failed\b")
 RUNNER_REFUSAL_LINE_PREFIX = "run-all-test-suites: not run"
 RUNNER_STOPPED_LINE_PREFIX = "run-all-test-suites: not run to the end — stopped by "
-SUITE_KILLED_BY_RUN_STOP_TEXT_IN_SUITE_LINE = " killed when the run was stopped by "
+FAILED_SUITE_LINE_KILLED_WHEN_RUN_STOPPED_MARK = " killed when the run was stopped by "
 RUNNER_STDERR_LINES_SHOWN = 40
 
 MESSAGE_PREFIX = "pre-push: "
@@ -252,7 +252,7 @@ def stopped_run_failed_suite_lines(stdout):
     """The lines of a stopped run naming a suite that failed before the stop, not one it killed."""
     return [line for line in stdout.splitlines()
             if line.startswith(FAILED_SUITE_LINE_PREFIX)
-            and SUITE_KILLED_BY_RUN_STOP_TEXT_IN_SUITE_LINE not in line]
+            and FAILED_SUITE_LINE_KILLED_WHEN_RUN_STOPPED_MARK not in line]
 
 
 def say_refusal(stream, stdout, budget=None):
