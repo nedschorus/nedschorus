@@ -362,34 +362,76 @@ def launch_time_git_sync_git_failure_next_steps(error) -> str:
         next_step_to_skip_when_the_rerun_fails_too=LAUNCH_TIME_GIT_SYNC_STOP_HOLDS_BACK)
 
 
-def branch_state_instruction_after(launch_time_git_sync_report: str) -> str:
+def branch_state_instruction_after(launch_time_git_sync_report: str, branch_state_instruction: str) -> str:
     """The branch-state instruction, left out after a git failure, whose next steps may end in stopping."""
     stop_line = next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
         rerun_fails_when=LAUNCH_TIME_GIT_SYNC_RERUN_FAILS_WHEN, which_lines_to_quote_in_the_report=LAUNCH_TIME_GIT_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT,
         read_by_a_subagent=False,
         next_step_to_skip_when_the_rerun_fails_too=LAUNCH_TIME_GIT_SYNC_STOP_HOLDS_BACK)
-    return "" if launch_time_git_sync_report.endswith(stop_line) else BRANCH_STATE_INSTRUCTION
+    if not branch_state_instruction or launch_time_git_sync_report.endswith(stop_line):
+        return ""
+    return f" — {branch_state_instruction}"
 
 
-def launch_time_git_sync_report_in_prompt(launch_time_git_sync_report: str) -> str:
+def launch_time_git_sync_report_in_prompt(launch_time_git_sync_report: str,
+                                          branch_state_instruction: str = "") -> str:
     """The report as the prompt carries it: a report of several lines, such as a git
     failure's next steps, stands as its own paragraph instead of running on from the
     sentence before it."""
-    text = launch_time_git_sync_report + branch_state_instruction_after(launch_time_git_sync_report)
+    text = launch_time_git_sync_report + branch_state_instruction_after(
+        launch_time_git_sync_report, branch_state_instruction)
     return f"\n\n{text}\n\n" if "\n" in launch_time_git_sync_report else text
 
 
-BRANCH_STATE_INSTRUCTION = (
-    " — If this branch has never been pushed, rebase it onto origin/main "
-    "before your first substantive action and rerun the tests for what you "
-    "touched. If it is pushed, leave it as it is, and start new work on a "
-    "branch from origin/main. If this seat has "
-    "open pull requests, check their state with `gh`: merge-lane-2 reviews "
-    "and merges them; when one has a review with findings, dispatch a forked "
-    "subagent to fix it — never extend a head you've already pushed. When "
-    "one conflicts with main, clear the conflict with the hand-merge that "
-    "scripts/branch-conflict-check.py describes."
+BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION = (
+    "This branch has never been pushed: rebase it onto origin/main before your "
+    "first substantive action and rerun the tests for what you touched."
 )
+
+BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION = (
+    "This branch is pushed: leave its head as it is, and start new work on a "
+    "branch from origin/main."
+)
+
+
+# Printed to the handoff-supervisor's console, which the agent-session never reads.
+BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE = (
+    "handoff-supervisor: could not tell whether the branch checked out in the agent-home is pushed, "
+    "so the new agent-session's initial-agent-instructions tell it neither to rebase that branch onto "
+    "origin/main nor to leave the branch's head as it is.\n"
+    "handoff-supervisor: why: {cause}\n"
+    "handoff-supervisor: if this message comes back at the next launch, fix the git error on the why "
+    "line; until then nobody needs to act on it, and this launch goes ahead without either instruction."
+)
+
+
+def choose_branch_state_instruction_from_working_directory_push_state(working_directory: Path) -> str:
+    """The one branch-state instruction that applies to the checkout's branch, or "" on
+    main, on a detached HEAD, or when git cannot tell, which it prints. Call it after
+    launch_time_git_sync, whose fetch brings origin's branches up to date."""
+    branch = run_git_here(["rev-parse", "--abbrev-ref", "HEAD"], working_directory, timeout=15)
+    if branch.returncode != 0:
+        command = shlex.join(["git", "-C", str(working_directory), "rev-parse", "--abbrev-ref", "HEAD"])
+        print(BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE.format(
+            cause=f"`{command}` failed (exit {branch.returncode}): "
+                  f"{branch.stderr.strip() or 'git printed no error'}"))
+        return ""
+    name = branch.stdout.strip()
+    # head_state reads main as pushed, since origin/main equals it.
+    if name == "main":
+        return ""
+    # The Stop hook rebases only what head_state calls unpushed, so the successor is told the same.
+    key, text = checkout_freshness_catch_up.head_state(working_directory, name)
+    if key == "unpushed":
+        return BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION
+    if key == "detached":
+        return ""
+    if key == "unknown":
+        print(BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE.format(
+            cause=f"git could not tell whether branch {name} in {working_directory} is pushed to origin: {text}"))
+        return ""
+    return BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION
+
 
 # Overview refreshes are this agent-seat's job; other agent-seats have jobs of their own.
 AGENT_SEAT_GIVEN_OVERVIEW_REFRESH_LINES = "agent-instructions-editor"
@@ -463,40 +505,14 @@ MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE = (
     "When the approval-walk closes, run `python3 {mark_script} done`."
 )
 
-# A loose-ends audit at the session-handoff, not yet built, will write the loose ends into the next-step file; until then that clause matches nothing.
 ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION = (
-    "Bring the user everything that needs the user, by /walk-me-through's "
-    "steps, as your first action: the unanswered items of any "
-    "approval-walk in progress, open questions, concerns, suggestions, "
-    "and the loose ends the next step lists, when it lists any. When an "
-    "approval-walk is in progress, continue it instead of opening a new "
-    "one: keep its name, its item numbers and its item pages, and resume "
-    "at the item that the last `#next_to_present` line of its "
-    'walk-minutes names, as /walk-me-through\'s section "Interruption and '
-    'recovery" says. Add everything else that needs the user to that '
-    "approval-walk as new items just after the item it resumes at, "
-    'numbered as its section "Re-planning" says, in this order: the next '
-    "step's own item first, when it needs the user; then items that block "
-    "work, then items that change direction, then the rest. When more "
-    "than one approval-walk is in progress, continue first the one the "
-    "next step names, or the one with the latest walk-minutes when it "
-    "names none, then the others, and add the new items to the first. "
-    "When none is in progress, open one approval-walk for everything that "
-    "needs the user, in the order just given for new items. Before you "
-    "show any item, whether it is new or comes from an approval-walk in "
-    "progress, check it against the user's earlier rulings, as "
-    '/walk-me-through\'s section "Each item" says. Do the work that does '
-    "not need the user without asking the user: your own yourself, and "
-    "another agent-seat's by sending it to that agent-seat with "
-    "SendMessage. Keep working on the previous session's work while the "
-    "user answers. When nothing needs the user, open no approval-walk and "
-    "only keep working."
-)
-
-SUPERVISOR_POINTER_SENTENCE = (
-    "This session was launched by nc-systems/handoff/handoff-supervisor.py, which "
-    "watches this seat and composed this prompt — read it if you need to "
-    "investigate the handoff mechanism."
+    "1. First, bring the user everything that needs him in one approval-walk, "
+    "by /walk-me-through. Continue an open approval-walk rather than open a new "
+    "one: the one the next step names, or else the one with the latest "
+    "walk-minutes. Add new items just after the item it resumes at: the next "
+    "step's own item first, when it needs him, then the rest in the order "
+    "/walk-me-through gives. When nothing needs him, open no approval-walk. "
+    "2. While he answers, take the next step."
 )
 
 # Subagent IDs resolve only within their session, so a successor must re-commission unfinished work.
@@ -1047,16 +1063,17 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
                           predecessor_session_directory: Optional[Path] = None,
                           launch_time_git_sync_report: str = "",
                           overview_refresh_due: tuple = (),
-                          memory_review_due: tuple = ()) -> str:
+                          memory_review_due: tuple = (),
+                          branch_state_instruction: str = "") -> str:
     next_step = next_step_from(handoff_fields)
     lines = [
         f"Read {extract_path} — the dialog from the session you are continuing, "
         + written_at_wariness_sentence(handoff_fields.get(session_handoff_field_names.WRITTEN_AT_FIELD, "")),
         ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION,
-        SUPERVISOR_POINTER_SENTENCE,
     ]
     if launch_time_git_sync_report:
-        lines.append(launch_time_git_sync_report_in_prompt(launch_time_git_sync_report))
+        lines.append(launch_time_git_sync_report_in_prompt(launch_time_git_sync_report,
+                                                           branch_state_instruction))
     lines.extend(overview_refresh_due)
     lines.extend(memory_review_due)
     roster = spawned_subagent_roster_from(handoff_fields)
@@ -1087,12 +1104,14 @@ class DialogIgnitionPlan:
 
     def compose(self, launch_time_git_sync_report: str,
                 overview_refresh_due: tuple = (),
-                memory_review_due: tuple = ()) -> str:
+                memory_review_due: tuple = (),
+                branch_state_instruction: str = "") -> str:
         return build_ignition_prompt(self.extract_path, self.handoff_fields,
                                      self.predecessor_session_directory,
                                      launch_time_git_sync_report=launch_time_git_sync_report,
                                      overview_refresh_due=overview_refresh_due,
-                                     memory_review_due=memory_review_due)
+                                     memory_review_due=memory_review_due,
+                                     branch_state_instruction=branch_state_instruction)
 
 
 @dataclass
@@ -1110,7 +1129,8 @@ class IgnitionPlanWithoutConversationTail:
 
     def compose(self, launch_time_git_sync_report: str,
                 overview_refresh_due: tuple = (),
-                memory_review_due: tuple = ()) -> str:
+                memory_review_due: tuple = (),
+                branch_state_instruction: str = "") -> str:
         if self.unextracted_transcript_path is not None:
             recovery_note = (
                 "the previous session's conversation-tail is unavailable, because the "
@@ -1142,7 +1162,8 @@ class IgnitionPlanWithoutConversationTail:
             + ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION
         )
         if launch_time_git_sync_report:
-            prompt += " " + launch_time_git_sync_report_in_prompt(launch_time_git_sync_report)
+            prompt += " " + launch_time_git_sync_report_in_prompt(launch_time_git_sync_report,
+                                                                  branch_state_instruction)
         for line in overview_refresh_due:
             prompt += " " + line
         for line in memory_review_due:
@@ -2318,8 +2339,12 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 memory_review_due = memory_review_due_lines()
                 for line in memory_review_due:
                     print(f"handoff-supervisor: {line}")
-                prompt = ignition_plan.compose(launch_time_git_sync_report, overview_refresh_due,
-                                               memory_review_due)
+                branch_state_instruction = (
+                    choose_branch_state_instruction_from_working_directory_push_state(
+                        settings.working_directory))
+                prompt = ignition_plan.compose(
+                    launch_time_git_sync_report, overview_refresh_due, memory_review_due,
+                    branch_state_instruction=branch_state_instruction)
                 ignition_plan = None
                 if not_restarted_on_main_code_report:
                     prompt += " " + HANDOFF_SUPERVISOR_NOT_RESTARTED_ON_MAIN_CODE_TEMPLATE.format(
