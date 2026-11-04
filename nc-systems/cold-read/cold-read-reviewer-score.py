@@ -4,7 +4,7 @@
 Severity weights belong to the defect list. Precision is hits over hits plus
 FALSE findings and is unweighted, because false findings have no defect row
 and therefore no severity weight. A placement on a weight-0 row, an UNFIXED
-placement and a TEST-SETUP-ARTIFACT placement are neither hits nor false, and
+placement and a TRUE-ONLY-OF-READER-CHECKOUT-NOT-OF-DRAFT placement are neither hits nor false, and
 stay out of recall and precision alike.
 
 A placement file is named `<reviewer>--placement.md`. Repeated reads of one
@@ -14,7 +14,7 @@ each member, reporting the median over the run indices every member has.
 
 When the defect list has a `## Sentences with no defect` section, a FALSE
 finding whose quote, whitespace normalised, lies inside one of its sentences
-is counted as a clean-text false positive. The match is plain substring
+is counted as a FALSE finding on a sentence with no defect. The match is plain substring
 containment: a short quote such as one word can lie inside a listed sentence
 while the reader meant another sentence that shares the word."""
 
@@ -38,7 +38,7 @@ PLACEMENT_FILE_SUFFIX = "--placement.md"
 
 PLACEMENT_ROW_PATTERN = re.compile(r"^ROW\s+(\d+)(?:\s*\+\s*(\d+))?$")
 PLACEMENT_UNFIXED_PATTERN = re.compile(r"^UNFIXED\s+(U\d+)$")
-PLACEMENT_TEST_SETUP_ARTIFACT = "TEST-SETUP-ARTIFACT"
+PLACEMENT_TRUE_ONLY_OF_READER_CHECKOUT_NOT_OF_DRAFT = "TRUE-ONLY-OF-READER-CHECKOUT-NOT-OF-DRAFT"
 REVIEWER_RUN_PATTERN = re.compile(r"^(.+)-run-(\d+)$")
 SELF_REPORTED_TOTAL_PATTERN = re.compile(r"^\s*Findings:\s*(\d+)\s*$", re.MULTILINE)
 
@@ -96,7 +96,7 @@ def read_severity_weights(path: pathlib.Path) -> dict:
     return weights
 
 
-def read_declined_entries(path: pathlib.Path) -> set:
+def read_defect_list_declined_entries(path: pathlib.Path) -> set:
     """Return the U-numbers of the declined table; empty when the list has none."""
     section = read_section(path.read_text(encoding="utf-8"), DECLINED_SECTION_HEADING)
     if section is None:
@@ -109,7 +109,7 @@ def normalise_whitespace(text: str) -> str:
     return " ".join(text.split())
 
 
-def read_clean_sentences(path: pathlib.Path):
+def read_defect_list_sentences_with_no_defect(path: pathlib.Path):
     """Return {id: sentence} from the sentences-with-no-defect table, or None when the list has none."""
     section = read_section(path.read_text(encoding="utf-8"),
                            CLEAN_SENTENCES_SECTION_HEADING)
@@ -131,13 +131,13 @@ def clean_sentences_holding_quote(quote: str, clean_sentences: dict) -> set:
             if normalised in sentence}
 
 
-def reviewer_name(path: pathlib.Path) -> str:
+def reviewer_name_from_placement_file_name(path: pathlib.Path) -> str:
     if path.name.endswith(PLACEMENT_FILE_SUFFIX):
         return path.name[:-len(PLACEMENT_FILE_SUFFIX)]
     return path.stem
 
 
-def reader_and_run(reviewer: str):
+def reader_and_run_index_from_reviewer_name(reviewer: str):
     """Return (reader, run index); a reviewer with no `-run-<k>` suffix is run 1 of itself."""
     match = REVIEWER_RUN_PATTERN.match(reviewer)
     if match:
@@ -175,7 +175,7 @@ def classify_placement(placement: str, source: str, finding_id: str,
                 f"Place that finding again in {source} with one of the forms the "
                 f"scorer reads: `UNFIXED U<n>` for a U-number the declined table "
                 f"holds, `ROW <n>` for the Table 1 row whose fault the finding "
-                f"names, `{PLACEMENT_TEST_SETUP_ARTIFACT}` when the finding is true "
+                f"names, `{PLACEMENT_TRUE_ONLY_OF_READER_CHECKOUT_NOT_OF_DRAFT}` when the finding is true "
                 f"only of the reader's checkout and tools, or `FALSE`; then run "
                 f"the same scorer command again. The scorer stops at the first "
                 f"such placement, so the rerun may show another.\n"
@@ -184,8 +184,8 @@ def classify_placement(placement: str, source: str, finding_id: str,
                 f"asked for the score, and do not edit the defect list, whose rows "
                 f"every published score was measured against.")
         return set(), "UNFIXED"
-    if placement == PLACEMENT_TEST_SETUP_ARTIFACT:
-        return set(), "TEST_SETUP_ARTIFACT"
+    if placement == PLACEMENT_TRUE_ONLY_OF_READER_CHECKOUT_NOT_OF_DRAFT:
+        return set(), "TRUE_ONLY_OF_READER_CHECKOUT_NOT_OF_DRAFT"
     if placement == "FALSE":
         return set(), "FALSE"
     raise PlacementParseError(
@@ -195,7 +195,7 @@ def classify_placement(placement: str, source: str, finding_id: str,
 def parse_one_placement_file(path: pathlib.Path, row_total: int, declined: set):
     """Return (reviewer, findings, anomalies) for one placement table."""
     # A stray pipe can split a finding into extra cells; dropping that row would change the totals.
-    reviewer = reviewer_name(path)
+    reviewer = reviewer_name_from_placement_file_name(path)
     findings, anomalies = [], []
     seen_header = False
     for raw_line in path.read_text(encoding="utf-8").splitlines():
@@ -239,9 +239,9 @@ def parse_one_placement_file(path: pathlib.Path, row_total: int, declined: set):
 
 
 def summarize(findings, weights, total_weight, row_total, clean_sentences=None):
-    """Return reviewer figures; weight-zero rows, UNFIXED and test-setup artifacts count as neither hits nor false hits."""
-    hits, false_count, unfixed_count, not_a_defect, test_setup_artifacts = [], 0, 0, 0, 0
-    clean_text_false, sentences_flagged = 0, set()
+    """Return reviewer figures; weight-zero rows, UNFIXED and findings true only of the reader checkout count as neither hits nor false hits."""
+    hits, false_count, unfixed_count, not_a_defect, true_only_of_reader_checkout = [], 0, 0, 0, 0
+    false_on_sentences_with_no_defect, sentences_flagged = 0, set()
     for finding in findings:
         if finding["category"] == "HIT":
             if finding["rows"] and all(weights[r] == 0 for r in finding["rows"]):
@@ -253,10 +253,10 @@ def summarize(findings, weights, total_weight, row_total, clean_sentences=None):
             if clean_sentences:
                 holding = clean_sentences_holding_quote(finding["quote"], clean_sentences)
                 if holding:
-                    clean_text_false += 1
+                    false_on_sentences_with_no_defect += 1
                     sentences_flagged |= holding
-        elif finding["category"] == "TEST_SETUP_ARTIFACT":
-            test_setup_artifacts += 1
+        elif finding["category"] == "TRUE_ONLY_OF_READER_CHECKOUT_NOT_OF_DRAFT":
+            true_only_of_reader_checkout += 1
         else:
             unfixed_count += 1
     rows_hit = set()
@@ -272,14 +272,14 @@ def summarize(findings, weights, total_weight, row_total, clean_sentences=None):
         "weighted_recall": weight_hit / total_weight if total_weight else 0.0,
         "false": false_count, "unfixed": unfixed_count,
         "not_a_defect": not_a_defect,
-        "test_setup_artifacts": test_setup_artifacts,
-        "clean_text_false": clean_text_false,
+        "true_only_of_reader_checkout": true_only_of_reader_checkout,
+        "false_on_sentences_with_no_defect": false_on_sentences_with_no_defect,
         "clean_sentences_flagged": sentences_flagged,
         "precision": len(hits) / judged if judged else 0.0,
     }
 
 
-def format_number(value) -> str:
+def format_median_as_integer_or_one_decimal(value) -> str:
     return str(int(value)) if float(value).is_integer() else f"{value:.1f}"
 
 
@@ -288,10 +288,10 @@ def print_per_reviewer(summaries, weights, total_weight):
     print("## Per reviewer\n")
     print(f"Flat recall is rows over {scored_rows}; weighted recall is the weight "
           f"of those rows over {total_weight}. Precision is hits over hits plus "
-          f"False; weight-0 rows, Unfixed and test-setup artifacts are neither.\n")
+          f"False; weight-0 rows, Unfixed and True only of reader checkout are neither.\n")
     print("| Reviewer | Findings | Hits | Rows | Flat recall | Weight | "
           "Weighted recall | False | Weight-0 rows | Unfixed | "
-          "Test-setup artifacts | Precision |")
+          "True only of reader checkout | Precision |")
     print("|---|---|---|---|---|---|---|---|---|---|---|---|")
     for reviewer, s in sorted(summaries.items(),
                               key=lambda kv: (-kv[1]["weighted_recall"], kv[0])):
@@ -299,7 +299,7 @@ def print_per_reviewer(summaries, weights, total_weight):
               f"{len(s['rows_hit'])} | {s['flat_recall'] * 100:.0f} % | "
               f"{s['weight_hit']} | {s['weighted_recall'] * 100:.0f} % | "
               f"{s['false']} | {s['not_a_defect']} | {s['unfixed']} | "
-              f"{s['test_setup_artifacts']} | {s['precision'] * 100:.0f} % |")
+              f"{s['true_only_of_reader_checkout']} | {s['precision'] * 100:.0f} % |")
     print()
     for reviewer, s in sorted(summaries.items()):
         print(f"- {reviewer} rows hit: "
@@ -310,15 +310,15 @@ def print_per_reviewer(summaries, weights, total_weight):
 def print_clean_sentences(summaries, clean_sentences):
     print("## Flags on the sentences with no defect\n")
     print(f"{len(clean_sentences)} sentences are listed in the defect list. A "
-          f"clean-text false positive is a FALSE finding whose quote lies inside "
+          f"FALSE finding on a sentence with no defect is one whose quote lies inside "
           f"one of them; a true negative is a listed sentence no such finding "
           f"lies inside.\n")
-    print("| Reviewer | Clean-text false positives | Sentences flagged | "
+    print("| Reviewer | FALSE on sentences with no defect | Sentences flagged | "
           "True negatives |")
     print("|---|---|---|---|")
     for reviewer, s in sorted(summaries.items()):
         flagged = sorted(s["clean_sentences_flagged"], key=lambda n: int(n[1:]))
-        print(f"| {reviewer} | {s['clean_text_false']} | "
+        print(f"| {reviewer} | {s['false_on_sentences_with_no_defect']} | "
               f"{', '.join(flagged) or 'none'} | "
               f"{len(clean_sentences) - len(flagged)} |")
     print()
@@ -327,7 +327,7 @@ def print_clean_sentences(summaries, clean_sentences):
 def runs_by_reader(summaries):
     grouped = {}
     for reviewer, summary in summaries.items():
-        reader, run = reader_and_run(reviewer)
+        reader, run = reader_and_run_index_from_reviewer_name(reviewer)
         grouped.setdefault(reader, {})[run] = summary
     return grouped
 
@@ -352,7 +352,7 @@ def print_per_reader(summaries):
               f"{', '.join(f'{p:.0f} %' for p in precisions)} | "
               f"{statistics.median(precisions):.0f} % | "
               f"{', '.join(str(f) for f in falses)} | "
-              f"{format_number(statistics.median(falses))} |")
+              f"{format_median_as_integer_or_one_decimal(statistics.median(falses))} |")
     print()
 
 
@@ -386,7 +386,7 @@ def print_unions(summaries, weights, total_weight, sizes, show_top):
             continue
         scored.sort(key=lambda item: (-item[0], -item[1], item[2]))
         best = scored[0]
-        print(f"### Sets of {size} — best {format_number(best[0])} of {total_weight} "
+        print(f"### Sets of {size} — best {format_median_as_integer_or_one_decimal(best[0])} of {total_weight} "
               f"({best[0] / total_weight * 100:.0f} %)\n")
         print("| Set | Weight | Weighted recall | Rows | Heavy rows missed |")
         print("|---|---|---|---|---|")
@@ -394,8 +394,8 @@ def print_unions(summaries, weights, total_weight, sizes, show_top):
             missed = sorted((r for r in weights if weights[r] >= 5
                              and 2 * sum(r not in u for u in unions) >= len(unions)),
                             key=lambda r: -weights[r])
-            print(f"| {' + '.join(combination)} | {format_number(weight)} | "
-                  f"{weight / total_weight * 100:.0f} % | {format_number(rows)} | "
+            print(f"| {' + '.join(combination)} | {format_median_as_integer_or_one_decimal(weight)} | "
+                  f"{weight / total_weight * 100:.0f} % | {format_median_as_integer_or_one_decimal(rows)} | "
                   f"{', '.join(str(r) for r in missed) or 'none'} |")
         print()
 
@@ -504,8 +504,8 @@ def main() -> int:
         return EXIT_BAD_INVOCATION
 
     weights = read_severity_weights(arguments.defect_list)
-    declined = read_declined_entries(arguments.defect_list)
-    clean_sentences = read_clean_sentences(arguments.defect_list)
+    declined = read_defect_list_declined_entries(arguments.defect_list)
+    clean_sentences = read_defect_list_sentences_with_no_defect(arguments.defect_list)
     total_weight = sum(weights.values())
     row_total = max(weights)
 

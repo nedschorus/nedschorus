@@ -174,18 +174,18 @@ with tempfile.TemporaryDirectory(prefix="cold-read-reviewer-score-test-") as nam
 
     check("the declined entries are read from Table 2 only, not from a "
           "crosswalk that also holds U-numbers",
-          scorer.read_declined_entries(ruler) == {"U1"},
-          str(scorer.read_declined_entries(ruler)))
+          scorer.read_defect_list_declined_entries(ruler) == {"U1"},
+          str(scorer.read_defect_list_declined_entries(ruler)))
     check("a list with no Table 2 has no declined entries",
-          scorer.read_declined_entries(plain_ruler) == set())
+          scorer.read_defect_list_declined_entries(plain_ruler) == set())
     check("the sentences with no defect are read with their ids",
-          scorer.read_clean_sentences(ruler)
+          scorer.read_defect_list_sentences_with_no_defect(ruler)
           == {"N1": "Not for merely reading or citing an issue.",
               "N2": "## When Used"},
-          str(scorer.read_clean_sentences(ruler)))
+          str(scorer.read_defect_list_sentences_with_no_defect(ruler)))
     check("a list with no sentences-with-no-defect section gives None, not an "
           "empty list that would print twelve true negatives for nothing",
-          scorer.read_clean_sentences(plain_ruler) is None)
+          scorer.read_defect_list_sentences_with_no_defect(plain_ruler) is None)
 
     # --- Scoring arithmetic ------------------------------------------------
     result = run("--placements", str(placements), "--defect-list", str(ruler))
@@ -223,16 +223,16 @@ with tempfile.TemporaryDirectory(prefix="cold-read-reviewer-score-test-") as nam
     check("precision with no hit and no FALSE is 0, not a division by zero",
           nothing_judged["precision"] == 0.0, str(nothing_judged))
 
-    # --- Fault: test-setup artifacts had no category -----------------------
+    # --- Fault: findings true only of the reader checkout had no category----------------
     artifact_placements = write_placements(scratch / "artifact", {
         "delta--placement.md": [
             ("1", "ROW 1", "sure", "clean"),
-            ("2", "TEST-SETUP-ARTIFACT", "sure", "path retired after the draft"),
+            ("2", "TRUE-ONLY-OF-READER-CHECKOUT-NOT-OF-DRAFT", "sure", "path retired after the draft"),
             ("3", "FALSE", "sure", "nothing"),
         ],
     })
     result = run("--placements", str(artifact_placements), "--defect-list", str(ruler))
-    check("a TEST-SETUP-ARTIFACT placement is neither hit nor false: counted in "
+    check("a TRUE-ONLY-OF-READER-CHECKOUT-NOT-OF-DRAFT placement is neither hit nor false: counted in "
           "its own column and out of precision, 1 of 2 = 50 %",
           "| delta | 3 | 1 | 1 | 33 % | 8 | 62 % | 1 | 0 | 0 | 1 | 50 % |"
           in result.stdout, result.stdout + result.stderr)
@@ -277,8 +277,8 @@ with tempfile.TemporaryDirectory(prefix="cold-read-reviewer-score-test-") as nam
           and "nothing was scored" in result.stderr,
           result.stdout + result.stderr)
     check("a reviewer's name is the file name before '--placement.md'",
-          scorer.reviewer_name(pathlib.Path("a--b--placement.md")) == "a--b"
-          and scorer.reviewer_name(pathlib.Path("a--b.md")) == "a--b")
+          scorer.reviewer_name_from_placement_file_name(pathlib.Path("a--b--placement.md")) == "a--b"
+          and scorer.reviewer_name_from_placement_file_name(pathlib.Path("a--b.md")) == "a--b")
 
     # --- Fault: repeated reads of one reader were not grouped --------------
     runs = write_placements(scratch / "runs", {
@@ -314,11 +314,11 @@ with tempfile.TemporaryDirectory(prefix="cold-read-reviewer-score-test-") as nam
     check("the set of all three readers is scored on their common run 1",
           "### Sets of 3 — best 13 of 13 (100 %)" in out, out)
     check("a median between two values prints with one decimal, a whole one "
-          "without", scorer.format_number(12) == "12"
-          and scorer.format_number(10.5) == "10.5")
+          "without", scorer.format_median_as_integer_or_one_decimal(12) == "12"
+          and scorer.format_median_as_integer_or_one_decimal(10.5) == "10.5")
     check("a reviewer's reader and run come from its -run-<k> suffix",
-          scorer.reader_and_run("ann-run-12") == ("ann", 12)
-          and scorer.reader_and_run("gem38-high") == ("gem38-high", 1))
+          scorer.reader_and_run_index_from_reviewer_name("ann-run-12") == ("ann", 12)
+          and scorer.reader_and_run_index_from_reviewer_name("gem38-high") == ("gem38-high", 1))
 
     heavy_missed = write_placements(scratch / "heavy-missed", {
         "ann-run-1--placement.md": [("1", "ROW 1", "sure", "x")],
@@ -343,14 +343,14 @@ with tempfile.TemporaryDirectory(prefix="cold-read-reviewer-score-test-") as nam
     })
     result = run("--placements", str(clean), "--defect-list", str(ruler))
     check("a FALSE finding whose quote, whitespace normalised and quotation "
-          "marks stripped, lies inside a listed sentence is one clean-text "
-          "false positive; a hit there, an unlisted quote and an empty quote "
+          "marks stripped, lies inside a listed sentence counts once on that sentence; "
+          "a hit there, an unlisted quote and an empty quote "
           "are not",
           "| eta | 1 | N1 | 1 |" in result.stdout, result.stdout + result.stderr)
     result = run("--placements", str(artifact_placements),
                  "--defect-list", str(plain_ruler))
-    check("a list with no sentences-with-no-defect section prints no clean-text "
-          "section", result.returncode == 0
+    check("a list with no sentences-with-no-defect section prints no section on "
+          "them", result.returncode == 0
           and "## Flags on the sentences with no defect" not in result.stdout,
           result.stdout + result.stderr)
 
@@ -433,13 +433,13 @@ if REAL_RULER.is_file() and NEWER_RULER.is_file():
           and sum(1 for w in new_weights.values() if w > 0) == 33,
           str(new_weights))
     check("the newer list declines the same entries as the older, U5, U7 and U8",
-          scorer.read_declined_entries(NEWER_RULER)
-          == scorer.read_declined_entries(REAL_RULER) == {"U5", "U7", "U8"},
-          str(scorer.read_declined_entries(NEWER_RULER)))
+          scorer.read_defect_list_declined_entries(NEWER_RULER)
+          == scorer.read_defect_list_declined_entries(REAL_RULER) == {"U5", "U7", "U8"},
+          str(scorer.read_defect_list_declined_entries(NEWER_RULER)))
     check("the older list has no sentences-with-no-defect section, so its "
           "scores print as before",
-          scorer.read_clean_sentences(REAL_RULER) is None)
-    clean_sentences = scorer.read_clean_sentences(NEWER_RULER) or {}
+          scorer.read_defect_list_sentences_with_no_defect(REAL_RULER) is None)
+    clean_sentences = scorer.read_defect_list_sentences_with_no_defect(NEWER_RULER) or {}
     raw = scorer.normalise_whitespace(FIRST_DRAFT.read_text(encoding="utf-8"))
     not_in_raw = [i for i, s in clean_sentences.items() if s not in raw]
     check("the newer list names twelve sentences with no defect, each quoted "

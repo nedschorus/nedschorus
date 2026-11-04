@@ -10,7 +10,7 @@
 
 - **Nine rows widened**, each marked in its last column: rows 3, 4, 6, 9, 10, 11, 15 and 20 take in more of the raw or more of the fault, and row 27's "What is wrong" is corrected. No weight changed.
 - **Row 34 added**, weight 2: "home" counts a queue in When Used and is set against a queue in step 2.
-- **`## Sentences with no defect`** lists twelve sentences of the raw that hold no row and no Table 2 entry. A FALSE finding whose quote lies inside one of them is a clean-text false positive.
+- **`## Sentences with no defect`** lists twelve sentences of the raw that hold no row and no Table 2 entry. The scorer counts a FALSE finding whose quote lies inside one of them as a FALSE finding on a sentence with no defect.
 - **Unchanged:** the weights of rows 1 to 33, Table 2, the perfect, and rows 13, 16, 32 and 33, which stay as the user ruled on 2026-09-08. The check's proposals to drop those four rows and to add row 35 were not adopted.
 
 The sections below that predate 2026-11-03 keep their counts of 33 rows and 102 as written then; this file's ruler is the Severity weights table, 34 rows, 33 of them scored, total 104.
@@ -21,8 +21,8 @@ The sections below that predate 2026-11-03 keep their counts of 33 rows and 102 
 |---|---|---|
 | `ROW n` or `ROW a + b` | The finding names the fault of that Table 1 row. | A hit on a row of weight above 0; neither on a row of weight 0. |
 | `UNFIXED Un` | The finding names a Table 2 entry. | Neither. The scorer refuses a U-number Table 2 does not hold. |
-| `TEST-SETUP-ARTIFACT` | The finding is true only of the checkout and tools the reader ran in, not of the raw as written on 2026-08-06, such as a path retired since or a term the glossary added later. | Neither: counted in its own column, out of recall and out of precision. |
-| `FALSE` | Anything else. | A false positive; counted again as a clean-text false positive when its quote lies inside a sentence of `## Sentences with no defect`. |
+| `TRUE-ONLY-OF-READER-CHECKOUT-NOT-OF-DRAFT` | The finding is true only of the checkout and tools the reader ran in, not of the raw as written on 2026-08-06, such as a path retired since or a term the glossary added later. | Neither: counted in its own column, out of recall and out of precision. |
+| `FALSE` | Anything else. | A false positive; counted again, as a FALSE finding on a sentence with no defect, when its quote lies inside a sentence of `## Sentences with no defect`. |
 
 Precision is hits over hits plus FALSE findings; every placement that is neither stays out of it.
 
@@ -203,7 +203,7 @@ Three of the nine UNFIXED rows were declined on 2026-09-07/08 and are **not** de
 
 ## Sentences with no defect
 
-Added 2026-11-03. Each sentence below is quoted exactly from the raw and holds no Table 1 row and no Table 2 entry. A FALSE finding whose quote, with its whitespace normalised, lies inside one of these sentences is a clean-text false positive; a sentence that no such finding lies inside is a true negative. A finding on one of these sentences that names a row's fault, such as replacement of the whole body at N8, which is row 30, is placed on that row and is not a false positive.
+Added 2026-11-03. Each sentence below is quoted exactly from the raw and holds no Table 1 row and no Table 2 entry. A FALSE finding whose quote, with its whitespace normalised, lies inside one of these sentences is a FALSE finding on a sentence with no defect; a sentence that no such finding lies inside is a true negative. A finding on one of these sentences that names a row's fault, such as replacement of the whole body at N8, which is row 30, is placed on that row and is not a false positive.
 
 | Id | Sentence of the raw, quoted exactly |
 |---|---|
