@@ -72,6 +72,10 @@ QUIET_GH_ROUTES = {"closing": closing_route(), "merged": {"stdout": "[]"}}
 failures = []
 
 
+def review_worktrees_directory(helpers):
+    return helpers.parent / f"{helpers.name}-review-worktrees"
+
+
 def check(name, condition, detail=""):
     print(("PASS  " if condition else "FAIL  ") + name)
     if not condition:
@@ -110,7 +114,7 @@ def run_program(scratch, helpers, specs, *extra, gh_routes=None, token=TEST_TOKE
     return subprocess.run(
         [sys.executable, str(PROGRAM), str(specs_file),
          "--merge-lane-worktrees-and-outputs-directory", str(helpers),
-         "--merge-lane-review-worktrees-directory", str(helpers / "wt"),
+         "--merge-lane-review-worktrees-directory", str(review_worktrees_directory(helpers)),
          "--review-tools-worktree-at-main", str(scratch / "main-checkout"),
          "--brief-file", str(scratch / "standing.md"),
          "--ned-box-reviewer-brief-environment-addendum-file", str(scratch / "addendum.md"),
@@ -165,8 +169,8 @@ def main():
         git(repository, "checkout", "-q", "main")
         helpers = scratch / "merge-helpers"
         git(repository, "worktree", "add", "-q", "--detach",
-            str(helpers / "wt" / "pr7-merged"), fix_head)
-        merged_tree = git(helpers / "wt" / "pr7-merged", "rev-parse", "HEAD^{tree}")
+            str(review_worktrees_directory(helpers) / "pr7-merged"), fix_head)
+        merged_tree = git(review_worktrees_directory(helpers) / "pr7-merged", "rev-parse", "HEAD^{tree}")
         (scratch / "standing.md").write_text(STANDING_TEXT)
         (scratch / "addendum.md").write_text(ADDENDUM)
 
