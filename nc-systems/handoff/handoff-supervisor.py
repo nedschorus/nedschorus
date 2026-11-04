@@ -8,7 +8,7 @@ cannot exit itself: /clear and /exit are unavailable to it, and self-SIGTERM
 trips the safety classifier.
 
 The cycle, per reincarnation:
-  1. Watch the handoff file for a restart-counter above the last consumed.
+  1. Watch the handoff file for a session-handoff-sequence-number above the last consumed.
   2. Kill the running session, and remove the agent-seat's finished worktrees.
   2a. Unless the handoff carries dont-restart, fast-forward the checkout this
      program runs from to origin/main, and, when the checkout is then on
@@ -56,7 +56,8 @@ The cycle, per reincarnation:
 The handoff file the agent writes (simple `key: value` lines):
   written-at:           UTC timestamp, ISO 8601
   next-step:            the first action the successor takes
-  restart-counter:      predecessor's counter plus one
+  session-handoff-sequence-number: predecessor's number plus one (a session-handoff
+                        written before the rename carries it as restart-counter)
   dont-restart:         optional; any value makes the supervisor ask before relaunching
   spawned-subagent-<n>: optional, one per subagent still working when the
                         handoff was written; the reincarnation kills them, so the
@@ -140,6 +141,11 @@ _next_step_lines_spec = importlib.util.spec_from_file_location(
     / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
+
+_session_handoff_field_names_spec = importlib.util.spec_from_file_location(
+    "session_handoff_field_names", Path(__file__).with_name("session-handoff-field-names.py"))
+session_handoff_field_names = importlib.util.module_from_spec(_session_handoff_field_names_spec)
+_session_handoff_field_names_spec.loader.exec_module(session_handoff_field_names)
 
 _worth_resuming_spec = importlib.util.spec_from_file_location(
     "seat_transcript_worth_resuming",
@@ -319,12 +325,15 @@ HEARTBEAT_INTERVAL_SECONDS = 10.0
 PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS = 15
 
 
-NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
-NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
-NEXT_STEP_BLOCK_TERMINATOR = "END-OF-NEXT-STEP"
-NEXT_STEP_BLOCK_UNTERMINATED_FIELD = "next-step-verbatim-unterminated"
-SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
-WRITTEN_BY_SESSION_FIELD = "written-by-session"
+NEXT_STEP_VERBATIM_FIELD = session_handoff_field_names.NEXT_STEP_VERBATIM_FIELD
+NEXT_STEP_BLOCK_OPENING_MARKER = session_handoff_field_names.NEXT_STEP_BLOCK_OPENING_MARKER
+NEXT_STEP_BLOCK_TERMINATOR = session_handoff_field_names.NEXT_STEP_BLOCK_TERMINATOR
+NEXT_STEP_BLOCK_UNTERMINATED_FIELD = session_handoff_field_names.NEXT_STEP_BLOCK_UNTERMINATED_FIELD
+SPAWNED_SUBAGENT_FIELD_PREFIX = session_handoff_field_names.SPAWNED_SUBAGENT_FIELD_PREFIX
+WRITTEN_BY_SESSION_FIELD = session_handoff_field_names.WRITTEN_BY_SESSION_FIELD
+SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD = session_handoff_field_names.SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD
+LEGACY_RESTART_COUNTER_FIELD = session_handoff_field_names.LEGACY_RESTART_COUNTER_FIELD
+DONT_RESTART_FIELD = session_handoff_field_names.DONT_RESTART_FIELD
 WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 
 # The prompt goes on to the next step; a stop must hold that back too.
@@ -816,7 +825,10 @@ def heartbeat_age_sentence(state_path: Path) -> str:
 
 
 def counter_from(fields: dict):
-    raw = fields.get("restart-counter")
+    """Return the session-handoff-sequence-number as an int, or None when missing or not a number."""
+    raw = fields.get(SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD)
+    if raw is None:
+        raw = fields.get(LEGACY_RESTART_COUNTER_FIELD)
     if raw is None:
         return None
     try:
@@ -1006,7 +1018,7 @@ def next_step_from(handoff_fields: dict) -> str:
     verbatim = handoff_fields.get(NEXT_STEP_VERBATIM_FIELD, "")
     if verbatim.strip():
         return verbatim
-    return handoff_fields.get("next-step", "").strip()
+    return handoff_fields.get(session_handoff_field_names.NEXT_STEP_FIELD, "").strip()
 
 
 def spawned_subagent_roster_from(handoff_fields: dict) -> list:
@@ -1029,7 +1041,7 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
     next_step = next_step_from(handoff_fields)
     lines = [
         f"Read {extract_path} — the dialog from the session you are continuing, "
-        + written_at_wariness_sentence(handoff_fields.get("written-at", "")),
+        + written_at_wariness_sentence(handoff_fields.get(session_handoff_field_names.WRITTEN_AT_FIELD, "")),
         ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION,
         SUPERVISOR_POINTER_SENTENCE,
     ]
@@ -2201,7 +2213,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         boot_counter = counter_from(boot_fields)
         consumed = state.get("consumed_counter")
         if boot_counter is not None and (consumed is None or boot_counter > consumed):
-            if boot_fields.get("dont-restart"):
+            if boot_fields.get(DONT_RESTART_FIELD):
                 # Boot recovery must honor dont-restart too; a deliberate stand-down needs an exit record.
                 if not sys.stdin.isatty():
                     print("handoff-supervisor: dont-restart, and no terminal to ask on; stopping")
@@ -2383,7 +2395,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
 
         # Check before killing or consuming: without a terminal a successor reads EOF; leave the handoff recoverable.
         # dont-restart needs no terminal because no successor launches.
-        if not sys.stdin.isatty() and not handoff_fields.get("dont-restart"):
+        if not sys.stdin.isatty() and not handoff_fields.get(DONT_RESTART_FIELD):
             print(
                 "handoff-supervisor: a handoff arrived, but this supervisor has no terminal to "
                 "seat a successor on — not reincarnating. The session stays up and the handoff stays "
@@ -2395,7 +2407,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         stop_session(process)
         generation += 1
 
-        if handoff_fields.get("dont-restart"):
+        if handoff_fields.get(DONT_RESTART_FIELD):
             if not sys.stdin.isatty():
                 # Without a terminal, asking would raise EOFError before consuming the handoff and trigger it again next time.
                 print("handoff-supervisor: dont-restart, and no terminal to ask on; stopping")
@@ -2416,7 +2428,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         # The handoff is still unconsumed, so the restarted process starts the successor from it at startup.
         # A dont-restart handoff is not restarted on, or the startup path would ask restart? y/n again.
         if (settings.restarts_itself_on_main_code_at_each_session_handoff
-                and not handoff_fields.get("dont-restart")):
+                and not handoff_fields.get(DONT_RESTART_FIELD)):
             not_restarted_on_main_code_report = (
                 handoff_supervisor_restart_itself_on_main_code_or_return_failure_report(settings))
             print("handoff-supervisor: not restarted on main's code, carrying on with the code "

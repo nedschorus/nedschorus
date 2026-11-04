@@ -150,7 +150,7 @@ def write_handoff(workspace: Path, name: str, counter: int, dont_restart: bool =
     lines = [
         f"# handoff for {name}",
         "written-at: 2026-08-19T00:00:00+00:00",
-        f"restart-counter: {counter}",
+        f"session-handoff-sequence-number: {counter}",
         "next-step: Continue the walk.",
     ]
     if dont_restart:
@@ -177,10 +177,10 @@ def run_no_handoff_cases(workspace: Path):
           "hand off first" in result.stderr, result.stderr)
 
     (workspace / "prose-handoff.md").write_text(
-        "# handoff for prose\nthis file has no restart-counter line at all\n", encoding="utf-8"
+        "# handoff for prose\nthis file has no session-handoff-sequence-number line at all\n", encoding="utf-8"
     )
     result = run_resupervise(workspace, "prose", "--dry-run")
-    check("a handoff with no restart-counter refuses",
+    check("a handoff with no session-handoff-sequence-number refuses",
           result.returncode == 1, result.stdout + result.stderr)
     check("the unreadable-handoff refusal says the supervisor would not start a fresh agent-session from it",
           "not start a fresh agent-session from it" in result.stderr, result.stderr)
@@ -199,7 +199,7 @@ def run_already_consumed_case(workspace: Path):
     check("an already-consumed handoff refuses",
           result.returncode == 1, result.stdout + result.stderr)
     check("the consumed refusal names both counters",
-          "restart-counter 4" in result.stderr and "recorded 4" in result.stderr,
+          "session-handoff-sequence-number 4" in result.stderr and "recorded 4" in result.stderr,
           result.stderr)
 
     # Strictly newer is the boundary the supervisor's own boot-ignition uses.
@@ -322,7 +322,8 @@ def run_missing_launcher_case(workspace: Path):
     # file directly or through a path constant.
     supervisor_home = workspace / "nc-systems" / "handoff"
     supervisor_home.mkdir(parents=True)
-    for supervisor_file in ("handoff-supervisor.py", "handoff-user-review-of-agent-memory-stores-mark.py",
+    for supervisor_file in ("handoff-supervisor.py", "session-handoff-field-names.py",
+                            "handoff-user-review-of-agent-memory-stores-mark.py",
                             "handoff-architecture-overview-refresh-user-shown-mark.py",
                             "uncommitted-work-snapshots.py",
                             "agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py"):
@@ -1097,7 +1098,7 @@ def run_apostrophe_propagation_case(workspace: Path):
     apostrophe_handoffs = workspace / "agent's handoffs"
     apostrophe_handoffs.mkdir(exist_ok=True)
     (apostrophe_handoffs / "quoted-seat-handoff.md").write_text(
-        "# handoff for quoted-seat\nrestart-counter: 2\nnext-step: go\n",
+        "# handoff for quoted-seat\nsession-handoff-sequence-number: 2\nnext-step: go\n",
         encoding="utf-8")
     isolated = workspace / "isolated"
     record = workspace / "launcher-environment-apostrophe.txt"

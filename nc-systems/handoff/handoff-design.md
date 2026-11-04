@@ -55,7 +55,7 @@ The `next-step` field is always one line: the writer script collapses its whites
 
     written-at: 2026-08-19T17:04:11Z
     next-step: FIRST ACTION: run the suite and read the three failures. THEN: fix only the locale case; leave the other two for the design approval-walk on docs/issues/45-remote-named-agent-launch-and-reattach.md@3406ac3.
-    restart-counter: 7
+    session-handoff-sequence-number: 7
     written-in: /Users/el/agents/git-infra
     written-by-session: 5b66b6d0-0000-4000-8000-000000000000
     next-step-verbatim: <<END-OF-NEXT-STEP
