@@ -61,7 +61,10 @@ done by hand. A run on NEW_TOPIC_BRANCH refuses when the branch already holds a 
 and says how to undo it, keeping its changes, so that a new run tests and commits them again. When the
 pre-push hook lets the push through but prints on stderr that it skipped a check, such as the selective
 test run past its time limit, the finish step still does every step after the push, then prints the
-hook's notice and exits 1 instead of reporting success.
+hook's notice and exits 1 instead of reporting success; when a step after the push fails, its failure
+report carries the notice. Only PRE_PUSH_HOOK_SKIPPED_A_CHECK_PHRASES tell a notice apart from the lines
+the hook prints on a push it checked, so a new skip message in the hook with none of them is missed, and
+the finish step then reports success.
 
 Exit codes: 0 brief printed, round passes or move step done; 1 the review or the round breaks a rule, said on
 stderr; 2 gh, git or the answers file could not be read, said on stderr.
@@ -722,6 +725,12 @@ def current_branch():
     return branch
 
 
+# Each way the pre-push hook lets a push through without a check it runs prints one of these, in
+# scripts/git-client-side-hooks/pre-push or scripts/git-client-side-hooks-pre-push-selective-test-run.py.
+PRE_PUSH_HOOK_SKIPPED_A_CHECK_PHRASES = ("goes ahead without", "lets the push through without",
+                                         "none of this push's branches was checked")
+
+
 def push_time_limit_seconds():
     """The pre-push hook's own time budgets, as scripts/ghi-issue-write.py sizes its pushes."""
     # Loaded here, not at import, so that only a move's push pays for loading that program and its hooks.
@@ -850,7 +859,10 @@ def move_finish(number, title, body_file):
             raise StepFailed(f"git push origin {new_branch} ran past {push_time_limit_seconds()} seconds") from None
         if pushed.returncode:
             raise StepFailed(f"git push origin {new_branch} failed: {pushed.stderr.strip()}")
-        hook_notice.extend(line for line in pushed.stderr.splitlines() if line.strip())
+        # The hook writes to stderr on a push it checked too, so only a skip phrase marks a notice; then
+        # every line is kept, because the lines after the phrase say what to run by hand.
+        if any(phrase in pushed.stderr for phrase in PRE_PUSH_HOOK_SKIPPED_A_CHECK_PHRASES):
+            hook_notice.extend(line for line in pushed.stderr.splitlines() if line.strip())
 
     def open_pull_request():
         created["url"] = gh(["pr", "create", "--base", "main", "--head", new_branch, "--title", title,
@@ -878,9 +890,11 @@ def move_finish(number, title, body_file):
         except (StepFailed, OSError) as failure:
             done = "".join(f"; {description}" for description, _step in steps[:index])
             still_to_do = "; ".join(description for description, _step in steps[index:])
+            notice = ("\nThe push went ahead, but git push printed this on stderr, as the pre-push hook does when it "
+                      "skips a check; do what these lines say as well as the steps above:\n" + "\n".join(hook_notice)) if hook_notice else ""
             raise StepFailed(f"{failure}. Nothing is undone. Done: the moved change is committed on {new_branch} as "
                              f"{commit[:12]}{done}. Still to do, in order: {still_to_do}. Do these by hand; running "
-                             "the program again refuses, because the branch already holds the commit.") from None
+                             "the program again refuses, because the branch already holds the commit." + notice) from None
     url = created["url"]
     if hook_notice:
         raise Refused(f"The moved change is pushed and its pull request is open at {url}, and you are back on "

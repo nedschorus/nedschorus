@@ -1347,12 +1347,51 @@ def move_pre_push_notice_cases(root, _repository, _base, _frozen_head):
           and bool(git(repository, "ls-remote", "origin", NEW_BRANCH)), out + err)
 
 
+PRE_PUSH_CHECKED_LINES = ("pre-push: starting the selective test run on /x, which can take up to 480 seconds.",
+                          "pre-push: the selective test run passed. SUMMARY: 3 passed, 0 failed, 3 total")
+PRE_PUSH_SKIP_LINE = ("pre-push: the selective test run ran past its time limit, so this push goes ahead without "
+                      "the selective test run: topic.")
+
+
+def move_with_pre_push_hook(case_root, hook_lines, pull_request_create=None):
+    """Runs a whole move whose pre-push hook prints hook_lines on stderr and exits 0."""
+    repository, frozen_head = move_repository(case_root)
+    body = case_root / "description.md"
+    body.write_text("Moves the timeout change.\n")
+    routes = move_routes(frozen_head, body, pull_request_create)
+    hooks = case_root / "hooks"
+    hooks.mkdir()
+    (hooks / "pre-push").write_text("#!/bin/sh\n" + "".join(f"echo '{line}' >&2\n" for line in hook_lines) + "exit 0\n")
+    (hooks / "pre-push").chmod(0o755)
+    git(repository, "config", "core.hooksPath", str(hooks))
+    run(case_root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    (repository / "partly.txt").write_text(PARTLY_MOVED_ONLY)
+    return run(case_root, repository, routes, "--move-change-to-own-pull-request-finish", "--title", "Move it",
+               "--body-file", str(body))
+
+
+def move_pre_push_checked_and_skip_after_failure_cases(root, _repository, _base, _frozen_head):
+    checked_root = root / "checked"
+    checked_root.mkdir()
+    code, out, err = move_with_pre_push_hook(checked_root, PRE_PUSH_CHECKED_LINES)
+    check("move-finish: when the pre-push hook checks the push and prints its start and pass lines, exit 0 with "
+          "the success line", code == 0 and "Moved to https://github.com/o/r/pull/41" in out, out + err)
+    failed_root = root / "skip-then-gh-fails"
+    failed_root.mkdir()
+    code, out, err = move_with_pre_push_hook(failed_root, (PRE_PUSH_SKIP_LINE,),
+                                             {"exit": 1, "stderr": "pull request create failed\n"})
+    check("move-finish: when the pre-push hook skips a check and gh pr create then fails, exit 2 with the hook's "
+          "notice in the failure report", code == 2 and "Do these by hand" in err and PRE_PUSH_SKIP_LINE in err,
+          out + err)
+
+
 gh_timeout_case()
 case("move", move_cases)
 case("move hand commit", move_hand_commit_cases)
 case("move failure after push", move_failure_after_push_cases)
 case("move push failure", move_push_failure_cases)
 case("move pre-push notice", move_pre_push_notice_cases)
+case("move pre-push checked, and skip notice after a failure", move_pre_push_checked_and_skip_after_failure_cases)
 case("brief", brief_cases)
 case("check", check_cases)
 case("commissioned reviewer", commissioned_reviewer_cases)
