@@ -236,7 +236,7 @@ def run(root, *arguments, checkout=None, lock_file=None, rendezvous_seconds="20"
                "--log-dir", str(root / "logs"),
                "--lock-file", str(lock_file if lock_file is not None else root / "run.lock"),
                "--recorded-inputs-directory", str(root / "recordings"),
-               "--files-only-strace-saw-directory", str(root / "recordings"),
+               "--suite-files-only-strace-saw-lists-directory", str(root / "recordings"),
                *arguments]
     return subprocess.run(command, capture_output=True, text=True, env=environment,
                           stdin=subprocess.DEVNULL, check=False)
@@ -1374,7 +1374,7 @@ with tempfile.TemporaryDirectory() as scratch:
                   f"strace run of {kept['recorded_at']} saw" in lines(selected.stdout),
               (ran(root), selected.stdout))
     (root / "ran.txt").unlink(missing_ok=True)
-    unlisted = run(root, CHANGED_SINCE, base, "--files-only-strace-saw-directory",
+    unlisted = run(root, CHANGED_SINCE, base, "--suite-files-only-strace-saw-lists-directory",
                    str(root / "no-lists-here"))
     check("without that list, the same change does not select the suite",
           ran(root) == [], (ran(root), unlisted.stdout))
@@ -1387,7 +1387,8 @@ with tempfile.TemporaryDirectory() as scratch:
 
     a_file = root / "a-file-not-a-directory"
     a_file.write_text("")
-    unsaved = run(root, "--record-inputs-with-strace", "--files-only-strace-saw-directory",
+    unsaved = run(root, "--record-inputs-with-strace",
+                  "--suite-files-only-strace-saw-lists-directory",
                   str(a_file), environment_extra=fake, driver=FAKE_STRACE_DRIVER)
     check("a list of files only strace saw that cannot be saved is reported, and the "
           "suite's recording is removed, so the next selective run selects the suite",
@@ -1404,13 +1405,13 @@ def kept_hours_before_now(hours):
             "files_only_strace_saw": []}
 
 
-notice = module.suites_without_recent_files_only_strace_saw_list_notice_or_none(
+notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
     ["a-test.py", "b-test.py", "c-test.sh"],
     {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(35)},
     pathlib.Path("/store"), NOW)
 check("no notice when every recorded suite's list is younger than the limit, a shell suite, "
       "which is never recorded, aside", notice is None, notice)
-notice = module.suites_without_recent_files_only_strace_saw_list_notice_or_none(
+notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
     ["a-test.py", "b-test.py"],
     {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(37)},
     pathlib.Path("/store"), NOW)
@@ -1420,7 +1421,7 @@ check("a list older than the limit is named, with the time it was recorded",
       and "If you have not yet told the user in this agent-session that the daily full test "
           "run's lists are stale: tell him" in notice,
       notice)
-notice = module.suites_without_recent_files_only_strace_saw_list_notice_or_none(
+notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
     ["a-test.py"], {}, pathlib.Path("/store"), NOW)
 check("a missing list is named, with the directory it was looked for in",
       notice is not None and notice.startswith("run-all-test-suites: 1 of 1 suites")

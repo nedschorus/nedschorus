@@ -22,8 +22,9 @@ Usage:
                 program's lock; default, the system temp directory
   --recorded-inputs-directory
                 passed through to the runner, as its --recorded-inputs-directory
-                and its --files-only-strace-saw-directory; default, not passed,
-                so the runner uses the machine's own recordings store
+                and its --suite-files-only-strace-saw-lists-directory; default,
+                not passed, so the runner uses the machine's own recordings
+                store
 
 Every option is a seam for scripts/daily-full-test-run-of-main-test.py, and
 for a run made by hand that must not write to the real log-store or the real
@@ -539,7 +540,7 @@ def daily_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, machin
                 if arguments.recorded_inputs_directory:
                     command += ["--recorded-inputs-directory",
                                 arguments.recorded_inputs_directory,
-                                "--files-only-strace-saw-directory",
+                                "--suite-files-only-strace-saw-lists-directory",
                                 arguments.recorded_inputs_directory]
                 completed, seconds_waiting_for_lock, lock_never_released = (
                     run_test_suite_runner_waiting_for_the_machine_lock(

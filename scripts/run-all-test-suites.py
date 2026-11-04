@@ -8,7 +8,7 @@ Usage:
                                  [--only-suites-whose-recorded-inputs-changed-since COMMIT]
                                  [--recorded-inputs-directory DIR]
                                  [--record-inputs-with-strace]
-                                 [--files-only-strace-saw-directory DIR]
+                                 [--suite-files-only-strace-saw-lists-directory DIR]
                                  [--leave-recorded-inputs-and-failure-history-unchanged]
                                  [--stop-at-first-failing-suite]
                                  [--only-suites-named SUITE [SUITE ...]]
@@ -45,7 +45,7 @@ Usage:
                 on Linux, record with strace as well as the audit hook; see
                 RECORDED INPUTS below. scripts/daily-full-test-run-of-main.py
                 passes it; without it the audit hook records alone
-  --files-only-strace-saw-directory
+  --suite-files-only-strace-saw-lists-directory
                 where a run given --record-inputs-with-strace keeps, for each
                 suite, the files only strace saw it read, and where every
                 selective run reads them; default
@@ -483,12 +483,13 @@ suite depends on. Two recorders, whose findings are added together:
   read. A run that records with the audit hook alone replaces the
   recording, and a run given its own --recorded-inputs-directory, such as
   merge-lane-2's head runs, never sees the daily run's recordings, so
-  selection reads these lists from --files-only-strace-saw-directory, whose
-  default is where the daily full run keeps its recordings: a suite also
-  runs when a file on its list differs. A selective run on Linux names how
-  many suites have no list from a strace run in the last
-  FILES_ONLY_STRACE_SAW_OLDER_THAN_HOURS_NOTICE hours, which a missed daily
-  run causes.
+  selection reads these lists from
+  --suite-files-only-strace-saw-lists-directory, whose default is where the
+  daily full run keeps its recordings: a suite also runs when a file on its
+  list differs. A selective run on Linux names how many suites have no list
+  from a strace run in the last
+  FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE hours, which a
+  missed daily run causes.
 
 A recording keeps, per suite: its exit code and seconds; each file read,
 with its git blob hash; each path it opened or checked for, and whether the
@@ -966,7 +967,7 @@ STRACE_INPUT_RECORDER_METHOD = "strace"
 FILES_ONLY_STRACE_SAW_FILE_SUFFIX = ".files-only-strace-saw.json"
 # The daily full run records them once a day; the 12 hours over cover its hour of waiting
 # for the machine's lock and its own length, so one missed daily run is reported.
-FILES_ONLY_STRACE_SAW_OLDER_THAN_HOURS_NOTICE = 36
+FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE = 36
 # The runner, hooks and settings can affect every suite or session a suite starts.
 EVERY_SUITE_RUNS_WHEN_THESE_CHANGE = (
     "scripts/run-all-test-suites.py", ".claude/hooks/", ".claude/guard-hooks/", ".claude/settings.json")
@@ -3386,9 +3387,10 @@ def recorded_at_time_or_none(text):
 
 
 # Agent-facing: docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md
-def suites_without_recent_files_only_strace_saw_list_notice_or_none(suites, kept_by_suite, directory, now):
+def suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+        suites, kept_by_suite, directory, now):
     """A line saying how many suites' files only strace saw are missing or too old to trust."""
-    limit = datetime.timedelta(hours=FILES_ONLY_STRACE_SAW_OLDER_THAN_HOURS_NOTICE)
+    limit = datetime.timedelta(hours=FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE)
     recorded = [suite for suite in suites if not is_shell_test_suite(suite)]
     times = {suite: recorded_at_time_or_none((kept_by_suite.get(suite) or {}).get("recorded_at"))
              for suite in recorded}
@@ -3398,8 +3400,9 @@ def suites_without_recent_files_only_strace_saw_list_notice_or_none(suites, kept
     known = [times[suite] for suite in stale if times[suite] is not None]
     since = (f"since {min(known).strftime('%Y-%m-%dT%H:%M:%SZ')}" if known else "at all")
     return (f"{PROGRAM}: {len(stale)} of {len(recorded)} suites have no list of the files only "
-            f"strace saw them read from the last {FILES_ONLY_STRACE_SAW_OLDER_THAN_HOURS_NOTICE} "
-            f"hours in {directory}, so this selective run does not select such a suite when the "
+            f"strace saw them read from the last "
+            f"{FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE} hours in {directory}, "
+            f"so this selective run does not select such a suite when the "
             f"change edits a file the suite reads only through git or a shell script. "
             f"scripts/daily-full-test-run-of-main.py makes those lists once a day on ned-box, so "
             f"it has not recorded every suite {since}. The verdicts of the suites this run ran "
@@ -3791,7 +3794,7 @@ def parse_arguments(argv):
     parser.add_argument("--recorded-inputs-directory",
                         default=str(DEFAULT_RECORDED_INPUTS_DIRECTORY))
     parser.add_argument("--record-inputs-with-strace", action="store_true")
-    parser.add_argument("--files-only-strace-saw-directory",
+    parser.add_argument("--suite-files-only-strace-saw-lists-directory",
                         default=str(DEFAULT_RECORDED_INPUTS_DIRECTORY))
     parser.add_argument("--leave-recorded-inputs-and-failure-history-unchanged",
                         dest="leave_records_unchanged", action="store_true")
@@ -3903,7 +3906,7 @@ def main(argv=None, platform=None):
         try:
             recordings_dir = recordings_directory_for(arguments.recorded_inputs_directory, top)
             files_only_strace_saw_dir = recordings_directory_for(
-                arguments.files_only_strace_saw_directory, top)
+                arguments.suite_files_only_strace_saw_lists_directory, top)
         except CouldNotRun as refusal:
             print(refusal, file=sys.stderr)
             return EXIT_COULD_NOT_RUN
@@ -3955,7 +3958,7 @@ def main(argv=None, platform=None):
                         + f", kept in {recordings_dir}")
         # Only Linux has strace; the Mac selects without these lists.
         if changed_since is not None and platform.startswith("linux"):
-            notice = suites_without_recent_files_only_strace_saw_list_notice_or_none(
+            notice = suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
                 suites, files_only_strace_saw_by_suite, files_only_strace_saw_dir,
                 datetime.datetime.now(datetime.timezone.utc))
             if notice is not None:

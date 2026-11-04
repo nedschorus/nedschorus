@@ -622,10 +622,10 @@ def run_cases_on_ned_box(workspace: Path):
     recorded_inputs = workspace / "a-recorded-inputs-directory"
     result = fixture.run(extra_arguments=["--recorded-inputs-directory", str(recorded_inputs)])
     check("--recorded-inputs-directory is passed through to the runner, as its "
-          "--recorded-inputs-directory and its --files-only-strace-saw-directory",
+          "--recorded-inputs-directory and its --suite-files-only-strace-saw-lists-directory",
           result.code == 0 and result.runner_calls[0]["argv"][-6:-2]
           == ["--recorded-inputs-directory", str(recorded_inputs),
-              "--files-only-strace-saw-directory", str(recorded_inputs)]
+              "--suite-files-only-strace-saw-lists-directory", str(recorded_inputs)]
           and not recorded_inputs.exists(), repr(result))
     stand_in_elsewhere = workspace / "a-stand-in-runner-outside-the-worktree.py"
     stand_in_elsewhere.write_text(STAND_IN_RUNNER_SOURCE, encoding="utf-8")
