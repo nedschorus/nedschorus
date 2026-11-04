@@ -22,6 +22,7 @@ import io
 import json
 import os
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -455,8 +456,10 @@ check("a ~ that a variable's value brings in is kept as written, as the shell ke
       removals("W='~/wt'; git worktree remove $W") == [("/work", "~/wt", None)],
       removals("W='~/wt'; git worktree remove $W"))
 tilde_checkout, tilde_worktree = checkout_with_worktree("tilde")
+# The user base is kept, because the shell reader's tree-sitter is installed under the real home.
 code, output, stderr = run_hook_process(f"git worktree remove ~/{tilde_worktree.name}", tilde_checkout,
-                                        dict(os.environ, HOME=str(tilde_worktree.parent)))
+                                        dict(os.environ, HOME=str(tilde_worktree.parent),
+                                             PYTHONUSERBASE=site.getuserbase()))
 check("a worktree named through ~/ has its records shipped and the removal let through",
       code == 0 and output is None
       and (STORE / "cold-read-records" / "tilde-doc-2026-11-03" / "fast-read.md").is_file(), (code, output, stderr))
