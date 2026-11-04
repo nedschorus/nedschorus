@@ -222,10 +222,15 @@ def main(arguments=None, run=run_on):
             print(f"{number}. {name}, on {machine}:\n   {command}")
         return 0
     if THIS_MACHINE_PLATFORM != "darwin":
-        print(f"REFUSED: the nc-shared-database install ran on {THIS_MACHINE_PLATFORM}, and it runs only on "
-              f"the Mac, which alone can open an ssh session to ned-box; nothing was installed. "
-              f"An agent on the Mac runs `{INSTALL_RERUN_COMMAND}`. From ned-box, ask the user to run "
-              f"`{INSTALL_RERUN_COMMAND}` in a Terminal on his Mac.", file=sys.stderr)
+        print(f"REFUSED: the nc-shared-database install ran on {THIS_MACHINE_PLATFORM}, and nothing was "
+              f"installed. It runs only on the Mac, because it writes the Mac's token for the "
+              f"nc-shared-database service on the Mac and reaches ned-box over ssh from there.\n"
+              f"If you are the agent talking with the user: ask him to run "
+              f"`{INSTALL_RERUN_COMMAND}` in a Terminal on his Mac, and wait for his word that it "
+              f"finished.\n"
+              f"If you are a subagent: report to the agent that dispatched you that the user must "
+              f"run `{INSTALL_RERUN_COMMAND}` in a Terminal on his Mac.",
+              file=sys.stderr)
         return 2
     mac_token = None
     for number, (name, machine, command, reads_mac_token, expected, advice) in enumerate(
@@ -238,8 +243,9 @@ def main(arguments=None, run=run_on):
         if name == MAC_TOKEN_STEP_NAME:
             mac_token = NC_SHARED_DATABASE_SERVICE_TOKEN_FILE_PATH.read_text(encoding="utf-8").strip()
         print(f"step {number} passed: {name}, on {machine}")
-    print(f"The nc-shared-database service is installed: it accepts requests from the Mac and "
-          f"ned-box on port {PORT}, and only with a token from the accepted-tokens file.")
+    print(f"The nc-shared-database service is installed: it listens on ned-box's port {PORT}, takes "
+          f"requests from the Mac and from ned-box itself, and answers only a request that carries "
+          f"a token listed in ned-box's {ACCEPTED_TOKENS_FILE}.")
     return 0
 
 
