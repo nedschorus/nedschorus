@@ -491,6 +491,22 @@ try:
         reading = replay.read_ghi_md_whole_file_replacement(GhiMdGuardNaming(replaced), "cp a b", "/c", None)
         check(f"the GHI-MD soft-block's reading when its guard names {replaced}", reading == expected, reading)
 
+    class WorktreeRemoveGuardReading:
+        UNREADABLE_WORKTREE_PATH_NOTICE = "cannot read {word}"
+
+        def __init__(self, removals):
+            self.removals = removals
+
+        def worktree_removals_in_command(self, command, working_directory):
+            return self.removals
+
+    for removals, expected in (([("/c", "wt", None)], (["ships the records first", [["/c", "wt"]]], None)),
+                               ([("/c", "$WT", "$WT")], (["unchecked", "$WT"], "cannot read $WT")),
+                               ([], ("passed", None))):
+        reading = replay.read_git_worktree_remove_records_ship_first(
+            WorktreeRemoveGuardReading(removals), "git worktree remove wt", "/c", None)
+        check(f"the worktree-removal guard's reading when its guard finds {removals}", reading == expected, reading)
+
     def add_bash_hook(worktree):
         path = worktree / ".claude" / "settings.json"
         settings = json.loads(path.read_text())
