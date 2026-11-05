@@ -638,7 +638,7 @@ def run_cases():
               and "core/ReplaceBinaryOperator_Add_Mul (2), core/ReplaceBinaryOperator_Add_Sub (1)"
                   in description
               and "+    return x * 1" in description
-              and f"This task's command: {job.survivor_task_command(sorted(diff_files))}\n"
+              and f"This task's command: {job.survivor_task_recorded_mutant_killed_check_command_line(sorted(diff_files))}\n"
                   in description
               and all(path.is_file() for path in diff_files)
               and all(fixture.state_json()["tasks_opened"].get(job.mutant_key(mutant))
@@ -656,7 +656,7 @@ def run_cases():
               "SURVIVED scripts/thing.py:1 core/NumberReplacer: added to task #6, open for this "
               "line, on alpha's task list" in record
               and task_six["subject"].startswith("Surviving mutants in scripts/thing.py:1: 1;")
-              and f"This task's command: {job.survivor_task_command([line_one_diff_file])}\n"
+              and f"This task's command: {job.survivor_task_recorded_mutant_killed_check_command_line([line_one_diff_file])}\n"
                   in task_six["description"]
               and line_one_diff_file.is_file() and task_six["status"] == "pending"
               and "SURVIVED scripts/thing.py:3 core/ReplaceUnaryOperator_Delete_Not: task #10 opened" in record
@@ -681,7 +681,7 @@ def run_cases():
                   in record
               and task_nine["subject"].startswith("Surviving mutants in scripts/thing.py:2: 4;")
               and f"This task's command: "
-                  f"{job.survivor_task_command(sorted([*diff_files, new_diff_file]))}\n"
+                  f"{job.survivor_task_recorded_mutant_killed_check_command_line(sorted([*diff_files, new_diff_file]))}\n"
                   in task_nine["description"]
               and fixture.state_json()["tasks_opened"].get(job.mutant_key(new_on_line_two))
               == {"agent_seat": "alpha", "task_id": 9},
@@ -761,7 +761,7 @@ def run_cases():
               completed.returncode == 0
               and task["subject"].startswith("Surviving mutants in scripts/thing.py:2: 1;")
               and task["status"] == "pending"
-              and f"This task's command: {job.survivor_task_command([diff_files[2]])}\n"
+              and f"This task's command: {job.survivor_task_recorded_mutant_killed_check_command_line([diff_files[2]])}\n"
                   in task["description"]
               and str(diff_files[0]) not in task["description"]
               and str(diff_files[1]) not in task["description"]
@@ -824,7 +824,7 @@ def run_cases():
               "subject, command and last line, with its status kept",
               completed.returncode == 0 and task["status"] == "in_progress"
               and task["subject"].startswith("Surviving mutants in scripts/thing.py:2: 1;")
-              and f"This task's command: {job.survivor_task_command([diff_file])}\n"
+              and f"This task's command: {job.survivor_task_recorded_mutant_killed_check_command_line([diff_file])}\n"
                   in task["description"]
               and "mark this task completed" not in task["description"]
               and task["description"].endswith(
