@@ -327,6 +327,58 @@ case("an unreadable GitHub head leaves git's answer standing",
 case("an unreadable GitHub head says GitHub could not be asked",
      any("could not be asked" in l for l in lines))
 
+# --- no --head with --pull-request: the head is GitHub's pushed head ----------
+# Run from a checkout of main, HEAD was checked instead, and a pull request
+# GitHub found CONFLICTING was reported CLEAN about main itself.
+def run_without_head(runner, pull_request=605, fetch=True):
+    return CHECK.check(None, "origin/main", pull_request, runner=runner,
+                       sleep=lambda _s: None, reads=3, sleep_seconds=7,
+                       fetch=fetch)
+
+
+log = []
+status, lines = run_without_head(fake_runner(
+    merge_tree_status=0, gh_results=[(0, "CONFLICTING")], log=log))
+case("no --head: GitHub's verdict about its pushed head counts",
+     status == CHECK.EXIT_CONFLICT)
+case("no --head: the pushed head is read from GitHub once",
+     sum(1 for c in log if "headRefOid" in c) == 1)
+case("no --head: the pushed head is checked, not HEAD",
+     ["git", "rev-parse", "--verify", "--quiet", RESOLVED_HEAD + "^{commit}"]
+     in log and not any(c[-1] == "HEAD^{commit}" for c in log))
+case("no --head: a pushed head this checkout has is not fetched",
+     ["git", "fetch", "origin", RESOLVED_HEAD] not in log)
+
+log = []
+status, lines = run_without_head(fake_runner(gh_head_status=1, log=log))
+case("no --head and GitHub cannot say the pushed head: exit 2 as UNREAD",
+     status == CHECK.EXIT_BAD_INVOCATION
+     and lines == CHECK.pull_request_frozen_head_gh_read_failure_report_lines(605))
+case("no --head and GitHub cannot say the pushed head: HEAD is not checked",
+     not any(c[:2] == ["git", "merge-tree"] for c in log))
+
+for fetch_status, why in ((1, "the fetch fails"),
+                          (0, "the fetch does not bring it")):
+    log = []
+    status, lines = run_without_head(
+        fake_runner(head_resolves=False, fetch_status=fetch_status, log=log),
+        fetch=False)
+    case("no --head, a pushed head this checkout lacks, %s: exit 2 naming it"
+         % why, status == CHECK.EXIT_BAD_INVOCATION
+         and lines == CHECK.pull_request_frozen_head_fetch_failure_report_lines(
+             605, RESOLVED_HEAD, "origin"))
+    case("no --head, a pushed head this checkout lacks, %s: it was fetched by "
+         "its hash, under --no-fetch too" % why,
+         ["git", "fetch", "origin", RESOLVED_HEAD] in log)
+
+log = []
+status, lines = run_without_head(fake_runner(merge_tree_status=1, log=log),
+                                 pull_request=None)
+case("no --head and no --pull-request: HEAD is checked, GitHub is not asked",
+     status == CHECK.EXIT_CONFLICT
+     and ["git", "rev-parse", "--verify", "--quiet", "HEAD^{commit}"] in log
+     and not any(c[:1] == ["gh"] for c in log))
+
 # --- gh unavailable ----------------------------------------------------------
 status, lines = run(
     fake_runner(merge_tree_status=1, gh_results=[(1, "")]),
@@ -1739,6 +1791,51 @@ def real_repository_cases(root):
     case("real: gh failing leaves git's answer standing, said once",
          status == CHECK.EXIT_NO_CONFLICT
          and lines == clean_block(label=clean_label) + [GITHUB_FAILED])
+
+    # No --head, run from a checkout of main, as merge-lane-2 runs it: the
+    # head checked is the pull request's pushed head, not the checkout's HEAD.
+    status, lines, calls = run_here(
+        *pull_request_args,
+        gh=dict(HEADREFOID=conflict_head, BASEREFNAME="main",
+                MERGEABLE="CONFLICTING"))
+    case("real: --pull-request without --head, from main, checks the pull "
+         "request's pushed head", status == CHECK.EXIT_CONFLICT
+         and lines == conflict_block(label=conflict_label)
+         + [github_line("CONFLICTING", 1)])
+
+    # A pushed head this checkout lacks, held on origin only under a ref the
+    # default fetch skips, as GitHub holds a fork's pull request: it is
+    # fetched by its hash.
+    git_in(origin, "checkout", "-q", "-b", "pull-only", "main")
+    pull_only_head = commit_in(origin, "pull-only.txt", "pushed only\n",
+                               "pull-only topic")
+    git_in(origin, "update-ref", "refs/pull/605/head", pull_only_head)
+    git_in(origin, "checkout", "-q", "main")
+    git_in(origin, "branch", "-q", "-D", "pull-only")
+    status, lines, _ = run_here(
+        *pull_request_args,
+        gh=dict(HEADREFOID=pull_only_head, BASEREFNAME="main",
+                MERGEABLE="MERGEABLE"))
+    case("real: a pushed head this checkout lacks is fetched and checked",
+         status == CHECK.EXIT_NO_CONFLICT
+         and lines == clean_block(label=real_label(pull_only_head,
+                                                   "pull-only topic"))
+         + [github_line("MERGEABLE", 1)])
+
+    missing_head = "e" * 40
+    status, lines, _ = run_here(
+        *pull_request_args,
+        gh=dict(HEADREFOID=missing_head, BASEREFNAME="main",
+                MERGEABLE="MERGEABLE"))
+    case("real: a pushed head that cannot be fetched exits 2, naming it",
+         status == CHECK.EXIT_BAD_INVOCATION
+         and lines == CHECK.pull_request_frozen_head_fetch_failure_report_lines(
+             605, missing_head, "origin"))
+
+    status, lines, _ = run_here(*pull_request_args, gh=dict(FAIL="1"))
+    case("real: --pull-request without --head exits 2 when GitHub cannot say "
+         "the pushed head", status == CHECK.EXIT_BAD_INVOCATION
+         and lines == CHECK.pull_request_frozen_head_gh_read_failure_report_lines(605))
 
 
 with tempfile.TemporaryDirectory(prefix="branch-conflict-check-test-") as scratch:

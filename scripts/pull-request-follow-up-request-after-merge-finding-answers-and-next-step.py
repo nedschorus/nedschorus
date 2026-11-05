@@ -91,7 +91,7 @@ review of the pull request that merge-lane-2's GitHub account posted, with its i
 the comments the posting program, POSTING_PROGRAM_FILE_NAME, moved into its body; read each comment's category by the
 mark that program opened it with; then print the request line and one numbered line for each fix-next,
 fix-in-maintenance or file-for-later finding, "<n>. <category>: `<path>:<line>`: <text>", its text joined onto one
-line. A finding a later review restates, with the same category, path and text, is printed once. Before printing,
+line; a nit is a fix-in-maintenance finding, so it is printed as one, whether or not a fix-round fixed it. A finding a later review restates, with the same category, path and text, is printed once. Before printing,
 the block is parsed back with parse_follow_up_request_blocks_from_message_text(), as the hook parses it, and must
 read back as the same lines. With no such finding it prints nothing. It refuses when merge-lane-2 has no approving
 review of the pull request, and when one of merge-lane-2's comments opens with no mark, as a review posted before
@@ -147,7 +147,6 @@ def load_script_beside_this_one(file_name):
 defect_line_reader = load_script_beside_this_one(
     "pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
 pre_push_conflict_check = load_script_beside_this_one("git-client-side-hooks-pre-push-conflict-check.py")
-pre_push_selective_test_run = load_script_beside_this_one("git-client-side-hooks-pre-push-selective-test-run.py")
 
 PROGRAM = "scripts/" + Path(__file__).name
 REPOSITORY = "nedschorus/nedschorus"
@@ -183,9 +182,8 @@ SUBAGENT_LINE = "If you are a subagent, pass that sentence to the agent that dis
 
 
 def push_time_limit_seconds(environment):
-    # Sized from the time budgets the two pre-push hooks bound themselves to, plus the push itself.
-    return math.ceil(pre_push_conflict_check.time_budget_seconds(environment)
-                     + pre_push_selective_test_run.time_budget_seconds(environment) + PUSH_ITSELF_SECONDS)
+    # Sized from the time budget the pre-push conflict check bounds itself to, plus the push itself.
+    return math.ceil(pre_push_conflict_check.time_budget_seconds(environment) + PUSH_ITSELF_SECONDS)
 
 
 class Refused(Exception):
@@ -960,7 +958,7 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
                 f"{FOLLOW_UP_REQUEST_LINE_START} pull request {number}, then one line for each such finding, numbered "
                 "from 1, such as: 1. fix-next: <path>:<line>: <the finding on one line>\n"
                 "If they hold none, write no block.")
-        category, text = marked
+        category, text, _nit = marked
         finding = (category, comment["path"], " ".join(text.split()))
         if category != posting.BLOCKING_CATEGORY and finding not in [found[:3] for found in findings]:
             findings.append((*finding, comment["line"]))

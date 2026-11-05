@@ -20,8 +20,9 @@ module the other walk-me-through hooks use, and its additionalContext tells the 
   and the command to run again once its cause is fixed;
 - with none open: to answer the prompt first, then open an approval-walk with the alerts as its only items and
   write each alert's `#user_alert <id>` line into its walk-minutes;
-- when the walk files cannot be read: to run INSERT_PROGRAM if an approval-walk is open, and the no-walk steps
-  otherwise, each under its condition.
+- when the walk files cannot be read, or more than one approval-walk is open or paused, which the walk finder
+  raises as MoreThanOneUnclosedApprovalWalk naming each walk-minutes file: to run INSERT_PROGRAM if an
+  approval-walk is open, and the no-walk steps otherwise, each under its condition, with the finder's error.
 
 FAILURES. A payload that is not JSON: one line on stderr, exit 1. A failure claiming alerts: a systemMessage, which
 Claude Code shows the user, says that alerts may be waiting unseen, since an alert is how a program reaches

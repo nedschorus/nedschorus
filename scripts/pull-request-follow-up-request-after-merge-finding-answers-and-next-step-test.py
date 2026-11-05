@@ -615,18 +615,17 @@ def test_open_failures():
         pushes = []
         program.git_output.run_git = push_times_out
         try:
-            with case.in_process(worktree, **{program.pre_push_conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE: "7",
-                                              program.pre_push_selective_test_run.TIME_BUDGET_ENVIRONMENT_VARIABLE: "11.5"}), \
+            with case.in_process(worktree, **{program.pre_push_conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE: "7.5"}), \
                     contextlib.redirect_stderr(io.StringIO()) as stderr:
                 code = program.main([str(NUMBER), "open-pull-request", "--handled-finding-numbers", "1"])
         finally:
             program.git_output.run_git = original_run_git
-        check("a push that times out is given the hooks' budgets from the environment plus 120 s, rounded up to whole "
+        check("a push that times out is given the conflict check's budget from the environment plus 120 s, rounded up to whole "
               "seconds, and hands the agent the sentence for the user, not a run again",
-              code == 2 and pushes == [139] and stderr.getvalue() ==
-              "FAILED: git push -u origin topic-one failed (did not finish within 139 s), so no pull request was opened.\n"
+              code == 2 and pushes == [128] and stderr.getvalue() ==
+              "FAILED: git push -u origin topic-one failed (did not finish within 128 s), so no pull request was opened.\n"
               "open-pull-request stopped there; what it did before the failure stays done.\n"
-              + fails_line("open-pull-request") + "git push -u origin topic-one failed (did not finish within 139 s), so "
+              + fails_line("open-pull-request") + "git push -u origin topic-one failed (did not finish within 128 s), so "
               "no pull request was opened." + SUBAGENT_END,
               f"{code} {pushes} {stderr.getvalue()!r}")
 
@@ -806,20 +805,15 @@ def test_open_gh_pr_create_second_try_and_gh_pr_list():
         case.close()
 
 
-def test_push_time_limit_is_the_pre_push_hooks_budgets_plus_120_seconds():
-    hooks = []
-    for file_name in ("git-client-side-hooks-pre-push-conflict-check.py",
-                      "git-client-side-hooks-pre-push-selective-test-run.py"):
-        spec = importlib.util.spec_from_file_location(
-            file_name[:-3].replace("-", "_") + "_for_test", PROGRAM.with_name(file_name))
-        hooks.append(importlib.util.module_from_spec(spec))
-        spec.loader.exec_module(hooks[-1])
-    conflict_check, selective_test_run = hooks
-    for environment in ({}, {conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE: "7",
-                             selective_test_run.TIME_BUDGET_ENVIRONMENT_VARIABLE: "11.5"}):
-        expected = math.ceil(conflict_check.time_budget_seconds(environment)
-                             + selective_test_run.time_budget_seconds(environment) + 120)
-        check(f"the push time limit is the two pre-push hooks' budgets plus 120 s, rounded up, environment {environment}",
+def test_push_time_limit_is_the_pre_push_conflict_check_budget_plus_120_seconds():
+    file_name = "git-client-side-hooks-pre-push-conflict-check.py"
+    spec = importlib.util.spec_from_file_location(
+        file_name[:-3].replace("-", "_") + "_for_test", PROGRAM.with_name(file_name))
+    conflict_check = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(conflict_check)
+    for environment in ({}, {conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE: "7.5"}):
+        expected = math.ceil(conflict_check.time_budget_seconds(environment) + 120)
+        check(f"the push time limit is the pre-push conflict check's budget plus 120 s, rounded up, environment {environment}",
               program.push_time_limit_seconds(environment) == expected
               and isinstance(program.push_time_limit_seconds(environment), int),
               f"{program.push_time_limit_seconds(environment)} != {expected}")
@@ -1434,7 +1428,7 @@ for test in (test_help, test_block_parsing, test_print_block, test_brief_text, t
              test_open_refusals, test_open, test_open_pushes_the_checked_out_recorded_branch_not_the_last,
              test_open_failures, test_open_passes_on_what_a_push_that_succeeds_prints,
              test_open_gh_pr_create_second_try_and_gh_pr_list,
-             test_push_time_limit_is_the_pre_push_hooks_budgets_plus_120_seconds,
+             test_push_time_limit_is_the_pre_push_conflict_check_budget_plus_120_seconds,
              test_open_title_and_description_file_removal_failure,
              test_leave_out_and_finish, test_three_findings, test_waiting_for_user_ruling,
              test_state_failures, test_clean_up, test_clean_up_goes_on_past_each_worktree_and_branch,
