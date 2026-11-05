@@ -24,6 +24,7 @@ fresh machine; that is the same defect seen from its quiet side.
 Run: python3 scripts/handoff-context-threshold-hook-test.py
 """
 
+import argparse
 import atexit
 import ast
 import contextlib
@@ -1750,6 +1751,26 @@ with tempfile.TemporaryDirectory() as wait_set_workspace:
           hook.awaited_work_still_in_flight(workflow_marker, hook.WorkInFlight([], [], ["w1"])))
     check("with no saved list, a workflow whose launch time is unknown holds the handoff",
           hook.awaited_work_still_in_flight(unknown_marker, hook.WorkInFlight([], [], ["w9"])))
+    # A deferral that begins while a subagent waits off the list on its own shell task must still
+    # wait for that subagent once the task ends and the subagent is back on the list.
+    with tempfile.TemporaryDirectory() as owner_workspace:
+        saved_handoff_directory = hook.HANDOFF_DIRECTORY
+        hook.HANDOFF_DIRECTORY = Path(owner_workspace)
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                hook.defer("owner-off-list", 40.0, "40%",
+                           hook.WorkInFlight([], ["T"], launching_subagent_id_by_task_id={"T": "A"}),
+                           argparse.Namespace(background_task_wait_minutes=30.0,
+                                              ceiling_used_percentage=65.0),
+                           now=began)
+            owner_marker = hook.handoff_deferred_marker_and_refused_commands_files_common.handoff_deferred_marker_read(
+                Path(owner_workspace), "owner-off-list")
+        finally:
+            hook.HANDOFF_DIRECTORY = saved_handoff_directory
+    check("a deferral begun while a subagent waits off the list on its own shell task waits for"
+          " that subagent once it is back on the list",
+          hook.awaited_work_still_in_flight(owner_marker, hook.WorkInFlight(["A"], [])),
+          owner_marker)
     # A launch record whose time carries no zone is read as UTC, so it compares with the deferral's start.
     check("a launch time with no time zone is read as UTC",
           hook.record_time({"timestamp": "2026-10-28T20:12:00"}) == began,

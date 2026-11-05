@@ -588,7 +588,12 @@ def defer(session_id, used, share, flight, arguments, unreadable_marker_problem=
     marker_record = handoff_deferred_marker_and_refused_commands_files_common.HandoffDeferredMarker(
         used_percentage=used,
         deferral_began_at=now or datetime.now(timezone.utc),
-        awaited_subagent_ids=flight.subagent_ids if count_is_known else [],
+        # A subagent off the list while it waits on its own shell task returns to the list when the
+        # task ends, and must still be waited for then.
+        awaited_subagent_ids=(flight.subagent_ids + [
+            flight.launching_subagent_id_by_task_id[task_id] for task_id in flight.background_task_ids
+            if flight.launching_subagent_id_by_task_id.get(task_id) not in (None, *flight.subagent_ids)]
+            if count_is_known else []),
         awaited_background_task_ids=flight.background_task_ids if count_is_known else [],
         awaited_work_is_unknown=not count_is_known,
         awaited_workflow_ids=flight.workflow_ids if count_is_known else [],
