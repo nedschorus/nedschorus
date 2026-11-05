@@ -327,6 +327,7 @@ def run_missing_launcher_case(workspace: Path):
                             "handoff-architecture-overview-refresh-user-shown-mark.py",
                             "uncommitted-work-snapshots.py",
                             "handoff-reference-checkout-fetch-and-fast-forward-to-origin-main-check-common.py",
+                            "agent-seat-terminal-captures-common.py",
                             "agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py"):
         (supervisor_home / supervisor_file).write_text(
             SUPERVISOR_SCRIPT.with_name(supervisor_file).read_text(encoding="utf-8"),
