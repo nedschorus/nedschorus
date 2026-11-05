@@ -329,6 +329,15 @@ def merge_lane_cases(scratch):
           "block, and the commissioned reviewer's Blocks finding they leave out does not",
           isinstance(found, list) and [item["line"] for item in found] == [2, 4, 1],
           f"{found}\n{second_part.detail}")
+    addendum = {"body": "COMMENT\n\nOne more blocker on the same head.", "comments": [
+        {"path": "scripts/thing.py", "line": 5, "body": "**Blocks** A blocker added later."}]}
+    found = fix_round_blocking_findings(fix_round, [graded.posted, addendum, reviewer_blocks],
+                                        ["ned-review-merge", "ned-review-merge", "mac-claude"])
+    check("round trip: a later merge-lane-2 review of the same head with a Blocks comment and no "
+          "count still blocks beside the counted review, while the commissioned reviewer's "
+          "graded-down Blocks finding does not",
+          isinstance(found, list) and [item["line"] for item in found] == [2, 5],
+          f"{found}\n{graded.detail}")
     count_only = {"body": "REQUEST_CHANGES\n\n**Blocking: 1**\n\nSee the reviewer's Blocks.",
                   "comments": []}
     found = fix_round_blocking_findings(fix_round, [count_only, reviewer_blocks],
