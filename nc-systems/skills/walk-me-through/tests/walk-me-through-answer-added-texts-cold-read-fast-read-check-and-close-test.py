@@ -461,10 +461,11 @@ def test_a_mark_whose_text_would_not_be_read_whole_is_refused_for_every_answer_t
 
 def test_marks_whose_texts_are_read_whole_are_not_refused():
     body = ('- #new "Row one."\n- #new "Row two."\n\n> #new "A quoted row."\n\n'
-            '<!--\n#new\n-->\n\n#new "The last row."\n```\ncode right below\n```\n')
+            '<!--\n#new\n-->\n\n```\nExample: #new "a fenced example"\n```\n\n#new "The last row."\n```\ncode right below\n```\n')
     case = Case(document=marks_document(body))
     result = case.run("check")
-    check("marks in list items one under another, in a quotation, in an HTML comment, or right above a fence "
+    check("marks in list items one under another, in a quotation, in an HTML comment, not opening a fenced line, or "
+          "right above a fence "
           "are not refused, and each text is read",
           result.returncode == 0
           and case.calls.read_text() == "Row one.\nRow two.\nA quoted row.\nThe last row.\n", described(result))
