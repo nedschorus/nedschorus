@@ -837,6 +837,10 @@ def cases(scratch):
     world.run(tool="Write", file_path=skills / "a.md")
     os.rename(skills / "a.md", skills / "b.md")
     check("a mv of a settled guarded file is not asked about", world.run() == "", "")
+    check("the settled mv's old path is logged as the rename, not as a deletion",
+          world.approved_in_log(skills / "a.md", "deleted", "rename")
+          and not world.approved_in_log(skills / "a.md", "deleted", "deletion"),
+          world.store_file(skills / "a.md", "log"))
     (skills / "b.md").write_text("skill b, unapproved\n")
     world.run()
     os.rename(skills / "b.md", skills / "c.md")
