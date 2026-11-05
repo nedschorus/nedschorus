@@ -701,6 +701,32 @@ def run_cases():
               == {"agent_seat": "alpha", "task_id": 11},
               (completed.returncode, completed.stderr, task_files(alpha_list)))
 
+    # A survivor on a line whose task is open, when that task cannot be rewritten: the run stops
+    # at the merge before the state names the task for it, and the task is left as it was.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        merge = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                               author="alpha")
+        completed = fixture.run({merge: {"json": verdict(survived=[survivor()])}})
+        before = (alpha_list / "1.json").read_text()
+        later = fixture.commit("scripts/other.py", "VALUE = 2\n", author="alpha")
+        added = survivor(2, "core/ReplaceComparisonOperator")
+        (alpha_list / ".1.json.partial").mkdir()
+        completed = fixture.run({later: {"json": verdict(survived=[added])}})
+        check("a survivor on a line whose open task cannot be rewritten stops the run at that "
+              "merge, exit 4, naming the error, with the task unchanged, the merge not recorded "
+              "as tested and the state not naming the task for the survivor",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and f"merge {later[:12]}: no task could be opened on alpha's task list, or "
+                  f"rewritten there" in completed.stderr
+              and "IsADirectoryError" in completed.stderr
+              and (alpha_list / "1.json").read_text() == before
+              and fixture.state_json()["last_tested_main_commit"] == merge
+              and job.mutant_key(added) not in fixture.state_json()["tasks_opened"],
+              (completed.returncode, completed.stderr, fixture.state_json()))
+
     # The recheck: each night, each survivor task the state names is judged on main by the
     # recorded mutant killed check; killed mutants and mutants that no longer exist leave the
     # task and the state, and a task with none left is completed.
