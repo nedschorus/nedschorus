@@ -95,8 +95,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
         if key != deletion.captures.AGENT_SEAT_TERMINAL_CAPTURES_DESTINATION_ENVIRONMENT_VARIABLE}
     with mock.patch.object(deletion.captures, "LOG_STORE_AGENT_SESSION_FILES_BY_MACHINE_DIRECTORY", fake_store), \
             mock.patch.dict(os.environ, environment_without_override, clear=True):
-        on_ned_box = deletion.captures_directories_to_delete_from_on_this_machine_find("ned-box")
-        on_the_mac = deletion.captures_directories_to_delete_from_on_this_machine_find("els-MacBook-Pro")
+        on_ned_box = deletion.agent_seat_terminal_captures_directories_this_machine_deletes_old_captures_from_find("ned-box")
+        on_the_mac = deletion.agent_seat_terminal_captures_directories_this_machine_deletes_old_captures_from_find("els-MacBook-Pro")
     check("on ned-box a run deletes from every machine's copy in the log-store, the Mac's included, "
           "since the transcript mirror never deletes",
           on_ned_box == [fake_store / "mac" / "agent-seat-terminal-captures",

@@ -52,12 +52,13 @@ SECONDS_PER_DAY = 86_400
 # Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 FAILED_PATH_KEPT_UNTIL_A_RUN_CAN_DELETE_IT_LINE = (
     "The path stays until a run can delete it; the run went on with the other captures. "
-    "If the same path fails on the next day's run too, show its owner and permissions with "
-    "`ls -ld <the path>` on this machine and fix them, so this program, running as this "
-    "machine's own user, can delete it.")
+    "If the same path fails on the next day's run too, run `ls -ld` on the path and on its "
+    "directory, on the machine whose log holds this line, where the path is; if either is not "
+    "writable by that machine's own user, which runs this program, tell the user the path and what "
+    "`ls -ld` showed. A subagent tells the agent that dispatched it instead.")
 
 
-def captures_directories_to_delete_from_on_this_machine_find(hostname=None) -> list:
+def agent_seat_terminal_captures_directories_this_machine_deletes_old_captures_from_find(hostname=None) -> list:
     if (captures.this_machine_is_the_log_store_host(hostname)
             and not os.environ.get(captures.AGENT_SEAT_TERMINAL_CAPTURES_DESTINATION_ENVIRONMENT_VARIABLE)):
         return sorted(captures.LOG_STORE_AGENT_SESSION_FILES_BY_MACHINE_DIRECTORY.glob(
@@ -112,7 +113,7 @@ def main(argv=None, now=None) -> int:
                         help="a captures directory to delete from; repeat for several; "
                              "replaces this machine's own list")
     arguments = parser.parse_args(argv)
-    directories = arguments.captures_directory or captures_directories_to_delete_from_on_this_machine_find()
+    directories = arguments.captures_directory or agent_seat_terminal_captures_directories_this_machine_deletes_old_captures_from_find()
     oldest_kept_modification_time = (time.time() if now is None else now) - (
         captures.AGENT_SEAT_TERMINAL_CAPTURES_KEPT_DAYS * SECONDS_PER_DAY)
     deleted = failed = 0
