@@ -104,9 +104,9 @@ runner = module_loaded_by_path("run_all_test_suites",
 snapshots = module_loaded_by_path("uncommitted_work_snapshots",
                                   REPOSITORY_ROOT / MODULE_RELATIVE)
 command_line_prefix = module_loaded_by_path(
-    "claude_code_headless_print_mode_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
+    "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
     REPOSITORY_ROOT / "nc-systems" / "general-tools"
-    / "claude-code-headless-print-mode-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+    / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 
 
 def git(directory, *arguments):
@@ -153,7 +153,7 @@ def start_claude(claude_program, clone, settings_path):
     environment = runner.environment_without_git_redirecting_variables()
     environment[snapshots.AGENT_SEAT_ENVIRONMENT_VARIABLE] = LIVE_CHECK_AGENT_SEAT
     return subprocess.Popen(
-        [*command_line_prefix.claude_code_headless_print_mode_command_line_prefix_build("dontAsk", claude_program),
+        [*command_line_prefix.claude_code_headless_run_command_line_prefix_build("dontAsk", claude_program),
          LIVE_CHECK_PROMPT, "--model", LIVE_CHECK_MODEL,
          "--allowedTools", "Bash", "--output-format", "json", "--no-session-persistence",
          "--settings", str(settings_path)],

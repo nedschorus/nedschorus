@@ -107,9 +107,9 @@ _common_spec = importlib.util.spec_from_file_location(
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
 _command_line_prefix_spec = importlib.util.spec_from_file_location(
-    "claude_code_headless_print_mode_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
+    "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
     Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
-    / "claude-code-headless-print-mode-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+    / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 command_line_prefix = importlib.util.module_from_spec(_command_line_prefix_spec)
 _command_line_prefix_spec.loader.exec_module(command_line_prefix)
 run_all_test_suites = common.run_all_test_suites
@@ -245,7 +245,7 @@ def reviewer_environment(record):
 def run_reviewer(schema_text, brief, head_worktree, environment, time_limit):
     """Return (exit code or None when killed at the time limit, stdout, stderr)."""
     process = subprocess.Popen(
-        [*command_line_prefix.claude_code_headless_print_mode_command_line_prefix_build("dontAsk"),
+        [*command_line_prefix.claude_code_headless_run_command_line_prefix_build("dontAsk"),
          "--json-schema", schema_text, "--output-format", "json", "--allowedTools", *ALLOWED_TOOLS],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         cwd=head_worktree, env=environment, start_new_session=True)
@@ -291,7 +291,7 @@ def remove_reviewer_worktrees(head_worktree, number):
 
 
 def resume_command(session_id):
-    return shlex.join([*command_line_prefix.claude_code_headless_print_mode_command_line_prefix_build("dontAsk"),
+    return shlex.join([*command_line_prefix.claude_code_headless_run_command_line_prefix_build("dontAsk"),
                        "--resume", session_id, "--allowedTools", *ALLOWED_TOOLS])
 
 
