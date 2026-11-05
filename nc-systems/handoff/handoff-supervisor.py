@@ -361,6 +361,7 @@ NEXT_STEP_BLOCK_OPENING_MARKER = session_handoff_field_names.NEXT_STEP_BLOCK_OPE
 NEXT_STEP_BLOCK_TERMINATOR = session_handoff_field_names.NEXT_STEP_BLOCK_TERMINATOR
 NEXT_STEP_BLOCK_UNTERMINATED_FIELD = session_handoff_field_names.NEXT_STEP_BLOCK_UNTERMINATED_FIELD
 SPAWNED_SUBAGENT_FIELD_PREFIX = session_handoff_field_names.SPAWNED_SUBAGENT_FIELD_PREFIX
+BACKGROUND_TASK_FIELD_PREFIX = session_handoff_field_names.BACKGROUND_TASK_FIELD_PREFIX
 WRITTEN_BY_SESSION_FIELD = session_handoff_field_names.WRITTEN_BY_SESSION_FIELD
 SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD = session_handoff_field_names.SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD
 LEGACY_RESTART_COUNTER_FIELD = session_handoff_field_names.LEGACY_RESTART_COUNTER_FIELD
@@ -550,6 +551,11 @@ ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE = (
     "{transcript_directory}/subagents/agent-<id>.jsonl."
 )
 
+
+BACKGROUND_TASKS_STILL_RUNNING_WHEN_SESSION_ENDED_SENTENCE_TEMPLATE = (
+    "The session you are replacing had {task_count} background task(s) still running when it "
+    "ended: {joined_tasks}. Restart any you still need."
+)
 
 BACKGROUND_TASKS_STARTED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE = (
     "The session you are replacing started {task_count} background Bash task(s) during its "
@@ -1137,6 +1143,10 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
             joined_roster="; ".join(roster),
             transcript_directory=transcript_directory,
         ))
+    still_running_tasks = numbered_field_values_from(handoff_fields, BACKGROUND_TASK_FIELD_PREFIX)
+    if still_running_tasks:
+        lines.append(BACKGROUND_TASKS_STILL_RUNNING_WHEN_SESSION_ENDED_SENTENCE_TEMPLATE.format(
+            task_count=len(still_running_tasks), joined_tasks="; ".join(still_running_tasks)))
     late_tasks = numbered_field_values_from(
         handoff_fields, BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
     if late_tasks:

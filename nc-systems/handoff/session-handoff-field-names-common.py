@@ -16,6 +16,9 @@ WRITTEN_BY_SESSION_FIELD = "written-by-session"
 DONT_RESTART_FIELD = "dont-restart"
 # Numbered by the writer, because the reader keeps only a key's first occurrence.
 SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
+# Numbered for the same reason. A reader must take only digits after it: the handoff-supervisor's
+# BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX starts with these words too.
+BACKGROUND_TASK_FIELD_PREFIX = "background-task-"
 NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
 NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
 NEXT_STEP_BLOCK_TERMINATOR = "END-OF-NEXT-STEP"

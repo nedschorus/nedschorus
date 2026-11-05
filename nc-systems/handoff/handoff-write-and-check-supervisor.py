@@ -5,8 +5,9 @@ The handoff system's writer (specification:
 nc-systems/handoff/handoff-design.md). The retiring agent writes one
 thing — the prompt telling its successor what to do first — and this script
 does everything else a machine can do: it stamps the timestamp, derives the
-restart counter, derives the roster of subagents still working — the ones the
-reincarnation is about to kill mid-job — formats and writes the file, then checks
+restart counter, derives the roster of subagents still working and the list of
+background Bash tasks still running — the ones the reincarnation is about to
+kill mid-job — formats and writes the file, then checks
 whether a supervisor is actually watching and tells the agent what that means
 for it.
 
@@ -138,6 +139,7 @@ DEFAULT_AGENT_NAME_RULE_TEXT = (
 )
 
 SPAWNED_SUBAGENT_FIELD_PREFIX = field_names.SPAWNED_SUBAGENT_FIELD_PREFIX
+BACKGROUND_TASK_FIELD_PREFIX = field_names.BACKGROUND_TASK_FIELD_PREFIX
 
 BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
     supervisor.BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
@@ -413,6 +415,55 @@ def background_task_launches_by_id(transcript_path: Path, task_ids) -> dict:
     return launches
 
 
+def background_tasks_still_running(transcript_path: Path) -> list:
+    """Return [(task id, description, command, launch time)] for the background Bash tasks the
+    transcript launched with no completion notification, in launch order.
+
+    A Monitor is not one: its launch record carries no backgroundTaskId. Raises
+    threshold_hook.TranscriptCouldNotBeFullyRead when a launch record cannot be read.
+    """
+    # No wait limit: a task past the threshold hook's wait still dies at the session-handoff.
+    flight = threshold_hook.work_in_flight(str(transcript_path), float("inf"),
+                                           should_read_subagent_own_transcripts=False)
+    launches = background_task_launches_by_id(transcript_path, flight.background_task_ids)
+    return [(task_id, *launches[task_id], flight.launched_at_by_id.get(task_id))
+            for task_id in flight.background_task_ids]
+
+
+def background_task_field_lines(tasks) -> list:
+    """Render the still-running background tasks as numbered handoff fields."""
+    lines = []
+    for ordinal, (task_id, description, command, launched_at) in enumerate(tasks, start=1):
+        described = f' "{description}"' if description else ""
+        started = (launched_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if launched_at is not None
+                   else "an unrecorded time")
+        lines.append(f"{BACKGROUND_TASK_FIELD_PREFIX}{ordinal}: {task_id}{described} "
+                     f"started at {started} command: {json.dumps(command)}")
+    return lines
+
+
+def background_task_fields_for_this_session(working_directory: Path):
+    """Return (field lines, console status), reporting failures without blocking handoff."""
+    session_id = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not session_id:
+        return [], ("background tasks: not listed — CLAUDE_CODE_SESSION_ID is unset, so this "
+                    "script cannot find the transcript. Name in the next step, with its command, "
+                    "any background task still running that your successor must restart.")
+    try:
+        transcript_path = find_session_transcript(session_id, working_directory)
+        if transcript_path is None:
+            return [], (f"background tasks: not listed — no single transcript found for session "
+                        f"{session_id} under {PROJECTS_ROOT}. Name in the next step, with its "
+                        "command, any background task still running that your successor must restart.")
+        tasks = background_tasks_still_running(transcript_path)
+    except Exception as error:  # noqa: BLE001 - the list never blocks a handoff
+        return [], (f"background tasks: not listed — {type(error).__name__}: {error}. Name in the "
+                    "next step, with its command, any background task still running that your "
+                    "successor must restart.")
+    return (background_task_field_lines(tasks),
+            f"background tasks: {len(tasks)} still running, recorded for the successor")
+
+
 def background_tasks_started_during_handoff_deferral_still_running(transcript_path: Path,
                                                                    deferral_began_at) -> list:
     """Return [(task id, description, command)] for background Bash tasks launched at or after
@@ -421,14 +472,10 @@ def background_tasks_started_during_handoff_deferral_still_running(transcript_pa
     A task whose launch record has no readable time counts as launched during the deferral.
     Raises threshold_hook.TranscriptCouldNotBeFullyRead when a launch record cannot be read.
     """
-    # No wait limit: a task past the threshold hook's wait still dies at the session-handoff.
-    flight = threshold_hook.work_in_flight(str(transcript_path), float("inf"),
-                                           should_read_subagent_own_transcripts=False)
-    late = [task_id for task_id in flight.background_task_ids
-            if flight.launched_at_by_id.get(task_id) is None
-            or flight.launched_at_by_id[task_id] >= deferral_began_at]
-    launches = background_task_launches_by_id(transcript_path, late)
-    return [(task_id, *launches[task_id]) for task_id in late]
+    return [(task_id, description, command)
+            for task_id, description, command, launched_at
+            in background_tasks_still_running(transcript_path)
+            if launched_at is None or launched_at >= deferral_began_at]
 
 
 def handoff_deferral_field_lines(late_tasks, refused_commands) -> list:
@@ -500,7 +547,7 @@ def handoff_deferral_fields_for_this_session(handoff_directory: Path, working_di
 
 def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_restart: bool,
                        seat_directory: Path, spawned_subagent_lines=(), verbatim_lines=(),
-                       handoff_deferral_lines=()) -> None:
+                       handoff_deferral_lines=(), background_task_lines=()) -> None:
     """Write the handoff atomically so readers cannot see a partial file."""
     lines = [
         f"{field_names.WRITTEN_AT_FIELD}: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
@@ -516,6 +563,7 @@ def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_re
         lines.append(f"{field_names.DONT_RESTART_FIELD}: the user asked to be consulted before a relaunch")
 
     lines.extend(spawned_subagent_lines)
+    lines.extend(background_task_lines)
     lines.extend(handoff_deferral_lines)
 
     # Write the block last so field-like content cannot shadow actual fields.
@@ -890,16 +938,20 @@ def main(argv=None) -> int:
 
     counter = next_restart_counter(handoff_path, state_path)
     spawned_subagent_lines, roster_report = spawned_subagent_roster_for_this_session(seat_directory)
+    background_task_lines, background_task_report = background_task_fields_for_this_session(
+        seat_directory)
     handoff_deferral_lines, handoff_deferral_report = handoff_deferral_fields_for_this_session(
         handoff_directory, seat_directory)
     prune_report = prune_completed_tasks(next_step_text)
     write_handoff_file(handoff_path, next_step, counter, arguments.dont_restart, seat_directory,
                        spawned_subagent_lines=spawned_subagent_lines,
                        verbatim_lines=verbatim_lines,
-                       handoff_deferral_lines=handoff_deferral_lines)
+                       handoff_deferral_lines=handoff_deferral_lines,
+                       background_task_lines=background_task_lines)
     # Flushed at once: the supervisor may end this session soon after the handoff file appears.
     print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (session-handoff-sequence-number {counter})", flush=True)
     print(f"handoff-write-and-check-supervisor: {roster_report}", flush=True)
+    print(f"handoff-write-and-check-supervisor: {background_task_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {handoff_deferral_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {prune_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {run_branch_protection_audit()}")

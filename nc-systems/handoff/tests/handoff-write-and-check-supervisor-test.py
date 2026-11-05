@@ -1793,8 +1793,11 @@ def run_handoff_deferral_fields_cases(workspace: Path):
           == 'blate00001 "Fast read started during the deferral" command: '
              + json.dumps("python3 nc-systems/cold-read/cold-read-fast-read.py --target a.md"),
           body)
-    check("a background task started before the deferral, or one that finished, is not listed",
-          "bearly0001" not in body and "blate00002" not in body
+    deferral_field_text = "\n".join(line for line in body.splitlines()
+                                    if line.startswith("background-task-started-during-handoff-deferral-"))
+    check("a background task started before the deferral, or one that finished, is not listed "
+          "among the tasks started during the deferral",
+          "bearly0001" not in deferral_field_text and "blate00002" not in body
           and "background-task-started-during-handoff-deferral-3" not in body, body)
     check("a background task launched at the moment the deferral began is listed, with what its "
           "Bash call ran and nothing from other blocks",
@@ -1879,6 +1882,93 @@ def run_handoff_deferral_fields_cases(workspace: Path):
         missing_ok=True)
     clear()
     run_threshold_hook_defer_then_fire_then_writer_case(workspace)
+
+
+def run_background_task_fields_cases(workspace: Path):
+    """The session-handoff lists every background Bash task still running when it is written, with
+    its command and start time, because the session-handoff stops it. A transcript that cannot be
+    read is reported, not hidden, and never costs the handoff."""
+    home = workspace / "background-task-home"
+    projects = home / ".claude" / "projects" / "-fixture-project"
+    projects.mkdir(parents=True, exist_ok=True)
+    handoffs = workspace / "background-task-handoffs"
+    handoffs.mkdir(parents=True, exist_ok=True)
+    session_id = "00000000-0000-4000-8000-0000000b9a50"
+    undated_launch = background_bash_launch_records("bundated01", "", "tail -f x.log", "unused")
+    for record in undated_launch:
+        del record["timestamp"]
+    records = [
+        *background_bash_launch_records("brunning01", "Six-reviewer grid",
+                                        "python3 nc-systems/cold-read/cold-read-grid.py --target a.md",
+                                        "2026-10-28T22:00:00.000+01:00"),
+        *background_bash_launch_records("bfinished1", "Finished earlier", "python3 done.py",
+                                        "2026-10-28T21:05:00.000Z"),
+        background_bash_completion_record("bfinished1", "2026-10-28T21:06:00.000Z"),
+        *monitor_records("bmonitor01", "2026-10-28T21:07:00.000Z", "2026-10-28T21:08:00.000Z")[:1],
+        *undated_launch,
+    ]
+    (projects / f"{session_id}.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    environment = {"HOME": str(home), "CLAUDE_CODE_SESSION_ID": session_id}
+
+    written = run_writer(handoffs, "carry on\n", "--agent", "backgroundtaskcase",
+                         environment_overrides=environment)
+    body = handoff_text(handoffs, "backgroundtaskcase")
+    fields = writer.supervisor.parse_handoff_file(handoffs / "backgroundtaskcase-handoff.md")
+    check("a background task still running is listed with its description, its start time in UTC "
+          "and its command",
+          fields.get("background-task-1")
+          == 'brunning01 "Six-reviewer grid" started at 2026-10-28T21:00:00Z command: '
+             + json.dumps("python3 nc-systems/cold-read/cold-read-grid.py --target a.md"),
+          body)
+    check("a background task whose launch record has no time is listed as started at an "
+          "unrecorded time",
+          fields.get("background-task-2")
+          == 'bundated01 started at an unrecorded time command: ' + json.dumps("tail -f x.log"),
+          body)
+    check("a finished background task and a Monitor are not listed",
+          "bfinished1" not in body and "bmonitor01" not in body
+          and "background-task-3" not in fields, body)
+    check("the writer reports how many background tasks it recorded",
+          "background tasks: 2 still running, recorded for the successor" in written.stdout,
+          written.stdout)
+    prompt = writer.supervisor.build_ignition_prompt(Path("/x/dialog.md"), fields)
+    check("the successor's first prompt lists each background task and says to restart any still "
+          "needed",
+          "The session you are replacing had 2 background task(s) still running when it ended: "
+          + fields["background-task-1"] + "; " + fields["background-task-2"]
+          + ". Restart any you still need." in prompt, prompt[:800])
+    check("a field started during a handoff-deferral is not read as a still-running background task",
+          writer.supervisor.numbered_field_values_from(
+              {"background-task-started-during-handoff-deferral-1": "blate", "background-task-1": "b1"},
+              writer.supervisor.BACKGROUND_TASK_FIELD_PREFIX) == ["b1"])
+
+    unreadable_session_id = "00000000-0000-4000-8000-0000000b9a51"
+    (projects / f"{unreadable_session_id}.jsonl").write_text(
+        '{"backgroundTaskId": "bcutoff001" this line is cut off\n', encoding="utf-8")
+    unreadable = run_writer(handoffs, "carry on\n", "--agent", "unreadabletaskscase",
+                            environment_overrides={"HOME": str(home),
+                                                   "CLAUDE_CODE_SESSION_ID": unreadable_session_id})
+    check("a launch record that cannot be read still writes the handoff, with no background-task "
+          "field, and tells the agent to name the tasks by hand",
+          "next-step: carry on" in handoff_text(handoffs, "unreadabletaskscase")
+          and "background-task-1" not in handoff_text(handoffs, "unreadabletaskscase")
+          and "background tasks: not listed — TranscriptCouldNotBeFullyRead" in unreadable.stdout
+          and "Name in the next step" in unreadable.stdout, unreadable.stdout)
+
+    lost = run_writer(handoffs, "carry on\n", "--agent", "losttaskscase",
+                      environment_overrides={"HOME": str(home),
+                                             "CLAUDE_CODE_SESSION_ID": "00000000-0000-0000-0000-0000000b9a52"})
+    check("a transcript that cannot be found still writes the handoff and says to name the tasks "
+          "by hand",
+          (handoffs / "losttaskscase-handoff.md").is_file()
+          and "background tasks: not listed — no single transcript found" in lost.stdout,
+          lost.stdout)
+
+    unidentified = run_writer(handoffs, "carry on\n", "--agent", "unidentifiedtaskscase")
+    check("a session with no id says why the background tasks are not listed",
+          "background tasks: not listed — CLAUDE_CODE_SESSION_ID is unset" in unidentified.stdout,
+          unidentified.stdout)
 
 
 THRESHOLD_HOOK_SCRIPT = SYSTEM_DIRECTORY.parent.parent / "scripts" / "handoff-context-threshold-hook.py"
@@ -1979,6 +2069,7 @@ with tempfile.TemporaryDirectory() as temporary_directory_name:
     run_completed_task_prune_cases(temporary_directory)
     run_completed_task_prune_remote_store_cases(temporary_directory)
     run_handoff_deferral_fields_cases(temporary_directory)
+    run_background_task_fields_cases(temporary_directory)
 
 print()
 if failures:
