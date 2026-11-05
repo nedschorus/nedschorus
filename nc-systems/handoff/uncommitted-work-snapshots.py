@@ -569,7 +569,7 @@ def list_command_text(agent_seat):
 
 
 RESTORE_STEPS = """\
-Each was listed because its worktree is gone or no longer holds its changes. Handle each of them before your other work:
+Each was listed because its worktree is gone or no longer holds its changes. Handle each of them:
 1. See what it holds: `git diff --stat <ref>^ <ref>`, then `git diff <ref>^ <ref>`.
 2. Decide what to keep. If you keep nothing, skip step 3. Read the end of the transcript the entry names, to learn what the dead agent was doing; if the transcript is gone, decide from the diff alone, and ask the user when unsure. Drop any mutant: a deliberate small break in code that nc-mutation-testing makes, by a program or by an agent's own edit, to check that the tests notice. A crash during nc-mutation-testing leaves the mutant in the work-snapshot. If one file holds both wanted work and a mutant, keep the file and remove the mutant from it by editing it before you commit in step 3.
 3. Restore what you keep, as a commit.
