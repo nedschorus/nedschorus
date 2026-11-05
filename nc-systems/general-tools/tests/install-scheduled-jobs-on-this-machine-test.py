@@ -172,6 +172,25 @@ MAC_NC_SHARED_DATABASE_BACKUP_COPY_PLIST = {
     "StandardOutPath": "/Users/el/.claude/nc-shared-database-newest-backup-copy-to-mac.log",
     "StandardErrorPath": "/Users/el/.claude/nc-shared-database-newest-backup-copy-to-mac.log",
 }
+# The deletion of agent-seat terminal captures older than seven days, last in the table.
+NED_BOX_TERMINAL_CAPTURES_DELETE_LINE = (
+    "45 5 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
+    "agent-seat-terminal-captures-older-than-seven-days-delete.py >> "
+    "/home/nedlern/.claude/agent-seat-terminal-captures-older-than-seven-days-delete.log 2>&1")
+MAC_TERMINAL_CAPTURES_DELETE_PLIST = {
+    "Label": "com.nedschorus.agent-seat-terminal-captures-older-than-seven-days-delete",
+    "ProgramArguments": ["/opt/homebrew/bin/python3",
+                         "/Users/el/Projects/nedschorus/nc-systems/handoff/"
+                         "agent-seat-terminal-captures-older-than-seven-days-delete.py"],
+    "EnvironmentVariables": {
+        "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
+                "/usr/sbin:/sbin"},
+    "StartCalendarInterval": {"Hour": 5, "Minute": 45},
+    "StandardOutPath":
+        "/Users/el/.claude/agent-seat-terminal-captures-older-than-seven-days-delete.log",
+    "StandardErrorPath":
+        "/Users/el/.claude/agent-seat-terminal-captures-older-than-seven-days-delete.log",
+}
 DOMAIN = f"gui/{os.getuid()}"
 
 
@@ -284,8 +303,9 @@ check("the table's jobs are the two typed by hand before this program, the workt
       "weekly owner check of the work-snapshot hook, the session dialogs refresh, the "
       "guarded-file store's prune, the nc-shared-database's backup and its copy to the "
       "Mac, the deletion of exited agent-sessions' temp folders, the scheduled full "
-      "mutation pass, and no other",
-      sorted(real_jobs) == ["claude-code-temp-folders-of-exited-agent-sessions-delete",
+      "mutation pass, the deletion of old agent-seat terminal captures, and no other",
+      sorted(real_jobs) == ["agent-seat-terminal-captures-older-than-seven-days-delete",
+                            "claude-code-temp-folders-of-exited-agent-sessions-delete",
                             "clean-worktrees", "daily-full-test-run-of-main",
                             "guarded-file-versions-and-approvals-store-removed-checkout-"
                             "copies-prune",
@@ -335,6 +355,24 @@ check("the temp-folder deletion runs on ned-box alone, at 07:30, and its program
       and f"    {NED_BOX_TEMP_FOLDERS_DELETE_LINE}\n"
       in (REPOSITORY_ROOT / temp_folders_delete["program"]).read_text(encoding="utf-8"),
       installer.cron_line(ned_box, temp_folders_delete, temp_folders_delete["on"]["ned-box"]))
+terminal_captures_delete = real_jobs["agent-seat-terminal-captures-older-than-seven-days-delete"]
+terminal_captures_delete_documentation = (
+    REPOSITORY_ROOT / terminal_captures_delete["program"]).read_text(encoding="utf-8")
+check("the deletion of old agent-seat terminal captures runs at 05:45 by cron on ned-box and by "
+      "launchd on the Mac, and its program documents the table's ned-box line and names this "
+      "installer",
+      sorted(terminal_captures_delete["on"]) == ["mac", "ned-box"]
+      and installer.cron_line(ned_box, terminal_captures_delete,
+                              terminal_captures_delete["on"]["ned-box"])
+      == NED_BOX_TERMINAL_CAPTURES_DELETE_LINE
+      and installer.launch_agent_plist(mac, terminal_captures_delete,
+                                       terminal_captures_delete["on"]["mac"])
+      == MAC_TERMINAL_CAPTURES_DELETE_PLIST
+      and f"    {NED_BOX_TERMINAL_CAPTURES_DELETE_LINE}\n" in terminal_captures_delete_documentation
+      and "nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py"
+      in terminal_captures_delete_documentation,
+      installer.cron_line(ned_box, terminal_captures_delete,
+                          terminal_captures_delete["on"]["ned-box"]))
 full_mutation_pass = real_jobs[
     "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open"]
 check("the scheduled full mutation pass runs on ned-box alone, at 00:30, and its program "
@@ -376,7 +414,7 @@ printed, errors = io.StringIO(), io.StringIO()
 stub = MachineStub()
 with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="linux", home=Path("/home/nedlern"), run=stub)
-check("--print as ned-box prints ned-box's ten cron lines from the real table and runs nothing",
+check("--print as ned-box prints ned-box's twelve cron lines from the real table and runs nothing",
       exit_code == 0 and stub.commands == []
       and printed.getvalue().splitlines() == [
           "machine: ned-box (linux, /home/nedlern)",
@@ -397,7 +435,9 @@ check("--print as ned-box prints ned-box's ten cron lines from the real table an
           "nc-shared-database-nightly-backup-with-integrity-check — cron line:",
           NED_BOX_NC_SHARED_DATABASE_BACKUP_LINE,
           "claude-code-temp-folders-of-exited-agent-sessions-delete — cron line:",
-          NED_BOX_TEMP_FOLDERS_DELETE_LINE],
+          NED_BOX_TEMP_FOLDERS_DELETE_LINE,
+          "agent-seat-terminal-captures-older-than-seven-days-delete — cron line:",
+          NED_BOX_TERMINAL_CAPTURES_DELETE_LINE],
       (exit_code, printed.getvalue(), errors.getvalue()))
 printed, errors = io.StringIO(), io.StringIO()
 with redirect_stdout(printed), redirect_stderr(errors):
@@ -417,10 +457,18 @@ weekly_part, _, prune_and_backup_copy_part = weekly_and_prune_part.partition(pru
 backup_copy_heading = ("nc-shared-database-newest-backup-copy-to-mac — launchd job, "
                        "/Users/el/Library/LaunchAgents/com.nedschorus.nc-shared-database-"
                        "newest-backup-copy-to-mac.plist:\n")
-prune_part, _, backup_copy_part = prune_and_backup_copy_part.partition(backup_copy_heading)
+prune_part, _, backup_copy_and_captures_delete_part = prune_and_backup_copy_part.partition(
+    backup_copy_heading)
+captures_delete_heading = (
+    "agent-seat-terminal-captures-older-than-seven-days-delete — launchd job, "
+    "/Users/el/Library/LaunchAgents/com.nedschorus.agent-seat-terminal-captures-older-than-"
+    "seven-days-delete.plist:\n")
+backup_copy_part, _, captures_delete_part = backup_copy_and_captures_delete_part.partition(
+    captures_delete_heading)
 check("--print as the Mac prints the mirror's cron line, the full test run's and the worktree "
-      "cleanup's plists, the weekly owner check's and the guarded-file prune's plists, and the "
-      "nc-shared-database backup copy's plist, and runs nothing",
+      "cleanup's plists, the weekly owner check's and the guarded-file prune's plists, the "
+      "nc-shared-database backup copy's plist and the terminal captures deletion's plist, and "
+      "runs nothing",
       exit_code == 0 and stub.commands == [] and clean_part.startswith("<?xml")
       and daily_part.startswith(
           "machine: mac (darwin, /Users/el)\ntranscript-mirror-to-log-store — cron line:\n"
@@ -435,7 +483,10 @@ check("--print as the Mac prints the mirror's cron line, the full test run's and
       and plistlib.loads(prune_part.encode("utf-8")) == MAC_GUARDED_FILE_PRUNE_PLIST
       and backup_copy_part.startswith("<?xml")
       and plistlib.loads(backup_copy_part.encode("utf-8"))
-      == MAC_NC_SHARED_DATABASE_BACKUP_COPY_PLIST,
+      == MAC_NC_SHARED_DATABASE_BACKUP_COPY_PLIST
+      and captures_delete_part.startswith("<?xml")
+      and plistlib.loads(captures_delete_part.encode("utf-8"))
+      == MAC_TERMINAL_CAPTURES_DELETE_PLIST,
       (exit_code, mac_printed, errors.getvalue()))
 
 
