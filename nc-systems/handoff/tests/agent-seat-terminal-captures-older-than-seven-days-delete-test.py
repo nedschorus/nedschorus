@@ -137,7 +137,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
     check("a captures directory that cannot be listed is a FAILED line, the next directory is still "
           "done, exit 1",
           exit_code == 1 and f"FAILED: could not list {unlistable_store} (" in output
-          and str(store) in output.splitlines()[-1] and output.splitlines()[-1].endswith("; 1 FAILED"),
+          and str(store) in output.splitlines()[-1] and output.splitlines()[-1].endswith("; 1 FAILED")
+          and "deleted 0 capture(s)" in output.splitlines()[-1],
           output)
 
     emptied_store = scratch / "emptied-store"
