@@ -124,13 +124,16 @@ def commit_seeded_cold_read_scratch_repository(repository):
 # A stub `agy` that answers in chat, long enough for the cell to keep the
 # answer as the report and holding the three headings the fast-clarify cell
 # requires, and a stub `claude` that fails, so no model starts.
+_cell_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common", SYSTEM_DIRECTORY / "cold-read-cell-common.py")
+_cell_common = importlib.util.module_from_spec(_cell_common_spec)
+_cell_common_spec.loader.exec_module(_cell_common)
 STUB_AGY_ANSWERING_IN_CHAT = """#!/usr/bin/env python3
 import sys
-sys.stdout.write("## Question 1: What it says\\n\\n- a point\\n\\n"
-                 "## Question 2: Where you struggled\\n\\nNo issues\\n\\n"
-                 "## Question 3: What it does not cover that it implies it should\\n\\n"
+sys.stdout.write("".join(heading + "\\n\\n" for heading in HEADINGS)
                  + " ".join(f"word{index}" for index in range(150)) + "\\n")
-"""
+""".replace("HEADINGS", repr(
+    _cell_common.COLD_READ_CELL_TO_REQUIRED_REPORT_SECTION_HEADINGS["fast-clarify"]))
 STUB_CLAUDE_FAILING = """#!/usr/bin/env python3
 import sys
 sys.stderr.write("stub claude: no model in a test\\n")
