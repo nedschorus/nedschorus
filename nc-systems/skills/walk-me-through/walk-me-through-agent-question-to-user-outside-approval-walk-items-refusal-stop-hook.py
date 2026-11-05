@@ -145,7 +145,9 @@ item.
 SILENT while the agent answers a Stop hook (stop_hook_active set), as the
 Stop-hook silence rule's module requires; in a headless `claude -p` child;
 when the transcript or the cwd's checkout is missing; when no approval-walk is
-open, unless NO WALK IN THE CHECKOUT applies; while the open walk is paused,
+open, unless NO WALK IN THE CHECKOUT applies; when more than one approval-walk
+is open or paused, since no waiting item is known, which the answer program
+refuses, naming each; while the open walk is paused,
 or its minutes carry only the old marker; when the turn wrote no text; and
 when the open walk's minutes line or walk-document cannot be read, which the
 current-item Stop hook reports at the next turn the user starts.
@@ -651,7 +653,10 @@ def output_for(payload, environment, model=model_judgement):
     if not walk_directory.is_dir():
         return no_walk_in_checkout_refusal(payload, environment, top, walk_directory)
     parser = walk_finder.markdown_parser()
-    walk = walk_finder.newest_unclosed_approval_walk_including_paused(walk_directory, parser)
+    try:
+        walk = walk_finder.the_one_unclosed_approval_walk_including_paused(walk_directory, parser)
+    except walk_finder.MoreThanOneUnclosedApprovalWalk:
+        return None  # no waiting item is known; the answer program refuses and names both approval-walks
     if walk is None:
         return no_walk_in_checkout_refusal(payload, environment, top, walk_directory)
     minutes, value, old_marker, paused = walk

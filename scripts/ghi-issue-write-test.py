@@ -102,6 +102,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import traceback
 from pathlib import Path
 
@@ -4815,6 +4816,13 @@ def run_push_time_limit_cases(scratch: Path):
               == tool.push_time_limit_seconds({})
               - module.DEFAULT_TIME_BUDGET_SECONDS + 1000,
               str(tool.push_time_limit_seconds(longer)))
+    outer_hook_started = {
+        selective.HOOK_STARTED_AT_ENVIRONMENT_VARIABLE: str(time.time() - 200)}
+    check("a start time an outer pre-push hook exported does not shorten the "
+          "push's time, since the push starts its own hook",
+          tool.push_time_limit_seconds(outer_hook_started)
+          == tool.push_time_limit_seconds({}),
+          str(tool.push_time_limit_seconds(outer_hook_started)))
 
     stopped = subprocess.TimeoutExpired(["git", "push"], 1)
     case_name = ("a stopped push says how long it ran, that a rerun is safe "

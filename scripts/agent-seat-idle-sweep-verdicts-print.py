@@ -592,12 +592,13 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
             judged = [item for item in raised if item["code_reading"] == fields.JUDGE]
             verdict[fields.TOOL_CALLS_SINCE_START_OF_EARLIEST_TURN_WITH_SENTENCE_TO_JUDGE] = (
                 tool_calls_since_start_of_earliest_turn_with_sentence_to_judge(facts, judged))
-            verdict.update({fields.RULE: 2, fields.DECISION: fields.JUDGE})
             # Only the judge can find every sentence backed, and then rules 3 to 5 decide; a
-            # sentence code already found unbacked means that can never happen.
+            # sentence code already found unbacked means that can never happen. Rule 2 is set
+            # after those reads, so one that fails leaves the rule null.
             if not any(item["code_reading"] == fields.UNBACKED for item in raised):
                 verdict[fields.IF_EVERY_SENTENCE_BACKED] = rules_three_to_five(
                     verdict, put_off_at, checker, task_directory)
+            verdict.update({fields.RULE: 2, fields.DECISION: fields.JUDGE})
         else:
             verdict.update({fields.RULE: 2, fields.DECISION: fields.SEND_UNBACKED})
     except ReadFailure as error:

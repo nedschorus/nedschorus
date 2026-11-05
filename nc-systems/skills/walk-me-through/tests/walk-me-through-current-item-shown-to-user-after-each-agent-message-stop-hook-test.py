@@ -935,7 +935,7 @@ def test_where_the_minutes_line_sits():
                     document=WALK_DOCUMENT + "\n## Item 2 of 10: a re-planned copy\n\nText.\n")
     case.reply("Recorded.")
     check_blocked("a line without `of M` over two headings for its item, of different M, is sent back", case.run(),
-                  "more than one heading for `Item 2`", "end the minutes with the line `#next_to_present item N of M`")
+                  "more than one heading for `Item 2`", "add the line `#next_to_present item N of M` as the new last line")
     case = Case()
     case.walk_files(minutes="#next_to_present item 2.",
                     document="# A walk\n\n## The poem page\n\nText.\n\n## The summary\n\nText.\n")
@@ -1036,21 +1036,19 @@ def test_old_marker_is_migrated():
                  case.run(stop_hook_active=True))
 
 
-def test_newest_open_walk_is_checked():
+def test_two_unclosed_approval_walks_leave_the_hook_silent_and_closed_ones_are_not_counted():
     case = Case()
     case.walk_files(name="older-walk", minutes="#next_to_present item 5 of 9.", modified=1_000)
     case.walk_files(name="newer-walk", minutes="#next_to_present item 2 of 9.", modified=2_000)
     case.reply("Recorded.")
-    check_reminded("the most recently modified open walk's item is the one checked", case.run())
+    check_silent("with two open approval-walks no waiting item is known, so a reply with no closing line passes",
+                 case.run())
     case = Case()
     case.walk_files(name="newer-closed-walk", minutes="#next_to_present none, closed.", modified=3_000)
     case.walk_files(name="open-walk", minutes="#next_to_present item 2 of 9.", modified=2_000)
-    older = case.walk_files(name="older-walk", minutes="#next_to_present item 5 of 9.", modified=1_000)
-    older.write_bytes(b"#next_to_present \xff\xfe item 5 of 9.\n")
-    os.utime(older, (1_000, 1_000))
-    case.reply(ITEM_2_SHOWN)
-    check_silent("a newer closed walk is passed over, and minutes older than the newest open walk are not read",
-                 case.run())
+    case.walk_files(name="older-walk", minutes="#next_to_present none, closed.", modified=1_000)
+    case.reply("Recorded.")
+    check_reminded("closed approval-walks are not counted, so the one open walk is checked", case.run(), "`Item 2 of 9`")
 
 
 def test_an_item_with_no_page_in_the_walk_minutes_is_sent_back_to_be_published():
@@ -1204,7 +1202,8 @@ def test_a_paused_walk_is_not_checked_until_a_later_marker_resumes_it():
     case.walk_files(name="newer-walk", minutes="#next_to_present item 2 of 9.\n\n#approval_walk_paused stop order",
                     modified=2_000)
     case.reply("Stopped.")
-    check_silent("a paused newest walk is not passed over for an older open walk", case.run())
+    check_silent("a paused walk and an open one are two unclosed approval-walks, so no waiting item is known",
+                 case.run())
     case = Case()
     case.walk_files(minutes="#approval_walk_paused before the walk began\n\n#next_to_present item 2 of 9")
     case.reply("Stopped.")

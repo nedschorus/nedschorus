@@ -701,8 +701,8 @@ def next_action_prompt_lines(payload: dict, tasks: dict, directory: Path, state:
     if top is None or not (top / walk_finder.WALK_DIRECTORY).is_dir():
         return None
     walk_directory = top / walk_finder.WALK_DIRECTORY
-    if walk_finder.newest_unclosed_approval_walk_including_paused(
-            walk_directory, walk_finder.markdown_parser()) is not None:
+    if walk_finder.unclosed_approval_walks_including_paused(
+            walk_directory, walk_finder.markdown_parser()):
         return None
     handoff = _load_module_by_path("handoff_context_threshold_hook", HANDOFF_THRESHOLD_HOOK_FILE)
     if (handoff.fired_marker_path(session_id).exists()
