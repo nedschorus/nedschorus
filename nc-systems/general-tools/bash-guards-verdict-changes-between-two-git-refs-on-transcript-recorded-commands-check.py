@@ -541,6 +541,12 @@ def read_ghi_md_whole_file_replacement(guard, command, working_directory, search
     return ("refused", f"replaces {replaced}") if replaced else ("passed", None)
 
 
+def read_handoff_deferral_cold_read_full_run_launch(guard, command, working_directory, search_file_directory):
+    # Read as if a handoff-deferral were on: the marker file is per agent-session and absent here.
+    runs_grid = guard.command_runs_cold_read_grid_script(command)
+    return ("refused", guard.COLD_READ_FULL_RUN_REFUSED_AND_SAVED_REASON) if runs_grid else ("passed", None)
+
+
 def read_git_worktree_remove_records_ship_first(guard, command, working_directory, search_file_directory):
     # Only whether the command removes a worktree is read: running the shippers would copy real records during a replay.
     if guard.command_runs_git_worktree_remove(command):
@@ -613,6 +619,8 @@ GUARDS = {
     "nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py":
         read_markdown_push_reminder,
     ".claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py": read_ghi_md_whole_file_replacement,
+    ".claude/guard-hooks/handoff-deferral-cold-read-full-run-launch-refusal-hook.py":
+        read_handoff_deferral_cold_read_full_run_launch,
     ".claude/guard-hooks/git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py":
         read_git_worktree_remove_records_ship_first,
 }
