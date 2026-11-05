@@ -2005,6 +2005,23 @@ def test_following_the_repeated_heading_refusal_clears_it_whichever_heading_is_m
               result.returncode == 0 and case.calls.read_text() == read, described(result))
 
 
+def test_following_the_repeated_heading_refusal_clears_it_when_two_headings_share_a_total_and_one_does_not():
+    layout = ("# W\n\n## Item 1 of 10: one\n\n{a}\n\n#new \"A.\"\n\n{b}\n\n#new \"B.\"\n\n"
+              "## Item 2 of 10: c\n\n#new \"C.\"\n")
+    a, b = "## Item 2 of 9: a", "## Item 2 of 9: b"
+    refused = Case(next_to_present="item 2 of 9", document=layout.format(a=a, b=b)).run("check")
+    check("the `of M` in the minutes does not pick between two headings that share it, and the refusal says so",
+          refused.returncode == 1 and "if no other of those headings gives the same total as the heading you mean"
+          in refused.stderr, described(refused))
+    for meant, next_to_present, first, second, read in (
+            ("the one `of 10` heading, named by its total", "item 2 of 10", a, b, "C.\n"),
+            ("an `of 9` heading, the other withdrawn", "item 2 of 9", a, "## Withdrawn: Item 2 of 9: b", "A.\n")):
+        case = Case(next_to_present=next_to_present, document=layout.format(a=first, b=second))
+        result = case.run("check")
+        check(f"an agent that means {meant} and does as the refusal says is not refused again",
+              result.returncode == 0 and case.calls.read_text() == read, described(result))
+
+
 def test_each_parts_answer_is_recorded_and_close_records_each_parts_outcome():
     for flags, answered, recorded in (
             (("--part-answer", "2=d", "--part-answer", "1=AO"), "part 1 approved #approved_obvious, part 2 disapproved",
