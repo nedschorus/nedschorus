@@ -5,7 +5,8 @@ Run: python3 nc-systems/handoff/tests/handoff-reference-checkout-back-on-main-af
 
 HOME is a scratch directory, set before the program is loaded, so the reference-checkout is a
 fresh clone under it, made for each case from a bare origin of its own. A failed push is caused by
-a pre-receive hook in that origin that refuses every push.
+a pre-receive hook in that origin that refuses every push. One case installs this repository's own
+client-side hooks in the scratch checkout, as both machines' clones have them.
 
 Prints one line per case and exits non-zero if any case fails.
 """
@@ -48,6 +49,7 @@ _spec.loader.exec_module(program)
 CHECKOUT = program.reference_checkout_steps.REFERENCE_CHECKOUT
 ORIGIN = SCRATCH_HOME / "origin.git"
 OTHER_CLONE = SCRATCH_HOME / "other-clone"
+REPOSITORY_HOOKS = Path(__file__).resolve().parents[3] / "scripts" / "git-client-side-hooks"
 TODAY = date(2026, 11, 4)
 LEFTOVERS = "reference-checkout-leftovers-2026-11-04"
 
@@ -181,10 +183,23 @@ def failed_push_case():
     hook.chmod(0o755)
     status, out, err = run_program()
     check("failed push: exits 1 quoting git, and leaves main untouched on the leftovers branch",
-          status == 1 and "refused by the test hook" in err and "git push origin" in err
+          status == 1 and "refused by the test hook" in err and "git push --no-verify origin" in err
           and git("rev-parse", "refs/heads/main") == local
           and git("symbolic-ref", "HEAD") == f"refs/heads/{LEFTOVERS}"
+          and f"now on the branch {LEFTOVERS}, at commit {git('rev-parse', 'HEAD')}" in err
           and not origin_branch(LEFTOVERS) and "was not put back on main" in err, out + err)
+
+
+def leftovers_conflicting_with_origin_main_under_repository_hooks_case():
+    fresh_reference_checkout()
+    git("config", "core.hooksPath", str(REPOSITORY_HOOKS))
+    local = commit("local only")
+    advance_origin()
+    status, out, err = run_program()
+    check("leftovers that conflict with origin/main, with the repository's hooks installed: "
+          "pushed all the same, then on main",
+          status == 0 and origin_branch(LEFTOVERS) == local and on_main_at_origin_main_and_clean(),
+          out + err)
 
 
 def branch_name_taken_case():
@@ -289,6 +304,7 @@ changes_and_commits_case()
 neither_case()
 behind_origin_only_case()
 failed_push_case()
+leftovers_conflicting_with_origin_main_under_repository_hooks_case()
 branch_name_taken_case()
 head_off_main_case()
 detached_head_with_commits_case()

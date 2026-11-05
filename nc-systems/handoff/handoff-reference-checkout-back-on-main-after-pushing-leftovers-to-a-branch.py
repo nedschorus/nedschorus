@@ -32,9 +32,12 @@ What it does not handle:
 
 How it fails: it prints the failed step and what git printed to standard error and exits 1, and runs
 no step after the failed one. A failed fetch, or local main's own commits, change nothing. A failed
-push leaves the checkout on the leftovers branch, holding the commit, with main untouched; run again,
-it saves the same leftovers to a branch with the next suffix. It changes the clone every agent-seat's
-worktrees hang off, but moves main only after the push holds whatever main is moved away from.
+push leaves the checkout on the leftovers branch, holding the commit, with main untouched, and its
+message names that branch and commit; run again, it saves the same leftovers to a branch with the
+next suffix. The push skips the clone's pre-push hook, so leftovers that conflict with origin/main,
+the usual state of a stuck reference-checkout, are pushed all the same. It changes the clone every
+agent-seat's worktrees hang off, but moves main only after the push holds whatever main is moved
+away from.
 
 Exit status: 0 on main at origin/main; 1 a step failed.
 """
@@ -84,8 +87,19 @@ def save_leftovers_to_pushed_branch(checkout: Path, today: date, changes: str) -
     if changes:
         git(checkout, ["add", "-A"])
         git(checkout, ["commit", "-q", "-m", LEFTOVERS_COMMIT_MESSAGE])
-    git(checkout, ["push", "origin", f"refs/heads/{branch}"],
-        timeout_seconds=reference_checkout_steps.NETWORK_OR_TREE_GIT_STEP_TIMEOUT_SECONDS)
+    # The pre-push hook's conflict check would refuse the very leftovers this saves; the branch is
+    # an archive, never a pull request's head.
+    try:
+        git(checkout, ["push", "--no-verify", "origin", f"refs/heads/{branch}"],
+            timeout_seconds=reference_checkout_steps.NETWORK_OR_TREE_GIT_STEP_TIMEOUT_SECONDS)
+    except StepFailed as error:
+        commit = git(checkout, ["rev-parse", "HEAD"])
+        raise StepFailed(f"{error}\nThe reference-checkout is now on the branch {branch}, at commit "
+                         f"{commit}, which holds the leftovers; main is untouched.\nFix what made "
+                         "the push fail, as git's message above shows, then run this program again, "
+                         f"as python3 {Path(__file__).resolve()}: it pushes the same leftovers to "
+                         f"a new branch named like {branch} with the next free number at its end, "
+                         "and puts the reference-checkout back on main.") from error
     return branch
 
 
