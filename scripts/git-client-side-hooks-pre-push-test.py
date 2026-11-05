@@ -1572,8 +1572,17 @@ def run_open_pull_request_branch_cases(scratch):
                 command, **options)
         return run
 
+    def fetch_times_out(command, **options):
+        if command[:2] == ["git", "fetch"]:
+            raise subprocess.TimeoutExpired(command, options["timeout"])
+        return save_failing_at("update-ref", "", cat_file=missing)(command, **options)
+
     old_head_ref = f"refs/force-pushed-old-heads/clean/{'2' * 40}"
     for label, runner, environment, detail in [
+            ("the fetch of a replaced commit this clone lacks does not answer in time",
+             fetch_times_out, {},
+             "git fetch --quiet did not answer within %d seconds."
+             % loaded.GIT_FETCH_TIMEOUT_SECONDS),
             ("update-ref fails", save_failing_at("update-ref", "fatal: injected lock failure"),
              {}, "git update-ref " + old_head_ref + " exited with status 128: fatal: injected "
              "lock failure"),
