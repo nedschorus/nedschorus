@@ -28,8 +28,9 @@ scripts/recover-crashed-seats.py makes (assess_seat), and:
   refuses before it reads them. Once the refusal clears, as when the user
   closes a leftover shell by hand, a crash beneath it is restarted;
 - leaves every other agent-seat alone: a stop on purpose (a clean exit, an
-  exit its supervisor recorded as a stop at a dont-restart handoff, or a
-  dont-restart handoff waiting, verdict seat-asked-to-be-consulted), and an
+  exit its supervisor recorded as a stop at an ask-user-before-restart
+  handoff, or an ask-user-before-restart handoff waiting, verdict
+  seat-asked-to-be-consulted), and an
   agent-seat not seen running since the machine booted, which the login
   restart or the user brings back;
 - tries to restart an agent-seat at most once in RESTART_LIMIT_SECONDS, a
@@ -129,7 +130,7 @@ WAITING_HANDOFF_VERDICT = "defer-to-boot-ignition"
 RECORDED_EXIT_VERDICT = "offer-after-recorded-exit"
 REFUSED_VERDICT = "refuse"
 LEFTOVER_SHELL_VERDICT = "ask-to-close-the-leftover-idle-shell"
-DONT_RESTART_HANDOFF_VERDICT = "seat-asked-to-be-consulted"
+ASK_USER_BEFORE_RESTART_HANDOFF_VERDICT = "seat-asked-to-be-consulted"
 REFUSED_VERDICTS = (REFUSED_VERDICT, LEFTOVER_SHELL_VERDICT)
 # Two sightings a minute apart keep a run from acting on a seat that a launch,
 # resupervise-seat.py or the login restart is bringing up at that moment.
@@ -997,24 +998,24 @@ def show_notice_words_for_window(path):
 
 def stopped_on_purpose_predicate(supervisor, handoff_directory: Path):
     """Return a test of a recorded exit: a clean exit, or one its supervisor recorded as a
-    stop at a dont-restart handoff.
+    stop at an ask-user-before-restart handoff.
 
-    The supervisor's own record of why it stopped decides, not the handoff file: a
-    dont-restart handoff answered y stays on disk, consumed, while its successor runs,
+    The supervisor's own record of why it stopped decides, not the handoff file: an
+    ask-user-before-restart handoff answered y stays on disk, consumed, while its successor runs,
     and that successor's later failure must still reach the user.
     """
     def stopped_on_purpose(seat, detail):
         if detail[0] == 0:
             return True
-        return supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(supervisor.read_supervisor_state(
-            supervisor.supervisor_state_path(handoff_directory, seat)))
+        return supervisor.agent_exit_record_is_a_stop_at_an_ask_user_before_restart_handoff(
+            supervisor.read_supervisor_state(supervisor.supervisor_state_path(handoff_directory, seat)))
     return stopped_on_purpose
 
 
 def handoff_down_agent_seat_records_stopped_on_purpose_predicate_factory(
         supervisor, records_reader, handoff_directory: Path):
     """Return a test of a down seat's records, read in recovery's order: a waiting
-    dont-restart handoff, else a recorded exit that stopped_on_purpose_predicate accepts.
+    ask-user-before-restart handoff, else a recorded exit that stopped_on_purpose_predicate accepts.
 
     A launch clears the exit record, so a record found here is the seat's latest stop.
     """
@@ -1024,7 +1025,7 @@ def handoff_down_agent_seat_records_stopped_on_purpose_predicate_factory(
         state_path = supervisor.supervisor_state_path(handoff_directory, seat)
         waiting = records_reader.waiting_handoff_verdict(handoff_directory, seat, state_path)
         if waiting is not None:
-            return waiting[0] == DONT_RESTART_HANDOFF_VERDICT
+            return waiting[0] == ASK_USER_BEFORE_RESTART_HANDOFF_VERDICT
         exit_record = supervisor.agent_exit_record_from_supervisor_state(
             supervisor.read_supervisor_state(state_path))
         return exit_record is not None and stopped_on_purpose(seat, exit_record)
