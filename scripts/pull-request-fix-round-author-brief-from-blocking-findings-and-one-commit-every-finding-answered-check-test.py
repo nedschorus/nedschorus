@@ -1601,7 +1601,7 @@ def nit_cases(root, repository, base, frozen_head):
 
     code, out, err = run(root, repository, routes, "--check", "--answers", answers_file(root, GOOD_ANSWERS))
     check("nits: --check refuses answers with no entry for the nit",
-          code == 1 and "no entry for finding 3" in err and "the review has 2 blocking findings and 1 nits" in err,
+          code == 1 and "no entry for finding 3" in err and "the review has 2 blocking findings and 1 nit." in err,
           err + out)
 
     fix = commit_file(repository, "nit.txt", "the name\n", "fix the nit")

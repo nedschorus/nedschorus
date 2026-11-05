@@ -290,7 +290,9 @@ def merge_lane_cases(scratch):
             ("a finding opening with a hand-written category mark",
              [finding(3, "fix-next", "**file-for-later** b")], "APPROVE",
              "comment on scripts/thing.py:3 whose body already opens with the category mark "
-             "**file-for-later**"),
+             "**file-for-later**, the bold opening that names the finding's category; this program writes that "
+             "mark from the comment's \"finding_category\" and \"nit\", so remove the mark from the start of "
+             "its \"body\""),
             ("a REQUEST_CHANGES verdict with nothing must-fix-now", [finding(2, "fix-next")],
              "REQUEST_CHANGES", "has the verdict 'REQUEST_CHANGES' but no comment whose "
                                 "\"finding_category\" is must-fix-now; this program posts "
@@ -299,19 +301,22 @@ def merge_lane_cases(scratch):
              "has the verdict 'COULD_NOT_REVIEW'"),
             ("a nit whose category is fix-next", [nit(2, category="fix-next")], "APPROVE",
              "comment on scripts/thing.py:2 with \"nit\": true whose \"finding_category\" is 'fix-next'; "
-             "only a fix-in-maintenance finding can be a nit"),
+             "only a fix-in-maintenance finding can be a nit, so make its category fix-in-maintenance or omit the "
+             "\"nit\" key"),
             ("a nit whose category is must-fix-now", [nit(2, category="must-fix-now")], "REQUEST_CHANGES",
              "whose \"finding_category\" is 'must-fix-now'; only a fix-in-maintenance finding can be a nit"),
             ("a \"nit\" of false", [nit(2, value=False)], "APPROVE",
-             "comment on scripts/thing.py:2 whose \"nit\" is False; give \"nit\" only as true"),
-            ("a \"nit\" of 1", [nit(2, value=1)], "APPROVE", "whose \"nit\" is 1; give \"nit\" only as true"),
+             "comment on scripts/thing.py:2 whose \"nit\" is False; give \"nit\" only as the JSON value true, "
+             "on a nit, a small fix that names no failure, such as a misspelt name, and omit the \"nit\" key "
+             "from any other comment"),
+            ("a \"nit\" of 1", [nit(2, value=1)], "APPROVE", "whose \"nit\" is 1; give \"nit\" only as the JSON value true"),
             ("a \"nit\" of the text true", [nit(2, value="true")], "APPROVE",
-             "whose \"nit\" is 'true'; give \"nit\" only as true"),
+             "whose \"nit\" is 'true'; give \"nit\" only as the JSON value true"),
             ("a nit opening with a hand-written nit mark", [nit(2, "**fix-in-maintenance, nit** b")], "APPROVE",
              "comment on scripts/thing.py:2 whose body already opens with the category mark "
              "**fix-in-maintenance, nit**"),
             ("a comment with a key other than \"nit\" beside its category", [{**finding(2, "fix-next"), "note": "x"}],
-             "APPROVE", "and a \"finding_category\", with no other keys but \"nit\"")):
+             "APPROVE", "and a \"finding_category\", with no other keys but an optional \"nit\": true")):
         result = run_program(scratch, review(verdict, comments=comments),
                              arguments=MERGE_LANE_ARGUMENTS)
         check(f"merge-lane-2's file with {name} exits 2, says why, calls no gh, and says to fix "

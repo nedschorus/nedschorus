@@ -207,7 +207,7 @@ def read_review_file(path, account):
         raise ReviewFileUnusable(
             "has a \"comments\" entry that is not exactly a text \"path\", a number \"line\" and "
             "a text \"body\"" + (", and a \"finding_category\"," if categorized else ",")
-            + " with no other keys" + (" but \"nit\"" if categorized else ""))
+            + " with no other keys" + (" but an optional \"nit\": true" if categorized else ""))
     if not categorized:
         return verdict, body, comments
     for comment in comments:
@@ -219,12 +219,13 @@ def read_review_file(path, account):
         if "nit" in comment and comment["nit"] is not True:
             raise ReviewFileUnusable(
                 f"has a comment on {where} whose \"nit\" is {comment['nit']!r}; give \"nit\" only as "
-                f"true, and leave it out of a comment that is not a nit")
+                f"the JSON value true, on a nit, a small fix that names no failure, such as a misspelt name, "
+                f"and omit the \"nit\" key from any other comment")
         if "nit" in comment and comment["finding_category"] != NIT_CATEGORY:
             raise ReviewFileUnusable(
                 f"has a comment on {where} with \"nit\": true whose \"finding_category\" is "
                 f"{comment['finding_category']!r}; only a {NIT_CATEGORY} finding can be a nit, so make its "
-                f"category {NIT_CATEGORY} or leave \"nit\" out")
+                f"category {NIT_CATEGORY} or omit the \"nit\" key")
         mark = fix_round.BLOCKING_MARKER_PATTERN.match(comment["body"].lstrip())
         if mark:
             raise ReviewFileUnusable(
@@ -235,8 +236,9 @@ def read_review_file(path, account):
         if marked:
             raise ReviewFileUnusable(
                 f"has a comment on {where} whose body already opens with the category mark "
-                f"{review_comment_opening_mark_for_finding_category(marked[0], marked[2]).strip()}; this program writes "
-                f"each comment's category mark from its \"finding_category\" and \"nit\", so leave it out of the body")
+                f"{review_comment_opening_mark_for_finding_category(marked[0], marked[2]).strip()}, the bold "
+                f"opening that names the finding's category; this program writes that mark from the comment's "
+                f"\"finding_category\" and \"nit\", so remove the mark from the start of its \"body\"")
     if verdict == "REQUEST_CHANGES" and not any(
             comment["finding_category"] == BLOCKING_CATEGORY for comment in comments):
         raise ReviewFileUnusable(

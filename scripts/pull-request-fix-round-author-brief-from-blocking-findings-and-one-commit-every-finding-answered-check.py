@@ -544,7 +544,7 @@ def read_answers(path, blocking_count, nit_count):
             problems.append(f"no entry for finding {', '.join(map(str, missing))}")
         if extra:
             problems.append(f"an entry for finding {', '.join(map(str, extra))}, which does not exist")
-        nits = f" and {nit_count} nits" if nit_count else ""
+        nits = f" and {nit_count} nit{'' if nit_count == 1 else 's'}" if nit_count else ""
         raise Refused(f"The answers file {path} has {' and '.join(problems)}; the review has "
                       f"{blocking_count} blocking findings{nits}.\n"
                       "Give each finding, numbered as the brief numbers it, exactly one entry "
