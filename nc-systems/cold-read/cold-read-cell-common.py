@@ -392,7 +392,7 @@ USER_CLEARABLE_CAUSE_CLASSES = frozenset(
     {"logged-out", "agent-binary-missing", "account-limit", "model-limit"})
 CAUSE_DETAIL_MAX_CHARACTERS = 120
 # A report was written but lacks a heading its cell requires; "no-report" would say no report was written.
-INCOMPLETE_REPORT_CAUSE_CLASS = "incomplete-report"
+REPORT_MISSING_REQUIRED_HEADING_CAUSE_CLASS = "report-missing-required-heading"
 # Drop per-attempt timestamps from details that the grid reports for an entire agent-binary.
 DETAIL_IS_REST_OF_LINE = "rest-of-line"
 DETAIL_IS_WHOLE_LINE = "whole-line"
@@ -620,7 +620,7 @@ def verify_report(program: str, report: pathlib.Path, required_headings=()) -> N
             "re-run. The model's own words, printed above this line when it "
             "gave any, may say why it stopped.",
             exit_code=1,
-            cause=(INCOMPLETE_REPORT_CAUSE_CLASS,
+            cause=(REPORT_MISSING_REQUIRED_HEADING_CAUSE_CLASS,
                    ("report written without " + "; ".join(missing))[:CAUSE_DETAIL_MAX_CHARACTERS]),
         )
 

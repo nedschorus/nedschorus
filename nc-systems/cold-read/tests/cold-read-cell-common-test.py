@@ -1435,11 +1435,11 @@ with tempfile.TemporaryDirectory() as scratch:
         check(f"{case_slug}: the cell does not say a report was written",
               "report written to" not in result.stderr, repr(result.stderr))
         check(f"{case_slug}: the cause line says the report is incomplete, not that none was written",
-              "cold-read-claude-cell: cause: incomplete-report — report written without"
+              "cold-read-claude-cell: cause: report-missing-required-heading — report written without"
               in result.stderr and "no report written" not in result.stderr,
               repr(result.stderr))
-        check(f"{case_slug}: the failed attempt is labelled incomplete-report",
-              "claude-fable-5-1(incomplete-report)" in result.stderr, repr(result.stderr))
+        check(f"{case_slug}: the failed attempt is labelled report-missing-required-heading",
+              "claude-fable-5-1(report-missing-required-heading)" in result.stderr, repr(result.stderr))
 
     # Every heading present passes, with trailing spaces on a heading line,
     # and a cell with no required headings is not held to fast-clarify's.
