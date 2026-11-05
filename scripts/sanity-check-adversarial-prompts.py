@@ -322,6 +322,12 @@ _next_step_lines_spec = importlib.util.spec_from_file_location(
     / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
+_command_line_prefix_spec = importlib.util.spec_from_file_location(
+    "claude_code_headless_print_mode_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "claude-code-headless-print-mode-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+command_line_prefix = importlib.util.module_from_spec(_command_line_prefix_spec)
+_command_line_prefix_spec.loader.exec_module(command_line_prefix)
 # The Codex cells' permission profile, as it appears in their sessions.
 CODEX_CREDENTIAL_DENYING_PERMISSION_PROFILE = "sanity-check-no-credentials"
 
@@ -619,8 +625,9 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
             # review nobody is left to save.
             break
         recognised_texts = RECOGNISED_FAILURE_TEXTS_FOR_MODEL["claude"](model)
+        # dontAsk: a tool call --allowedTools does not allow is refused, with no one to ask.
         command = [
-            "claude", "-p",
+            *command_line_prefix.claude_code_headless_print_mode_command_line_prefix_build("dontAsk"),
             "--model", model,
             "--effort", REASONING_EFFORT,
             "--output-format", "text",
