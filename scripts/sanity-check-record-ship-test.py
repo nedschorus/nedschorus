@@ -65,7 +65,7 @@ def ship(destination, *args, script=SHIP, extra_env=None):
 
 # A writer: loads the record shipper given as argv[1], takes the being-written
 # lock on the record argv[2], prints "held", and holds it until its stdin closes.
-RECORD_WRITER_HOLDING_LOCK_PROGRAM = """
+COLD_READ_RECORD_BEING_WRITTEN_LOCK_HOLDER_UNTIL_STDIN_CLOSES_PYTHON_SOURCE = """
 import importlib.util, pathlib, sys
 spec = importlib.util.spec_from_file_location("shipper", sys.argv[1])
 shipper = importlib.util.module_from_spec(spec)
@@ -230,7 +230,7 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
     being_written = make_record(scratch_repo / "sanity-check-records", "2026-09-12-being-written",
                                 {"cut-adversarial-prompt-claude.md": CUT_REPORT})
     holder = subprocess.Popen(
-        [sys.executable, "-c", RECORD_WRITER_HOLDING_LOCK_PROGRAM,
+        [sys.executable, "-c", COLD_READ_RECORD_BEING_WRITTEN_LOCK_HOLDER_UNTIL_STDIN_CLOSES_PYTHON_SOURCE,
          str(scratch_repo / "nc-systems" / "cold-read" / "cold-read-record-ship.py"), str(being_written)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     try:
