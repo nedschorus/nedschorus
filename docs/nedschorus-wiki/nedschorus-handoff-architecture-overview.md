@@ -147,4 +147,4 @@ Unless named otherwise, files are in `~/.claude/handoffs/` on the agent-seat's m
 - GHI [Hooks, skills and instructions load from one copy per machine that tracks main, so a fix reaches every agent-seat when it merges](https://github.com/nedschorus/nedschorus/issues/2408)
 - GHI [A session-handoff's next step carries forward a step that a later ruling or skill change removed](https://github.com/nedschorus/nedschorus/issues/2412)
 
-**Checked against:** commit [9ecda8345f6d2062befc44c042236d7e6c6ae6fa](https://github.com/nedschorus/nedschorus/commit/9ecda8345f6d2062befc44c042236d7e6c6ae6fa)
+**Checked against:** commit [ffda8acb53b803e99d2da40fd114686ee8fc0291](https://github.com/nedschorus/nedschorus/commit/ffda8acb53b803e99d2da40fd114686ee8fc0291)
