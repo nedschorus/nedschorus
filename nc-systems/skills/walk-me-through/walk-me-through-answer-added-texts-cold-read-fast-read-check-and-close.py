@@ -125,7 +125,16 @@ since an agent-seat keeps at most one approval-walk open.
 CHECK finds the texts the answer adds: the item's lines whose first word,
 after any list or quotation marker, outside fenced code, is a mark the answer adds;
 the text is the rest of the line, without one pair of surrounding quotation
-marks. For each text it looks for a cold-read-record holding a fast read's report and
+marks. Before it reads them, CHECK refuses, writing nothing, when any `#new` or
+`#new_if_d` line of the item, whatever the answer, has no text after its mark,
+is inside fenced or indented code, or opens a paragraph that runs onto the
+lines right below it, since those texts would miss their fast read; the
+refusal lists each such mark by its line number, gives the text joined into
+one line where it can find it, from the run-on lines, from the rest of the
+code block, or, for a mark with no text, from the lines running on right below
+it or else the one fenced block or quotation after the blank lines below it,
+and says how to rerun. A mark in an HTML comment is not refused, since the user
+is not shown it. For each text it looks for a cold-read-record holding a fast read's report and
 a file under target/ that contains the text, whitespace aside, in the
 checkout's cold-read-records/ and in the log-store's. The log-store's
 cold-read-records directory is the path in cold-read-record-ship.py's
@@ -267,7 +276,9 @@ since no read ahead was started while item 1 was shown.
 APPROVAL-WALK-WAITING-ITEM-COLD-READ-FAST-READ gives the item the
 `#next_to_present` line names its cold-read-fast-read, as its text stands: the
 item's lines in the walk-document, heading and fenced code included, keyed by
-the sha256 of that text unchanged, whitespace included. A read of that key
+the sha256 of that text unchanged, whitespace included. It first refuses,
+as CHECK does and before it starts any read, an item with a `#new` or
+`#new_if_d` mark whose text would not be read whole. A read of that key
 that wrote its report is used, a read ahead included; one a read-ahead worker
 still runs is waited for, for as long as the worker's process lives, since the
 fast read ends its own run with timeouts of its own; otherwise the step runs the
@@ -348,6 +359,9 @@ PROGRAM = "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-clos
 NEW_MARK, NEW_IF_D_MARK = "#new", "#new_if_d"
 NEW_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*(#new(?:_if_d)?)\b[:\s]*(.*)$")
 QUOTE_PAIRS = (('"', '"'), ("“", "”"), ("'", "'"))
+FENCE_DELIMITER = re.compile(r"^\s*(?:>\s?)*\s*(?:`{3,}|~{3,})")
+QUOTATION_LINE = re.compile(r"^\s*>")
+QUOTATION_MARKERS = re.compile(r"^\s*(?:>\s?)*")
 ANSWER_LINE = re.compile(r"^(?P<item>items? .+?): (?:the user answered|settled without asking the user,) "
                          r"(?P<answered>.+?)(?: #approved_(?:obvious|after_advisor))?(?: #case_against_[a-z_]+)? "
                          r"\([^)]*\)(?: in his words \".*\")?, which makes (?:its change\. Fast reads:|no change\.)$",
@@ -657,6 +671,22 @@ NAVIGATION_WORD_REFUSED = (
     "walk-me-through skill lets a navigation word alone advance only when no recommendation is outstanding.\n"
     "If {item} asks for no decision, such as a summary item, run `python3 {program} check --moved-on-no-decision "
     "--user-reply-as-typed {quoted_words}`, then close.")
+UNREADABLE_NEW_MARKS = (
+    "nothing written: {item} in the walk-document {document} has a `#new` or `#new_if_d` mark whose text this "
+    "program would not read whole, so that text would reach the user's answer without its cold-read-fast-read. "
+    "This program reads a mark's text only from the rest of the mark's own line, outside fenced code:\n{problems}\n"
+    "For each mark listed, write its whole text on the mark's own line, after the mark, as one line, and delete the "
+    "lines it ran onto or the block below that held it.\n"
+    "Where a line above gives the mark's line with its text joined onto it, write that line in place of the mark's "
+    "line, unless that is not the text you meant.\n"
+    "If a mark inside fenced code is an example, not a text an answer adds, write it in backquotes inside a "
+    "sentence instead, outside the fence, so that no line opens with it.\n"
+    "Then run `{command}` again.\n"
+    "From now on, write every `#new` or `#new_if_d` text on one line, after its mark, outside fenced code.")
+UNREADABLE_BARE = "- line {line}: `{mark}` has no text after it on its line."
+UNREADABLE_FENCED = "- line {line}: `{mark}` is inside fenced code, where no mark is read."
+UNREADABLE_RUN_ON = "- line {line}: the text of `{mark}` runs onto {below} right below it, where it is not read."
+UNREADABLE_JOINED = " The mark's line with its text joined onto it: {mark} {text}"
 NOT_ASKED_REFUSED = (
     "nothing written: {item} cannot be settled without asking the user as kind {kind}, because:\n{problems}\n"
     "If the item does not fit kind {kind}, or the case against is more than cost, present {item} to the user as "
@@ -863,16 +893,22 @@ def item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_
     return document, text, tokens, ranges
 
 
-def item_lines(walk_finder, minutes, value, numbers, total, parser):
-    """Return (walk-document path, the lines of the items numbered, outside fenced code)."""
+def item_lines(walk_finder, minutes, value, numbers, total, parser, item, command):
+    """Return (walk-document path, the lines of the items numbered, outside fenced code); a Failure when a mark's
+    text would not be read whole, so that no answer is recorded without the fast read of a text it adds."""
     document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
+    refuse_unreadable_new_marks(text, tokens, ranges, item, document, command)
     lines = walk_finder.prose_lines(text, parser, tokens)
     return document, [line for first, end in ranges for line in lines[first:end]]
 
 
-def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None):
-    """Return (walk-document path, the items' text as the user is shown it, heading and fenced code included)."""
-    document, text, _, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_by)
+def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None, refused_unless_marks_read=None):
+    """Return (walk-document path, the items' text as the user is shown it, heading and fenced code included).
+    With refused_unless_marks_read, (item, command), a Failure when a mark's text would not be read whole."""
+    document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_by)
+    if refused_unless_marks_read:
+        item, command = refused_unless_marks_read
+        refuse_unreadable_new_marks(text, tokens, ranges, item, document, command)
     lines = text.split("\n")
     return document, "\n".join(line for first, end in ranges for line in lines[first:end]).strip()
 
@@ -884,14 +920,97 @@ def proposed_texts(lines, marks):
         match = NEW_LINE.match(line)
         if not match or match[1] not in marks:
             continue
-        text = match[2].strip()
-        for opening, closing in QUOTE_PAIRS:
-            if len(text) >= 2 and text.startswith(opening) and text.endswith(closing):
-                text = text[1:-1].strip()
-                break
+        text = unquoted(match[2])
         if text:
             texts.append((match[1], text))
     return texts
+
+
+def unquoted(text):
+    """Return text stripped, without one pair of surrounding quotation marks."""
+    text = text.strip()
+    for opening, closing in QUOTE_PAIRS:
+        if len(text) >= 2 and text.startswith(opening) and text.endswith(closing):
+            return text[1:-1].strip()
+    return text
+
+
+def lines_joined(lines):
+    """Return lines as one line, each without its quotation markers, whitespace runs squeezed."""
+    return squeezed(" ".join(QUOTATION_MARKERS.sub("", line) for line in lines))
+
+
+def lines_until_blank_or_fence(lines, first, end):
+    """Return the lines from first up to end, stopping before a blank line or a fence delimiter."""
+    taken = []
+    for line in lines[first:end]:
+        if not line.strip() or FENCE_DELIMITER.match(line):
+            break
+        taken.append(line)
+    return taken
+
+
+def block_right_below(lines, first, end):
+    """Return the lines a mark with no text on its line may have meant: the lines that run on right below it,
+    or else the one fenced block or quotation after the blank lines below it; [] when there is neither."""
+    if first < end and lines[first].strip() and not FENCE_DELIMITER.match(lines[first]):
+        return lines_until_blank_or_fence(lines, first, end)
+    while first < end and not lines[first].strip():
+        first += 1
+    if first < end and FENCE_DELIMITER.match(lines[first]):
+        return lines_until_blank_or_fence(lines, first + 1, end)
+    if first < end and QUOTATION_LINE.match(lines[first]):
+        return lines_until_blank_or_fence(lines, first, end)
+    return []
+
+
+def unreadable_new_marks(text, tokens, ranges):
+    """Return one problem line for each `#new` or `#new_if_d` mark in the ranges whose text check would not read
+    whole: one with no text on its line, one inside fenced or indented code, and one whose paragraph runs onto
+    the lines right below it."""
+    lines = text.split("\n")
+    code, comments, paragraphs = {}, set(), []
+    for token in tokens:
+        if token.map is None:
+            continue
+        if token.type in ("fence", "code_block"):
+            code.update((number, token.map[1]) for number in range(*token.map))
+        elif token.type == "html_block" and token.content.lstrip().startswith("<!--"):
+            comments.update(range(*token.map))
+        elif token.type == "paragraph_open":
+            paragraphs.append(token.map)
+    problems = []
+    for first, end in ranges:
+        for number in range(first, end):
+            match = NEW_LINE.match(lines[number])
+            if not match or number in comments:
+                continue
+            mark, line = match[1], number + 1
+            if number in code:
+                joined = lines_joined([match[2]] + lines_until_blank_or_fence(lines, number + 1, min(code[number], end)))
+                problems.append(UNREADABLE_FENCED.format(line=line, mark=mark)
+                                + (UNREADABLE_JOINED.format(mark=mark, text=joined) if joined else ""))
+                continue
+            if not unquoted(match[2]):
+                joined = lines_joined(block_right_below(lines, number + 1, end))
+                problems.append(UNREADABLE_BARE.format(line=line, mark=mark)
+                                + (UNREADABLE_JOINED.format(mark=mark, text=joined) if joined else ""))
+                continue
+            paragraph_end = max((paragraph[1] for paragraph in paragraphs if paragraph[0] <= number < paragraph[1]),
+                                default=number + 1)
+            if paragraph_end > number + 1:
+                last = min(paragraph_end, end)
+                below = f"line {number + 2}" if last == number + 2 else f"lines {number + 2} to {last}"
+                problems.append(UNREADABLE_RUN_ON.format(line=line, mark=mark, below=below)
+                                + UNREADABLE_JOINED.format(mark=mark, text=lines_joined([match[2]] + lines[number + 1:last])))
+    return problems
+
+
+def refuse_unreadable_new_marks(text, tokens, ranges, item, document, command):
+    problems = unreadable_new_marks(text, tokens, ranges)
+    if problems:
+        raise Failure(UNREADABLE_NEW_MARKS.format(item=item, document=document, problems="\n".join(problems),
+                                                  command=command))
 
 
 def squeezed(text):
@@ -1278,7 +1397,8 @@ def check(arguments):
         raise Failure(NAVIGATION_WORD_REFUSED.format(words=words, item=item, answered=answered_word(arguments),
                                                      program=program, quoted_words=shlex.quote(words)))
     in_his_words = USER_WORDS.format(words=words) if words else ""
-    document, lines = item_lines(walk_finder, minutes, value, numbers, total, parser)
+    document, lines = item_lines(walk_finder, minutes, value, numbers, total, parser, item,
+                                 f"python3 {program} check{check_flags(arguments)}")
     rating = case_against_rating(lines, item, document, arguments)
     rated = CASE_AGAINST_HASHTAG.format(rating=rating.replace(" ", "_")) if rating else ""
     if arguments.deferred or arguments.moved_on_no_decision or arguments.moved_on is not None:
@@ -1523,14 +1643,15 @@ def waiting_item_read(arguments):
                                             WAITING_ITEM_READ_STEP, top)
     total = total or count
     item = items_named(numbers, total)
-    document, text = item_text(walk_finder, minutes, value, numbers, total, parser)
+    program = Path(__file__).resolve()
+    command = READ_STEP_COMMAND.format(program=program, flags=" " + AFTER_FIXES_FLAG, top=shlex.quote(str(top)))
+    document, text = item_text(walk_finder, minutes, value, numbers, total, parser,
+                               refused_unless_marks_read=(item, command))
     reads = item_reads_directory(walk_finder, minutes)
     not_started = start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, total,
                                                  arguments.fast_read_program)
     if not_started:
         print(not_started)
-    program = Path(__file__).resolve()
-    command = READ_STEP_COMMAND.format(program=program, flags=" " + AFTER_FIXES_FLAG, top=shlex.quote(str(top)))
     key = text_key(text)
     while read_outcome(reads, key) is None and worker_alive(reads, key):
         time.sleep(READ_POLL_SECONDS)

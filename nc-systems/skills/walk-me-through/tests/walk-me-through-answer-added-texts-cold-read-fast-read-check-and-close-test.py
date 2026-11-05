@@ -122,7 +122,7 @@ If the sentence stays, a note follows it:
 - #new “Each row names the mistake it prevents.”
 
 ```
-#new "inside a fence, not a proposed text"
+A fenced line that names the `#new` mark inside a sentence.
 ```
 
 #case_against weak: the page grows by one line.
@@ -283,7 +283,7 @@ def test_missing_fast_reads_are_run_and_reported():
           and 'Read the fast-read report of each text above whose status line says "fast read had to be run".' in lines
           and f"close --cwd {shlex.quote(str(case.checkout.resolve()))}` and do what it prints." in lines[-1],
           described(result))
-    check("a #new line inside a fence or in another item is not a proposed text",
+    check("a fenced line naming `#new` inside a sentence, or a #new line in another item, is not a proposed text",
           case.calls.read_text() == ("The page lists one poem per job an agent does.\n"
                                      "Each row names the mistake it prevents.\n"),
           repr(case.calls.read_text()))
@@ -388,6 +388,100 @@ def test_no_proposed_text():
     check("the counts of an item with no #new line are logged as zero",
           "texts=0\talready_done=0\thad_to_be_run=0" in case.counts_log.read_text(),
           case.counts_log.read_text())
+
+
+def marks_document(body):
+    """A walk-document whose item 3 holds body from its line 5 on."""
+    return f"# A walk\n\n## Item 3 of 9: the opening sentence\n\n{body}\n#case_against weak: the page grows.\n\nRecommendation: change it.\n"
+
+
+UNREADABLE_MARK_CASES = (
+    ("a mark with no text", "#new\n\nThe sentence stays.\n",
+     ["- line 5: `#new` has no text after it on its line."]),
+    ("a mark with an empty quotation", '#new ""\n',
+     ["- line 5: `#new` has no text after it on its line."]),
+    ("a `#new_if_d` mark with no text, on an A answer", "#new_if_d\n\n> A note\n> says why.\n\nThe end.\n",
+     ["- line 5: `#new_if_d` has no text after it on its line. The mark's line with its text joined onto it: "
+      "#new_if_d A note says why."]),
+    ("a mark with no text above a fenced block", "#new\n\n```\nThe page lists\none poem.\n```\n",
+     ["- line 5: `#new` has no text after it on its line. The mark's line with its text joined onto it: "
+      "#new The page lists one poem."]),
+    ("a mark with no text whose text runs on right below it", '#new\n"The page lists\none poem."\n',
+     ["- line 5: `#new` has no text after it on its line. The mark's line with its text joined onto it: "
+      '#new "The page lists one poem."']),
+    ("a mark inside fenced code", 'Before.\n\n```\n#new "The page lists\none poem."\n```\n',
+     ["- line 8: `#new` is inside fenced code, where no mark is read. The mark's line with its text joined onto "
+      'it: #new "The page lists one poem."']),
+    ("a mark inside indented code", 'Before.\n\n    #new "The page lists one poem."\n',
+     ["- line 7: `#new` is inside fenced code, where no mark is read. The mark's line with its text joined onto "
+      'it: #new "The page lists one poem."']),
+    ("a mark whose text runs onto the lines below it", '#new "The page lists\none poem\nper job."\n',
+     ["- line 5: the text of `#new` runs onto lines 6 to 7 right below it, where it is not read. The mark's line "
+      'with its text joined onto it: #new "The page lists one poem per job."']),
+    ("a mark in a quotation whose text runs onto the line below it", '> #new "The page lists\n> one poem."\n',
+     ["- line 5: the text of `#new` runs onto line 6 right below it, where it is not read. The mark's line with "
+      'its text joined onto it: #new "The page lists one poem."']),
+    ("two marks, each listed", '#new\n\n#new "The page lists\none poem."\n',
+     ["- line 5: `#new` has no text after it on its line.",
+      "- line 7: the text of `#new` runs onto line 8 right below it, where it is not read. The mark's line with "
+      'its text joined onto it: #new "The page lists one poem."']),
+)
+
+
+def test_a_mark_whose_text_would_not_be_read_whole_is_refused_by_check_writing_nothing():
+    for name, body, problem_lines in UNREADABLE_MARK_CASES:
+        case = Case(document=marks_document(body))
+        before = case.minutes.read_text()
+        result = case.run("check", "--obvious")
+        lines = result.stderr.rstrip("\n").split("\n")
+        check(f"check refuses {name}, listing each mark by its line, and writes nothing",
+              result.returncode == 1 and result.stdout == ""
+              and lines[0].startswith(FAILURE_PREFIX + "check: nothing written: item 3 of 9 in the walk-document ")
+              and [line for line in lines if line.startswith("- line ")] == problem_lines
+              and f"Then run `python3 {PROGRAM} check --obvious --user-reply-as-typed a` again." in lines
+              and "For each mark listed, write its whole text on the mark's own line, after the mark, as one line, "
+                  "and delete the lines it ran onto or the block below that held it." in lines
+              and case.minutes.read_text() == before and case.calls.read_text() == ""
+              and not case.counts_log.exists(), described(result))
+
+
+def test_a_mark_whose_text_would_not_be_read_whole_is_refused_for_every_answer():
+    for flags in (("--deferred",), ("--disapproved",), ("--moved-on", "no decision needed")):
+        case = Case(document=marks_document("#new\n"))
+        before = case.minutes.read_text()
+        result = case.run("check", *flags)
+        check(f"check {flags[0]} refuses an item with a mark that has no text, writing nothing",
+              result.returncode == 1 and "- line 5: `#new` has no text after it on its line." in result.stderr
+              and case.minutes.read_text() == before, described(result))
+
+
+def test_marks_whose_texts_are_read_whole_are_not_refused():
+    body = ('- #new "Row one."\n- #new "Row two."\n\n> #new "A quoted row."\n\n'
+            '<!--\n#new\n-->\n\n#new "The last row."\n```\ncode right below\n```\n')
+    case = Case(document=marks_document(body))
+    result = case.run("check")
+    check("marks in list items one under another, in a quotation, in an HTML comment, or right above a fence "
+          "are not refused, and each text is read",
+          result.returncode == 0
+          and case.calls.read_text() == "Row one.\nRow two.\nA quoted row.\nThe last row.\n", described(result))
+
+
+def test_the_waiting_item_read_step_refuses_a_mark_whose_text_would_not_be_read_whole():
+    case = Case(document=marks_document('#new "The page lists\none poem."\n'))
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    command = (f"python3 {PROGRAM} {WAITING_ITEM_READ_STEP_NAME} --after-fixes-reread-only-when-facts-change "
+               f"--cwd {shlex.quote(str(case.checkout.resolve()))}")
+    check("the waiting-item read step refuses a mark whose text runs on, before any read, and names itself to rerun",
+          result.returncode == 1
+          and "- line 5: the text of `#new` runs onto line 6 right below it, where it is not read." in result.stderr
+          and f"Then run `{command}` again." in result.stderr
+          and case.calls.read_text() == "" and not case.reads().exists(), described(result))
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    document.write_text(document.read_text().replace('#new "The page lists\none poem."', '#new "The page lists one poem."'))
+    again = case.run(*shlex.split(command)[2:-2])
+    check("after the mark's text is joined onto its line, the command the refusal gave reads the item",
+          again.returncode == 0 and "its cold-read-fast-read, of its text as it stands, had to be run now"
+          in again.stdout, described(again))
 
 
 def test_a_failed_fast_read_stops_the_check():
@@ -890,7 +984,7 @@ def test_only_the_units_own_openings_of_its_total_bound_an_item_under_a_shared_h
 def test_an_item_with_no_opening_of_its_own_reads_to_the_units_last_line():
     document = WALK_DOCUMENT.replace(
         "## Item 5 of 9: a new item a finding raised",
-        "## Items 8 and 9 of 9: two rows\n\n#new \"Row eight.\"\n#new \"Row nine.\"\n#case_against none.\n## Item 5 of 9: a new item a finding raised")
+        "## Items 8 and 9 of 9: two rows\n\n#new \"Row eight.\"\n\n#new \"Row nine.\"\n\n#case_against none.\n## Item 5 of 9: a new item a finding raised")
     case = Case(next_to_present="item 9 of 9", document=document)
     result = case.run("check")
     check("an item under a shared heading with no opening of its own reads the unit up to its last line",
