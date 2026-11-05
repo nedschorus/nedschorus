@@ -39,6 +39,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from unittest import mock
 
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
     "git_redirecting_environment_removal_test_fixture",
@@ -388,8 +389,11 @@ def schema_driven_cases(scratch):
         program.SCHEMA_FILE_NAME = str(schema_file)
         printed = io.StringIO()
         handler = signal.getsignal(signal.SIGTERM)
+        # In-process, so the stand-in claude and gh catch a regressed refusal only if
+        # os.environ is the case's own.
         try:
-            with contextlib.redirect_stdout(printed):
+            with contextlib.redirect_stdout(printed), mock.patch.dict(
+                    os.environ, {**case.environment, "FAKE_CLAUDE_MODE": "valid"}, clear=True):
                 code = program.main(case.command("7a", None, ())[2:])
         finally:
             signal.signal(signal.SIGTERM, handler)
