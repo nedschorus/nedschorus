@@ -26,13 +26,12 @@ The cycle, per reincarnation:
      with the code it started with, and the successor's initial agent
      instructions say why too.
   3. Extract its dialog to disk before anything else proceeds. When the
-     extraction fails, the successor's prompt is the handoff's next step,
-     then a recovery note saying the session-dialog could not be extracted
-     and where the retiring session's transcript is, or that it was not
-     found, then the instruction to put items needing the user in one
-     approval-walk, then the lines step 6 says the initial agent
-     instructions carry, such as the launch-time-git-sync's line and the
-     leftover work-snapshots and the agent-seat's worktrees and branches.
+     extraction fails, the successor's prompt is a recovery note saying the
+     session-dialog could not be extracted and where the retiring session's
+     transcript is, or that it was not found, then the instruction to put
+     items needing the user in one approval-walk, then the lines step 6 says
+     the initial agent instructions carry, such as the launch-time-git-sync's
+     line and the leftovers, and last the handoff's next step.
   4. Each generation opens the same launcher-pinned task list.
   5. Print one queue-status line — to the console only. It does not ride
      the initial agent instructions (user-ruled 2026-08-29: "Also useless is the
@@ -51,8 +50,9 @@ The cycle, per reincarnation:
      (uncommitted_work_snapshot_text), and the agent-seat's worktrees and
      its branches with no pull request, with the steps to keep or delete each
      (agent_seat_worktrees_and_branches_text). These leftovers go between the
-     prompt's opening and its next step, each entry opened by how many first
-     prompts have listed it
+     prompt's opening and its next step, and each leftover entry starts with
+     a count of the first prompts that have listed it, such as "(listed in 2
+     first prompt(s))"; the branches the list deleted go above them
      (launch_prompt_with_leftovers_before_the_next_step).
   7. Keep the current and previous handoff and conversation-tail; delete older ones.
 
@@ -1667,19 +1667,45 @@ def leftovers_with_prompt_listing_counts(leftovers: str, counts_path: Path) -> s
                      else line for line, key in zip(lines, keys))
 
 
+def forget_leftover_prompt_listing_counts(counts_path: Path) -> None:
+    """Delete the counts file when nothing is listed, so a later leftover of a name listed
+    before starts its count again at 1."""
+    try:
+        counts_path.unlink(missing_ok=True)
+    except OSError as error:
+        print(f"handoff-supervisor: could not delete {counts_path}, the leftovers' listing counts, "
+              f"after a launch that listed no leftover: {type(error).__name__}: {error}. A "
+              f"leftover listed again later keeps its old count until the file is deleted.",
+              file=sys.stderr)
+
+
 def launch_prompt_with_leftovers_before_the_next_step(prompt: str, leftover_parts: tuple,
                                                       counts_path: Path) -> str:
     """The prompt with the leftovers between its opening and its next step, or after it when it
-    has no next step."""
-    leftovers = "\n\n".join(part for part in leftover_parts if part)
-    if not leftovers:
+    has no next step. Branches the list deleted go above the leftovers' opening sentence, which
+    asks the agent to act on each leftover below it, because they need nothing."""
+    heading_start = agent_seat_worktrees_and_branches_list.ALREADY_DELETED_HEADING_START
+    listed_parts, deleted_parts = [], []
+    for part in leftover_parts:
+        listed, heading, deleted = part.partition(heading_start)
+        if listed.strip():
+            listed_parts.append(listed.rstrip("\n"))
+        if heading:
+            deleted_parts.append(heading + deleted)
+    blocks = deleted_parts
+    leftovers = "\n\n".join(listed_parts)
+    if leftovers:
+        blocks.append(LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE + "\n\n"
+                      + leftovers_with_prompt_listing_counts(leftovers, counts_path))
+    else:
+        forget_leftover_prompt_listing_counts(counts_path)
+    if not blocks:
         return prompt
-    leftovers = (LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE + "\n\n"
-                 + leftovers_with_prompt_listing_counts(leftovers, counts_path))
-    opening, heading, next_step = prompt.partition(NEXT_STEP_HEADING)
-    if not heading:
-        return f"{prompt}\n\n{leftovers}"
-    return f"{opening}\n\n{leftovers}{heading}{next_step}"
+    inserted = "\n\n".join(blocks)
+    opening, next_step_heading, next_step = prompt.partition(NEXT_STEP_HEADING)
+    if not next_step_heading:
+        return f"{prompt}\n\n{inserted}"
+    return f"{opening}\n\n{inserted}{next_step_heading}{next_step}"
 
 
 def agent_seat_worktrees_and_branches_text(agent: str, working_directory: Path) -> str:
