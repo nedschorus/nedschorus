@@ -557,13 +557,13 @@ def run_recorded_mutant_killed_check_cases():
               f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
-        completed, repository, worktrees_before, _ = run_recorded_mutant_killed_check(
+        completed, repository, worktrees_before, head = run_recorded_mutant_killed_check(
             scratch_name, {**HEAD_FILES, "scripts/thing-test.py": "import sys\nsys.exit(1)\n"},
             SURVIVOR_DIFF)
         check("the recorded mutant killed check exits 2 when the suites fail without the "
-              "mutant, and removes its worktree",
+              "mutant, naming the head, and removes its worktree",
               completed.returncode == 2
-              and "do not pass at head" in completed.stderr
+              and f"do not pass at head {head[:12]} without a mutant" in completed.stderr
               and "without a mutant" in completed.stderr
               and worktrees_of(repository) == worktrees_before,
               f"rc={completed.returncode} err={completed.stderr}")
@@ -584,6 +584,22 @@ def run_recorded_mutant_killed_check_cases():
                       f"scripts/thing.py ends with a `# pragma: no mutate` comment"
                       in "\n" + completed.stdout,
                   f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    # scripts/gone.py is not at the head, but its sibling suite is, so its mutant gets as far as
+    # reading the file.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**killing_files, "scripts/gone-test.py": "import sys\nsys.exit(0)\n"},
+            SURVIVOR_DIFF.replace("thing.py", "gone.py"), more_diff_texts=[SURVIVOR_DIFF])
+        check("a recorded mutant whose file cannot be read at the head could not be judged, "
+              "saying why, and the next mutant is still judged",
+              completed.returncode == 2
+              and f"{could_not_be_judged_line}{Path(scratch_name) / 'mutant.diff'}: it does not "
+                  f"apply to scripts/gone.py at head" in "\n" + completed.stdout
+              and "the file cannot be read" in completed.stdout
+              and f"{killed_line}{Path(scratch_name) / 'mutant-2.diff'}: "
+                  in "\n" + completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
         completed, _, _, _ = run_recorded_mutant_killed_check(

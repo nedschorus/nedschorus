@@ -848,23 +848,26 @@ def run_cases():
             fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
             merge = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
                                    author="alpha")
-            fixture.run({merge: {"json": verdict(survived=[survivor()])}})
+            fixture.run({merge: {"json": verdict(
+                survived=[survivor(1, "core/NumberReplacer"), survivor()])}})
             before = (alpha_list / "1.json").read_text()
             state_before = fixture.state_json()["tasks_opened"]
             later = fixture.commit("scripts/other.py", "VALUE = 2\n", author="alpha")
             completed = fixture.run({"recheck": {**plan_step, "verdicts": {
                 job.mutant_key(survivor()): "killed"}}, later: {"json": verdict()}}, *flags)
-            check(f"{case_name}: the task and the state are left as they were, the record and "
-                  f"standard error name the task, the merges are still tested, and the run exits 8",
+            record = fixture.records()[-1].read_text()
+            check(f"{case_name}: each of two tasks and the state are left as they were, the "
+                  f"record and standard error name both tasks, the merges are still tested, and "
+                  f"the run exits 8",
                   completed.returncode
                   == job.EXIT_SURVIVOR_TASK_MUTANTS_NOT_JUDGED_TASK_LEFT_AS_IT_WAS
                   and (alpha_list / "1.json").read_text() == before
                   and fixture.state_json()["tasks_opened"] == state_before
                   and fixture.state_json()["last_tested_main_commit"] == later
-                  and f"NOT RECHECKED: task #1 on alpha's task list" in
-                      fixture.records()[-1].read_text()
+                  and "NOT RECHECKED: task #1 on alpha's task list" in record
+                  and "NOT RECHECKED: task #2 on alpha's task list" in record
                   and wanted in completed.stderr
-                  and "1 survivor task(s) were left as they were" in completed.stderr,
+                  and "2 survivor task(s) were left as they were" in completed.stderr,
                   (completed.returncode, completed.stderr, fixture.records()[-1].read_text()))
 
     with tempfile.TemporaryDirectory() as scratch:
