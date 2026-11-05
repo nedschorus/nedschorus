@@ -896,8 +896,8 @@ def move_finish(number, title, body_file):
                              + labelled_hook_output()) from None
     url = created["url"]
     print(f"Moved to {url}; you are back on {return_branch}.\n"
-          f"Answer the finding in the answers file, {answers}, with an entry that starts: "
-          f"{MOVED_TO_PULL_REQUEST_PREFIX}{url}"
+          f"Answer each finding whose change you moved in the answers file, {answers}, with an entry that starts "
+          f"with that finding's number, as every entry does: <n>. {MOVED_TO_PULL_REQUEST_PREFIX}{url}"
           + labelled_hook_output())
 
 
