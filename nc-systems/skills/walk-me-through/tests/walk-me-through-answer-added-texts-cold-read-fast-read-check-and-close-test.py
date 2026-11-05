@@ -3137,6 +3137,20 @@ def test_close_writes_the_first_entered_day_once_into_each_unshown_item_that_has
           walk_document(case))
 
 
+def test_the_first_entered_line_close_writes_keeps_indented_code_under_the_heading_out_of_its_paragraph():
+    code = f"    {CATEGORY_TAG}must_fix_now"
+    case = Case(next_to_present="item 1 of 9", document=ordered_walk(
+        f"## three\n{code}\n\n{CATEGORY_TAG}fix_next\n\n#case_against none.\n\nRecommendation: approve.\n\n"))
+    case.run("check")
+    closed = case.run("close")
+    document = walk_document(case)
+    check("close leaves a blank line after the first-entered line it writes above indented code, so the code's "
+          "category tag is not read as the item's second one, and the item is shown",
+          closed.returncode == 0 and "Traceback" not in closed.stderr
+          and re.search(rf"#approval_walk_item_first_entered \S+\n\n{re.escape(code)}\n", document) is not None
+          and marker(case) == "#next_to_present item 2 of 3", described(closed) + document)
+
+
 def refused_walk_order(name, *items, expected):
     case = Case(next_to_present="item 1 of 9", document=ordered_walk(*items))
     case.run("check")

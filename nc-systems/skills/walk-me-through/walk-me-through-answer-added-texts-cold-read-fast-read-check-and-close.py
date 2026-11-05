@@ -1565,13 +1565,15 @@ def walk_document_items(walk_finder, minutes, value, numbers, total, parser, ste
     try:
         order, summary, placing = walk_document_order(walk_finder, text, units, parser, document, today)
         stamped = unshown_items_first_entered_stamped(walk_finder, text, units, parser, today)
+        if stamped != text:
+            # Placed before the write, so a stamped document that no longer places writes nothing.
+            units = walk_finder.item_unit_spans(stamped, parser)
+            order, summary, placing = walk_document_order(walk_finder, stamped, units, parser, document, today)
     except WalkOrderUnusable as problem:
         raise Failure(WALK_ORDER_REFUSED.format(problem=problem, program=Path(__file__).resolve(), step=step,
                                                 top=shlex.quote(str(top))))
     if stamped != text:
         document.write_text(stamped, encoding="utf-8")
-        units = walk_finder.item_unit_spans(stamped, parser)
-        order, summary, placing = walk_document_order(walk_finder, stamped, units, parser, document, today)
     count = walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units)
     return count, order, summary, units, placing
 
@@ -1622,7 +1624,9 @@ def unshown_items_first_entered_stamped(walk_finder, text, units, parser, today)
     unstamped = [unit[3] for unit in unshown_units(walk_finder, units, lines)
                  if not any(WALK_FIRST_ENTERED_LINE.match(line) for line in prose[unit[3] + 1:unit[4]])]
     for first in reversed(unstamped):
-        lines[first + 1:first + 1] = ["", f"{WALK_FIRST_ENTERED_TAG} {today}"]
+        # The blank line after it keeps a next line, such as indented code, from joining the tag's paragraph.
+        after = [""] if first + 1 < len(lines) and lines[first + 1].strip() else []
+        lines[first + 1:first + 1] = ["", f"{WALK_FIRST_ENTERED_TAG} {today}"] + after
     return "\n".join(lines)
 
 
