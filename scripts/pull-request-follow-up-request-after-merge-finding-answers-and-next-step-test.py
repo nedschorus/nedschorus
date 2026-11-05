@@ -1397,7 +1397,8 @@ def test_print_block():
     check(f"{PRINT_BLOCK} refuses when merge-lane-2 has no approving review, saying when to run it again",
           code == 1 and out == "" and err == (
               f"REFUSED: ned-review-merge, merge-lane-2's GitHub account, has no approving review of pull request "
-              f"{NUMBER}, so merge-lane-2's findings on it are not final and no #follow_up_request block was printed.\n"
+              f"{NUMBER}, so merge-lane-2 has not approved it yet: its review is still running or it requested changes. No "
+              "#follow_up_request block was printed.\n"
               "Once ned-review-merge's approving review is posted, run: "
               f"python3 {program.PROGRAM} {NUMBER} {PRINT_BLOCK}\n"), err)
     code, out, err = print_block([merge_lane_review(1)], [merge_lane_comment(10, 1, "Rename it.")])
@@ -1415,7 +1416,8 @@ def test_print_block():
           code == 2 and out == "" and err.startswith("FAILED: gh api exited 1: HTTP 502\n"), err)
     code, out, err = print_block("not json", [])
     check(f"{PRINT_BLOCK} reports gh output that is not a list of pages as FAILED with exit 2",
-          code == 2 and err.startswith(f"FAILED: gh api pulls/{NUMBER}/reviews printed no list of pages: "), err)
+          code == 2 and err.startswith(f"FAILED: gh api pulls/{NUMBER}/reviews printed output that is not the JSON list of result pages "
+                                       "--paginate --slurp prints: "), err)
     code, out, err = print_block([{"id": 1}], [])
     check(f"{PRINT_BLOCK} reports a review without its expected fields as FAILED with exit 2",
           code == 2 and err.startswith(f"FAILED: GitHub's reviews of pull request {NUMBER} were not in the "
@@ -1423,7 +1425,7 @@ def test_print_block():
     code, out, err = print_block([merge_lane_review(1)], [merge_lane_comment(10, 1, "**fix-next** Rename it.")],
                                  read_back=lambda text: [])
     check(f"{PRINT_BLOCK} prints nothing and fails with exit 2 when its block does not read back as itself",
-          code == 2 and out == "" and "does not read back as itself" in err, err)
+          code == 2 and out == "" and "does not read back as itself" in err and "Do not paste the block" in err, err)
     code, out, err = print_block([merge_lane_review(1)], [merge_lane_comment(10, 1, "**fix-next** Rename it.")],
                                  read_back=lambda text: (_ for _ in ()).throw(ValueError("unreadable")))
     check(f"{PRINT_BLOCK} fails with exit 2 when the parser refuses its block, quoting the parser",

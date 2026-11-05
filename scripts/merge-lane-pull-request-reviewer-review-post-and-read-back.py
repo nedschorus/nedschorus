@@ -216,13 +216,13 @@ def read_review_file(path, account):
             raise ReviewFileUnusable(
                 f"has a comment on {where} whose body already opens with the blocking mark "
                 f"{mark.group(0)}; this program writes that mark for each {BLOCKING_CATEGORY} "
-                f"comment, so leave it out of the body")
+                f"comment, so delete that mark from the comment's body")
         marked = finding_category_and_text_read_from_review_comment_opening_mark(comment["body"])
         if marked:
             raise ReviewFileUnusable(
                 f"has a comment on {where} whose body already opens with the category mark "
                 f"{review_comment_opening_mark_for_finding_category(marked[0]).strip()}; this program writes each comment's "
-                f"category mark from its \"finding_category\", so leave it out of the body")
+                f"category mark from its \"finding_category\", so delete that mark from the comment's body")
     if verdict == "REQUEST_CHANGES" and not any(
             comment["finding_category"] == BLOCKING_CATEGORY for comment in comments):
         raise ReviewFileUnusable(
