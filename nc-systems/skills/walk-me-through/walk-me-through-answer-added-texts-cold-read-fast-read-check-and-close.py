@@ -586,6 +586,13 @@ HELD_NEW_ITEM_WAITS_ON_UNSHOWN = (
     "depends on what {waited_on} would decide, add to {new_item} one sentence saying what {waited_on} proposes, "
     "as background, since the user rules on {new_item} first. "
     "Then run close with " + HOLD_ANSWER_FLAG + " again.")
+GATHERING_WOULD_LOSE_AN_ITEM = (
+    "walk-document not changed: close recorded the answer in {minutes}, but moving the items not yet shown "
+    "together in {document} would have left fewer items than it found, so close wrote neither the walk-document "
+    "nor a new `#next_to_present` line. This is a defect in this program.\n"
+    "Tell the user this line, and send it to reboot-test with SendMessage, so that the program is fixed.\n"
+    "Until then, show the user the next item yourself, and write its `#next_to_present` line into the minutes "
+    "by hand.")
 CLOSE_HELD_NEXT = ("Then run `{command}`, which gives {new_item} its cold-read-fast-read, do what it prints, and "
                    "present {new_item}. When the close step records the user's approval or disapproval of "
                    "{new_item}, it records the same outcome for {item}; after a deferral, a move on or answers to "
@@ -1743,15 +1750,28 @@ def unshown_items_gathered_behind_chosen(walk_finder, minutes, chosen, units, pl
     lines = document.read_text(encoding="utf-8").split("\n")
     spans = {unit[3]: (unit[3], unit[4]) for unit in units if unit[3] in placing}
     rest = unshown_items_in_walk_order([item for item in placing if item != chosen], placing)
-    gathered = [line for item in [chosen] + rest for line in lines[spans[item][0]:spans[item][1]]]
     start = min(spans)
     kept = [(index, line) for index, line in enumerate(lines)
             if not any(first <= index < end for first, end in spans.values())]
-    before = [line for index, line in kept if index < start]
-    after = [line for index, line in kept if index >= start]
-    text = "\n".join(before + gathered + after)
+    joined = []
+    chosen_line = None
+    # An item whose last line is not blank, moved above a `**Item N of M**` paragraph, would make that
+    # paragraph a continuation of its own and so hide the numbered item; a blank line at every join keeps
+    # each block a paragraph of its own.
+    for item, block in ([(None, [line for index, line in kept if index < start])]
+                        + [(item, lines[spans[item][0]:spans[item][1]]) for item in [chosen] + rest]
+                        + [(None, [line for index, line in kept if index >= start])]):
+        if joined and block and joined[-1].strip() and block[0].strip():
+            joined.append("")
+        if item == chosen:
+            chosen_line = len(joined)
+        joined.extend(block)
+    text = "\n".join(joined)
+    gathered_units = walk_finder.item_unit_spans(text, parser)
+    if sorted(unit[0] for unit in gathered_units) != sorted(unit[0] for unit in units):
+        raise Failure(GATHERING_WOULD_LOSE_AN_ITEM.format(document=document, minutes=minutes))
     document.write_text(text, encoding="utf-8")
-    return len(before), walk_finder.item_unit_spans(text, parser)
+    return chosen_line, gathered_units
 
 
 def numbered_heading(heading, number, total):

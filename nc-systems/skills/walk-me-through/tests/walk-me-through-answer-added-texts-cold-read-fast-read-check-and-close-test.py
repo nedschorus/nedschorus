@@ -3191,6 +3191,57 @@ def test_a_category_tag_in_underscore_emphasis_is_read_without_the_closing_under
               shown == ["emphasised", "later", "Summary"], f"{shown}\n{walk_document(case)}")
 
 
+def test_gathering_unshown_items_keeps_a_numbered_item_written_as_a_bold_paragraph():
+    """The last unshown item ends the file with no blank line after it, and gathering moves it just above a
+    numbered item written as a `**Item N of M: ...**` paragraph."""
+    document = ("# A walk in which code picks the order\n\n## Item 1 of 9: one\n\n#case_against none.\n\n"
+                "Recommendation: approve.\n\n" + unshown_item("urgent", f"{CATEGORY_TAG}must_fix_now")
+                + "**Item 2 of 9: two**\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                + unshown_item("later", f"{CATEGORY_TAG}fix_next").rstrip("\n"))
+    case = Case(next_to_present="item 1 of 9", document=document)
+    case.run("check")
+    closed = case.run("close")
+    text = walk_document(case)
+    check("close shows urgent as a new number and keeps item 2, written as a bold paragraph, as an item of its own",
+          closed.returncode == 0 and text.count("**Item 2 of 9: two**") == 1
+          and re.search(r"^## Item 3 of \d+: urgent$", text, re.M) is not None
+          and re.search(r"Recommendation: approve\.\n\n\*\*Item 2 of 9: two\*\*", text) is not None,
+          f"exit {closed.returncode}, stderr {closed.stderr!r}\n{text}")
+
+
+def test_close_writes_no_walk_document_when_gathering_would_lose_an_item():
+    """Gathering keeps blank lines at its joins, so it cannot lose an item; a stand-in walk finder that reads one
+    item fewer after gathering is put into the program, run in this process."""
+    case = Case(next_to_present="item 1 of 9", document=ordered_walk(
+        unshown_item("next", f"{CATEGORY_TAG}fix_next"), numbered_item(3, "three"),
+        unshown_item("urgent", f"{CATEGORY_TAG}must_fix_now")))
+    case.run("check")
+    program = load_program()
+    original = program.unshown_items_gathered_behind_chosen
+
+    def gathered_with_an_item_lost(walk_finder, *rest):
+        class Finder:
+            def __getattr__(self, name):
+                return getattr(walk_finder, name)
+
+            def item_unit_spans(self, text, parser):
+                return walk_finder.item_unit_spans(text, parser)[:-1]
+        return original(Finder(), *rest)
+
+    program.unshown_items_gathered_behind_chosen = gathered_with_an_item_lost
+    markers = case.minutes.read_text().count("#next_to_present")
+    errors = io.StringIO()
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+        exit_code = program.main(["close", *case_paths(case)])
+    text = walk_document(case)
+    check("close exits 1, names the defect, neither moves nor numbers an item and adds no `#next_to_present` line "
+          "when gathering would lose an item",
+          exit_code == 1 and "would have left fewer items than it found" in errors.getvalue()
+          and text.index("## next") < text.index("## Item 3 of 9: three") < text.index("## urgent")
+          and case.minutes.read_text().count("#next_to_present") == markers,
+          f"exit {exit_code}, stderr {errors.getvalue()!r}\n{text}")
+
+
 def test_close_writes_nothing_when_the_stamped_walk_document_no_longer_places():
     """The first-entered stamp is written so that it cannot make a document unplaceable, so a stand-in stamp that
     does so is put into the program, run in this process."""
