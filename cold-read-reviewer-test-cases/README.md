@@ -21,6 +21,7 @@ The rest of the cold-read machinery's output is a log and lives in the log-store
 - `ghi-write-first-draft-6a098f4.md` — the draft as first written, 658 words, byte-identical to git object 6a098f4 (2026-08-06).
 - `ghi-write-perfected-2026-09-08.md` — the skill at main 78ceb75, which the user walked and accepted, plus the six fixes his scrub accepted and the two fixes of 2026-09-09. 916 words.
 - `ghi-write-defect-list-2026-09-07.md` — 33 rows, one per defect, each quoting the draft exactly and saying what is wrong. Scrubbed by the user 2026-09-07 and 09-08. Carries the severity weights adopted 2026-09-08.
+- `ghi-write-defect-list-2026-11-03.md` — the 2026-09-07 list with nine rows widened, row 34 added at weight 2 (34 rows, 33 scored, total 104), and twelve sentences with no defect listed, approved by the user 2026-11-03. Rows 1 to 33 keep their weights. It is not the scorer's default ruler: every figure below is measured against the 2026-09-07 list, and `--defect-list` selects this one.
 
 ## The defect list is the ruler, and it has weights
 

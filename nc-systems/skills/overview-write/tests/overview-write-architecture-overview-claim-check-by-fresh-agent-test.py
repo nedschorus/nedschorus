@@ -2,7 +2,9 @@
 """Check the overview claim check's stages, its refusals and the reports it writes.
 
 Each case runs the program in a disposable git repository. A stand-in `claude`,
-first on PATH, logs the prompt it is given and prints a canned report; the
+first on PATH, logs the prompt it is given and prints a canned report, or, for
+a recheck prompt naming an assertion the case lists, that assertion's canned
+answer; the
 repository's own scripts/md-drift-lint.py is a stand-in that exits as the case
 asks. No case runs a model or touches the log-store.
 
@@ -37,15 +39,20 @@ _spec.loader.exec_module(claim_check)
 OVERVIEW = "docs/nedschorus-wiki/nedschorus-example-architecture-overview.md"
 CONTROL_VARIABLE = "OVERVIEW_CLAIM_CHECK_TEST_CONTROL_DIRECTORY"
 TIMEOUT_SECONDS = 120
+RECHECK_SLEEP_SECONDS = 3
 failures = []
 
 STAND_IN_CLAUDE = f"""#!{sys.executable}
 import json, os, pathlib, sys
 control = pathlib.Path(os.environ[{CONTROL_VARIABLE!r}])
+prompt = sys.stdin.read()
 with (control / "claude-calls.jsonl").open("a", encoding="utf-8") as log:
-    log.write(json.dumps({{"argv": sys.argv[1:], "stdin": sys.stdin.read(), "cwd": os.getcwd(),
+    log.write(json.dumps({{"argv": sys.argv[1:], "stdin": prompt, "cwd": os.getcwd(), "started": __import__("time").time(),
                           "overview_there": pathlib.Path({OVERVIEW!r}).read_text(encoding="utf-8")}}) + "\\n")
 answer = json.loads((control / "claude.json").read_text(encoding="utf-8"))
+for assertion, recheck in answer.get("rechecks", {{}}).items():
+    if f"The assertion: {{assertion}}\\n" in prompt:
+        answer = recheck
 __import__("time").sleep(answer.get("sleep_seconds", 0))
 sys.stdout.write(answer["stdout"])
 sys.stderr.write(answer.get("stderr", ""))
@@ -63,7 +70,7 @@ sys.exit(answer["exit_code"])
 """
 
 GOOD_REPORT = "VERDICT 1 supported: the program exists\n  nc-systems/example/tool.py:1 `x = 1`\nCOUNTS supported=1 contradicted=0 unsupported=0\n"
-UNSUPPORTED_REPORT = "VERDICT 1 unsupported: the program exists\nCOUNTS supported=0 contradicted=0 unsupported=1\n"
+UNSUPPORTED_REPORT = "VERDICT 1 unsupported must-fix: the program exists\nCOUNTS supported=0 contradicted=0 unsupported=1\n"
 
 
 def check(name, condition, detail=""):
@@ -89,6 +96,7 @@ class Fixture:
         self.write("nc-systems/example/tool.py", "x = 1\n")
         self.write("scripts/md-drift-lint.py", STAND_IN_MD_DRIFT_LINT)
         self.code_commit = self.commit("code")
+        self.git("update-ref", "refs/remotes/origin/main", self.code_commit)
 
     def git(self, *arguments):
         result = subprocess.run(["git", "-C", str(self.repository), "-c", "user.name=fixture",
@@ -115,9 +123,11 @@ class Fixture:
         return self.commit("overview")
 
     def answer(self, *, claude_stdout=GOOD_REPORT, claude_exit=0, lint_stdout="", lint_exit=0,
-               claude_sleep=0, lint_sleep=0):
+               claude_sleep=0, lint_sleep=0, rechecks=None):
+        """rechecks maps an assertion to the {"stdout", "exit_code"} the stand-in gives a recheck prompt naming it."""
         (self.control / "claude.json").write_text(json.dumps(
-            {"stdout": claude_stdout, "exit_code": claude_exit, "sleep_seconds": claude_sleep}))
+            {"stdout": claude_stdout, "exit_code": claude_exit, "sleep_seconds": claude_sleep,
+             "rechecks": rechecks or {}}))
         (self.control / "lint.json").write_text(json.dumps(
             {"stdout": lint_stdout, "exit_code": lint_exit, "sleep_seconds": lint_sleep}))
         for log in ("claude-calls.jsonl", "lint-calls.txt"):
@@ -143,8 +153,9 @@ class Fixture:
         os.environ.update(self.environment)
         os.chdir(self.repository)
         try:
-            with contextlib.redirect_stderr(io.StringIO()) as stderr, contextlib.redirect_stdout(io.StringIO()):
+            with contextlib.redirect_stderr(io.StringIO()) as stderr, contextlib.redirect_stdout(io.StringIO()) as stdout:
                 code = claim_check.main(["--overview", OVERVIEW, "--report-directory", str(self.reports)])
+            self.last_in_process_stdout = stdout.getvalue()
             return code, stderr.getvalue()
         finally:
             claim_check.FRESH_AGENT_TIMEOUT_SECONDS, claim_check.MD_DRIFT_LINT_TIMEOUT_SECONDS = saved[0], saved[1]
@@ -160,14 +171,57 @@ class Fixture:
         return self.git("worktree", "list", "--porcelain").count("worktree ")
 
 
+def recheck(verdict_and_rank, assertion="b"):
+    verdict = verdict_and_rank.split()[0]
+    counts = " ".join(f"{name}={int(name == verdict)}" for name in claim_check.VERDICTS)
+    return f"VERDICT 1 {verdict_and_rank}: {assertion}\nCOUNTS {counts}\n"
+
+
 def run_unit_cases():
-    result = claim_check.result_from_fresh_agent_report
-    check("every claim supported gives the all-supported result", result(GOOD_REPORT) == claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED)
-    check("a contradicted claim gives the counts that fall short",
-          result("VERDICT 1 supported: a\nVERDICT 2 contradicted: b\nCOUNTS supported=1 contradicted=1 unsupported=0\n")
-          == "not all claims supported: 1 contradicted, 0 unsupported, 1 supported")
-    check("an unsupported claim with none contradicted gives the counts that fall short",
-          result(UNSUPPORTED_REPORT) == "not all claims supported: 0 contradicted, 1 unsupported, 0 supported")
+    def result(report, rechecks=None):
+        return claim_check.result_from_fresh_agent_report(report, rechecks)[1]
+
+    all_supported = claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED
+    no_must_fix = claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_NO_MUST_FIX_CLAIM_REMAINS
+    must_fix_report = "VERDICT 1 supported: a\nVERDICT 2 contradicted must-fix: b\nCOUNTS supported=1 contradicted=1 unsupported=0\n"
+    check("every claim supported gives the all-supported result", result(GOOD_REPORT) == all_supported)
+    check("a must-fix claim the recheck ranks must-fix again gives the counts of what remains",
+          result(must_fix_report, {2: recheck("contradicted must-fix")})
+          == "must-fix claims remain: 1 must-fix, 0 fix-later, 0 nit")
+    claims, _ = claim_check.result_from_fresh_agent_report(must_fix_report, {2: recheck("unsupported fix-later")})
+    check("a must-fix claim the recheck ranks fix-later is ranked fix-later, and no must-fix claim remains",
+          result(must_fix_report, {2: recheck("unsupported fix-later")}) == no_must_fix
+          and claims[1].rank == claim_check.RANK_FIX_LATER, claims)
+    check("a must-fix claim the recheck finds supported is ranked fix-later",
+          claim_check.result_from_fresh_agent_report(must_fix_report, {2: recheck("supported")})[0][1].rank
+          == claim_check.RANK_FIX_LATER)
+    check("a must-fix claim the recheck ranks nit is ranked fix-later",
+          claim_check.result_from_fresh_agent_report(must_fix_report, {2: recheck("contradicted nit")})[0][1].rank
+          == claim_check.RANK_FIX_LATER)
+    check("fix-later and nit claims alone leave no must-fix claim, with no recheck",
+          result("VERDICT 1 unsupported fix-later: a\nVERDICT 2 contradicted nit: b\n"
+                 "COUNTS supported=0 contradicted=1 unsupported=1\n") == no_must_fix)
+    check("an unsupported claim with no rank is malformed",
+          result("VERDICT 1 unsupported: a\nCOUNTS supported=0 contradicted=0 unsupported=1\n")
+          == "malformed: VERDICT 1 is unsupported with the rank missing, not one of must-fix, fix-later, nit")
+    check("a claim with a rank outside the three is malformed",
+          result("VERDICT 1 contradicted later: a\nCOUNTS supported=0 contradicted=1 unsupported=0\n").startswith(
+              "malformed: VERDICT 1 is contradicted with the rank later"))
+    check("a supported claim with a rank is malformed",
+          result("VERDICT 1 supported nit: a\nCOUNTS supported=1 contradicted=0 unsupported=0\n")
+          == "malformed: VERDICT 1 is supported but has the rank nit")
+    check("a malformed recheck makes the result malformed",
+          result(must_fix_report, {2: "I could not check it.\n"})
+          == "malformed: the recheck of VERDICT 2 is malformed: no VERDICT line")
+    check("a recheck with two VERDICT lines makes the result malformed",
+          result(must_fix_report, {2: "VERDICT 1 supported: b\nVERDICT 2 supported: c\n"
+                                      "COUNTS supported=2 contradicted=0 unsupported=0\n"})
+          == "malformed: the recheck of VERDICT 2 has 2 VERDICT lines, not one")
+    claims, _ = claim_check.claims_from_fresh_agent_report(
+        "VERDICT 1 contradicted fix-later: a\n  x.py:3 `y`\nVERDICT 2 supported: b\n  z.py:1 `w`\n"
+        "COUNTS supported=1 contradicted=1 unsupported=0\n")
+    check("each claim keeps the lines after its VERDICT line as its evidence, without the COUNTS line",
+          [claim.evidence for claim in claims] == ["  x.py:3 `y`", "  z.py:1 `w`"], claims)
     check("a COUNTS line that disagrees with the VERDICT lines is malformed",
           result("VERDICT 1 supported: a\nCOUNTS supported=2 contradicted=0 unsupported=0\n").startswith("malformed: the COUNTS line"))
     check("VERDICT lines out of order are malformed",
@@ -189,6 +243,175 @@ def last_stdout_line(result):
 
 def next_action_line(action):
     return claim_check.NEXT_ACTION_LINE_PREFIX + action
+
+
+MUST_FIX_REPORT = ("VERDICT 1 supported: the tool sets x\n  nc-systems/example/tool.py:1 `x = 1`\n"
+                   "VERDICT 2 contradicted must-fix: the program exists\n  FIRST-EVIDENCE-LINE\n"
+                   "COUNTS supported=1 contradicted=1 unsupported=0\n")
+
+
+def proposed_improvements_or_changes_files(fixture):
+    """Resolved, as the program prints them: the test sandbox's temporary directory is a symlink."""
+    return sorted(path.resolve() for path in (fixture.repository / Path(OVERVIEW).parent).glob(
+        Path(OVERVIEW).stem + claim_check.PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX + "*.md"))
+
+
+def run_ranked_claim_cases(fixture, blob):
+    def newest_report():
+        return claim_check.find_newest_architecture_overview_claim_check_report_path_and_result_for_overview_git_blob(
+            fixture.reports, OVERVIEW, blob)
+
+    fixture.answer(claude_stdout=MUST_FIX_REPORT,
+                   rechecks={"the program exists": {"stdout": recheck("contradicted must-fix", "the program exists")}})
+    result = fixture.run()
+    calls = fixture.claude_calls()
+    newest = newest_report()
+    check("a must-fix claim the recheck ranks must-fix again exits 5, and the newest report counts what remains",
+          result.returncode == 5 and newest[1] == "must-fix claims remain: 1 must-fix, 0 fix-later, 0 nit",
+          (result, newest))
+    check("a remaining must-fix claim ends with the next action: fix the must-fix claims, or bring round 3 to the user",
+          last_stdout_line(result) == next_action_line(claim_check.NEXT_ACTION_WHEN_MUST_FIX_CLAIMS_REMAIN), result.stdout)
+    check("both prompts give the three ranks", len(calls) == 2
+          and all(claim_check.CLAIM_RANK_DEFINITIONS_FOR_FRESH_AGENT_PROMPT in call["stdin"] for call in calls), calls)
+    recheck_prompt = calls[1]["stdin"] if len(calls) == 2 else ""
+    check("the recheck prompt names the must-fix assertion alone, without the first verdict, rank or evidence",
+          "The assertion: the program exists\n" in recheck_prompt and "FIRST-EVIDENCE-LINE" not in recheck_prompt
+          and "contradicted must-fix" not in recheck_prompt and "the tool sets x" not in recheck_prompt
+          and fixture.code_commit in recheck_prompt and calls[1]["cwd"] == calls[0]["cwd"], recheck_prompt)
+    report_text = newest[0].read_text() if newest else ""
+    check("the report holds the ranks after the recheck in its header, and the recheck's answer after the report",
+          report_text.split("\n\n", 1)[0].endswith("\nranks after the recheck: 1 must-fix, 0 fix-later, 0 nit")
+          and "# Recheck of VERDICT 2, which the report above ranks must-fix" in report_text, report_text)
+    check("a run with no fix-later claim writes no proposed-improvements-or-changes-file",
+          not proposed_improvements_or_changes_files(fixture))
+
+    fixture.answer(claude_stdout=MUST_FIX_REPORT,
+                   rechecks={"the program exists": {"stdout": recheck("contradicted fix-later", "the program exists")}})
+    result = fixture.run()
+    newest = newest_report()
+    written = proposed_improvements_or_changes_files(fixture)
+    check("a must-fix claim the recheck does not rank must-fix exits 0 with the no-must-fix result",
+          result.returncode == 0 and newest[1] == claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_NO_MUST_FIX_CLAIM_REMAINS,
+          (result, newest))
+    entry = written[0].read_text() if len(written) == 1 else ""
+    check("the fix-later claim is written, with its evidence and an open state, to a file named by the check and the day",
+          len(written) == 1 and written[0].name.startswith(
+              Path(OVERVIEW).stem + "-proposed-improvements-or-changes-overview-write-claim-check-by-fresh-agent-")
+          and "## E1 — possible problem: an assertion of the overview is contradicted" in entry
+          and "\nClaim: the program exists\n" in entry and ">   FIRST-EVIDENCE-LINE" in entry
+          and "State: open" in entry and str(newest[0]) in entry, (written, entry))
+    pointer_line = claim_check.overview_pointer_line_to_proposed_improvements_or_changes_files(OVERVIEW)
+    check("with a fix-later file written and no pointer line, the next action says to commit the file, open the "
+          "follow-up, add the pointer line and run again",
+          last_stdout_line(result) == next_action_line(
+              claim_check.NEXT_ACTION_WHEN_NO_MUST_FIX_CLAIM_REMAINS
+              + claim_check.NEXT_ACTION_SUFFIX_WHEN_FIX_LATER_CLAIMS_WRITTEN_TO_PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE.format(path=written[0] if written else None)
+              + claim_check.NEXT_ACTION_SUFFIX_WHEN_OVERVIEW_LACKS_PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE.format(line=pointer_line)), result.stdout)
+
+    result = fixture.run()
+    check("a fix-later claim a file beside the overview already holds is not written again",
+          result.returncode == 0 and proposed_improvements_or_changes_files(fixture) == written
+          and last_stdout_line(result) == next_action_line(claim_check.NEXT_ACTION_WHEN_NO_MUST_FIX_CLAIM_REMAINS),
+          result.stdout)
+
+    real_run_git = claim_check.run_git
+
+    def run_git_whose_worktree_remove_fails(repository, *arguments, check=True):
+        if arguments[:2] == ("worktree", "remove"):
+            return subprocess.CompletedProcess(["git", *arguments], 128, "", "fatal: injected removal failure")
+        return real_run_git(repository, *arguments, check=check)
+
+    code, stderr = fixture.run_in_process_with_timeouts(run_git=run_git_whose_worktree_remove_fails)
+    fixture.git("worktree", "prune")
+    check("no must-fix claim with a worktree git cannot remove exits 6, with the next action to push and clean up",
+          code == 6 and fixture.last_in_process_stdout.strip().splitlines()[-1] == next_action_line(
+              claim_check.NEXT_ACTION_WHEN_NO_MUST_FIX_CLAIM_REMAINS_AND_WORKTREE_STAYS), (code, stderr))
+
+    count = len(fixture.reports_written())
+    fixture.answer(claude_stdout=MUST_FIX_REPORT,
+                   rechecks={"the program exists": {"stdout": "", "exit_code": 1, "stderr": "usage limit reached"}})
+    result = fixture.run()
+    check("a recheck fresh-agent that fails exits 4, quotes its stderr and writes no report",
+          result.returncode == 4 and "usage limit reached" in result.stderr and len(fixture.reports_written()) == count,
+          result.stderr)
+
+    fixture.answer(claude_stdout=MUST_FIX_REPORT,
+                   rechecks={"the program exists": {"stdout": "I could not decide.\n"}})
+    result = fixture.run()
+    newest = newest_report()
+    check("a malformed recheck exits 5 with a malformed result, and ends with the next action: run again",
+          result.returncode == 5 and newest[1] == "malformed: the recheck of VERDICT 2 is malformed: no VERDICT line"
+          and last_stdout_line(result) == next_action_line(claim_check.NEXT_ACTION_WHEN_FRESH_AGENT_REPORT_IS_MALFORMED_FIRST_TIME),
+          (result, newest))
+    for report in fixture.reports_written():
+        if report.read_text().count("result: malformed"):
+            report.unlink()
+
+    fixture.answer(claude_stdout="VERDICT 1 contradicted must-fix: alpha claim\nVERDICT 2 unsupported must-fix: beta claim\n"
+                                 "COUNTS supported=0 contradicted=1 unsupported=1\n",
+                   rechecks={"alpha claim": {"stdout": recheck("contradicted must-fix", "alpha claim"),
+                                             "sleep_seconds": RECHECK_SLEEP_SECONDS},
+                             "beta claim": {"stdout": recheck("unsupported fix-later", "beta claim"),
+                                            "sleep_seconds": RECHECK_SLEEP_SECONDS}})
+    result = fixture.run()
+    rechecks = fixture.claude_calls()[1:]
+    starts = sorted(call["started"] for call in rechecks)
+    # Run one after the other, the second recheck would start only after the first's sleep ended.
+    check("the rechecks run in parallel: the second starts before the first has finished",
+          len(starts) == 2 and starts[1] - starts[0] < RECHECK_SLEEP_SECONDS, starts)
+    check("each must-fix claim gets its own recheck, which names only that claim",
+          result.returncode == 5 and len(rechecks) == 2
+          and sorted(("alpha claim" in call["stdin"], "beta claim" in call["stdin"]) for call in rechecks)
+          == [(False, True), (True, False)] and newest_report()[1] == "must-fix claims remain: 1 must-fix, 1 fix-later, 0 nit",
+          (result, rechecks))
+    second = [path for path in proposed_improvements_or_changes_files(fixture) if path not in written]
+    second_text = second[0].read_text() if len(second) == 1 else ""
+    check("a fix-later claim is written even when a must-fix claim remains, to a second file of the day, and the "
+          "next action names that file",
+          len(second) == 1 and second[0].name.endswith("-2.md") and "Claim: beta claim" in second_text
+          and "the program exists" not in second_text and "alpha claim" not in second_text
+          and last_stdout_line(result).startswith(next_action_line(claim_check.NEXT_ACTION_WHEN_MUST_FIX_CLAIMS_REMAIN))
+          and str(second[0]) in last_stdout_line(result), result.stdout)
+
+    for written_file in proposed_improvements_or_changes_files(fixture):
+        written_file.unlink()
+    with_pointer = fixture.commit_overview(body=f"# Example overview\n\n{pointer_line}\n\nThe example system.\n")
+    fixture.answer(claude_stdout="VERDICT 1 unsupported fix-later: gamma claim\nVERDICT 2 contradicted nit: delta claim\n"
+                                 "COUNTS supported=0 contradicted=1 unsupported=1\n")
+    result = fixture.run()
+    written = proposed_improvements_or_changes_files(fixture)
+    check("fix-later and nit claims need no recheck; only the fix-later one is written, and with the pointer line "
+          "present the next action leaves it out",
+          result.returncode == 0 and len(fixture.claude_calls()) == 1 and len(written) == 1
+          and "gamma claim" in written[0].read_text() and "delta claim" not in written[0].read_text()
+          and last_stdout_line(result) == next_action_line(
+              claim_check.NEXT_ACTION_WHEN_NO_MUST_FIX_CLAIM_REMAINS
+              + claim_check.NEXT_ACTION_SUFFIX_WHEN_FIX_LATER_CLAIMS_WRITTEN_TO_PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE.format(path=written[0] if written else None)),
+          (with_pointer, result.stdout))
+    for written_file in written:
+        written_file.unlink()
+    main_before = fixture.git("rev-parse", "refs/remotes/origin/main")
+    fixture.write(f"{Path(OVERVIEW).parent}/{Path(OVERVIEW).stem}-proposed-improvements-or-changes-"
+                  "overview-write-claim-check-by-fresh-agent-2026-01-01.md", "# earlier\n")
+    fixture.git("update-ref", "refs/remotes/origin/main", fixture.commit("an earlier file from the claim check on main"))
+    fixture.answer(claude_stdout="VERDICT 1 unsupported fix-later: epsilon claim\n"
+                                 "COUNTS supported=0 contradicted=0 unsupported=1\n")
+    result = fixture.run()
+    written = [path for path in proposed_improvements_or_changes_files(fixture) if "2026-01-01" not in path.name]
+    check("when origin/main already holds a file from the claim check, new claims ranked fix later go to regular "
+          "maintenance, not to another follow-up pull request",
+          result.returncode == 0 and len(written) == 1
+          and "Regular maintenance fixes them in the overview." in written[0].read_text()
+          and last_stdout_line(result) == next_action_line(
+              claim_check.NEXT_ACTION_WHEN_NO_MUST_FIX_CLAIM_REMAINS
+              + claim_check.NEXT_ACTION_SUFFIX_WHEN_FOLLOW_UP_PULL_REQUEST_LEAVES_FIX_LATER_CLAIMS_TO_REGULAR_MAINTENANCE.format(
+                  path=written[0] if written else None)), (written, result.stdout))
+    check("without such a file on origin/main, the file says a follow-up pull request fixes its claims",
+          "A follow-up pull request fixes them in the overview." in entry, entry)
+    for written_file in proposed_improvements_or_changes_files(fixture):
+        written_file.unlink()
+    fixture.git("update-ref", "refs/remotes/origin/main", main_before)
+    fixture.commit_overview()
 
 
 def run_program_cases(fixture):
@@ -219,20 +442,7 @@ def run_program_cases(fixture):
     check("every claim supported ends with the next action: push",
           last_stdout_line(result) == next_action_line(claim_check.NEXT_ACTION_BY_EXIT_CODE[0]), result.stdout)
 
-    fixture.answer(claude_stdout="VERDICT 1 contradicted: the program exists\nCOUNTS supported=0 contradicted=1 unsupported=0\n")
-    result = fixture.run()
-    newest = claim_check.find_newest_architecture_overview_claim_check_report_path_and_result_for_overview_git_blob(fixture.reports, OVERVIEW, blob)
-    check("a contradicted claim exits 5, and the newest report says so",
-          result.returncode == 5 and newest[1].startswith("not all claims supported: 1 contradicted"), (result, newest))
-    check("a contradicted claim ends with the next action: correct the statements and run again",
-          last_stdout_line(result) == next_action_line(claim_check.NEXT_ACTION_WHEN_NOT_EVERY_ASSERTION_IS_SUPPORTED), result.stdout)
-
-    fixture.answer(claude_stdout=UNSUPPORTED_REPORT)
-    result = fixture.run()
-    newest = claim_check.find_newest_architecture_overview_claim_check_report_path_and_result_for_overview_git_blob(fixture.reports, OVERVIEW, blob)
-    check("an unsupported claim with none contradicted exits 5, and the newest report says so",
-          result.returncode == 5 and newest[1] == "not all claims supported: 0 contradicted, 1 unsupported, 0 supported",
-          (result, newest))
+    run_ranked_claim_cases(fixture, blob)
 
     real_run_git = claim_check.run_git
 
@@ -389,6 +599,13 @@ def run_program_cases(fixture):
           result.returncode == 0 and len(calls) == 1 and str(answers.resolve()) in calls[0]["stdin"]
           and f"writer answers: {answers.resolve()}" in claim_check.find_newest_architecture_overview_claim_check_report_path_and_result_for_overview_git_blob(
               fixture.reports, OVERVIEW, blob)[0].read_text(), result.stderr)
+    fixture.answer(claude_stdout=UNSUPPORTED_REPORT)
+    result = fixture.run("--writer-answers", str(answers))
+    calls = fixture.claude_calls()
+    check("the recheck prompt names the answers file with the wording for one assertion",
+          len(calls) == 2 and claim_check.RECHECK_WRITER_ANSWERS_TEMPLATE.format(answers=answers.resolve()) in calls[1]["stdin"]
+          and claim_check.FRESH_AGENT_WRITER_ANSWERS_TEMPLATE.format(answers=answers.resolve()) in calls[0]["stdin"],
+          calls)
 
     fixture.answer()
     result = fixture.run("--writer-answers", str(fixture.root / "missing.md"))
@@ -414,6 +631,14 @@ def run_program_cases(fixture):
     result = fixture.run("--revision", "no-such-branch")
     check("a revision that does not exist is refused with git's words",
           result.returncode == 1 and "git rev-parse" in result.stderr, result.stderr)
+    fixture.commit_overview()
+    fixture.git("update-ref", "-d", "refs/remotes/origin/main")
+    fixture.answer()
+    result = fixture.run()
+    fixture.git("update-ref", "refs/remotes/origin/main", fixture.code_commit)
+    check("a repository without origin/main is refused with the fetch command, before any fresh-agent runs",
+          result.returncode == 1 and "origin/main is missing" in result.stderr and "fetch origin" in result.stderr
+          and not fixture.claude_calls(), result.stderr)
     result = fixture.run("--no-such-flag")
     check("a malformed argument is refused with exit 1, not the program-defect exit",
           result.returncode == 1 and "--help" in result.stderr, result.stderr)

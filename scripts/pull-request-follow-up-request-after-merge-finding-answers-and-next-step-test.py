@@ -203,7 +203,8 @@ def test_help():
           completed.returncode == 0 and all(name in completed.stdout for name in
                                             ("next-step", "start-topic-branch", "open-pull-request", "record-finding-leave-out-reason",
                                              "record-finding-as-waiting-for-user-ruling", "reopen-waiting-finding-with-user-ruling",
-                                             "finish-and-print-merge-lane-2-message", "remove-topic-branches-and-worktrees")),
+                                             "finish-and-print-merge-lane-2-message", "remove-topic-branches-and-worktrees",
+                                             "print-follow-up-request-block-from-merge-lane-2-reviews")),
           completed.stdout)
     for label, arguments, words in (
             ("no subcommand", (), "required: subcommand"),
@@ -614,18 +615,17 @@ def test_open_failures():
         pushes = []
         program.git_output.run_git = push_times_out
         try:
-            with case.in_process(worktree, **{program.pre_push_conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE: "7",
-                                              program.pre_push_selective_test_run.TIME_BUDGET_ENVIRONMENT_VARIABLE: "11.5"}), \
+            with case.in_process(worktree, **{program.pre_push_conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE: "7.5"}), \
                     contextlib.redirect_stderr(io.StringIO()) as stderr:
                 code = program.main([str(NUMBER), "open-pull-request", "--handled-finding-numbers", "1"])
         finally:
             program.git_output.run_git = original_run_git
-        check("a push that times out is given the hooks' budgets from the environment plus 120 s, rounded up to whole "
+        check("a push that times out is given the conflict check's budget from the environment plus 120 s, rounded up to whole "
               "seconds, and hands the agent the sentence for the user, not a run again",
-              code == 2 and pushes == [139] and stderr.getvalue() ==
-              "FAILED: git push -u origin topic-one failed (did not finish within 139 s), so no pull request was opened.\n"
+              code == 2 and pushes == [128] and stderr.getvalue() ==
+              "FAILED: git push -u origin topic-one failed (did not finish within 128 s), so no pull request was opened.\n"
               "open-pull-request stopped there; what it did before the failure stays done.\n"
-              + fails_line("open-pull-request") + "git push -u origin topic-one failed (did not finish within 139 s), so "
+              + fails_line("open-pull-request") + "git push -u origin topic-one failed (did not finish within 128 s), so "
               "no pull request was opened." + SUBAGENT_END,
               f"{code} {pushes} {stderr.getvalue()!r}")
 
@@ -805,20 +805,15 @@ def test_open_gh_pr_create_second_try_and_gh_pr_list():
         case.close()
 
 
-def test_push_time_limit_is_the_pre_push_hooks_budgets_plus_120_seconds():
-    hooks = []
-    for file_name in ("git-client-side-hooks-pre-push-conflict-check.py",
-                      "git-client-side-hooks-pre-push-selective-test-run.py"):
-        spec = importlib.util.spec_from_file_location(
-            file_name[:-3].replace("-", "_") + "_for_test", PROGRAM.with_name(file_name))
-        hooks.append(importlib.util.module_from_spec(spec))
-        spec.loader.exec_module(hooks[-1])
-    conflict_check, selective_test_run = hooks
-    for environment in ({}, {conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE: "7",
-                             selective_test_run.TIME_BUDGET_ENVIRONMENT_VARIABLE: "11.5"}):
-        expected = math.ceil(conflict_check.time_budget_seconds(environment)
-                             + selective_test_run.time_budget_seconds(environment) + 120)
-        check(f"the push time limit is the two pre-push hooks' budgets plus 120 s, rounded up, environment {environment}",
+def test_push_time_limit_is_the_pre_push_conflict_check_budget_plus_120_seconds():
+    file_name = "git-client-side-hooks-pre-push-conflict-check.py"
+    spec = importlib.util.spec_from_file_location(
+        file_name[:-3].replace("-", "_") + "_for_test", PROGRAM.with_name(file_name))
+    conflict_check = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(conflict_check)
+    for environment in ({}, {conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE: "7.5"}):
+        expected = math.ceil(conflict_check.time_budget_seconds(environment) + 120)
+        check(f"the push time limit is the pre-push conflict check's budget plus 120 s, rounded up, environment {environment}",
               program.push_time_limit_seconds(environment) == expected
               and isinstance(program.push_time_limit_seconds(environment), int),
               f"{program.push_time_limit_seconds(environment)} != {expected}")
@@ -1341,11 +1336,99 @@ def test_waiting_for_user_ruling():
         case.close()
 
 
-for test in (test_help, test_block_parsing, test_brief_text, test_no_saved_block, test_start,
+PRINT_BLOCK = "print-follow-up-request-block-from-merge-lane-2-reviews"
+
+
+def print_block(reviews, comments, gh_failure=None, read_back=None):
+    """Run PRINT_BLOCK in process, gh answering with reviews and comments as one page each, or raising
+    gh_failure; read_back replaces the block parser. Return (exit code, stdout, stderr)."""
+    def fake_gh(arguments, timeout_seconds=None):
+        if arguments[:2] == ["pr", "view"]:
+            return TITLE + "\n"
+        if gh_failure:
+            raise gh_failure
+        page = reviews if any(argument.endswith("/reviews?per_page=100") for argument in arguments) else comments
+        return page if isinstance(page, str) else json.dumps([page])
+    saved_gh, saved_parser = program.gh, program.parse_follow_up_request_blocks_from_message_text
+    program.gh = fake_gh
+    if read_back:
+        program.parse_follow_up_request_blocks_from_message_text = read_back
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = program.main([str(NUMBER), PRINT_BLOCK])
+    finally:
+        program.gh, program.parse_follow_up_request_blocks_from_message_text = saved_gh, saved_parser
+    return code, out.getvalue(), err.getvalue()
+
+
+def merge_lane_review(review_id, state="APPROVED", body="APPROVE\n\nThe review body.", login="ned-review-merge"):
+    return {"id": review_id, "user": {"login": login}, "state": state, "body": body}
+
+
+def merge_lane_comment(comment_id, review_id, body, line=3, **extra):
+    return {"id": comment_id, "pull_request_review_id": review_id, "path": "scripts/thing.py", "line": line,
+            "body": body, "user": {"login": "ned-review-merge"}, **extra}
+
+
+def test_print_block():
+    code, out, err = print_block(
+        [merge_lane_review(1), merge_lane_review(2, login="mac-claude")],
+        [merge_lane_comment(10, 1, "**fix-next** Rename it."),
+         merge_lane_comment(11, 1, "Thanks, fixed.", in_reply_to_id=10),
+         merge_lane_comment(12, 2, "An unmarked remark of another account's review."),
+         merge_lane_comment(13, 1, "**file-for-later** File it.", line=None, original_line=9)])
+    check(f"{PRINT_BLOCK} reads only merge-lane-2's reviews, leaves out replies, and gives an outdated "
+          "comment its original line",
+          code == 0 and err == "" and out == (f"#follow_up_request pull request {NUMBER}\n"
+                                               "1. fix-next: `scripts/thing.py:3`: Rename it.\n"
+                                               "2. file-for-later: `scripts/thing.py:9`: File it.\n"), out + err)
+    code, out, err = print_block([merge_lane_review(1)], [merge_lane_comment(10, 1, "**Blocks** Fix it.")])
+    check(f"{PRINT_BLOCK} with only must-fix-now findings prints nothing and exits 0",
+          code == 0 and out == "" and err == "", out + err)
+    code, out, err = print_block([merge_lane_review(1, state="CHANGES_REQUESTED"), merge_lane_review(2, login="other")],
+                                 [merge_lane_comment(10, 1, "**fix-next** Rename it.")])
+    check(f"{PRINT_BLOCK} refuses when merge-lane-2 has no approving review, saying when to run it again",
+          code == 1 and out == "" and err == (
+              f"REFUSED: ned-review-merge, merge-lane-2's GitHub account, has no approving review of pull request "
+              f"{NUMBER}, so merge-lane-2's findings on it are not final and no #follow_up_request block was printed.\n"
+              "Once ned-review-merge's approving review is posted, run: "
+              f"python3 {program.PROGRAM} {NUMBER} {PRINT_BLOCK}\n"), err)
+    code, out, err = print_block([merge_lane_review(1)], [merge_lane_comment(10, 1, "Rename it.")])
+    check(f"{PRINT_BLOCK} refuses a merge-lane-2 comment with no mark, naming it, and says how to write the block "
+          "by hand",
+          code == 1 and out == "" and "comment on scripts/thing.py:3 of pull request 1964 does not open with a "
+                                      "category mark" in err
+          and f"the line #follow_up_request pull request {NUMBER}, then one line" in err, err)
+    code, out, err = print_block([merge_lane_review(
+        1, body="APPROVE\n\nBody.\n\nComments on lines outside this pull request's diff:\n- `a.py:4`: Unmarked.")], [])
+    check(f"{PRINT_BLOCK} refuses an unmarked comment moved into the review body",
+          code == 1 and "comment on a.py:4 of pull request 1964 does not open with a category mark" in err, err)
+    code, out, err = print_block(None, None, gh_failure=program.StepFailed("gh api exited 1: HTTP 502"))
+    check(f"{PRINT_BLOCK} reports a failed gh call as FAILED with exit 2",
+          code == 2 and out == "" and err.startswith("FAILED: gh api exited 1: HTTP 502\n"), err)
+    code, out, err = print_block("not json", [])
+    check(f"{PRINT_BLOCK} reports gh output that is not a list of pages as FAILED with exit 2",
+          code == 2 and err.startswith(f"FAILED: gh api pulls/{NUMBER}/reviews printed no list of pages: "), err)
+    code, out, err = print_block([{"id": 1}], [])
+    check(f"{PRINT_BLOCK} reports a review without its expected fields as FAILED with exit 2",
+          code == 2 and err.startswith(f"FAILED: GitHub's reviews of pull request {NUMBER} were not in the "
+                                       "expected shape: KeyError"), err)
+    code, out, err = print_block([merge_lane_review(1)], [merge_lane_comment(10, 1, "**fix-next** Rename it.")],
+                                 read_back=lambda text: [])
+    check(f"{PRINT_BLOCK} prints nothing and fails with exit 2 when its block does not read back as itself",
+          code == 2 and out == "" and "does not read back as itself" in err, err)
+    code, out, err = print_block([merge_lane_review(1)], [merge_lane_comment(10, 1, "**fix-next** Rename it.")],
+                                 read_back=lambda text: (_ for _ in ()).throw(ValueError("unreadable")))
+    check(f"{PRINT_BLOCK} fails with exit 2 when the parser refuses its block, quoting the parser",
+          code == 2 and out == "" and "it reads back as 'unreadable'" in err, err)
+
+
+for test in (test_help, test_block_parsing, test_print_block, test_brief_text, test_no_saved_block, test_start,
              test_open_refusals, test_open, test_open_pushes_the_checked_out_recorded_branch_not_the_last,
              test_open_failures, test_open_passes_on_what_a_push_that_succeeds_prints,
              test_open_gh_pr_create_second_try_and_gh_pr_list,
-             test_push_time_limit_is_the_pre_push_hooks_budgets_plus_120_seconds,
+             test_push_time_limit_is_the_pre_push_conflict_check_budget_plus_120_seconds,
              test_open_title_and_description_file_removal_failure,
              test_leave_out_and_finish, test_three_findings, test_waiting_for_user_ruling,
              test_state_failures, test_clean_up, test_clean_up_goes_on_past_each_worktree_and_branch,

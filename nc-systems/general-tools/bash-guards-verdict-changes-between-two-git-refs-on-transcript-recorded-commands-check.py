@@ -544,6 +544,13 @@ def read_handoff_deferral_cold_read_full_run_launch(guard, command, working_dire
     return ("refused", guard.COLD_READ_FULL_RUN_REFUSED_AND_SAVED_REASON) if runs_grid else ("passed", None)
 
 
+def read_git_worktree_remove_records_ship_first(guard, command, working_directory, search_file_directory):
+    # Only whether the command removes a worktree is read: running the shippers would copy real records during a replay.
+    if guard.command_runs_git_worktree_remove(command):
+        return "ships every worktree's records first", None
+    return "passed", None
+
+
 class MarkdownChangingCheckoutProbeRunner(StubbedProbeRunner):
     """Answers the Markdown push reminder's git as a checkout whose every ref changes one Markdown file.
 
@@ -611,6 +618,8 @@ GUARDS = {
     ".claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py": read_ghi_md_whole_file_replacement,
     ".claude/guard-hooks/handoff-deferral-cold-read-full-run-launch-refusal-hook.py":
         read_handoff_deferral_cold_read_full_run_launch,
+    ".claude/guard-hooks/git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py":
+        read_git_worktree_remove_records_ship_first,
 }
 SEARCH_FILE_GUARD = ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py"
 
@@ -645,12 +654,19 @@ def worker_start(checkout, new_process, search_file_directory, timeout,
     WORKER["search_file_directory"] = search_file_directory
 
 
+def rows_as_json_data(rows):
+    # A reading can hold a value of a class from a checkout's guard or shell reader, such as the reader's str
+    # subclass for a word that starts with ~. Those modules are loaded by file path, so pickle cannot name the
+    # class and a worker could not return the rows; the step writes them as JSON in any case.
+    return json.loads(json.dumps(rows))
+
+
 def worker_guard_rows(pairs):
     rows = []
     for command, working_directory in pairs:
         rows.append({key: list(value) for key, value in guard_readings(
             WORKER["guards"], command, working_directory, WORKER["search_file_directory"]).items()})
-    return rows, WORKER["switched"]
+    return rows_as_json_data(rows), WORKER["switched"]
 
 
 def search_file_main_outcome(guard, command, working_directory):
@@ -686,7 +702,7 @@ def worker_search_file_main_rows(pairs):
             # A failed reading; is_failed_reading() makes the run exit 2.
             row = list(failed_reading(error))
         rows.append(row)
-    return rows, WORKER["switched"]
+    return rows_as_json_data(rows), WORKER["switched"]
 
 
 def smoke_check(checkout, new_process, search_file_directory, timeout,

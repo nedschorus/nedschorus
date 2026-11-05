@@ -1,13 +1,14 @@
 #!/bin/sh
-# Refuses a push from a mutation-testing worktree, a push that rewrites or
-# deletes the head branch of an open pull request, a push of a branch that
-# conflicts with main or sets a file back to a version main has replaced, and a
-# push whose selective test run has a failing suite; lets every other push
-# through. The work is done by four Python files,
+# Refuses a push from a mutation-testing worktree, a push that rewrites the head
+# branch of an open pull request that is or once was ready for review, a push
+# that deletes the head branch of an open pull request, and a push of a branch that
+# conflicts with main or sets a file back to a version main has replaced; lets
+# every other push through. It runs no test suites: the author runs them before
+# pushing, and merge-lane-2 runs them at the pull request's head. The work is
+# done by three Python files,
 # scripts/git-client-side-hooks-pre-push-mutation-testing-worktree-push-refusal.py,
-# scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py,
-# scripts/git-client-side-hooks-pre-push-conflict-check.py and
-# scripts/git-client-side-hooks-pre-push-selective-test-run.py, whose docstrings
+# scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py and
+# scripts/git-client-side-hooks-pre-push-conflict-check.py, whose docstrings
 # have the reasons and what is and is not checked. This file only guards the way
 # into them.
 #
@@ -29,8 +30,8 @@
 #
 # The pushed refs are read once, into a variable, so the messages below can
 # name each branch the conflict check would have checked, and so a push with
-# no such branch (main, a tag, a deletion, another remote) runs neither the
-# conflict check nor the selective test run. Such a push still runs the open
+# no such branch (main, a tag, a deletion, another remote) does not run the
+# conflict check. Such a push still runs the open
 # pull request check, which asks GitHub about a forced update or a deletion of
 # a branch on origin.
 # The filter matches branches_to_check in the Python file; the pre-push nc-test-suite
@@ -41,9 +42,7 @@ conflict_check="$hook_directory/../git-client-side-hooks-pre-push-conflict-check
 # Resolved, so a message names the file by a path a reader can open.
 scripts_directory=$(cd "$hook_directory/.." 2>/dev/null && pwd -P) || scripts_directory="$hook_directory/.."
 mutation_testing_worktree_check="$scripts_directory/git-client-side-hooks-pre-push-mutation-testing-worktree-push-refusal.py"
-selective_test_run="$scripts_directory/git-client-side-hooks-pre-push-selective-test-run.py"
 open_pull_request_branch_check="$scripts_directory/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py"
-selective_test_run_hand_command="python3 scripts/run-all-test-suites.py --only-suites-whose-recorded-inputs-changed-since origin/main --wait-for-lock-seconds 600"
 refuse_push_status=10
 checked_remote=origin
 tell_user_line="Tell the user this whole message, including any error printed just above it: the next push on this machine may go unchecked the same way."
@@ -133,7 +132,7 @@ say_no_branch_checked() {
     printf '%s' "$unchecked_lines" >&2
     echo "Nor was any of them checked for files set back to a version that origin/main has replaced, because that check runs only on a branch the conflict check finds clean." >&2
     printf '%s' "$revert_lines" >&2
-    echo "pre-push: neither the conflict check nor the revert check refuses this push, so it goes on to the selective test run, which can still refuse it." >&2
+    echo "pre-push: this push goes through without a clean verdict for $branch_list: scripts/branch-conflict-check.py or scripts/branch-reverts-a-file-to-an-older-main-version-check.py gave no verdict there, as the lines above say." >&2
     echo "$tell_user_line" >&2
 }
 
@@ -148,28 +147,5 @@ if [ -f "$conflict_check" ]; then
     fi
 else
     say_no_branch_checked "the pre-push conflict check did not run, because $conflict_check is missing"
-fi
-
-say_selective_test_run_not_run() {
-    echo "pre-push: $1, so this push goes ahead without the selective test run: $branch_list." >&2
-    echo "Run it by hand from your worktree: $selective_test_run_hand_command" >&2
-    echo "If a suite fails, fix it, commit the fix and push again." >&2
-    echo "$tell_user_line" >&2
-}
-
-if [ ! -f "$selective_test_run" ]; then
-    say_selective_test_run_not_run "the selective test run did not start, because $selective_test_run is missing"
-    exit 0
-fi
-
-# The branch filter above has already chosen this push, so the check needs neither git's
-# arguments nor the pushed refs.
-python3 "$selective_test_run" </dev/null
-selective_test_run_status=$?
-if [ "$selective_test_run_status" -eq "$refuse_push_status" ]; then
-    exit 1
-fi
-if [ "$selective_test_run_status" -ne 0 ]; then
-    say_selective_test_run_not_run "the selective test run check, $selective_test_run, exited with status $selective_test_run_status"
 fi
 exit 0

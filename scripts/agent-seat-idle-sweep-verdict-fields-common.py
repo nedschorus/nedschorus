@@ -2,10 +2,11 @@
 """The fields of one idle-sweep verdict, the JSON object scripts/agent-seat-idle-sweep-verdicts-print.py
 prints for each agent-seat, and the values its rule, decision and sentences may take.
 
-Not a program to run. The printing program builds its verdicts from these names, its test checks
-every verdict it prints with verdict_field_problems(), and the program that judges and sends reads
-verdicts by these names, so a field renamed in one place and not the other fails a test instead of
-being read as missing.
+Not a program to run. The printing program takes four field names from here, rule, decision,
+text and if_every_sentence_backed, and every value it prints for decision, kind and code_reading;
+it writes the other field names as literals. Its test checks every verdict it prints with
+verdict_field_problems(), and the program that judges and sends reads verdicts by these names, so
+a field renamed in one place and not the other fails a test instead of being read as missing.
 """
 
 AGENT_SEAT = "agent_seat"

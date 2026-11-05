@@ -397,14 +397,11 @@ def _load_sibling_script(module_name, file_name):
     return module
 
 
-# The pre-push hook runs these two before git sends anything, so a push must
-# be given at least their time; see push_time_limit_seconds.
+# The pre-push hook runs this before git sends anything, so a push must be
+# given at least its time; see push_time_limit_seconds.
 pre_push_conflict_check = _load_sibling_script(
     "git_client_side_hooks_pre_push_conflict_check",
     "git-client-side-hooks-pre-push-conflict-check.py")
-pre_push_selective_test_run = _load_sibling_script(
-    "git_client_side_hooks_pre_push_selective_test_run",
-    "git-client-side-hooks-pre-push-selective-test-run.py")
 
 DEFAULT_REPO = "nedschorus/nedschorus"
 GHI_MD_DIRECTORY = "docs/issues"
@@ -421,9 +418,8 @@ RECONSIDERED_MARKER_NAME = ".ghi-issue-write-reconsidered"
 GH_NO_SUCH_ISSUE_STDERR_FRAGMENT = "could not resolve to an issue"
 SLUG_WORD_LIMIT = 8
 GH_TIMEOUT_SECONDS = 120
-# Beyond the pre-push hook's own limit: the hook's mutation-testing-worktree
-# check, the selective run's search for leftover processes after its budget,
-# and git sending the branch.
+# Beyond the pre-push conflict check's own limit: the hook's other checks and
+# git sending the branch.
 PUSH_TIME_MARGIN_SECONDS = 120
 ADJUDICATION_TIMEOUT_SECONDS = 420
 # scripts/ghi-guide-agent-ask.py's EXIT_NOT_ABOUT_ISSUES and EXIT_RULING_QUESTION:
@@ -630,15 +626,12 @@ def remove_landing_worktree(worktree: Path, worktree_parent: Path,
 
 
 def push_time_limit_seconds(environment):
-    """How long a push may take: the pre-push hook's conflict check and
-    selective test run, each with its budget as the hook reads it from the
-    same environment and its grace period counted twice, since each one's
-    stop_process_group waits it after SIGTERM and again after SIGKILL, and a
-    margin that also covers the selective run's listing of descendants."""
+    """How long a push may take: the pre-push hook's conflict check, with
+    its budget as the hook reads it from the same environment and its grace
+    period counted twice, since its stop_process_group waits it after SIGTERM
+    and again after SIGKILL, and a margin."""
     return (pre_push_conflict_check.time_budget_seconds(environment)
             + 2 * pre_push_conflict_check.TERMINATE_GRACE_SECONDS
-            + pre_push_selective_test_run.time_budget_seconds(environment)
-            + 2 * pre_push_selective_test_run.TERMINATE_GRACE_SECONDS
             + PUSH_TIME_MARGIN_SECONDS)
 
 

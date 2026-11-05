@@ -182,11 +182,11 @@ def run_counter_cases(workspace: Path):
     check("no previous handoff starts the counter at 1",
           writer.next_restart_counter(handoff_path, state_path) == 1)
 
-    handoff_path.write_text("restart-counter: 4\n", encoding="utf-8")
+    handoff_path.write_text("session-handoff-sequence-number: 4\n", encoding="utf-8")
     check("an existing counter increments",
           writer.next_restart_counter(handoff_path, state_path) == 5)
 
-    handoff_path.write_text("restart-counter: not a number\n", encoding="utf-8")
+    handoff_path.write_text("session-handoff-sequence-number: not a number\n", encoding="utf-8")
     check("an unreadable counter still starts at 1 when nothing was consumed",
           writer.next_restart_counter(handoff_path, state_path) == 1)
 
@@ -197,13 +197,53 @@ def run_counter_cases(workspace: Path):
     check("an unreadable counter clears the consumed value",
           writer.next_restart_counter(handoff_path, state_path) == 10)
 
-    handoff_path.write_text("restart-counter: 2\n", encoding="utf-8")
+    handoff_path.write_text("session-handoff-sequence-number: 2\n", encoding="utf-8")
     check("a stale handoff file cannot write a counter the supervisor would ignore",
           writer.next_restart_counter(handoff_path, state_path) == 10)
 
     state_path.write_text("{ not json", encoding="utf-8")
     check("unreadable supervisor state falls back to the handoff file",
           writer.next_restart_counter(handoff_path, state_path) == 3)
+
+
+def run_session_handoff_round_trip_cases(workspace: Path):
+    """Every field the writer writes comes back from the supervisor's parser under the shared name."""
+    names = writer.field_names
+    handoff_path = workspace / "round-trip-handoff.md"
+    writer.write_handoff_file(
+        handoff_path, "carry on", 12, True, workspace,
+        spawned_subagent_lines=[f"{names.SPAWNED_SUBAGENT_FIELD_PREFIX}1: a123 (still working)"],
+        verbatim_lines=["first line", "second line"])
+    fields = writer.supervisor.parse_handoff_file(handoff_path)
+    check("round trip: the next step comes back", fields.get(names.NEXT_STEP_FIELD) == "carry on", str(fields))
+    check("round trip: the session-handoff-sequence-number comes back as the number written",
+          writer.supervisor.counter_from(fields) == 12
+          and fields.get(names.SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD) == "12", str(fields))
+    check("round trip: the number is also written under the retired restart-counter name",
+          fields.get(names.LEGACY_RESTART_COUNTER_FIELD) == "12", str(fields))
+    # The counter_from of handoff-supervisors started before the rename, which they keep running until their next handoff.
+    def pre_rename_counter_from(fields: dict):
+        raw = fields.get("restart-counter")
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+    check("a handoff-supervisor running pre-rename code reads the new writer's session-handoff",
+          pre_rename_counter_from(fields) == 12, str(fields))
+    check("round trip: written-at, written-in and written-by-session come back",
+          all(fields.get(name) for name in (names.WRITTEN_AT_FIELD, names.WRITTEN_IN_FIELD,
+                                            names.WRITTEN_BY_SESSION_FIELD)), str(fields))
+    check("round trip: dont-restart comes back when asked", bool(fields.get(names.DONT_RESTART_FIELD)), str(fields))
+    check("round trip: a spawned-subagent line comes back",
+          fields.get(f"{names.SPAWNED_SUBAGENT_FIELD_PREFIX}1") == "a123 (still working)", str(fields))
+    check("round trip: the verbatim next step comes back with its line break",
+          fields.get(names.NEXT_STEP_VERBATIM_FIELD) == "first line\nsecond line", str(fields))
+    check("round trip: the parser shares the writer's field names",
+          writer.supervisor.session_handoff_field_names.SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD
+          == names.SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD
+          and writer.supervisor.NEXT_STEP_VERBATIM_FIELD == names.NEXT_STEP_VERBATIM_FIELD)
 
 
 def run_invocation_cases(workspace: Path):
@@ -215,11 +255,11 @@ def run_invocation_cases(workspace: Path):
     check("the writer accepts a well-formed invocation", result.returncode != 2, result.stderr)
     fields = writer.supervisor.parse_handoff_file(handoff_path)
     check("the written file parses as the supervisor reads it", set(fields) >= {
-        "written-at", "next-step", "restart-counter"}, str(fields))
+        "written-at", "next-step", "session-handoff-sequence-number"}, str(fields))
     check("the next step survives its newline",
           fields["next-step"] == "Read the design doc, then continue. Second line here.",
           fields["next-step"])
-    check("the counter starts at 1", fields["restart-counter"] == "1", fields["restart-counter"])
+    check("the counter starts at 1", fields["session-handoff-sequence-number"] == "1", fields["session-handoff-sequence-number"])
     check("the timestamp is UTC ISO 8601",
           fields["written-at"].endswith("Z") and fields["written-at"][4] == "-",
           fields["written-at"])
@@ -227,7 +267,7 @@ def run_invocation_cases(workspace: Path):
 
     result = run_writer(workspace, "Continue from the trial.")
     fields = writer.supervisor.parse_handoff_file(handoff_path)
-    check("a second write increments the counter", fields["restart-counter"] == "2", result.stdout)
+    check("a second write increments the counter", fields["session-handoff-sequence-number"] == "2", result.stdout)
 
     result = run_writer(workspace, "Stop and ask first.", "--dont-restart")
     fields = writer.supervisor.parse_handoff_file(handoff_path)
@@ -1222,8 +1262,8 @@ def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Pat
     parent_handoff = child_route_handoffs / f"{parent_name}-handoff.md"
     parent_fields = (writer.supervisor.parse_handoff_file(parent_handoff)
                      if parent_handoff.is_file() else {})
-    check("the parent seat's own handoff is on disk at restart-counter 1, written in from its seat",
-          parent_fields.get("restart-counter") == "1"
+    check("the parent seat's own handoff is on disk at session-handoff-sequence-number 1, written in from its seat",
+          parent_fields.get("session-handoff-sequence-number") == "1"
           and parent_fields.get("written-in") == str(parent), str(parent_fields))
     writer.supervisor.write_supervisor_state(
         child_route_handoffs / f"{parent_name}-supervisor-state.json",
@@ -1241,7 +1281,7 @@ def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Pat
     check("and records its own directory as written-in, not the parent's",
           child_fields.get("written-in") == str(child), str(child_fields))
     after_bytes = parent_handoff.read_bytes() if parent_handoff.is_file() else b""
-    check("and the parent's handoff is byte-for-byte unchanged, restart-counter included",
+    check("and the parent's handoff is byte-for-byte unchanged, session-handoff-sequence-number included",
           parent_bytes != b"" and after_bytes == parent_bytes,
           after_bytes.decode("utf-8", errors="replace"))
 
@@ -1541,7 +1581,7 @@ def run_completed_task_prune_cases(workspace: Path):
     fixture = PruneFixture(workspace, "refused")
     fixture.task("1.json", task_bytes(1, "completed"))
     (fixture.handoffs / "prunecase-handoff.md").write_text(
-        "written-at: 2000-01-01T00:00:00Z\nnext-step: another seat's work\nrestart-counter: 1\n"
+        "written-at: 2000-01-01T00:00:00Z\nnext-step: another seat's work\nsession-handoff-sequence-number: 1\n"
         f"written-in: {fixture.root / 'another-seat'}\n", encoding="utf-8")
     refused = fixture.run()
     check("a refused handoff prunes nothing",
@@ -1927,6 +1967,7 @@ with tempfile.TemporaryDirectory() as temporary_directory_name:
     run_written_by_session_field_cases(temporary_directory)
     run_multi_line_next_step_cases(temporary_directory)
     run_counter_cases(temporary_directory)
+    run_session_handoff_round_trip_cases(temporary_directory)
     run_invocation_cases(temporary_directory)
     run_liveness_report_cases(temporary_directory)
     run_console_identity_case(temporary_directory)

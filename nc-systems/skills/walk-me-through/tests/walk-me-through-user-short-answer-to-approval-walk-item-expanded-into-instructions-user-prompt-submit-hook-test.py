@@ -9,6 +9,7 @@ scratch checkout this suite made. The exit code is asserted on every case.
 
 import importlib.util
 import json
+import re
 import shlex
 import shutil
 import subprocess
@@ -485,6 +486,18 @@ def test_an_item_without_a_recommendation_line_is_reported_for_a_ao_and_d():
         check(f"{prompt!r} on an item with no recommendation is not reported",
               lines is not None and not any(line.startswith("The hook could not read") for line in lines),
               f"lines {lines!r}")
+
+
+def test_an_item_whose_heading_m_differs_from_the_minutes_has_its_recommendation_read():
+    document = WALK_DOCUMENT.replace("## Items 5 and 6 of 9", "## a case the walk missed\n\nRecommendation: add the "
+                                     "filter after all.\n\n## Items 5 and 6 of 9")
+    lines = Case(next_to_present="item 4 of 7", document=document).lines("a")
+    check("A on an item whose heading says `of 9` under minutes that say `of 7` reads its recommendation, which the "
+          "unnumbered item after it does not extend",
+          lines is not None and "A means approve: the user agrees with the recommendation of item 4 of 7 (leave the "
+                                "filter out). Do what the recommendation says." in lines
+          and not any(line.startswith("The hook could not read") for line in lines)
+          and not any("add the filter after all" in line for line in lines), f"lines {lines!r}")
 
 
 def test_an_empty_recommendation_line_is_no_recommendation():
@@ -1523,6 +1536,19 @@ def test_unreadable_minutes_still_expand_and_say_so():
           and "If an approval-walk is open:" in lines and "If no approval-walk is open:" in lines
           and any(line.startswith("D means disapprove: the user disagrees with your last") for line in lines),
           f"lines {lines!r}")
+
+
+def test_two_unclosed_approval_walks_are_reported_naming_both():
+    case = Case(next_to_present="item 3 of 9")
+    second = case.minutes("#next_to_present item 5 of 9\n#approval_walk_paused stop order", name="a-second-walk")
+    lines = case.lines("a")
+    check("with two unclosed approval-walks the hook takes neither and names both walk-minutes files",
+          lines is not None
+          and lines[0].startswith("The user answered \"a\"; the hook could not tell whether an approval-walk "
+                                  "is open, because reading the approval-walk state failed: "
+                                  "MoreThanOneUnclosedApprovalWalk")
+          and re.search(rf"/docs/walk/{second.name}, (<minutes>|\S*/docs/walk/{WALK_NAME}-minutes\.md)'\)", lines[0])
+          and "If an approval-walk is open:" in lines, f"lines {lines!r}")
 
 
 def test_missing_walk_document_is_reported_for_a():

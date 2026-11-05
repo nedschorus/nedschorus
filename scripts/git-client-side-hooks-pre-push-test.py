@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Tests for scripts/git-client-side-hooks/pre-push, the hook that refuses to
-push a branch that conflicts with main, or whose selective test run has a
-failing suite, or a push that rewrites or deletes the head branch of an open
-pull request, and for the Python files it runs,
-scripts/git-client-side-hooks-pre-push-conflict-check.py,
-scripts/git-client-side-hooks-pre-push-selective-test-run.py and
+push a branch that conflicts with main, or a push that rewrites or deletes the
+head branch of an open pull request, and runs no test suites, and for the
+Python files it runs,
+scripts/git-client-side-hooks-pre-push-conflict-check.py and
 scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py.
 
 Run: python3 scripts/git-client-side-hooks-pre-push-test.py
@@ -18,10 +17,9 @@ the temporary directory:
     <layout>/scripts/git-client-side-hooks-pre-push-conflict-check.py
     <layout>/scripts/branch-conflict-check.py
     <layout>/scripts/branch-reverts-a-file-to-an-older-main-version-check.py
-    <layout>/scripts/git-client-side-hooks-pre-push-selective-test-run.py
     <layout>/scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py
-    <layout>/scripts/run-all-test-suites.py, always a fake that passes
-    unless a case gives another fake; the real one is never run by a push here
+    <layout>/scripts/run-all-test-suites.py, a fake that fails and logs each
+    start, so a case can show the hook never starts it
     <layout>/nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py
 So each case runs exactly what git runs on a seat's push. A case that needs
 the conflict check to misbehave puts a fake check at the check's path, and
@@ -62,7 +60,6 @@ MUTATION_TESTING_WORKTREE_CHECK = (SCRIPTS_DIRECTORY / "git-client-side-hooks-pr
                                    "testing-worktree-push-refusal.py")
 REAL_CONFLICT_CHECK = SCRIPTS_DIRECTORY / "branch-conflict-check.py"
 REAL_REVERT_CHECK = SCRIPTS_DIRECTORY / "branch-reverts-a-file-to-an-older-main-version-check.py"
-SELECTIVE_TEST_RUN_CHECK = SCRIPTS_DIRECTORY / "git-client-side-hooks-pre-push-selective-test-run.py"
 OPEN_PULL_REQUEST_BRANCH_CHECK = (SCRIPTS_DIRECTORY / "git-client-side-hooks-pre-push-open-pull-"
                                   "request-branch-non-fast-forward-or-deletion-refusal.py")
 REAL_TEST_SUITES_RUNNER = SCRIPTS_DIRECTORY / "run-all-test-suites.py"
@@ -76,7 +73,6 @@ FAKE_GH_OPEN_PULL_REQUESTS_VARIABLE = "PRE_PUSH_TEST_FAKE_GH_OPEN_PULL_REQUESTS"
 FAKE_GH_FAILURE_VARIABLE = "PRE_PUSH_TEST_FAKE_GH_FAILURE"
 FAKE_GH_LOG_VARIABLE = "PRE_PUSH_TEST_FAKE_GH_LOG"
 ESCAPE_HATCH_VARIABLE = "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE"
-SELECTIVE_TEST_RUN_BUDGET_VARIABLE = "NEDSCHORUS_PRE_PUSH_SELECTIVE_TEST_RUN_SECONDS"
 SESSION_VARIABLE = "CLAUDE_CODE_BRIDGE_SESSION_ID"
 LOCAL_SESSION_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 FAKE_SESSION = "session_0FakePrePushTestSessionAAAA"
@@ -104,8 +100,10 @@ RERUN_VERDICT_LINE = ("If the hand conflict check also prints no VERDICT line, t
                       "this whole message and what that check printed.")
 NO_BRANCH_CHECKED = ("so none of this push's branches was checked for conflicts with "
                      "origin/main: %s.")
-PUSH_GOES_ON_LINE = ("pre-push: neither the conflict check nor the revert check refuses this "
-                     "push, so it goes on to the selective test run, which can still refuse it.")
+PUSH_GOES_ON_START = "pre-push: this push goes through without a clean verdict"
+PUSH_GOES_ON_LINE = (PUSH_GOES_ON_START + " for %s: scripts/branch-conflict-check.py or "
+                     "scripts/branch-reverts-a-file-to-an-older-main-version-check.py gave no "
+                     "verdict there, as the lines above say.")
 SHORT_COMMIT_LENGTH = 12
 
 
@@ -165,6 +163,11 @@ sys.exit(1)
 FAKE_CHECK_NO_VERDICT_FOR_CLEAN_CONFLICT_OTHERWISE = (
     FAKE_CHECK_NO_ANSWER_FOR_CLEAN_CONFLICT_OTHERWISE.replace("sys.exit(2)", "sys.exit(7)"))
 
+FAKE_CHECK_NO_VERDICT_FOR_CLEAN_CLEAN_OTHERWISE = (
+    FAKE_CHECK_NO_VERDICT_FOR_CLEAN_CONFLICT_OTHERWISE.replace(
+        'print("VERDICT: CONFLICT -- fake conflict for the test.")\nsys.exit(1)',
+        'print("VERDICT: CLEAN -- fake clean verdict for the test.")\nsys.exit(0)'))
+
 FAKE_CHECK_CRASHES = FAKE_CHECK_PREAMBLE + """\
 raise RuntimeError("fake crash inside the conflict check")
 """
@@ -221,158 +224,27 @@ time.sleep(FAKE_HANG_SECONDS)
 """
 
 
-# --- Fake run-all-test-suites.py files -------------------------------------
-# Each is written to <layout>/scripts/run-all-test-suites.py. Each first
-# appends its arguments, as one JSON list, to the file
-# FAKE_TEST_SUITES_RUNNER_LOG_VARIABLE names, so a case can tell whether the
-# selective test run started, and with which arguments.
-
 BRANCH_NOT_CHECKED_END = "."
 # What git itself writes on stderr for a push: the remote's name, one line per ref, and a
 # line when a hook refused the push.
 GIT_PUSH_REMOTE_LINE_START = "To "
 GIT_PUSH_FAILED_LINE_START = "error: failed to push some refs to "
 GIT_PUSH_REF_LINE = re.compile(r"^ [ +\-*!=] ")
-SELECTIVE_TEST_RUN_STARTING = "pre-push: starting the selective test run on "
-SELECTIVE_TEST_RUN_PASSED = "pre-push: the selective test run passed. "
-SELECTIVE_TEST_RUN_REFUSED = ("pre-push: an nc-test-suite failed in the selective test run, so this "
-                              "push is refused. ")
-SELECTIVE_TEST_RUN_NOT_RUN_END = ", so this push goes ahead without the selective test run"
-SELECTIVE_TEST_RUN_HAND_RUN_LINE = (
-    "Run it by hand from your worktree: python3 scripts/run-all-test-suites.py "
-    "--only-suites-whose-recorded-inputs-changed-since origin/main --wait-for-lock-seconds 600")
-FAKE_LOG_DIRECTORY = "/fake/run-all-test-suites-logs"
-FAKE_FAILING_SUITE_LINE = "FAIL scripts/fake-failing-test.py exit 1 — log /fake/fake-failing-test.log"
-FAKE_FAILED_SUMMARY = "SUMMARY: 2 passed, 1 failed, 3 total; 0 cases skipped in 0 suites"
-FAKE_PASSED_SUMMARY = "SUMMARY: 3 passed, 0 failed, 3 total; 0 cases skipped in 0 suites"
-# The real runner's refusal when told to wait 0 seconds for a held lock: the
-# holder on the first line, then advice to the runner's own caller.
-FAKE_LOCK_HOLDER_LINE = ("run-all-test-suites: not run — another run holds /fake/lock: "
-                         "process 4242, checkout /fake/other.")
-FAKE_LOCK_ADVICE_LINE = ("To wait for the lock, run this again with --wait-for-lock-seconds 600, "
-                         "instead of retrying in a loop.")
 
-FAKE_TEST_SUITES_RUNNER_PREAMBLE = """\
+# --- Fake run-all-test-suites.py -------------------------------------------
+# Written to <layout>/scripts/run-all-test-suites.py. It appends its arguments,
+# as one JSON list, to the file FAKE_TEST_SUITES_RUNNER_LOG_VARIABLE names, and
+# fails, so a push that started it would be logged, and refused were the hook
+# to read its status.
+FAKE_TEST_SUITES_RUNNER_FAILS = """\
 import json, os, sys
-FAKE_HANG_SECONDS = %d
 _log = os.environ.get("%s")
 if _log:
     with open(_log, "a") as _handle:
         _handle.write(json.dumps(sys.argv[1:]) + "\\n")
-print("run-all-test-suites: /fake at abc (clean); 9 suites listed by git; -j 4; logs in %s",
-      flush=True)
-""" % (FAKE_HANG_SECONDS, FAKE_TEST_SUITES_RUNNER_LOG_VARIABLE, FAKE_LOG_DIRECTORY)
-
-FAKE_TEST_SUITES_RUNNER_PASSES = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
-print("PASS scripts/a-test.py (0.1s)")
-print(%r)
-""" % FAKE_PASSED_SUMMARY
-
-FAKE_TEST_SUITES_RUNNER_FAILS = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
 print("FAIL scripts/fake-failing-test.py exit 1 (0.1s)")
-print("")
-print("1 failed:")
-print(%r)
-print(%r)
 sys.exit(1)
-""" % (FAKE_FAILING_SUITE_LINE, FAKE_FAILED_SUMMARY)
-
-# A suite whose nc-test-sandbox did not start, as the real runner reports one: a line as it
-# finishes, and a line with its log at the end.
-FAKE_NOT_RUN_SUITE_PROGRESS_LINE = ("NOT RUN scripts/fake-not-run-test.py did not start: bwrap "
-                                    "could not build its nc-test-sandbox (exit 1) (0.1s)")
-FAKE_NOT_RUN_SUITE_LINE = ("NOT RUN scripts/fake-not-run-test.py did not start: bwrap could not "
-                           "build its nc-test-sandbox (exit 1) — log /fake/fake-not-run-test.log")
-FAKE_NOT_RUN_SUMMARY = "SUMMARY: 2 passed, 0 failed, 1 not run, 3 total; 0 cases skipped in 0 suites"
-FAKE_FAILED_AND_NOT_RUN_SUMMARY = ("SUMMARY: 1 passed, 1 failed, 1 not run, 3 total; 0 cases "
-                                   "skipped in 0 suites")
-FAKE_NOT_RUN_SECTION = """\
-print(%r)
-print("")
-print("1 not run, because bwrap could not build the nc-test-sandbox; each log says why and what to do:")
-print(%r)
-""" % (FAKE_NOT_RUN_SUITE_PROGRESS_LINE, FAKE_NOT_RUN_SUITE_LINE)
-
-FAKE_TEST_SUITES_RUNNER_SUITE_NOT_RUN = FAKE_TEST_SUITES_RUNNER_PREAMBLE + FAKE_NOT_RUN_SECTION + """\
-print(%r)
-sys.exit(2)
-""" % FAKE_NOT_RUN_SUMMARY
-
-FAKE_TEST_SUITES_RUNNER_FAILS_AND_SUITE_NOT_RUN = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
-print("FAIL scripts/fake-failing-test.py exit 1 (0.1s)")
-print("")
-print("1 failed:")
-print(%r)
-""" % FAKE_FAILING_SUITE_LINE + FAKE_NOT_RUN_SECTION + """\
-print(%r)
-sys.exit(1)
-""" % FAKE_FAILED_AND_NOT_RUN_SUMMARY
-
-FAKE_TEST_SUITES_RUNNER_LOCKED = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
-print(%r, file=sys.stderr)
-print(%r, file=sys.stderr)
-sys.exit(3)
-""" % (FAKE_LOCK_HOLDER_LINE, FAKE_LOCK_ADVICE_LINE)
-
-FAKE_TEST_SUITES_RUNNER_CANNOT_START = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
-print("run-all-test-suites: not run — /fake is not a checkout's top directory", file=sys.stderr)
-sys.exit(2)
-"""
-
-FAKE_TEST_SUITES_RUNNER_KILLED = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
-import signal
-os.kill(os.getpid(), signal.SIGKILL)
-"""
-
-FAKE_OVERRUN_STDERR_LINE = "run-all-test-suites: scripts/slow-test.py is still running"
-
-# The shape a real overrun takes: the suites the run started keep running, so
-# stopping the run alone would leave them. One child stays in the run's process
-# group; the other starts its own session, as scripts/run-codex-task-from-brief-test.py's
-# children do, so stopping the group alone would miss it. Each child's pid is
-# written beside the log, so the case can see that both were stopped.
-FAKE_TEST_SUITES_RUNNER_HANGS_WITH_CHILD = FAKE_TEST_SUITES_RUNNER_PREAMBLE + (
-    "print(%r, file=sys.stderr, flush=True)\n" % FAKE_OVERRUN_STDERR_LINE) + """\
-import subprocess, time
-_sleeper = [sys.executable, "-c", "import time; time.sleep(%d)" % FAKE_HANG_SECONDS]
-_child = subprocess.Popen(_sleeper)
-_detached = subprocess.Popen(_sleeper, start_new_session=True, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL)
-with open(_log + ".child-pid", "w") as _handle:
-    _handle.write(str(_child.pid))
-with open(_log + ".detached-child-pid", "w") as _handle:
-    _handle.write(str(_detached.pid))
-time.sleep(FAKE_HANG_SECONDS)
-"""
-
-# An uncaught exception after the run has started: Python exits 1, as a failed
-# suite does, but the run prints no SUMMARY line.
-FAKE_RUNNER_CRASH_ERROR = "OSError: [Errno 28] No space left on device: '/fake/logs'"
-FAKE_TEST_SUITES_RUNNER_CRASHES = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
-raise OSError(28, "No space left on device", "/fake/logs")
-"""
-
-# The real runner writes its report and run record after printing SUMMARY, so
-# a write that fails there exits 1 after a SUMMARY that counts no failure.
-FAKE_TEST_SUITES_RUNNER_CRASHES_AFTER_SUMMARY = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
-print(%r, flush=True)
-raise OSError(28, "No space left on device", "/fake/logs")
-""" % FAKE_PASSED_SUMMARY
-
-# The real runner's refusal when the signal sandbox cannot start: the cause is
-# on the first line, and the lines after it advise the runner's own caller.
-FAKE_SANDBOX_REFUSAL_FIRST_LINE = ("run-all-test-suites: not run — the signal sandbox could not "
-                                   "start: bwrap missing from PATH")
-FAKE_SANDBOX_REFUSAL_LAST_LINE = ("On macOS, report the reason above to the user: the suites need "
-                                  "sandbox-exec to refuse their signals to processes outside the "
-                                  "sandbox.")
-FAKE_TEST_SUITES_RUNNER_SANDBOX_CANNOT_START = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
-print(%r, file=sys.stderr)
-print("Each suite runs inside the signal sandbox (bwrap on Linux, sandbox-exec on macOS).",
-      file=sys.stderr)
-print(%r, file=sys.stderr)
-sys.exit(2)
-""" % (FAKE_SANDBOX_REFUSAL_FIRST_LINE, FAKE_SANDBOX_REFUSAL_LAST_LINE)
+""" % FAKE_TEST_SUITES_RUNNER_LOG_VARIABLE
 
 
 # --- Fake gh ---------------------------------------------------------------
@@ -402,17 +274,14 @@ FAKE_GH_LOGGED_OUT = "To get started with GitHub CLI, please run:  gh auth login
 def make_layout(parent, name, conflict_check=REAL_CONFLICT_CHECK,
                 runner_text=None, include_runner=True, mutation_testing_worktree_check_text=None,
                 include_mutation_testing_worktree_check=True,
-                test_suites_runner_text=None, include_test_suites_runner=True,
-                selective_test_run_check_text=None, include_selective_test_run_check=True,
+                include_test_suites_runner=True,
                 open_pull_request_branch_check_text=None,
                 include_open_pull_request_branch_check=True, revert_check=REAL_REVERT_CHECK):
     """A copy of this checkout's hooks, laid out as the hook expects.
 
     conflict_check is a Path to copy, a string of fake check source, or None
     for no check at all. runner_text replaces the Python file the hook runs
-    for the conflict check. test_suites_runner_text replaces the fake
-    run-all-test-suites.py that passes, and selective_test_run_check_text the
-    selective test run check, and open_pull_request_branch_check_text the check
+    for the conflict check, and open_pull_request_branch_check_text the check
     for rewrites and deletions of open pull requests' head branches. revert_check,
     like conflict_check, is a Path to copy, fake source, or None for no file.
     Returns the hooks directory, for core.hooksPath.
@@ -432,20 +301,13 @@ def make_layout(parent, name, conflict_check=REAL_CONFLICT_CHECK,
         mutation_testing_worktree_check.write_text(mutation_testing_worktree_check_text)
     elif include_mutation_testing_worktree_check:
         shutil.copy2(MUTATION_TESTING_WORKTREE_CHECK, mutation_testing_worktree_check)
-    selective_test_run_check = scripts / SELECTIVE_TEST_RUN_CHECK.name
-    if selective_test_run_check_text is not None:
-        selective_test_run_check.write_text(selective_test_run_check_text)
-    elif include_selective_test_run_check:
-        shutil.copy2(SELECTIVE_TEST_RUN_CHECK, selective_test_run_check)
     open_pull_request_branch_check = scripts / OPEN_PULL_REQUEST_BRANCH_CHECK.name
     if open_pull_request_branch_check_text is not None:
         open_pull_request_branch_check.write_text(open_pull_request_branch_check_text)
     elif include_open_pull_request_branch_check:
         shutil.copy2(OPEN_PULL_REQUEST_BRANCH_CHECK, open_pull_request_branch_check)
     if include_test_suites_runner:
-        (scripts / REAL_TEST_SUITES_RUNNER.name).write_text(
-            test_suites_runner_text if test_suites_runner_text is not None
-            else FAKE_TEST_SUITES_RUNNER_PASSES)
+        (scripts / REAL_TEST_SUITES_RUNNER.name).write_text(FAKE_TEST_SUITES_RUNNER_FAILS)
     if isinstance(conflict_check, Path):
         shutil.copy2(conflict_check, scripts / REAL_CONFLICT_CHECK.name)
         module = parent / name / GIT_OUTPUT_MODULE_RELATIVE_PATH
@@ -659,11 +521,9 @@ def git_push_output_line(line):
 
 
 def conflict_check_said_nothing(stderr):
-    """True when every stderr line is the selective test run's own start or pass line or git's
-    own push output, so a line the conflict or revert check adds fails it, whatever it starts
-    with."""
-    return all(line.startswith((SELECTIVE_TEST_RUN_STARTING, SELECTIVE_TEST_RUN_PASSED))
-               or git_push_output_line(line) for line in stderr.splitlines())
+    """True when every stderr line is git's own push output, so a line the conflict or revert
+    check adds fails it, whatever it starts with."""
+    return all(git_push_output_line(line) for line in stderr.splitlines())
 
 
 def went_through(result):
@@ -740,7 +600,8 @@ def run_unit_cases():
               hand_check_line("topic", sha),
               hand_check_line("renamed-on-push", other),
               *no_branch_revert_lines([("topic", sha), ("renamed-on-push", other)]),
-              PUSH_GOES_ON_LINE,
+              PUSH_GOES_ON_LINE % ", ".join(
+                  [branch_entry("topic", sha), branch_entry("renamed-on-push", other)]),
               TELL_USER_LINE],
           stream.getvalue())
     stream = io.StringIO()
@@ -759,7 +620,7 @@ def run_unit_cases():
               "once that conflict check prints VERDICT: CLEAN, also run: python3 "
               "scripts/branch-reverts-a-file-to-an-older-main-version-check.py "
               "--head <branch name>",
-              PUSH_GOES_ON_LINE,
+              PUSH_GOES_ON_LINE % "any of its branches",
               TELL_USER_LINE],
           stream.getvalue())
     stream = io.StringIO()
@@ -775,10 +636,10 @@ def run_unit_cases():
         hooks = make_layout(layout_parent, "filter", conflict_check=None,
                             include_runner=False,
                             mutation_testing_worktree_check_text="import sys\nsys.exit(0)\n",
-                            selective_test_run_check_text="import sys\nsys.exit(0)\n",
                             open_pull_request_branch_check_text="import sys\nsys.exit(0)\n")
-        expected_first_line_end = NO_BRANCH_CHECKED % ", ".join(
+        expected_branch_list = ", ".join(
             [branch_entry("topic", sha), branch_entry("renamed-on-push", other)])
+        expected_first_line_end = NO_BRANCH_CHECKED % expected_branch_list
         for shell in SHELLS_FOR_THE_HOOK:
             def run_hook(remote, refs_text):
                 return subprocess.run(
@@ -794,7 +655,7 @@ def run_unit_cases():
                                     hand_check_line("renamed-on-push", other),
                                     *no_branch_revert_lines(
                                         [("topic", sha), ("renamed-on-push", other)]),
-                                    PUSH_GOES_ON_LINE,
+                                    PUSH_GOES_ON_LINE % expected_branch_list,
                                     TELL_USER_LINE],
                   completed.stderr)
             for label, refs_text in (
@@ -816,10 +677,10 @@ def run_unit_cases():
 
     sha = "a" * 40
     stream = io.StringIO()
-    reverts, skipped = runner.check_reverts([("late", sha)], time.monotonic() - 1, 7, stream)
-    check("a branch left with no time budget is not sent to the revert check, is reported "
-          "as skipped, and gets a message",
-          reverts == [] and skipped and REVERT_NOT_CHECKED % (
+    reverts, unchecked = runner.check_reverts([("late", sha)], time.monotonic() - 1, 7, stream)
+    check("a branch left with no time budget is not sent to the revert check, is returned "
+          "as unchecked, and gets a message",
+          reverts == [] and unchecked == [("late", sha)] and REVERT_NOT_CHECKED % (
               "late", "the 7-second time budget was used up") in stream.getvalue()
           and revert_hand_check_line(sha) in stream.getvalue(), stream.getvalue())
 
@@ -1020,7 +881,8 @@ def run_push_cases(scratch):
           lines.count(hand) == 1
           and lines[lines.index(hand):lines.index(hand) + 5]
           == [hand, *no_branch_revert_lines([("conflicting", conflicting_commit)]),
-              PUSH_GOES_ON_LINE, TELL_USER_LINE]
+              PUSH_GOES_ON_LINE % branch_entry("conflicting", conflicting_commit),
+              TELL_USER_LINE]
           and outcome.stderr.count("files set back") == 2, outcome.describe())
 
     # A push whose first branch is skipped and whose second conflicts is refused, and no
@@ -1038,7 +900,7 @@ def run_push_cases(scratch):
           + BRANCH_NOT_CHECKED_END in outcome.stderr.splitlines()
           and REFUSAL_HEADER % "conflicting" in outcome.stderr, outcome.describe())
     check("mixed push: and no line says the push goes ahead or goes on",
-          PUSH_GOES_ON_LINE not in outcome.stderr and "goes ahead" not in outcome.stderr,
+          PUSH_GOES_ON_START not in outcome.stderr and "goes ahead" not in outcome.stderr,
           outcome.describe())
 
     mixed = make_layout(scratch, "layout-mixed-no-verdict",
@@ -1051,7 +913,20 @@ def run_push_cases(scratch):
           "telling the user ends the message, after the refusal",
           was_refused(outcome) and hook_lines[-1:] == [TELL_USER_LINE]
           and outcome.stderr.count(TELL_USER_LINE) == 1
-          and PUSH_GOES_ON_LINE not in outcome.stderr, outcome.describe())
+          and PUSH_GOES_ON_START not in outcome.stderr, outcome.describe())
+
+    mixed_clean = make_layout(scratch, "layout-mixed-no-verdict-and-clean",
+                              conflict_check=FAKE_CHECK_NO_VERDICT_FOR_CLEAN_CLEAN_OTHERWISE)
+    half_checked = Scenario(scratch, "mixed-no-verdict-and-clean", mixed_clean)
+    outcome = half_checked.push("origin", "clean", "clean-second")
+    goes_on_lines = [line for line in outcome.stderr.splitlines()
+                     if line.startswith(PUSH_GOES_ON_START)]
+    check("mixed push, one branch with no verdict and one both checks find clean: it goes "
+          "through, and the push-goes-through line names only the unchecked branch",
+          went_through(outcome)
+          and goes_on_lines == [PUSH_GOES_ON_LINE % branch_entry(
+              "clean", half_checked.head("clean"))],
+          outcome.describe())
 
     def gave_no_verdict(label, outcome, reason):
         lines = outcome.stderr.splitlines()
@@ -1068,7 +943,8 @@ def run_push_cases(scratch):
                   lines[index + 1:index + 6]
                   == [hand_check_line("conflicting", commit),
                       *revert_check_not_run_lines("conflicting", commit).splitlines(),
-                      PUSH_GOES_ON_LINE, TELL_USER_LINE],
+                      PUSH_GOES_ON_LINE % branch_entry("conflicting", commit),
+                      TELL_USER_LINE],
                   outcome.describe())
 
     outcome = failing_check_case("check-crashes", FAKE_CHECK_CRASHES,
@@ -1214,7 +1090,8 @@ def run_push_cases(scratch):
           "and the line telling the user",
           "\n".join([hand_check_line("conflicting", failing.head("conflicting")),
                      *no_branch_revert_lines([("conflicting", failing.head("conflicting"))]),
-                     PUSH_GOES_ON_LINE, TELL_USER_LINE]) in outcome.stderr, outcome.describe())
+                     PUSH_GOES_ON_LINE % branch_entry("conflicting", failing.head("conflicting")),
+                     TELL_USER_LINE]) in outcome.stderr, outcome.describe())
 
     hooks = make_layout(scratch, "layout-runner-missing",
                         conflict_check=FAKE_CHECK_ALWAYS_CONFLICT, include_runner=False)
@@ -1242,360 +1119,20 @@ def run_push_cases(scratch):
           os.access(PRE_PUSH_HOOK, os.X_OK), str(PRE_PUSH_HOOK))
 
 
-# --- The selective test run -------------------------------------------------
+# --- No test suites ---------------------------------------------------------
 
-def load_module_from_path(name, path):
-    specification = importlib.util.spec_from_file_location(name, path)
-    loaded = importlib.util.module_from_spec(specification)
-    specification.loader.exec_module(loaded)
-    return loaded
-
-
-def run_selective_test_run_copies_of_runner_constants_cases():
-    # The hook keeps its own copies of the runner's output format, so nothing but this ties them.
-    hook = load_module_from_path("selective_test_run_check", SELECTIVE_TEST_RUN_CHECK)
-    runner = load_module_from_path("run_all_test_suites", REAL_TEST_SUITES_RUNNER)
-    for hook_name, hook_value, runner_value in (
-            ("RUNNER_FILE_NAME", hook.RUNNER_FILE_NAME, REAL_TEST_SUITES_RUNNER.name),
-            ("RUNNER_EXIT_ALL_PASSED", hook.RUNNER_EXIT_ALL_PASSED, runner.EXIT_ALL_PASSED),
-            ("RUNNER_EXIT_SOME_FAILED", hook.RUNNER_EXIT_SOME_FAILED, runner.EXIT_SOME_FAILED),
-            ("RUNNER_EXIT_LOCKED", hook.RUNNER_EXIT_LOCKED, runner.EXIT_LOCKED),
-            ("REPORT_FILE_NAME", hook.REPORT_FILE_NAME, runner.REPORT_FILE_NAME),
-            ("FAILED_SUITE_LINE_PREFIX", hook.FAILED_SUITE_LINE_PREFIX,
-             runner.FAILED_SUITE_LINE_PREFIX),
-            ("NOT_RUN_SUITE_LINE_PREFIX", hook.NOT_RUN_SUITE_LINE_PREFIX,
-             runner.NOT_RUN_SUITE_LINE_PREFIX),
-            ("SUITE_LINE_LOG_MARK", hook.SUITE_LINE_LOG_MARK, runner.SUITE_LINE_LOG_MARK),
-            ("SUMMARY_LINE_PREFIX", hook.SUMMARY_LINE_PREFIX, runner.SUMMARY_LINE_PREFIX),
-            ("RUNNER_REFUSAL_LINE_PREFIX", hook.RUNNER_REFUSAL_LINE_PREFIX,
-             f"{runner.PROGRAM}: not run")):
-        check(f"the selective test run's {hook_name} equals the runner's",
-              hook_value == runner_value, f"hook {hook_value!r}, runner {runner_value!r}")
-    first_line = (f"{runner.PROGRAM}: /fake at abc (clean); -j 4"
-                  f"{runner.FIRST_REPORT_LINE_LOG_DIRECTORY_MARK}/fake/logs")
-    found = hook.log_directory_named_in(first_line)
-    check("the selective test run's LOG_DIRECTORY_PATTERN finds the log directory after the "
-          "runner's FIRST_REPORT_LINE_LOG_DIRECTORY_MARK", found == "/fake/logs", repr(found))
-
-
-def run_selective_test_run_cases(scratch):
-    def lines_from(stderr, first):
-        """The stderr lines from the first one starting with `first`, or []."""
-        lines = stderr.splitlines()
-        index = next((i for i, line in enumerate(lines) if line.startswith(first)), None)
-        return [] if index is None else lines[index:]
-
-    real = make_layout(scratch, "layout-selective-passes")
-    scenario = Scenario(scratch, "selective-passes", real)
+def run_no_test_suites_cases(scratch):
+    hooks = make_layout(scratch, "layout-no-test-suites")
+    scenario = Scenario(scratch, "no-test-suites", hooks)
     result = scenario.push("origin", "clean")
-    check("selective test run passes: the push goes through and arrives at origin",
+    check("a clean branch goes through although run-all-test-suites.py beside the hook fails",
           went_through(result) and scenario.origin_ref("clean") == scenario.head("clean"),
           result.describe())
-    check("selective test run passes: the hook says it started, then that it passed, with "
-          "the run's summary",
-          SELECTIVE_TEST_RUN_STARTING + str(scenario.clone) in result.stderr
-          and SELECTIVE_TEST_RUN_PASSED + FAKE_PASSED_SUMMARY in result.stderr.splitlines(),
-          result.describe())
-    calls = scenario.fake_test_suites_runner_calls()
-    check("the run is the selective test run on the clone's top directory, waiting 0 seconds "
-          "for the lock",
-          calls == [["--checkout", str(scenario.clone),
-                     "--only-suites-whose-recorded-inputs-changed-since", "origin/main",
-                     "--wait-for-lock-seconds", "0"]], repr(calls))
-
-    help_text = subprocess.run([sys.executable, str(REAL_TEST_SUITES_RUNNER), "--help"],
-                               capture_output=True, text=True, timeout=60).stdout
-    check("every option the check passes is one the real run-all-test-suites.py offers",
-          all(option in help_text for option in calls[0] if option.startswith("--"))
-          if calls else False, help_text)
-
-    worktree = scratch / "selective-passes-worktree"
-    scenario.git(scenario.clone, "worktree", "add", "--quiet", "-b", "selective-worktree",
-                 str(worktree), scenario.base)
-    scenario.commit("selective-worktree.txt", "w\n", "Worktree work", cwd=worktree)
-    scenario.fake_test_suites_runner_log.unlink()
-    result = scenario.push("origin", "selective-worktree", cwd=worktree)
-    calls = scenario.fake_test_suites_runner_calls()
-    check("from a linked worktree, the run tests that worktree, not the clone",
-          went_through(result) and len(calls) == 1 and calls[0][:2] == ["--checkout", str(worktree)],
-          repr(calls) + result.describe())
-
-    # The pushes the hook checks nothing on start no run.
-    scenario.fake_test_suites_runner_log.unlink()
-    scenario.git(scenario.clone, "push", "--quiet", "--no-verify", "origin", "clean-second")
-    for label, arguments in (("a deletion", ("origin", "--delete", "clean-second")),
-                             ("a tag", ("origin", "refs/heads/clean:refs/tags/selective-tag")),
-                             ("main", ("origin", "main"))):
-        result = scenario.push(*arguments)
-        check("a push of %s goes through without the selective test run" % label,
-              went_through(result) and scenario.fake_test_suites_runner_calls() == []
-              and "selective test run" not in result.stderr, result.describe())
-    backup = scratch / "selective-backup.git"
-    scenario.git(scratch, "init", "--quiet", "--bare", str(backup))
-    scenario.git(scenario.clone, "remote", "add", "backup", str(backup))
-    result = scenario.push("backup", "clean")
-    check("a push to a remote not named origin goes through without the selective test run",
-          went_through(result) and scenario.fake_test_suites_runner_calls() == [],
-          result.describe())
-    result = scenario.push("origin", "conflicting")
-    check("a push the conflict check refuses never starts the selective test run",
-          was_refused(result) and scenario.fake_test_suites_runner_calls() == [],
-          result.describe())
-
-    # A failing suite refuses the push.
-    hooks = make_layout(scratch, "layout-selective-fails",
-                        test_suites_runner_text=FAKE_TEST_SUITES_RUNNER_FAILS)
-    failing = Scenario(scratch, "selective-fails", hooks)
-    result = failing.push("origin", "clean")
-    check("a failing suite: the push is refused and the branch never reaches origin",
-          was_refused(result) and failing.origin_ref("clean") is None, result.describe())
-    refusal = lines_from(result.stderr, SELECTIVE_TEST_RUN_REFUSED)
-    check("a failing suite: the refusal carries the summary, each failing suite with its log, "
-          "and the whole report's path",
-          refusal[:3] == [SELECTIVE_TEST_RUN_REFUSED + FAKE_FAILED_SUMMARY,
-                          FAKE_FAILING_SUITE_LINE,
-                          "The whole report: %s/test-run-report.txt" % FAKE_LOG_DIRECTORY],
-          result.describe())
-    check("a failing suite: then says to fix and push again, and when to tell the user",
-          len(refusal) >= 6 and refusal[3].startswith("Fix what each failing suite's log shows")
-          and refusal[5].startswith("If it fails a second time, tell the user"),
-          result.describe())
-    check("a failing suite: the refusal does not offer --no-verify",
-          "--no-verify" not in result.stderr, result.describe())
-
-    hooks = make_layout(scratch, "layout-selective-fails-and-not-run",
-                        test_suites_runner_text=FAKE_TEST_SUITES_RUNNER_FAILS_AND_SUITE_NOT_RUN)
-    failing_and_not_run = Scenario(scratch, "selective-fails-and-not-run", hooks)
-    result = failing_and_not_run.push("origin", "clean")
-    refusal = lines_from(result.stderr, SELECTIVE_TEST_RUN_REFUSED)
-    check("a failing suite and a suite not run: the push is refused, naming the failing suite "
-          "and the suite not run, each with its log, then the whole report's path",
-          was_refused(result)
-          and refusal[:4] == [SELECTIVE_TEST_RUN_REFUSED + FAKE_FAILED_AND_NOT_RUN_SUMMARY,
-                              FAKE_FAILING_SUITE_LINE, FAKE_NOT_RUN_SUITE_LINE,
-                              "The whole report: %s/test-run-report.txt" % FAKE_LOG_DIRECTORY],
-          result.describe())
-
-    def not_run_case(label, runner_text, expected_cause, tell_user, budget=None,
-                     include_test_suites_runner=True, extra_environment=None):
-        hooks = make_layout(scratch, "layout-selective-" + label,
-                            test_suites_runner_text=runner_text,
-                            include_test_suites_runner=include_test_suites_runner)
-        outcome_scenario = Scenario(scratch, "selective-" + label, hooks)
-        if budget is not None:
-            outcome_scenario.extra_environment[SELECTIVE_TEST_RUN_BUDGET_VARIABLE] = budget
-        outcome_scenario.extra_environment.update(extra_environment or {})
-        outcome = outcome_scenario.push("origin", "clean")
-        check("%s: the push goes through" % label,
-              went_through(outcome)
-              and outcome_scenario.origin_ref("clean") == outcome_scenario.head("clean"),
-              outcome.describe())
-        message = lines_from(outcome.stderr, "pre-push: " + expected_cause)
-        check("%s: says why the selective test run gave no verdict, and how to run it by hand"
-              % label,
-              bool(message) and message[0].endswith(SELECTIVE_TEST_RUN_NOT_RUN_END + ".")
-              and message[1:3] == [SELECTIVE_TEST_RUN_HAND_RUN_LINE,
-                                   "If a suite fails, fix it, commit the fix and push again."],
-              outcome.describe())
-        check("%s: %s the user" % (label, "tells" if tell_user else "does not tell"),
-              (message[3:4] == [TELL_USER_LINE]) == tell_user
-              and (TELL_USER_LINE in outcome.stderr) == tell_user, outcome.describe())
-        return outcome_scenario, outcome
-
-    _, outcome = not_run_case(
-        "lock held", FAKE_TEST_SUITES_RUNNER_LOCKED,
-        "another run of the nc-test-suites held this machine's test lock: " + FAKE_LOCK_HOLDER_LINE,
-        tell_user=False)
-    check("lock held: the runner's advice to its own caller is not passed on",
-          FAKE_LOCK_ADVICE_LINE not in outcome.stderr, outcome.describe())
-    not_run_case("cannot start", FAKE_TEST_SUITES_RUNNER_CANNOT_START,
-                 "the selective test run gave no verdict, because it exited 2: run-all-test-"
-                 "suites: not run — /fake is not a checkout's top directory", tell_user=True)
-    _, outcome = not_run_case(
-        "runner crashes", FAKE_TEST_SUITES_RUNNER_CRASHES,
-        "the selective test run gave no verdict, because it exited 1: " + FAKE_RUNNER_CRASH_ERROR,
-        tell_user=True)
-    check("runner crashes: the runner's traceback is shown above the message",
-          "pre-push: the test runner printed on stderr:" in outcome.stderr
-          and "Traceback (most recent call last):" in outcome.stderr
-          and outcome.stderr.index("Traceback") < outcome.stderr.index(
-              "the selective test run gave no verdict"), outcome.describe())
-    check("runner crashes: the push is not reported as a failed suite",
-          SELECTIVE_TEST_RUN_REFUSED not in outcome.stderr, outcome.describe())
-    _, outcome = not_run_case(
-        "runner crashes after a passing SUMMARY", FAKE_TEST_SUITES_RUNNER_CRASHES_AFTER_SUMMARY,
-        "the selective test run gave no verdict, because it exited 1: " + FAKE_RUNNER_CRASH_ERROR,
-        tell_user=True)
-    check("runner crashes after a passing SUMMARY: the push is not reported as a failed suite",
-          SELECTIVE_TEST_RUN_REFUSED not in outcome.stderr, outcome.describe())
-    check("runner crashes after a passing SUMMARY: the runner's traceback is shown",
-          "Traceback (most recent call last):" in outcome.stderr, outcome.describe())
-    _, outcome = not_run_case(
-        "sandbox cannot start", FAKE_TEST_SUITES_RUNNER_SANDBOX_CANNOT_START,
-        "the selective test run gave no verdict, because it exited 2: "
-        + FAKE_SANDBOX_REFUSAL_FIRST_LINE, tell_user=True)
-    check("sandbox cannot start: everything the runner printed on stderr is shown",
-          FAKE_SANDBOX_REFUSAL_LAST_LINE in outcome.stderr.splitlines(), outcome.describe())
-    _, outcome = not_run_case(
-        "a suite not run", FAKE_TEST_SUITES_RUNNER_SUITE_NOT_RUN,
-        "the selective test run gave no verdict, because it exited 2", tell_user=True)
-    check("a suite not run: the suite is named with its log, then the whole report's path, "
-          "above the message",
-          lines_from(outcome.stderr, "pre-push: these suites were not run")[:4]
-          == ["pre-push: these suites were not run; each log says why and what to do:",
-              FAKE_NOT_RUN_SUITE_LINE,
-              "The whole report: %s/test-run-report.txt" % FAKE_LOG_DIRECTORY,
-              "pre-push: the selective test run gave no verdict, because it exited 2"
-              + SELECTIVE_TEST_RUN_NOT_RUN_END + "."],
-          outcome.describe())
-    check("a suite not run: the line printed as the suite finished, without its log, is not "
-          "repeated", FAKE_NOT_RUN_SUITE_PROGRESS_LINE not in outcome.stderr, outcome.describe())
-    not_run_case("killed", FAKE_TEST_SUITES_RUNNER_KILLED,
-                 "the selective test run gave no verdict, because it was killed by signal 9",
-                 tell_user=True)
-    not_run_case("runner missing", None,
-                 "the selective test run did not start, because %s is missing"
-                 % (scratch / "layout-selective-runner missing" / "scripts"
-                    / REAL_TEST_SUITES_RUNNER.name),
-                 tell_user=True, include_test_suites_runner=False)
-
-    hanging, outcome = not_run_case(
-        "overrun", FAKE_TEST_SUITES_RUNNER_HANGS_WITH_CHILD,
-        "the selective test run had not finished when the 1-second time budget ran out, and "
-        "was stopped; the logs of the suites it ran are in " + FAKE_LOG_DIRECTORY,
-        tell_user=False, budget=HANGING_CHECK_BUDGET_SECONDS)
-    check("overrun: what the run printed on stderr is shown above the message",
-          "pre-push: the test runner printed on stderr:" in outcome.stderr
-          and FAKE_OVERRUN_STDERR_LINE in outcome.stderr.splitlines()
-          and outcome.stderr.index(FAKE_OVERRUN_STDERR_LINE) < outcome.stderr.index(
-              "the selective test run had not finished"), outcome.describe())
-    check("overrun: the push is not held for long",
-          outcome.seconds < HANGING_CASE_WALL_CLOCK_LIMIT_SECONDS, "%.1f seconds" % outcome.seconds)
-    child_pid_file = Path(str(hanging.fake_test_suites_runner_log) + ".child-pid")
-    child_pid = int(child_pid_file.read_text()) if child_pid_file.exists() else None
-    check("(setup) the overrunning run's child recorded its pid", child_pid is not None)
-    if child_pid is not None:
-        check("overrun: the run's child, a suite, was stopped too",
-              process_gone_within(child_pid, seconds=5), "pid %d still running" % child_pid)
-        stop_leftover_process(child_pid)
-    detached_pid_file = Path(str(hanging.fake_test_suites_runner_log) + ".detached-child-pid")
-    detached_pid = (int(detached_pid_file.read_text()) if detached_pid_file.exists() else None)
-    check("(setup) the overrunning run's child in its own session recorded its pid",
-          detached_pid is not None)
-    if detached_pid is not None:
-        check("overrun: a child the run started in its own session was stopped too",
-              process_gone_within(detached_pid, seconds=5),
-              "pid %d still running" % detached_pid)
-        stop_leftover_process(detached_pid)
-
-    # An overrun where ps fails: the run's descendants cannot be listed, so the message says
-    # some may still be running, and tells the user.
-    failing_ps_bin = scratch / "overrun-failing-ps-bin"
-    failing_ps_bin.mkdir()
-    (failing_ps_bin / "ps").write_text(
-        "#!/bin/sh\necho 'ps: cannot read the process table' >&2\nexit 1\n")
-    (failing_ps_bin / "ps").chmod(0o755)
-    unlisted, outcome = not_run_case(
-        "overrun with ps failing", FAKE_TEST_SUITES_RUNNER_HANGS_WITH_CHILD,
-        "the selective test run had not finished when the 1-second time budget ran out, and "
-        "was stopped; the logs of the suites it ran are in " + FAKE_LOG_DIRECTORY
-        + "; the processes its suites started in their own sessions could not be listed, so "
-        "some may still be running: ps -A -o pid=,ppid= exited 1: ps: cannot read the process "
-        "table", tell_user=True, budget=HANGING_CHECK_BUDGET_SECONDS,
-        extra_environment={"PATH": "%s%s%s" % (failing_ps_bin, os.pathsep,
-                                               os.environ.get("PATH", ""))})
-    for suffix in (".child-pid", ".detached-child-pid"):
-        leftover_file = Path(str(unlisted.fake_test_suites_runner_log) + suffix)
-        if leftover_file.exists():
-            stop_leftover_process(int(leftover_file.read_text()))
-
-    # The shell hook in front of the check.
-    for label, options, expected in (
-            ("check missing", {"include_selective_test_run_check": False},
-             "the selective test run did not start, because %s is missing"
-             % (scratch / "layout-selective-check-missing" / "scripts"
-                / SELECTIVE_TEST_RUN_CHECK.name)),
-            ("check fails", {"selective_test_run_check_text": "raise RuntimeError('broken')\n"},
-             "the selective test run check, %s, exited with status 1"
-             % (scratch / "layout-selective-check-fails" / "scripts"
-                / SELECTIVE_TEST_RUN_CHECK.name))):
-        hooks = make_layout(scratch, "layout-selective-" + label.replace(" ", "-"), **options)
-        broken = Scenario(scratch, "selective-" + label.replace(" ", "-"), hooks)
-        outcome = broken.push("origin", "clean")
-        message = lines_from(outcome.stderr, "pre-push: " + expected)
-        check("selective test run %s: the push goes through" % label,
-              went_through(outcome) and broken.origin_ref("clean") == broken.head("clean"),
-              outcome.describe())
-        check("selective test run %s: the hook names the branch, the hand run, and tells the "
-              "user" % label,
-              message[:1] == ["pre-push: %s%s: %s." % (expected, SELECTIVE_TEST_RUN_NOT_RUN_END,
-                                                      branch_entry("clean", broken.head("clean")))]
-              and message[1:4] == [SELECTIVE_TEST_RUN_HAND_RUN_LINE,
-                                   "If a suite fails, fix it, commit the fix and push again.",
-                                   TELL_USER_LINE],
-              outcome.describe())
-
-    # A missing conflict check does not end the hook before the selective test run.
-    # include_runner=False removes the file the hook itself tests for, so the hook's own
-    # "is missing" branch runs, not the Python check's.
-    hooks = make_layout(scratch, "layout-selective-conflict-check-missing", conflict_check=None, include_runner=False,
-                        test_suites_runner_text=FAKE_TEST_SUITES_RUNNER_FAILS)
-    missing = Scenario(scratch, "selective-conflict-check-missing", hooks)
-    outcome = missing.push("origin", "clean")
-    said = [line for line in outcome.stderr.splitlines()
-            if line.startswith("pre-push: the pre-push conflict check did not run, because ")]
-    check("with the conflict check missing, the hook's own branch says so",
-          len(said) == 1 and ("/%s is missing" % CONFLICT_CHECK_RUNNER.name) in said[0],
-          outcome.describe())
-    check("with the conflict check missing, the selective test run still runs and refuses",
-          was_refused(outcome) and SELECTIVE_TEST_RUN_REFUSED in outcome.stderr,
-          outcome.describe())
-
-    selective = types.ModuleType("selective_test_run_check_under_test")
-    selective.__file__ = str(SELECTIVE_TEST_RUN_CHECK)
-    exec(compile(SELECTIVE_TEST_RUN_CHECK.read_text(), str(SELECTIVE_TEST_RUN_CHECK), "exec"),
-         selective.__dict__)
-    for summary, expected in ((FAKE_FAILED_SUMMARY, 1), (FAKE_PASSED_SUMMARY, 0), ("", 0),
-                              ("SUMMARY: 0 passed, 12 failed, 12 total", 12)):
-        check("the SUMMARY line %r counts %d failed suites" % (summary, expected),
-              selective.summary_failed_count(summary) == expected)
-    for configured, expected in (("", 480.0), ("abc", 480.0), ("-5", 480.0), ("0", 480.0),
-                                 ("90", 90.0)):
-        got = selective.time_budget_seconds({SELECTIVE_TEST_RUN_BUDGET_VARIABLE: configured})
-        check("a time budget configured as %r is %g seconds" % (configured, expected),
-              got == expected, repr(got))
-    check("a time budget left unconfigured is 480 seconds",
-          selective.time_budget_seconds({}) == 480.0)
-
-    # A ps that fails: the descendants cannot be listed, and the stop says so.
-    failing_ps_directory = scratch / "failing-ps-bin"
-    failing_ps_directory.mkdir()
-    failing_ps = failing_ps_directory / "ps"
-    failing_ps.write_text("#!/bin/sh\necho 'ps: cannot read the process table' >&2\nexit 1\n")
-    failing_ps.chmod(0o755)
-    saved_path = os.environ.get("PATH", "")
-    os.environ["PATH"] = "%s%s%s" % (failing_ps_directory, os.pathsep, saved_path)
-    try:
-        try:
-            selective.descendant_process_ids(os.getpid())
-            listing_raised = None
-        except RuntimeError as error:
-            listing_raised = str(error)
-        sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
-                                   start_new_session=True, stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, text=True)
-        try:
-            _stdout, _stderr, stop_error = selective.stop_process_group(sleeper)
-        finally:
-            stop_leftover_process(sleeper.pid)
-    finally:
-        os.environ["PATH"] = saved_path
-    check("a ps that fails: listing the run's descendants raises, naming ps and its error",
-          listing_raised is not None and "ps -A -o pid=,ppid= exited 1" in listing_raised
-          and "cannot read the process table" in listing_raised, repr(listing_raised))
-    check("a ps that fails: the run is still stopped, and the stop returns the listing error",
-          sleeper.returncode is not None and stop_error is not None
-          and "cannot read the process table" in stop_error, repr((sleeper.returncode, stop_error)))
+    check("and the hook never starts run-all-test-suites.py",
+          scenario.fake_test_suites_runner_calls() == [], repr(scenario.fake_test_suites_runner_calls()))
+    check("the hook names no test run, and no file of the test step it no longer runs",
+          "test run" not in PRE_PUSH_HOOK.read_text()
+          and "selective" not in PRE_PUSH_HOOK.read_text(), str(PRE_PUSH_HOOK))
 
 
 # --- Pushes from a mutation-testing worktree ------------------------------
@@ -1680,7 +1217,8 @@ def run_open_pull_request_branch_cases(scratch):
                     "url": "https://github.com/example/example/pull/4242"}
     open_on_clean = json.dumps({"clean": pull_request, "clean-second": pull_request})
     refused_header = ("pre-push: this push is refused, because its update to branch clean does not "
-                      "build on the commits origin holds, and clean is the head of open pull "
+                      "build on origin/clean, the commits already pushed, and clean is the head "
+                      "of open pull "
                       "request #4242 (https://github.com/example/example/pull/4242)")
     lookup_failed = "whether clean has an open pull request could not be checked: "
 
@@ -2085,9 +1623,11 @@ def run_revert_check_cases(scratch):
         check("and says the branch was not checked, why, and the command to check it by hand",
               REVERT_NOT_CHECKED % ("squashed", reason) in result.stderr
               and revert_hand_check_line(commit) in result.stderr, result.describe())
-        check("and then, once, that the push goes on to the selective test run",
-              result.stderr.count(PUSH_GOES_ON_LINE) == 1
-              and result.stderr.index(PUSH_GOES_ON_LINE)
+        goes_on = PUSH_GOES_ON_LINE % branch_entry("squashed", commit)
+        check("and then, once, that the push goes through without a clean verdict for it",
+              result.stderr.count(PUSH_GOES_ON_START) == 1
+              and result.stderr.count(goes_on) == 1
+              and result.stderr.index(goes_on)
               > result.stderr.index(REVERT_NOT_CHECKED % ("squashed", reason)),
               result.describe())
 
@@ -2126,13 +1666,12 @@ def run_revert_check_cases(scratch):
 
 def main():
     run_unit_cases()
-    run_selective_test_run_copies_of_runner_constants_cases()
     # Resolved, because git and the hooks print resolved paths: on macOS the temporary
     # directory is under /var, a symlink to /private/var.
     scratch = Path(tempfile.mkdtemp(prefix="pre-push-test-")).resolve()
     try:
         run_push_cases(scratch)
-        run_selective_test_run_cases(scratch)
+        run_no_test_suites_cases(scratch)
         run_mutation_testing_worktree_cases(scratch)
         run_open_pull_request_branch_cases(scratch)
         run_revert_check_cases(scratch)

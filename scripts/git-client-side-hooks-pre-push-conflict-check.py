@@ -49,8 +49,9 @@ TELL_USER_LINE = ("Tell the user this whole message, including any error printed
                   "above it: the next push on this machine may go unchecked the same way.")
 REVERT_AFTER_HAND_CONFLICT_CHECK_LINE = ("Once the hand conflict check of %s prints VERDICT: "
                                          "CLEAN, check it for files set back too: %s")
-PUSH_GOES_ON_LINE = ("pre-push: neither the conflict check nor the revert check refuses this "
-                     "push, so it goes on to the selective test run, which can still refuse it.")
+PUSH_GOES_ON_LINE = ("pre-push: this push goes through without a clean verdict for %%s: "
+                     "scripts/%s or scripts/%s gave no verdict there, as the lines above say."
+                     % (CONFLICT_CHECK_FILE_NAME, REVERT_CHECK_FILE_NAME))
 RERUN_VERDICT_LINE = ("If the hand conflict check also prints no VERDICT line, tell the user "
                       "this whole message and what that check printed.")
 
@@ -220,7 +221,7 @@ def say_no_branch_checked(stream, cause, branches):
         % BASE_NAME_FOR_MESSAGES)
     for branch, object_id in branches:
         say(stream, revert_after_hand_conflict_check_line(branch, object_id))
-    say(stream, PUSH_GOES_ON_LINE)
+    say(stream, PUSH_GOES_ON_LINE % branch_list(branches))
     say(stream, TELL_USER_LINE)
 
 
@@ -235,7 +236,7 @@ def say_error_before_branches_read(stream, error_text):
         "check prints VERDICT: CLEAN, also run: %s"
         % (BASE_NAME_FOR_MESSAGES, CHECKED_REMOTE_NAME,
            REVERT_HAND_CHECK_COMMAND % "<branch name>"))
-    say(stream, PUSH_GOES_ON_LINE)
+    say(stream, PUSH_GOES_ON_LINE % "any of its branches")
     say(stream, TELL_USER_LINE)
 
 
@@ -300,11 +301,12 @@ def main(argv, pushed_refs_text, stderr, environment):
             say_revert_check_not_run(stderr, branch, local_object_id)
             tell_user = True
 
-    reverts, revert_check_skipped = check_reverts(clean_branches, deadline, budget, stderr)
+    reverts, revert_unchecked = check_reverts(clean_branches, deadline, budget, stderr)
     if not conflicts and not reverts:
-        skipped = len(conflicts) + len(clean_branches) < len(branches)
-        if skipped or revert_check_skipped:
-            say(stderr, PUSH_GOES_ON_LINE)
+        decided = set(clean_branches) - set(revert_unchecked)
+        unchecked = [entry for entry in branches if entry not in decided]
+        if unchecked:
+            say(stderr, PUSH_GOES_ON_LINE % branch_list(unchecked))
         if tell_user:
             say(stderr, TELL_USER_LINE)
         return EXIT_ALLOW_PUSH
@@ -326,14 +328,14 @@ def main(argv, pushed_refs_text, stderr, environment):
 
 
 def check_reverts(branches, deadline, budget, stderr):
-    """Return (reverts, skipped): (branch, result) for each branch the revert check finds
-    setting a file back, and whether any branch went unchecked.
+    """Return (reverts, unchecked): (branch, result) for each branch the revert check finds
+    setting a file back, and (branch, local object ID) for each it gave no verdict on.
 
     Any other outcome lets the branch through, with one message."""
     check_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), REVERT_CHECK_FILE_NAME)
     reverts = []
-    skipped = False
+    unchecked = []
     for branch, local_object_id in branches:
         remaining = deadline - time.monotonic()
         if not os.path.isfile(check_path):
@@ -354,12 +356,12 @@ def check_reverts(branches, deadline, budget, stderr):
         say(stderr, MESSAGE_PREFIX + "branch %s was not checked for files set back to a "
             "version that %s has replaced, because %s."
             % (branch, BASE_NAME_FOR_MESSAGES, reason))
-        skipped = True
+        unchecked.append((branch, local_object_id))
         say(stderr, "Check it by hand from your worktree: %s"
             % (REVERT_HAND_CHECK_COMMAND % short_commit(local_object_id)))
         say(stderr, "If that run prints no VERDICT line, tell the user this whole message "
             "and what that run printed.")
-    return reverts, skipped
+    return reverts, unchecked
 
 
 def report_unexpected_error(stream, error, argv, pushed_refs_text):

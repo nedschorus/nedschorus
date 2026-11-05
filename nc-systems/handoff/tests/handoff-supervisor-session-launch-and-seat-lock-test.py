@@ -590,7 +590,7 @@ def run_appended_system_prompt_cases(workspace: Path):
         handoff_directory = workspace / name
         handoff_directory.mkdir(parents=True, exist_ok=True)
         (handoff_directory / f"{name}-handoff.md").write_text(
-            "written-at: 2026-08-31T00:00:00Z\nnext-step: carry on\nrestart-counter: 5\n",
+            "written-at: 2026-08-31T00:00:00Z\nnext-step: carry on\nsession-handoff-sequence-number: 5\n",
             encoding="utf-8",
         )
         supervisor.write_supervisor_state(

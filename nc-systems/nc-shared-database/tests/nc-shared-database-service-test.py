@@ -431,6 +431,11 @@ with tempfile.TemporaryDirectory() as scratch:
               and f"Authorization: {scheme} {TOKEN}".encode() in b"".join(received),
               (status, answer, received))
 
+    check("the database file is ~/.local/state/nedschorus/nc-shared-database.sqlite3 by default",
+          service.NC_SHARED_DATABASE_FILE_PATH
+          == Path.home() / ".local" / "state" / "nedschorus" / "nc-shared-database.sqlite3",
+          service.NC_SHARED_DATABASE_FILE_PATH)
+
     try:
         service.main(["--port", "eighty"])
         refused = None
