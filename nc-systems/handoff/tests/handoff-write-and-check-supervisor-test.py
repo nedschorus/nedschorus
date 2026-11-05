@@ -1946,6 +1946,18 @@ def run_threshold_hook_defer_then_fire_then_writer_case(workspace: Path):
           and "was not deferred" not in written.stdout,
           written.stdout + handoff_text(handoffs, "deferthenfirecase"))
 
+    # A launch whose record has no readable time counts as started during the deferral.
+    undated = workspace / "deferral-launch-undated.jsonl"
+    undated_records = background_bash_launch_records(
+        "bundated01", "Launched with no readable time", "python3 undated.py", "not a time")
+    undated.write_text("".join(json.dumps(record) + "\n" for record in undated_records),
+                       encoding="utf-8")
+    undated_late = writer.background_tasks_started_during_handoff_deferral_still_running(
+        undated, datetime(2026, 10, 28, 20, 12, tzinfo=timezone.utc))
+    check("a still-running task whose launch record has no readable time is listed as started"
+          " during the deferral",
+          [task[0] for task in undated_late] == ["bundated01"], undated_late)
+
     # Lines the launch search skips, placed before a launch, do not end the search.
     skipped_first = workspace / "deferral-launch-after-skipped-lines.jsonl"
     skipped_first.write_text(

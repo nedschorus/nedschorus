@@ -149,7 +149,8 @@ def _handoff_deferred_record_read(path: Path):
             raise ValueError("deferral_began_at has no time zone")
         subagent_ids = record["awaited_subagent_ids"]
         background_task_ids = record["awaited_background_task_ids"]
-        workflow_ids = record["awaited_workflow_ids"]
+        # A record written before workflows were saved awaited none, and must keep its wait set.
+        workflow_ids = record.get("awaited_workflow_ids", [])
         if not all(isinstance(ids, list) for ids in (subagent_ids, background_task_ids, workflow_ids)):
             raise ValueError("an awaited list is not a list")
         return HandoffDeferredMarker(
