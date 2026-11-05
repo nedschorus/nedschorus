@@ -415,7 +415,7 @@ def background_task_launches_by_id(transcript_path: Path, task_ids) -> dict:
     return launches
 
 
-def background_tasks_still_running(transcript_path: Path) -> list:
+def background_task_launches_still_running_in_transcript(transcript_path: Path) -> list:
     """Return [(task id, description, command, launch time)] for the background Bash tasks the
     transcript launched with no completion notification, in launch order.
 
@@ -455,7 +455,7 @@ def background_task_fields_for_this_session(working_directory: Path):
             return [], (f"background tasks: not listed — no single transcript found for session "
                         f"{session_id} under {PROJECTS_ROOT}. Name in the next step, with its "
                         "command, any background task still running that your successor must restart.")
-        tasks = background_tasks_still_running(transcript_path)
+        tasks = background_task_launches_still_running_in_transcript(transcript_path)
     except Exception as error:  # noqa: BLE001 - the list never blocks a handoff
         return [], (f"background tasks: not listed — {type(error).__name__}: {error}. Name in the "
                     "next step, with its command, any background task still running that your "
@@ -474,7 +474,7 @@ def background_tasks_started_during_handoff_deferral_still_running(transcript_pa
     """
     return [(task_id, description, command)
             for task_id, description, command, launched_at
-            in background_tasks_still_running(transcript_path)
+            in background_task_launches_still_running_in_transcript(transcript_path)
             if launched_at is None or launched_at >= deferral_began_at]
 
 

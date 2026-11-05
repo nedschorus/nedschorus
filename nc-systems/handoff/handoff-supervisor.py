@@ -552,7 +552,7 @@ ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE = (
 )
 
 
-BACKGROUND_TASKS_STILL_RUNNING_WHEN_SESSION_ENDED_SENTENCE_TEMPLATE = (
+BACKGROUND_TASKS_STOPPED_AT_SESSION_HANDOFF_SUCCESSOR_RESTART_SENTENCE_TEMPLATE = (
     "The session you are replacing had {task_count} background task(s) still running when it "
     "ended: {joined_tasks}. Restart any you still need."
 )
@@ -1145,7 +1145,7 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
         ))
     still_running_tasks = numbered_field_values_from(handoff_fields, BACKGROUND_TASK_FIELD_PREFIX)
     if still_running_tasks:
-        lines.append(BACKGROUND_TASKS_STILL_RUNNING_WHEN_SESSION_ENDED_SENTENCE_TEMPLATE.format(
+        lines.append(BACKGROUND_TASKS_STOPPED_AT_SESSION_HANDOFF_SUCCESSOR_RESTART_SENTENCE_TEMPLATE.format(
             task_count=len(still_running_tasks), joined_tasks="; ".join(still_running_tasks)))
     late_tasks = numbered_field_values_from(
         handoff_fields, BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
