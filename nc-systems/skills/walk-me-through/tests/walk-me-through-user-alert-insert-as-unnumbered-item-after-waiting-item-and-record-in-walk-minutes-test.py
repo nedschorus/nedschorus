@@ -242,6 +242,25 @@ def run_refusal_cases(root):
           f"walk-minutes {walk / f'{WALK}-minutes.md'}" in result.stderr
           and f"walk-document {walk / f'{WALK}.md'}" in result.stderr, result.stderr)
 
+    checkout, home = walk_checkout(root, "two-unclosed")
+    claimed_alert(home, "alert-a", "first")
+    walk = checkout / "docs" / "walk"
+    (walk / "second-walk.md").write_text(WALK_DOCUMENT, encoding="utf-8")
+    (walk / "second-walk-minutes.md").write_text("# Minutes\n#next_to_present item 4 of 9\n", encoding="utf-8")
+    before = files(checkout) + ((walk / "second-walk.md").read_text(encoding="utf-8"),
+                                (walk / "second-walk-minutes.md").read_text(encoding="utf-8"))
+    result = run(checkout, home, "alert-a")
+    after = files(checkout) + ((walk / "second-walk.md").read_text(encoding="utf-8"),
+                               (walk / "second-walk-minutes.md").read_text(encoding="utf-8"))
+    resolved = checkout.resolve() / "docs" / "walk"
+    check("with two unclosed approval-walks, the program exits 1 without a traceback, names both walk-minutes and "
+          "the command to run again, and changes nothing",
+          result.returncode == 1 and "Traceback" not in result.stderr
+          and "more than one approval-walk is open or paused" in result.stderr
+          and str(resolved / f"{WALK}-minutes.md") in result.stderr
+          and str(resolved / "second-walk-minutes.md") in result.stderr
+          and f"then run again: python3 {PROGRAM.resolve()} --cwd {checkout} alert-a" in result.stderr
+          and after == before, result.stderr)
 
 with tempfile.TemporaryDirectory() as temporary_directory:
     scratch = Path(temporary_directory)
