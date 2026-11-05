@@ -82,8 +82,7 @@ READER_TIMEOUT_SECONDS = 300
 CANDIDATE_LENGTHS = ("full", "medium", "short")
 MAX_FAILED_READERS_FOR_A_PASS = 1
 
-# Each reader: (runtime, model, effort). Item 25 of the open-decisions walk of
-# 2026-10-26, with item 26.1's Terra in place of gpt-6-luna.
+# Each reader: (runtime, model, effort).
 READERS = (
     ("claude", "claude-sonnet-5-5", "medium"),
     ("claude", "claude-opus-5-5", "medium"),
