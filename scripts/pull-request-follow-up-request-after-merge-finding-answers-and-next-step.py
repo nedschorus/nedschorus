@@ -936,7 +936,7 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
             comments += [{"path": comment["path"], "line": comment.get("line") or comment.get("original_line"),
                           "body": comment["body"]}
                          for comment in inline if comment["pull_request_review_id"] == review["id"]]
-            comments += posting.comments_moved_into_body(review.get("body") or "")
+            comments += posting.outside_the_diff_comments_read_back_from_review_body(review.get("body") or "")
     except (KeyError, TypeError, AttributeError) as error:
         raise StepFailed(f"GitHub's reviews of pull request {number} were not in the expected shape: "
                          f"{type(error).__name__}: {error}") from None
@@ -948,7 +948,7 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
                       f"{command(number, 'print-follow-up-request-block-from-merge-lane-2-reviews')}")
     findings = []
     for comment in comments:
-        marked = posting.posted_comment_category_and_text(comment["body"])
+        marked = posting.finding_category_and_text_read_from_review_comment_opening_mark(comment["body"])
         if marked is None:
             raise Refused(
                 f"{account}'s comment on {comment['path']}:{comment['line']} of pull request {number} does not open "

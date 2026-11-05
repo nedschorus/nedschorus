@@ -39,7 +39,7 @@ reads blocking findings by, using that program's BLOCKING_MARKER_PATTERN,
 and the category marks that
 pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py
 reads non-blocking findings by:
-- each comment is posted opening with posted_category_mark() of its
+- each comment is posted opening with review_comment_opening_mark_for_finding_category() of its
   category: "**Blocks** " for must-fix-now, and the category in bold, as in
   "**fix-next** ", for the other three; a comment whose body already opens
   with a blocking mark or a category mark is refused;
@@ -214,11 +214,11 @@ def read_review_file(path, account):
                 f"has a comment on {where} whose body already opens with the blocking mark "
                 f"{mark.group(0)}; this program writes that mark for each {BLOCKING_CATEGORY} "
                 f"comment, so leave it out of the body")
-        marked = posted_comment_category_and_text(comment["body"])
+        marked = finding_category_and_text_read_from_review_comment_opening_mark(comment["body"])
         if marked:
             raise ReviewFileUnusable(
                 f"has a comment on {where} whose body already opens with the category mark "
-                f"{posted_category_mark(marked[0]).strip()}; this program writes each comment's "
+                f"{review_comment_opening_mark_for_finding_category(marked[0]).strip()}; this program writes each comment's "
                 f"category mark from its \"finding_category\", so leave it out of the body")
     if verdict == "REQUEST_CHANGES" and not any(
             comment["finding_category"] == BLOCKING_CATEGORY for comment in comments):
@@ -231,14 +231,14 @@ def read_review_file(path, account):
     return verdict, body, comments
 
 
-def posted_category_mark(category):
+def review_comment_opening_mark_for_finding_category(category):
     """The mark a comment of this finding_category opens with when posted."""
     if category == BLOCKING_CATEGORY:
         return BLOCKING_MARK
     return NON_BLOCKING_CATEGORY_MARK_FORMAT.format(category=category)
 
 
-def posted_comment_category_and_text(body):
+def finding_category_and_text_read_from_review_comment_opening_mark(body):
     """(finding_category, text) of a posted merge-lane-2 comment, read by the mark it opens with,
     or None when it opens with none. A blocking mark is read as the fix-round program reads it."""
     stripped = body.lstrip()
@@ -246,13 +246,13 @@ def posted_comment_category_and_text(body):
     if blocking:
         return BLOCKING_CATEGORY, stripped[blocking.end():].strip()
     for category in FINDING_CATEGORIES:
-        mark = posted_category_mark(category)
+        mark = review_comment_opening_mark_for_finding_category(category)
         if category != BLOCKING_CATEGORY and stripped.startswith(mark):
             return category, stripped[len(mark):].strip()
     return None
 
 
-def comments_moved_into_body(body):
+def outside_the_diff_comments_read_back_from_review_body(body):
     """The comments with_outside_comments_in_body() moved into a posted body, each a dict of path,
     line and body; a line after the heading that does not start a comment continues the one before."""
     lines = body.split("\n")
@@ -276,7 +276,7 @@ def with_finding_category_marks(body, comments):
     count set by the must-fix-now ones left."""
     comments = fix_round.without_reposts([
         {"path": comment["path"], "line": comment["line"],
-         "body": posted_category_mark(comment["finding_category"]) + comment["body"]}
+         "body": review_comment_opening_mark_for_finding_category(comment["finding_category"]) + comment["body"]}
         for comment in comments])
     count = len(fix_round.marked(comments))
     verdict = "REQUEST_CHANGES" if count else "APPROVE"

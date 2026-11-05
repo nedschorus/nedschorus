@@ -406,7 +406,7 @@ def merge_lane_cases(scratch):
           isinstance(found, str) and "says **Blocking: 2**, but 1" in found,
           f"{found}\n{moved.detail}")
 
-    marks = [load_posting_program().posted_category_mark(category)
+    marks = [load_posting_program().review_comment_opening_mark_for_finding_category(category)
              for category in ("fix-next", "fix-in-maintenance", "file-for-later")]
     check("no non-blocking category's mark matches the fix-round program's blocking mark, so the "
           "fix-round program never reads a non-blocking finding as blocking",
