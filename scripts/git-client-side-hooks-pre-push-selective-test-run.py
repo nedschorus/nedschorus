@@ -13,9 +13,11 @@ files, uncommitted changes included, not the pushed commit. A push made with GIT
 directory outside the checkout gives that directory as the top, which the runner refuses, so
 such a push goes ahead with the message for a run that could not start.
 
-Only a suite's failure refuses the push. Every way the run can end without a verdict lets the push
+Only a suite's failure refuses the push, including a failure seen before the time budget ran out.
+Every way the run can end without a verdict lets the push
 through with a message saying how to run it by hand: another run holding the machine's test lock,
-which the run does not wait for, the run not finishing within the time budget, the run unable to start or
+which the run does not wait for, the run not finishing within the time budget with no suite failed
+by then, the run unable to start or
 ending in an uncaught exception, a suite whose test sandbox did not start while no suite failed, which
 the runner reports with exit 2, and this file failing. A run that exits 1 refuses the push only
 when its SUMMARY line counts a failed suite: the runner still writes its report and run record
@@ -26,10 +28,15 @@ only the line naming the holder is shown, because the runner's other lines there
 caller and the message gives the hand run instead. A wrong refusal stops an agent's work, and the
 pull request's head is tested again before it merges.
 
+When the time budget runs out, the run alone is sent SIGTERM first, so that it stops its own suites,
+reports each as killed by the stop rather than as failed, and exits 1 only when a suite had already
+failed; signalled directly, a suite would die first and be reported as a failure. A run that has
+not exited RUNNER_STOP_GRACE_SECONDS later, and every process it started that is still running,
+such as one a suite started in a session of its own, is then killed.
+
 The time budget is DEFAULT_TIME_BUDGET_SECONDS or the number of seconds in
-TIME_BUDGET_ENVIRONMENT_VARIABLE. With the conflict check's
-60 seconds before it, the hook ends within the 600 seconds a Claude Code agent can give one
-command.
+TIME_BUDGET_ENVIRONMENT_VARIABLE. With the conflict check's 60 seconds before it and the stop's
+graces after it, the hook ends within the 600 seconds a Claude Code agent can give one command.
 """
 
 import os
@@ -57,6 +64,8 @@ HAND_RUN_COMMAND = "python3 scripts/%s %s %s %s %d" % (
 
 DEFAULT_TIME_BUDGET_SECONDS = 480.0
 TIME_BUDGET_ENVIRONMENT_VARIABLE = "NEDSCHORUS_PRE_PUSH_SELECTIVE_TEST_RUN_SECONDS"
+# The runner acts on a stop within half a second, then kills its suites and writes its report.
+RUNNER_STOP_GRACE_SECONDS = 30.0
 TERMINATE_GRACE_SECONDS = 5.0
 
 LOG_DIRECTORY_PATTERN = re.compile(r"; logs in (.+)$")
@@ -69,6 +78,8 @@ SUITE_LINE_LOG_MARK = " — log "
 SUMMARY_LINE_PREFIX = "SUMMARY:"
 SUMMARY_FAILED_COUNT_PATTERN = re.compile(r"\b(\d+) failed\b")
 RUNNER_REFUSAL_LINE_PREFIX = "run-all-test-suites: not run"
+RUNNER_STOPPED_LINE_PREFIX = "run-all-test-suites: not run to the end — stopped by "
+FAILED_SUITE_LINE_KILLED_WHEN_RUN_STOPPED_MARK = " killed when the run was stopped by "
 RUNNER_STDERR_LINES_SHOWN = 40
 
 MESSAGE_PREFIX = "pre-push: "
@@ -113,11 +124,19 @@ def descendant_process_ids(root_pid):
     return found
 
 
+def signal_each(signal_number, pids):
+    for pid in pids:
+        try:
+            os.kill(pid, signal_number)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+
 def stop_process_group(process):
     """Stop the run and every process it started.
 
     Return its captured (stdout, stderr) and an error naming the descendants that could not be
-    listed, or None.
+    listed, or None. process.returncode is then the run's exit status.
     """
     # Listed before any signal: once the run dies, its children are re-parented and the tree is lost.
     try:
@@ -126,23 +145,26 @@ def stop_process_group(process):
     except (OSError, subprocess.SubprocessError, RuntimeError) as error:
         descendants = []
         listing_error = str(error)
-    # SIGTERM first, so the run can release its lock and finish its run record.
+    # The run's group outlives the run until communicate() reaps it, so killpg cannot miss it here.
+    os.killpg(process.pid, signal.SIGTERM)
+    try:
+        stdout, stderr = process.communicate(timeout=RUNNER_STOP_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        stdout = stderr = None
+    # SIGTERM first, so a run that did not exit can still release its lock and finish its run record.
     for signal_number in (signal.SIGTERM, signal.SIGKILL):
-        try:
+        if stdout is None:
             os.killpg(process.pid, signal_number)
-        except (ProcessLookupError, PermissionError):
-            pass
-        for pid in descendants:
-            try:
-                os.kill(pid, signal_number)
-            except (ProcessLookupError, PermissionError):
-                pass
+        signal_each(signal_number, descendants)
+        if stdout is not None:
+            continue
         try:
             stdout, stderr = process.communicate(timeout=TERMINATE_GRACE_SECONDS)
-            return stdout, stderr, listing_error
         except subprocess.TimeoutExpired:
             continue
-    return "", "", listing_error
+    if stdout is None:
+        return "", "", listing_error
+    return stdout, stderr, listing_error
 
 
 def checkout_top_directory():
@@ -226,13 +248,34 @@ def say_suites_not_run(stream, stdout):
     say_whole_report(stream, stdout)
 
 
-def say_refusal(stream, stdout):
-    lines = stdout.splitlines()
-    summary = next((line for line in reversed(lines) if line.startswith(SUMMARY_LINE_PREFIX)), "")
-    say(stream, MESSAGE_PREFIX + "an nc-test-suite failed in the selective test run, so this push "
-        "is refused. %s" % summary)
-    for line in suite_lines_with_logs(stdout, (FAILED_SUITE_LINE_PREFIX,
-                                               NOT_RUN_SUITE_LINE_PREFIX)):
+def stopped_run_failed_suite_lines(stdout):
+    """The lines of a stopped run naming a suite that failed before the stop, not one it killed."""
+    return [line for line in stdout.splitlines()
+            if line.startswith(FAILED_SUITE_LINE_PREFIX)
+            and FAILED_SUITE_LINE_KILLED_WHEN_RUN_STOPPED_MARK not in line]
+
+
+def say_refusal(stream, stdout, budget=None, listing_error=None):
+    """Refuse for a run that ended with a SUMMARY, or, given its budget, for one stopped at it.
+
+    A listing_error from the stop is reported with the refusal, and the user is told, because the
+    suites' processes it could not list may still be running.
+    """
+    if budget is None:
+        lines = stdout.splitlines()
+        summary = next((line for line in reversed(lines)
+                        if line.startswith(SUMMARY_LINE_PREFIX)), "")
+        say(stream, MESSAGE_PREFIX + "an nc-test-suite failed in the selective test run, so this "
+            "push is refused. %s" % summary)
+        suite_lines = suite_lines_with_logs(stdout, (FAILED_SUITE_LINE_PREFIX,
+                                                     NOT_RUN_SUITE_LINE_PREFIX))
+    else:
+        say(stream, MESSAGE_PREFIX + "an nc-test-suite failed in the selective test run, so this "
+            "push is refused. That run went on after the failure until its %d-second time budget "
+            "ran out, and was stopped there; the suites it had not finished by then were not "
+            "tested." % budget)
+        suite_lines = stopped_run_failed_suite_lines(stdout)
+    for line in suite_lines:
         say(stream, line)
     say_whole_report(stream, stdout)
     say(stream, "Fix what each failing suite's log shows, commit the fix and push again; the "
@@ -241,6 +284,12 @@ def say_refusal(stream, stdout):
         "push again once without changing anything, since some suites fail only when the "
         "machine is busy.")
     say(stream, "If it fails a second time, tell the user which suite fails and where its log is.")
+    if listing_error:
+        say(stream, MESSAGE_PREFIX + "the processes the run's suites started in their own process "
+            "sessions on this machine could not be listed when the run was stopped, so some may "
+            "still be running: %s" % listing_error)
+        say(stream, "Tell the user this line and the error in it, since those processes may keep "
+            "running on the machine.")
 
 
 def main(stream, environment):
@@ -276,14 +325,20 @@ def main(stream, environment):
         stdout, stderr = process.communicate(timeout=budget)
     except subprocess.TimeoutExpired:
         stdout, stderr, listing_error = stop_process_group(process)
+        # The runner exits 1 after a stop only when a suite had already failed.
+        if process.returncode == RUNNER_EXIT_SOME_FAILED and any(
+                line.startswith(RUNNER_STOPPED_LINE_PREFIX) for line in stdout.splitlines()):
+            say_refusal(stream, stdout, budget=budget, listing_error=listing_error)
+            return EXIT_REFUSE_PUSH
         log_directory = log_directory_named_in(stdout)
         cause = ("the selective test run had not finished when the %d-second time budget ran "
                  "out, and was stopped" % budget)
         if log_directory:
             cause += "; the logs of the suites it ran are in %s" % log_directory
         if listing_error:
-            cause += ("; the processes its suites started in their own sessions could not be "
-                      "listed, so some may still be running: %s" % listing_error)
+            cause += ("; the processes its suites started in their own process sessions on this "
+                      "machine could not be listed, so some may still be running: %s"
+                      % listing_error)
         say_runner_stderr(stream, stderr)
         say_not_run(stream, cause, tell_user=bool(listing_error))
         return EXIT_ALLOW_PUSH
