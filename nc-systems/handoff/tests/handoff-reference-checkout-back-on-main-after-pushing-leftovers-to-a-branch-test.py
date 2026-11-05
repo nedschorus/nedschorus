@@ -278,6 +278,21 @@ def post_merge_hook_failure_case():
           and origin_branch(LEFTOVERS) and on_main_at_origin_main_and_clean(), out + err)
 
 
+def post_merge_hook_timeout_case():
+    fresh_reference_checkout()
+    post_merge_hook("#!/bin/sh\nsleep 30\n")
+    commit("local only")
+    saved_timeout = program.POST_MERGE_HOOK_TIMEOUT_SECONDS
+    program.POST_MERGE_HOOK_TIMEOUT_SECONDS = 1
+    try:
+        status, out, err = run_program()
+    finally:
+        program.POST_MERGE_HOOK_TIMEOUT_SECONDS = saved_timeout
+    check("a post-merge hook that does not finish: exits 1 saying so, the checkout on main",
+          status == 1 and "post-merge" in err and "did not finish" in err
+          and on_main_at_origin_main_and_clean(), out + err)
+
+
 def leftovers_conflicting_with_origin_main_under_repository_hooks_case():
     fresh_reference_checkout()
     git("config", "core.hooksPath", str(REPOSITORY_HOOKS))
@@ -401,6 +416,7 @@ head_on_an_unpushed_leftovers_branch_case()
 ignored_file_at_a_path_origin_main_tracks_case()
 post_merge_hook_run_after_the_switch_case()
 post_merge_hook_failure_case()
+post_merge_hook_timeout_case()
 leftovers_conflicting_with_origin_main_under_repository_hooks_case()
 branch_name_taken_case()
 head_off_main_case()
