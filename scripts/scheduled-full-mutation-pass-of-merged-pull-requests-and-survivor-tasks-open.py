@@ -69,9 +69,12 @@ each line gets at most one task, naming how many of its mutants survived and
 their cosmic-ray operators, and showing each mutant's diff. A mutant the state
 already names is left out of its line's group, and a line whose group is then
 empty gets no task. A line for which its owner's list holds a task not marked
-completed, whose subject names the file and line, gets no second task: the
-record names that task, and the state names it for a mutant whose diff file
-its description names, as for a task a stopped run opened, and for no other.
+completed, whose subject names the file and line, gets no second task: each
+of its mutants that task does not yet name is added to the end of the task's
+description, with its diff and command, and the state names that task for
+each. Claude Code rewriting the task file at the same moment can drop the
+addition; step 4 of the next run then reports the task as no longer holding
+the mutant.
 A task is a Claude Code task file, `<id>.json` in the task list
 directory `nedschorus-<agent-seat>-tasks` under --task-lists-directory, with
 the keys id, subject, description, status, blocks and blockedBy. The
@@ -96,7 +99,7 @@ THE RECORD is one text file per run in the log-store:
 
 It holds origin/main, the commit the run started after, a line per merge with
 the mutation testing program's SUMMARY line, a line per surviving mutant with
-the task it was given or the open task for its line, a line per ERRORED mutant and changed file with no
+the task it was given or was added to, a line per ERRORED mutant and changed file with no
 suite, each failure, and the wall-clock seconds. This program runs on ned-box
 only, so the record is written locally. A record that cannot be written is
 printed on standard output instead, and the run exits EXIT_RECORD_NOT_WRITTEN.
@@ -362,6 +365,30 @@ def agent_seat_task_list_new_pending_task_write(list_directory, subject, descrip
     return task_id
 
 
+def mutants_shown_with_commands(mutants_and_diff_files, merge):
+    count = len(mutants_and_diff_files)
+    return "\n\n".join(
+        f"Mutant {number} of {count}, cosmic-ray operator {mutant['operator']}, as a diff "
+        f"against main at {merge[:12]}:\n{mutant['diff']}\n"
+        f"Its command: python3 scripts/{MUTATION_TESTING_PROGRAM.name} "
+        f"--recorded-mutant-killed-check {shlex.quote(str(diff_file))}"
+        for number, (mutant, diff_file) in enumerate(mutants_and_diff_files, start=1))
+
+
+def task_mutants_added_write(task_file, task, mutants_and_diff_files, merge, merge_subject,
+                             record_citation):
+    """Append the mutants, with their commands, to the open task's description. Raises OSError."""
+    added = (f"\n\nAdded by a later run: {len(mutants_and_diff_files)} more mutant(s) of this "
+             f"line survived merge {merge[:12]} ({merge_subject}); kill them too, or record why "
+             f"no test can.\n\n"
+             f"{mutants_shown_with_commands(mutants_and_diff_files, merge)}\n\n"
+             f"That run's record: {record_citation}")
+    updated = dict(task, description=str(task.get("description", "")) + added)
+    partial = task_file.with_name(f".{task_file.name}.partial")
+    partial.write_text(json.dumps(updated, indent=2), encoding="utf-8")
+    os.replace(partial, task_file)
+
+
 def task_text(place, mutants_and_diff_files, merge, merge_subject, author, owner_reason,
               record_citation):
     count = len(mutants_and_diff_files)
@@ -374,12 +401,7 @@ def task_text(place, mutants_and_diff_files, merge, merge_subject, author, owner
     whose = ("You wrote the line." if owner_reason is None
              else f"Agent-seat {author} wrote the line; this task is on your list because "
                   f"{owner_reason}.")
-    mutants_shown = "\n\n".join(
-        f"Mutant {number} of {count}, cosmic-ray operator {mutant['operator']}, as a diff "
-        f"against main at {merge[:12]}:\n{mutant['diff']}\n"
-        f"Its command: python3 scripts/{MUTATION_TESTING_PROGRAM.name} "
-        f"--recorded-mutant-killed-check {shlex.quote(str(diff_file))}"
-        for number, (mutant, diff_file) in enumerate(mutants_and_diff_files, start=1))
+    mutants_shown = mutants_shown_with_commands(mutants_and_diff_files, merge)
     description = (
         f"The scheduled full mutation pass found {count} mutant(s) that no test kills in "
         f"{place} (cosmic-ray operators, with how many mutants each: {operators_named}), a "
@@ -508,15 +530,22 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
             for mutant in not_given]
         try:
             found = task_on_list_open_for_line(list_directory, place)
+            # A mutant whose diff file the open task already names was added to it by a run
+            # stopped before it wrote the state.
+            to_add = [(mutant, diff_file) for mutant, diff_file in mutants_and_diff_files
+                      if found is None or not task_names_mutant(found[1], mutant_key(mutant))]
+            for mutant, diff_file in to_add:
+                diff_file.parent.mkdir(parents=True, exist_ok=True)
+                diff_file.write_text(mutant["diff"], encoding="utf-8")
             if found is None:
-                for mutant, diff_file in mutants_and_diff_files:
-                    diff_file.parent.mkdir(parents=True, exist_ok=True)
-                    diff_file.write_text(mutant["diff"], encoding="utf-8")
                 subject, description = task_text(place, mutants_and_diff_files, merge,
                                                  merge_subject, author, owner_reason,
                                                  record_citation)
                 task_id = agent_seat_task_list_new_pending_task_write(list_directory, subject,
                                                                       description)
+            elif to_add:
+                task_mutants_added_write(list_directory / f"{found[0]}.json", found[1], to_add,
+                                         merge, merge_subject, record_citation)
         except OSError as error:
             raise StepFailed(
                 f"merge {merge[:12]}: no task could be opened on {owner}'s task list for the "
@@ -536,20 +565,15 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
                               f"opened on {owner}'s task list")
             write_state(state_file, state)
             continue
-        found_id, found_task = found
+        found_id = found[0]
+        added_keys = {mutant_key(mutant) for mutant, _ in to_add}
         for mutant in not_given:
             key = mutant_key(mutant)
-            # A task that names the mutant's diff file was opened for it, by a run stopped
-            # before it wrote the state; any other open task for the line takes the mutant in
-            # without naming it, so the state, whose tasks must name their mutants, leaves it out.
-            if task_names_mutant(found_task, key):
-                state["tasks_opened"][key] = {"agent_seat": owner, "task_id": found_id}
-                record.append(f"  SURVIVED {place} {mutant['operator']}: already given task "
-                              f"#{found_id} on {owner}'s task list")
-            else:
-                record.append(f"  SURVIVED {place} {mutant['operator']}: no task, since task "
-                              f"#{found_id} on {owner}'s task list, not marked completed, is "
-                              f"open for this line")
+            state["tasks_opened"][key] = {"agent_seat": owner, "task_id": found_id}
+            record.append(f"  SURVIVED {place} {mutant['operator']}: "
+                          + (f"added to task #{found_id}, open for this line,"
+                             if key in added_keys else f"already given task #{found_id}")
+                          + f" on {owner}'s task list")
         write_state(state_file, state)
     for mutant in errored:
         record.append(f"  ERRORED {mutant['module_path']}:{mutant['line']} {mutant['operator']}"
