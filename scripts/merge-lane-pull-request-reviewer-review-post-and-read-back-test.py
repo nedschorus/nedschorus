@@ -345,6 +345,16 @@ def merge_lane_cases(scratch):
     check("round trip: a merge-lane-2 review that marks nothing of its own leaves the "
           "commissioned reviewer's Blocks finding blocking",
           isinstance(found, list) and [item["line"] for item in found] == [3], str(found))
+    lane_uncounted = {"body": "REQUEST_CHANGES\n\nA blocker of merge-lane-2's own.", "comments": [
+        {"path": "scripts/thing.py", "line": 6, "body": "**Blocks** A blocker of merge-lane-2's own."}]}
+    reviewer_counted = {"body": "COMMENT\n\n**Blocking: 1**\n\nOne blocker.", "comments": [
+        {"path": "scripts/thing.py", "line": 3, "body": "**Blocks** A Blocks finding graded down."}]}
+    found = fix_round_blocking_findings(fix_round, [lane_uncounted, reviewer_counted],
+                                        ["ned-review-merge", "mac-claude"])
+    check("round trip: a Blocking count in a commissioned reviewer's review does not make the "
+          "round graded, so that reviewer's Blocks finding still blocks beside merge-lane-2's "
+          "uncounted one",
+          isinstance(found, list) and sorted(item["line"] for item in found) == [3, 6], str(found))
     duplicated = run_program(scratch, review("REQUEST_CHANGES", comments=[
         finding(2, "must-fix-now"), finding(2, "must-fix-now"), finding(3, "fix-next"),
         finding(3, "fix-next")]), arguments=MERGE_LANE_ARGUMENTS)
