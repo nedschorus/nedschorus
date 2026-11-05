@@ -47,6 +47,16 @@ On 2026-11-01, in the agent-session of the agent-seat reboot-test on ned-box (tr
 - Bears on Questions 3 and 6: he does not know whether a headless login exists.
 - Bears on the use of Codex: the agent that carries out the switch needs access to his email or his browser, possibly more, and he expects a background Codex agent to watch for changes in the login's steps, even if each step can be mechanized.
 
+## What the user decided
+
+Build no usage governor. A usage governor would be a program that holds back work that can wait, such as cold reads of drafts and research subagents, when the week's usage gets ahead of schedule. The user ruled that none is built, and that the weekly limit is met by switching among his three accounts, the switch this GHI covers.
+
+He ruled it on 2026-11-02 as item 7.1 of agent-instructions-editor's approval-walk merge-lane-2-seat-brief-rewrite-without-history-2026-11-02. The item is the section "Item 7.1 of 21: three accounts, no usage governor" of the walk-document `nedlern@ned-box:/home/nedlern/agents/agent-instructions-editor/docs/walk/merge-lane-2-seat-brief-rewrite-without-history-2026-11-02.md`, and its recommendation reads: "Recommendation: build no usage governor; get the three-account switch through GHI 1201's questions." Line 78 of the walk-minutes, `nedlern@ned-box:/home/nedlern/agents/agent-instructions-editor/docs/walk/merge-lane-2-seat-brief-rewrite-without-history-2026-11-02-minutes.md`, records his answer, approving that recommendation, in this line, quoted whole; the fast reads its last words introduce are listed on the lines after it: `item 7.1 of 19: the user answered approved #case_against_medium (2026-11-02 08:43) in his words "A", which makes its change. Fast reads:` The minutes number the walk's items out of 19 and the walk-document's heading out of 21, but both are the same item 7.1, on three accounts and no usage governor.
+
+The item gave these numbers, from the analysis `nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/fleet-time-and-token-costs-2026-10-31-to-2026-11-02/opus/report.md`: one account lasted 51 active hours before the weekly limit stopped the agent-seats on 2026-10-31 at 21:50Z for 18.3 hours; a full week at that rate needs 3.3 accounts' worth of usage; and with the report's proposal 7, token cuts of about 15% not yet built, three accounts cover the week with about 7% to spare. Its case against the ruling: that margin comes from a 48-hour sample, and a busier week stops three accounts too.
+
+- Bears on Question 1: the three accounts are the target, as the user also said on 2026-11-02 at 00:55Z, in agent-instructions-editor's agent-session, recorded at line 35 of the same walk-minutes: "I have 3 accounts, personal, work and non profit, so that is our target."
+
 ## Questions for the user
 
 1. Which accounts take part, and in what order?
