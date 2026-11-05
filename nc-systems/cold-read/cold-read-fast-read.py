@@ -86,8 +86,15 @@ nc-systems/cold-read/cold-read-record-ship.py, whose one line is printed on stde
 `record:` (user-ruled 2026-09-07). When shipping fails, the report is still
 kept and its path printed, and then the read exits 1, because the record did
 not reach the log-store.
-The cold-read-cell launcher pre-clears the report path, so a suggestions file
-left by an earlier read is replaced, never appended to.
+The cold-read-cell writes its report into this program's temporary
+directory, and the finished report is written to the path above once, after
+Question 4 is answered and the sentences are attached. A record is shipped
+add-only, and another program, such as the hook that ships every worktree's
+records before a `git worktree remove`, may ship it while the read is still
+running; a report rewritten after such a shipment would make the read's own
+shipment, and every later one, refuse the record. Before the cell launches,
+this program removes the report path, so a suggestions file left by an
+earlier read is replaced, never appended to, and a failed read leaves none.
 
 FROM THE MAC. A document in a ned-box worktree, opened on the Mac through
 its mount of ned-box's home, /Volumes/nedhome, cannot be placed there: the
@@ -335,6 +342,9 @@ WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_FILE_NAME = "cold-read-fast-r
 # a file of the same name; directly in the scratch directory, that would be
 # the shared temporary root, where a concurrent fast read writes its own.
 WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_DIRECTORY_NAME = "what-should-be-code-answer"
+# The fast-clarify cell's own report sits one directory below the scratch
+# directory, for the reason the Question 4 answer does above.
+FAST_CLARIFY_CELL_REPORT_SCRATCH_DIRECTORY_NAME = "fast-clarify-cell-report"
 WHAT_SHOULD_BE_CODE_QUESTION_LAUNCHER_OUTPUT_SCRATCH_FILE_NAME = (
     "cold-read-fast-read-what-should-be-code-launcher-output.txt")
 # Opus 5.5 defect-hunt cells at xhigh, a larger task than one question at
@@ -1354,26 +1364,24 @@ def what_should_be_code_section(target: pathlib.Path, scratch: pathlib.Path) -> 
 
 
 def fast_read_report_finish_and_print_path(
-    *, report: pathlib.Path, target: pathlib.Path, sentences: dict,
+    *, report: pathlib.Path, cell_report: pathlib.Path, target: pathlib.Path, sentences: dict,
     marked_copy_kept, full_run_class_name, bare_references, launch_sha256: str,
     on_records_route: bool, backup_line: str, scratch: pathlib.Path,
     quota_line: str = "",
 ) -> int:
-    """Turn the cell's report into the read's: ask Question 4 and add its
-    section, attach the sentences, the coverage and the bare numbers, name an
-    edit made during the read and the Sonnet backup, ship the record, print
-    the path. Returns 0, or 1 when the record did not reach the log-store,
-    whether or not Question 4 was answered."""
-    # Asked only once Questions 1 to 3 have a report to hold the answer, and
-    # not beside the fast-clarify cell: the claude launcher reports as a stray
-    # write any file in the checkout that changes while it runs, and on the
-    # walk route that cell's report is written there.
+    """Turn the cell's report, cell_report, into the read's, written once at
+    report: ask Question 4 and add its section, attach the sentences, the
+    coverage and the bare numbers, name an edit made during the read and the
+    Sonnet backup, ship the record, print the path. Returns 0, or 1 when
+    the record did not reach the log-store, whether or not Question 4 was
+    answered."""
+    # Asked only once Questions 1 to 3 have a report to hold the answer.
     question_4_section = what_should_be_code_section(target, scratch)
     # Before anything reads or ships it: put each original sentence under
     # the restatement claiming its id, and say which sentences no
     # restatement claimed.
     attached = attach_sentences_and_coverage(
-        report.read_text(encoding="utf-8"), sentences, target,
+        cell_report.read_text(encoding="utf-8"), sentences, target,
         marked_copy_kept, full_run_class_name, question_4_section)
     if bare_references is not None:
         attached += bare_references_section(bare_references)
@@ -1467,8 +1475,11 @@ def main() -> int:
         marked_copy = (report.parent if on_records_route else pathlib.Path(scratch)) / (
             f"{target.stem}{SENTENCE_ID_MARKED_COPY_SUFFIX}")
         marked_copy.write_text(marked_text, encoding="utf-8")
+        cell_report = (pathlib.Path(scratch) / FAST_CLARIFY_CELL_REPORT_SCRATCH_DIRECTORY_NAME
+                       / report.name)
+        report.unlink(missing_ok=True)
         finish = dict(
-            report=report, target=target, sentences=sentences,
+            report=report, cell_report=cell_report, target=target, sentences=sentences,
             marked_copy_kept=marked_copy if on_records_route else None,
             full_run_class_name=full_run_class_name, bare_references=bare_references,
             launch_sha256=launch_sha256, on_records_route=on_records_route,
@@ -1476,7 +1487,7 @@ def main() -> int:
         quota_error_line = ""
         for attempt in range(1, FAST_READ_ATTEMPTS + 1):
             exit_code, output = run_one_fast_clarify_cell(
-                AGY_CELL_LAUNCHER, marked_copy, report, prompt_file)
+                AGY_CELL_LAUNCHER, marked_copy, cell_report, prompt_file)
             if exit_code == 0:
                 return fast_read_report_finish_and_print_path(**finish, backup_line="")
             gemini_cause = cold_read_cell_reviewer_launcher_failure_cause_line(
@@ -1504,7 +1515,7 @@ def main() -> int:
               f"running the same cell once on {SONNET_BACKUP_MODEL}, the Sonnet "
               "backup, through the claude cell launcher.", file=sys.stderr)
         exit_code, output = run_one_fast_clarify_cell(
-            CLAUDE_CELL_LAUNCHER, marked_copy, report, prompt_file)
+            CLAUDE_CELL_LAUNCHER, marked_copy, cell_report, prompt_file)
         if exit_code == 0:
             return fast_read_report_finish_and_print_path(
                 **finish,

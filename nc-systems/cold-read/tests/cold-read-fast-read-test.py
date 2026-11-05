@@ -195,7 +195,7 @@ EMBEDDED_PROMPT_COPY_AND_SOURCE_PAIRS = (
 # "fail_first_attempts": N fails the first N and succeeds after; "hang"
 # sleeps past any deadline a case sets.
 STUB_AGY = """#!/usr/bin/env python3
-import json, os, pathlib, sys
+import json, os, pathlib, re, sys
 argv = sys.argv
 model = argv[argv.index("--model") + 1] if "--model" in argv else "*"
 prompt = argv[argv.index("--print") + 1] if "--print" in argv else ""
@@ -217,7 +217,11 @@ if "delete_document" in step:
 if launches <= step.get("fail_first_attempts", 0):
     sys.stderr.write(step.get("fail_stderr", "stub agy: simulated failure on launch %d\\n" % launches))
     sys.exit(step.get("fail_exit", 1))
-report_path = pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"])
+# Where the prompt tells the reviewer to write, as the real agy does; the
+# variable is for a prompt that names no report.
+named = re.search(r"Write your report to (\\S+), once", prompt)
+report_path = pathlib.Path(named.group(1) if named
+                           else os.environ["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"])
 if "report" in step:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(step["report"], encoding="utf-8")
@@ -237,9 +241,11 @@ sys.exit(step.get("exit", 0))
 # "concurrent_read_answer" exits 0 without writing its own report, after
 # writing that text where a concurrent fast read, in a temporary directory of
 # its own, would write its Question 4 answer; it saves that directory, then
-# that file, one per line, to the file "concurrent_read_answer_path_file" names.
+# that file, one per line, to the file "concurrent_read_answer_path_file" names;
+# "ship_record_first" is a command the stub runs before it writes its report,
+# saving the command's stdout to the file "ship_record_first_line_file" names.
 STUB_CLAUDE = """#!/usr/bin/env python3
-import json, os, pathlib, re, sys, tempfile, time
+import json, os, pathlib, re, subprocess, sys, tempfile, time
 argv = sys.argv
 prompt = sys.stdin.read()
 model = argv[argv.index("--model") + 1] if "--model" in argv else ""
@@ -273,8 +279,13 @@ if "concurrent_read_answer" in plan:
 if "report" not in plan:
     sys.stderr.write(plan.get("fail_stderr", "stub claude: simulated failure\\n"))
     sys.exit(1)
+if "ship_record_first" in plan:
+    shipped = subprocess.run(plan["ship_record_first"], capture_output=True, text=True, check=False)
+    pathlib.Path(plan["ship_record_first_line_file"]).write_text(shipped.stdout, encoding="utf-8")
+named = re.search(r"Write your report to (\\S+), once", prompt)
 report_path = (own_report if asks_question_4
-               else pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"]))
+               else pathlib.Path(named.group(1) if named
+                                 else os.environ["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"]))
 report_path.parent.mkdir(parents=True, exist_ok=True)
 report_path.write_text(plan["report"], encoding="utf-8")
 """.replace("QUESTION_4_MODEL", script_under_test_module().WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID)
@@ -695,6 +706,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- FAILED after the second failure ----------------------------------
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    suggestions.write_text("LEFT BY AN EARLIER READ\n", encoding="utf-8")
     result = run_fast_read(
         repository, stubs,
         {"*": {"fail_first_attempts": 99, "report": "STUB FAST READ: never\n"}},
@@ -710,7 +722,7 @@ with tempfile.TemporaryDirectory() as scratch:
           launches_counted(counter) == 2 and launches_counted(claude_counter_path(counter)) == 1,
           f"launches={launches_counted(counter)}, "
           f"claude launches={launches_counted(claude_counter_path(counter))}")
-    check("no report is left behind by a failed read",
+    check("no report is left behind by a failed read, not even an earlier read's",
           not suggestions.exists(), f"{suggestions} exists")
     check("a failed read writes no agent-session file",
           agent_session_written_beside(suggestions) is None,
@@ -1254,9 +1266,20 @@ with tempfile.TemporaryDirectory() as scratch:
     marked_copy_name = (pathlib.Path(walk_draft_relative).stem
                         + script_under_test_module().SENTENCE_ID_MARKED_COPY_SUFFIX)
     target_line = received_prompt.split("\n", 1)[0]
+    # The cell writes into the read's temporary directory, and the read writes
+    # the suggestions file only once it is finished.
+    named_cell_report = re.search(r"Write your report to (\S+), once", received_prompt)
+    cell_report_path = Path(named_cell_report.group(1)) if named_cell_report else Path()
+    check("the cell is told to write its report into the read's temporary directory, "
+          "under the report's own name, not to the suggestions file",
+          cell_report_path.name == suggestions.name
+          and cell_report_path.parent.name
+          == script_under_test_module().FAST_CLARIFY_CELL_REPORT_SCRATCH_DIRECTORY_NAME
+          and str(suggestions) not in received_prompt and not cell_report_path.exists(),
+          repr(str(cell_report_path)))
     expected_prompt = (script_under_test_module().FAST_CLARIFY_PROMPT_TEMPLATE
                        .replace("{TARGET_PATH}", "{TARGET_PATH}")
-                       .replace("{REPORT_PATH}", str(suggestions)))
+                       .replace("{REPORT_PATH}", str(cell_report_path)))
     check("the model receives the template embedded in the script",
           result.returncode == 0
           and received_prompt.strip().replace(
@@ -1268,7 +1291,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and str(repository / walk_draft_relative) not in received_prompt,
           repr(received_prompt[:300]))
     check("both paths are substituted and no placeholder remains",
-          str(suggestions) in received_prompt
+          named_cell_report is not None
           and "{TARGET_PATH}" not in received_prompt
           and "{REPORT_PATH}" not in received_prompt,
           repr(received_prompt[:300]))
@@ -1435,6 +1458,46 @@ with tempfile.TemporaryDirectory() as scratch:
           (store_copy / records_report.name).is_file()
           and (store_copy / "target" / other_relative).is_file(),
           sorted(str(p.relative_to(store_copy)) for p in store_copy.rglob("*")) if store_copy.exists() else "no store copy")
+
+    # A shipment of the record made while the read is still running, as the
+    # pre-remove hook makes when any agent-seat runs `git worktree remove`
+    # during a read's Question 4, must not hold a report the finished read
+    # then rewrites: the read's own shipment would be refused, and so would
+    # every later `git worktree remove`, the hook shipping the record again each time.
+    mid_read_document_relative = "docs/drafts/a-design-shipped-mid-read.md"
+    (repository / mid_read_document_relative).write_text(
+        "# A design\n\nShipped while read.\n", encoding="utf-8")
+    mid_read_report = (repository / "cold-read-records"
+                       / f"a-design-shipped-mid-read-{record_stamp}" / "cold-read-fast-read.md")
+    mid_read_shipment_line_file = scratch / "mid-read-shipment-line"
+    mid_read_shipment_line_file.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: shipped mid-read\n"}},
+        mid_read_report, mid_read_document_relative, counter,
+        question_4_plan={"report": QUESTION_4_STUB_ANSWER,
+                         "ship_record_first": [
+                             sys.executable,
+                             str(repository / "nc-systems" / "cold-read" / "cold-read-record-ship.py"),
+                             str(mid_read_report.parent)],
+                         "ship_record_first_line_file": str(mid_read_shipment_line_file)},
+    )
+    mid_read_shipment_line = (mid_read_shipment_line_file.read_text(encoding="utf-8")
+                              if mid_read_shipment_line_file.is_file() else "")
+    mid_read_record_lines = [line for line in result.stderr.splitlines() if "record: " in line]
+    check("a record shipped while its read is still running ships again, whole, when the read "
+          "finishes, and the read exits 0",
+          mid_read_shipment_line.startswith("shipped:") and result.returncode == 0
+          and len(mid_read_record_lines) == 1 and "record: shipped:" in mid_read_record_lines[0],
+          f"mid-read shipment {mid_read_shipment_line!r}; exit {result.returncode}; "
+          f"{mid_read_record_lines!r}")
+    mid_read_store_report = (repository / SCRATCH_LOG_STORE_RELATIVE
+                             / mid_read_report.parent.name / mid_read_report.name)
+    check("the store's report of a record shipped mid-read is the finished report",
+          mid_read_store_report.is_file() and mid_read_report.is_file()
+          and mid_read_store_report.read_bytes() == mid_read_report.read_bytes(),
+          f"store copy present={mid_read_store_report.is_file()}")
+    # Later cases list the records beside the report, so leave none of this one.
+    shutil.rmtree(mid_read_report.parent, ignore_errors=True)
 
     # A second read of the same document on the same day takes a fresh -2
     # directory, so two frozen targets never share one (the grid's rule). The
