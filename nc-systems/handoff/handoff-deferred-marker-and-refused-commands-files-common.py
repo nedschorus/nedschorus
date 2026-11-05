@@ -2,8 +2,8 @@
 """Read and write an agent-session's handoff-deferred marker file and its file of refused commands.
 
 The threshold hook, scripts/handoff-context-threshold-hook.py, writes the marker file at the
-first handoff-deferral: when the deferral began, and the subagents and background Bash tasks
-then in flight, which are the only work later turns wait for. The cold-read-grid refusal hook
+first handoff-deferral: when the deferral began, and the subagents, workflows and background
+Bash tasks then in flight, which are the only work later turns wait for. The cold-read-grid refusal hook
 refuses a cold-read-full-run while the marker file exists and appends the refused command to
 the file of refused commands. The handoff writer script reads both to list, in the
 session-handoff, the work the deferral did not wait for. When the threshold hook fires the
@@ -59,12 +59,13 @@ class HandoffDeferredMarker:
 
     # A dataclass cannot be used: it needs its module in sys.modules, and loading by path skips that.
     def __init__(self, used_percentage, deferral_began_at, awaited_subagent_ids,
-                 awaited_background_task_ids, awaited_work_is_unknown):
+                 awaited_background_task_ids, awaited_work_is_unknown, awaited_workflow_ids=()):
         self.used_percentage = used_percentage
         self.deferral_began_at = deferral_began_at
         self.awaited_subagent_ids = list(awaited_subagent_ids)
         self.awaited_background_task_ids = list(awaited_background_task_ids)
         self.awaited_work_is_unknown = awaited_work_is_unknown
+        self.awaited_workflow_ids = list(awaited_workflow_ids)
 
 
 def handoff_deferred_marker_path(handoff_directory: Path, session_id: str) -> Path:
@@ -112,6 +113,7 @@ def handoff_deferred_marker_write(handoff_directory: Path, session_id: str,
         "deferral_began_at": utc_iso(marker.deferral_began_at),
         "awaited_subagent_ids": list(marker.awaited_subagent_ids),
         "awaited_background_task_ids": list(marker.awaited_background_task_ids),
+        "awaited_workflow_ids": list(marker.awaited_workflow_ids),
         "awaited_work_is_unknown": bool(marker.awaited_work_is_unknown),
     }) + "\n")
     return path
@@ -147,7 +149,8 @@ def _handoff_deferred_record_read(path: Path):
             raise ValueError("deferral_began_at has no time zone")
         subagent_ids = record["awaited_subagent_ids"]
         background_task_ids = record["awaited_background_task_ids"]
-        if not isinstance(subagent_ids, list) or not isinstance(background_task_ids, list):
+        workflow_ids = record["awaited_workflow_ids"]
+        if not all(isinstance(ids, list) for ids in (subagent_ids, background_task_ids, workflow_ids)):
             raise ValueError("an awaited list is not a list")
         return HandoffDeferredMarker(
             used_percentage=float(record["used_percentage"]),
@@ -155,6 +158,7 @@ def _handoff_deferred_record_read(path: Path):
             awaited_subagent_ids=[str(item) for item in subagent_ids],
             awaited_background_task_ids=[str(item) for item in background_task_ids],
             awaited_work_is_unknown=bool(record["awaited_work_is_unknown"]),
+            awaited_workflow_ids=[str(item) for item in workflow_ids],
         )
     except (ValueError, KeyError, TypeError) as problem:
         raise HandoffDeferredMarkerUnreadable(

@@ -1398,6 +1398,13 @@ with tempfile.TemporaryDirectory() as workspace:
         check("a subagent's own shell task within the wait holds the handoff, dated from the"
               " subagent's transcript", flight.background_task_ids == ["bsubyoung"],
               str(flight.background_task_ids))
+        check("a subagent's own shell task is tied to the subagent whose transcript launched it",
+              flight.launching_subagent_id_by_task_id == {"bsubyoung": "a2573a7737ae643dc"},
+              str(flight.launching_subagent_id_by_task_id))
+        flight = flight_of([list_entry("bshellyoung", "shell")])
+        check("the session's own shell task is tied to no subagent",
+              flight.launching_subagent_id_by_task_id == {},
+              str(flight.launching_subagent_id_by_task_id))
         flight = flight_of([list_entry("bsubold", "shell")])
         check("a subagent's own shell task past the wait holds nothing", not flight,
               str(flight.background_task_ids))
@@ -1467,6 +1474,43 @@ with tempfile.TemporaryDirectory() as workspace:
             check("the hook defers behind a listed workflow and names it",
                   result.returncode == 2
                   and "1 workflow(s) and 1 background task(s) run" in result.stderr,
+                  f"code {result.returncode}, stderr {result.stderr[:250]}")
+            saved = json.loads(list_deferred_marker_file.read_text(encoding="utf-8"))
+            check("a deferral behind a listed workflow saves it as awaited work and names it",
+                  saved.get("awaited_workflow_ids") == ["w1"] and "workflow w1" in result.stderr,
+                  f"marker {saved}, stderr {result.stderr[:400]}")
+            result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
+                               "transcript_path": str(list_session),
+                               "background_tasks": [list_entry("w1", "workflow"),
+                                                    list_entry("w2", "workflow")]})
+            check("while an awaited workflow runs, a later turn stays silent",
+                  result.returncode == 0 and not result.stderr.strip(),
+                  f"code {result.returncode}, stderr {result.stderr[:250]}")
+            result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
+                               "transcript_path": str(list_session),
+                               "background_tasks": [list_entry("w2", "workflow")]})
+            check("a workflow started after the deferral began does not hold the handoff",
+                  result.returncode == 2 and is_handoff_instruction(result.stderr),
+                  f"code {result.returncode}, stderr {result.stderr[:250]}")
+            clear_list_markers()
+            result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
+                               "transcript_path": str(list_session),
+                               "background_tasks": [list_entry("a2573a7737ae643dc", "subagent")]})
+            check("the hook defers behind a listed subagent",
+                  result.returncode == 2 and "handoff deferred" in result.stderr,
+                  f"code {result.returncode}, stderr {result.stderr[:250]}")
+            # Claude Code's list drops a subagent while it waits on its own shell task.
+            result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
+                               "transcript_path": str(list_session),
+                               "background_tasks": [list_entry("bsubyoung", "shell")]})
+            check("an awaited subagent's own shell task holds the handoff while the subagent waits"
+                  " off the list", result.returncode == 0 and not result.stderr.strip(),
+                  f"code {result.returncode}, stderr {result.stderr[:250]}")
+            result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
+                               "transcript_path": str(list_session),
+                               "background_tasks": [list_entry("bshellyoung", "shell")]})
+            check("a shell task neither awaited nor launched by an awaited subagent does not hold it",
+                  result.returncode == 2 and is_handoff_instruction(result.stderr),
                   f"code {result.returncode}, stderr {result.stderr[:250]}")
             clear_list_markers()
             result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
@@ -1692,13 +1736,20 @@ with tempfile.TemporaryDirectory() as wait_set_workspace:
         awaited_background_task_ids=[], awaited_work_is_unknown=True)
     check("with no saved list, work launched as the deferral began holds the handoff",
           hook.awaited_work_still_in_flight(
-              unknown_marker, hook.WorkInFlight([], ["b1"], {"b1": began})))
+              unknown_marker, hook.WorkInFlight([], ["b1"], launched_at_by_id={"b1": began})))
     check("with no saved list, work whose launch time is unknown holds the handoff",
           hook.awaited_work_still_in_flight(
-              unknown_marker, hook.WorkInFlight(["a1"], [], {"a1": None})))
+              unknown_marker, hook.WorkInFlight(["a1"], [], launched_at_by_id={"a1": None})))
     check("with no saved list, work launched after the deferral began does not hold it",
           not hook.awaited_work_still_in_flight(
-              unknown_marker, hook.WorkInFlight(["a1"], [], {"a1": began + timedelta(seconds=1)})))
+              unknown_marker, hook.WorkInFlight(["a1"], [], launched_at_by_id={"a1": began + timedelta(seconds=1)})))
+    workflow_marker = hook.handoff_deferred_marker_and_refused_commands_files_common.HandoffDeferredMarker(
+        used_percentage=40.0, deferral_began_at=began, awaited_subagent_ids=[],
+        awaited_background_task_ids=[], awaited_work_is_unknown=False, awaited_workflow_ids=["w1"])
+    check("an awaited workflow still running holds the handoff",
+          hook.awaited_work_still_in_flight(workflow_marker, hook.WorkInFlight([], [], ["w1"])))
+    check("with no saved list, a workflow whose launch time is unknown holds the handoff",
+          hook.awaited_work_still_in_flight(unknown_marker, hook.WorkInFlight([], [], ["w9"])))
     # A launch record whose time carries no zone is read as UTC, so it compares with the deferral's start.
     check("a launch time with no time zone is read as UTC",
           hook.record_time({"timestamp": "2026-10-28T20:12:00"}) == began,

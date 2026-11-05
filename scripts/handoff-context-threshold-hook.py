@@ -162,6 +162,7 @@ MARKER_NOT_WRITTEN_LINE = (
 def awaited_phrase(flight: WorkInFlight) -> str:
     """Return the ids of the work the deferral waits for, by kind."""
     parts = [f"subagent {agent_id}" for agent_id in flight.subagent_ids]
+    parts += [f"workflow {workflow_id}" for workflow_id in flight.workflow_ids]
     parts += [f"background task {task_id}" for task_id in flight.background_task_ids]
     return ", ".join(parts)
 
@@ -301,12 +302,16 @@ def used_tokens_of(usage: dict) -> int:
 class WorkInFlight:
     """An empty scan must be falsy; a tuple of empty lists would still be truthy."""
 
-    def __init__(self, subagent_ids, background_task_ids, workflow_ids=(), launched_at_by_id=None):
+    def __init__(self, subagent_ids, background_task_ids, workflow_ids=(), launched_at_by_id=None,
+                 launching_subagent_id_by_task_id=None):
         self.subagent_ids = list(subagent_ids)
         self.background_task_ids = list(background_task_ids)
         self.workflow_ids = list(workflow_ids)
         # None for an id whose launch record carries no readable timestamp.
         self.launched_at_by_id = dict(launched_at_by_id or {})
+        # Claude Code's list drops a subagent while it waits on its own shell task, so the deferral
+        # waits for that task in its place.
+        self.launching_subagent_id_by_task_id = dict(launching_subagent_id_by_task_id or {})
 
     def __bool__(self):
         return bool(self.subagent_ids or self.background_task_ids or self.workflow_ids)
@@ -432,7 +437,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
         [agent_id for agent_id in spawned_ids if subagent_still_in_flight(agent_id)],
         [task_id for task_id in launched_task_ids
          if task_id not in finished_ids and still_within_wait(task_id)],
-        launched_at_by_id,
+        launched_at_by_id=launched_at_by_id,
     )
 
 
@@ -458,8 +463,8 @@ def work_in_flight_from_background_tasks(background_tasks: list, transcript_path
         return [entry["id"] for entry in running if entry.get("type") == task_type]
 
     shell_ids = ids_of(SHELL_TASK_TYPE)
-    launch_ages, monitor_ids = shell_task_launch_ages_and_monitor_ids(
-        transcript_path, shell_ids, now)
+    launch_ages, monitor_ids, launching_subagent_id_by_task_id = (
+        shell_task_launch_ages_and_monitor_ids(transcript_path, shell_ids, now))
 
     def still_within_wait(task_id):
         age = launch_ages.get(task_id)
@@ -470,15 +475,18 @@ def work_in_flight_from_background_tasks(background_tasks: list, transcript_path
         [task_id for task_id in shell_ids
          if task_id not in monitor_ids and still_within_wait(task_id)],
         ids_of(WORKFLOW_TASK_TYPE),
+        launching_subagent_id_by_task_id=launching_subagent_id_by_task_id,
     )
 
 
 def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list, now):
     """Return ({shell task id: seconds since its launch record, or None if undated},
-    {ids whose launch record is the Monitor tool's}) for the ids the transcripts record."""
-    launch_ages, monitor_ids = {}, set()
+    {ids whose launch record is the Monitor tool's},
+    {shell task id: id of the subagent whose transcript holds its launch record})
+    for the ids the transcripts record."""
+    launch_ages, monitor_ids, launching_subagent_id_by_task_id = {}, set(), {}
     if not shell_ids or not transcript_path:
-        return launch_ages, monitor_ids
+        return launch_ages, monitor_ids, launching_subagent_id_by_task_id
     session_path = Path(transcript_path).expanduser()
     subagent_directory = session_path.with_suffix("") / "subagents"
     # An undated subagent shell task counts as within its wait, so a subagent directory that
@@ -506,16 +514,24 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
                     if tool_result.get(BACKGROUND_TASK_LAUNCH_KEY) in shell_ids:
                         launch_ages.setdefault(tool_result[BACKGROUND_TASK_LAUNCH_KEY],
                                                record_age_seconds(record, now))
+                        if path != session_path and path.stem.startswith(SUBAGENT_TRANSCRIPT_PREFIX):
+                            launching_subagent_id_by_task_id.setdefault(
+                                tool_result[BACKGROUND_TASK_LAUNCH_KEY],
+                                path.stem[len(SUBAGENT_TRANSCRIPT_PREFIX):])
                     if MONITOR_LAUNCH_KEY in tool_result and tool_result.get("taskId") in shell_ids:
                         monitor_ids.add(tool_result["taskId"])
         except OSError as problem:
             raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
-    return launch_ages, monitor_ids
+    return launch_ages, monitor_ids, launching_subagent_id_by_task_id
+
+
+SUBAGENT_TRANSCRIPT_PREFIX = "agent-"
 
 
 def subagent_transcript_path(session_transcript_path, agent_id) -> Path:
     """Return where Claude Code writes the subagent's own transcript, beside the session's."""
-    return Path(session_transcript_path).with_suffix("") / "subagents" / f"agent-{agent_id}.jsonl"
+    return (Path(session_transcript_path).with_suffix("") / "subagents"
+            / f"{SUBAGENT_TRANSCRIPT_PREFIX}{agent_id}.jsonl")
 
 
 def subagent_own_transcript_shows_work_in_flight(subagent_path: Path,
@@ -555,10 +571,14 @@ def awaited_work_still_in_flight(marker, flight: WorkInFlight) -> bool:
         def launched_before_deferral(work_id):
             launched_at = flight.launched_at_by_id.get(work_id)
             return launched_at is None or launched_at <= marker.deferral_began_at
-        return any(launched_before_deferral(work_id)
-                   for work_id in flight.subagent_ids + flight.background_task_ids)
-    return bool(set(marker.awaited_subagent_ids) & set(flight.subagent_ids)
-                or set(marker.awaited_background_task_ids) & set(flight.background_task_ids))
+        return any(launched_before_deferral(work_id) for work_id in
+                   flight.subagent_ids + flight.workflow_ids + flight.background_task_ids)
+    awaited_subagent_ids = set(marker.awaited_subagent_ids)
+    return bool(awaited_subagent_ids & set(flight.subagent_ids)
+                or set(marker.awaited_workflow_ids) & set(flight.workflow_ids)
+                or set(marker.awaited_background_task_ids) & set(flight.background_task_ids)
+                or any(flight.launching_subagent_id_by_task_id.get(task_id) in awaited_subagent_ids
+                       for task_id in flight.background_task_ids))
 
 
 def defer(session_id, used, share, flight, arguments, unreadable_marker_problem=None,
@@ -571,6 +591,7 @@ def defer(session_id, used, share, flight, arguments, unreadable_marker_problem=
         awaited_subagent_ids=flight.subagent_ids if count_is_known else [],
         awaited_background_task_ids=flight.background_task_ids if count_is_known else [],
         awaited_work_is_unknown=not count_is_known,
+        awaited_workflow_ids=flight.workflow_ids if count_is_known else [],
     )
     lines = [
         HANDOFF_DEFERRED_NOTICE.format(

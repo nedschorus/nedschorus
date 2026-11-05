@@ -301,13 +301,14 @@ def marker_file_cases(workspace):
 
     good = {"used_percentage": 40.04, "deferral_began_at": "2026-10-28T20:12:00.000Z",
             "awaited_subagent_ids": ["a1"], "awaited_background_task_ids": ["b1"],
-            "awaited_work_is_unknown": False}
+            "awaited_work_is_unknown": False, "awaited_workflow_ids": ["w1"]}
     for label, record in (
             ("a JSON value that is not an object", ["a list"]),
             ("a start time with no time zone", {**good, "deferral_began_at": "2026-10-28T20:12:00"}),
             ("an awaited subagent list that is not a list", {**good, "awaited_subagent_ids": "a1"}),
             ("an awaited background task list that is not a list",
              {**good, "awaited_background_task_ids": "b1"}),
+            ("an awaited workflow list that is not a list", {**good, "awaited_workflow_ids": "w1"}),
             ("a record missing a field", {key: value for key, value in good.items()
                                           if key != "awaited_work_is_unknown"})):
         check(f"a marker file holding {label} is reported unreadable",
@@ -330,17 +331,19 @@ def marker_file_cases(workspace):
     began_at = datetime(2026, 10, 28, 20, 12, 0, 123456, tzinfo=timezone.utc)
     markers.handoff_deferred_marker_write(handoffs, SESSION_ID, markers.HandoffDeferredMarker(
         used_percentage=40.04, deferral_began_at=began_at, awaited_subagent_ids=["a1"],
-        awaited_background_task_ids=["b1"], awaited_work_is_unknown=True))
+        awaited_background_task_ids=["b1"], awaited_work_is_unknown=True,
+        awaited_workflow_ids=["w1"]))
     saved = json.loads(path.read_text(encoding="utf-8"))
     read_back = markers.handoff_deferred_marker_read(handoffs, SESSION_ID)
     check("a written marker record is what the file holds",
           saved == {"used_percentage": 40.0, "deferral_began_at": "2026-10-28T20:12:00.123Z",
                     "awaited_subagent_ids": ["a1"], "awaited_background_task_ids": ["b1"],
-                    "awaited_work_is_unknown": True}, saved)
+                    "awaited_work_is_unknown": True, "awaited_workflow_ids": ["w1"]}, saved)
     check("a written marker record reads back",
           read_back.deferral_began_at == began_at.replace(microsecond=123000)
           and read_back.awaited_subagent_ids == ["a1"]
           and read_back.awaited_background_task_ids == ["b1"]
+          and read_back.awaited_workflow_ids == ["w1"]
           and read_back.awaited_work_is_unknown is True and read_back.used_percentage == 40.0,
           vars(read_back))
     check("a written marker record leaves no partial file behind",
