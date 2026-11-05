@@ -52,14 +52,16 @@ def view_answer(**fields):
 
 
 class FakeRunner:
-    """Answers gh pr view, git rev-parse HEAD, the test suite runner and gh pr ready; any of
-    them can be replaced by a behaviour(command) that returns or raises. Records each call."""
+    """Answers gh pr view, git rev-parse HEAD, git status, the test suite runner and gh pr
+    ready; any of them can be replaced by a behaviour(command) that returns or raises. Records
+    each call."""
 
-    def __init__(self, view=None, rev_parse=None, suites=None, ready=None):
+    def __init__(self, view=None, rev_parse=None, status=None, suites=None, ready=None):
         self.behaviours = {
             "view": view or (lambda command: completed(command, 0, view_answer())),
             "rev-parse": rev_parse or (lambda command: completed(command, 0,
                                                                    f"{CHECKOUT}\n{HEAD}\n")),
+            "status": status or (lambda command: completed(command, 0, "")),
             "suites": suites or (lambda command: completed(command, 0)),
             "ready": ready or (lambda command: completed(command, 0)),
         }
@@ -70,6 +72,8 @@ class FakeRunner:
             kind = "view"
         elif command[:2] == ["git", "rev-parse"]:
             kind = "rev-parse"
+        elif command == ["git", "status", "--porcelain"]:
+            kind = "status"
         elif command == program.selective_test_run_command(CHECKOUT):
             kind = "suites"
         elif command[:3] == ["gh", "pr", "ready"]:
@@ -113,9 +117,10 @@ def main():
     status, output, errors = run(runner)
     check("a draft with a defect line, its head checked out and passing suites is marked ready, "
           "the suites running before gh pr ready",
-          status == program.EXIT_MARKED_READY and runner.calls == ["view", "rev-parse", "suites",
-                                                                   "ready"]
-          and f"#77 ({URL}) is marked ready for review." in output,
+          status == program.EXIT_MARKED_READY
+          and runner.calls == ["view", "rev-parse", "status", "suites", "ready"]
+          and f"#77 ({URL}) is marked ready for review." in output
+          and "merge-lane-2" not in output + errors,
           (status, runner.calls, output, errors))
     check("the test suites run with the checkout's own runner, by the command CLAUDE.md gives "
           "for before a push",
@@ -130,7 +135,8 @@ def main():
     status, output, errors = run(runner)
     check("a pull request already ready for review is left as it is, with nothing run",
           status == program.EXIT_MARKED_READY and runner.calls == ["view"]
-          and "already ready for review, so it was left as it is." in output,
+          and "already ready for review, so it was left as it is." in output
+          and "merge-lane-2" not in output + errors,
           (status, output, errors))
 
     # Refusals, each before gh pr ready.
@@ -138,9 +144,10 @@ def main():
             ("a closed pull request", FakeRunner(view=answers(view_answer(state="CLOSED"))),
              ["view"], ["is closed, not open, so it cannot be marked ready for review.",
                         "If you meant another pull request: run this again with its number.",
-                        "If you meant this one and it is closed: read why with gh pr view 77 "
-                        "--comments; when that reason no longer holds, reopen it with gh pr "
-                        "reopen 77, then run this again; otherwise leave it closed."]),
+                        "If you meant this one and it is closed: do not reopen it yourself. "
+                        "Tell the user, in one sentence, that it is closed and you meant to mark "
+                        "it ready for review, and ask whether to reopen it;",
+                        "If the answer is yes: run gh pr reopen 77, then run this again."]),
             ("a merged pull request", FakeRunner(view=answers(view_answer(state="MERGED"))),
              ["view"], ["is merged, not open, so it cannot be marked ready for review.",
                         "If you meant this one and it is merged: its review is over, so there "
@@ -148,29 +155,52 @@ def main():
             ("a checkout whose HEAD is not the pushed head",
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{'b' * 40}\n")), ["view", "rev-parse"],
              [f"this checkout's HEAD, {'b' * 12}, is not #77 ({URL})'s pushed nc-head-commit, "
-              f"{'a' * 12}", "If this checkout has commits the pull request lacks: push them, "
+              f"{'a' * 12}", "If this is not the pull request's own checkout: run this again "
+              "from that checkout, and skip the steps below.", "If this checkout has commits the pull request lacks: push them, "
               "then run this again.", "If the pull request has commits this checkout lacks: run "
               "git pull --ff-only, then run this again.", "If each has commits the other lacks: "
               "run git pull --no-rebase, which merges the pull request's commits into this "
-              "checkout, then push, then run this again."]),
+              "checkout, then push, then run this again; if git reports a merge conflict, "
+              "stop, run git merge --abort, and tell the user, or the agent that dispatched "
+              "you, which files conflict."]),
+            ("a checkout with an uncommitted change to a tracked file",
+             FakeRunner(status=answers(" M scripts/example.py\n")),
+             ["view", "rev-parse", "status"],
+             ["this checkout has 1 uncommitted change(s), such as 'M scripts/example.py', so "
+              f"the test suites would test files that are not in #77 ({URL})'s pushed commits.",
+              "If the changes belong in the pull request: commit and push them, then run this "
+              "again.",
+              "If they do not: set them aside with git stash push -u -m <a name of your own>, "
+              "run this again, then bring them back with git stash apply <that entry's commit> "
+              "and drop the entry."]),
+            ("a checkout with an untracked file that is not ignored",
+             FakeRunner(status=answers("?? notes.txt\n?? more.txt\n")),
+             ["view", "rev-parse", "status"],
+             ["this checkout has 2 uncommitted change(s), such as '?? notes.txt'"]),
             ("a placeholder description with no defect line",
              FakeRunner(view=answers(view_answer(body="Work in progress.\n"))),
-             ["view", "rev-parse"],
+             ["view", "rev-parse", "status"],
              ["description has no line beginning \"#root_cause\"",
-              "Save the current description in a file with gh pr view 77 --json body -q .body > "
-              "<file>",
-              "#follow_up <full https://github.com/ link to the issue or pull request that will "
-              "fix it>",
-              "save the file with gh pr edit 77 --body-file <file>, which replaces the whole "
-              "description"]),
+              "Write the current description to a file outside this repository, such as a file "
+              "in your scratchpad, with gh pr view 77 --json body -q .body > <file>.",
+              "or, when the cause stays or was not found, \"#root_cause_not_fixed <the cause "
+              "that stays, or that it was not found, and why> #follow_up <full https://github.com/ "
+              "link to the issue or pull request that will fix it or look for it>\"; when "
+              "neither exists yet, file an issue with the /ghi-write skill first.",
+              "Then upload the file with gh pr edit 77 --body-file <file>, which replaces the "
+              "whole description"]),
             ("an empty description", FakeRunner(view=answers(view_answer(body=None))),
-             ["view", "rev-parse"], ["description has no line beginning \"#root_cause\""]),
-            ("a failing test suite", FakeRunner(suites=exits(1)), ["view", "rev-parse", "suites"],
+             ["view", "rev-parse", "status"],
+             ["description has no line beginning \"#root_cause\""]),
+            ("a failing test suite", FakeRunner(suites=exits(1)),
+             ["view", "rev-parse", "status", "suites"],
              ["the test suites exited with status 1, so #77",
               "The failing suites are named above.",
-              "Fix them, commit and push the fix, then run this again."]),
+              "Fix them and commit the fix. Before you push it, run the test suites and the "
+              "mutation pass that CLAUDE.md asks for before a push; then push, and run this "
+              "again."]),
             ("a test suite runner that stops before judging every suite",
-             FakeRunner(suites=exits(2)), ["view", "rev-parse", "suites"],
+             FakeRunner(suites=exits(2)), ["view", "rev-parse", "status", "suites"],
              ["scripts/run-all-test-suites.py exited with status 2, before judging every suite, "
               "so #77",
               "Its error is above.", RETRY_LINE])]:
@@ -220,6 +250,11 @@ def main():
              FakeRunner(rev_parse=answers(HEAD + "\n")),
              ["reading this checkout's HEAD failed: git rev-parse --show-toplevel HEAD printed 1 "
               "lines, not 2.", RETRY_LINE]),
+            ("git status fails",
+             FakeRunner(status=exits(128, "fatal: index file corrupt")),
+             ["reading this checkout's uncommitted changes failed: git status --porcelain "
+              "exited with status 128: fatal: index file corrupt.",
+              "If git gave any other error: Run this command again once."]),
             ("python3 cannot run the test suites",
              FakeRunner(suites=raises(FileNotFoundError(2, "No such file", "python3"))),
              ["running the test suites failed: python3 could not be run (", RETRY_LINE]),

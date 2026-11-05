@@ -5,8 +5,9 @@ Usage: python3 scripts/pull-request-ready-for-review-mark-after-description-defe
 
 Run it from the pull request's own checkout, with its nc-head-commit checked out. In order, it:
 1. reads the pull request with gh, and stops when it is not open, or is already ready for review;
-2. refuses when the checkout's HEAD is not the pull request's pushed nc-head-commit, because the
-   test suites would then test commits other than the ones under review;
+2. refuses when the checkout's HEAD is not the pull request's pushed nc-head-commit, or when
+   git status --porcelain shows an uncommitted change or an untracked file that is not ignored,
+   because the test suites would then test files other than the ones under review;
 3. refuses a description with no defect line (#root_cause, #root_cause_not_fixed or
    #no_defect_fixed), read by the same reader scripts/merge-gate.sh uses; a placeholder
    description has none;
@@ -16,8 +17,7 @@ Run it from the pull request's own checkout, with its nc-head-commit checked out
 
 It does not check what scripts/merge-gate.sh checks again before merging, such as a not-fixed
 line's #follow_up link, and it does not stop anyone from marking a pull request ready for
-review on GitHub's page. The test suites run on the working tree, so uncommitted changes in it
-are tested too, as in the test run before a push. Every refusal comes before step 5, so a refusal changes nothing on
+review on GitHub's page. Every refusal comes before step 5, so a refusal changes nothing on
 GitHub. A failure of gh, git or python3 is printed with its cause, and exits 1, like a refusal.
 
 Exit codes: 0 marked ready for review, or already was; 1 refused or failed; 2 bad arguments.
@@ -111,9 +111,11 @@ def check_and_mark_ready(number, runner, output):
                          "If you meant another pull request: run this again with its number.\n"
                          "If you meant this one and it is merged: its review is over, so there is "
                          "nothing to mark.\n"
-                         "If you meant this one and it is closed: read why with gh pr view "
-                         f"{number} --comments; when that reason no longer holds, reopen it with "
-                         f"gh pr reopen {number}, then run this again; otherwise leave it closed.")
+                         "If you meant this one and it is closed: do not reopen it yourself. Tell "
+                         "the user, in one sentence, that it is closed and you meant to mark it "
+                         "ready for review, and ask whether to reopen it; if you are a subagent, "
+                         "tell the agent that dispatched you instead. If the answer is yes: run "
+                         f"gh pr reopen {number}, then run this again.")
     if pull_request["isDraft"] is not True:
         output.write(MESSAGE_PREFIX + f"{name} is already ready for review, so it was left as "
                      "it is.\n")
@@ -135,26 +137,44 @@ def check_and_mark_ready(number, runner, output):
             f"this checkout's HEAD, {head[:12]}, is not {name}'s pushed nc-head-commit, "
             f"{str(pull_request['headRefOid'])[:12]}, so the test suites would not test the "
             f"commits under review. {NOTHING_CHANGED_LINE}\n"
+            "If this is not the pull request's own checkout: run this again from that checkout, "
+            "and skip the steps below.\n"
             "If this checkout has commits the pull request lacks: push them, then run this "
             "again.\n"
             "If the pull request has commits this checkout lacks: run git pull --ff-only, then "
             "run this again.\n"
             "If each has commits the other lacks: run git pull --no-rebase, which merges the "
-            "pull request's commits into this checkout, then push, then run this again.\n"
-            "If you are in another checkout: run this again from the pull request's own "
-            "checkout.")
+            "pull request's commits into this checkout, then push, then run this again; if git "
+            "reports a merge conflict, stop, run git merge --abort, and tell the user, or the "
+            "agent that dispatched you, which files conflict.")
+    changed = run_command(
+        ["git", "status", "--porcelain"], runner, GIT_TIMEOUT_SECONDS,
+        "reading this checkout's uncommitted changes", rev_parse_failed).splitlines()
+    if changed:
+        raise StepFailed(
+            f"this checkout has {len(changed)} uncommitted change(s), such as "
+            f"{changed[0].strip()!r}, so the test suites would test files that are not in "
+            f"{name}'s pushed commits. {NOTHING_CHANGED_LINE}\n"
+            "If the changes belong in the pull request: commit and push them, then run this "
+            "again.\n"
+            "If they do not: set them aside with git stash push -u -m <a name of your own>, "
+            "run this again, then bring them back with git stash apply <that entry's commit> "
+            "and drop the entry.")
     if not defect_line_reader.pull_request_description_defect_lines(pull_request.get("body") or ""):
         raise StepFailed(
             f"{name}'s description has no line beginning \"#root_cause\", "
             "\"#root_cause_not_fixed\" or \"#no_defect_fixed\", so it is still a placeholder, "
             "or does not say whether the pull request fixes a defect, and scripts/merge-gate.sh "
             f"would refuse to merge it. {NOTHING_CHANGED_LINE}\n"
-            f"Save the current description in a file with gh pr view {number} --json body -q "
-            ".body > <file>, and add to that file, for each defect the pull request fixes, a "
-            "line \"#root_cause <the cause the change removes>\" or \"#root_cause_not_fixed "
-            "<the cause that stays, and why> #follow_up <full https://github.com/ link to the "
-            "issue or pull request that will fix it>\", or, when it fixes none, the line "
-            f"\"#no_defect_fixed\". Then save the file with gh pr edit {number} --body-file <file>, which replaces the whole "
+            "Write the current description to a file outside this repository, such as a file in "
+            f"your scratchpad, with gh pr view {number} --json body -q .body > <file>. Add to that "
+            "file, for each defect the pull request fixes, a line \"#root_cause <the cause the "
+            "change removes>\", or, when the cause stays or was not found, \"#root_cause_not_fixed "
+            "<the cause that stays, or that it was not found, and why> #follow_up <full "
+            "https://github.com/ link to the issue or pull request that will fix it or look for "
+            "it>\"; when neither exists yet, file an issue with the /ghi-write skill first. When "
+            "the pull request fixes no defect, add the line \"#no_defect_fixed\". Then upload the "
+            f"file with gh pr edit {number} --body-file <file>, which replaces the whole "
             "description, and run this again.")
     command = selective_test_run_command(checkout)
     output.write(MESSAGE_PREFIX + "running " + " ".join(command[1:]) + "\n")
@@ -171,7 +191,8 @@ def check_and_mark_ready(number, runner, output):
         raise StepFailed(
             f"the test suites exited with status {status}, {stays_a_draft} The failing suites "
             "are named above.\n"
-            "Fix them, commit and push the fix, then run this again.")
+            "Fix them and commit the fix. Before you push it, run the test suites and the "
+            "mutation pass that CLAUDE.md asks for before a push; then push, and run this again.")
     if status != 0:
         raise StepFailed(
             f"scripts/run-all-test-suites.py exited with status {status}, before judging every "
