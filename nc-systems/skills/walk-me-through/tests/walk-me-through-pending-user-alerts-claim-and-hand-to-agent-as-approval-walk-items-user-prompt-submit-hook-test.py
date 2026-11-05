@@ -88,6 +88,20 @@ class Case:
         return sorted(path.stem for path in (self.alerts / directory).glob("*.json"))
 
 
+def run_timeout_case():
+    settings = json.loads((HERE.parents[2] / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    timeouts = [hook.get("timeout") for entry in settings["hooks"]["UserPromptSubmit"] for hook in entry["hooks"]
+                if HOOK.name in hook.get("command", "")]
+    specification = importlib.util.spec_from_file_location("user_alerts_hook", HOOK)
+    hook_module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(hook_module)
+    check("the insert program's limit is at most half the hook's timeout in .claude/settings.json, so a stalled "
+          "insert is reported before Claude Code kills the hook",
+          len(timeouts) == 1 and isinstance(timeouts[0], (int, float))
+          and hook_module.INSERT_TIMEOUT_SECONDS * 2 <= timeouts[0],
+          f"settings timeouts {timeouts}, INSERT_TIMEOUT_SECONDS {hook_module.INSERT_TIMEOUT_SECONDS}")
+
+
 def run_typed_prompt_cases(root):
     case = Case(root, "nothing-pending")
     result, context = case.run("hello")
@@ -258,6 +272,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_mac_cases(scratch)
     run_release_cases(scratch)
     run_failure_cases(scratch)
+    run_timeout_case()
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")

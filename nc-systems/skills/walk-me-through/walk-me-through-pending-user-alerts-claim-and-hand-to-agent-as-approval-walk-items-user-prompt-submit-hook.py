@@ -47,7 +47,9 @@ INSERT_PROGRAM = HERE / "walk-me-through-user-alert-insert-as-unnumbered-item-af
 ALERTS_MODULE_FILE = (CHECKOUT / "nc-systems" / "general-tools"
                       / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
 TRANSCRIPT_READER_FILE = CHECKOUT / "scripts" / "claude-code-session-transcript-records-read-backward-common.py"
-INSERT_TIMEOUT_SECONDS = 60
+# At most half this hook's timeout in .claude/settings.json, so a stalled insert is reported, not killed with
+# the hook after the alerts are claimed; a test checks.
+INSERT_TIMEOUT_SECONDS = 5
 USER_TURN_ORIGIN = "human"
 # How Claude Code opens a background-task notice, another agent-session's message and a subagent's hand-back.
 NOT_TYPED_PROMPT_OPENINGS = ("<task-notification>", "<cross-session-message", "<agent-message",
