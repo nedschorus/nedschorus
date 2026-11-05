@@ -528,11 +528,12 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
           "dialog could not be extracted" in console.getvalue(),
           console.getvalue()[-600:])
     successor_prompt = launched_prompts[1] if len(launched_prompts) > 1 else ""
-    check("FAILED EXTRACTION: the successor's prompt is the next step, then says the "
-          "session-dialog could not be extracted and gives the path of the transcript, "
-          "which is in another seat's project folder",
-          successor_prompt.startswith(
-              "carry on\n\n(Recovered at a handoff: the previous session's conversation-tail "
+    check("FAILED EXTRACTION: the successor's prompt says the session-dialog could not be "
+          "extracted and gives the path of the transcript, which is in another seat's project "
+          "folder, then gives the next step",
+          successor_prompt.endswith(supervisor.NEXT_STEP_HEADING + "carry on")
+          and successor_prompt.startswith(
+              "(Recovered at a handoff: the previous session's conversation-tail "
               "is unavailable, because the handoff-supervisor could not extract session "
               f"{writer_session_id}'s session-dialog; this next-step and the repository are "
               f"your context, and that session's transcript is "
@@ -543,8 +544,9 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
     check("FAILED EXTRACTION: when no project folder holds the writer's transcript, the "
           "successor's prompt says it is not where it was expected nor in any other project "
           "folder, and that the next step and the repository are its whole context",
-          no_transcript_prompt.startswith(
-              "carry on further\n\n(Recovered at a handoff: the previous session's "
+          no_transcript_prompt.endswith(supervisor.NEXT_STEP_HEADING + "carry on further")
+          and no_transcript_prompt.startswith(
+              "(Recovered at a handoff: the previous session's "
               "conversation-tail is unavailable, because the handoff-supervisor could not "
               f"extract session {writer_without_a_transcript}'s session-dialog, and that "
               "session's transcript is not at "
@@ -555,8 +557,9 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
     two_folders_prompt = launched_prompts[3] if len(launched_prompts) > 3 else ""
     check("FAILED EXTRACTION: when two project folders hold the writer's transcript, the "
           "successor's prompt names both, joined by \"and\"",
-          two_folders_prompt.startswith(
-              "carry on still\n\n(Recovered at a handoff: the previous session's "
+          two_folders_prompt.endswith(supervisor.NEXT_STEP_HEADING + "carry on still")
+          and two_folders_prompt.startswith(
+              "(Recovered at a handoff: the previous session's "
               "conversation-tail is unavailable, because the handoff-supervisor could not "
               f"extract session {writer_in_two_project_folders}'s session-dialog; this "
               "next-step and the repository are your context, and that session's transcript "

@@ -233,10 +233,36 @@ AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER = "asks_som
 MODEL_ANSWERS = (AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER,
                  AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER)
 MODEL_SCHEMA = {"type": "object",
-                "properties": {"lines": {"type": "array", "items": {
+                "properties": {"lines": {"type": "array", "description": "One entry per numbered line.", "items": {
                     "type": "object",
-                    "properties": {"line_number": {"type": "integer"},
-                                   **{answer: {"type": "boolean"} for answer in MODEL_ANSWERS}},
+                    "properties": {
+                        "line_number": {"type": "integer",
+                                        "description": "The line's number in the list of numbered lines."},
+                        AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER: {
+                            "type": "boolean",
+                            "description": "Whether the line concerns the decision a waiting item puts to the user, in "
+                                           "any words. True when the line restates, explains or argues for that "
+                                           "item's recommendation, alternative or question, recommends an answer, "
+                                           "reminds him that the item waits for his answer, or asks what he meant by "
+                                           "his answer to the item, such as whether \"dark\" meant D. A line about a "
+                                           "walk item that is not waiting, such as one still to come, concerns no "
+                                           "waiting item. Judged apart from the other answer: a line can be true or "
+                                           "false for both."},
+                        AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER: {
+                            "type": "boolean",
+                            "description": "Whether the line asks the user to decide, approve, choose or answer "
+                                           "anything other than a waiting item's decision. True for a question to him; "
+                                           "a recommendation on another matter that he is expected to approve or "
+                                           "reject; a question from another agent passed on to him; a reminder that a "
+                                           "question that is not one of the walk's items still waits for him; a "
+                                           "question about running the walk, such as whether to pause it or skip an "
+                                           "item; a request for him to report something back, such as what a command "
+                                           "printed. False when the line asks him nothing, such as a report, advice "
+                                           "that needs no answer, a question the agent answers itself, a report of "
+                                           "what someone asked someone else that is not passed to him, or a request "
+                                           "to do something with nothing to report back, such as opening a file or a "
+                                           "page. Judged apart from the other answer: a line can be true or false for "
+                                           "both."}},
                     "required": ["line_number", *MODEL_ANSWERS], "additionalProperties": False}}},
                 "required": ["lines"], "additionalProperties": False}
 MODEL_SYSTEM_PROMPT = "You classify text. Answer only through the structured output."
@@ -247,14 +273,7 @@ The text of each waiting item, as the walk-document holds it:
 {waiting_items}
 </waiting_items>
 
-Below is one of the agent's messages, with every walk item it shows word for word taken out, and then the lines of it that the agent's code could not judge, numbered from 1. Use the message and the waiting items' text as context, and answer two questions about each numbered line, true or false:
-
-- {concerns_answer}: does the line concern the decision a waiting item puts to him, in any words? True when the line restates, explains or argues for that item's recommendation, alternative or question, recommends an answer, reminds him that the item waits for his answer, or asks what he meant by his answer to the item, such as whether "dark" meant D. A line about a walk item that is not waiting, such as one still to come, concerns no waiting item.
-- {asks_else_answer}: does the line ask him to decide, approve, choose or answer anything other than a waiting item's decision? True for a question to him; a recommendation on another matter that he is expected to approve or reject; a question from another agent passed on to him; a reminder that a question that is not one of the walk's items still waits for him; a question about running the walk, such as whether to pause it or skip an item; a request for him to report something back, such as what a command printed. False when the line asks him nothing, such as a report, advice that needs no answer, a question the agent answers itself, a report of what someone asked someone else that is not passed to him, or a request to do something with nothing to report back, such as opening a file or a page.
-
-A line can be true for both, or false for both.
-
-Give one entry per numbered line, with its number in the list of numbered lines as line_number, and both answers.
+Below is one of the agent's messages, with every walk item it shows word for word taken out, and then the lines of it that the agent's code could not judge, numbered from 1. Use the message and the waiting items' text as context, and judge each numbered line as the fields of the structured output describe.
 
 The message:
 <message>
@@ -507,8 +526,6 @@ def model_judgement(message_lines, question_like_lines, total, waiting, waiting_
     prompt = MODEL_PROMPT_TEMPLATE.format(
         total=total, waiting_items=waiting_items_text,
         waiting_phrase=f"items {waiting} wait" if " and " in waiting else f"item {waiting} waits",
-        concerns_answer=AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER,
-        asks_else_answer=AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER,
         message="\n".join(message_lines),
         lines="\n".join(f"{number}. {line}" for number, line in enumerate(question_like_lines, 1)))
     command = ["claude", "-p", "--model", MODEL, "--output-format", "json",

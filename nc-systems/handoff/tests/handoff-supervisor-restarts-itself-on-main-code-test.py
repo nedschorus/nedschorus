@@ -176,6 +176,61 @@ def run_ask_user_before_restart_case(workspace: Path):
           str(run.events))
 
 
+def run_not_restarted_notice_names_the_tool_cases(workspace: Path):
+    """The notice names the program that puts the reference-checkout back on main when that
+    checkout will not fast-forward, since the restart program's step 0 would fail the same way,
+    and the restart program for an os.execv failure or a handoff-supervisor running from
+    another checkout; each command as this machine runs it."""
+    handoff_programs = "~/Projects/nedschorus/nc-systems/handoff/"
+    restart = (f"python3 {handoff_programs}handoff-supervisor-restart-onto-main-code-by-relaunch-"
+               "from-reference-checkout.py seatname")
+    back_on_main = (f"python3 {handoff_programs}handoff-reference-checkout-back-on-main-after-"
+                    "pushing-leftovers-to-a-branch.py")
+    commands = {
+        "restart on the Mac": f"`{restart}`",
+        "restart on ned-box": f"`ssh nedlern@ned-box '{restart}'`",
+        "back on main on the Mac": f"`{back_on_main}`",
+        "back on main on ned-box": f"`ssh nedlern@ned-box '{back_on_main}'`"}
+    cannot_fast_forward = "launch-time-git-sync: main left as is — 2 uncommitted tracked change(s)"
+    for case, report, checkout, on_the_mac, expected in (
+            ("reference-checkout will not fast-forward on ned-box", cannot_fast_forward,
+             supervisor.REFERENCE_CHECKOUT, False, "back on main on ned-box"),
+            ("reference-checkout will not fast-forward on the Mac", cannot_fast_forward,
+             supervisor.REFERENCE_CHECKOUT, True, "back on main on the Mac"),
+            ("os.execv failed on ned-box",
+             "os.execv failed: PermissionError: [Errno 13] Permission denied",
+             supervisor.REFERENCE_CHECKOUT, False, "restart on ned-box"),
+            ("os.execv returned on the Mac",
+             "os.execv returned without replacing the process", supervisor.REFERENCE_CHECKOUT,
+             True, "restart on the Mac"),
+            ("another checkout will not fast-forward on the Mac", cannot_fast_forward,
+             workspace / "agent-home", True, "restart on the Mac")):
+        notice = supervisor.handoff_supervisor_not_restarted_on_main_code_notice(
+            report, "seatname", checkout, on_the_mac)
+        back_on_main_ending = expected.startswith("back on main")
+        ending = (
+            "No agent works in that checkout, so anything that stops it is left over. Run "
+            f"{commands[expected]}: it saves any leftovers to a pushed branch and puts the "
+            "checkout back on main. Name to the user the branch it prints, if any. If it fails, "
+            "work out why from what it printed, asking an advisor if you have one, and fix it "
+            "without losing anything the checkout holds, then run "
+            f"{commands[expected]} again to check; tell the user afterwards what you found and "
+            "did. Once the checkout is on main, the handoff-supervisor restarts itself at the "
+            "next session-handoff at which it starts the successor without stopping to ask the "
+            "user." if back_on_main_ending else
+            "The restart program restarts it from the reference-checkout "
+            f"{supervisor.REFERENCE_CHECKOUT}. Once you have done what that program's docstring "
+            f"says the agent-seat does before running it, run {commands[expected]}, and then do "
+            "what the docstring says the agent-seat does after.")
+        check(f"NOTICE TOOL ({case}): the notice names {commands[expected]} and no other command",
+              f'reason: "{report}". Tell the user now' in notice
+              and f"name the checkout {checkout}. " in notice
+              and notice.endswith(ending)
+              and all((command in notice) == (name == expected)
+                      for name, command in commands.items()),
+              notice)
+
+
 def run_restart_failure_cases(workspace: Path):
     for case, report, exec_raises, exec_returns, expected in (
             ("cannotfastforward",
@@ -206,6 +261,10 @@ def run_restart_failure_cases(workspace: Path):
                   f"{supervisor.REPOSITORY_ROOT}." in successor_prompt
               and "only when the handoff-supervisor restarts" in successor_prompt,
               successor_prompt)
+        check(f"NOT RESTARTED ({case}): the successor's initial agent instructions carry the "
+              "notice that names the tool for the cause",
+              supervisor.handoff_supervisor_not_restarted_on_main_code_notice(expected, case)
+              in successor_prompt, successor_prompt)
         check(f"NOT RESTARTED ({case}): the console says why",
               f"not restarted on main's code, carrying on with the code this process started "
               f"with: {expected}" in run.console, run.console[-600:])
@@ -326,10 +385,12 @@ def run_missing_transcript_cases(workspace: Path):
           exit_code == 0 and len(prompts) == 2 and state.get("consumed_counter") == 1
           and "not relaunching" not in console.getvalue() + errors.getvalue(),
           f"{exit_code!r} {len(prompts)} {state} {errors.getvalue()[-400:]}")
-    check("MISSING TRANSCRIPT, NOT RESTARTED: the successor's prompt is the next step, says the "
-          "transcript is missing, and says why the supervisor did not restart",
+    check("MISSING TRANSCRIPT, NOT RESTARTED: the successor's prompt says the transcript is "
+          "missing and why the supervisor did not restart, then gives the next step",
           successor_prompt.startswith(
-              "carry on\n\n" + recovery_note_for_a_missing_transcript("a handoff", retiring, workspace))
+              recovery_note_for_a_missing_transcript("a handoff", retiring, workspace))
+          # The not-restarted line follows the next step, as it does in a prompt from a dialog.
+          and supervisor.NEXT_STEP_HEADING + "carry on " in successor_prompt
           and f'reason: "{cannot_fast_forward}"' in successor_prompt,
           successor_prompt[:900])
 
@@ -365,7 +426,8 @@ def run_missing_transcript_cases(workspace: Path):
               f"says it was recovered at {occasion} and that the transcript is missing",
               len(prompts) == 1 and state.get("consumed_counter") == 1
               and prompts[0].startswith(
-                  "carry on\n\n" + recovery_note_for_a_missing_transcript(occasion, retiring, workspace)),
+                  recovery_note_for_a_missing_transcript(occasion, retiring, workspace))
+              and prompts[0].endswith(supervisor.NEXT_STEP_HEADING + "carry on"),
               f"{state} {prompts[:1]!r}"[:900])
 
 
@@ -642,6 +704,7 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_restart_placement_cases(workspace)
     run_ask_user_before_restart_case(workspace)
     run_restart_failure_cases(workspace)
+    run_not_restarted_notice_names_the_tool_cases(workspace)
     run_restarted_process_cases(workspace)
     run_missing_transcript_cases(workspace)
     run_restart_arguments_cases(workspace)

@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """The first prompt's list of an agent-seat's worktrees and of its branches with no pull request.
 
-nc-systems/handoff/handoff-supervisor.py appends this list to the first prompt
-of every agent-session it starts, so that work an earlier agent-session left
-behind is carried on or deleted instead of forgotten. Building the list is
-code; whether to keep or delete each entry is the agent-session's judgment.
+nc-systems/handoff/handoff-supervisor.py puts this list in the first prompt
+of every agent-session it starts, before the next step, so that work an
+earlier agent-session left behind is carried on or deleted instead of
+forgotten. Building the list is code; whether to keep or delete each entry is
+the agent-session's judgment.
 
 WHAT IS LISTED.
 - A worktree, when its owner file (scripts/worktree-owner-file-read-and-write.py)
-  names this agent-seat, other than the directory the agent-session starts in
-  and a worktree whose owning agent-session's `claude` process still runs.
+  names this agent-seat, other than the directory the agent-session starts in,
+  a worktree whose owning agent-session's `claude` process still runs, and a
+  worktree whose pull request is open, which merge-lane-2 reviews.
   A worktree with no owner file, or one that cannot be read, is not listed;
   scripts/clean-worktrees.py reports those in its daily count line.
 - A local branch, when no worktree has it checked out, its tip commit is not
@@ -20,7 +22,8 @@ WHAT IS LISTED.
   unconfigured-agent, is in no agent-seat's list; the cleaner's count line
   counts it among the branches with no pull request.
 
-Beside each entry the list prints the command that deletes it:
+Each branch entry gives how many commits origin/main lacks and the newest
+one's subject. Beside each entry the list prints the command that deletes it:
 scripts/clean-worktrees.py --remove-worktree-and-force-delete-its-branch or
 --force-delete-branch, which ships a worktree's walks and records first, and
 keeps a worktree or branch whose pull request is open.
@@ -28,11 +31,20 @@ keeps a worktree or branch whose pull request is open.
 origin/main is read as it is on disk: the handoff-supervisor fetches just
 before it builds the prompt.
 
+WHAT IT DELETES. Only the first prompt's list, never the list command, deletes
+a branch it would list whose every commit is already on origin/main as a
+cherry-picked copy (`git cherry origin/main <branch>` prints no `+` line, and
+the branch has no merge commit origin/main lacks, since `git cherry` leaves
+merge commits out): no work is lost, and the list names the branch with the `git branch <name>
+<sha>` command that restores it. A branch whose deletion fails is listed as
+before, with why.
+
 HOW IT CAN FAIL. When gh cannot list pull requests, worktrees are listed with
 their pull request state unknown and the branch list is replaced by a line
 saying why, with the command below; any other failure replaces the whole list
 with a line saying why, with the same command, so a failure is never read as
-an empty list. It reads only; it deletes nothing.
+an empty list; a branch deleted before the failure is still named below that
+line, with the command that restores it.
 
 Usage:
   agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py
@@ -148,6 +160,14 @@ def delete_command_text(repo, flag, value):
     return shlex.join(["python3", str(CLEAN_WORKTREES_PATH), "--repo", str(repo), flag, str(value)])
 
 
+def has_open_pull_request(branch, tip, by_head_branch):
+    """Whether any pull request, not only the newest, is open with the branch or the tip as its
+    head: scripts/clean-worktrees.py keeps the worktree then, so its delete command refuses."""
+    if by_head_branch is None:
+        return False
+    return clean_worktrees_module().open_pull_request_of(by_head_branch, branch, tip) is not None
+
+
 def worktree_entry(repo, worktree, branch, tip, by_head_branch, by_head_commit):
     if by_head_branch is None:
         pull_request_text = "pull request state unknown"
@@ -202,24 +222,56 @@ def authored_branches(repo, agent_seat):
     return branches
 
 
-def branch_entries(repo, branches, by_head_branch, by_head_commit):
-    """Return the entry text of each branch that no pull request has as its head."""
+def every_commit_is_a_cherry_picked_copy_on_origin_main(repo, tip):
+    """Whether origin/main holds a copy of every commit the tip has that origin/main lacks.
+    `git cherry` leaves out merge commits, whose conflict resolutions may be work origin/main
+    lacks, so a tip with a merge commit origin/main lacks never counts as copied."""
+    if git_lines(repo, "rev-list", "--merges", f"{ORIGIN_MAIN}..{tip}"):
+        return False
+    marks = [line.split(" ", 1)[0] for line in git_lines(repo, "cherry", ORIGIN_MAIN, tip)]
+    return bool(marks) and "+" not in marks
+
+
+def deleted_branch_entry(repo, branch, tip):
+    restore = shlex.join(["git", "-C", str(repo), "branch", branch, tip])
+    return (f"deleted branch {branch}, whose every commit is on origin/main as a cherry-picked "
+            f"copy; restore it with: {restore}")
+
+
+def branch_entries(repo, branches, by_head_branch, by_head_commit, deleted,
+                   delete_cherry_picked_copies=False):
+    """Return the entry text of each branch that no pull request has as its head. The entry text
+    of each such branch deleted because origin/main holds a copy of its every commit is appended
+    to deleted, the caller's list, at once, so that the deletion and its restore command are
+    still reported when a later git call raises."""
     origin_tips = origin_branch_tips(repo)
     entries = []
     for branch, tip, date in branches:
         if pull_request_for(branch, tip, by_head_branch, by_head_commit) is not None:
             continue
+        deletion_failure = ""
+        if delete_cherry_picked_copies and every_commit_is_a_cherry_picked_copy_on_origin_main(
+                repo, tip):
+            result = clean_worktrees_module().run_git(repo, "branch", "-D", branch)
+            if not result.returncode:
+                deleted.append(deleted_branch_entry(repo, branch, tip))
+                continue
+            deletion_failure = (f"; every commit is on origin/main as a cherry-picked copy, but "
+                                f"`git branch -D` exited {result.returncode}: "
+                                f"{' '.join(result.stderr.split())[:200] or 'no error text'}")
         count = git_lines(repo, "rev-list", "--count", f"{ORIGIN_MAIN}..{tip}")[0]
+        subject = git_lines(repo, "log", "-1", "--format=%s", tip)[0]
         command = delete_command_text(
             repo, clean_worktrees_module().FORCE_DELETE_BRANCH_FLAG, branch)
         entries.append(f"branch {branch}; {count} commit(s) not on origin/main, the newest "
-                       f"{tip[:12]} of {date}; {pushed_text(branch, tip, origin_tips)}; "
+                       f"{tip[:12]} of {date}, \"{subject}\"; "
+                       f"{pushed_text(branch, tip, origin_tips)}{deletion_failure}; "
                        f"delete with: {command}")
     return entries
 
 
 INSTRUCTIONS = """\
-Each is listed because it belongs to this agent-seat: a worktree because its owner file names this agent-seat, a branch because this agent-seat wrote its newest commit not on origin/main and no pull request has it as its head. An earlier agent-session left each one. Before your other work, decide for each whether you will carry it on. To carry one on, work on it, or say in your session-handoff which agent-seat will. To delete one, run the command printed beside it, which keeps a worktree whose pull request is open; for a branch marked "not on origin", read `git log origin/main..<branch>` first. If the command prints a line opening FAILED or exits nonzero, keep that item, tell the user what it printed, and go on with the others. Tell the user in your next message which worktrees and branches you kept and which you deleted."""
+Each is listed because it belongs to this agent-seat: a worktree because its owner file names this agent-seat, a branch because this agent-seat wrote its newest commit not on origin/main and no pull request has it as its head. An earlier agent-session left each one. Decide for each whether you will carry it on. To carry one on, work on it, or say in your session-handoff which agent-seat will. To delete one, run the command printed beside it, which keeps a worktree whose pull request is open; for a branch marked "not on origin", read `git log origin/main..<branch>` first. If the command prints a line opening FAILED or exits nonzero, keep that item, tell the user what it printed, and go on with the others. Tell the user in your next message which worktrees and branches you kept and which you deleted."""
 
 
 def section(heading, entries, agent_seat, entries_at_most):
@@ -232,10 +284,22 @@ def section(heading, entries, agent_seat, entries_at_most):
     return lines
 
 
-def list_text_and_failure(repo, agent_seat, skip_worktree=None, entries_at_most=None):
+def deleted_section(deleted):
+    if not deleted:
+        return []
+    return ([f"Already deleted, needing nothing from you: this agent-seat's branches whose every "
+             f"commit is on origin/main, so no work is lost: {len(deleted)}:"]
+            + [f"- {entry}" for entry in deleted])
+
+
+def list_text_and_failure(repo, agent_seat, skip_worktree=None, entries_at_most=None,
+                          delete_cherry_picked_copies=False):
     """Return (the list's text, or "" when there is nothing to list; whether part failed).
-    entries_at_most caps the entries shown of each kind; None shows every entry."""
+    entries_at_most caps the entries shown of each kind; None shows every entry.
+    delete_cherry_picked_copies deletes, instead of listing, each branch whose every commit is
+    on origin/main as a cherry-picked copy."""
     cleaner = None
+    deleted = []
     try:
         cleaner = clean_worktrees_module()
         inside = cleaner.git_output.run_git_unless_outside_a_repository(
@@ -250,14 +314,17 @@ def list_text_and_failure(repo, agent_seat, skip_worktree=None, entries_at_most=
             return "", False
         by_head_branch, by_head_commit, pull_request_failure = pull_requests_or_failure(repo)
         worktrees = [worktree_entry(repo, worktree, branch, tip, by_head_branch, by_head_commit)
-                     for worktree, branch, tip in owned]
+                     for worktree, branch, tip in owned
+                     if not has_open_pull_request(branch, tip, by_head_branch)]
         branches = ([] if pull_request_failure else
-                    branch_entries(repo, authored, by_head_branch, by_head_commit))
+                    branch_entries(repo, authored, by_head_branch, by_head_commit, deleted,
+                                   delete_cherry_picked_copies))
     except Exception as error:
-        return (f"This agent-seat's worktrees and branches with no pull request could not be "
-                f"listed ({type(error).__name__}: {error}). Work an earlier agent-session left "
-                f"may be waiting; list it with: {list_command_text(agent_seat)}"), True
-    if not worktrees and not branches and not pull_request_failure:
+        failure = (f"This agent-seat's worktrees and branches with no pull request could not be "
+                   f"listed ({type(error).__name__}: {error}). Work an earlier agent-session left "
+                   f"may be waiting; list it with: {list_command_text(agent_seat)}")
+        return "\n".join([failure] + deleted_section(deleted)), True
+    if not worktrees and not branches and not deleted and not pull_request_failure:
         return "", False
     lines = []
     if worktrees:
@@ -272,13 +339,15 @@ def list_text_and_failure(repo, agent_seat, skip_worktree=None, entries_at_most=
                          branches, agent_seat, entries_at_most)
     if worktrees or branches:
         lines.append(INSTRUCTIONS)
+    lines += deleted_section(deleted)
     return "\n".join(lines), bool(pull_request_failure)
 
 
 def first_prompt_text(repo, agent_seat, skip_worktree=None):
     """The first prompt's paragraph on this agent-seat's worktrees and branches with no pull
     request; empty when there are none. A failure is stated, never left as an empty list."""
-    return list_text_and_failure(repo, agent_seat, skip_worktree, ENTRIES_AT_MOST)[0]
+    return list_text_and_failure(repo, agent_seat, skip_worktree, ENTRIES_AT_MOST,
+                                 delete_cherry_picked_copies=True)[0]
 
 
 def main(argv=None):

@@ -484,36 +484,43 @@ def main():
               f"step pids {step_pids}, still running {still_running}, exit {exit_code}, "
               f"took {took:.1f} seconds")
 
-        shutil.rmtree(meeting, ignore_errors=True)
-        meeting.mkdir()
-        (scratch / "brief-specifications.json").write_text(json.dumps([first_round]))
-        stdout_closed = subprocess.Popen(
-            [sys.executable, str(PROGRAM), "7", str(scratch / "brief-specifications.json"),
-             *directory_options], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env={**program_environment, "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_EXTRA_LINES": "10000",
-                 "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_FAILING_STEP": STEPS[3],
-                 "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_FAILING_STEP_EXIT": "3"})
-        started_files = [meeting / step for step in STEPS[2:]]
-        deadline = time.monotonic() + 30
-        while not all(started_file.exists() for started_file in started_files):
-            if time.monotonic() > deadline or stdout_closed.poll() is not None:
-                break
-            time.sleep(0.05)
-        # Nothing has read the program's stdout, so its pipe is full or filling; closing
-        # the reading end makes every later write fail.
-        stdout_closed.stdout.close()
-        try:
-            stdout_closed.wait(timeout=60)
-            ended = True
-        except subprocess.TimeoutExpired:
-            stdout_closed.kill()
-            stdout_closed.wait()
-            ended = False
-        stderr = stdout_closed.stderr.read().decode(errors="replace")
-        stdout_closed.stderr.close()
+        def close_stdout_while_steps_run(failing_step, failing_exit, signalled_step=""):
+            """Run the program with nothing reading its stdout, then close that pipe."""
+            shutil.rmtree(meeting, ignore_errors=True)
+            meeting.mkdir()
+            (scratch / "brief-specifications.json").write_text(json.dumps([first_round]))
+            stdout_closed = subprocess.Popen(
+                [sys.executable, str(PROGRAM), "7", str(scratch / "brief-specifications.json"),
+                 *directory_options], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env={**program_environment,
+                     "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_EXTRA_LINES": "10000",
+                     "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_FAILING_STEP": failing_step,
+                     "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_FAILING_STEP_EXIT": failing_exit,
+                     "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_SIGNALLED_STEP": signalled_step})
+            started_files = [meeting / step for step in STEPS[2:]]
+            deadline = time.monotonic() + 30
+            while not all(started_file.exists() for started_file in started_files):
+                if time.monotonic() > deadline or stdout_closed.poll() is not None:
+                    break
+                time.sleep(0.05)
+            # Nothing has read the program's stdout, so its pipe is full or filling; closing
+            # the reading end makes every later write fail.
+            stdout_closed.stdout.close()
+            try:
+                stdout_closed.wait(timeout=60)
+                ended = True
+            except subprocess.TimeoutExpired:
+                stdout_closed.kill()
+                stdout_closed.wait()
+                ended = False
+            stderr = stdout_closed.stderr.read().decode(errors="replace")
+            stdout_closed.stderr.close()
+            return ended, stdout_closed.returncode, stderr
+
+        ended, returncode, stderr = close_stdout_while_steps_run(STEPS[3], "3")
         check("when the program's stdout closes while steps 3 to 5 print, it keeps reading "
               "their output, so it ends, and exits 1 naming the error",
-              ended and stdout_closed.returncode == 1
+              ended and returncode == 1
               and f"PR 7: the stdout of scripts/{PROGRAM.name} failed while its steps 3 to 5 "
                   f"ran at the same time ([Errno 32] Broken pipe)" in stderr
               and f"  step 3 exited 0: read its records in "
@@ -525,8 +532,33 @@ def main():
               and f"  step 5 exited 0: read its records in "
                   f"{helpers / 'claude-reviews' / ('pr7-' + head_commit)}*, and do not run it "
                   f"again, because it has posted its Claude review\n" in stderr
-              and stderr.count(sys.executable) == 1,
-              f"ended {ended}, exit {stdout_closed.returncode}\n{stderr[-2000:]}")
+              and stderr.count(sys.executable) == 1
+              and "may have posted" not in stderr,
+              f"ended {ended}, exit {returncode}\n{stderr[-2000:]}")
+
+        ended, returncode, stderr = close_stdout_while_steps_run(STEPS[4], "1")
+        claude_reviews = helpers / "claude-reviews" / ("pr7-" + head_commit)
+        check("when the program's stdout fails and step 5 exited nonzero, its line says the "
+              "review may be posted even so, and runs the step again only when none is",
+              ended and returncode == 1
+              and f"  step 5 exited 1, and may have posted its Claude review even so: if "
+                  f"{claude_reviews}* holds a posted.txt, read it, and if it shows a posted "
+                  f"review or cannot tell, check the pull request's reviews on GitHub; run the "
+                  f"step alone, with the same commits, only when no review of it is posted: "
+                  f"{shlex.join([sys.executable, str(checkout / 'scripts' / STEPS[4]), '7', str(first_round['tag']), head_commit, *directory_options])}\n"
+                  in stderr,
+              f"ended {ended}, exit {returncode}\n{stderr[-2000:]}")
+
+        ended, returncode, stderr = close_stdout_while_steps_run(STEPS[2], "2",
+                                                                 signalled_step=STEPS[4])
+        check("when the program's stdout fails, a signal killed step 5 and step 3 exited 2, "
+              "step 5's line says the review may be posted even so, and step 3's does not",
+              ended and returncode == 1
+              and f"  step 5 exited -{signal.SIGKILL.value}, and may have posted its Claude "
+                  f"review even so: if {claude_reviews}* holds a posted.txt" in stderr
+              and "  step 3 exited 2: run it alone, with the same commits, to see its message: "
+                  in stderr,
+              f"ended {ended}, exit {returncode}\n{stderr[-2000:]}")
 
         generic_instruction = ("If the message above names a cause you can fix, fix it and "
                                "run this again.\nOtherwise, tell the user this message.")

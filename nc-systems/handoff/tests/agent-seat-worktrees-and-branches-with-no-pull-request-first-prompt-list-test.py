@@ -189,6 +189,8 @@ def test_branches():
           "a branch whose tip is a pull request's head commit is not listed", text)
     check(f"branch pushed-work; 1 commit(s) not on origin/main, the newest {pushed_tip[:12]} of " in text
           and "on origin at the same commit" in text, "a pushed branch says it is on origin", text)
+    check('"work on seat-a-work"; not on origin' in text,
+          "a branch entry gives its newest commit's subject", text)
     check("landed" not in text, "a branch with nothing beyond origin/main is not listed")
     check("checked-out" not in text, "a branch a worktree has checked out is not listed as a branch")
     check("branch main;" not in text, "main is never listed, even with commits origin/main lacks", text)
@@ -249,8 +251,22 @@ def test_worktrees():
                         "headRefOid": stopped_head}])
     text, failed = listing.list_text_and_failure(main, "seat-a", skip_worktree=home)
     check(not failed, "a worktree listing reports no failure", text)
-    check(f"worktree {seat_owned}; branch seat-owned; pull request #12 (open)" in text,
-          "a worktree whose owner file names this agent-seat is listed with its pull request", text)
+    check(str(seat_owned) not in text,
+          "a worktree whose pull request is open is left out: merge-lane-2 reviews it", text)
+    reopened = owned_worktree(main, "reopened", {"owner_kind": "agent-seat", "agent_seat": "seat-a"})
+    set_pull_requests([{"number": 20, "state": "OPEN", "headRefName": "reopened",
+                        "headRefOid": "0" * 40},
+                       {"number": 21, "state": "CLOSED", "headRefName": "reopened",
+                        "headRefOid": "0" * 40}])
+    older_open, _ = listing.list_text_and_failure(main, "seat-a", skip_worktree=home)
+    check(str(reopened) not in older_open,
+          "a worktree with an older open pull request beside a newer closed one is left out",
+          older_open)
+    git(main, "worktree", "remove", str(reopened))
+    set_pull_requests([{"number": 12, "state": "OPEN", "headRefName": "seat-owned",
+                        "headRefOid": "0" * 40},
+                       {"number": 13, "state": "CLOSED", "headRefName": "renamed",
+                        "headRefOid": stopped_head}])
     check(f"worktree {stopped}; branch stopped-session; pull request #13 (closed)" in text,
           "a worktree of a stopped agent-session is listed, its pull request found by head commit",
           text)
@@ -258,7 +274,7 @@ def test_worktrees():
     check(str(home) not in text, "the directory the agent-session starts in is not listed")
     check(str(after_home) in text,
           "the worktrees git lists after the skipped directory are still listed", text)
-    check("worktrees: 3:" in text, "the worktree section counts its entries", text)
+    check("worktrees: 2:" in text, "the worktree section counts its entries", text)
     command_line = next((line for line in text.splitlines()
                          if line.startswith(f"- worktree {stopped};")), "")
     command = command_line.split("; delete with: ", 1)[-1]
@@ -420,6 +436,167 @@ def test_more_worktrees_than_the_limit():
           "the list command prints every worktree past the limit", (exit_code, len(listed)))
 
 
+def cherry_picked_branch(main, branch, author):
+    """A branch of author's whose one commit is also on origin/main as a cherry-picked copy."""
+    tip = branch_with_commit(main, branch, author)
+    git(main, "checkout", "-q", "-B", "landing", "origin/main")
+    # A commit of main's own first, so the copy cannot come out with the branch commit's hash.
+    (main / "landing.txt").write_text("landing\n")
+    git(main, "add", "-A")
+    git(main, "commit", "-q", "-m", "landing")
+    git(main, "cherry-pick", tip)
+    git(main, "push", "-q", "origin", "HEAD:main")
+    git(main, "fetch", "-q", "origin")
+    git(main, "checkout", "-q", "--detach")
+    git(main, "branch", "-D", "landing")
+    return tip
+
+
+def test_cherry_picked_copies_deleted():
+    main = new_clone()
+    set_pull_requests([])
+    tip = cherry_picked_branch(main, "seat-a-copied", "seat-a")
+    branch_with_commit(main, "seat-a-unique", "seat-a")
+    listed, failed = listing.list_text_and_failure(main, "seat-a")
+    check(not failed and "branch seat-a-copied;" in listed
+          and git(main, "branch", "--list", "seat-a-copied") != "",
+          "the list command deletes nothing: a cherry-picked copy is listed", listed)
+    text = listing.first_prompt_text(main, "seat-a")
+    restore = shlex.join(["git", "-C", str(main), "branch", "seat-a-copied", tip])
+    check("branch seat-a-copied;" not in text and git(main, "branch", "--list", "seat-a-copied") == ""
+          and f"- deleted branch seat-a-copied, whose every commit is on origin/main as a "
+              f"cherry-picked copy; restore it with: {restore}" in text,
+          "the first prompt deletes a branch whose every commit is a copy on origin/main, and "
+          "names it with the command that restores it", text)
+    check("branch seat-a-unique;" in text,
+          "a branch with a commit origin/main lacks is still listed", text)
+    restored = subprocess.run(shlex.split(restore), capture_output=True, text=True)
+    check(restored.returncode == 0 and git(main, "rev-parse", "seat-a-copied") == tip,
+          "the restore command brings the branch back at its tip", restored.stderr)
+    saved = cleaner.run_git
+
+    def refuse_branch_deletion(repo, *arguments, **keywords):
+        if arguments[:2] == ("branch", "-D"):
+            return subprocess.CompletedProcess(arguments, 1, "", "error: stand-in refusal")
+        return saved(repo, *arguments, **keywords)
+
+    cleaner.run_git = refuse_branch_deletion
+    try:
+        text = listing.first_prompt_text(main, "seat-a")
+    finally:
+        cleaner.run_git = saved
+    check("branch seat-a-copied;" in text and "`git branch -D` exited 1: error: stand-in refusal"
+          in text and git(main, "branch", "--list", "seat-a-copied") != "",
+          "a branch whose deletion fails is listed, with why", text)
+
+
+def test_merge_commit_branch_not_deleted():
+    main = new_clone()
+    set_pull_requests([])
+    tip = cherry_picked_branch(main, "seat-a-merged", "seat-a")
+    path = main.parent / "tmp-merge"
+    git(main, "worktree", "add", "-q", str(path), "seat-a-merged")
+    # origin/main~1, not origin/main: merging the copy in would hide it from `git cherry`.
+    git(path, "merge", "-q", "--no-ff", "-m", "merge landing", "origin/main~1", author="seat-a")
+    # An edit made inside the merge commit, as a hand resolution of a conflict is: work that
+    # origin/main lacks and that `git cherry` never shows.
+    (path / "tracked.txt").write_text("resolved by hand\n")
+    git(path, "commit", "-q", "-a", "--amend", "--no-edit", author="seat-a")
+    merged_tip = git(path, "rev-parse", "HEAD")
+    git(main, "worktree", "remove", str(path))
+    check(merged_tip != tip and git(main, "cherry", "origin/main", merged_tip).startswith("-")
+          and "+" not in git(main, "cherry", "origin/main", merged_tip),
+          "the scratch branch's only commit not on origin/main that `git cherry` sees is a copy",
+          git(main, "cherry", "-v", "origin/main", merged_tip))
+    text = listing.first_prompt_text(main, "seat-a")
+    check("branch seat-a-merged;" in text and git(main, "branch", "--list", "seat-a-merged") != "",
+          "a branch with a merge commit origin/main lacks is listed, not deleted", text)
+
+
+def test_deletion_reported_when_a_later_git_call_fails():
+    main = new_clone()
+    set_pull_requests([])
+    tip = cherry_picked_branch(main, "seat-a-copied", "seat-a")
+    branch_with_commit(main, "seat-a-zz-unique", "seat-a")
+    saved = cleaner.run_git
+
+    def fail_after_deleting(repo, *arguments, **keywords):
+        if arguments[:1] == ("log",):
+            return subprocess.CompletedProcess(arguments, 128, "", "fatal: stand-in failure")
+        return saved(repo, *arguments, **keywords)
+
+    cleaner.run_git = fail_after_deleting
+    try:
+        text, failed = listing.list_text_and_failure(main, "seat-a",
+                                                     delete_cherry_picked_copies=True)
+    finally:
+        cleaner.run_git = saved
+    restore = shlex.join(["git", "-C", str(main), "branch", "seat-a-copied", tip])
+    check(failed and git(main, "branch", "--list", "seat-a-copied") == ""
+          and "could not be listed (ListingFailed" in text
+          and f"restore it with: {restore}" in text,
+          "a deletion is still reported, with its restore command, when a later git call fails",
+          text)
+
+
+def test_supervisor_puts_leftovers_before_the_next_step_without_a_conversation_tail():
+    fixture_spec = importlib.util.spec_from_file_location(
+        "handoff_supervisor_test_fixture_without_tail",
+        SYSTEM_DIRECTORY / "tests" / "handoff-supervisor-test-fixture.py")
+    fixture = importlib.util.module_from_spec(fixture_spec)
+    fixture_spec.loader.exec_module(fixture)
+    supervisor = fixture.supervisor
+    counts = SCRATCH / "seat-y-leftovers-prompt-listing-counts.json"
+    prompt = supervisor.IgnitionPlanWithoutConversationTail("Do the next thing.").compose(
+        "launch-time-git-sync: test")
+    branches = "This agent-seat's branches with no pull request: 1:\n- branch b1; 1 commit(s)"
+    launched = supervisor.launch_prompt_with_leftovers_before_the_next_step(
+        prompt, ("", branches), counts)
+    check(launched.index("branch b1;") < launched.index("Do the next thing.")
+          and launched.endswith(f"{supervisor.NEXT_STEP_HEADING}Do the next thing."),
+          "a prompt with no conversation-tail gets the leftovers before its next step", launched)
+    no_step = supervisor.IgnitionPlanWithoutConversationTail("").compose("")
+    check(supervisor.NEXT_STEP_HEADING not in no_step,
+          "a prompt with no conversation-tail and no next step has no next-step heading", no_step)
+
+
+def test_supervisor_puts_leftovers_before_the_next_step():
+    fixture_spec = importlib.util.spec_from_file_location(
+        "handoff_supervisor_test_fixture_leftovers",
+        SYSTEM_DIRECTORY / "tests" / "handoff-supervisor-test-fixture.py")
+    fixture = importlib.util.module_from_spec(fixture_spec)
+    fixture_spec.loader.exec_module(fixture)
+    supervisor = fixture.supervisor
+    counts = SCRATCH / "seat-x-leftovers-prompt-listing-counts.json"
+    prompt = f"Opening.{supervisor.NEXT_STEP_HEADING}Do the next thing."
+    branches = "This agent-seat's branches with no pull request: 1:\n- branch b1; 1 commit(s)\nSteps."
+    snapshots = "Leftover work-snapshots: 1:\n- refs/work-snapshots/k/w: worktree /x (is gone); more"
+    first = supervisor.launch_prompt_with_leftovers_before_the_next_step(
+        prompt, (snapshots, branches), counts)
+    check(first.startswith("Opening.\n\n" + supervisor.LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE)
+          and first.endswith(f"Steps.{supervisor.NEXT_STEP_HEADING}Do the next thing."),
+          "the leftovers go between the opening and the next step", first)
+    check("- (listed in 1 first prompt(s)) branch b1;" in first
+          and "- (listed in 1 first prompt(s)) refs/work-snapshots/k/w: worktree" in first,
+          "each leftover entry opens with how many first prompts have listed it", first)
+    second = supervisor.launch_prompt_with_leftovers_before_the_next_step(
+        prompt, ("", branches), counts)
+    check("- (listed in 2 first prompt(s)) branch b1;" in second
+          and json.loads(counts.read_text()) == {"branch b1": 2},
+          "a leftover listed again counts up, and one no longer listed is dropped", second)
+    check(supervisor.launch_prompt_with_leftovers_before_the_next_step(prompt, ("", ""), counts)
+          == prompt, "with no leftovers the prompt is unchanged")
+    no_next_step = supervisor.launch_prompt_with_leftovers_before_the_next_step(
+        "Resume.", ("", branches), counts)
+    check(no_next_step.startswith("Resume.\n\n" + supervisor.LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE),
+          "a prompt with no next step gets the leftovers after it", no_next_step)
+    counts.write_text("not json")
+    broken = supervisor.launch_prompt_with_leftovers_before_the_next_step(
+        prompt, ("", branches), counts)
+    check("- branch b1;" in broken and "could not be counted" in broken and "JSONDecodeError" in broken,
+          "an unreadable counts file is stated, and the entries are still listed", broken)
+
+
 def test_supervisor_appends_the_list():
     fixture_spec = importlib.util.spec_from_file_location(
         "handoff_supervisor_test_fixture", SYSTEM_DIRECTORY / "tests" / "handoff-supervisor-test-fixture.py")
@@ -453,13 +630,21 @@ def test_supervisor_appends_the_list():
             pass
     check(launched and launched[0].startswith(
         supervisor.first_prompt_from_launch_command_marked_not_typed_by_the_user("Founding prompt.")
-        + "\n\nThis agent-seat's branches with no pull request: 1:"),
-          "every launch's prompt carries the list after the prompt", launched[:1] and launched[0][:200])
+        + "\n\n" + supervisor.LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE
+        + "\n\nThis agent-seat's branches with no pull request: 1:\n"
+        "- (listed in 1 first prompt(s)) branch seat-five-work;")
+          and supervisor.leftover_prompt_listing_counts_path(handoffs, "seat-five").exists(),
+          "a launch's prompt with no next step carries the leftovers after it, counted",
+          launched[:1] and launched[0][:400])
 
 
 for case in (test_branches, test_pushed_text, test_worktrees, test_gh_failure,
              test_other_failure_and_outside, test_more_than_the_limit,
-             test_more_worktrees_than_the_limit,
+             test_more_worktrees_than_the_limit, test_cherry_picked_copies_deleted,
+             test_merge_commit_branch_not_deleted,
+             test_deletion_reported_when_a_later_git_call_fails,
+             test_supervisor_puts_leftovers_before_the_next_step,
+             test_supervisor_puts_leftovers_before_the_next_step_without_a_conversation_tail,
              test_supervisor_appends_the_list):
     print(f"-- {case.__name__}")
     case()

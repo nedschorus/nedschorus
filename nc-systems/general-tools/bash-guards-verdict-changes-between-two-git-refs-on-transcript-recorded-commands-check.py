@@ -29,7 +29,8 @@ Steps:
      hook's new process uses.
   4. Compare the two refs row by row and print each difference, then the recorded commands the
      guards the head adds refuse, in refusal groups: one guard and one refusal message each, with
-     a few of its commands; every group in full is in added-guard-refusal-groups.json.
+     a few of its commands; every group in full is in added-guard-refusal-groups.json, and every group's
+     "refusal right" answer line, ready to copy, is in added-guard-refusal-right-lines.txt.
 
 Exit status: 0 when no verdict differs and no added guard refuses a recorded command; 1 when a
 verdict differs or an added guard refuses a recorded command; 2 when the replay itself
@@ -48,7 +49,8 @@ raised for any other reason is not read again. A message that differs while its 
 Files: the run log directory holds the files a reader needs to see why a run exited 1 or 2, each step's log
 and each mode's differences-<mode>.json. By default it is a new directory under --log-store-runs-directory, in
 the log-store on ned-box, removed after an exit 0 and kept after an exit 1 or 2. It also holds
-added-guard-refusal-groups.json when an added guard refuses a recorded command. Everything else, the
+added-guard-refusal-groups.json and added-guard-refusal-right-lines.txt when an added guard refuses a recorded
+command. Everything else, the
 checkouts and the pairs and verdicts files, goes in a scratch directory, by default a temporary directory that
 is removed whenever the replay exits, on an exception, SIGTERM or SIGHUP too, unless its checkouts could not be
 removed. --scratch-directory names a scratch directory that is kept, and that holds the run log files too.
@@ -107,6 +109,7 @@ PRINTED_TEXT_LENGTH = 300
 REFUSAL_GROUPS_PRINTED = 10
 REFUSED_COMMANDS_PRINTED_PER_GROUP = 3
 REFUSAL_GROUPS_FILE_NAME = "added-guard-refusal-groups.json"
+REFUSAL_RIGHT_LINES_FILE_NAME = "added-guard-refusal-right-lines.txt"
 SCRATCH_OR_RUN_LOG_DIRECTORY_NOT_REMOVED_MESSAGE = (
     "REPLAY FAILED: the paths listed below could not be removed, so this Bash guards replay exits 2; any verdicts "
     "it printed above stand. Each path is in the replay's scratch directory, made under TMPDIR, or, after a replay that "
@@ -154,15 +157,15 @@ NEW_GUARD_REFUSES_MESSAGE = (
     "refusal-group-<8 or more hex digits>, made from the guard's path and the message, so the same group has the "
     "same id in every run of this check that finds the same groups.\n"
     "The pull request's reviewer answers each refusal group in the body of the review the reviewer posts, "
-    "every group in the file added-guard-refusal-groups.json in the run log directory whose path this check "
-    "printed first, including the groups and commands the list above leaves out. That file is a JSON list with "
+    "every group in the file {groups_file}, including the groups and commands the list above leaves out. "
+    "That file is a JSON list with "
     "one object per group: \"group\" is its id, \"guard\" the guard's path, \"reason\" the refusal message, "
     "\"modes\" the modes that refused, and \"refused commands\" a list of [command, working directory].\n"
     "Where every command in a group is rightly refused, the answer is a line of its own:\n"
     "  refusal right: <guard file> | <group id>\n"
     "for example, with a made-up guard path: refusal right: scripts/example-guard-hook.py | refusal-group-0a1b2c3d. "
-    "Each group listed above prints its own line in that form, ready to copy; a group the list leaves out "
-    "prints no line, so write its line from added-guard-refusal-groups.json.\n"
+    "Each group listed above prints its own line in that form, ready to copy, and the file "
+    "{refusal_right_lines_file} holds that line for every group, the ones the list leaves out included.\n"
     "On the next line, write in one line why the guard is right to refuse that group's commands.\n"
     "Where a command in a group is wrongly refused, the group gets no \"refusal right\" line: the answer is a "
     "finding that names each wrongly refused command and its working directory, and the author then narrows the "
@@ -538,6 +541,12 @@ def read_ghi_md_whole_file_replacement(guard, command, working_directory, search
     return ("refused", f"replaces {replaced}") if replaced else ("passed", None)
 
 
+def read_handoff_deferral_cold_read_full_run_launch(guard, command, working_directory, search_file_directory):
+    # Read as if a handoff-deferral were on: the marker file is per agent-session and absent here.
+    runs_grid = guard.command_runs_cold_read_grid_script(command)
+    return ("refused", guard.COLD_READ_FULL_RUN_REFUSED_AND_SAVED_REASON) if runs_grid else ("passed", None)
+
+
 def read_git_worktree_remove_records_ship_first(guard, command, working_directory, search_file_directory):
     # Only whether the command removes a worktree is read: running the shippers would copy real records during a replay.
     if guard.command_runs_git_worktree_remove(command):
@@ -610,6 +619,8 @@ GUARDS = {
     "nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py":
         read_markdown_push_reminder,
     ".claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py": read_ghi_md_whole_file_replacement,
+    ".claude/guard-hooks/handoff-deferral-cold-read-full-run-launch-refusal-hook.py":
+        read_handoff_deferral_cold_read_full_run_launch,
     ".claude/guard-hooks/git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py":
         read_git_worktree_remove_records_ship_first,
 }
@@ -988,6 +999,10 @@ def added_guard_refusal_groups(refusals_by_mode):
     return sorted(listed, key=lambda group: (-len(group["refused commands"]), group["guard"], group["group"]))
 
 
+def refusal_right_line(group):
+    return f"refusal right: {group['guard']} | {group['group']}"
+
+
 def print_added_guard_refusal_groups(groups, groups_file):
     """Print the first REFUSAL_GROUPS_PRINTED groups, each with its first REFUSED_COMMANDS_PRINTED_PER_GROUP
     commands, every text cut by shortened(), and the count of what is left out."""
@@ -1005,8 +1020,7 @@ def print_added_guard_refusal_groups(groups, groups_file):
             more = len(commands) - REFUSED_COMMANDS_PRINTED_PER_GROUP
             print(f"    {more} more {'command' if more == 1 else 'commands'} of this group "
                   f"{'is' if more == 1 else 'are'} left out here")
-        print(f"    answer if every command of this group is rightly refused: refusal right: {group['guard']} | "
-              f"{group['group']}")
+        print(f"    answer if every command of this group is rightly refused: {refusal_right_line(group)}")
     left_out = groups[REFUSAL_GROUPS_PRINTED:]
     left_out_commands = sum(len(group["refused commands"]) for group in left_out)
     if left_out:
@@ -1201,6 +1215,8 @@ def replay_with_sigterm_handled(arguments):
         if added_guard_refused:
             groups = added_guard_refusal_groups(refusals_by_mode)
             (run_log_directory / REFUSAL_GROUPS_FILE_NAME).write_text(json.dumps(groups, indent=1))
+            (run_log_directory / REFUSAL_RIGHT_LINES_FILE_NAME).write_text(
+                "".join(refusal_right_line(group) + "\n" for group in groups))
             print_added_guard_refusal_groups(groups, run_log_directory / REFUSAL_GROUPS_FILE_NAME)
         if all_failed:
             print_rows("REPLAY FAILED: readings that raised or timed out, which have no verdict to compare",
@@ -1210,8 +1226,11 @@ def replay_with_sigterm_handled(arguments):
             if verdict_changed:
                 print(VERDICT_CHANGED_MESSAGE)
             if added_guard_refused:
-                print(NEW_GUARD_REFUSES_MESSAGE + (NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING if verdict_changed
-                                                   else NEW_GUARD_REFUSES_ONLY_ENDING))
+                print(NEW_GUARD_REFUSES_MESSAGE.format(
+                    groups_file=run_log_directory / REFUSAL_GROUPS_FILE_NAME,
+                    refusal_right_lines_file=run_log_directory / REFUSAL_RIGHT_LINES_FILE_NAME)
+                      + (NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING if verdict_changed
+                         else NEW_GUARD_REFUSES_ONLY_ENDING))
             status = 1
         else:
             print("NO VERDICT CHANGED")

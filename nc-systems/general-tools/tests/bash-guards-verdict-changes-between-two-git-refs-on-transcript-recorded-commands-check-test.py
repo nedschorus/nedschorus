@@ -810,6 +810,16 @@ try:
           and out.count(f": {TMUX_KILL_GUARD} refuses 1 recorded command, in in-process\n") == 10
           and "  290 more refusal groups are left out here, holding 290 refused recorded commands\n" in out
           and len(groups) == 300, f"status {status}, {len(out)} characters\n{out[:3000]}\n{err}")
+    lines_file = groups_file.with_name(replay.REFUSAL_RIGHT_LINES_FILE_NAME)
+    lines = lines_file.read_text().splitlines() if lines_file.exists() else []
+    check("a head that adds a guard refusing 300 long commands, each with its own message: the refusal right lines "
+          "file holds the ready line of every one of the 300 groups, the 290 the list leaves out included",
+          lines == [f"refusal right: {TMUX_KILL_GUARD} | {group['group']}" for group in groups] and len(lines) == 300,
+          f"{lines_file}: {lines[:5]}")
+    check("a head that adds a guard refusing 300 long commands, each with its own message: the message names the "
+          "groups file and the refusal right lines file by their full paths",
+          f"every group in the file {groups_file}, including" in out
+          and f"the file {lines_file} holds that line for every group" in " ".join(out.split()), out[-6000:])
 
     one_command_more = replay.REFUSED_COMMANDS_PRINTED_PER_GROUP + 1
     one_left_out_group = [{"group": f"refusal-group-{number:08x}", "guard": "g.py", "reason": f"r{number}",
@@ -825,10 +835,9 @@ try:
           and "  1 more refusal group is left out here, holding 1 refused recorded command\n" in printed.getvalue(),
           printed.getvalue())
     message = " ".join(replay.NEW_GUARD_REFUSES_MESSAGE.split())
-    check("the message says a refusal group the list leaves out prints no \"refusal right\" line, so its line is "
-          "written from the groups file, and that a group still refused after a fix-round needs one line, not one "
-          "per command",
-          "a group the list leaves out prints no line, so write its line from added-guard-refusal-groups.json" in message
+    check("the message says the refusal right lines file holds the line of every group, the ones the list leaves "
+          "out included, and that a group still refused after a fix-round needs one line, not one per command",
+          "holds that line for every group, the ones the list leaves out included" in message
           and "such a group needs its one \"refusal right\" line in the review of the fix-round's head" in message,
           replay.NEW_GUARD_REFUSES_MESSAGE)
 

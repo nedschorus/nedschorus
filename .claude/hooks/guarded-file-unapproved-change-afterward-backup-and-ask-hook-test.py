@@ -139,6 +139,11 @@ class World:
         return any(line.startswith("seen\t") and f"\t{key}\t" in line
                    for line in self.store_file(path, "log").splitlines())
 
+    def approved_in_log(self, path, key, how):
+        """Whether the log has an "approved" line for key with how as its way of approval."""
+        return any(line.split("\t")[:1] == ["approved"] and line.split("\t")[4:6] == [key, how]
+                   for line in self.store_file(path, "log").splitlines())
+
     def failing_git(self, arguments, failure="echo 'fatal: injected failure' >&2; exit 128"):
         """Make every git whose command line holds arguments fail as a broken repository does,
         or by the shell commands in failure, for the hook's runs and commands until
@@ -698,6 +703,35 @@ def cases(scratch):
     check("a resolution a run saw before the finishing commit is asked about",
           str(claude) in message, message)
 
+    # -- a merge of origin/main, stopped on a conflict, that deletes a guarded file
+    world = fresh(scratch, "conflicted-merge-deletes-guarded-file")
+    page = world.repo / "docs" / "nedschorus-wiki" / "page.md"
+    notes = world.repo / "notes.txt"
+    page.parent.mkdir(parents=True)
+    page.write_text("a wiki page\n")
+    world.git("add", ".")
+    world.git("commit", "-qm", "add a page")
+    world.git("checkout", "-q", "-b", "topic")
+    notes.write_text("topic notes\n")
+    world.git("commit", "-qam", "topic")
+    world.git("checkout", "-q", "main")
+    page.unlink()
+    notes.write_text("main notes\n")
+    world.git("commit", "-qam", "a reviewed pull request deletes the page")
+    world.git("update-ref", "refs/remotes/origin/main", "main")
+    world.git("checkout", "-q", "topic")
+    world.run()
+    world.git("merge", "origin/main", check_ok=False)
+    during = world.run()
+    notes.write_text("merged notes\n")
+    world.git("commit", "-qam", "merge origin/main")
+    message = world.run()
+    check("a deletion of a guarded file that a merge of origin/main stopped on a conflict brought "
+          "in is not asked about, during the merge or after its finishing commit",
+          during == "" and message == "" and not page.exists(), (during, message))
+    check("the deletion is logged as approved, with its own way of approval",
+          world.approved_in_log(page, "deleted", "deletion"), world.store_file(page, "log"))
+
     # -- a version origin/main holds is approved, even one a run saw unapproved
     world = fresh(scratch, "origin-main")
     claude = world.repo / "CLAUDE.md"
@@ -807,8 +841,13 @@ def cases(scratch):
     world.run()
     os.rename(skills / "b.md", skills / "c.md")
     message = world.run()
-    check("a mv of an unsettled guarded file to a new guarded path is asked about",
-          str(skills / "c.md") in message, message)
+    check("a mv of an unsettled guarded file to a new guarded path is asked about, though the "
+          "old path's deletion is not",
+          f"{skills / 'c.md'}, version {world.key(skills / 'c.md')}" in message
+          and f"{skills / 'b.md'}, version deleted" not in message, message)
+    check("the mv's new path stays unapproved",
+          world.key(skills / "c.md") not in world.store_file(skills / "c.md", "approved"),
+          world.store_file(skills / "c.md", "approved"))
 
     # -- copies that do not match, incomplete lines
     world = fresh(scratch, "damaged-store")
@@ -1189,23 +1228,27 @@ def cases(scratch):
     check("a live asking session's file only reminds another session",
           "Reminder" in world.run(session="third", owner="owner-third"), "")
 
-    # -- the takeover of a deletion's ask after the asking session ended
-    world = fresh(scratch, "deleted-takeover")
+    # -- an unsettled deletion an older state file holds
+    world = fresh(scratch, "unsettled-deletion-in-state")
     claude = world.repo / "CLAUDE.md"
     claude.unlink()
-    world.run(session="old", owner="ended-old")
-    message = world.run(session="successor", owner="owner-new")
-    check("when the asking session has ended, the next session is asked about a deletion",
-          "A guarded file changed" in message and "version deleted" in message
-          and "did not run" not in message, message)
+    state_file = next((world.repo / ".git").glob("*-state.json"))
+    state = json.loads(state_file.read_text())
+    state["files"][str(claude)] = [0, 0, 0, 0, "deleted", "deleted", False]
+    state_file.write_text(json.dumps(state))
+    message = world.run()
+    check("an unsettled deletion the state file holds is approved, not reminded about",
+          message == "" and world.approved_in_log(claude, "deleted", "deletion"),
+          (message, world.store_file(claude, "log")))
 
     # -- a shell deletion, and a declined version that is in a commit
     world = fresh(scratch, "deletion")
     claude = world.repo / "CLAUDE.md"
     claude.unlink()
     message = world.run()
-    check("a shell deletion of a guarded file is asked about", str(claude) in message
-          and "version deleted" in message, message)
+    check("a shell deletion of a guarded file is not asked about, and is logged as approved",
+          message == "" and world.approved_in_log(claude, "deleted", "deletion"),
+          (message, world.store_file(claude, "log")))
     result = world.command("--restore", claude, "deleted")
     check("declining a deletion puts back the newest approved content",
           result.returncode == 0 and claude.read_text() == "project v1\n", result.stderr)
@@ -1438,14 +1481,14 @@ def cases(scratch):
     check("a Write of a guarded file the hook never saw approves the result",
           message == "" and world.key(skill) in world.store_file(skill, "approved"), message)
 
-    world = fresh(scratch, "write-after-unapproved-deletion")
+    world = fresh(scratch, "write-after-deletion")
     claude = world.repo / "CLAUDE.md"
     claude.unlink()
     world.run()
     claude.write_text("project rewritten by Write\n")
     message = world.run(tool="Write", file_path=claude)
-    check("a Write that recreates a file whose deletion was not approved approves the result, "
-          "since the Write wrote the whole file",
+    check("a Write that recreates a deleted file approves the result, since the Write wrote the "
+          "whole file",
           world.key(claude) in world.store_file(claude, "approved")
           and "made on a version" not in message, message)
 

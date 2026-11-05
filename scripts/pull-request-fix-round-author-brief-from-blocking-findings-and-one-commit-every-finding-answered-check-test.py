@@ -37,6 +37,14 @@ URL = f"https://github.com/o/r/pull/{NUMBER}"
 ADVISOR_SENTENCE = ("This is the pull request's third fix-round, its last before merge-lane-2 brings it to "
                     "the user: before you change anything, call the advisor with the blocking findings and "
                     "the fix you plan.")
+CARRYING_OUT_USER_RULING_PARAGRAPH = (
+    "When a finding asks you to change a file the instruction-file guard protects, and the fix only makes the "
+    "file do what a ruling of the user's already says, the change is a user-approved-change: before each edit, "
+    "write the ruling's words, quoted from the walk-minutes item or the agent-session where he gave it, with "
+    "its time, into the `.walk-approved` marker file at the root of your worktree, and cite the ruling in the "
+    "commit message. A change the guard's refusal lets through without a ruling, such as an obvious-error-fix, "
+    "goes as that refusal says. Leave out any other change to such a file, go on with the other findings, and "
+    "name that change in your report to the agent that dispatched you.")
 
 FAKE_GH = r'''#!/usr/bin/env python3
 import json, os, sys
@@ -228,6 +236,9 @@ def brief_cases(root, repository, base, frozen_head):
           and f"{NUMBER} --move-change-to-own-pull-request-finish --title <title> --body-file <description file>" in out
           and f"puts you back on fix-round-pull-request-{NUMBER}-review-11." in out
           and "git switch" not in out.split("3. Change nothing else")[1].split("4. Put every change")[0], out)
+    check("brief: rule 2 says a fix that carries out a user ruling in a guarded-file is a user-approved-change",
+          "\n   " + CARRYING_OUT_USER_RULING_PARAGRAPH + "\n3. Change nothing else" in out
+          and out.index("2. Check each finding") < out.index(CARRYING_OUT_USER_RULING_PARAGRAPH), out)
     check("brief: a conflict defers to the conflict check's report, and asks for no merge itself",
           "If it reports VERDICT: CONFLICT, do what its report says." in out
           and "merge origin/main as its report says" not in out and "merge nothing" not in out, out)
@@ -1588,6 +1599,8 @@ def nit_cases(root, repository, base, frozen_head):
           "Not merge-lane-2's" not in out, out)
     check("nits: step 3 makes the listed nits part of the round",
           "are not part of this round, apart from the nits listed above" in out, out)
+    check("nits: step 2 says a nit needs no test",
+          "with a test that fails without the fix; a nit needs no test." in out, out)
 
     code, out, err = run(root, repository, routes_for(frozen_head, [review(commit_id=frozen_head)]))
     check("nits: a round with no nit prints no nit heading", code == 0 and "Nits to fix" not in out, err + out)
