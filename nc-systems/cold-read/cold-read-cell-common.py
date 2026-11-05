@@ -63,9 +63,11 @@ EXIT_BAD_INVOCATION = 64
 class CellRefusal(Exception):
     """A refusal carrying its remedy and exit code."""
 
-    def __init__(self, message: str, exit_code: int = EXIT_BAD_INVOCATION):
+    def __init__(self, message: str, exit_code: int = EXIT_BAD_INVOCATION, cause=None):
         super().__init__(message)
         self.exit_code = exit_code
+        # (cause class, detail) when the refusal knows its cause better than the classifier of its output would.
+        self.cause = cause
 
 
 # The keychain remains accessible because masking it logs the agent-binaries out.
@@ -389,6 +391,8 @@ AGENT_BINARY_WIDE_CAUSE_CLASSES = frozenset(
 USER_CLEARABLE_CAUSE_CLASSES = frozenset(
     {"logged-out", "agent-binary-missing", "account-limit", "model-limit"})
 CAUSE_DETAIL_MAX_CHARACTERS = 120
+# A report was written but lacks a heading its cell requires; "no-report" would say no report was written.
+INCOMPLETE_REPORT_CAUSE_CLASS = "incomplete-report"
 # Drop per-attempt timestamps from details that the grid reports for an entire agent-binary.
 DETAIL_IS_REST_OF_LINE = "rest-of-line"
 DETAIL_IS_WHOLE_LINE = "whole-line"
@@ -616,6 +620,8 @@ def verify_report(program: str, report: pathlib.Path, required_headings=()) -> N
             "re-run. The model's own words, printed above this line when it "
             "gave any, may say why it stopped.",
             exit_code=1,
+            cause=(INCOMPLETE_REPORT_CAUSE_CLASS,
+                   ("report written without " + "; ".join(missing))[:CAUSE_DETAIL_MAX_CHARACTERS]),
         )
 
 
@@ -835,13 +841,14 @@ def run_model_chain(
             verify_report(program, report, required_report_headings)
         except CellRefusal as refusal:
             # stdout may explain why a successful exit produced no report.
-            failed_attempts.append(f"{model}(no-report)")
+            cause = refusal.cause or classify_failed_attempt(
+                stdout=completed.stdout or "", stderr=completed.stderr or "",
+                exit_code=0, recognised_texts=recognised_texts)
+            failed_attempts.append(f"{model}({cause[0]})")
             if completed.stdout:
                 print(completed.stdout, file=sys.stderr)
             print(str(refusal), file=sys.stderr)
-            print(cause_line(program, *classify_failed_attempt(
-                stdout=completed.stdout or "", stderr=completed.stderr or "",
-                exit_code=0, recognised_texts=recognised_texts)), file=sys.stderr)
+            print(cause_line(program, *cause), file=sys.stderr)
             continue
         produced_by = model
         # Use only this attempt's stderr: stdout may quote token counts, and earlier attempts cost other models.
