@@ -138,7 +138,7 @@ Unless named otherwise, files are in `~/.claude/handoffs/` on the agent-seat's m
 - GHI [Move mechanical agent chores into programs and hooks](https://github.com/nedschorus/nedschorus/issues/1036)
 - GHI [Check every prerequisite of the fleet's programs before an agent-session starts](https://github.com/nedschorus/nedschorus/issues/1055)
 - GHI [Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user](https://github.com/nedschorus/nedschorus/issues/1058)
-- GHI [Save a message that SendMessage queues to an offline Remote Control entry, and deliver it later or have the sender resend it](https://github.com/nedschorus/nedschorus/issues/1115)
+- GHI [One message queue for messages between agent-seats, kept in the nc-shared-database, with SendMessage as the nudge](https://github.com/nedschorus/nedschorus/issues/1115)
 - GHI [One design of record for the project's git checkouts, worktrees and branch rules](https://github.com/nedschorus/nedschorus/issues/1121)
 - GHI [Agent-seat retirement as a program: the agent-seat marks itself retired, the handoff-supervisor confirms with the user and retires it, and the launchers refuse a retired name](https://github.com/nedschorus/nedschorus/issues/1125)
 - GHI [Moving an agent-seat to the other machine in one handoff that stops it on the old machine and starts it on the new one without restart prompts](https://github.com/nedschorus/nedschorus/issues/1129)
