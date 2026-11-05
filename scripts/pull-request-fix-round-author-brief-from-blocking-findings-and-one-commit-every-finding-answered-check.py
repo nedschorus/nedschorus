@@ -481,7 +481,7 @@ def print_brief(number, reviewer_login):
         f"1. Before changing anything, run: python3 scripts/branch-conflict-check.py --pull-request {number}",
         "   If it reports VERDICT: CONFLICT, do what its report says.",
         "2. Check each finding against the code. Fix each one that holds, root cause included, "
-        "with a test that fails without the fix.",
+        "with a test that fails without the fix; a nit needs no test.",
         GUARDED_FILE_CHANGE_CARRYING_OUT_USER_RULING_INSTRUCTION,
         "3. Change nothing else, apart from the tests, callers, documents and citations that "
         "keep the pull request atomic. Findings that do not block, in this review or any other, "
