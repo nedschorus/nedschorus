@@ -149,8 +149,8 @@ def main():
           and f"#77 ({URL}) is marked ready for review." in output
           and "merge-lane-2" not in output + errors,
           (status, runner.calls, output, errors))
-    check("the test suites run with the checkout's own runner, by the command CLAUDE.md gives "
-          "for before a push",
+    check("the test suites run with the checkout's own runner, selecting the suites whose recorded "
+          "inputs changed since origin/main",
           program.selective_test_run_command(CHECKOUT) == [
               "python3", CHECKOUT + "/scripts/run-all-test-suites.py",
               "--only-suites-whose-recorded-inputs-changed-since", "origin/main"]
@@ -268,8 +268,8 @@ def main():
              ["the test suites exited with status 1, so #77",
               "The failing suites are named above.",
               "Fix the cause of each suite's failure and commit the fix. Before you push it, "
-              "run the test suites and the mutation pass that CLAUDE.md asks for before a "
-              "push; then push, and run this again.",
+              "run the mutation pass that CLAUDE.md asks for before a push; then push, and run "
+              "this again, which runs the test suites again.",
               "If git or a pre-push hook refuses the push: do what its message says, then run "
               "this again; if it names nothing to do, tell the user, or the agent that "
               "dispatched you, what it printed."]),
