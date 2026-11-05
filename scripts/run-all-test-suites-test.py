@@ -1304,8 +1304,12 @@ seen = os.environ["FAKE_STRACE_SAW"]
 suite_traced = any(argument.endswith(os.environ["FAKE_STRACE_SUITE"]) for argument in command)
 # A suite that fails before reaching data.txt, as when the daily run times out.
 stops_early = suite_traced and os.environ.get("FAKE_STRACE_SUITE_FAILS_BEFORE_READING")
+# A suite that skips, without the mark, the case that reads data.txt, and still passes.
+skips_reading = suite_traced and os.environ.get("FAKE_STRACE_SUITE_SKIPS_THE_CASE_THAT_READS")
+if skips_reading:
+    print("SKIP the case that reads data.txt", flush=True)
 with open(trace + ".1", "w") as written:
-    if suite_traced and not stops_early:
+    if suite_traced and not stops_early and not skips_reading:
         written.write(f'openat(AT_FDCWD</>, "{seen}", O_RDONLY) = 3<{seen}>\n')
 sys.exit(1 if stops_early else code)
 '''
@@ -1433,6 +1437,17 @@ with tempfile.TemporaryDirectory() as scratch:
           and json.loads(next(store.glob(
               f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
           == complete_list, stopped.stdout)
+
+    skipped = run(root, "--record-inputs-with-strace",
+                  environment_extra={**fake, "FAKE_STRACE_SUITE_SKIPS_THE_CASE_THAT_READS": "1"},
+                  driver=FAKE_STRACE_DRIVER)
+    check("a traced run that passed but skipped a case without the mark that says this machine "
+          "cannot run it keeps the last complete list of files only strace saw",
+          skipped.returncode == 0
+          and recording(root, STRACE_ONLY_SUITE).get("skipped_cases") == 1
+          and json.loads(next(store.glob(
+              f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
+          == complete_list, (skipped.stdout, recording(root, STRACE_ONLY_SUITE)))
 
     git(repo, "checkout", "-q", "-b", "holds-another-data")
     commit_files(repo, {"data.txt": "b\n"}, "another data")

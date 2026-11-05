@@ -3359,7 +3359,7 @@ def files_only_strace_saw_file_for(directory, suite):
     return directory / (suite.replace("/", "__") + FILES_ONLY_STRACE_SAW_FILE_SUFFIX)
 
 
-def recorded_run_passed_and_ran_every_case(recording):
+def recorded_run_passed_and_skipped_only_cases_this_machine_cannot_run(recording):
     """True when the recorded run passed and skipped only cases marked as ones this machine
     cannot run, so it reached every file the suite reads."""
     skipped = recording.get("skipped_cases")
@@ -3376,7 +3376,7 @@ def save_files_only_strace_saw(directory, recording):
 
     A run that failed or skipped cases saw only part of what the suite reads, so it leaves the
     last kept list as it is; that list ages, and the stale-list notice names it."""
-    if not recorded_run_passed_and_ran_every_case(recording):
+    if not recorded_run_passed_and_skipped_only_cases_this_machine_cannot_run(recording):
         return
     directory.mkdir(parents=True, exist_ok=True)
     target = files_only_strace_saw_file_for(directory, recording["suite"])
