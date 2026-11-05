@@ -36,6 +36,11 @@
 # The filter matches branches_to_check in the Python file; the pre-push nc-test-suite
 # pins both against the same pushes.
 
+# The selective test run cuts its time budget by the time spent since this, so
+# the whole hook ends within one Claude Code command's 600 seconds.
+NEDSCHORUS_PRE_PUSH_HOOK_STARTED_AT_EPOCH_SECONDS=$(date +%s)
+export NEDSCHORUS_PRE_PUSH_HOOK_STARTED_AT_EPOCH_SECONDS
+
 hook_directory=$(dirname "$0")
 conflict_check="$hook_directory/../git-client-side-hooks-pre-push-conflict-check.py"
 # Resolved, so a message names the file by a path a reader can open.
