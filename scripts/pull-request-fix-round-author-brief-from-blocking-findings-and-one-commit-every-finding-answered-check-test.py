@@ -1599,6 +1599,8 @@ def nit_cases(root, repository, base, frozen_head):
           "Not merge-lane-2's" not in out, out)
     check("nits: step 3 makes the listed nits part of the round",
           "are not part of this round, apart from the nits listed above" in out, out)
+    check("nits: step 2 says a nit needs no test",
+          "with a test that fails without the fix; a nit needs no test." in out, out)
 
     code, out, err = run(root, repository, routes_for(frozen_head, [review(commit_id=frozen_head)]))
     check("nits: a round with no nit prints no nit heading", code == 0 and "Nits to fix" not in out, err + out)
