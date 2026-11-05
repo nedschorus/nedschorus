@@ -425,15 +425,41 @@ def open_tasks_nothing_holds(task_directory, checker):
     return [{"id": task_id, "subject": tasks[task_id].get("subject")} for task_id in free]
 
 
+def open_tasks_with_prerequisites_or_blocked_by(task_directory):
+    """Every open task that waits on something, whenever it was created: any of them may be the
+    one that backs a promise or a hold."""
+    if not task_directory.is_dir():
+        return []
+    unreadable = []
+    tasks = due_task_hook.read_tasks(task_directory, unreadable)
+    if unreadable:
+        raise ReadFailure(f"{unreadable[0]} could not be read as a task with an id, so whether it "
+                          "backs a promise of the agent-seat is unknown. Repair the file so that "
+                          "it holds a task with an id, or remove it if it is not a task, then run "
+                          "this program again.")
+    waiting = []
+    for task_id, task in tasks.items():
+        prerequisites = (task.get("metadata") or {}).get("prerequisites")
+        if task.get("status") in due_task_hook.OPEN_TASK_STATUSES and (
+                prerequisites or task.get("blockedBy")):
+            waiting.append({"id": task_id, "subject": task.get("subject"),
+                            "prerequisites": prerequisites or [],
+                            "blockedBy": task.get("blockedBy") or []})
+    return waiting
+
+
 # --- One agent-seat's verdict ---
 
-def code_reading_of_sentence(kind, turn_started_at, task_tool_calls):
+def code_reading_of_sentence(kind, turn_started_at, task_tool_calls, open_waiting_tasks):
     """What code settles about one matched sentence: not_raised, unbacked, or judge.
 
-    A task created or updated in the sentence's turn or after it may back the sentence."""
+    A task created or updated in the sentence's turn or after it may back the sentence, and so may
+    any open task that waits on something, however old."""
     if kind in NOT_RAISED_KINDS:
         return fields.NOT_RAISED
     if kind in (PROMISE_AFTER_EVENT, HOLD):
+        if open_waiting_tasks:
+            return fields.JUDGE
         backing_candidates = [call for call in task_tool_calls
                               if call[0] and turn_started_at and call[0] >= turn_started_at
                               and ((call[2].get("metadata") or {}).get("prerequisites")
@@ -442,7 +468,7 @@ def code_reading_of_sentence(kind, turn_started_at, task_tool_calls):
     return fields.JUDGE
 
 
-def matched_sentences(facts, since):
+def matched_sentences(facts, since, open_waiting_tasks):
     messages = facts.turn_ending_messages
     if since is None:
         messages = messages[-1:]
@@ -457,7 +483,8 @@ def matched_sentences(facts, since):
             found.append({"record_uuid": record.get("uuid"), "time": iso(moment),
                           "sentence": sentence, "kind": kind,
                           "code_reading": code_reading_of_sentence(
-                              kind, turn_started_at or moment, facts.task_tool_calls)})
+                              kind, turn_started_at or moment, facts.task_tool_calls,
+                              open_waiting_tasks)})
     return found
 
 
@@ -583,15 +610,17 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
             return verdict
 
         verdict[fields.LAST_TURN_ENDING_MESSAGE] = last_message_of(facts)
-        verdict["sentences"] = matched_sentences(facts, since)
-        raised = [item for item in verdict["sentences"] if item["code_reading"] != fields.NOT_RAISED]
         task_directory = paths.tasks_root / f"nedschorus-{seat}-tasks"
+        open_waiting_tasks = open_tasks_with_prerequisites_or_blocked_by(task_directory)
+        verdict["sentences"] = matched_sentences(facts, since, open_waiting_tasks)
+        raised = [item for item in verdict["sentences"] if item["code_reading"] != fields.NOT_RAISED]
         if not raised:
             verdict.update(rules_three_to_five(verdict, put_off_at, checker, task_directory))
         elif any(item["code_reading"] == fields.JUDGE for item in raised):
             judged = [item for item in raised if item["code_reading"] == fields.JUDGE]
             verdict[fields.TOOL_CALLS_SINCE_START_OF_EARLIEST_TURN_WITH_SENTENCE_TO_JUDGE] = (
                 tool_calls_since_start_of_earliest_turn_with_sentence_to_judge(facts, judged))
+            verdict[fields.OPEN_TASKS_WITH_PREREQUISITES_OR_BLOCKED_BY] = open_waiting_tasks
             # Only the judge can find every sentence backed, and then rules 3 to 5 decide; a
             # sentence code already found unbacked means that can never happen. Rule 2 is set
             # after those reads, so one that fails leaves the rule null.

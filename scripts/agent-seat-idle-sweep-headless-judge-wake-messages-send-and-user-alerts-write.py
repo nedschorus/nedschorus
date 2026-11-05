@@ -214,7 +214,8 @@ it, or by a task to build one together with a proposal to the user; a memory nev
 - A hold, such as "I'll hold", is backed by a task whose prerequisites name what releases the hold.
 
 The tool calls the agent-seat made from the earliest sentence's turn on are in the JSON below, with \
-the tasks they created or updated and the files they changed; so is what is running. Send nothing. \
+the tasks they created or updated and the files they changed; so are its open tasks that have \
+prerequisites or blockedBy, whenever they were created, and what is running. Send nothing. \
 Answer, for every sentence by its index, backed true or false, and reason, one sentence.
 
 {facts}"""
@@ -747,7 +748,9 @@ class Sweep:
                                      "sentence": item["sentence"]}
                                     for index, item in enumerate(judged)],
                          tool_calls_since_start_of_earliest_turn_with_sentence_to_judge=verdict.get(
-                             fields.TOOL_CALLS_SINCE_START_OF_EARLIEST_TURN_WITH_SENTENCE_TO_JUDGE, []))
+                             fields.TOOL_CALLS_SINCE_START_OF_EARLIEST_TURN_WITH_SENTENCE_TO_JUDGE, []),
+                         open_tasks_with_prerequisites_or_blocked_by=verdict.get(
+                             fields.OPEN_TASKS_WITH_PREREQUISITES_OR_BLOCKED_BY, []))
             prompt = SENTENCES_JUDGE_PROMPT.format(
                 seat=seat, facts=json.dumps(facts, indent=1, ensure_ascii=False))
             outcome = run_headless(prompt, SENTENCES_ANSWER_SCHEMA, "", self.working_directory,

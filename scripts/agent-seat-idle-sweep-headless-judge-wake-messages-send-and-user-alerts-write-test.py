@@ -882,6 +882,24 @@ check("a sender past its time whose child holds its output open: stopped in seco
       and any("stopped after" in event["problem"] for event in machine.events("headless_failed")),
       (code, took, machine.events("headless_failed")))
 
+# --- an older open task that waits on something reaches the judge ---------------------------------
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.task("alpha", "6")
+machine.task("alpha", "7")
+# blockedBy, not a pull request prerequisite, so that no gh query is made.
+older_task = machine.tasks / "nedschorus-alpha-tasks" / "7.json"
+older_task.write_text(json.dumps(dict(json.loads(older_task.read_text()), blockedBy=["6"])))
+# Judged backed, rule 5 follows for the open task 6, and its judge sends nothing.
+machine.script({"answer": {"sentences": [{"index": 0, "backed": True, "reason": "task 7"}]}},
+               {"answer": {"sent": False, "reason": "busy"}})
+machine.run(0)
+calls = machine.claude_calls()
+check("a promise with an older open task held by blockedBy: the judge is handed that task",
+      len(calls) == 2 and '"open_tasks_with_prerequisites_or_blocked_by": [ { "id": "7", "subject": '
+      '"task 7", "prerequisites": [], "blockedBy": [ "6" ] } ]' in " ".join(calls[0]["prompt"].split())
+      and not machine.events("message_sent"), calls)
+
 if failures:
     print(f"{len(failures)} case(s) failed")
     sys.exit(1)

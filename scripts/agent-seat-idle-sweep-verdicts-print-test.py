@@ -214,9 +214,31 @@ machine.seat("alpha", [user("a", at="2026-11-02T11:30:00Z"),
                            {"pr_merged": 927}]}}), at="2026-11-02T11:35:00Z"),
                        turn_end(at="2026-11-02T11:36:00Z"), user("go", at="2026-11-02T11:40:00Z"),
                        assistant(PROMISE), turn_end()])
+machine.task("alpha", "1", metadata={"prerequisites": [{"pr_merged": 927}]})
+machine.gh_responses.write_text(json.dumps({"pr:927": {"state": "OPEN"}}))
 _, verdicts, _ = machine.run()
-check("a task created in an earlier turn does not back the promise",
-      verdicts["alpha"]["sentences"][0]["code_reading"] == "unbacked", verdicts["alpha"])
+check("an open task created in an earlier turn, with prerequisites: the judge decides",
+      verdicts["alpha"]["sentences"][0]["code_reading"] == "judge"
+      and verdicts["alpha"].get("decision") == "judge"
+      and verdicts["alpha"].get("open_tasks_with_prerequisites_or_blocked_by")
+      == [{"id": "1", "subject": "task 1", "prerequisites": [{"pr_merged": 927}],
+           "blockedBy": []}], verdicts["alpha"])
+for case, status, metadata, blocked_by in (
+        ("completed", "completed", {"prerequisites": [{"pr_merged": 927}]}, ()),
+        ("open with neither prerequisites nor blockedBy", "pending", None, ())):
+    machine = Machine()
+    machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+    machine.task("alpha", "1", status=status, metadata=metadata, blocked_by=blocked_by)
+    _, verdicts, _ = machine.run()
+    check(f"an older task {case} does not back the promise: code finds it unbacked",
+          verdicts["alpha"]["sentences"][0]["code_reading"] == "unbacked", verdicts["alpha"])
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant("I'll hold."), turn_end()])
+machine.task("alpha", "1")
+machine.task("alpha", "2", blocked_by=["1"])
+_, verdicts, _ = machine.run()
+check("a hold with an older open task held by blockedBy: the judge decides",
+      verdicts["alpha"]["sentences"][0]["code_reading"] == "judge", verdicts["alpha"])
 machine = Machine()
 machine.seat("alpha", [user("go", at="2026-11-02T11:49:00Z"),
                        assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
@@ -609,19 +631,26 @@ check("one agent-seat's gh failure is not reported for the next agent-seat",
       code == 1 and "pr_merged 51" in verdicts["alpha"]["errors"][0]
       and verdicts["beta"]["errors"] == [] and verdicts["beta"]["rule"] == 5, verdicts)
 
-# --- rule 2 settled by code reads no task list ---------------------------------------------
+# --- rule 2 settled by code asks GitHub nothing ----------------------------------------------
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.task("alpha", "1")
+code, verdicts, _ = machine.run()
+check("an unbacked promise is sent without asking GitHub about any task",
+      code == 0 and verdicts["alpha"]["decision"] == "send_unbacked"
+      and "if_every_sentence_backed" not in verdicts["alpha"], (code, verdicts["alpha"]))
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
 machine.task("alpha", "1", metadata={"prerequisites": [{"pr_merged": 51}]})
 code, verdicts, _ = machine.run()
-check("an unbacked promise is sent although a task's gh query would fail",
-      code == 0 and verdicts["alpha"]["decision"] == "send_unbacked"
-      and "if_every_sentence_backed" not in verdicts["alpha"], (code, verdicts["alpha"]))
+check("a promise an older task may back, whose gh query fails: an error, rule null",
+      code == 1 and verdicts["alpha"]["rule"] is None
+      and "pr_merged 51" in verdicts["alpha"]["errors"][0], (code, verdicts["alpha"]))
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant(PROMISE + " " + ANNOUNCED), turn_end()])
-machine.task("alpha", "1", metadata={"prerequisites": [{"pr_merged": 51}]})
+machine.task("alpha", "1")
 code, verdicts, _ = machine.run()
-check("an unbacked promise beside a sentence for the judge: rule 2, no task list read",
+check("an unbacked promise beside a sentence for the judge: rule 2, rules 3 to 5 not read",
       code == 0 and verdicts["alpha"]["rule"] == 2 and verdicts["alpha"]["decision"] == "judge"
       and "if_every_sentence_backed" not in verdicts["alpha"], (code, verdicts["alpha"]))
 machine = Machine()
