@@ -33,11 +33,12 @@ exits, the run's whole process group is killed and reaped, before the cleanup
 below: the reviewer runs in its own session, so nothing else would stop it.
 
 claude exits 0 with subtype "success" even when the reviewer never produced an
-answer the schema accepts; only structured_output being null shows that. So
-the answer is checked here against every rule of
+answer the schema accepts; only structured_output being null or absent, as
+after a refusal, shows that. claude checks the answer against the schema too,
+but this program does not rely on claude, whose checks it cannot see: the
+answer is checked here against every rule of
 merge-lane-pull-request-claude-reviewer-review-schema.json, the one place the
-answer's fields are defined, and never taken on claude's exit code; Claude's
-structured outputs do not enforce minLength or minimum, and this check does. A
+answer's fields are defined, minLength and minimum included. A
 schema that uses a keyword or type this check does not know is refused before
 the reviewer runs, so no rule of the schema goes unchecked. A COULD_NOT_REVIEW
 verdict is a review that did not
@@ -319,9 +320,10 @@ def main(argv=None):
             raise Refused(
                 f"the review schema {schema_file} uses JSON-schema keywords or types that this "
                 f"program's answer check does not enforce, so an answer could break those rules "
-                f"unnoticed: {'; '.join(not_enforced)}. Either remove each "
-                f"from the schema, or add it to CHECKED_SCHEMA_KEYWORDS or JSON_TYPES and to "
-                f"answer_problems in {Path(__file__).resolve()}")
+                f"unnoticed: {'; '.join(not_enforced)}. Remove each from the schema, unless "
+                f"the reviewer's answer must keep to it; to keep one, add a keyword to "
+                f"CHECKED_SCHEMA_KEYWORDS, or a type to JSON_TYPES, and enforce it in "
+                f"answer_problems, both in {Path(__file__).resolve()}")
         if not (here / POST_SCRIPT_NAME).is_file():
             raise Refused(f"the posting script {here / POST_SCRIPT_NAME} is missing")
         at = git(head_worktree, "rev-parse", "HEAD")

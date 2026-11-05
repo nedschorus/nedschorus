@@ -7,7 +7,7 @@ as step 1 builds it, with the brief step 2 writes beside it. A stand-in claude
 and a stand-in gh go first on PATH, and HOME holds a mac-claude token file, so
 no case runs a model or reaches GitHub. The stand-in claude logs its
 arguments, standard input, directory and environment, and answers as
-FAKE_CLAUDE_MODE says: valid, null, invalid, no-note, note-not-text,
+FAKE_CLAUDE_MODE says: valid, null, refusal-no-structured-output, invalid, no-note, note-not-text,
 not-object, extra-key, line-below-minimum, line-not-integer,
 comment-body-empty, could-not-review, nonzero, not-json, hang (it writes its
 pid, starts a child that also sleeps, and
@@ -81,6 +81,9 @@ output = {"type": "result", "subtype": "success", "is_error": False, "session_id
                                   "tool_input": {"command": "rm -rf /tmp/x"}}]}
 if mode == "null":
     output["structured_output"] = None
+elif mode == "refusal-no-structured-output":
+    del output["structured_output"]
+    output["result"] = "The reviewer declined this request."
 elif mode == "invalid":
     output["structured_output"] = {"verdict": "MAYBE", "body": "b", "comments": [], "note": ""}
 elif mode == "no-note":
@@ -495,6 +498,8 @@ def main():
 
         for mode, expected in (
                 ("null", "the reviewer finished without an answer the review schema accepts"),
+                ("refusal-no-structured-output",
+                 "the reviewer finished without an answer the review schema accepts"),
                 ("invalid", "the reviewer's answer is not a valid review: the answer's verdict "
                             "'MAYBE' is not one of APPROVE, REQUEST_CHANGES, COULD_NOT_REVIEW"),
                 ("no-note", "the reviewer's answer is not a valid review: the answer has no note"),
@@ -529,6 +534,12 @@ def main():
               in case.stdout
               and (case.record() / "note.txt").read_text() == "Bash needs allowing.\n",
               case.detail)
+        case = Case(scratch).run("refusal-no-structured-output")
+        check("an output with no structured_output, as after a refusal, prints the reviewer's "
+              "text answer as its last answer, and writes no note",
+              lambda: case.code == 1
+              and "The reviewer's last answer:\nThe reviewer declined this request." in case.stdout
+              and not (case.record() / "note.txt").exists(), case.detail)
         case = Case(scratch).run("could-not-review")
         check("a COULD_NOT_REVIEW answer's reason is printed",
               lambda: case.stdout.count("Bash was refused, so nothing ran.") == 1, case.detail)
