@@ -13,6 +13,23 @@ already holds with the same content is skipped without running its shipper,
 the answer the shipper would give ("nothing new"); the others are shipped by
 running the shipper.
 
+A record whose being-written lock a running program holds, as the
+cold-read-grid holds its record's for the 14 to 44 minutes of a
+cold-read-full-run, is not shipped: that program rewrites files it has
+already written, so a shipment now would make its own shipment, and every
+later one, refuse the record, and the program ships the record itself when it
+finishes. Such a record refuses the removal only when the command removes
+the worktree it is in, because the removal would delete it first. The hook
+finds the worktree a `git worktree remove` names as git does: a path
+argument that is the end of exactly one worktree's path, starting at a
+directory boundary, names that worktree; otherwise the argument, resolved
+against the hook's cwd and any -C before `worktree`, is compared with each
+worktree's real path. When it cannot tell, because the path or a -C holds a
+variable, a glob or a substitution, `worktree remove` is given an option
+other than -f or --force or more than one path, or the command changes
+directory before a path that depends on it, the hook refuses the removal
+while any record is being written, and asks for the path written out in full.
+
 It allows the command silently when every record shipped or none needed to.
 It refuses the command, naming each record that did not ship, its worktree,
 the shipper's own line and the command that ships it again, when a shipper
@@ -72,6 +89,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import shlex
 import subprocess
 import sys
@@ -141,6 +159,30 @@ SHIPPER_PRINTED_NOTHING_LINE_TEMPLATE = "the shipper printed nothing (exit {code
 SHIPPING_BUDGET_SPENT_LINE_TEMPLATE = (
     "not shipped: this hook's limit of {budget} seconds for shipping ran out first")
 RECORD_CHECK_FAILED_LINE_TEMPLATE = "not shipped: this hook could not check or ship it: {error}"
+RECORD_BEING_WRITTEN_LINE_TEMPLATE = "Record {record} (worktree {worktree})\n"
+RECORD_BEING_WRITTEN_IN_REMOVED_WORKTREE_REFUSAL_TEMPLATE = (
+    "Refused on purpose: this command removes a worktree in which a running program, such as the "
+    "cold-read-grid, is still writing a record. That program holds the record's being-written lock "
+    "and ships the record to the log-store itself when it finishes; removing the worktree now would "
+    "delete the record first.\n"
+    "{records}"
+    "If the program writing a record above is yours, wait until it prints its `record:` line, then "
+    "run your command again.\n"
+    "If it is not yours, leave the worktree in place, stop, and "
+    f"{TELL_THE_USER_OR_DISPATCHING_AGENT} that `git worktree remove` is refused while a program "
+    "writes a record in that worktree, quoting each Record line above word for word.")
+REMOVED_WORKTREE_UNRESOLVED_REFUSAL_TEMPLATE = (
+    "Refused on purpose: this hook could not tell which worktree this command removes ({reason}), "
+    "and a running program, such as the cold-read-grid, is still writing a record in a worktree. "
+    "That program ships the record to the log-store itself when it finishes; removing its worktree "
+    "now would delete the record first.\n"
+    "{records}"
+    "Run the removal again as `git worktree remove <path>`, with the worktree's path written out "
+    "in full, as an absolute path with no variable, in a command that does not change directory.")
+# A word the shell would still expand: a variable, a substitution or a glob.
+UNEXPANDED_WORD_PATTERN = re.compile(r"[$`*?]|\{\}")
+DIRECTORY_CHANGING_PROGRAMS = ("cd", "pushd", "popd")
+WORKTREE_REMOVE_FORCE_OPTIONS = {"-f", "--force"}
 
 SHIP_RECORDS_YOURSELF_NEXT_STEP_LINES = (
     "Before you remove another worktree, ship its records yourself, from that worktree's root, "
@@ -196,6 +238,99 @@ def command_runs_git_worktree_remove(command):
             if inner is not None and command_runs_git_worktree_remove(inner):
                 return True
     return False
+
+
+def worktree_named_by_path_suffix(argument, worktrees):
+    """The one worktree whose path ends with the argument, starting at a directory boundary, or None:
+    the first way git's find_worktree finds the worktree `git worktree remove <argument>` names."""
+    if not argument:
+        return None
+    named = [worktree for worktree in worktrees
+             if str(worktree).endswith(argument)
+             and (len(str(worktree)) == len(argument) or str(worktree)[-len(argument) - 1] == "/")]
+    return named[0] if len(named) == 1 else None
+
+
+def worktree_named_by_real_path(path, worktrees):
+    """The worktree whose real path is the real path of path, or None: git's second way."""
+    named = os.path.realpath(path)
+    return next((worktree for worktree in worktrees if os.path.realpath(worktree) == named), None)
+
+
+def removal_path_argument_and_path_or_unresolved_reason(words, index):
+    """For the `git ... worktree remove ...` whose git is words[index]: (the path argument, that
+    path joined to each -C before it, None), (None, None, None) for a removal naming no path, or
+    (None, None, why the hook cannot tell). The joined path is relative when it depends on the cwd."""
+    directories = []
+    index += 1
+    while index < len(words) and words[index].startswith("-"):
+        if words[index] == "-C" and index + 1 < len(words):
+            if UNEXPANDED_WORD_PATTERN.search(words[index + 1]):
+                return None, None, f"the -C directory {words[index + 1]} holds a variable, a glob or a substitution"
+            directories.append(shell_reader.shell_word_tilde_prefix_expand_as_bash_would(words[index + 1]))
+        index += 2 if words[index] in GIT_GLOBAL_VALUE_FLAGS else 1
+    paths = []
+    options_ended = False
+    for word in words[index + 2:]:
+        if not options_ended and word == "--":
+            options_ended = True
+        elif not options_ended and word in WORKTREE_REMOVE_FORCE_OPTIONS:
+            continue
+        elif not options_ended and word.startswith("-"):
+            return None, None, f"`worktree remove` is given the option {word}"
+        else:
+            paths.append(word)
+    if len(paths) > 1:
+        return None, None, f"`worktree remove` is given {len(paths)} paths"
+    if not paths:
+        return None, None, None
+    if UNEXPANDED_WORD_PATTERN.search(paths[0]):
+        return None, None, f"the path {paths[0]} holds a variable, a glob or a substitution"
+    argument = shell_reader.shell_word_tilde_prefix_expand_as_bash_would(paths[0])
+    return argument, os.path.join(*directories, argument), None
+
+
+def worktrees_removed_or_unresolved_reason(command, cwd, worktrees):
+    """Return (the set of worktrees the command removes, None), or (None, why the hook cannot tell).
+
+    A path that depends on the cwd is unresolved in a command that changes directory anywhere,
+    because the hook does not follow the directory changes.
+    """
+    commands = list(shell_reader.simple_commands(command))
+    changes_directory = False
+    for words in commands:
+        index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
+        if index is not None and any(is_program(words[index], name) for name in DIRECTORY_CHANGING_PROGRAMS):
+            changes_directory = True
+    removed = set()
+    for words in commands:
+        index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
+        if index is None:
+            continue
+        if any(is_program(words[index], runner) for runner in shell_reader.SHELL_STRING_RUNNERS):
+            inner = shell_reader.shell_command_string(words[index + 1:])
+            if inner is None:
+                continue
+            inner_removed, reason = worktrees_removed_or_unresolved_reason(inner, cwd, worktrees)
+            if reason is not None:
+                return None, reason
+            removed |= inner_removed
+            continue
+        if not is_git_worktree_remove(words):
+            continue
+        argument, path, reason = removal_path_argument_and_path_or_unresolved_reason(words, index)
+        if reason is not None:
+            return None, reason
+        if argument is None:
+            continue
+        worktree = worktree_named_by_path_suffix(argument, worktrees)
+        if worktree is None:
+            if changes_directory and not os.path.isabs(path):
+                return None, f"the command changes directory, and the path {argument} is relative"
+            worktree = worktree_named_by_real_path(os.path.join(cwd, path), worktrees)
+        if worktree is not None:
+            removed.add(worktree)
+    return removed, None
 
 
 def worktrees_listed_or_failure_reason(directory, runner):
@@ -299,8 +434,10 @@ def unshipped_line_for(record, kind, runner, clock, deadline):
 
 def ship_every_record(worktrees, runner, clock, deadline, progress):
     """The worker: read every worktree's records into progress["records"], then ship each, adding to
-    progress["shipped"] each record that shipped or needed no shipping, and to progress["lines"] the reason
-    line of each that did not ship. An error before every worktree's records are read goes in progress["error"]."""
+    progress["shipped"] each record that shipped or needed no shipping, to progress["being_written"] each
+    left unshipped because a running program holds its being-written lock, and to progress["lines"] the
+    reason line of each that did not ship. An error before every worktree's records are read goes in
+    progress["error"]."""
     try:
         kinds = record_kinds()
         progress["records"] = [(worktree, kind, record) for worktree in dict.fromkeys(worktrees)
@@ -310,6 +447,9 @@ def ship_every_record(worktrees, runner, clock, deadline, progress):
         return
     for worktree, kind, record in progress["records"]:
         try:
+            if kind[2].record_directory_being_written_lock_is_held_by_any_process(record):
+                progress["being_written"].append((worktree, record))
+                continue
             line = unshipped_line_for(record, kind, runner, clock, deadline)
         except Exception as error:
             # A record another agent-session removed mid-check has nothing left to ship.
@@ -370,7 +510,7 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
     if worktrees is None:
         note_unchecked(WORKTREE_LISTING_FAILED_NOTICE.format(reason=reason))
         return 0
-    progress = {"shipped": set(), "lines": {}}
+    progress = {"shipped": set(), "lines": {}, "being_written": []}
     worker = threading.Thread(target=ship_every_record, args=(worktrees, runner, clock, deadline, progress),
                               daemon=True)
     worker.start()
@@ -387,10 +527,26 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
     # so a record it ships after this copy is refused, never let through unshipped.
     shipped = set(progress["shipped"])
     lines = dict(progress["lines"])
+    being_written = list(progress["being_written"])
+    left_to_their_writers = {record for _, record in being_written}
     unshipped = [(kind[1], worktree, record, lines.get(record) or budget_spent_line())
-                 for worktree, kind, record in records if record not in shipped]
-    if unshipped:
-        deny(shipment_failed_refusal(unshipped))
+                 for worktree, kind, record in records
+                 if record not in shipped and record not in left_to_their_writers]
+    refusals = [shipment_failed_refusal(unshipped)] if unshipped else []
+    if being_written:
+        removed, unresolved = worktrees_removed_or_unresolved_reason(
+            command, payload.get("cwd") or os.getcwd(), worktrees)
+        in_removed = [(worktree, record) for worktree, record in being_written
+                      if unresolved is not None or worktree in removed]
+        listed = "".join(RECORD_BEING_WRITTEN_LINE_TEMPLATE.format(record=record, worktree=worktree)
+                         for worktree, record in in_removed)
+        if unresolved is not None:
+            refusals.append(REMOVED_WORKTREE_UNRESOLVED_REFUSAL_TEMPLATE.format(
+                reason=unresolved, records=listed))
+        elif in_removed:
+            refusals.append(RECORD_BEING_WRITTEN_IN_REMOVED_WORKTREE_REFUSAL_TEMPLATE.format(records=listed))
+    if refusals:
+        deny("\n\n".join(refusals))
     return 0
 
 
