@@ -480,7 +480,7 @@ def unresolved_lines(side, rev):
     ]
 
 
-def unread_pull_request_head_lines(pull_request):
+def pull_request_frozen_head_gh_read_failure_report_lines(pull_request):
     """Return the UNREAD message for a pull request whose pushed head gh could not give."""
     return [
         "UNREAD: gh could not give pull request %d's pushed head, so there is "
@@ -492,7 +492,7 @@ def unread_pull_request_head_lines(pull_request):
     ]
 
 
-def unfetched_pull_request_head_lines(pull_request, github_head, remote):
+def pull_request_frozen_head_fetch_failure_report_lines(pull_request, github_head, remote):
     """Return the UNRESOLVED message for a pushed head this checkout lacks and cannot fetch."""
     return [
         "UNRESOLVED: pull request %d's pushed head %s is not in this checkout, "
@@ -509,12 +509,12 @@ def pull_request_head(pull_request, remote, runner=run):
     """Return (pushed head hash, None), or (None, report lines) when it cannot be had."""
     github_head = github_head_commit(pull_request, runner)
     if github_head is None:
-        return None, unread_pull_request_head_lines(pull_request)
+        return None, pull_request_frozen_head_gh_read_failure_report_lines(pull_request)
     if resolve_commit(github_head, runner) is None:
         # The default fetch skips a fork's pull request and a deleted branch.
         status, _ = runner(["git", "fetch", remote, github_head])
         if status != 0 or resolve_commit(github_head, runner) is None:
-            return None, unfetched_pull_request_head_lines(
+            return None, pull_request_frozen_head_fetch_failure_report_lines(
                 pull_request, github_head, remote)
     return github_head, None
 

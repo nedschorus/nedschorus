@@ -353,7 +353,7 @@ log = []
 status, lines = run_without_head(fake_runner(gh_head_status=1, log=log))
 case("no --head and GitHub cannot say the pushed head: exit 2 as UNREAD",
      status == CHECK.EXIT_BAD_INVOCATION
-     and lines == CHECK.unread_pull_request_head_lines(605))
+     and lines == CHECK.pull_request_frozen_head_gh_read_failure_report_lines(605))
 case("no --head and GitHub cannot say the pushed head: HEAD is not checked",
      not any(c[:2] == ["git", "merge-tree"] for c in log))
 
@@ -365,7 +365,7 @@ for fetch_status, why in ((1, "the fetch fails"),
         fetch=False)
     case("no --head, a pushed head this checkout lacks, %s: exit 2 naming it"
          % why, status == CHECK.EXIT_BAD_INVOCATION
-         and lines == CHECK.unfetched_pull_request_head_lines(
+         and lines == CHECK.pull_request_frozen_head_fetch_failure_report_lines(
              605, RESOLVED_HEAD, "origin"))
     case("no --head, a pushed head this checkout lacks, %s: it was fetched by "
          "its hash, under --no-fetch too" % why,
@@ -1829,13 +1829,13 @@ def real_repository_cases(root):
                 MERGEABLE="MERGEABLE"))
     case("real: a pushed head that cannot be fetched exits 2, naming it",
          status == CHECK.EXIT_BAD_INVOCATION
-         and lines == CHECK.unfetched_pull_request_head_lines(
+         and lines == CHECK.pull_request_frozen_head_fetch_failure_report_lines(
              605, missing_head, "origin"))
 
     status, lines, _ = run_here(*pull_request_args, gh=dict(FAIL="1"))
     case("real: --pull-request without --head exits 2 when GitHub cannot say "
          "the pushed head", status == CHECK.EXIT_BAD_INVOCATION
-         and lines == CHECK.unread_pull_request_head_lines(605))
+         and lines == CHECK.pull_request_frozen_head_gh_read_failure_report_lines(605))
 
 
 with tempfile.TemporaryDirectory(prefix="branch-conflict-check-test-") as scratch:
