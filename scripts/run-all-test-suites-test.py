@@ -1301,10 +1301,13 @@ with open(os.environ["FAKE_STRACE_CALLED_FILE"], "a") as called:
     called.write("called\n")
 code = subprocess.call(command)
 seen = os.environ["FAKE_STRACE_SAW"]
+suite_traced = any(argument.endswith(os.environ["FAKE_STRACE_SUITE"]) for argument in command)
+# A suite that fails before reaching data.txt, as when the daily run times out.
+stops_early = suite_traced and os.environ.get("FAKE_STRACE_SUITE_FAILS_BEFORE_READING")
 with open(trace + ".1", "w") as written:
-    if any(argument.endswith(os.environ["FAKE_STRACE_SUITE"]) for argument in command):
+    if suite_traced and not stops_early:
         written.write(f'openat(AT_FDCWD</>, "{seen}", O_RDONLY) = 3<{seen}>\n')
-sys.exit(code)
+sys.exit(1 if stops_early else code)
 '''
 FAKE_STRACE_DRIVER = r'''
 import importlib.util, os, sys
@@ -1360,24 +1363,32 @@ with tempfile.TemporaryDirectory() as scratch:
           recording(root, STRACE_ONLY_SUITE).get("recorded_by") == ["python-audit-hook"]
           and kept_list(root / "recordings") == kept, kept_list(root / "recordings"))
 
+    # Recorded where no list was kept yet, so only the list read at selection names data.txt.
     other_store = root / "another-store"
-    run(root, "--recorded-inputs-directory", str(other_store))
+    run(root, "--recorded-inputs-directory", str(other_store),
+        "--suite-files-only-strace-saw-lists-directory", str(root / "no-lists-here"))
     commit_files(repo, {"data.txt": "b\n"}, "change data")
-    for store, where in ((root / "recordings", "the run's own recordings directory"),
-                         (other_store, "another directory than the run's recordings")):
-        (root / "ran.txt").unlink(missing_ok=True)
-        selected = run(root, CHANGED_SINCE, base, "--recorded-inputs-directory", str(store))
-        check(f"a change to a file only strace saw selects the suite, with its list read from "
-              f"{where}",
-              ran(root) == [STRACE_ONLY_SUITE]
-              and f"SELECTED {STRACE_ONLY_SUITE}: it reads data.txt, which differs, as only the "
-                  f"strace run of {kept['recorded_at']} saw" in lines(selected.stdout),
-              (ran(root), selected.stdout))
     (root / "ran.txt").unlink(missing_ok=True)
-    unlisted = run(root, CHANGED_SINCE, base, "--suite-files-only-strace-saw-lists-directory",
+    selected = run(root, CHANGED_SINCE, base)
+    check("a change to a file only strace saw selects the suite through a recording made with "
+          "the audit hook alone, which holds that file from the list",
+          ran(root) == [STRACE_ONLY_SUITE]
+          and f"SELECTED {STRACE_ONLY_SUITE}: it reads data.txt, which differs"
+          in lines(selected.stdout), (ran(root), selected.stdout))
+    (root / "ran.txt").unlink(missing_ok=True)
+    unlisted = run(root, CHANGED_SINCE, base, "--recorded-inputs-directory", str(other_store),
+                   "--suite-files-only-strace-saw-lists-directory",
                    str(root / "no-lists-here"))
     check("without that list, the same change does not select the suite",
           ran(root) == [], (ran(root), unlisted.stdout))
+    (root / "ran.txt").unlink(missing_ok=True)
+    selected = run(root, CHANGED_SINCE, base, "--recorded-inputs-directory", str(other_store))
+    check("a change to a file only strace saw selects the suite, with its list read from "
+          "another directory than the run's recordings, for a recording made without the list",
+          ran(root) == [STRACE_ONLY_SUITE]
+          and f"SELECTED {STRACE_ONLY_SUITE}: it reads data.txt, which differs, as only the "
+              f"strace run of {kept['recorded_at']} saw" in lines(selected.stdout),
+          (ran(root), selected.stdout))
     check("a selective run says, on Linux only, that suites have no list of files only strace "
           "saw",
           any(line.startswith("run-all-test-suites: 2 of 2 suites have no list of the files "
@@ -1394,6 +1405,51 @@ with tempfile.TemporaryDirectory() as scratch:
           "suite's recording is removed, so the next selective run selects the suite",
           f"inputs of {STRACE_ONLY_SUITE} not recorded:" in unsaved.stdout
           and recording(root, STRACE_ONLY_SUITE) == {}, unsaved.stdout)
+
+# A recording made with the audit hook alone in one checkout, used in another that holds
+# another copy of a file only strace saw; and a traced run that stopped before reaching it.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {STRACE_ONLY_SUITE: PASSES})
+    base = commit_files(repo, {"data.txt": "a\n"}, "data")
+    fake_strace = root / "fake-strace.py"
+    fake_strace.write_text(f"#!{sys.executable}\n" + FAKE_STRACE_SOURCE)
+    fake_strace.chmod(0o755)
+    fake = {"FAKE_STRACE_PROGRAM": str(fake_strace),
+            "FAKE_STRACE_CALLED_FILE": str(root / "fake-strace-called.txt"),
+            "FAKE_STRACE_SAW": os.path.realpath(repo / "data.txt"),
+            "FAKE_STRACE_SUITE": STRACE_ONLY_SUITE}
+    store = root / "recordings"
+    run(root, "--record-inputs-with-strace", environment_extra=fake, driver=FAKE_STRACE_DRIVER)
+    complete_list = json.loads(next(store.glob(
+        f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
+
+    stopped = run(root, "--record-inputs-with-strace",
+                  environment_extra={**fake, "FAKE_STRACE_SUITE_FAILS_BEFORE_READING": "1"},
+                  driver=FAKE_STRACE_DRIVER)
+    check("a traced run in which the suite failed keeps the last complete list of files only "
+          "strace saw, since it saw only what the suite reached before it stopped",
+          stopped.returncode == 1
+          and json.loads(next(store.glob(
+              f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
+          == complete_list, stopped.stdout)
+
+    git(repo, "checkout", "-q", "-b", "holds-another-data")
+    commit_files(repo, {"data.txt": "b\n"}, "another data")
+    run(root)
+    check("a recording made with the audit hook alone holds the blob hash of each file on the "
+          "suite's list of files only strace saw",
+          "data.txt" in recording(root, STRACE_ONLY_SUITE).get("reads", {}),
+          recording(root, STRACE_ONLY_SUITE))
+    git(repo, "checkout", "-q", base)
+    (root / "ran.txt").unlink(missing_ok=True)
+    selected = run(root, CHANGED_SINCE, base)
+    check("that recording, used in a checkout holding another copy of the file, selects the "
+          "suite though the file does not differ from the commit given",
+          ran(root) == [STRACE_ONLY_SUITE]
+          and f"SELECTED {STRACE_ONLY_SUITE}: its recording read another copy of data.txt than "
+              f"the checkout holds, so what it reads here is unknown" in lines(selected.stdout),
+          (ran(root), selected.stdout))
 
 # Only the daily full run records these lists, once a day; a list older than the limit, or
 # none, means a daily run was missed, and the run says so.

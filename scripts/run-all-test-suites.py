@@ -486,7 +486,10 @@ suite depends on. Two recorders, whose findings are added together:
   selection reads these lists from
   --suite-files-only-strace-saw-lists-directory, whose default is where the
   daily full run keeps its recordings: a suite also runs when a file on its
-  list differs. A selective run on Linux names how many suites have no list
+  list differs. A run with the audit hook alone records the files on the
+  list among the files read, with their blob hashes in its checkout. A
+  strace run in which the suite failed or skipped cases leaves the last list
+  as it is. A selective run on Linux names how many suites have no list
   from a strace run in the last
   FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE hours, which a
   missed daily run causes.
@@ -3190,8 +3193,13 @@ def file_list_fingerprint(files):
         "utf-8", "surrogateescape")).hexdigest()
 
 
-def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
-    """Return the suite's recorded files, path checks, directory listings and git calls."""
+def recording_of(top, suite, result, recording_dir, files, commit, strace_used,
+                 files_only_strace_saw=None):
+    """Return the suite's recorded files, path checks, directory listings and git calls.
+
+    In a run without strace, files_only_strace_saw, the suite's kept list from its last strace
+    run, joins the files read, so the recording holds their blob hashes as this checkout has
+    them and selection compares those hashes when the recording is used in another checkout."""
     hook_log, strace_dir = recording_paths_for(recording_dir, suite)
     touched, probed, listed, git_commands = {suite}, set(), set(), set()
     git_calls = {}
@@ -3234,6 +3242,8 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
         elif kind == "list":
             listed.add("" if relative == "." else relative)
     seen_by_hook = set(touched)
+    if not strace_used and files_only_strace_saw is not None:
+        touched.update(files_only_strace_saw["files_only_strace_saw"])
     if strace_used:
         for path in paths_strace_saw(strace_dir):
             relative = relative_inside(top, path)
@@ -3349,10 +3359,25 @@ def files_only_strace_saw_file_for(directory, suite):
     return directory / (suite.replace("/", "__") + FILES_ONLY_STRACE_SAW_FILE_SUFFIX)
 
 
+def recorded_run_passed_and_ran_every_case(recording):
+    """True when the recorded run passed and skipped only cases marked as ones this machine
+    cannot run, so it reached every file the suite reads."""
+    skipped = recording.get("skipped_cases")
+    marked = recording.get("skipped_cases_this_machine_cannot_run")
+    return (recording.get("exit") == 0
+            and isinstance(skipped, int) and not isinstance(skipped, bool)
+            and isinstance(marked, int) and not isinstance(marked, bool) and skipped == marked)
+
+
 def save_files_only_strace_saw(directory, recording):
     """Keep, apart from the recording, the files only strace saw, so runs that record with the
     audit hook alone, which replace the recording, and runs that keep their recordings in
-    another directory, still select the suite when one of them changes."""
+    another directory, still select the suite when one of them changes.
+
+    A run that failed or skipped cases saw only part of what the suite reads, so it leaves the
+    last kept list as it is; that list ages, and the stale-list notice names it."""
+    if not recorded_run_passed_and_ran_every_case(recording):
+        return
     directory.mkdir(parents=True, exist_ok=True)
     target = files_only_strace_saw_file_for(directory, recording["suite"])
     kept = {key: recording[key] for key in ("suite", "recorded_at", "commit",
@@ -4054,7 +4079,8 @@ def main(argv=None, platform=None):
             result = run_admitted(suite, recorder=recorder)
             try:
                 recording = recording_of(
-                    top, suite, result, recording_dir, files, commit, strace is not None)
+                    top, suite, result, recording_dir, files, commit, strace is not None,
+                    files_only_strace_saw_by_suite.get(suite))
                 if strace is not None:
                     save_files_only_strace_saw(files_only_strace_saw_dir, recording)
                 save_recording(recordings_dir, recording)
