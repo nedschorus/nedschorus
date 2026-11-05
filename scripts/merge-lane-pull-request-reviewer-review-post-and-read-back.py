@@ -303,7 +303,7 @@ def outside_the_diff_line(comment):
 
 def with_finding_category_marks(body, comments):
     """Return (verdict, body, comments) as posted for categorized comments: each opened with its
-    category's mark, no finding_category key left, a comment repeating an earlier one's path, line
+    category's mark, or the nit mark for a nit, no finding_category or nit key left, a comment repeating an earlier one's path, line
     and posted body dropped, as the fix-round program counts it once, and the verdict and the body's
     count set by the must-fix-now ones left."""
     comments = fix_round.without_reposts([

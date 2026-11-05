@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print a pull request author's fix-round brief from merge-lane-2's blocking findings, and check the round.
+"""Print a pull request author's fix-round brief from merge-lane-2's blocking findings and nits, and check the round.
 
 Usage:
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number>
