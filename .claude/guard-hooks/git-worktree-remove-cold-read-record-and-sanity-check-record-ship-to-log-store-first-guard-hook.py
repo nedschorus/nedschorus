@@ -43,12 +43,12 @@ has not confirmed shipped, the worker's own line for each it found unshipped,
 and the budget line for the rest. A worker still running, as when an ssh to
 ned-box stalls, is left to end on its own: its store check only reads the
 store, and a shipper it started may go on writing to the store, which harms
-no record, because a shipper only adds files, and checks them by reading them
-back. Two files are the exceptions, and each is replaced by a rename that
-leaves the old file or the new one, never part of either: the cold-read-record
-shipper replaces the store's cold-read-triage.md, or triage.md, with the
-record's newer copy; and either shipper rewrites the README.md at the store's
-root from the text the shipper holds, whenever the two differ.
+no record. Every shipment, whichever shipper runs it, adds the record's files
+to the store and checks them by reading them back, and it replaces only two
+store files, each by a rename that leaves the old file or the new one, never
+part of either: the record's triage file, cold-read-triage.md or triage.md,
+when the record's copy differs; and the README.md at the store's root, when
+it differs from the text the shipper holds.
 
 How it can fail: when `git worktree list` fails or runs past
 GIT_TIMEOUT_SECONDS, as in a cwd outside any repository, or when the shell
