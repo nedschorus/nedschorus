@@ -7,8 +7,10 @@ as step 1 builds it, with the brief step 2 writes beside it. A stand-in claude
 and a stand-in gh go first on PATH, and HOME holds a mac-claude token file, so
 no case runs a model or reaches GitHub. The stand-in claude logs its
 arguments, standard input, directory and environment, and answers as
-FAKE_CLAUDE_MODE says: valid, null, invalid, could-not-review, nonzero,
-not-json, hang (it writes its pid, starts a child that also sleeps, and
+FAKE_CLAUDE_MODE says: valid, null, refusal-no-structured-output, invalid, no-note, note-not-text,
+not-object, extra-key, line-below-minimum, line-not-integer,
+comment-body-empty, could-not-review, nonzero, not-json, hang (it writes its
+pid, starts a child that also sleeps, and
 writes the child's pid), leave-child (it starts a sleeping child whose output
 goes to /dev/null, writes the child's pid, and answers validly), or move-head
 (it checks the head worktree out at another commit). Every
@@ -37,6 +39,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from unittest import mock
 
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
     "git_redirecting_environment_removal_test_fixture",
@@ -79,12 +82,25 @@ output = {"type": "result", "subtype": "success", "is_error": False, "session_id
                                   "tool_input": {"command": "rm -rf /tmp/x"}}]}
 if mode == "null":
     output["structured_output"] = None
+elif mode == "refusal-no-structured-output":
+    del output["structured_output"]
+    output["result"] = "The reviewer declined this request."
 elif mode == "invalid":
     output["structured_output"] = {"verdict": "MAYBE", "body": "b", "comments": [], "note": ""}
 elif mode == "no-note":
     del answer["note"]
 elif mode == "note-not-text":
     answer["note"] = 5
+elif mode == "not-object":
+    output["structured_output"] = "APPROVE"
+elif mode == "extra-key":
+    answer["summary"] = "s"
+elif mode == "line-below-minimum":
+    answer["comments"][0]["line"] = 0
+elif mode == "line-not-integer":
+    answer["comments"][0]["line"] = True
+elif mode == "comment-body-empty":
+    answer["comments"][0]["body"] = ""
 elif mode == "could-not-review":
     output["structured_output"] = {"verdict": "COULD_NOT_REVIEW",
                                    "body": "Bash was refused, so nothing ran.", "comments": [],
@@ -321,8 +337,77 @@ class Case:
         return any("POST" in call["arguments"] for call in self.gh_calls)
 
 
+def load_program():
+    spec = importlib.util.spec_from_file_location("claude_reviewer_headless_run", PROGRAM)
+    program = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(program)
+    return program
+
+
+def schema_driven_cases(scratch):
+    """The answer check reads its rules from the schema file it is given, with no rule of its own."""
+    program = load_program()
+    schema = json.loads(SCHEMA.read_text())
+    answer = {"verdict": "APPROVE", "body": "Looks right.",
+              "comments": [{"path": "scripts/thing.py", "line": 2, "body": "A remark."}],
+              "note": ""}
+    check("an answer the schema file allows has no problems",
+          lambda: program.answer_problems(answer, schema) == [])
+
+    longer_body = json.loads(SCHEMA.read_text())
+    longer_body["properties"]["body"]["minLength"] = 20
+    check("a minLength raised in the schema refuses the same answer, with no code change",
+          lambda: program.answer_problems(answer, longer_body)
+          == ["the answer's body is shorter than 20 characters"])
+    with_summary = json.loads(SCHEMA.read_text())
+    with_summary["required"].append("summary")
+    with_summary["properties"]["summary"] = {"type": "string"}
+    check("a field the schema adds as required is required of the answer, with no code change",
+          lambda: program.answer_problems(answer, with_summary) == ["the answer has no summary"])
+
+    not_enforced = program.review_schema_keywords_and_types_the_answer_check_does_not_enforce
+    check("the schema file uses only keywords and types the answer check enforces",
+          lambda: not_enforced(schema) == [])
+    unchecked = json.loads(SCHEMA.read_text())
+    unchecked["properties"]["comments"]["items"]["properties"]["path"]["pattern"] = r"\S"
+    unchecked["properties"]["note"]["type"] = "number"
+    check("a keyword or type the answer check does not enforce is named, at any depth",
+          lambda: not_enforced(unchecked)
+          == ["the schema.comments[].path: pattern", "the schema.note: type number"],
+          str(not_enforced(unchecked)))
+
+    for name, text, expected in (
+            ("not JSON", "{", "is not JSON ("),
+            ("not an object", "[]", "is not a JSON object"),
+            ("unchecked keyword", json.dumps(unchecked),
+             "uses JSON-schema keywords or types that this program's answer check does not "
+             "enforce, so an answer could break those rules unnoticed: "
+             "the schema.comments[].path: pattern; the schema.note: type number.")):
+        case = Case(scratch)
+        schema_file = case.state / "review-schema.json"
+        schema_file.write_text(text)
+        program.SCHEMA_FILE_NAME = str(schema_file)
+        printed = io.StringIO()
+        handler = signal.getsignal(signal.SIGTERM)
+        # In-process, so the stand-in claude and gh catch a regressed refusal only if
+        # os.environ is the case's own.
+        try:
+            with contextlib.redirect_stdout(printed), mock.patch.dict(
+                    os.environ, {**case.environment, "FAKE_CLAUDE_MODE": "valid"}, clear=True):
+                code = program.main(case.command("7a", None, ())[2:])
+        finally:
+            signal.signal(signal.SIGTERM, handler)
+        case.code, case.stdout = code, printed.getvalue()
+        case.read_calls()
+        check(f"a review schema file that is {name} refuses with exit 2 before the reviewer runs",
+              lambda: code == 2 and not case.claude_calls
+              and f"PR 7: Claude review not run: the review schema {schema_file} "
+              in printed.getvalue()
+              and expected in printed.getvalue(), f"exit {code}\n{printed.getvalue()}")
+
+
 def main():
-    scratch = Path(tempfile.mkdtemp(prefix="claude-reviewer-headless-run-test-")).resolve()
+    scratch =Path(tempfile.mkdtemp(prefix="claude-reviewer-headless-run-test-")).resolve()
     try:
         reported = io.StringIO()
         with contextlib.redirect_stdout(reported):
@@ -417,10 +502,24 @@ def main():
 
         for mode, expected in (
                 ("null", "the reviewer finished without an answer the review schema accepts"),
-                ("invalid", "the reviewer's answer is not a valid review: its verdict 'MAYBE'"),
-                ("no-note", "its keys are ['body', 'comments', 'verdict'], not verdict, body, "
-                            "comments and note"),
-                ("note-not-text", "the reviewer's answer is not a valid review: its note is not text"),
+                ("refusal-no-structured-output",
+                 "the reviewer finished without an answer the review schema accepts"),
+                ("invalid", "the reviewer's answer is not a valid review: the answer's verdict "
+                            "'MAYBE' is not one of APPROVE, REQUEST_CHANGES, COULD_NOT_REVIEW"),
+                ("no-note", "the reviewer's answer is not a valid review: the answer has no note"),
+                ("note-not-text", "the reviewer's answer is not a valid review: the answer's note "
+                                  "is int, not string"),
+                ("not-object", "the reviewer's answer is not a valid review: the answer is str, "
+                               "not object"),
+                ("extra-key", "the reviewer's answer is not a valid review: the answer has "
+                              "summary, which the schema does not allow"),
+                ("line-below-minimum", "the reviewer's answer is not a valid review: the "
+                                       "answer's comments[0]'s line 0 is below the minimum 1"),
+                ("line-not-integer", "the reviewer's answer is not a valid review: the answer's "
+                                     "comments[0]'s line is bool, not integer"),
+                ("comment-body-empty", "the reviewer's answer is not a valid review: the "
+                                       "answer's comments[0]'s body is shorter than 1 "
+                                       "characters"),
                 ("could-not-review", "the reviewer could not finish the review"),
                 ("nonzero", "claude exited 3: claude: API error 529"),
                 ("not-json", "claude printed no JSON output"),
@@ -439,6 +538,12 @@ def main():
               in case.stdout
               and (case.record() / "note.txt").read_text() == "Bash needs allowing.\n",
               case.detail)
+        case = Case(scratch).run("refusal-no-structured-output")
+        check("an output with no structured_output, as after a refusal, prints the reviewer's "
+              "text answer as its last answer, and writes no note",
+              lambda: case.code == 1
+              and "The reviewer's last answer:\nThe reviewer declined this request." in case.stdout
+              and not (case.record() / "note.txt").exists(), case.detail)
         case = Case(scratch).run("could-not-review")
         check("a COULD_NOT_REVIEW answer's reason is printed",
               lambda: case.stdout.count("Bash was refused, so nothing ran.") == 1, case.detail)
@@ -543,16 +648,7 @@ def main():
               lambda: case.code == 2 and not case.claude_calls
               and "is not at the nc-head-commit" in case.stdout, case.detail)
 
-        def schema_matches_the_step():
-            schema = json.loads(SCHEMA.read_text())
-            return (schema["properties"]["verdict"]["enum"] == ["APPROVE", "REQUEST_CHANGES",
-                                                                "COULD_NOT_REVIEW"]
-                    and schema["required"] == ["verdict", "body", "comments", "note"]
-                    and schema["properties"]["note"] == {"type": "string"}
-                    and schema["properties"]["comments"]["items"]["required"]
-                    == ["path", "line", "body"])
-        check("the schema file's verdicts and fields are the ones the step checks",
-              schema_matches_the_step)
+        schema_driven_cases(scratch)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
