@@ -6,7 +6,8 @@ Run: python3 nc-systems/handoff/tests/handoff-reference-checkout-back-on-main-af
 HOME is a scratch directory, set before the program is loaded, so the reference-checkout is a
 fresh clone under it, made for each case from a bare origin of its own. A failed push is caused by
 a pre-receive hook in that origin that refuses every push. One case installs this repository's own
-client-side hooks in the scratch checkout, as both machines' clones have them.
+client-side hooks in the scratch checkout, as both machines' clones have them; two install a
+post-merge hook of their own.
 
 Prints one line per case and exits non-zero if any case fails.
 """
@@ -127,7 +128,8 @@ def changes_only_case():
           and tree_file(LEFTOVERS, "tracked.txt") == "changed by hand"
           and tree_file(LEFTOVERS, "untracked.txt") == "new by hand"
           and git("log", "-1", "--format=%s", LEFTOVERS, cwd=ORIGIN)
-          == program.LEFTOVERS_COMMIT_MESSAGE, out + err)
+          == program.LEFTOVERS_COMMIT_MESSAGE
+          and local_branches() == ["refs/heads/main"], out + err)
 
 
 def commits_only_case():
@@ -174,20 +176,106 @@ def behind_origin_only_case():
           and on_main_at_origin_main_and_clean() and not origin_branch(LEFTOVERS), out + err)
 
 
-def failed_push_case():
-    fresh_reference_checkout()
-    local = commit("local only")
-    advance_origin()
+def refuse_every_push():
     hook = ORIGIN / "hooks" / "pre-receive"
     hook.write_text("#!/bin/sh\necho refused by the test hook >&2\nexit 1\n")
     hook.chmod(0o755)
+    return hook
+
+
+def local_branches():
+    return git("for-each-ref", "--format=%(refname)", "refs/heads").splitlines()
+
+
+def failed_push_then_rerun_case():
+    fresh_reference_checkout()
+    local = commit("local only")
+    advance_origin()
+    hook = refuse_every_push()
     status, out, err = run_program()
-    check("failed push: exits 1 quoting git, and leaves main untouched on the leftovers branch",
+    check("failed push: exits 1 quoting git, puts the checkout on main at origin/main all the same, "
+          "and keeps the leftovers on the local branch it names with its commit",
           status == 1 and "refused by the test hook" in err and "git push --no-verify origin" in err
-          and git("rev-parse", "refs/heads/main") == local
-          and git("symbolic-ref", "HEAD") == f"refs/heads/{LEFTOVERS}"
-          and f"now on the branch {LEFTOVERS}, at commit {git('rev-parse', 'HEAD')}" in err
-          and not origin_branch(LEFTOVERS) and "was not put back on main" in err, out + err)
+          and on_main_at_origin_main_and_clean()
+          and git("rev-parse", f"refs/heads/{LEFTOVERS}") == local
+          and f"The leftovers branch {LEFTOVERS}, at commit {local}, holds leftovers" in err
+          and "it pushes that same branch" in err
+          and "is on main at origin/main" in err
+          and not origin_branch(LEFTOVERS) and "a step failed" in err, out + err)
+    hook.unlink()
+    status, out, err = run_program()
+    check("rerun after a failed push: pushes that same branch, with no new suffix, and deletes "
+          "its local copy",
+          status == 0 and LEFTOVERS in out and origin_branch(LEFTOVERS) == local
+          and not origin_branch(f"{LEFTOVERS}-2") and local_branches() == ["refs/heads/main"]
+          and on_main_at_origin_main_and_clean(), out + err)
+
+
+def head_on_an_unpushed_leftovers_branch_case():
+    """As a failed push left the checkout before the program went back to main after one."""
+    fresh_reference_checkout()
+    git("switch", "-q", "-c", LEFTOVERS)
+    local = commit("left by an earlier run")
+    (CHECKOUT / "untracked.txt").write_text("new by hand\n")
+    status, out, err = run_program()
+    saved = origin_branch(LEFTOVERS)
+    check("HEAD on an unpushed leftovers branch with new changes: commits them on that same "
+          "branch and pushes it, with no new suffix",
+          status == 0 and saved and git("rev-parse", f"{saved}^", cwd=ORIGIN) == local
+          and tree_file(LEFTOVERS, "untracked.txt") == "new by hand"
+          and not origin_branch(f"{LEFTOVERS}-2") and on_main_at_origin_main_and_clean(),
+          out + err)
+
+
+def ignored_file_at_a_path_origin_main_tracks_case():
+    fresh_reference_checkout()
+    (OTHER_CLONE / "kept.log").write_text("from origin\n")
+    git("add", "kept.log", cwd=OTHER_CLONE)
+    git("commit", "-q", "-m", "track kept.log", cwd=OTHER_CLONE)
+    git("push", "-q", "origin", "HEAD:main", cwd=OTHER_CLONE)
+    (CHECKOUT / ".git" / "info" / "exclude").write_text("*.log\n")
+    (CHECKOUT / "kept.log").write_text("ignored, and only here\n")
+    head = git("rev-parse", "HEAD")
+    status, out, err = run_program()
+    check("ignored file at a path origin/main tracks: exits 1 naming it, and changes nothing",
+          status == 1 and "kept.log" in err and "would overwrite" in err
+          and git("rev-parse", "HEAD") == head
+          and (CHECKOUT / "kept.log").read_text() == "ignored, and only here\n"
+          and local_branches() == ["refs/heads/main"], out + err)
+
+
+def post_merge_hook(body):
+    hooks = SCRATCH_HOME / "hooks"
+    hooks.mkdir(exist_ok=True)
+    hook = hooks / "post-merge"
+    hook.write_text(body)
+    hook.chmod(0o755)
+    git("config", "core.hooksPath", str(hooks))
+
+
+def post_merge_hook_run_after_the_switch_case():
+    fresh_reference_checkout()
+    record = SCRATCH_HOME / "post-merge-ran"
+    record.unlink(missing_ok=True)
+    post_merge_hook(f"#!/bin/sh\ngit rev-parse ORIG_HEAD HEAD > {record}\n")
+    local = commit("local only")
+    advanced = advance_origin()
+    status, out, err = run_program()
+    check("after switching main to origin/main, the post-merge hook runs as after a merge, with "
+          "ORIG_HEAD at the commit HEAD left",
+          status == 0 and record.is_file()
+          and record.read_text().split() == [local, advanced], out + err)
+
+
+def post_merge_hook_failure_case():
+    fresh_reference_checkout()
+    post_merge_hook("#!/bin/sh\necho FAILED by the test hook >&2\nexit 1\n")
+    commit("local only")
+    status, out, err = run_program()
+    check("a failed post-merge hook: exits 1 with what the hook printed, the checkout on main and "
+          "the leftovers pushed",
+          status == 1 and "FAILED by the test hook" in err and "post-merge" in err
+          and origin_branch(LEFTOVERS) and on_main_at_origin_main_and_clean(), out + err)
 
 
 def leftovers_conflicting_with_origin_main_under_repository_hooks_case():
@@ -290,7 +378,8 @@ def merge_in_progress_case():
     check("merge in progress: git refuses to switch, the program exits 1 quoting it, main untouched",
           status == 1 and "git switch -c" in err and "merging" in err
           and git("rev-parse", "refs/heads/main") == main_before
-          and (CHECKOUT / ".git" / "MERGE_HEAD").is_file() and not origin_branch(LEFTOVERS),
+          and (CHECKOUT / ".git" / "MERGE_HEAD").is_file() and not origin_branch(LEFTOVERS)
+          and "a step failed" in err,
           out + err)
 
 
@@ -307,7 +396,11 @@ commits_only_case()
 changes_and_commits_case()
 neither_case()
 behind_origin_only_case()
-failed_push_case()
+failed_push_then_rerun_case()
+head_on_an_unpushed_leftovers_branch_case()
+ignored_file_at_a_path_origin_main_tracks_case()
+post_merge_hook_run_after_the_switch_case()
+post_merge_hook_failure_case()
 leftovers_conflicting_with_origin_main_under_repository_hooks_case()
 branch_name_taken_case()
 head_off_main_case()

@@ -5,7 +5,7 @@ Used by handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-che
 step 0 fetches and fast-forwards the reference-checkout, and by
 handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py, which ends with the
 same fast-forward and check after saving any leftovers; handoff-supervisor.py takes
-REFERENCE_CHECKOUT from it, to tell a reference-checkout's notice from another's. Each step raises
+REFERENCE_CHECKOUT from it, to tell its own checkout from the reference-checkout. Each step raises
 ReferenceCheckoutGitStepFailed, whose message names the git command and quotes what git printed.
 git runs with the variables that redirect it to another repository removed.
 
