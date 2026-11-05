@@ -200,7 +200,7 @@ SOURCES = (
     ("seat-briefs", pathlib.Path("agents"), "seat-briefs", seat_briefs_in),
     (GLOBAL_INSTRUCTIONS_FILE_NAME, pathlib.Path(".claude"), ".", global_instructions_in),
     (agent_seat_terminal_captures.AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_NAME,
-     agent_seat_terminal_captures.CAPTURES_DIRECTORY_UNDER_HOME_OFF_THE_LOG_STORE_HOST,
+     agent_seat_terminal_captures.AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_UNDER_HOME_ON_A_MACHINE_WITHOUT_THE_LOG_STORE,
      agent_seat_terminal_captures.AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_NAME, None),
 )
 # mirror_one's outcome for a source that is absent or has no files to take.

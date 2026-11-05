@@ -74,7 +74,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
           str(overridden))
 
     # -- how a terminal capture is named----------------------------------------------------------
-    named = captures.agent_seat_terminal_capture_path(
+    named = captures.agent_seat_terminal_capture_file_path_build(
         "merge-lane-2", time.strptime("2026-11-05 14:03:22", "%Y-%m-%d %H:%M:%S"), Path("/r"))
     check("a terminal capture is <directory>/<agent-seat>/<UTC start>-<agent-seat>-terminal-capture.log",
           named == Path("/r/merge-lane-2/20261105T140322Z-merge-lane-2-terminal-capture.log"), str(named))
@@ -83,13 +83,16 @@ with tempfile.TemporaryDirectory() as scratch_name:
     captures_directory = scratch / "captures with a space"
     in_pane_environment = dict(base_environment, **IN_A_PANE, **{OVERRIDE: str(captures_directory)})
 
-    line = start_with(dict(base_environment, **{OVERRIDE: str(captures_directory)}))
-    check("outside a tmux pane nothing is captured, and the line says why and how a launcher starts "
-          "the agent-seat in one",
-          line.startswith("this agent-seat's terminal output is not being captured to a file: this handoff-supervisor is not "
-                          "in a tmux pane")
-          and "`launch-claude-ubuntu <agent-seat>`" in line and "`launch-claude-mac <agent-seat>`" in line
-          and not captures_directory.exists(), line)
+    for hostname, launch_command in (("ned-box", "launch-claude-ubuntu MD-skills"),
+                                     ("els-MacBook-Pro", "launch-claude-mac MD-skills")):
+        with mock.patch.object(captures.socket, "gethostname", return_value=hostname):
+            line = start_with(dict(base_environment, **{OVERRIDE: str(captures_directory)}))
+        check(f"outside a tmux pane on {hostname} nothing is captured, and the line says why and "
+              f"gives this agent-seat's own launch command, `{launch_command}`",
+              line.startswith("this agent-seat's terminal output is not being captured to a file: "
+                              "this handoff-supervisor is not in a tmux pane")
+              and f"`{launch_command}`, run on the Mac" in line and "do not stop it" in line
+              and not captures_directory.exists(), line)
 
     succeeding = stub_tmux(scratch / "succeeding-tmux", "sys.exit(0)\n")
     line = start_with(dict(in_pane_environment,
@@ -118,7 +121,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
         check(f"a tmux that {label}: nothing is captured, the line passes on tmux's exit and words, "
               "and says the agent-seat runs on",
               line == (f"this agent-seat's terminal output is not being captured to a file: {expected}\n"
-                       f"{captures.NOT_CAPTURED_AGENT_SEAT_RUNS_ON_LINE}"), line)
+                       f"{captures.AGENT_SEAT_TERMINAL_CAPTURE_NOT_STARTED_AGENT_SEAT_RUNS_UNCAPTURED_MESSAGE_LINE}"), line)
 
     hanging = stub_tmux(scratch / "hanging-tmux", "time.sleep(30)\n")
     with mock.patch.object(captures, "TMUX_PIPE_PANE_TIMEOUT_SECONDS", 1):
@@ -126,14 +129,14 @@ with tempfile.TemporaryDirectory() as scratch_name:
                                PATH=f"{hanging}{os.pathsep}{base_environment.get('PATH', '')}"))
     check("a tmux that does not answer is given up on at the timeout, and the line says so",
           line.startswith("this agent-seat's terminal output is not being captured to a file: tmux pipe-pane could not run")
-          and "timed out" in line and line.endswith(captures.NOT_CAPTURED_AGENT_SEAT_RUNS_ON_LINE), line)
+          and "timed out" in line and line.endswith(captures.AGENT_SEAT_TERMINAL_CAPTURE_NOT_STARTED_AGENT_SEAT_RUNS_UNCAPTURED_MESSAGE_LINE), line)
 
     empty_path_directory = scratch / "no-tmux-here"
     empty_path_directory.mkdir()
     line = start_with(dict(in_pane_environment, PATH=str(empty_path_directory)))
     check("no tmux on PATH: nothing is captured, and the line says tmux could not run",
           line.startswith("this agent-seat's terminal output is not being captured to a file: tmux pipe-pane could not run (")
-          and line.endswith(captures.NOT_CAPTURED_AGENT_SEAT_RUNS_ON_LINE), line)
+          and line.endswith(captures.AGENT_SEAT_TERMINAL_CAPTURE_NOT_STARTED_AGENT_SEAT_RUNS_UNCAPTURED_MESSAGE_LINE), line)
 
     a_file_not_a_directory = scratch / "a-file"
     a_file_not_a_directory.write_text("", encoding="utf-8")
@@ -142,7 +145,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
     check("a captures directory that cannot be made: nothing is captured, and the line names it",
           line.startswith(f"this agent-seat's terminal output is not being captured to a file: the directory "
                           f"{a_file_not_a_directory}/MD-skills could not be made (")
-          and line.endswith(captures.NOT_CAPTURED_AGENT_SEAT_RUNS_ON_LINE), line)
+          and f"run `ls -ld {a_file_not_a_directory}/MD-skills`" in line
+          and "tell the user which directory" in line, line)
 
 print()
 if failures:

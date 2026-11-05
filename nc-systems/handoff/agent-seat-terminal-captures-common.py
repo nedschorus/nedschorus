@@ -40,18 +40,22 @@ LOG_STORE_HOSTNAME = "ned-box"
 LOG_STORE_AGENT_SESSION_FILES_BY_MACHINE_DIRECTORY = Path(
     "/home/nedlern/nedschorus-logs/agent-session-files-by-machine")
 # The transcript mirror copies the Mac's ~/.claude/<name> to the store's mac/<name>.
-CAPTURES_DIRECTORY_UNDER_HOME_OFF_THE_LOG_STORE_HOST = Path(".claude") / AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_NAME
+AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_UNDER_HOME_ON_A_MACHINE_WITHOUT_THE_LOG_STORE = Path(".claude") / AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_NAME
 AGENT_SEAT_TERMINAL_CAPTURES_KEPT_DAYS = 7
 TMUX_PIPE_PANE_TIMEOUT_SECONDS = 30
 # Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 NOT_CAPTURED_OPENING_LINE = "this agent-seat's terminal output is not being captured to a file"
-NOT_CAPTURED_AGENT_SEAT_RUNS_ON_LINE = (
+AGENT_SEAT_TERMINAL_CAPTURE_NOT_STARTED_AGENT_SEAT_RUNS_UNCAPTURED_MESSAGE_LINE = (
     "The agent-seat runs as usual, uncaptured until its handoff-supervisor next starts, as it does "
     "at each session-handoff. Nothing needs doing for this agent-seat now.")
-NOT_IN_A_TMUX_PANE_REMEDY_LINE = (
-    "The agent-seat runs as usual, uncaptured. An agent-seat started by its launcher always runs "
-    "in a tmux pane: start it with `launch-claude-ubuntu <agent-seat>` from the Mac for one on "
-    "ned-box, or `launch-claude-mac <agent-seat>` on the Mac.")
+NOT_IN_A_TMUX_PANE_REMEDY_TEMPLATE = (
+    "The agent-seat runs as usual, uncaptured; do not stop it for this. Its launcher always starts "
+    "it in a tmux pane, so its next start by `{launch_command}`, run on the Mac, is captured.")
+DIRECTORY_NOT_MADE_REMEDY_TEMPLATE = (
+    "The agent-seat runs as usual, uncaptured; do not stop it for this. Every later start fails the "
+    "same way until the cause is fixed: on {machine}, run `ls -ld {directory}` and its parent "
+    "directories, and if one is not writable by the user the agent-seat runs as, tell the user "
+    "which directory and what `ls -ld` showed. A subagent tells the agent that dispatched it instead.")
 
 
 def this_machine_is_the_log_store_host(hostname=None) -> bool:
@@ -66,10 +70,10 @@ def agent_seat_terminal_captures_directory_on_this_machine_find(hostname=None) -
     if this_machine_is_the_log_store_host(hostname):
         return (LOG_STORE_AGENT_SESSION_FILES_BY_MACHINE_DIRECTORY / LOG_STORE_HOSTNAME
                 / AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_NAME)
-    return Path.home() / CAPTURES_DIRECTORY_UNDER_HOME_OFF_THE_LOG_STORE_HOST
+    return Path.home() / AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_UNDER_HOME_ON_A_MACHINE_WITHOUT_THE_LOG_STORE
 
 
-def agent_seat_terminal_capture_path(agent_seat_name: str, started_at: time.struct_time,
+def agent_seat_terminal_capture_file_path_build(agent_seat_name: str, started_at: time.struct_time,
                                      directory: Path) -> Path:
     started = time.strftime("%Y%m%dT%H%M%SZ", started_at)
     return directory / agent_seat_name / f"{started}-{agent_seat_name}-terminal-capture.log"
@@ -79,15 +83,20 @@ def agent_seat_terminal_capture_start_in_this_tmux_pane(agent_seat_name: str) ->
     """Pipe this tmux pane's output into a new terminal capture file; return the line saying where, or why not."""
     pane = os.environ.get("TMUX_PANE")
     if not os.environ.get("TMUX") or not pane:
+        launcher = "launch-claude-ubuntu" if this_machine_is_the_log_store_host() else "launch-claude-mac"
+        launch_command = f"{launcher} {agent_seat_name}"
         return (f"{NOT_CAPTURED_OPENING_LINE}: this handoff-supervisor is not in a tmux pane "
-                f"(TMUX or TMUX_PANE is unset).\n{NOT_IN_A_TMUX_PANE_REMEDY_LINE}")
-    path = agent_seat_terminal_capture_path(
+                f"(TMUX or TMUX_PANE is unset).\n"
+                f"{NOT_IN_A_TMUX_PANE_REMEDY_TEMPLATE.format(launch_command=launch_command)}")
+    path = agent_seat_terminal_capture_file_path_build(
         agent_seat_name, time.gmtime(), agent_seat_terminal_captures_directory_on_this_machine_find())
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as error:
+        machine = LOG_STORE_HOSTNAME if this_machine_is_the_log_store_host() else "the Mac"
         return (f"{NOT_CAPTURED_OPENING_LINE}: the directory {path.parent} could not be made "
-                f"({error}).\n{NOT_CAPTURED_AGENT_SEAT_RUNS_ON_LINE}")
+                f"({error}).\n"
+                f"{DIRECTORY_NOT_MADE_REMEDY_TEMPLATE.format(machine=machine, directory=path.parent)}")
     # Without -o: a supervisor restarting itself at a session-handoff runs this again in the same
     # pane, and -o would close the pipe the earlier start opened instead of opening a new one.
     try:
@@ -96,10 +105,10 @@ def agent_seat_terminal_capture_start_in_this_tmux_pane(agent_seat_name: str) ->
             capture_output=True, text=True, check=False, timeout=TMUX_PIPE_PANE_TIMEOUT_SECONDS)
     except (OSError, subprocess.TimeoutExpired) as error:
         return (f"{NOT_CAPTURED_OPENING_LINE}: tmux pipe-pane could not run ({error}).\n"
-                f"{NOT_CAPTURED_AGENT_SEAT_RUNS_ON_LINE}")
+                f"{AGENT_SEAT_TERMINAL_CAPTURE_NOT_STARTED_AGENT_SEAT_RUNS_UNCAPTURED_MESSAGE_LINE}")
     if completed.returncode != 0:
         tmux_said = completed.stderr.strip()
         return (f"{NOT_CAPTURED_OPENING_LINE}: tmux pipe-pane exited {completed.returncode}"
                 f"{': ' + tmux_said if tmux_said else ', saying nothing'}.\n"
-                f"{NOT_CAPTURED_AGENT_SEAT_RUNS_ON_LINE}")
+                f"{AGENT_SEAT_TERMINAL_CAPTURE_NOT_STARTED_AGENT_SEAT_RUNS_UNCAPTURED_MESSAGE_LINE}")
     return f"this agent-seat's terminal output is captured to {path}"
