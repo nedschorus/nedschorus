@@ -3,10 +3,10 @@
 
 Usage:
   nc-systems/nc-shared-database/nc-shared-database-service-on-ned-box-and-jobs-on-both-machines-install-from-the-mac.py
-      [--print] [--firewall-rule-added-by-hand]
+      [--print] [--skip-firewall-step-rule-added-by-hand]
 
   --print   print each step's machine and shell command, and run nothing
-  --firewall-rule-added-by-hand
+  --skip-firewall-step-rule-added-by-hand
             skip step 7, after the user has added the firewall rule himself
             because ned-box's sudo asked for a password; steps 10 and 11 still
             check that the Mac reaches the service
@@ -79,7 +79,7 @@ MAC_TOKEN_STEP_NAME = "the Mac's token file is made"
 PROGRAM_IN_REFERENCE_CHECKOUT = (f"{REFERENCE_CHECKOUT}/nc-systems/nc-shared-database/"
                                  f"{Path(__file__).name}")
 INSTALL_RERUN_COMMAND = f"python3 {PROGRAM_IN_REFERENCE_CHECKOUT}"
-FIREWALL_RULE_ADDED_BY_HAND_OPTION = "--firewall-rule-added-by-hand"
+SKIP_FIREWALL_STEP_RULE_ADDED_BY_HAND_OPTION = "--skip-firewall-step-rule-added-by-hand"
 FIREWALL_STEP_NAME = "ned-box's firewall opens the service's port to the home network"
 INSTALL_RERUN_INSTRUCTION_LINE = f"To run this install again, run on the Mac: `{INSTALL_RERUN_COMMAND}`"
 SUBAGENT_REPORT_TO_DISPATCHING_AGENT_INSTRUCTION_LINE = ("If you are a subagent, do not ask or tell the user anything: send this whole "
@@ -118,7 +118,7 @@ def sudo_advice(machine, command):
             "cannot type one. Ask the user to run, in a Terminal on his Mac, "
             f"`{command_text_to_run_on_the_mac_ssh_wrapped_when_for_ned_box(machine, asking, for_the_user_to_type=True)}`, which asks him "
             "for his ned-box password. When he says it succeeded, run on the Mac "
-            f"`{INSTALL_RERUN_COMMAND} {FIREWALL_RULE_ADDED_BY_HAND_OPTION}`, which skips this step: "
+            f"`{INSTALL_RERUN_COMMAND} {SKIP_FIREWALL_STEP_RULE_ADDED_BY_HAND_OPTION}`, which skips this step: "
             "without that option the install stops here again, because its sudo still cannot "
             "type a password. When he cannot or will not, the install stays stopped at this step: "
             "say so to him.")
@@ -225,8 +225,8 @@ def failure_report(number, name, machine, command, result, expected, advice):
 def main(arguments=None, run=run_on):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--print", action="store_true", dest="print_only")
-    parser.add_argument(FIREWALL_RULE_ADDED_BY_HAND_OPTION, action="store_true",
-                        dest="firewall_rule_added_by_hand")
+    parser.add_argument(SKIP_FIREWALL_STEP_RULE_ADDED_BY_HAND_OPTION, action="store_true",
+                        dest="skip_firewall_step_rule_added_by_hand")
     options = parser.parse_args(arguments)
     if options.print_only:
         for number, (name, machine, command, *_) in enumerate(install_steps(), 1):
@@ -246,7 +246,7 @@ def main(arguments=None, run=run_on):
     mac_token = None
     for number, (name, machine, command, reads_mac_token, expected, advice) in enumerate(
             install_steps(), 1):
-        if name == FIREWALL_STEP_NAME and options.firewall_rule_added_by_hand:
+        if name == FIREWALL_STEP_NAME and options.skip_firewall_step_rule_added_by_hand:
             print(f"step {number} skipped: {name}, on {machine}; the user added the rule by hand")
             continue
         result = run(machine, command, mac_token if reads_mac_token else None)

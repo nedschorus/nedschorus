@@ -8,7 +8,7 @@ token reaches only the accepted-tokens step, on standard input; a failing step
 stops the run and reports the step, its output and its advice; ssh's exit 255
 gets the reach-ned-box advice; a service answer other than the one a check needs
 fails; a machine other than the Mac is refused; --print runs nothing; the
-firewall step runs `sudo -n`, its advice names --firewall-rule-added-by-hand,
+firewall step runs `sudo -n`, its advice names --skip-firewall-step-rule-added-by-hand,
 and that option skips the step and runs the rest. Two cases
 run the token and accepted-tokens commands in a real shell under a temporary
 HOME: a token is made once and kept, and the accepted-tokens file holds both,
@@ -122,11 +122,11 @@ with tempfile.TemporaryDirectory() as directory:
           runner.calls[6][1].startswith("sudo -n ufw allow "), runner.calls[6][1])
     check("the sudo advice says to run the install again with the option that skips the "
           "firewall step, since sudo would stop it there again",
-          f"`{installer.INSTALL_RERUN_COMMAND} --firewall-rule-added-by-hand`" in err, err)
+          f"`{installer.INSTALL_RERUN_COMMAND} --skip-firewall-step-rule-added-by-hand`" in err, err)
 
     runner = FakeRunner()
-    code, out, err = run_main(runner, ["--firewall-rule-added-by-hand"])
-    check("with --firewall-rule-added-by-hand the firewall step is skipped and reported, and "
+    code, out, err = run_main(runner, ["--skip-firewall-step-rule-added-by-hand"])
+    check("with --skip-firewall-step-rule-added-by-hand the firewall step is skipped and reported, and "
           "every other step runs, the checks from the Mac included",
           code == 0 and len(runner.calls) == step_count - 1
           and not any("ufw" in c[1] for c in runner.calls)
