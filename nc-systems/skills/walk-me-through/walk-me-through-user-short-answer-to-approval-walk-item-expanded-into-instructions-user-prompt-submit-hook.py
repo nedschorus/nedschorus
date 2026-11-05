@@ -38,22 +38,26 @@ paragraph; O2 and O3 approve one of them, through the check step with
 --option.
 
 THE OPEN APPROVAL-WALK is found with WALK_FINDER_FILE, the module the
-walk-me-through Stop hook uses too, loaded by path: the most recently modified
+walk-me-through Stop hook uses too, loaded by path: the one
 docs/walk/*-minutes.md, in the checkout the payload's cwd names, whose last
-`#next_to_present` line is not `none` or `closed`. The waiting items are that
+`#next_to_present` line is not `none` or `closed`. When more than one is, the
+hook reads that as reading the approval-walk state failing, and its context
+names each walk-minutes file in the error. The waiting items are that
 line's running count, such as `item 4.1 of 6`. An item's recommendation is the
 rest of the line after the last `Recommendation:` in its part of the
 walk-document, emphasis and one trailing period aside; an item with none
 recommends nothing. Under a heading shared by several items, an item's part
-starts at its opening, as WALK_FINDER_FILE's docstring says; when the heading
-holds more than one recommendation and an item has no opening, the hook reads
+starts at its opening, as WALK_FINDER_FILE's docstring says; when an item has
+no opening and the heading holds more than one recommendation, or that item's
+lines run over another item's opening, the hook reads
 no recommendation for any of its items and says why.
 
 R ON AN OPEN APPROVAL-WALK, as the whole prompt (R or repeat), hands the
 agent each waiting item's closing line to print, word for word: the item's
 link, from the newest `#item_page` line for that item number in the minutes,
 as WALK_FINDER_FILE's docstring says, with the item's running count and point
-from its walk-document heading, any link in the point cut to its text, then
+from its walk-document heading, any link in the point cut to its text and a
+deferred item's note `(deferred: moved to just before the summary item)` left out, then
 ANSWER_LETTERS_TEXT, as the walk-me-through skill writes it. The link opens
 the item's page, which shows the item in full on every screen the user reads.
 When the newest line records a failed publish, the closing line has no link,
@@ -504,23 +508,23 @@ def read_walk(cwd):
     text = document.read_text(encoding="utf-8")
     tokens = parser.parse(text)
     spans = walk_finder.item_unit_spans(text, parser)
-    if total is None:
-        totals = {span[1] for span in spans}
-        total = totals.pop() if len(totals) == 1 else None
     recommendations, problems, parts = recommendations_in(
         walk_finder.prose_lines(text, parser, tokens), walk_finder.item_opening_lines(text, parser, tokens),
-        spans, total, walk_finder, part_starts(tokens))
+        spans, walk_finder, part_starts(tokens))
+    if total is None:
+        total = walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(spans)
     return WalkState(name, count[0], numbers, total, recommendations, None, problems, parts, pages,
-                     heading_points(text.split("\n"), spans, total, parser), minutes)
+                     heading_points(text.split("\n"), spans, parser), minutes)
 
 
-def heading_points(lines, spans, total, parser):
+def heading_points(lines, spans, parser):
     """{item number: the point its heading states after the running count's colon, without its links} for the
-    walk's items."""
+    walk's items; a deferred item's note is not part of its point."""
     points = {}
-    for numbers, unit_total, _, first, _ in spans:
-        match = HEADING_POINT.match(lines[first])
-        if match and match[1] and (total is None or unit_total == total):
+    walk_finder = load_walk_finder()
+    for numbers, _, _, first, _ in spans:
+        match = HEADING_POINT.match(walk_finder.approval_walk_item_heading_with_deferred_note_removed(lines[first]))
+        if match and match[1]:
             points.update({number: without_links(match[1], parser) for number in numbers})
     return points
 
@@ -593,26 +597,29 @@ def part_numbers(starts, first, end):
     return sorted(found) if 1 < len(found) <= MOST_PARTS and found == set(range(1, len(found) + 1)) else []
 
 
-def recommendations_in(lines, openings, spans, total, walk_finder, starts):
+def recommendations_in(lines, openings, spans, walk_finder, starts):
     """Return ({item number: recommendation text or None} for every item of the walk-document, {item number:
     why its recommendation is None} for the items whose reason is not NO_RECOMMENDATION_PROBLEM, {item number:
     its part numbers} for the items that hold parts), from its prose_lines, item_opening_lines and
     part_starts.
 
-    Under a heading that names several items and holds more than one recommendation, every item's
-    recommendation is None when any of them has no opening, since an opening missed leaves the part
-    before it running on into the next item's recommendation."""
+    Under a heading that names several items, every item's recommendation is None when any of them has no
+    opening and either the heading holds more than one recommendation or that item's lines run over another
+    item's opening, since an opening missed leaves the part before it running on into the next item's text."""
     found, problems, parts = {}, {}, {}
     for numbers, unit_total, _, first, end in spans:
-        if total is not None and unit_total != total:
-            continue
         ranges = {number: (first, end) for number in numbers}
         if len(numbers) > 1:
             ranges = {number: walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
                 openings, first, end, number, numbers, unit_total) for number in numbers}
-            # An item with no opening of its own is given the whole unit, which starts at the heading.
+            # Only an item with no opening of its own has a range that starts at the unit's heading.
             missing = [number for number in numbers if ranges[number][0] == first]
-            if missing and len(RECOMMENDATION.findall("\n".join(lines[first:end]))) > 1:
+            # Only the items' own lines, so a Withdrawn version's recommendation is not counted.
+            held = sorted({line for start, stop in ranges.values() for line in range(start, stop)})
+            # A range with no opening that runs over another item's opening holds that item's text, so its own
+            # cannot be told apart: item 6's text below item 5's Withdrawn version would read item 5's.
+            overrun = any(first < ranges[other][0] < ranges[number][1] for number in missing for other in numbers)
+            if missing and (overrun or len(RECOMMENDATION.findall("\n".join(lines[line] for line in held))) > 1):
                 problem = PARTS_NOT_TOLD_APART_PROBLEM.format(
                     heading=lines[first].strip(), missing=", ".join(f"item {number}" for number in missing))
                 for number in numbers:

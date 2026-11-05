@@ -497,7 +497,8 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     #
     # late.md, which the refusal cases left on disk, reached the store with
     # the notes above and stays in the local directory: a store record holding
-    # a file the local one lacks is refused as another read's.
+    # a file the local one lacks is refused as another read's when the local
+    # one has something to ship, as the rewritten triage.md below is.
     stored_triage = store_root / "cold-read-records" / demo.name / "triage.md"
     triage_as_first_shipped = stored_triage.read_text(encoding="utf-8")
     displaced_digest = hashlib.sha256(
@@ -693,15 +694,23 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           f"exit {result.returncode}: {result.stdout}{result.stderr}")
     # The store holds the triage file under both names and the record only under
     # cold-read-triage.md: renaming it to triage.md would leave the store holding
-    # cold-read-triage.md that the record lacks, so no mv is offered.
+    # cold-read-triage.md that the record lacks, so no mv is offered. Unchanged,
+    # the record is a partial copy of the store's and has nothing to ship.
     both_names = make_record(records, "2026-10-31-store-holds-both-triage-names",
                              {"a.md": REPORT_A, "triage.md": "# triage\n\nold\n",
                               "cold-read-triage.md": "# triage\n\nfirst\n"})
     ship(local_destination, str(both_names))
     (both_names / "triage.md").unlink()
     result = ship(local_destination, str(both_names))
-    check("store holding both triage names, record only cold-read-triage.md: REFUSED as "
-          "another read's, with no mv of the triage file",
+    check("store holding both triage names, record only cold-read-triage.md, unchanged: "
+          "nothing new",
+          result.returncode == 0 and "nothing new" in result.stdout,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    (both_names / "cold-read-triage.md").write_text("# triage\n\nafter the walk\n",
+                                                    encoding="utf-8")
+    result = ship(local_destination, str(both_names))
+    check("store holding both triage names, record only cold-read-triage.md, rewritten: "
+          "REFUSED as another read's, with no mv of the triage file",
           result.returncode == 2 and "another read's: triage.md." in result.stdout
           and "Rename the local triage file" not in result.stdout,
           f"exit {result.returncode}: {result.stdout}{result.stderr}")
@@ -745,7 +754,12 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     # md-skills-seat-open-decisions-2026-09-20 item 3).
     shutil.copytree(SYSTEM_DIRECTORY, scratch_repo / "nc-systems" / "cold-read",
                     ignore=shutil.ignore_patterns("__pycache__"))
-    scratch_ship = scratch_repo / "nc-systems" / "cold-read" / SHIP.name
+    # cold-read-record-names-common.py reads ned-box's home and its Mac mount from this module.
+    ned_box_home_module = "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py"
+    (scratch_repo / "nc-systems" / "general-tools").mkdir()
+    shutil.copy2(SYSTEM_DIRECTORY.parent / "general-tools" / ned_box_home_module,
+                 scratch_repo / "nc-systems" / "general-tools" / ned_box_home_module)
+    scratch_ship =scratch_repo / "nc-systems" / "cold-read" / SHIP.name
     all_store = str(scratch / "store-all" / "cold-read-records")
     good = make_record(scratch_repo / "cold-read-records", "2026-09-01-good", {"r.md": REPORT_A})
     bad = make_record(scratch_repo / "cold-read-records", "2026-09-02-bad", {"r.md": REPORT_B})
@@ -1779,18 +1793,18 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
     os.environ[DESTINATION_VARIABLE] = str(names_store)
     try:
         handoff_record, handoff_unlisted = (
-            names_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
+            names_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
                 names_records / "SKILL-handoff-2026-10-25"))
         item_record, item_unlisted = (
-            names_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
+            names_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
                 names_records / "item-19-1-2026-10-25"))
-        free_record, _ = names_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
+        free_record, _ = names_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
             names_records / "c-2026-10-25")
         os.environ[DESTINATION_VARIABLE] = "nobody@ned-box:" + str(names_store)
         names_shipper.SSH_COMMAND = unreachable_ssh_command
         try:
             unlisted_record, unlisted_reason = (
-                names_shipper.cold_read_first_unused_record_directory_name_in_checkout_and_log_store_with_log_store_listing_error(
+                names_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
                     names_records / "SKILL-handoff-2026-10-25"))
         finally:
             names_shipper.SSH_COMMAND = real_ssh_command
@@ -1806,8 +1820,8 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
     check("the item-19-1 case: a name only the store holds is passed over, giving -2",
           item_record == names_records / "item-19-1-2026-10-25-2" and item_unlisted is None,
           f"{item_record} {item_unlisted}")
-    check("a name free in both is used as it is, and no directory is made",
-          free_record == names_records / "c-2026-10-25" and not free_record.exists(),
+    check("a name free in both is used as it is, and the directory is made",
+          free_record == names_records / "c-2026-10-25" and free_record.is_dir(),
           str(free_record))
     check("when the store cannot be listed, the name free in the checkout is given "
           "with the reason, for the caller to print",
@@ -1818,6 +1832,10 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
     check("the line a caller prints names the program, the record name and the reason",
           line.startswith("some-program: ") and "SKILL-handoff-2026-10-25-2" in line
           and unlisted_reason in line, line)
+    # The claims above created their directories; removed so the shipment's
+    # rename cases below see only the names they set up.
+    for claimed_record in (handoff_record, item_record, free_record, unlisted_record):
+        claimed_record.rmdir()
 
     # The SKILL-handoff shipment itself: the store's record holds a full run's
     # files, and the local directory of that name holds a fast read's.
@@ -1852,6 +1870,30 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
     check("nothing was copied into the other read's record",
           store_files_after == store_files_before,
           str(sorted(set(store_files_after) - set(store_files_before))))
+
+    # A local directory that is an older, partial copy of the store's record:
+    # every local file is in the store with the same bytes, and the store holds
+    # a fast read shipped later from another checkout.
+    make_record(names_store, "partial-copy-2026-10-29",
+                {"a.md": REPORT_A, "fast-read.md": REPORT_B})
+    partial_record = make_record(names_records, "partial-copy-2026-10-29", {"a.md": REPORT_A})
+    partial = ship(str(names_store), str(partial_record))
+    check("a store record holding every local file with the same bytes, and more, is "
+          "nothing new, exit 0, not REFUSED as another read's",
+          partial.returncode == 0 and partial.stdout.startswith("shipped:")
+          and "nothing new" in partial.stdout and partial.stdout.count("\n") == 1
+          and sorted(p.name for p in (names_store / "partial-copy-2026-10-29").iterdir())
+          == ["a.md", "fast-read.md"],
+          partial.stdout + partial.stderr)
+    # The same store record, with a file the local copy adds: two reads under one name.
+    (partial_record / "new.md").write_text("# new\n", encoding="utf-8")
+    partial_and_new = ship(str(names_store), str(partial_record))
+    check("a local file the store lacks, while the store holds a file the local copy "
+          "lacks, is still REFUSED as another read's",
+          partial_and_new.returncode == 2
+          and "another read's: fast-read.md." in partial_and_new.stdout
+          and not (names_store / "partial-copy-2026-10-29" / "new.md").exists(),
+          partial_and_new.stdout + partial_and_new.stderr)
 
     # The same refusal when the store's names cannot be read after its
     # inventory: the rename is free in this checkout only, and says so.

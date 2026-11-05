@@ -113,6 +113,7 @@ Prints one line per case and exits non-zero if any case fails.
 
 import ast
 import importlib.util
+import os
 import sys
 import pathlib
 import tempfile
@@ -149,6 +150,7 @@ JOINED_SEGMENT_VALUES = ("target",)
 OWNED_NAMES = frozenset({
     "RECORDS_DIR", "FROZEN_TARGET_DIRECTORY_NAME", "record_name_for_target",
     "record_directory_name_for_target", "fresh_record_directory",
+    "cold_read_record_directory_at_first_free_name_created_atomically",
     "frozen_target_path", "RECORDS_DIRECTORY_NAME", "RECORD_DATE_PATTERN",
     "COMPLETED_REPORT_NAME_PATTERN", "record_directory_name_pattern_for_target",
     "frozen_target_candidate_paths", "record_holds_completed_report",
@@ -528,6 +530,109 @@ with tempfile.TemporaryDirectory() as scratch:
 check("a fast read's report under its new name counts as a finished read",
       names.COMPLETED_REPORT_NAME_PATTERN.match(names.COLD_READ_FAST_READ_REPORT_FILE_NAME)
       is not None)
+
+# Two runs started at once both see one name free; the second to create it
+# must move on to the next. The other run's claim is injected between the
+# choice and the mkdir, the window a check-then-create leaves open.
+with tempfile.TemporaryDirectory() as scratch:
+    base = pathlib.Path(scratch) / "records" / "a-2026-11-02"
+    choose_free_name = names.fresh_record_directory
+    other_runs_claims = []
+
+    def free_name_then_another_run_claims_it(chosen_base, taken):
+        chosen = choose_free_name(chosen_base, taken)
+        if not other_runs_claims:
+            chosen.mkdir(parents=True)
+            other_runs_claims.append(chosen)
+        return chosen
+
+    names.fresh_record_directory = free_name_then_another_run_claims_it
+    try:
+        claimed = names.cold_read_record_directory_at_first_free_name_created_atomically(base, set())
+    finally:
+        names.fresh_record_directory = choose_free_name
+    check("a name another run creates between the choice and the claim is passed over",
+          other_runs_claims == [base] and claimed == base.with_name("a-2026-11-02-2")
+          and claimed.is_dir(), f"{other_runs_claims} {claimed}")
+
+    import threading
+    racers = 8
+    start = threading.Barrier(racers)
+    claimed_by_racers = []
+
+    def claim_at_the_barrier():
+        start.wait()
+        claimed_by_racers.append(names.cold_read_record_directory_at_first_free_name_created_atomically(
+            pathlib.Path(scratch) / "racing" / "b-2026-11-02", set()))
+
+    threads = [threading.Thread(target=claim_at_the_barrier) for _ in range(racers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    check(f"{racers} claims started at once get {racers} different directories",
+          len(set(claimed_by_racers)) == racers and all(d.is_dir() for d in claimed_by_racers),
+          str(sorted(claimed_by_racers)))
+    names_in_the_store = {"c-2026-11-02", "c-2026-11-02-2"}
+    check("a claim passes over the names the log-store holds",
+          names.cold_read_record_directory_at_first_free_name_created_atomically(
+              pathlib.Path(scratch) / "stored" / "c-2026-11-02", names_in_the_store).name
+          == "c-2026-11-02-3")
+
+    # Before the fix a claim on these looped forever, so a timer stops the case
+    # instead of hanging the suite.
+    import signal
+
+    def claim_loops(signal_number, frame):
+        raise TimeoutError("the claim did not return within 10 s")
+
+    previous_handler = signal.signal(signal.SIGALRM, claim_loops)
+    for kind, make_link in (
+            ("a dangling symlink", lambda link: link.symlink_to(link.with_name("nowhere"))),
+            ("a symlink loop", lambda link: link.symlink_to(link))):
+        base = pathlib.Path(scratch) / "linked" / kind.replace(" ", "-") / "d-2026-11-02"
+        base.parent.mkdir(parents=True)
+        make_link(base)
+        signal.alarm(10)
+        try:
+            claimed = names.cold_read_record_directory_at_first_free_name_created_atomically(base, set())
+        except TimeoutError as error:
+            claimed = error
+        finally:
+            signal.alarm(0)
+        check(f"a claim passes over {kind} at the chosen name",
+              isinstance(claimed, pathlib.Path) and claimed == base.with_name("d-2026-11-02-2")
+              and claimed.is_dir() and base.is_symlink(), str(claimed))
+    signal.signal(signal.SIGALRM, previous_handler)
+
+LINK_TEXT = ("[a](file:///Volumes/nedhome/x/y.md) and file:///Volumes/nedhome/z, bare /Volumes/nedhome/w, "
+             "other file:///Volumes/other/q\n")
+LINK_TEXT_REWRITTEN = ("[a](/home/nedlern/x/y.md) and /home/nedlern/z, bare /Volumes/nedhome/w, "
+                       "other file:///Volumes/other/q\n")
+rewritten = names.text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths(LINK_TEXT)
+check("the rewrite changes each file:///Volumes/nedhome/ link and nothing else",
+      rewritten == LINK_TEXT_REWRITTEN, repr(rewritten))
+with tempfile.TemporaryDirectory() as scratch:
+    saved_override = os.environ.get(names.MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE)
+    try:
+        os.environ[names.MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE] = str(
+            pathlib.Path(scratch) / "no-mount-here")
+        reviewer_copy = (
+            names.cold_read_reviewer_copy_text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths_where_mac_mount_absent(
+                LINK_TEXT))
+        check("where the Mac's mount of ned-box's home is absent, as on ned-box, the reviewer's copy is rewritten",
+              reviewer_copy == LINK_TEXT_REWRITTEN, repr(reviewer_copy))
+        os.environ[names.MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE] = scratch
+        reviewer_copy = (
+            names.cold_read_reviewer_copy_text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths_where_mac_mount_absent(
+                LINK_TEXT))
+        check("where the Mac's mount of ned-box's home is a directory, as on the Mac, the reviewer's copy keeps its links",
+              reviewer_copy == LINK_TEXT, repr(reviewer_copy))
+    finally:
+        if saved_override is None:
+            os.environ.pop(names.MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE, None)
+        else:
+            os.environ[names.MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE] = saved_override
 
 print()
 if failures:

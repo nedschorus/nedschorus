@@ -9,6 +9,7 @@ scratch checkout this suite made. The exit code is asserted on every case.
 
 import importlib.util
 import json
+import re
 import shlex
 import shutil
 import subprocess
@@ -487,6 +488,18 @@ def test_an_item_without_a_recommendation_line_is_reported_for_a_ao_and_d():
               f"lines {lines!r}")
 
 
+def test_an_item_whose_heading_m_differs_from_the_minutes_has_its_recommendation_read():
+    document = WALK_DOCUMENT.replace("## Items 5 and 6 of 9", "## a case the walk missed\n\nRecommendation: add the "
+                                     "filter after all.\n\n## Items 5 and 6 of 9")
+    lines = Case(next_to_present="item 4 of 7", document=document).lines("a")
+    check("A on an item whose heading says `of 9` under minutes that say `of 7` reads its recommendation, which the "
+          "unnumbered item after it does not extend",
+          lines is not None and "A means approve: the user agrees with the recommendation of item 4 of 7 (leave the "
+                                "filter out). Do what the recommendation says." in lines
+          and not any(line.startswith("The hook could not read") for line in lines)
+          and not any("add the filter after all" in line for line in lines), f"lines {lines!r}")
+
+
 def test_an_empty_recommendation_line_is_no_recommendation():
     document = WALK_DOCUMENT + "\n## Item 8 of 9: an unfinished item\n\nRecommendation:\n"
     lines = Case(next_to_present="item 8 of 9", document=document).lines("a")
@@ -666,6 +679,44 @@ def test_r_closing_line_label_keeps_the_text_of_a_link_in_the_heading_and_drops_
     closing = f"[Item 4 of 9, a filter for `old` rows \\[draft\\] https://example.com/x]({PAGE_1}) · {LETTERS_AFTER_LINK}"
     check("R's closing line holds no link inside its link, so the line stays clickable",
           lines is not None and lines[1] == page_line("R", "item 4 of 9", closing), f"lines {lines!r}")
+
+
+DEFERRED_NOTE = "(deferred: moved to just before the summary item)"
+
+
+def test_r_closing_line_point_leaves_out_a_deferred_items_heading_note():
+    document = WALK_DOCUMENT.replace("## Item 4 of 9: a filter", f"## Item 4 of 9 {DEFERRED_NOTE}: a filter")
+    case = Case(next_to_present="item 4 of 9", document=document)
+    case.minutes(f"#item_page item 4 of 9 {PAGE_1}\n\n#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    closing = f"[Item 4 of 9, a filter]({PAGE_1}) · {LETTERS_AFTER_LINK}"
+    check("R's closing line gives a deferred item's point without the note its heading carries, whose colon "
+          "is not the count's",
+          lines is not None and lines[1] == page_line("R", "item 4 of 9", closing), f"lines {lines!r}")
+
+
+def test_the_finder_reads_a_heading_carrying_the_deferred_note_as_it_reads_one_without():
+    specification = importlib.util.spec_from_file_location("item_finder", FINDER_MODULE_FILE)
+    finder = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(finder)
+    parser = finder.markdown_parser()
+    check("the finder's note constant is the text the close step writes and these tests use",
+          finder.APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT == DEFERRED_NOTE)
+    revised = (f"## Item 4 of 9: a filter\n\nRecommendation: old.\n\n"
+               f"## Item 4 of 9 {DEFERRED_NOTE} (revised): a filter\n\nRecommendation: new.\n")
+    spans = finder.item_unit_spans(revised, parser)
+    check("a heading that says `revised` after the deferred note still replaces the earlier unit for its item",
+          [(numbers, first) for numbers, _, _, first, _ in spans] == [(["4"], 4)], f"spans {spans!r}")
+    bold = f"**Item 4 of 9 {DEFERRED_NOTE}**: a filter\n\nRecommendation: new.\n"
+    check("a count with the deferred note in a bold paragraph still starts the item and is still its opening",
+          [(numbers, total) for numbers, total, _, _, _ in finder.item_unit_spans(bold, parser)] == [(["4"], "9")]
+          and finder.item_opening_lines(bold, parser) == {0: (["4"], "9")},
+          f"{finder.item_unit_spans(bold, parser)!r} {finder.item_opening_lines(bold, parser)!r}")
+    check("only the note and the space before it are taken out of a heading line",
+          finder.approval_walk_item_heading_with_deferred_note_removed(f"## Item 4 of 9 {DEFERRED_NOTE}: a filter")
+          == "## Item 4 of 9: a filter"
+          and finder.approval_walk_item_heading_with_deferred_note_removed("## Item 4 of 9: a filter")
+          == "## Item 4 of 9: a filter")
 
 
 def shown_as(markdown, parser):
@@ -1191,6 +1242,116 @@ def test_parts_in_an_items_opening_paragraph_under_a_shared_heading_are_that_ite
           lines is not None and lines[1].startswith("The answer gives a letter to item 1 of 9"), f"lines {lines!r}")
 
 
+def test_a_withdrawn_version_under_a_shared_heading_ends_only_its_own_item():
+    withdrawn = "#### Withdrawn version 1 of item 5\n\nThe first path.\n\nRecommendation: add the filter.\n\n"
+    layouts = {
+        "with openings": shared_heading_document("**Item 5: the path.** Recommendation: fix the path.\n\n" + withdrawn
+                                                 + "**Item 6: the sentence.** Recommendation: drop it.\n"),
+    }
+    for layout, document in layouts.items():
+        for number, recommendation in (("5", "fix the path"), ("6", "drop it")):
+            lines = Case(next_to_present=f"item {number} of 9", document=document).lines("a")
+            check(f"under a shared heading {layout}, a Withdrawn version of item 5 ends only item 5, so item {number} "
+                  "reads its own live recommendation",
+                  lines is not None and lines[1].startswith(
+                      f"A means approve: the user agrees with the recommendation of item {number} of 9 ({recommendation})."),
+                  f"lines {lines!r}")
+    document = shared_heading_document("Both items share one recommendation. Recommendation: do both.\n\n" + withdrawn)
+    lines = Case(next_to_present="item 6 of 9", document=document).lines("a")
+    check("under a shared heading whose items have no openings, a Withdrawn heading ends the unit's text",
+          lines is not None and lines[1].startswith(
+              "A means approve: the user agrees with the recommendation of item 6 of 9 (do both)."), f"lines {lines!r}")
+    for heading, withdrawn_labels in (
+            ("#### Withdrawn version 1 of item 6", "**Item 6: the old sentence.** Recommendation: keep it.\n"),
+            ("#### Withdrawn version 1 of items 5 and 6",
+             "**Item 5: the old path.** Recommendation: keep it.\n\n"
+             "**Item 6: the old sentence.** Recommendation: keep it.\n")):
+        document = shared_heading_document(
+            "**Item 5: the path.** Recommendation: fix the path.\n\nThe sentence. Recommendation: drop it.\n\n"
+            + heading + "\n\n" + withdrawn_labels)
+        lines = Case(next_to_present="item 6 of 9", document=document).lines("a")
+        check(f"under a shared heading, every label of a Withdrawn version below `{heading}` that names an item the "
+              "heading names is no live item's opening, so item 6 gets no recommendation and the line saying why, "
+              "never the withdrawn one",
+              lines is not None
+              and lines[1] == "A means approve: the user agrees with the recommendation of item 6 of 9. "
+                              "Do what the recommendation says."
+              and not any("keep it" in line for line in lines)
+              and any("because item 6 has no opening it reads" in line for line in lines),
+              f"lines {lines!r}")
+    document = shared_heading_document(
+        "**Item 5: the path.** Recommendation: fix the path.\n\n#### Withdrawn version 1\n\n"
+        "The old path. Recommendation: move it.\n\n**Item 6: the sentence.** Recommendation: drop it.\n")
+    for number, recommendation in (("5", "fix the path"), ("6", "drop it")):
+        lines = Case(next_to_present=f"item {number} of 9", document=document).lines("a")
+        check(f"under a shared heading, a Withdrawn heading that names no item drops no label, so item {number} "
+              "reads its own live recommendation",
+              lines is not None and lines[1].startswith(
+                  f"A means approve: the user agrees with the recommendation of item {number} of 9 ({recommendation})."),
+              f"lines {lines!r}")
+
+
+def test_an_item_with_no_opening_below_another_items_withdrawn_version_reads_no_recommendation():
+    withdrawn = "#### Withdrawn version 1 of item 5\n\nThe first path.\n\nRecommendation: add the filter.\n\n"
+    document = shared_heading_document("**Item 5: the path.** Recommendation: fix the path.\n\n" + withdrawn
+                                       + "The sentence. Recommendation: drop it.\n")
+    lines = Case(next_to_present="item 6 of 9", document=document).lines("a")
+    check("under a shared heading, item 6 with no opening below item 5's Withdrawn version gets no recommendation "
+          "and the line saying why, never item 5's",
+          lines is not None
+          and lines[1] == "A means approve: the user agrees with the recommendation of item 6 of 9. "
+                          "Do what the recommendation says."
+          and not any("fix the path" in line for line in lines)
+          and any("because item 6 has no opening it reads" in line for line in lines),
+          f"lines {lines!r}")
+
+
+def test_a_label_below_consecutive_withdrawn_headings_naming_an_item_either_names_is_no_opening():
+    specification = importlib.util.spec_from_file_location("item_finder", FINDER_MODULE_FILE)
+    finder = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(finder)
+    # A live label sits above its item's Withdrawn version, so below that version it is withdrawn text, even past
+    # another item's Withdrawn heading.
+    document = "\n\n".join((
+        "## Items 5 and 6 of 9: the path and the sentence",
+        "**Item 5: the path.** Recommendation: fix the path.", "**Item 6: the sentence.** Recommendation: drop it.",
+        "#### Withdrawn version 1 of item 5", "The first path.", "#### Withdrawn version 1 of item 6",
+        "**Item 5: the old path.** Recommendation: keep it.\n"))
+    openings = finder.item_opening_lines(document, finder.markdown_parser())
+    check("a label of item 5 below Withdrawn headings of item 5 and then item 6 is no opening",
+          openings == {2: (["5"], None), 4: (["6"], None), 6: ([], None), 10: ([], None)}, f"openings {openings!r}")
+
+
+def test_a_later_unit_that_names_a_withdrawn_item_again_reads_its_live_label():
+    specification = importlib.util.spec_from_file_location("item_finder", FINDER_MODULE_FILE)
+    finder = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(finder)
+    parser = finder.markdown_parser()
+    # A heading's count is no opening of item_opening_lines; a paragraph's is.
+    for start, revised, count_opening in (
+            ("a paragraph", "**Items 6 and 7 of 9 revised: the sentence and the link**", {8: (["6", "7"], "9")}),
+            ("a heading", "## Items 6 and 7 of 9 revised: the sentence and the link", {})):
+        document = "\n\n".join((
+            "## Item 6 of 9: the sentence", "The sentence.", "#### Withdrawn version 1 of item 6",
+            "**Item 6: the old sentence.** Recommendation: keep it.", revised,
+            "**Item 6: the sentence.** Recommendation: reword it.",
+            "**Item 7: the link.** Recommendation: fix the link.\n"))
+        openings = finder.item_opening_lines(document, parser)
+        units = finder.item_unit_spans(document, parser)
+        ranges = [finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
+            openings, first, end, "6", numbers, total) for numbers, total, _, first, end in units]
+        check(f"a unit started by {start} after a Withdrawn version of item 6 ends the Withdrawn version, so its "
+              "live `**Item 6:` label is item 6's opening and item 6's lines stop before item 7's",
+              openings == {4: ([], None), **count_opening, 10: (["6"], None), 12: (["7"], None)}
+              and units == [(["6", "7"], "9", None, 8, 14)] and ranges == [(10, 12)],
+              f"openings {openings!r}, units {units!r}, ranges {ranges!r}")
+        lines = Case(next_to_present="item 6 of 9", document=document).lines("a")
+        check(f"after a unit started by {start} names item 6 again, A on item 6 reads its live recommendation",
+              lines is not None and lines[1].startswith(
+                  "A means approve: the user agrees with the recommendation of item 6 of 9 (reword it)."),
+              f"lines {lines!r}")
+
+
 def test_numbered_r_whose_walk_document_or_marker_cannot_be_read_still_goes_to_the_agent():
     for case, problem in ((Case(next_to_present="item 4 of 9", document=None), "no walk-document"),
                           (Case(next_to_present="paused until rewritten"), "a marker naming no item")):
@@ -1375,6 +1536,19 @@ def test_unreadable_minutes_still_expand_and_say_so():
           and "If an approval-walk is open:" in lines and "If no approval-walk is open:" in lines
           and any(line.startswith("D means disapprove: the user disagrees with your last") for line in lines),
           f"lines {lines!r}")
+
+
+def test_two_unclosed_approval_walks_are_reported_naming_both():
+    case = Case(next_to_present="item 3 of 9")
+    second = case.minutes("#next_to_present item 5 of 9\n#approval_walk_paused stop order", name="a-second-walk")
+    lines = case.lines("a")
+    check("with two unclosed approval-walks the hook takes neither and names both walk-minutes files",
+          lines is not None
+          and lines[0].startswith("The user answered \"a\"; the hook could not tell whether an approval-walk "
+                                  "is open, because reading the approval-walk state failed: "
+                                  "MoreThanOneUnclosedApprovalWalk")
+          and re.search(rf"/docs/walk/{second.name}, (<minutes>|\S*/docs/walk/{WALK_NAME}-minutes\.md)'\)", lines[0])
+          and "If an approval-walk is open:" in lines, f"lines {lines!r}")
 
 
 def test_missing_walk_document_is_reported_for_a():

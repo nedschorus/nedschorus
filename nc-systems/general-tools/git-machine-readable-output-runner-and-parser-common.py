@@ -297,8 +297,9 @@ def patch_header_path(text):
 
 
 def run_git(directory, arguments, *, accepted_exit_codes=(0,),
-            timeout_seconds=GIT_TIMEOUT_SECONDS, environment=None):
-    """Run `git -C <directory> <arguments>` and return its stdout as bytes."""
+            timeout_seconds=GIT_TIMEOUT_SECONDS, environment=None, return_stderr=False):
+    """Run `git -C <directory> <arguments>` and return its stdout as bytes, or with
+    return_stderr, (stdout bytes, stderr text)."""
     arguments = list(arguments)
     try:
         result = subprocess.run(["git", "-C", str(directory), *arguments],
@@ -313,6 +314,8 @@ def run_git(directory, arguments, *, accepted_exit_codes=(0,),
     if result.returncode not in accepted_exit_codes:
         raise GitCommandFailed(arguments, directory, result.returncode,
                                os.fsdecode(result.stderr))
+    if return_stderr:
+        return result.stdout, os.fsdecode(result.stderr)
     return result.stdout
 
 

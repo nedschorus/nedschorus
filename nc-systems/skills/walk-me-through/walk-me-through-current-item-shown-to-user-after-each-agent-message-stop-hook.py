@@ -59,8 +59,8 @@ hook blocks with the line to add instead of checking the reply. Its value is `no
 `item 4.1`, `items 5 and 6`, `items 10 to 12`, with or without `of M`, and
 anything after the count, such as `(awaiting answer), then item 24`, is
 ignored. Among the minutes files in docs/walk/ at the top of the checkout
-named by the payload's cwd, the open approval-walk is the most recently
-modified one whose value is not closed. Minutes with no such line, as every
+named by the payload's cwd, the open approval-walk is the one whose value is
+not closed; an agent-seat keeps at most one. Minutes with no such line, as every
 walk before the line existed, are not open walks. A walk whose minutes hold a
 `#approval_walk_paused` line after their last marker is paused, as when the
 user paused it or a stop order forbids showing its items, and is not checked.
@@ -70,7 +70,8 @@ M`, `Items 5 and 6 of M`, `Items 10 to 12 of M` or `Items 12 to 12.3 of M`
 (item 12 and its parts 12.1 to 12.3), on a heading or on a paragraph opening
 with `**`, as markdown-it-py reads the document, so a count inside code starts
 nothing; it runs to the next running count, so headings inside an item, such
-as an original and a proposed section, stay in it. A heading that names
+as an original and a proposed section, stay in it, unless one is a `##`
+heading, which starts an unnumbered item. A heading that names
 several items is one unit, and so are the paragraphs under it that open with
 the count of one of its items, such as `**Item 10 of 12: ...**` under `##
 Items 10 and 11 of 12`. A heading that keeps an earlier item beside its
@@ -78,9 +79,11 @@ revision says `revised` after its count, as in `## Item 27 of 72 (revised)`;
 only the latest revision counts. A running count that names no item, such
 as a range that runs backwards, still ends the item before it; when the
 minutes name an item such a heading was meant to hold, or name an item that
-two headings carry when neither is a revision, the hook blocks naming the
-heading. When the minutes' value has no `of M`, the walk-document's own total
-is used, if its headings carry only one.
+two headings carry when neither is a revision and the minutes' `of M` does
+not pick one of them, the hook blocks naming the heading. An unnumbered item,
+`## <title>`, also ends the item before it, as WALK_FINDER_FILE's docstring
+says. M is display only: the hook shows the minutes' M, or, when their value
+has none, the M WALK_FINDER_FILE counts, and compares none.
 
 THE ITEM'S PAGE is the link of the newest `#item_page item N of M <link>`
 line for the item's number in the walk-minutes, read by WALK_FINDER_FILE as
@@ -97,9 +100,8 @@ approve · ...` without its link. The point is not compared with the
 walk-document, so a point written with or without escapes passes.
 
 THE REPLY PASSES when, for every item the minutes name, the closing line
-nearest the reply's end that names the item with the walk's total links to
-the item's page, or, for an item whose publish failed, has no link. A count
-with another total, such as `Item 2 of 90` for item 2 of 9, names nothing.
+nearest the reply's end that names the item, whatever M it gives, links to
+the item's page, or, for an item whose publish failed, has no link.
 
 A WAITING SUB-STEP, an item with a dotted number such as `Item 4.1 of 9`, also
 passes when the reply holds a line that is `[No decision here; type N or next
@@ -112,7 +114,9 @@ Stop-hook silence rule's module requires, when the agent-session is a
 headless `claude -p` child (its last words are its caller's answer), when the
 transcript is missing, when the turn wrote no text to the user, when the cwd is
 not in a git checkout, when no approval-walk is open or the open one is paused,
-and when the reply passes.
+when more than one approval-walk is open or paused, since no waiting item is
+known, which the answer program refuses, naming each, and when the reply
+passes.
 
 OUTPUT: {"decision": "block", "reason": <message>}, which keeps the agent
 going with the message as its next instruction: when the walk-minutes hold no
@@ -325,8 +329,7 @@ def closing_line_problems(numbers, total, closing_lines, pages, parser):
         page = pages[number]
         expected = None if page == walk_finder.ITEM_PAGE_PUBLISH_FAILED else parser.normalizeLink(page)
         # Nearest the reply's end first, since that is the line the user reads.
-        written = [link for line_numbers, line_total, link in closing_lines
-                   if number in line_numbers and line_total == total]
+        written = [link for line_numbers, _, link in closing_lines if number in line_numbers]
         values = {"number": number, "total": total, "page": page}
         if written and written[0] == expected:
             continue
@@ -386,7 +389,10 @@ def output_for(payload, environment):
     if top is None or not (top / walk_finder.WALK_DIRECTORY).is_dir():
         return None
     parser = walk_finder.markdown_parser()
-    walk = walk_finder.open_walk(top / walk_finder.WALK_DIRECTORY, parser)
+    try:
+        walk = walk_finder.open_walk(top / walk_finder.WALK_DIRECTORY, parser)
+    except walk_finder.MoreThanOneUnclosedApprovalWalk:
+        return None  # no waiting item is known; the answer program refuses and names both approval-walks
     if walk is None:
         return None
     records = transcript_records(Path(transcript_path).expanduser())

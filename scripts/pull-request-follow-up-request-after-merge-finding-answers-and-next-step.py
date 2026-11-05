@@ -10,10 +10,12 @@ Usage:
   PROGRAM <number> reopen-waiting-finding-with-user-ruling <n> --user-ruling "<his words>"
   PROGRAM <number> finish-and-print-merge-lane-2-message
   PROGRAM <number> remove-topic-branches-and-worktrees
+  PROGRAM <number> print-follow-up-request-block-from-merge-lane-2-reviews
 
 merge-lane-2 ends a merge message that asks for follow-ups with the line
 "#follow_up_request pull request <number>", then each non-blocking finding on a
-numbered line of its own, "1. ", "2. " and so on. The hook
+numbered line of its own, "1. ", "2. " and so on, which
+print-follow-up-request-block-from-merge-lane-2-reviews prints for it. The hook
 nc-systems/general-tools/pull-request-follow-up-request-from-merge-lane-2-message-save-and-forked-subagent-brief-hand-over-user-prompt-submit-hook.py
 saves that block word for word to SAVED_FINDINGS_FILE_NAME_FORMAT in
 PULL_REQUEST_FOLLOW_UP_REQUESTS_DIRECTORY_NAME under the git common directory,
@@ -56,7 +58,8 @@ next topic branch's pull request cannot take this one's title and description. A
 by gh not starting, is tried once more, and a second try that passes is printed as a notice; when a try refuses
 because a pull request for the branch is already open, as after a first try that opened it but failed, that pull
 request's link is recorded; when gh pr create exits 0 printing no link, the link gh pr list --head <branch> prints is
-recorded. A push that fails is not tried again.
+recorded. A push that fails is not tried again. What a push that succeeds prints on stderr, such as the pre-push
+hook saying it let the push through without one of its checks, is printed on stderr.
 
 record-finding-leave-out-reason: record the reason against the finding; refuse a finding that does
 not exist or already has an answer other than waiting for the user's decision, and an empty reason.
@@ -82,6 +85,17 @@ locks it, or it holds changed or untracked files; then delete each recorded
 topic branch whose commits are all on a remote-tracking branch of origin.
 Each worktree or branch left in place is printed with what the author should
 do, and the exit code is 1.
+
+print-follow-up-request-block-from-merge-lane-2-reviews, run by merge-lane-2 after the merge: read every
+review of the pull request that merge-lane-2's GitHub account posted, with its inline comments, replies left out, and
+the comments the posting program, POSTING_PROGRAM_FILE_NAME, moved into its body; read each comment's category by the
+mark that program opened it with; then print the request line and one numbered line for each fix-next,
+fix-in-maintenance or file-for-later finding, "<n>. <category>: `<path>:<line>`: <text>", its text joined onto one
+line. A finding a later review restates, with the same category, path and text, is printed once. Before printing,
+the block is parsed back with parse_follow_up_request_blocks_from_message_text(), as the hook parses it, and must
+read back as the same lines. With no such finding it prints nothing. It refuses when merge-lane-2 has no approving
+review of the pull request, and when one of merge-lane-2's comments opens with no mark, as a review posted before
+the posting program wrote category marks does.
 
 A block that differs from the saved one is a new request: saving it removes
 the answers file, with its started findings and its finished mark, but keeps the topic branch records,
@@ -137,6 +151,8 @@ pre_push_selective_test_run = load_script_beside_this_one("git-client-side-hooks
 
 PROGRAM = "scripts/" + Path(__file__).name
 REPOSITORY = "nedschorus/nedschorus"
+POSTING_PROGRAM_FILE_NAME = "merge-lane-pull-request-reviewer-review-post-and-read-back.py"
+FOLLOW_UP_REQUEST_LINE_START = "#follow_up_request"
 FOLLOW_UP_REQUEST_LINE_PATTERN = re.compile(r"^#follow_up_request pull request (\d+)[ \t]*$")
 FINDING_LINE_PATTERN = re.compile(r"^(\d+)\.\s+(\S.*)$")
 PULL_REQUEST_LINK_PATTERN = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+")
@@ -259,12 +275,18 @@ def parse_follow_up_request_blocks_from_message_text(text):
 
     A block ends at the first line after its request line that is not a numbered finding. Raises
     ValueError, naming the pull request, for a block whose findings are not numbered 1, 2, 3 and so
-    on, or that has none."""
+    on, or that has none; and, quoting the line, for a line that starts with #follow_up_request but is
+    not the request line, since merge-lane-2 writes the block by hand and a variant would otherwise be
+    skipped without a word."""
     lines = text.splitlines()
     requests = []
     for index, line in enumerate(lines):
         request = FOLLOW_UP_REQUEST_LINE_PATTERN.match(line)
         if not request:
+            if line.startswith(FOLLOW_UP_REQUEST_LINE_START):
+                raise ValueError(f"the line `{line.strip()}` starts with {FOLLOW_UP_REQUEST_LINE_START} but is not "
+                                 f"`{FOLLOW_UP_REQUEST_LINE_START} pull request <number>` alone on its line, with "
+                                 "the findings numbered `1.`, `2.`, `3.` and so on, one to a line, on the lines after it")
             continue
         number = int(request.group(1))
         findings = []
@@ -276,7 +298,7 @@ def parse_follow_up_request_blocks_from_message_text(text):
         numbers = [int(FINDING_LINE_PATTERN.match(finding).group(1)) for finding in findings]
         if not findings or numbers != list(range(1, len(findings) + 1)):
             raise ValueError(f"the lines after `#follow_up_request pull request {number}` are not "
-                             "findings numbered 1, 2, 3 and so on, one finding to a line")
+                             "findings numbered `1.`, `2.`, `3.` and so on, one finding to a line")
         requests.append(FollowUpRequest(number, [line, *findings]))
     return requests
 
@@ -365,8 +387,9 @@ def save_follow_up_request_and_clear_answers_when_its_findings_changed(request, 
     saved = state_file(states, SAVED_FINDINGS_FILE_NAME_FORMAT, request.number)
     if read_text_if_present(saved) == request.text:
         return saved
-    write_text(saved, request.text)
+    # Answers first: a removal that fails after the new block is saved would leave the old answers on it for good.
     remove_file(state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, request.number))
+    write_text(saved, request.text)
     return saved
 
 
@@ -562,7 +585,9 @@ def open_pull_request(number, findings):
     description_file = Path(worktree) / FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME
     title, description = read_title_and_description(description_file)
     try:
-        git_output.run_git(".", ["push", "-u", "origin", branch], timeout_seconds=push_time_limit_seconds(os.environ))
+        # --quiet leaves on stderr only errors and what the hooks and the remote print.
+        _, push_warnings = git_output.run_git(".", ["push", "--quiet", "-u", "origin", branch], return_stderr=True,
+                                              timeout_seconds=push_time_limit_seconds(os.environ))
     except git_output.GitCommandFailed as failure:
         if failure.returncode is None:
             raise StepFailed(f"git push -u origin {branch} failed ({failure.stderr}), so no pull request "
@@ -576,6 +601,9 @@ def open_pull_request(number, findings):
                                   f"{build_followed_up_pull_request_citation_with_title_and_link(number)} is stopped until it works.",
                                   "Otherwise pass")
             + f"\n{SUBAGENT_LINE}") from None
+    # The pre-push hook lets a push through when one of its checks fails, and says so only on stderr.
+    if push_warnings.strip():
+        print(f"git push -u origin {branch} succeeded, and printed:\n{push_warnings.rstrip()}", file=sys.stderr)
     output, opened = gh_pr_create_tried_twice(
         ["pr", "create", "--base", "main", "--head", branch, "--title", title, "--body", description])
     links = PULL_REQUEST_LINK_PATTERN.findall(output)
@@ -883,6 +911,75 @@ def remove_topic_branches_and_worktrees(number):
     return 0
 
 
+def gh_api_pages(path):
+    """Every item of a paginated GitHub list, read with gh api --paginate --slurp."""
+    output = gh(["api", "--paginate", "--slurp", f"repos/{REPOSITORY}/{path}?per_page=100"])
+    try:
+        return [item for page in json.loads(output) for item in page]
+    except (ValueError, TypeError) as error:
+        raise StepFailed(f"gh api {path} printed no list of pages: {error}") from None
+
+
+def print_follow_up_request_block_from_merge_lane_2_reviews(number):
+    # Loaded here, not at the top, so the hook, which loads this program for every merge-lane-2 message, does not load it.
+    posting = load_script_beside_this_one(POSTING_PROGRAM_FILE_NAME)
+    account = posting.MERGE_LANE_ACCOUNT
+    try:
+        reviews = sorted((review for review in gh_api_pages(f"pulls/{number}/reviews")
+                          if review["user"]["login"] == account), key=lambda review: review["id"])
+        review_ids = {review["id"] for review in reviews}
+        inline = sorted((comment for comment in gh_api_pages(f"pulls/{number}/comments")
+                         if comment["pull_request_review_id"] in review_ids and not comment.get("in_reply_to_id")),
+                        key=lambda comment: comment["id"])
+        comments = []
+        for review in reviews:
+            comments += [{"path": comment["path"], "line": comment.get("line") or comment.get("original_line"),
+                          "body": comment["body"]}
+                         for comment in inline if comment["pull_request_review_id"] == review["id"]]
+            comments += posting.outside_the_diff_comments_read_back_from_review_body(review.get("body") or "")
+    except (KeyError, TypeError, AttributeError) as error:
+        raise StepFailed(f"GitHub's reviews of pull request {number} were not in the expected shape: "
+                         f"{type(error).__name__}: {error}") from None
+    if not any(review.get("state") == "APPROVED" for review in reviews):
+        raise Refused(f"{account}, merge-lane-2's GitHub account, has no approving review of pull request {number}, so "
+                      f"merge-lane-2's findings on it are not final and no {FOLLOW_UP_REQUEST_LINE_START} block was "
+                      "printed.\n"
+                      f"Once {account}'s approving review is posted, run: "
+                      f"{command(number, 'print-follow-up-request-block-from-merge-lane-2-reviews')}")
+    findings = []
+    for comment in comments:
+        marked = posting.finding_category_and_text_read_from_review_comment_opening_mark(comment["body"])
+        if marked is None:
+            raise Refused(
+                f"{account}'s comment on {comment['path']}:{comment['line']} of pull request {number} does not open "
+                f"with a category mark, such as **fix-next**, so its category cannot be read and no "
+                f"{FOLLOW_UP_REQUEST_LINE_START} block was printed; reviews posted before "
+                f"scripts/{POSTING_PROGRAM_FILE_NAME} wrote category marks have none.\n"
+                "If merge-lane-2's reviews of the pull request hold a fix-next, fix-in-maintenance or file-for-later "
+                "finding, write the block by hand at the end of the merge message instead: the line "
+                f"{FOLLOW_UP_REQUEST_LINE_START} pull request {number}, then one line for each such finding, numbered "
+                "from 1, such as: 1. fix-next: <path>:<line>: <the finding on one line>\n"
+                "If they hold none, write no block.")
+        category, text = marked
+        finding = (category, comment["path"], " ".join(text.split()))
+        if category != posting.BLOCKING_CATEGORY and finding not in [found[:3] for found in findings]:
+            findings.append((*finding, comment["line"]))
+    if not findings:
+        return
+    lines = [f"{FOLLOW_UP_REQUEST_LINE_START} pull request {number}"] + [
+        f"{index}. {category}: `{path}:{line}`: {text}"
+        for index, (category, path, text, line) in enumerate(findings, 1)]
+    block = "\n".join(lines) + "\n"
+    try:
+        read_back = [request.lines for request in parse_follow_up_request_blocks_from_message_text(block)]
+    except ValueError as error:
+        read_back = str(error)
+    if read_back != [lines]:
+        raise StepFailed(f"the block built from {account}'s reviews does not read back as itself, so the hook would "
+                         f"save something else: it reads back as {read_back!r}")
+    print(block, end="")
+
+
 def finding_numbers(text):
     try:
         numbers = [int(part) for part in text.split(",")]
@@ -938,9 +1035,14 @@ def main(argv=None):
                                           "for merge-lane-2")
     subcommands.add_parser("remove-topic-branches-and-worktrees", help="in the author's checkout, once the subagent has ended: "
                                             "remove each recorded worktree and topic branch")
+    subcommands.add_parser("print-follow-up-request-block-from-merge-lane-2-reviews",
+                           help="after the merge: print the #follow_up_request block of the non-blocking findings in "
+                                "merge-lane-2's reviews, for the end of its merge message")
     arguments = parser.parse_args(argv)
     try:
-        if arguments.subcommand == "next-step":
+        if arguments.subcommand == "print-follow-up-request-block-from-merge-lane-2-reviews":
+            print_follow_up_request_block_from_merge_lane_2_reviews(arguments.number)
+        elif arguments.subcommand == "next-step":
             next_step(arguments.number)
         elif arguments.subcommand == "start-topic-branch":
             start_topic_branch(arguments.number, arguments.branch, arguments.finding_numbers)

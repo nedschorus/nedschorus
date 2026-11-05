@@ -92,6 +92,7 @@ hash and exiting 0.
 """
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -101,6 +102,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import traceback
 from pathlib import Path
 
@@ -1986,9 +1988,16 @@ ISSUE_TITLE_ON_GITHUB = "Statusline: branch name lost after a rebase"
 # A second edit of the same file, landed while the first is still open.
 # The branch is named for the content, so the revision gets a branch of
 # its own; the name below stands for the first one's.
-EARLIER_EDIT_BRANCH = "ghi-570-edit-ghipair0123456789ab"
+EARLIER_EDIT_BRANCH = "ghi-570-edit-ghi-md-sha256-0123456789abcdef"
 EARLIER_EDIT_TITLE = f"GHI-MD edit for issue 570: {EDIT_TITLE}"
 EARLIER_EDIT_URL = "https://github.com/nedschorus/nedschorus/pull/21"
+
+
+def expected_edit_branch(number: int, staged: str) -> str:
+    """Written out here rather than asked of the tool, so a change to the
+    tool's form fails the checks that use it."""
+    digest = hashlib.sha256(staged.encode("utf-8")).hexdigest()[:16]
+    return f"ghi-{number}-edit-ghi-md-sha256-{digest}"
 
 
 WORKTREE_REMOVAL_STDERR = "fatal: cannot remove a locked working tree"
@@ -2843,8 +2852,14 @@ def run_edit_cases(scratch: Path):
           not landing.ran("gh issue create"), str(landing.commands()))
     check("the branch is named for this edit's content, not for the issue "
           "alone",
-          ran_with(landing, "gh pr create", f"ghi-570-edit-{tool.pairing_key(staged)}"),
+          ran_with(landing, "gh pr create", expected_edit_branch(570, staged)),
           str(landing.commands()))
+    check("the branch name spells out the GHI-MD's SHA-256 and carries no "
+          "pairing key, whose abbreviation no glossary lists",
+          tool.edit_landing_branch_name(570, staged)
+          == expected_edit_branch(570, staged)
+          and "ghipair" not in tool.edit_landing_branch_name(570, staged),
+          tool.edit_landing_branch_name(570, staged))
     check("the worktree is detached, so the run makes no branch to leave",
           landing.ran("git worktree add --quiet --detach")
           and not any("-b" in call for call in landing.calls
@@ -2852,7 +2867,7 @@ def run_edit_cases(scratch: Path):
           str(landing.calls))
     check("and the push names the branch as a refspec instead",
           landing.ran("git push --quiet origin HEAD:refs/heads/"
-                      f"ghi-570-edit-{tool.pairing_key(staged)}"),
+                      f"{expected_edit_branch(570, staged)}"),
           str(landing.commands()))
     check("an edit's push is given the pre-push hook's time and a margin",
           landing.timeout_of("git push") == tool.push_time_limit_seconds(os.environ),
@@ -4801,6 +4816,13 @@ def run_push_time_limit_cases(scratch: Path):
               == tool.push_time_limit_seconds({})
               - module.DEFAULT_TIME_BUDGET_SECONDS + 1000,
               str(tool.push_time_limit_seconds(longer)))
+    outer_hook_started = {
+        selective.HOOK_STARTED_AT_ENVIRONMENT_VARIABLE: str(time.time() - 200)}
+    check("a start time an outer pre-push hook exported does not shorten the "
+          "push's time, since the push starts its own hook",
+          tool.push_time_limit_seconds(outer_hook_started)
+          == tool.push_time_limit_seconds({}),
+          str(tool.push_time_limit_seconds(outer_hook_started)))
 
     stopped = subprocess.TimeoutExpired(["git", "push"], 1)
     case_name = ("a stopped push says how long it ran, that a rerun is safe "

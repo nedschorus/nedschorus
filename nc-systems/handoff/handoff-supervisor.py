@@ -8,7 +8,7 @@ cannot exit itself: /clear and /exit are unavailable to it, and self-SIGTERM
 trips the safety classifier.
 
 The cycle, per reincarnation:
-  1. Watch the handoff file for a restart-counter above the last consumed.
+  1. Watch the handoff file for a session-handoff-sequence-number above the last consumed.
   2. Kill the running session, and remove the agent-seat's finished worktrees.
   2a. Unless the handoff carries dont-restart, fast-forward the checkout this
      program runs from to origin/main, and, when the checkout is then on
@@ -32,7 +32,7 @@ The cycle, per reincarnation:
      found, then the instruction to put items needing the user in one
      approval-walk, then the lines step 6 says the initial agent
      instructions carry, such as the launch-time-git-sync's line and the
-     leftover work-snapshots.
+     leftover work-snapshots and the agent-seat's worktrees and branches.
   4. Each generation opens the same launcher-pinned task list.
   5. Print one queue-status line — to the console only. It does not ride
      the initial agent instructions (user-ruled 2026-08-29: "Also useless is the
@@ -48,13 +48,16 @@ The cycle, per reincarnation:
      Every launch, a resume included, also carries the agent-seat's leftover
      work-snapshots whose worktree is gone or no longer holds their changes,
      with the steps to restore them
-     (uncommitted_work_snapshot_text).
+     (uncommitted_work_snapshot_text), and the agent-seat's worktrees and
+     its branches with no pull request, with the steps to keep or delete each
+     (agent_seat_worktrees_and_branches_text).
   7. Keep the current and previous handoff and conversation-tail; delete older ones.
 
 The handoff file the agent writes (simple `key: value` lines):
   written-at:           UTC timestamp, ISO 8601
   next-step:            the first action the successor takes
-  restart-counter:      predecessor's counter plus one
+  session-handoff-sequence-number: predecessor's number plus one (a session-handoff
+                        written before the rename carries it as restart-counter)
   dont-restart:         optional; any value makes the supervisor ask before relaunching
   spawned-subagent-<n>: optional, one per subagent still working when the
                         handoff was written; the reincarnation kills them, so the
@@ -139,6 +142,11 @@ _next_step_lines_spec = importlib.util.spec_from_file_location(
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
+_session_handoff_field_names_spec = importlib.util.spec_from_file_location(
+    "session_handoff_field_names", Path(__file__).with_name("session-handoff-field-names-common.py"))
+session_handoff_field_names = importlib.util.module_from_spec(_session_handoff_field_names_spec)
+_session_handoff_field_names_spec.loader.exec_module(session_handoff_field_names)
+
 _worth_resuming_spec = importlib.util.spec_from_file_location(
     "seat_transcript_worth_resuming",
     SCRIPTS_DIRECTORY / "agent-seat-transcript-worth-resuming-common.py")
@@ -204,15 +212,43 @@ _uncommitted_work_snapshots_spec = importlib.util.spec_from_file_location(
 uncommitted_work_snapshots = importlib.util.module_from_spec(_uncommitted_work_snapshots_spec)
 _uncommitted_work_snapshots_spec.loader.exec_module(uncommitted_work_snapshots)
 
+AGENT_SEAT_WORKTREES_AND_BRANCHES_LIST_PATH = Path(__file__).resolve().with_name(
+    "agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py")
+_agent_seat_worktrees_and_branches_list_spec = importlib.util.spec_from_file_location(
+    "agent_seat_worktrees_and_branches_with_no_pull_request_first_prompt_list",
+    AGENT_SEAT_WORKTREES_AND_BRANCHES_LIST_PATH)
+agent_seat_worktrees_and_branches_list = importlib.util.module_from_spec(
+    _agent_seat_worktrees_and_branches_list_spec)
+_agent_seat_worktrees_and_branches_list_spec.loader.exec_module(
+    agent_seat_worktrees_and_branches_list)
+
 # One loaded copy, so the GitCommandFailed checkout_freshness_catch_up raises is the class caught here.
 git_machine_readable_output = checkout_freshness_catch_up.git_output
 
+# Also opens scripts/recover-crashed-seats.py's resume prompts; the transcript reader recognizes all three by it.
+CRASH_RECOVERY_RESUME_PROMPT_OPENING = "This session was resumed by crash recovery (nedschorus#120)"
 # The opening is an EMPTY_SUCCESSOR_MARKERS entry used to recognize a workless resume.
 RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF = (
-    "This session was resumed by crash recovery (nedschorus#120): the "
+    f"{CRASH_RECOVERY_RESUME_PROMPT_OPENING}: the "
     "previous session ended without writing a handoff. Re-verify in-flight "
     "state before trusting it, then continue the work underway."
 )
+FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_TEMPLATE = "You are {agent}. No handoff exists yet; ask what to work on."
+# Claude Code records a prompt passed on its command line as typed by a person, so this line is the only mark
+# by which scripts/search-user-messages-in-transcripts.py tells the launch command's prompt from the user's words.
+FIRST_PROMPT_FROM_LAUNCH_COMMAND_NOT_TYPED_BY_THE_USER_LINE = (
+    "The text above this line came from the handoff-supervisor's --first-prompt-file or --first-prompt; "
+    "the user did not type it.")
+# Transcripts already written end their launch command's prompt with these, so the reader must still know them.
+FIRST_PROMPT_FROM_LAUNCH_COMMAND_NOT_TYPED_BY_THE_USER_LINE_EARLIER_WORDINGS = (
+    "The handoff-supervisor was given this first prompt with --first-prompt-file or --first-prompt; "
+    "the user did not type it.",
+)
+
+
+def first_prompt_from_launch_command_marked_not_typed_by_the_user(first_prompt: str) -> str:
+    """The prompt from --first-prompt-file or --first-prompt, as the agent-session is launched with it."""
+    return f"{first_prompt}\n\n{FIRST_PROMPT_FROM_LAUNCH_COMMAND_NOT_TYPED_BY_THE_USER_LINE}"
 
 # subprocess reports signals as negative return codes; shell wrappers report 128 + signal.
 SIGTERM_SESSION_EXIT_CODES = (143, -15)
@@ -304,12 +340,15 @@ HEARTBEAT_INTERVAL_SECONDS = 10.0
 PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS = 15
 
 
-NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
-NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
-NEXT_STEP_BLOCK_TERMINATOR = "END-OF-NEXT-STEP"
-NEXT_STEP_BLOCK_UNTERMINATED_FIELD = "next-step-verbatim-unterminated"
-SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
-WRITTEN_BY_SESSION_FIELD = "written-by-session"
+NEXT_STEP_VERBATIM_FIELD = session_handoff_field_names.NEXT_STEP_VERBATIM_FIELD
+NEXT_STEP_BLOCK_OPENING_MARKER = session_handoff_field_names.NEXT_STEP_BLOCK_OPENING_MARKER
+NEXT_STEP_BLOCK_TERMINATOR = session_handoff_field_names.NEXT_STEP_BLOCK_TERMINATOR
+NEXT_STEP_BLOCK_UNTERMINATED_FIELD = session_handoff_field_names.NEXT_STEP_BLOCK_UNTERMINATED_FIELD
+SPAWNED_SUBAGENT_FIELD_PREFIX = session_handoff_field_names.SPAWNED_SUBAGENT_FIELD_PREFIX
+WRITTEN_BY_SESSION_FIELD = session_handoff_field_names.WRITTEN_BY_SESSION_FIELD
+SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD = session_handoff_field_names.SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD
+LEGACY_RESTART_COUNTER_FIELD = session_handoff_field_names.LEGACY_RESTART_COUNTER_FIELD
+DONT_RESTART_FIELD = session_handoff_field_names.DONT_RESTART_FIELD
 WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 
 # The prompt goes on to the next step; a stop must hold that back too.
@@ -328,34 +367,76 @@ def launch_time_git_sync_git_failure_next_steps(error) -> str:
         next_step_to_skip_when_the_rerun_fails_too=LAUNCH_TIME_GIT_SYNC_STOP_HOLDS_BACK)
 
 
-def branch_state_instruction_after(launch_time_git_sync_report: str) -> str:
+def branch_state_instruction_after(launch_time_git_sync_report: str, branch_state_instruction: str) -> str:
     """The branch-state instruction, left out after a git failure, whose next steps may end in stopping."""
     stop_line = next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
         rerun_fails_when=LAUNCH_TIME_GIT_SYNC_RERUN_FAILS_WHEN, which_lines_to_quote_in_the_report=LAUNCH_TIME_GIT_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT,
         read_by_a_subagent=False,
         next_step_to_skip_when_the_rerun_fails_too=LAUNCH_TIME_GIT_SYNC_STOP_HOLDS_BACK)
-    return "" if launch_time_git_sync_report.endswith(stop_line) else BRANCH_STATE_INSTRUCTION
+    if not branch_state_instruction or launch_time_git_sync_report.endswith(stop_line):
+        return ""
+    return f" — {branch_state_instruction}"
 
 
-def launch_time_git_sync_report_in_prompt(launch_time_git_sync_report: str) -> str:
+def launch_time_git_sync_report_in_prompt(launch_time_git_sync_report: str,
+                                          branch_state_instruction: str = "") -> str:
     """The report as the prompt carries it: a report of several lines, such as a git
     failure's next steps, stands as its own paragraph instead of running on from the
     sentence before it."""
-    text = launch_time_git_sync_report + branch_state_instruction_after(launch_time_git_sync_report)
+    text = launch_time_git_sync_report + branch_state_instruction_after(
+        launch_time_git_sync_report, branch_state_instruction)
     return f"\n\n{text}\n\n" if "\n" in launch_time_git_sync_report else text
 
 
-BRANCH_STATE_INSTRUCTION = (
-    " — If this branch has never been pushed, rebase it onto origin/main "
-    "before your first substantive action and rerun the tests for what you "
-    "touched. If it is pushed, leave it as it is, and start new work on a "
-    "branch from origin/main. If this seat has "
-    "open pull requests, check their state with `gh`: merge-lane-2 reviews "
-    "and merges them; when one has a review with findings, dispatch a forked "
-    "subagent to fix it — never extend a head you've already pushed. When "
-    "one conflicts with main, clear the conflict with the hand-merge that "
-    "scripts/branch-conflict-check.py describes."
+BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION = (
+    "This branch has never been pushed: rebase it onto origin/main before your "
+    "first substantive action and rerun the tests for what you touched."
 )
+
+BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION = (
+    "This branch is pushed: leave its head as it is, and start new work on a "
+    "branch from origin/main."
+)
+
+
+# Printed to the handoff-supervisor's console, which the agent-session never reads.
+BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE = (
+    "handoff-supervisor: could not tell whether the branch checked out in the agent-home is pushed, "
+    "so the new agent-session's initial-agent-instructions tell it neither to rebase that branch onto "
+    "origin/main nor to leave the branch's head as it is.\n"
+    "handoff-supervisor: why: {cause}\n"
+    "handoff-supervisor: if this message comes back at the next launch, fix the git error on the why "
+    "line; until then nobody needs to act on it, and this launch goes ahead without either instruction."
+)
+
+
+def choose_branch_state_instruction_from_working_directory_push_state(working_directory: Path) -> str:
+    """The one branch-state instruction that applies to the checkout's branch, or "" on
+    main, on a detached HEAD, or when git cannot tell, which it prints. Call it after
+    launch_time_git_sync, whose fetch brings origin's branches up to date."""
+    branch = run_git_here(["rev-parse", "--abbrev-ref", "HEAD"], working_directory, timeout=15)
+    if branch.returncode != 0:
+        command = shlex.join(["git", "-C", str(working_directory), "rev-parse", "--abbrev-ref", "HEAD"])
+        print(BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE.format(
+            cause=f"`{command}` failed (exit {branch.returncode}): "
+                  f"{branch.stderr.strip() or 'git printed no error'}"))
+        return ""
+    name = branch.stdout.strip()
+    # head_state reads main as pushed, since origin/main equals it.
+    if name == "main":
+        return ""
+    # The Stop hook rebases only what head_state calls unpushed, so the successor is told the same.
+    key, text = checkout_freshness_catch_up.head_state(working_directory, name)
+    if key == "unpushed":
+        return BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION
+    if key == "detached":
+        return ""
+    if key == "unknown":
+        print(BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE.format(
+            cause=f"git could not tell whether branch {name} in {working_directory} is pushed to origin: {text}"))
+        return ""
+    return BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION
+
 
 # Overview refreshes are this agent-seat's job; other agent-seats have jobs of their own.
 AGENT_SEAT_GIVEN_OVERVIEW_REFRESH_LINES = "agent-instructions-editor"
@@ -429,40 +510,16 @@ MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE = (
     "When the approval-walk closes, run `python3 {mark_script} done`."
 )
 
-# A loose-ends audit at the session-handoff, not yet built, will write the loose ends into the next-step file; until then that clause matches nothing.
 ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION = (
-    "Bring the user everything that needs the user, by /walk-me-through's "
-    "steps, as your first action: the unanswered items of any "
-    "approval-walk in progress, open questions, concerns, suggestions, "
-    "and the loose ends the next step lists, when it lists any. When an "
-    "approval-walk is in progress, continue it instead of opening a new "
-    "one: keep its name, its item numbers and its item pages, and resume "
-    "at the item that the last `#next_to_present` line of its "
-    'walk-minutes names, as /walk-me-through\'s section "Interruption and '
-    'recovery" says. Add everything else that needs the user to that '
-    "approval-walk as new items just after the item it resumes at, "
-    'numbered as its section "Re-planning" says, in this order: the next '
-    "step's own item first, when it needs the user; then items that block "
-    "work, then items that change direction, then the rest. When more "
-    "than one approval-walk is in progress, continue first the one the "
-    "next step names, or the one with the latest walk-minutes when it "
-    "names none, then the others, and add the new items to the first. "
-    "When none is in progress, open one approval-walk for everything that "
-    "needs the user, in the order just given for new items. Before you "
-    "show any item, whether it is new or comes from an approval-walk in "
-    "progress, check it against the user's earlier rulings, as "
-    '/walk-me-through\'s section "Each item" says. Do the work that does '
-    "not need the user without asking the user: your own yourself, and "
-    "another agent-seat's by sending it to that agent-seat with "
-    "SendMessage. Keep working on the previous session's work while the "
-    "user answers. When nothing needs the user, open no approval-walk and "
-    "only keep working."
-)
-
-SUPERVISOR_POINTER_SENTENCE = (
-    "This session was launched by nc-systems/handoff/handoff-supervisor.py, which "
-    "watches this seat and composed this prompt — read it if you need to "
-    "investigate the handoff mechanism."
+    "1. First, bring the user everything that needs him in one approval-walk, "
+    "by /walk-me-through. Continue an open approval-walk rather than open a new "
+    "one: the one the next step names, or else the one with the latest "
+    "walk-minutes. Add new items just after the item it resumes at: the next "
+    "step's own item first, when it needs him, then the rest in the order "
+    "/walk-me-through gives. When nothing needs him, open no approval-walk. "
+    "2. While he answers, or at once when nothing needs him, take the next step, "
+    "then start each ready task on your task list: a task another agent-seat owns "
+    "goes to that agent-seat, any other to a background subagent or Codex."
 )
 
 # Subagent IDs resolve only within their session, so a successor must re-commission unfinished work.
@@ -801,7 +858,10 @@ def heartbeat_age_sentence(state_path: Path) -> str:
 
 
 def counter_from(fields: dict):
-    raw = fields.get("restart-counter")
+    """Return the session-handoff-sequence-number as an int, or None when missing or not a number."""
+    raw = fields.get(SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD)
+    if raw is None:
+        raw = fields.get(LEGACY_RESTART_COUNTER_FIELD)
     if raw is None:
         return None
     try:
@@ -932,22 +992,25 @@ def substantive_turn_count_of_session_transcript(session_id: str, working_direct
         return 0
 
 
-RECOVER_CRASHED_SEATS_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "recover-crashed-seats.py"
+RECOVER_CRASHED_SEATS_SCRIPT = SCRIPTS_DIRECTORY / "recover-crashed-seats.py"
 
 
-def unreadable_path_restart_instruction(agent: str, unreadable_path) -> str:
+def unreadable_path_restart_instruction(agent: str, handoff_directory: Path, unreadable_path) -> str:
     # OSError covers more than permissions (EIO, ENOTDIR), so the instruction names no cause.
+    recovery_command = shlex.join(["python3", str(RECOVER_CRASHED_SEATS_SCRIPT),
+                                   "--handoff-dir", str(handoff_directory), agent])
     return (f"When {unreadable_path} can be read again, start the agent-seat {agent} by running, "
             f"at a terminal on {socket.gethostname()}: "
-            f"python3 {RECOVER_CRASHED_SEATS_SCRIPT} {agent}\n"
+            f"{recovery_command}\n"
             f"If recover-crashed-seats.py asks whether to restart {agent}, answer y.")
 
 
-def transcript_unreadable_stop_message(agent: str, session_id: str, error: OSError) -> str:
+def transcript_unreadable_stop_message(agent: str, handoff_directory: Path, session_id: str,
+                                       error: OSError) -> str:
     return (f"handoff-supervisor: stopped: whether session {session_id} did new work could not "
             f"be decided, because its transcript could not be read: "
             f"{error.filename}: {error.strerror}.\n"
-            + unreadable_path_restart_instruction(agent, error.filename))
+            + unreadable_path_restart_instruction(agent, handoff_directory, error.filename))
 
 
 def queue_status_line(working_directory: Path) -> str:
@@ -988,7 +1051,7 @@ def next_step_from(handoff_fields: dict) -> str:
     verbatim = handoff_fields.get(NEXT_STEP_VERBATIM_FIELD, "")
     if verbatim.strip():
         return verbatim
-    return handoff_fields.get("next-step", "").strip()
+    return handoff_fields.get(session_handoff_field_names.NEXT_STEP_FIELD, "").strip()
 
 
 def spawned_subagent_roster_from(handoff_fields: dict) -> list:
@@ -1007,16 +1070,17 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
                           predecessor_session_directory: Optional[Path] = None,
                           launch_time_git_sync_report: str = "",
                           overview_refresh_due: tuple = (),
-                          memory_review_due: tuple = ()) -> str:
+                          memory_review_due: tuple = (),
+                          branch_state_instruction: str = "") -> str:
     next_step = next_step_from(handoff_fields)
     lines = [
         f"Read {extract_path} — the dialog from the session you are continuing, "
-        + written_at_wariness_sentence(handoff_fields.get("written-at", "")),
+        + written_at_wariness_sentence(handoff_fields.get(session_handoff_field_names.WRITTEN_AT_FIELD, "")),
         ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION,
-        SUPERVISOR_POINTER_SENTENCE,
     ]
     if launch_time_git_sync_report:
-        lines.append(launch_time_git_sync_report_in_prompt(launch_time_git_sync_report))
+        lines.append(launch_time_git_sync_report_in_prompt(launch_time_git_sync_report,
+                                                           branch_state_instruction))
     lines.extend(overview_refresh_due)
     lines.extend(memory_review_due)
     roster = spawned_subagent_roster_from(handoff_fields)
@@ -1047,12 +1111,14 @@ class DialogIgnitionPlan:
 
     def compose(self, launch_time_git_sync_report: str,
                 overview_refresh_due: tuple = (),
-                memory_review_due: tuple = ()) -> str:
+                memory_review_due: tuple = (),
+                branch_state_instruction: str = "") -> str:
         return build_ignition_prompt(self.extract_path, self.handoff_fields,
                                      self.predecessor_session_directory,
                                      launch_time_git_sync_report=launch_time_git_sync_report,
                                      overview_refresh_due=overview_refresh_due,
-                                     memory_review_due=memory_review_due)
+                                     memory_review_due=memory_review_due,
+                                     branch_state_instruction=branch_state_instruction)
 
 
 @dataclass
@@ -1070,7 +1136,8 @@ class IgnitionPlanWithoutConversationTail:
 
     def compose(self, launch_time_git_sync_report: str,
                 overview_refresh_due: tuple = (),
-                memory_review_due: tuple = ()) -> str:
+                memory_review_due: tuple = (),
+                branch_state_instruction: str = "") -> str:
         if self.unextracted_transcript_path is not None:
             recovery_note = (
                 "the previous session's conversation-tail is unavailable, because the "
@@ -1102,7 +1169,8 @@ class IgnitionPlanWithoutConversationTail:
             + ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION
         )
         if launch_time_git_sync_report:
-            prompt += " " + launch_time_git_sync_report_in_prompt(launch_time_git_sync_report)
+            prompt += " " + launch_time_git_sync_report_in_prompt(launch_time_git_sync_report,
+                                                                  branch_state_instruction)
         for line in overview_refresh_due:
             prompt += " " + line
         for line in memory_review_due:
@@ -1490,6 +1558,16 @@ def uncommitted_work_snapshot_text(agent: str, working_directory: Path,
     """The first prompt's paragraph on the agent-seat's leftover work-snapshots, or ""."""
     text = uncommitted_work_snapshots.first_prompt_text(
         working_directory, agent, handoff_directory)
+    if text:
+        print(f"handoff-supervisor: {text.splitlines()[0]}")
+    return text
+
+
+def agent_seat_worktrees_and_branches_text(agent: str, working_directory: Path) -> str:
+    """The first prompt's paragraph on the agent-seat's worktrees and its branches with no pull
+    request, or ""."""
+    text = agent_seat_worktrees_and_branches_list.first_prompt_text(
+        working_directory, agent, skip_worktree=working_directory)
     if text:
         print(f"handoff-supervisor: {text.splitlines()[0]}")
     return text
@@ -2125,12 +2203,12 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
     generation = max(state.get("generation", 0),
                      highest_generation_on_disk(settings.handoff_directory, settings.agent))
     if settings.first_prompt:
-        prompt = settings.first_prompt
+        prompt = first_prompt_from_launch_command_marked_not_typed_by_the_user(settings.first_prompt)
     elif settings.resume_session_id:
         # A resumed session retains its context and must not be told to ask for work it already has.
         prompt = RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF
     else:
-        prompt = f"You are {settings.agent}. No handoff exists yet; ask what to work on."
+        prompt = FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_TEMPLATE.format(agent=settings.agent)
 
     adopted = settings.adopted_session
     # Compose at launch so the branch-state line reports the sync performed for that launch.
@@ -2173,7 +2251,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         boot_counter = counter_from(boot_fields)
         consumed = state.get("consumed_counter")
         if boot_counter is not None and (consumed is None or boot_counter > consumed):
-            if boot_fields.get("dont-restart"):
+            if boot_fields.get(DONT_RESTART_FIELD):
                 # Boot recovery must honor dont-restart too; a deliberate stand-down needs an exit record.
                 if not sys.stdin.isatty():
                     print("handoff-supervisor: dont-restart, and no terminal to ask on; stopping")
@@ -2222,7 +2300,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             print(f"handoff-supervisor: startup stopped: whether agent-seat {settings.agent} has a transcript "
                   f"worth resuming could not be decided, because {error.filename} "
                   f"could not be read: {error.strerror}.\n"
-                  + unreadable_path_restart_instruction(settings.agent, error.filename),
+                  + unreadable_path_restart_instruction(
+                      settings.agent, settings.handoff_directory, error.filename),
                   file=sys.stderr)
             return 5
         if by_hand_session_id is not None:
@@ -2267,8 +2346,12 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 memory_review_due = memory_review_due_lines()
                 for line in memory_review_due:
                     print(f"handoff-supervisor: {line}")
-                prompt = ignition_plan.compose(launch_time_git_sync_report, overview_refresh_due,
-                                               memory_review_due)
+                branch_state_instruction = (
+                    choose_branch_state_instruction_from_working_directory_push_state(
+                        settings.working_directory))
+                prompt = ignition_plan.compose(
+                    launch_time_git_sync_report, overview_refresh_due, memory_review_due,
+                    branch_state_instruction=branch_state_instruction)
                 ignition_plan = None
                 if not_restarted_on_main_code_report:
                     prompt += " " + HANDOFF_SUPERVISOR_NOT_RESTARTED_ON_MAIN_CODE_TEMPLATE.format(
@@ -2286,7 +2369,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                         substantive_turn_count_of_session_transcript(
                             session_id, settings.working_directory))
                 except OSError as error:
-                    print(transcript_unreadable_stop_message(settings.agent, session_id, error), file=sys.stderr)
+                    print(transcript_unreadable_stop_message(settings.agent, settings.handoff_directory,
+                                                             session_id, error), file=sys.stderr)
                     return 5
             else:
                 consecutive_resumes_without_new_work = 0
@@ -2296,8 +2380,10 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             # Read at each launch: a resume after a crash is when a dead agent's work-snapshots appear.
             leftover_work_snapshots = uncommitted_work_snapshot_text(
                 settings.agent, settings.working_directory, settings.handoff_directory)
-            launch_prompt = (f"{prompt}\n\n{leftover_work_snapshots}"
-                             if leftover_work_snapshots else prompt)
+            worktrees_and_branches = agent_seat_worktrees_and_branches_text(
+                settings.agent, settings.working_directory)
+            launch_prompt = "\n\n".join(
+                part for part in (prompt, leftover_work_snapshots, worktrees_and_branches) if part)
             process = launch_agent_session(
                 settings.agent_command, session_id, settings.working_directory, launch_prompt,
                 resume=next_launch_resumes_the_session, remote_control_name=settings.agent,
@@ -2321,7 +2407,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 except OSError as error:
                     record_agent_exit_in_supervisor_state(settings.state_path, state,
                                                           process.returncode)
-                    print(transcript_unreadable_stop_message(settings.agent, session_id, error), file=sys.stderr)
+                    print(transcript_unreadable_stop_message(settings.agent, settings.handoff_directory,
+                                                             session_id, error), file=sys.stderr)
                     return 5
                 if (substantive_turns_at_the_last_resume is None
                         or substantive_turns > substantive_turns_at_the_last_resume):
@@ -2350,7 +2437,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
 
         # Check before killing or consuming: without a terminal a successor reads EOF; leave the handoff recoverable.
         # dont-restart needs no terminal because no successor launches.
-        if not sys.stdin.isatty() and not handoff_fields.get("dont-restart"):
+        if not sys.stdin.isatty() and not handoff_fields.get(DONT_RESTART_FIELD):
             print(
                 "handoff-supervisor: a handoff arrived, but this supervisor has no terminal to "
                 "seat a successor on — not reincarnating. The session stays up and the handoff stays "
@@ -2362,7 +2449,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         stop_session(process)
         generation += 1
 
-        if handoff_fields.get("dont-restart"):
+        if handoff_fields.get(DONT_RESTART_FIELD):
             if not sys.stdin.isatty():
                 # Without a terminal, asking would raise EOFError before consuming the handoff and trigger it again next time.
                 print("handoff-supervisor: dont-restart, and no terminal to ask on; stopping")
@@ -2383,7 +2470,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         # The handoff is still unconsumed, so the restarted process starts the successor from it at startup.
         # A dont-restart handoff is not restarted on, or the startup path would ask restart? y/n again.
         if (settings.restarts_itself_on_main_code_at_each_session_handoff
-                and not handoff_fields.get("dont-restart")):
+                and not handoff_fields.get(DONT_RESTART_FIELD)):
             not_restarted_on_main_code_report = (
                 handoff_supervisor_restart_itself_on_main_code_or_return_failure_report(settings))
             print("handoff-supervisor: not restarted on main's code, carrying on with the code "

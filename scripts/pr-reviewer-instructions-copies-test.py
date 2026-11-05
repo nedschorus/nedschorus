@@ -51,15 +51,15 @@ RULE_FAILURE_LINES = importlib.util.module_from_spec(_rule_failure_lines_spec)
 _rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)
 INSTRUCTIONS_FILE = REPO_ROOT / "docs" / "agents" / "pr-reviewer-instructions.md"
 CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
-SECTION_HEADING = ("## Review scope: code findings block the merge; prose gets "
-                   "none, apart from the exceptions below")
+SECTION_HEADING = ("## Review scope: must-fix-now code findings block the merge; "
+                   "prose gets none, apart from the exceptions below")
 
 # CLAUDE.md's bullet restates the heading inline before the copied intro, and
 # names the file and this test after it. Both are CLAUDE.md's own framing, not
 # part of the copy, so they bound the intro rather than being compared to it.
-CLAUDE_MD_PREFIX = ("Reviewing a pull request — **review scope: code findings "
-                    "block the merge; prose gets none, apart from the exceptions "
-                    "below.** ")
+CLAUDE_MD_PREFIX = ("Reviewing a pull request — **review scope: must-fix-now code "
+                    "findings block the merge; prose gets none, apart from the "
+                    "exceptions below.** ")
 CLAUDE_MD_SUFFIX_OPENING = "This bullet is the"
 
 failures = []
@@ -209,7 +209,7 @@ check("CLAUDE.md names the file and this test beside its copy",
 
 FIXTURE_INSTRUCTIONS = """# Reviewer instructions
 
-## Review scope: code findings block the merge; prose gets none, apart from the exceptions below
+## Review scope: must-fix-now code findings block the merge; prose gets none, apart from the exceptions below
 
 Intro sentence one. Intro sentence two.
 
@@ -223,8 +223,8 @@ Not part of the copy.
 
 FIXTURE_CLAUDE_MD = """# Project
 
-- Reviewing a pull request — **review scope: code findings block the merge; \
-prose gets none, apart from the exceptions below.** \
+- Reviewing a pull request — **review scope: must-fix-now code findings block \
+the merge; prose gets none, apart from the exceptions below.** \
 Intro sentence one. Intro sentence two. This bullet is the section, kept \
 identical by a test.
   - **A.** Alpha one. Alpha two.

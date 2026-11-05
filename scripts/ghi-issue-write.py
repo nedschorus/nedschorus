@@ -634,7 +634,12 @@ def push_time_limit_seconds(environment):
     selective test run, each with its budget as the hook reads it from the
     same environment and its grace period counted twice, since each one's
     stop_process_group waits it after SIGTERM and again after SIGKILL, and a
-    margin that also covers the selective run's listing of descendants."""
+    margin that also covers the selective run's listing of descendants.
+    A start time an outer pre-push hook exported is left out: this push
+    starts its own hook, whose clock starts with it."""
+    environment = {
+        name: value for name, value in environment.items()
+        if name != pre_push_selective_test_run.HOOK_STARTED_AT_ENVIRONMENT_VARIABLE}
     return (pre_push_conflict_check.time_budget_seconds(environment)
             + 2 * pre_push_conflict_check.TERMINATE_GRACE_SECONDS
             + pre_push_selective_test_run.time_budget_seconds(environment)
@@ -665,12 +670,16 @@ def push_branch(worktree, branch, runner, environment=None):
             "with this message.", 1) from None
 
 
+def ghi_md_text_sha256_prefix(file_text: str) -> str:
+    """The first 16 hex digits of the SHA-256 of a GHI-MD's text."""
+    return hashlib.sha256(file_text.encode("utf-8")).hexdigest()[:16]
+
+
 def pairing_key(file_text: str) -> str:
     """This file's identity, and the only thing tying a half-finished run to
     the issue it already created. Content rather than path, because step 4
     moves the file."""
-    digest = hashlib.sha256(file_text.encode("utf-8")).hexdigest()[:16]
-    return f"{PAIRING_KEY_PREFIX}{digest}"
+    return f"{PAIRING_KEY_PREFIX}{ghi_md_text_sha256_prefix(file_text)}"
 
 
 def first_heading(file_text: str) -> str:
@@ -2460,8 +2469,10 @@ def edit_landing_branch_name(number: int, staged: str) -> str:
     """The branch this edit lands on. Named for the content and not for the
     issue alone, so a rerun of the same edit names the same branch — which
     is what lets `edit_landing_state` recognise this tool's own earlier
-    push — and an edit that changed since names another."""
-    return f"ghi-{number}-edit-{pairing_key(staged)}"
+    push — and an edit that changed since names another. The
+    `ghi-<number>-edit-` prefix is what `refuse_on_an_earlier_edit_still_open`
+    lists an issue's edit branches by."""
+    return f"ghi-{number}-edit-ghi-md-sha256-{ghi_md_text_sha256_prefix(staged)}"
 
 
 def edit_landing_state(number: int, staged: str, on_main,

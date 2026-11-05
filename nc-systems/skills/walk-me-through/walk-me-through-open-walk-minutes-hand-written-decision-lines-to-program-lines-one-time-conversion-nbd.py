@@ -17,8 +17,9 @@ reading count it the same way:
   carries `<rejected>` or opens with disapproved or rejected, and `<accepted>`
   otherwise; one that carries `<moved on, no decision>` becomes the close step's
   moved-on line instead, also when a later `<revised, awaiting ruling>` line
-  undid it in the old reading and no later line decides the item, since an item
-  that asked for no decision awaits no ruling;
+  undid it in the old reading and no later line decides or defers the item, since
+  an item that asked for no decision awaits no ruling, while a later deferral
+  shows the rewrite made it one that asks for a decision;
 - a deferral becomes the close step's deferral line, or its second-deferral line
   when the item already has a deferral; a deferral of an item either reading
   counts as decided is left alone, since the walk never names a decided item;
@@ -61,7 +62,9 @@ it writes names the item with the walk's count from the `#next_to_present` line
 alone; or an item whose old reading came from a line that both decides and
 names other items, beyond writing one line per item. It can fail by proposing a
 line for a hand-written note the old reading misread, such as a note that says
-an item was approved in an earlier walk; that is why it is a dry run first and
+an item was approved in an earlier walk, or by restoring a move-on for an item
+whose rewrite made it ask for a decision when no later line defers or decides
+it; that is why it is a dry run first and
 why --skip exists. A wrong appended line is undone by deleting it; to run the
 script on that file again, also delete its
 `#walk_minutes_hand_written_lines_converted` line. It writes
@@ -113,10 +116,11 @@ def says_outcome(pattern, line):
     return any(not MODIFIER_BEFORE.search(line[:match.start()]) for match in pattern.finditer(line))
 
 
-def old_reading(program, walk_finder, text, parser):
+def old_reading(program, walk_finder, text, parser, skipped_lines=frozenset()):
     """Return (item -> (line index, line) of the last line that left it decided, item -> [(line index, line)] of
     each line that deferred it, item -> (line index, line) of a move-on line that a later awaiting-ruling line
-    undid), as the old reading counted them."""
+    undid), as the old reading counted them. A deferral on a line in skipped_lines (1-based) is still listed, but
+    it is no evidence that the rewritten item asks for a decision."""
     decided_by, deferred_by, undone_move_on = {}, collections.defaultdict(list), {}
     for index, line in enumerate(walk_finder.prose_lines(text, parser)):
         if program.ANSWER_LINE.match(line):
@@ -150,6 +154,9 @@ def old_reading(program, walk_finder, text, parser):
         if defers:
             for item in items:
                 deferred_by[item].append((index, line))
+                # A deferral after the rewrite shows the rewritten item asks for a decision.
+                if index + 1 not in skipped_lines:
+                    undone_move_on.pop(item, None)
     return decided_by, deferred_by, undone_move_on
 
 
@@ -224,7 +231,7 @@ def unconverted(program, walk_finder, parser, text, expected):
 
 def proposals(program, walk_finder, parser, text, skipped_lines, moved_on_lines=frozenset()):
     """Return ([(line index, line, item, proposed line)], [NOTE text]) for one walk-minutes file's text."""
-    decided_by, deferred_by, undone_move_on = old_reading(program, walk_finder, text, parser)
+    decided_by, deferred_by, undone_move_on = old_reading(program, walk_finder, text, parser, skipped_lines)
     decided_by = {item: source for item, source in decided_by.items() if source[0] + 1 not in skipped_lines}
     # An item that asked for no decision awaits no ruling, so rewriting it does not reopen it.
     for item, source in undone_move_on.items():
@@ -266,26 +273,34 @@ def proposals(program, walk_finder, parser, text, skipped_lines, moved_on_lines=
     proposed_decisions = [proposed for _, _, _, proposed in found if decides(program, proposed)]
     decided_once_written = new_decided | {item for _, _, item, proposed in found if decides(program, proposed)}
     written_lines = list(walk_finder.prose_lines(text, parser)) + proposed_decisions
-    for index, line in enumerate(walk_finder.prose_lines(text, parser)):
-        held = program.HELD_ANSWER_LINE.match(line)
-        if not held or index + 1 in skipped_lines:
-            continue
-        try:
-            held_items, _ = walk_finder.parse_items(held[1])
-            new_items, _ = walk_finder.parse_items(held[2])
-        except walk_finder.UnusableRange:
-            continue
-        if not set(new_items) <= decided_once_written:
-            continue
-        outcome = program.OUTCOMES[program.DISAPPROVED if new_items_rejected(program, walk_finder, written_lines,
-                                                                              new_items) else program.APPROVED]
-        for item in held_items:
-            if item in new_decided or item in proposed_items or item in decided_by:
+    # A held item this run decides releases, in turn, the items held for it, so repeat until nothing changes.
+    progress = True
+    while progress:
+        progress = False
+        for index, line in enumerate(walk_finder.prose_lines(text, parser)):
+            held = program.HELD_ANSWER_LINE.match(line)
+            if not held or index + 1 in skipped_lines:
                 continue
-            proposed_items.add(item)
-            found.append((index, line, item, program.CLOSE_ALREADY_DECIDED_MINUTES.format(
-                item=item_text(item), outcome=outcome,
-                ruling=f"the user's answer to {held[2]}, which {citation(index, line)} held its answer for")))
+            try:
+                held_items, _ = walk_finder.parse_items(held[1])
+                new_items, _ = walk_finder.parse_items(held[2])
+            except walk_finder.UnusableRange:
+                continue
+            if not set(new_items) <= decided_once_written:
+                continue
+            outcome = program.OUTCOMES[program.DISAPPROVED if new_items_rejected(
+                program, walk_finder, written_lines, new_items) else program.APPROVED]
+            for item in held_items:
+                if item in new_decided or item in proposed_items or item in decided_by:
+                    continue
+                proposed_items.add(item)
+                proposed = program.CLOSE_ALREADY_DECIDED_MINUTES.format(
+                    item=item_text(item), outcome=outcome,
+                    ruling=f"the user's answer to {held[2]}, which {citation(index, line)} held its answer for")
+                found.append((index, line, item, proposed))
+                decided_once_written.add(item)
+                written_lines.append(proposed)
+                progress = True
     for item in sorted(new_decided - set(decided_by)):
         notes.append(f"NOTE: item {item} reads as decided now but not in the old reading, which a later "
                      f"`<revised, awaiting ruling>` line or an unread close line explains; nothing is proposed.")

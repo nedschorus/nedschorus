@@ -41,6 +41,10 @@ GIT_ENVIRONMENT = {
 failures = []
 
 
+def review_worktrees_directory(helpers):
+    return helpers.parent / f"{helpers.name}-review-worktrees"
+
+
 def check(name, condition, detail=""):
     print(("PASS  " if condition else "FAIL  ") + name)
     if not condition:
@@ -82,7 +86,7 @@ def build_repositories(scratch):
 def run_program(helpers, checkout, *arguments, cwd=None):
     return subprocess.run(
         [sys.executable, str(PROGRAM), *arguments, "--merge-lane-worktrees-and-outputs-directory", str(helpers),
-         "--merge-lane-review-worktrees-directory", str(helpers / "wt"),
+         "--merge-lane-review-worktrees-directory", str(review_worktrees_directory(helpers)),
          "--review-tools-worktree-at-main", str(checkout)],
         capture_output=True, text=True, cwd=cwd,
         env={**{key: value for key, value in GIT_ENVIRONMENT.items()
@@ -116,8 +120,8 @@ def main():
     try:
         checkout, main_commit, head_commit = build_repositories(scratch)
         helpers = scratch / "merge-helpers"
-        head_worktree = helpers / "wt" / "pr7-head"
-        merged_worktree = helpers / "wt" / "pr7-merged"
+        head_worktree = review_worktrees_directory(helpers) / "pr7-head"
+        merged_worktree = review_worktrees_directory(helpers) / "pr7-merged"
 
         completed = run_program(helpers, checkout, "7", head_commit, main_commit)
         detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}"
@@ -154,8 +158,8 @@ def main():
         check("relative directory options make the worktrees under the caller's directory, "
               "not under the checkout git runs in",
               completed.returncode == 0
-              and (relative_helpers / "wt" / "pr7-head").is_dir()
-              and (relative_helpers / "wt" / "pr7-merged").is_dir()
+              and (review_worktrees_directory(relative_helpers) / "pr7-head").is_dir()
+              and (review_worktrees_directory(relative_helpers) / "pr7-merged").is_dir()
               and not (checkout / "relative-helpers").exists(),
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
 
@@ -197,9 +201,9 @@ def main():
               "no single printed command" if confirmed is None else
               f"exit {confirmed.returncode}\n{confirmed.stdout}{confirmed.stderr}")
         check("the conflicted merge is aborted, leaving pr<n>-merged clean at main",
-              git(helpers / "wt" / "pr9-merged", "status", "--porcelain") == ""
-              and git(helpers / "wt" / "pr9-merged", "rev-parse", "HEAD") == later_main,
-              git(helpers / "wt" / "pr9-merged", "status", "--porcelain"))
+              git(review_worktrees_directory(helpers) / "pr9-merged", "status", "--porcelain") == ""
+              and git(review_worktrees_directory(helpers) / "pr9-merged", "rev-parse", "HEAD") == later_main,
+              git(review_worktrees_directory(helpers) / "pr9-merged", "status", "--porcelain"))
 
         git(author, "checkout", "-q", "--orphan", "unrelated")
         git(author, "rm", "-q", "-rf", ".")

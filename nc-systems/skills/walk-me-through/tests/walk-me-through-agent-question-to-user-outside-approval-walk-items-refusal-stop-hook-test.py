@@ -79,6 +79,8 @@ The page goes in the wiki, next to the glossary. Do you agree that agents look t
 **The strongest case against:** one more page to read. Recommendation: Put it in the wiki.
 
 """ + ANSWER_LINE
+# The minutes' `#next_to_present` line gives M as 10; once the agent adds the item a refusal asks for, the walk has 11.
+M_AFTER_THE_ADDED_ITEM = "11"
 INTERRUPTION_ITEM = f"""## Item 2.1 of 11: merge-lane-2's question about the GHI
 
 merge-lane-2 asks: should I file one GHI listing the remaining seats' tests?
@@ -216,7 +218,7 @@ class Case:
     def reply(self, *texts, opening=USER_PROMPT):
         self.records(opening, *(text_record(text) for text in texts))
 
-    def run(self, model="no", stop_hook_active=False, last_assistant_message=None, environment_extra=None,
+    def run(self, model="yes", stop_hook_active=False, last_assistant_message=None, environment_extra=None,
             stdin_text=None, bin_directory=FAKE_BIN):
         payload = {"hook_event_name": "Stop", "session_id": "test-session",
                    "transcript_path": str(self.transcript), "cwd": str(self.checkout),
@@ -263,30 +265,76 @@ def check_blocked(case_name, result, *phrases):
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 
-def test_a_clear_question_blocks_without_the_model_and_is_logged():
+def test_a_question_mark_or_an_ask_phrase_sends_the_line_to_the_model_and_a_block_is_logged():
     case = Case()
     case.reply("The tests passed.\n\nShould I merge the pull request now?\n\nItem 2 of 10 is waiting for your answer.")
-    result = case.run(model="no")
-    check_blocked("a sentence ending in a question mark blocks", result,
-                  '"Should I merge the pull request now?"', "the hook's code read it as a clear question")
-    check("a clear question is decided without the model", case.model_calls() == [], case.model_calls())
+    result = case.run(model="yes")
+    check_blocked("a sentence ending in a question mark blocks when the model says it asks the user something", result,
+                  '"Should I merge the pull request now?"', "the model judged that it asks him something")
+    calls = case.model_calls()
+    check("a sentence ending in a question mark goes to the model, numbered",
+          len(calls) == 1 and numbered_lines(calls[0]) == "1. Should I merge the pull request now?", calls)
     entries = case.logged()
     check("the refusal is logged with its time, session, walk, sentence and what decided",
           len(entries) == 1 and entries[0]["session"] == "test-session"
           and entries[0]["walk"] == "poem-page-2026-10-12"
           and entries[0]["sentence"] == "Should I merge the pull request now?"
-          and entries[0]["decided_by"] == "code" and entries[0]["time"].endswith("+00:00"), entries)
+          and entries[0]["decided_by"] == "model" and entries[0]["time"].endswith("+00:00"), entries)
+    check_silent("a sentence ending in a question mark passes when the model says it asks nothing",
+                 case.run(model="no"))
+    check_blocked("a sentence ending in a question mark blocks when the model check fails", case.run(model="fail"),
+                  '"Should I merge the pull request now?"', "the hook's `claude -p` call that has the model judge")
     for case_name, text in (
-            ("`say yes` blocks", "The fix is ready. Say yes and I will push it."),
-            ("`answer A` blocks", "The fix is ready. Answer A and I will push it."),
-            ("`waiting for your answer` on a question that is not an item blocks",
+            ("`say yes`", "The fix is ready. Say yes and I will push it."),
+            ("`answer A`", "The fix is ready. Answer A and I will push it."),
+            ("`waiting for your answer` on a question that is not an item",
              "The cleanup of the old directories is still waiting for your answer."),
-            ("a bold question blocks", "**Do you agree with merging the two lines?** A: merge. D: keep both."),
-            ("a cue split by bold marks blocks once the marks are dropped", "**Should** I go ahead with the merge."),
-            ("a question relayed in quotes from another agent blocks",
+            ("a bold question", "**Do you agree with merging the two lines?** A: merge. D: keep both."),
+            ("a cue split by bold marks, once the marks are dropped", "**Should** I go ahead with the merge."),
+            ("a question relayed in quotes from another agent",
              'merge-lane-2 asks: "Should the hook be fixed today?" I recommend yes.')):
+        case = Case()
         case.reply(text)
-        check_blocked(case_name, case.run(model="no"), "approval-walk question check")
+        check_blocked(case_name + " blocks when the model says it asks the user something", case.run(model="yes"),
+                      "approval-walk question check", "the model judged that it asks him something")
+        check_silent(case_name + " passes when the model says it asks nothing", case.run(model="no"))
+        check(case_name + " goes to the model each time", len(case.model_calls()) == 2, case.model_calls())
+
+
+# Lines agents wrote during approval-walks, one of each kind that holds a `?` or an ask phrase but asks the user nothing.
+LOGGED_LINES_THAT_ASK_NOTHING = (
+    ("the walk-me-through skill's answer line, with its item not shown", ANSWER_LINE),
+    ("an answer to his question that restates the question first",
+     "**Do we need it?** The processes cost nothing so far. The /tmp quota did stop work yesterday, so a daily /tmp "
+     "check passes the project's bar for adding a guard: that failure has already happened. The process part is "
+     "cheap to include with it."),
+    ("the advisor-check questions the walk-me-through skill has the agent write",
+     "Walk-start advisor call, on the draft above. Does anything change what the items decide? Then the six "
+     "questions."),
+    ("the waiting item's recommendation reworded", "Recommendation: answer A if the disk is back, or D if it isn't."),
+    ("a check of what his last message meant as an answer to the waiting item",
+     "I'm taking your \"Yeah\" as A, approve. Reply A to confirm."),
+    ("a question routed to a later walk item",
+     "One thing waits on you later, not now. Before merging that pull request, merge-lane-2 needs your approval of "
+     "the not-restarted message it adds. I'll bring that to you once questions are allowed again."),
+    ("an ask phrase inside a negation", "cold-read-improvement says the docstring fix for the record-names guard's "
+     "list of what it does not catch is up for review: [PR 2368](https://github.com/nedschorus/nedschorus/pull/2368)."
+     " Nothing here needs your answer."),
+    ("a status report", "I'm continuing your request from the last session: everything that needs your ruling is "
+     "collected into one approval-walk. Meanwhile, without needing you, I merged two GHI-MD pull requests, checked "
+     "eight rulings that earlier pull requests had cited (all eight match your own words in the transcripts), and "
+     "restarted the code-review queue in the background."),
+    ("a question the agent asks itself", "Now #310 and #315's cleanup checks: are the locked worktrees free yet?"),
+)
+
+
+def test_each_kind_of_logged_line_that_asks_nothing_passes_once_the_model_says_so():
+    for case_name, line in LOGGED_LINES_THAT_ASK_NOTHING:
+        case = Case()
+        case.reply("PR 1922 merged.\n\n" + line)
+        check_silent(f"{case_name} passes when the model says it asks nothing", case.run(model="no"))
+        calls = case.model_calls()
+        check(f"{case_name} goes to the model", len(calls) == 1 and numbered_lines(calls[0]).startswith("1. "), calls)
 
 
 def test_the_block_message_says_what_to_do():
@@ -296,11 +344,16 @@ def test_the_block_message_says_what_to_do():
     for case_name, phrase in (
             ("the message says the hook refused on purpose", "this hook refused to end your turn on purpose"),
             ("the message names the walk and quotes the flagged text",
-             "the open approval-walk poem-page-2026-10-12 (the hook's code read it as a clear question). "
+             "the open approval-walk poem-page-2026-10-12 (the model judged that it asks him something other than a "
+             "waiting item's decision). "
              "The flagged text: \"Should I merge the pull request now?\""),
             ("the message names the waiting item", "goes to the waiting item, item 2,"),
-            ("the message names the interruption item's number and the new total",
-             "`## Item 2.1 of 11: <the point of the question>`, placed right after item 2."),
+            ("the message gives the interruption item a heading with no number, and names the script whose close "
+             "step numbers it",
+             "headed `## <the point of the question>`, with no number, placed right after item 2. Do not number it "
+             "yourself: when the user answers item 2, the close step of "
+             "nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py "
+             "writes the next number into this heading."),
             ("the message says to quote the question whole with a recommendation",
              "Quote the question whole in the item, as its asker wrote it, whether you or another agent, giving each "
              "line of the flagged text a line of its own, word for word, and putting the rest of the question on "
@@ -310,26 +363,21 @@ def test_the_block_message_says_what_to_do():
              "Give the item one recommendation and one alternative, and end it with the recommendation stated as "
              "an action, as in `Recommendation: <what you recommend doing>.` State the alternative before it, as in "
              "`The alternative: <what D does instead>.`"),
-            ("the message says to change M everywhere",
-             f"Change the walk's item count M from 10 to 11 in every item heading of {case.document} that carries `of 10`"),
-            ("the message gives the minutes' new line",
-             f"the last `#next_to_present` line of {case.minutes}, which then reads `#next_to_present item 2 of 11`"),
             ("the message says not to show the new item now",
              "Do not show the new item now: it is shown after item 2 is answered."),
             ("the message gives the closing line's form when the minutes record no page for the waiting item",
-             "End the message you write next with the line `I added the question as Item 2.1 of 11.` and then the "
-             "waiting item's closing line, as the walk-me-through skill writes it, as the last text of that message:\n"
-             f"`[Item 2 of 11, where the poem page lives](<page link>) · {CLOSING_LINE_ANSWER_LETTERS}`\n"
+             "End the message you write next with the line `I added the question as a new item after item 2.` and "
+             "then the waiting item's closing line, as the walk-me-through skill writes it, as the last text of that "
+             f"message:\n`[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the poem page lives](<page link>) · "
+             f"{CLOSING_LINE_ANSWER_LETTERS}`\n"
              "The minutes record no `#item_page` line for item 2. For each such item, publish its page first if it "
              f"has none and add to {case.minutes} the line `#item_page item <N> of <M> <the page's link>`, which this "
              "hook reads back; then put the same link in place of `<page link>` in the item's closing line.\n"),
             ("the message says how to clear a false block",
              "If the flagged text does not ask the user anything, reword it in your reply so that it no longer reads")):
         check(case_name, phrase in reason, reason)
-    taken = Case(document=WALK_DOCUMENT + "\n" + INTERRUPTION_ITEM.replace("of 11", "of 10"))
-    taken.reply("Should I merge the pull request now?")
-    check_blocked("an interruption number already in the walk-document is skipped",
-                  taken.run(), "`## Item 2.2 of 11: <the point of the question>`")
+    check("the message asks for no change to M in any heading or in the minutes",
+          "item count M" not in reason and "#next_to_present" not in reason, reason)
 
 
 def test_a_reply_with_nothing_question_like_passes():
@@ -347,11 +395,11 @@ def test_a_reply_with_nothing_question_like_passes():
     check("a reply with nothing question-like never calls the model", case.model_calls() == [], case.model_calls())
 
 
-def test_an_unclear_line_goes_to_the_model():
+def test_a_question_like_line_goes_to_the_model():
     case = Case()
     case.reply("The fix has a second part, and I recommend building it next.")
     result = case.run(model="yes:1")
-    check_blocked("an unclear line the model says asks the user blocks", result,
+    check_blocked("a question-like line the model says asks the user blocks", result,
                   '"The fix has a second part, and I recommend building it next."',
                   "the model judged that it asks him something")
     calls = case.model_calls()
@@ -360,14 +408,14 @@ def test_an_unclear_line_goes_to_the_model():
           len(calls) == 1 and argv[argv.index("--model") + 1] == hook.MODEL == "claude-haiku-5-5"
           and json.loads(argv[argv.index("--settings") + 1]) == {"disableAllHooks": True}
           and "--no-session-persistence" in argv, calls)
-    check("the model is given the unclear line, numbered, and the walk's total and waiting item",
+    check("the model is given the question-like line, numbered, and the walk's total and waiting item",
           calls and "1. The fix has a second part, and I recommend building it next." in calls[0]["stdin"]
           and "`Item N of 10`, or `item N` for short, and item 2 waits for his answer" in calls[0]["stdin"], calls)
     check("a block the model decided is logged as the model's",
           [entry["decided_by"] for entry in case.logged()] == ["model"], case.logged())
-    check_silent("an unclear line the model says asks nothing passes", case.run(model="no"))
+    check_silent("a question-like line the model says asks nothing passes", case.run(model="no"))
     case.reply("Waiting on you: should line 34 change, as item 2 of 10 asks?")
-    check_silent("a clear question on a line naming an item is unclear, so the model decides", case.run(model="no"))
+    check_silent("a question on a line naming an item goes to the model too", case.run(model="no"))
     case.reply("I recommend building it next.\n\nThat also fixes the second part, if you agree with the plan.")
     check_blocked("the model's line number picks the sentence named", case.run(model="yes:2"),
                   '"That also fixes the second part, if you agree with the plan."')
@@ -421,14 +469,17 @@ def test_a_question_about_something_other_than_the_waiting_item_still_blocks():
                   f'"{unrelated}"', "the model judged that it asks him something other than a waiting item's decision")
     case.reply(REAL_ITEM_1_REPLY.replace("**Recommendation:** close task #9",
                                          "**Recommendation:** shall I close task #9"))
-    check_blocked("a reworded recommendation holding a clear ask blocks without the model", case.run(model="waiting"),
-                  "the hook's code read it as a clear question")
+    calls_before = len(case.model_calls())
+    check_silent("a reworded recommendation holding an ask phrase passes when the model says it concerns the waiting "
+                 "item", case.run(model="waiting"))
+    calls = case.model_calls()[calls_before:]
+    check("a reworded recommendation holding an ask phrase goes to the model",
+          len(calls) == 1 and "shall I close task #9" in numbered_lines(calls[0]), calls)
     case.reply(REAL_ITEM_1_REPLY.replace("Also close task #10, which only prepared the scoring checks.",
                                          "Do you approve closing task #10 too?"))
-    check_blocked("a reworded recommendation ending in a question mark blocks without the model",
-                  case.run(model="waiting"), 'Do you approve closing task #10 too?"',
-                  "the hook's code read it as a clear question")
-    check("a clear ask never reaches the model", len(case.model_calls()) == 1, case.model_calls())
+    check_blocked("a reworded recommendation ending in a question mark blocks when the model says it asks something "
+                  "else", case.run(model="yes"), 'Do you approve closing task #10 too?"',
+                  "the model judged that it asks him something")
 
 
 def test_a_failed_model_check_blocks():
@@ -448,7 +499,7 @@ def test_a_failed_model_check_blocks():
              "claude exited -9 reporting an error"),
             ("a model verdict that answers for no line blocks", 'verdict:{"lines": []}',
              "claude's verdict does not give each of the 1 numbered lines exactly one entry with a true or false")):
-        check_blocked(case_name, case.run(model=mode), "the hook's `claude -p` call that has the model judge this unclear text failed", phrase,
+        check_blocked(case_name, case.run(model=mode), "the hook's `claude -p` call that has the model judge this question-like text failed", phrase,
                       '"The fix has a second part, and I recommend building it next."')
     check("a block after a failed model check is logged as such",
           [entry["decided_by"] for entry in case.logged()] == ["model-check-failed"] * 8, case.logged())
@@ -469,7 +520,7 @@ def test_a_failed_model_check_blocks():
                                 f'"{hook.AGENT_REPLY_LINE_MODEL_LABEL_ASKS_USER_SOMETHING_ELSE}"]', "c")):
             os.environ["FAKE_CLAUDE_MODE"] = mode
             line, failure = hook.model_judgement(["a", "b", "c"], ["a", "b", "c"], "10", "2", "## Item 2 of 10")
-            check(f"the model's answer {mode} picks unclear line {expected}", (line, failure) == (expected, None),
+            check(f"the model's answer {mode} picks question-like line {expected}", (line, failure) == (expected, None),
                   (line, failure))
         concerns = hook.AGENT_REPLY_LINE_CONCERNS_WAITING_APPROVAL_WALK_ITEM_DECISION_MODEL_TRUE_OR_FALSE_ANSWER
         asks_else = hook.AGENT_REPLY_LINE_ASKS_USER_SOMETHING_ELSE_MODEL_TRUE_OR_FALSE_ANSWER
@@ -541,6 +592,11 @@ def test_a_question_held_in_an_interruption_item_is_not_checked():
                  held.run(model="yes"))
     check("a question held in an interruption item never reaches the model", held.model_calls() == [],
           held.model_calls())
+    unnumbered = Case(document=WALK_DOCUMENT + "\n" + INTERRUPTION_ITEM.replace("## Item 2.1 of 11: ", "## "))
+    unnumbered.records(PEER_PROMPT, text_record(stray), text_record(
+        "I added the question as a new item after item 2.\n\nItem 2 of 10 is waiting for your answer."))
+    check_silent("a question an unnumbered item holds, headed as the refusal's step 1 says, passes",
+                 unnumbered.run(model="yes"))
     held.reply("Should I merge the pull request now?\n\n" + closing)
     check_blocked("a question the interruption item does not hold still blocks", held.run(),
                   '"Should I merge the pull request now?"')
@@ -659,7 +715,11 @@ def test_a_question_held_in_an_interruption_item_is_not_checked():
             ("under a shared heading, an interruption item's question passes after items without their own",
              partly_opened, "Should I rename the hook?", True),
             ("under a shared heading whose items have no openings, the interruption item's question blocks",
-             without_openings, "Should I file the GHI?", False)):
+             without_openings, "Should I file the GHI?", False),
+            ("under a shared heading whose items have no openings and that keeps a Withdrawn version, the "
+             "interruption item's question still blocks",
+             without_openings + "\n#### Withdrawn version 1 of items 2.1 and 3\n\nShould I file two GHIs?\n",
+             "Should I file the GHI?", False)):
         case = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + shared,
                     minutes="#next_to_present item 2 of 11")
         case.reply(reply_line + "\n\n" + closing)
@@ -690,8 +750,9 @@ def test_the_shown_item_and_quotes_from_it_are_not_checked():
     case = Case()
     case.reply("Recorded your answer to item 1.\n\n" + ITEM_2_SHOWN)
     check_silent("a question inside the item the reply shows does not block", case.run(model="yes"))
-    case.reply(ITEM_2_SHOWN + "\n\nShould I also add a link to it?")
-    check_blocked("a question after the shown item still blocks", case.run(), '"Should I also add a link to it?"')
+    after = Case()
+    after.reply(ITEM_2_SHOWN + "\n\nShould I also add a link to it?")
+    check_blocked("a question after the shown item still blocks", after.run(), '"Should I also add a link to it?"')
     case.reply('You asked about "Do you agree that agents look there first?" It means the wiki comes first.')
     check_silent("a quote of the walk-document's text is not checked", case.run(model="no"))
     case.reply("> Do you agree that agents look there first?\n\nThat line is the item's question.")
@@ -708,6 +769,26 @@ def test_the_shown_item_and_quotes_from_it_are_not_checked():
     numbered.reply(ITEM_2_SHOWN)
     check_silent("the shown item's answer line passes without the number and the alternative the walk-document adds",
                  numbered.run(model="yes"))
+
+
+def test_a_withdrawn_versions_lines_under_a_shared_heading_are_not_the_shown_items():
+    document = (f"# The poem page: approval-walk\n\n## Items 2 and 3 of 10: the poem page\n\n"
+                f"**Item 2: where it lives.** Should I keep the poem page in the wiki?\n\n"
+                f"#### Withdrawn version 1 of item 2\n\nShould I drop the poem page?\n\n"
+                f"**Item 3: its name.** Should I keep its name?\n\n{ANSWER_LINE}\n")
+    for case_name, line, passes in (
+            ("a reply showing a shared heading passes the live item's own line",
+             "**Item 2: where it lives.** Should I keep the poem page in the wiki?", True),
+            ("a reply showing a shared heading passes the line of an item whose opening follows another item's "
+             "Withdrawn version", "**Item 3: its name.** Should I keep its name?", True),
+            ("a reply showing a shared heading still has a line copied from a Withdrawn version under it checked",
+             "Should I drop the poem page?", False)):
+        case = Case(document=document)
+        case.reply("## Items 2 and 3 of 10: the poem page\n\n" + line)
+        if passes:
+            check_silent(case_name, case.run(model="yes"))
+        else:
+            check_blocked(case_name, case.run(), '"Should I drop the poem page?"')
 
 
 HANDOFF_WALK_ITEM_1_2_LINES = (
@@ -828,9 +909,9 @@ def test_the_refusal_log():
 def test_which_line_is_flagged_and_how_lines_are_joined():
     case = Case()
     case.reply("Should I merge it now?\n\nShould I also tag it?")
-    check_blocked("of two clear questions, the first is flagged", case.run(), '"Should I merge it now?"')
+    check_blocked("of two questions the model flags, the first is flagged", case.run(), '"Should I merge it now?"')
     case.reply("I recommend merging it.\n\nI recommend tagging it too.")
-    check_blocked("after a failed model check, the first unclear line is flagged", case.run(model="fail"),
+    check_blocked("after a failed model check, the first question-like line is flagged", case.run(model="fail"),
                   '"I recommend merging it."')
     case.reply("Still waiting for you:\n- the cleanup of the old directories;\n- the naming change.\n\nDone.")
     case.run(model="no")
@@ -851,24 +932,25 @@ def test_two_waiting_items():
     case = Case(minutes="#next_to_present items 2 and 3 of 10")
     case.reply("Should I merge the pull request now?")
     check_blocked("with two items waiting, the interruption item follows the later one and both are named",
-                  case.run(), "`## Item 3.1 of 11: <the point of the question>`, placed right after item 3.",
-                  "which then reads `#next_to_present items 2 and 3 of 11`",
+                  case.run(), "`## <the point of the question>`, with no number, placed right after item 3. Do not number it yourself: when the user answers item 3,",
+                  "`I added the question as a new item after item 3.`",
                   "and then each waiting item's closing line, on a line of its own, as the walk-me-through skill "
-                  f"writes it, as the last text of that message:\n`[Item 2 of 11, where the poem page lives](<page link>) · "
-                  f"{CLOSING_LINE_ANSWER_LETTERS}`\n`[Item 3 of 11, the hook](<page link>) · "
+                  f"writes it, as the last text of that message:\n`[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the "
+                  f"poem page lives](<page link>) · {CLOSING_LINE_ANSWER_LETTERS}`\n`[Item 3 of "
+                  f"{M_AFTER_THE_ADDED_ITEM}, the hook](<page link>) · "
                   f"{CLOSING_LINE_ANSWER_LETTERS}`\nThe minutes record no `#item_page` line for items 2 and 3. For each such item")
     mixed = Case(minutes="#item_page item 3 of 10 https://claude.ai/artifact/p3\n#next_to_present items 2 and 3 of 10")
     mixed.reply("Should I merge the pull request now?")
     check_blocked("with two items waiting and a page for one, each gets its own form of the closing line",
-                  mixed.run(), f"`[Item 2 of 11, where the poem page lives](<page link>) · {CLOSING_LINE_ANSWER_LETTERS}`\n"
-                  f"`[Item 3 of 11, the hook](https://claude.ai/artifact/p3) · {CLOSING_LINE_ANSWER_LETTERS}`\n"
+                  mixed.run(), f"`[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the poem page lives](<page link>) · "
+                  f"{CLOSING_LINE_ANSWER_LETTERS}`\n`[Item 3 of {M_AFTER_THE_ADDED_ITEM}, the hook]"
+                  f"(https://claude.ai/artifact/p3) · {CLOSING_LINE_ANSWER_LETTERS}`\n"
                   "The minutes record no `#item_page` line for item 2. For each such item")
 
 
 def test_only_a_reminder_of_the_open_walks_waiting_items_is_skipped():
     case = Case()
     for case_name, reminder in (
-            ("a reminder with another total is checked", "Item 2 of 200 is waiting for your answer."),
             ("a reminder of an item that is not waiting is checked", "Item 99 of 10 is waiting for your answer."),
             ("a reminder whose range runs backwards is checked", "Items 3 to 2 of 10 are waiting for your answer.")):
         case.reply("PR 1922 merged.\n\n" + reminder)
@@ -876,6 +958,9 @@ def test_only_a_reminder_of_the_open_walks_waiting_items_is_skipped():
     two_waiting = Case(minutes="#next_to_present items 2 and 3 of 10")
     two_waiting.reply("PR 1922 merged.\n\nItem 2 of 10 is waiting for your answer.")
     check_silent("a reminder of one of two waiting items is skipped", two_waiting.run(model="yes"))
+    case.reply("PR 1922 merged.\n\nItem 2 of 200 is waiting for your answer.")
+    check_silent("a reminder of a waiting item is skipped whatever M it gives, since M is display only",
+                 case.run(model="yes"))
 
 
 def closing_line(count, point="the poem page is recommended for the wiki"):
@@ -893,11 +978,13 @@ def test_only_the_waiting_items_closing_line_is_skipped():
             ("a closing line without a point passes", closing_line("2 of 10", point=None))):
         case.reply(text)
         check_silent(case_name, case.run(model="yes"))
+    for case_name, count in (("a waiting item's closing line with a larger M passes, since M is display only", "2 of 11"),
+                             ("a waiting item's closing line with a smaller M passes", "2 of 1")):
+        case.reply("PR 1922 merged.\n\n" + closing_line(count))
+        check_silent(case_name, case.run(model="yes"))
     check("a waiting item's closing line never reaches the model", case.model_calls() == [], case.model_calls())
     for case_name, line in (
             ("a closing line naming an item that is not waiting is checked", closing_line("3 of 10")),
-            ("a closing line with a larger total is checked", closing_line("2 of 11")),
-            ("a closing line with a smaller total is checked", closing_line("2 of 1")),
             ("a closing line with text after its answer letters is checked", closing_line("2 of 10") + " Agree?"),
             ("a closing line with text before it on its line is checked", "Recommended: " + closing_line("2 of 10")),
             ("a closing line missing an answer letter is checked",
@@ -1057,13 +1144,18 @@ def test_a_hyphenated_word_after_yes_or_no_is_not_an_ask():
         check_silent(case_name, case.run(model="yes"))
     check("a hyphenated word after yes or no never reaches the model", case.model_calls() == [], case.model_calls())
     case.reply("The fix is ready; on a yes I will push it.")
-    check_blocked("`on a yes` still blocks", case.run(model="no"), "approval-walk question check")
+    check_blocked("`on a yes` still goes to the model, and blocks when the model says it asks the user something",
+                  case.run(model="yes"), "the model judged that it asks him something")
 
 
 def test_an_answer_cue_followed_by_another_hyphenated_word_goes_to_the_model():
     for case_name, text in (("`Type A-D`", "Type A-D to answer."),
                             ("`Say yes-or-no`", "Say yes-or-no and I will merge it."),
-                            ("`on a yes-or-no`", "I will merge it on a yes-or-no from you.")):
+                            ("`on a yes-or-no`", "I will merge it on a yes-or-no from you."),
+                            ("`on a yes-decision`", "I will merge it on a yes-decision from you."),
+                            ("`Reply A-OP`", "Reply A-OP to approve the operation."),
+                            ("`Type D-OP`", "Type D-OP to drop the operation."),
+                            ("`Say no-opinion`", "Say no-opinion if you have none.")):
         case = Case()
         case.reply(text)
         check_blocked(case_name + " blocks when the model says it asks the user something", case.run(model="yes:1"),
@@ -1100,6 +1192,77 @@ def test_the_closing_line_without_its_link_is_skipped_only_for_an_item_whose_pub
                       + f"Item 3 of 10, the hook is recommended · {CLOSING_LINE_ANSWER_LETTERS}")
     check_blocked("the closing line without its link is checked for a waiting item whose publish did not fail",
                   two_waiting.run(model="yes"), "approval-walk question check", "Item 3 of 10, the hook")
+
+
+def test_a_message_ending_with_a_closing_line_blocks_when_the_checkout_holds_no_open_or_paused_walk():
+    ending = "PR 1922 merged.\n\n" + closing_line("2 of 10")
+    empty = Case()
+    empty.document.unlink()
+    empty.minutes.unlink()
+    empty.reply(ending)
+    reason = blocked_reason(empty.run(model="yes")) or ""
+    walk_directory = empty.checkout / "docs" / "walk"
+    for case_name, phrase in (
+            ("a closing line with an empty docs/walk/ blocks, saying the hook refused on purpose",
+             "approval-walk closing-line check: this hook refused to end your turn on purpose"),
+            ("the block quotes the closing line", f'"{closing_line("2 of 10")}"'),
+            ("the block names the checkout searched and its docs/walk/",
+             f"the checkout you work in, {empty.checkout}, has no open or paused approval-walk in {walk_directory}."),
+            ("the block tells the agent to move the walk's files into that docs/walk/",
+             f"move both files into {walk_directory}, creating {walk_directory} if it is missing"),
+            ("the block says what to do from now on",
+             "From now on, keep the walk-document and walk-minutes of every approval-walk you run in the `docs/walk/` "
+             "of the checkout you work in.")):
+        check(case_name, phrase in reason, reason)
+    check("a closing line with no walk never reaches the model", empty.model_calls() == [], empty.model_calls())
+    entries = empty.logged()
+    check("the block is logged with its sentence, no walk, and what decided",
+          len(entries) == 1 and entries[0]["walk"] is None and entries[0]["sentence"] == closing_line("2 of 10")
+          and entries[0]["decided_by"] == "no-walk-in-checkout", entries)
+    missing = Case()
+    shutil.rmtree(missing.walk)
+    missing.reply(ending)
+    check_blocked("a closing line with no docs/walk/ blocks, saying the folder does not exist", missing.run(),
+                  f"in {missing.walk}, which does not exist.")
+    closed = Case(minutes="#next_to_present none, closed")
+    for case_name, text in (
+            ("a closing line after a closed walk blocks", ending),
+            ("a closing line without its link blocks",
+             f"PR 1922 merged.\n\nItem 2 of 10, the poem page · {CLOSING_LINE_ANSWER_LETTERS}")):
+        closed.reply(text)
+        check_blocked(case_name, closed.run(), "approval-walk closing-line check", str(closed.checkout))
+    check_blocked("a closing line only in the payload's last_assistant_message blocks",
+                  closed.run(last_assistant_message=ending), "approval-walk closing-line check")
+    closed.reply("Should I merge it?\n\n" + closing_line("2 of 10"))
+    check_blocked("the closing line ending the turn's last text blocks when the payload has no last message",
+                  closed.run(last_assistant_message=""), "approval-walk closing-line check")
+    for case_name, text in (
+            ("a reply with no walk and no closing line passes", "Should I merge it?"),
+            ("a closing line that is not the message's last line passes", closing_line("2 of 10") + "\n\nDone."),
+            ("a closing line inside a code block passes", f"PR 1922 merged.\n\n```\n{closing_line('2 of 10')}\n```"),
+            ("a line holding the answer letters that is not a closing line passes",
+             f"The skill's letters are {CLOSING_LINE_ANSWER_LETTERS}")):
+        closed.reply(text)
+        check_silent(case_name, closed.run())
+    two = Case()
+    (two.walk / "a-second-walk-minutes.md").write_text("#next_to_present item 4 of 9\n")
+    two.reply("The tests passed.\n\nShould I merge the pull request now?")
+    check_silent("a question-like line passes when two approval-walks are open, since no waiting item is known",
+                 two.run(model="yes"))
+    check("a question-like line while two approval-walks are open never reaches the model",
+          two.model_calls() == [], two.model_calls())
+    paused = Case(minutes="#next_to_present item 2 of 10\n#approval_walk_paused")
+    paused.reply(ending)
+    check_silent("a closing line while the walk is paused passes", paused.run())
+    paused.reply("The tests passed.\n\nShould I merge the pull request now?")
+    check_silent("a question-like line while the walk is paused passes, though the model would say it asks",
+                 paused.run(model="yes"))
+    check("a question-like line while the walk is paused never reaches the model",
+          paused.model_calls() == [], paused.model_calls())
+    outside = Case()
+    outside.reply(ending)
+    shutil.rmtree(outside.checkout / ".git")
+    check_silent("a closing line from a cwd outside any checkout passes", outside.run())
 
 
 def test_a_fault_exits_1_and_names_it():

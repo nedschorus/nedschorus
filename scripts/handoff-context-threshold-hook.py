@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Request a handoff before context runs out.
 
-It fires at a share of the context window.
+It fires at a share of the context window, or below that share once it has deferred the
+handoff in this session and the work it deferred for has finished.
 
 Stop-hook payloads lack context usage; headless sessions lack a status line.
 The transcript supplies usage for both interactive and headless sessions."""
@@ -11,6 +12,7 @@ import importlib.util
 import json
 import os
 import re
+import socket
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,9 +44,16 @@ HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
 FIRED_MARKER_SUFFIX = "-handoff-asked"
 
 
+DEFERRED_MARKER_SUFFIX = "-handoff-deferred"
+
+
 def fired_marker_path(session_id: str) -> Path:
     # Read HANDOFF_DIRECTORY at call time so tests can redirect marker writes.
     return HANDOFF_DIRECTORY / f"{session_id}{FIRED_MARKER_SUFFIX}"
+
+
+def deferred_marker_path(session_id: str) -> Path:
+    return HANDOFF_DIRECTORY / f"{session_id}{DEFERRED_MARKER_SUFFIX}"
 
 # Caller-owned reincarnation must not replace the caller's answer with a handoff.
 REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
@@ -61,6 +70,9 @@ CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX = {
 }
 DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
 
+# scripts/agent-seat-due-task-raise-hook.py reads this to tell a handoff is due at the same Stop.
+DEFAULT_THRESHOLD_USED_PERCENTAGE = 33.0
+
 FIRST_TAIL_READ_BYTES = 256 * 1024
 
 # Messages below follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
@@ -70,17 +82,33 @@ HANDOFF_INSTRUCTION = (
     "reached the reincarnation threshold. Run the /handoff skill now."
 )
 
+HANDOFF_DEFERRED_MARKER_NOT_DELETED = (
+    "The threshold-hook could not delete this agent-session's handoff-deferral marker "
+    "{path} on {host}: {error}. If this agent-session keeps working after a compaction "
+    "instead of handing off, the threshold-hook asks for the /handoff skill again, even "
+    "below the threshold, because the marker is still there.\n"
+    "The text for the user: \"On {host}, the threshold-hook could not delete the "
+    "handoff-deferral marker {path} ({error}). Please check why that path cannot be "
+    "deleted, and delete it.\"\n"
+    "If you are a subagent, put that text in your final report to the agent that "
+    "dispatched you, and do not run the /handoff skill.\n"
+    "Otherwise, in the same reply, give the user that text word for word, then run the "
+    "/handoff skill, as the threshold-hook's instruction just before this message says, "
+    "without waiting for an answer."
+)
+
 HANDOFF_DEFERRED_NOTICE = (
     "Context at {share} — handoff deferred while {running} run, because a "
     "handoff now would stop them.\n"
     "Do not run the /handoff skill now; carry on with your work, and a later "
     "system message will tell you when to run it. That message comes once "
-    "every subagent has finished, and every background task has either "
+    "every subagent and workflow has finished, and every background task has either "
     "finished or run for {wait_minutes:g} minutes since its launch, or once "
     "this session's context reaches the {ceiling:g}% ceiling; a handoff then "
     "stops whatever is still running.\n"
-    "Spawn no new subagents and start no new background tasks, because each "
-    "one delays the handoff and is stopped if still running at the ceiling."
+    "Spawn no new subagents, start no new workflows (runs of the Workflow tool) and "
+    "start no new background tasks, because each one delays the handoff and is "
+    "stopped if still running at the ceiling."
 )
 
 HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE = (
@@ -91,8 +119,9 @@ HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE = (
     "the hook can read the whole transcript and finds nothing running, or "
     "once this session's context reaches the {ceiling:g}% ceiling; a handoff "
     "then stops whatever is still running.\n"
-    "Spawn no new subagents and start no new background tasks, because each "
-    "one delays the handoff and is stopped if still running at the ceiling."
+    "Spawn no new subagents, start no new workflows (runs of the Workflow tool) and "
+    "start no new background tasks, because each one delays the handoff and is "
+    "stopped if still running at the ceiling."
 )
 
 # Allow a slow cold-read cell plus one retry; the context ceiling still bounds deferral.
@@ -100,6 +129,19 @@ DEFAULT_BACKGROUND_TASK_WAIT_MINUTES = 75.0
 
 # Covers a subagent just woken by its own background task, before it has launched or written more.
 SUBAGENT_OWN_TRANSCRIPT_RECENT_WRITE_SECONDS = 5 * 60
+
+# Claude Code gives every Stop hook this list of the session's running work: subagents, workflows,
+# and background shell tasks, a subagent's own included. A subagent waiting on its own shell task
+# leaves the list while it waits; the shell task stays on it.
+BACKGROUND_TASKS_PAYLOAD_KEY = "background_tasks"
+SHELL_TASK_TYPE = "shell"
+SUBAGENT_TASK_TYPE = "subagent"
+WORKFLOW_TASK_TYPE = "workflow"
+RUNNING_TASK_STATUS = "running"
+
+# The list shows a Monitor as a shell task; only its launch record, which carries this key, tells it apart.
+MONITOR_LAUNCH_KEY = "timeoutMs"
+
 
 class TranscriptCouldNotBeFullyRead(Exception):
     """An incomplete scan must not be mistaken for no work in flight."""
@@ -215,14 +257,15 @@ def used_tokens_of(usage: dict) -> int:
 
 
 class WorkInFlight:
-    """An empty scan must be falsy; a tuple of two empty lists would still be truthy."""
+    """An empty scan must be falsy; a tuple of empty lists would still be truthy."""
 
-    def __init__(self, subagent_ids, background_task_ids):
+    def __init__(self, subagent_ids, background_task_ids, workflow_ids=()):
         self.subagent_ids = list(subagent_ids)
         self.background_task_ids = list(background_task_ids)
+        self.workflow_ids = list(workflow_ids)
 
     def __bool__(self):
-        return bool(self.subagent_ids or self.background_task_ids)
+        return bool(self.subagent_ids or self.background_task_ids or self.workflow_ids)
 
 
 def running_phrase(flight: WorkInFlight) -> str:
@@ -230,6 +273,8 @@ def running_phrase(flight: WorkInFlight) -> str:
     parts = []
     if flight.subagent_ids:
         parts.append(f"{len(flight.subagent_ids)} subagent(s)")
+    if flight.workflow_ids:
+        parts.append(f"{len(flight.workflow_ids)} workflow(s)")
     if flight.background_task_ids:
         parts.append(f"{len(flight.background_task_ids)} background task(s)")
     return " and ".join(parts)
@@ -337,6 +382,83 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
     )
 
 
+def work_in_flight_from_background_tasks(background_tasks: list, transcript_path: str,
+                                        background_task_wait_seconds: float,
+                                        now=None) -> WorkInFlight:
+    """Return the running subagents, workflows and background shell tasks on Claude Code's list.
+
+    The list gives no start time and shows a Monitor as a shell task, so each listed shell task's
+    launch record is looked up in the session's transcript and its subagents' transcripts: a shell
+    task launched by the Monitor tool holds nothing, nor does one launched longer ago than the wait;
+    one whose launch no transcript records counts as within its wait. An entry that is not a running
+    subagent, workflow or shell task holds nothing. Raises TranscriptCouldNotBeFullyRead when a
+    transcript cannot be read, or a line naming a listed shell task does not parse.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    running = [entry for entry in background_tasks
+               if isinstance(entry, dict) and entry.get("status") == RUNNING_TASK_STATUS
+               and isinstance(entry.get("id"), str)]
+
+    def ids_of(task_type):
+        return [entry["id"] for entry in running if entry.get("type") == task_type]
+
+    shell_ids = ids_of(SHELL_TASK_TYPE)
+    launch_ages, monitor_ids = shell_task_launch_ages_and_monitor_ids(
+        transcript_path, shell_ids, now)
+
+    def still_within_wait(task_id):
+        age = launch_ages.get(task_id)
+        return age is None or age <= background_task_wait_seconds
+
+    return WorkInFlight(
+        ids_of(SUBAGENT_TASK_TYPE),
+        [task_id for task_id in shell_ids
+         if task_id not in monitor_ids and still_within_wait(task_id)],
+        ids_of(WORKFLOW_TASK_TYPE),
+    )
+
+
+def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list, now):
+    """Return ({shell task id: seconds since its launch record, or None if undated},
+    {ids whose launch record is the Monitor tool's}) for the ids the transcripts record."""
+    launch_ages, monitor_ids = {}, set()
+    if not shell_ids or not transcript_path:
+        return launch_ages, monitor_ids
+    session_path = Path(transcript_path).expanduser()
+    subagent_directory = session_path.with_suffix("") / "subagents"
+    # An undated subagent shell task counts as within its wait, so a subagent directory that
+    # cannot be listed only keeps the handoff waiting, up to the ceiling.
+    paths = [session_path, *sorted(subagent_directory.glob("*.jsonl"))]
+    for path in paths:
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                for line_number, line in enumerate(handle, start=1):
+                    if not any(task_id in line for task_id in shell_ids):
+                        continue
+                    if BACKGROUND_TASK_LAUNCH_KEY not in line and MONITOR_LAUNCH_KEY not in line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError as problem:
+                        raise TranscriptCouldNotBeFullyRead(
+                            f"{path}, line {line_number}: this line names a shell task on "
+                            f"Claude Code's background_tasks list but is not valid JSON "
+                            f"({problem}); its first 200 characters: {line[:200].rstrip()!r}"
+                        ) from problem
+                    tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
+                    if not isinstance(tool_result, dict):
+                        continue
+                    if tool_result.get(BACKGROUND_TASK_LAUNCH_KEY) in shell_ids:
+                        launch_ages.setdefault(tool_result[BACKGROUND_TASK_LAUNCH_KEY],
+                                               record_age_seconds(record, now))
+                    if MONITOR_LAUNCH_KEY in tool_result and tool_result.get("taskId") in shell_ids:
+                        monitor_ids.add(tool_result["taskId"])
+        except OSError as problem:
+            raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
+    return launch_ages, monitor_ids
+
+
 def subagent_transcript_path(session_transcript_path, agent_id) -> Path:
     """Return where Claude Code writes the subagent's own transcript, beside the session's."""
     return Path(session_transcript_path).with_suffix("") / "subagents" / f"agent-{agent_id}.jsonl"
@@ -374,7 +496,8 @@ def subagent_own_transcript_shows_work_in_flight(subagent_path: Path,
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Fire the handoff skill when context runs low.")
-    parser.add_argument("--threshold-used-percentage", type=float, default=33.0)
+    parser.add_argument("--threshold-used-percentage", type=float,
+                        default=DEFAULT_THRESHOLD_USED_PERCENTAGE)
     parser.add_argument(
         "--ceiling-used-percentage", type=float, default=65.0,
         help="above this used share the handoff fires even with work in flight",
@@ -404,7 +527,10 @@ def main(argv=None) -> int:
     used_tokens, window = reading
     used = 100.0 * used_tokens / window
     share = f"{used:.0f}%"
-    if used < arguments.threshold_used_percentage:
+    # A compaction can drop the share below the threshold after a deferral; the deferred marker
+    # records that the threshold was passed, so the handoff its notice promised still comes.
+    if used < arguments.threshold_used_percentage and not (
+            HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred").exists():
         return 0
 
     fired_marker = fired_marker_path(session_id)
@@ -414,16 +540,23 @@ def main(argv=None) -> int:
     # Reincarnation kills in-process work; defer below the ceiling so work can finish.
     if used < arguments.ceiling_used_percentage:
         # An incomplete scan is not an all-clear; defer only as far as the context ceiling.
+        background_tasks = payload.get(BACKGROUND_TASKS_PAYLOAD_KEY)
         try:
-            flight = work_in_flight(
-                transcript_path, arguments.background_task_wait_minutes * 60)
+            # A claude without the list, such as an older one, is read from the transcript instead.
+            if isinstance(background_tasks, list):
+                flight = work_in_flight_from_background_tasks(
+                    background_tasks, transcript_path,
+                    arguments.background_task_wait_minutes * 60)
+            else:
+                flight = work_in_flight(
+                    transcript_path, arguments.background_task_wait_minutes * 60)
             count_is_known = True
         except TranscriptCouldNotBeFullyRead:
             flight = None
             count_is_known = False
 
         if not count_is_known or flight:
-            deferred_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred"
+            deferred_marker = deferred_marker_path(session_id)
             if deferred_marker.exists():
                 return 0  # Repeating the refusal would drive idle sessions into a loop; completion notifications wake them.
 
@@ -457,6 +590,15 @@ def main(argv=None) -> int:
         HANDOFF_INSTRUCTION.format(share=share),
         file=sys.stderr,
     )
+    # The deferral's promise is kept; left in place, the marker would refire the
+    # instruction below the threshold after every later compaction.
+    deferred_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred"
+    try:
+        deferred_marker.unlink(missing_ok=True)
+    except OSError as error:
+        print(HANDOFF_DEFERRED_MARKER_NOT_DELETED.format(
+                  path=deferred_marker, host=socket.gethostname(), error=error),
+              file=sys.stderr)
     return 2
 
 
