@@ -91,12 +91,15 @@ directory, and the finished report is written to the path above once, after
 Question 4 is answered and the sentences are attached. A record is shipped
 add-only, and a report rewritten after a shipment would make the read's own
 shipment, and every later one, refuse the record. This program holds the
-record's being-written lock from its creation until it ships the record, so
-the shipper, and the hook that ships every worktree's records before a
-`git worktree remove`, leave the record alone while the read runs. A shipper
-that does not test the lock, such as an older checkout's, may still ship it
-mid-read; that shipment holds only target/ and the marked copy, and a
-shipment only adds files, so the read's own shipment adds the rest. Before
+record's being-written lock, a flock on the record directory taken with
+cold-read-record-ship.py's record_directory_being_written_lock_take, from
+the record's creation until it ships the record. While it is held,
+cold-read-record-ship.py prints FAILED for the record and copies nothing,
+and the hook that ships every worktree's records before a
+`git worktree remove` skips it. A shipper that does not test the lock, such
+as an older checkout's, may still ship it mid-read; that shipment holds at
+most target/ and the marked copy, and a shipment only adds files, so the
+read's own shipment adds the rest. Before
 the cell launches,
 this program removes the report path, so a suggestions file left by an
 earlier read is replaced, never appended to, and a failed read leaves none.

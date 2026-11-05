@@ -1229,9 +1229,10 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
 
     if record_directory_being_written_lock_is_held_by_any_process(record_dir):
         print(f"FAILED: {name} — still being written: a running program, such as the "
-              f"cold-read-grid, holds its being-written lock and ships the record itself "
-              f"when it finishes; the record stays on disk, unshipped. Ship it only if that "
-              f"program's own `record:` line is not `shipped:`.")
+              f"cold-read-grid, holds a flock on the record directory and ships the record "
+              f"itself when it finishes, so this shipment copied nothing. Once no program is "
+              f"writing the record, run the same command again; it ships what the store lacks, "
+              f"or says nothing new. {rerun}")
         return EXIT_FAILED
 
     ensured = ensure_store(host, records_path)
