@@ -439,8 +439,7 @@ def test_a_mark_whose_text_would_not_be_read_whole_is_refused_by_check_writing_n
               and lines[0].startswith(FAILURE_PREFIX + "check: nothing written: item 3 of 9 in the walk-document ")
               and [line for line in lines if line.startswith("- line ")] == problem_lines
               and f"Then run `python3 {PROGRAM} check --obvious --user-reply-as-typed a` again." in lines
-              and "For each mark listed, write its whole text on the mark's own line, after the mark, as one line, "
-                  "and delete the lines below the mark that held that text." in lines
+              and "Fix the marks from the last listed to the first, so that the line numbers above stay right." in lines
               and case.minutes.read_text() == before and case.calls.read_text() == ""
               and not case.counts_log.exists(), described(result))
 
