@@ -75,7 +75,7 @@ def delete_old_captures(directory: Path, oldest_kept_modification_time: float, d
         seat_directories = sorted(path for path in directory.iterdir() if path.is_dir())
     except OSError as error:
         print(f"FAILED: could not list {directory} ({error}). {FAILED_PATH_KEPT_UNTIL_A_RUN_CAN_DELETE_IT_LINE}")
-        return deleted, failed + 1
+        return 0, 1
     for seat_directory in seat_directories:
         try:
             files = sorted(path for path in seat_directory.iterdir() if path.is_file())
