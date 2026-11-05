@@ -163,6 +163,11 @@ sys.exit(1)
 FAKE_CHECK_NO_VERDICT_FOR_CLEAN_CONFLICT_OTHERWISE = (
     FAKE_CHECK_NO_ANSWER_FOR_CLEAN_CONFLICT_OTHERWISE.replace("sys.exit(2)", "sys.exit(7)"))
 
+FAKE_CHECK_NO_VERDICT_FOR_CLEAN_CLEAN_OTHERWISE = (
+    FAKE_CHECK_NO_VERDICT_FOR_CLEAN_CONFLICT_OTHERWISE.replace(
+        'print("VERDICT: CONFLICT -- fake conflict for the test.")\nsys.exit(1)',
+        'print("VERDICT: CLEAN -- fake clean verdict for the test.")\nsys.exit(0)'))
+
 FAKE_CHECK_CRASHES = FAKE_CHECK_PREAMBLE + """\
 raise RuntimeError("fake crash inside the conflict check")
 """
@@ -909,6 +914,19 @@ def run_push_cases(scratch):
           was_refused(outcome) and hook_lines[-1:] == [TELL_USER_LINE]
           and outcome.stderr.count(TELL_USER_LINE) == 1
           and PUSH_GOES_ON_START not in outcome.stderr, outcome.describe())
+
+    mixed_clean = make_layout(scratch, "layout-mixed-no-verdict-and-clean",
+                              conflict_check=FAKE_CHECK_NO_VERDICT_FOR_CLEAN_CLEAN_OTHERWISE)
+    half_checked = Scenario(scratch, "mixed-no-verdict-and-clean", mixed_clean)
+    outcome = half_checked.push("origin", "clean", "clean-second")
+    goes_on_lines = [line for line in outcome.stderr.splitlines()
+                     if line.startswith(PUSH_GOES_ON_START)]
+    check("mixed push, one branch with no verdict and one both checks find clean: it goes "
+          "through, and the push-goes-through line names only the unchecked branch",
+          went_through(outcome)
+          and goes_on_lines == [PUSH_GOES_ON_LINE % branch_entry(
+              "clean", half_checked.head("clean"))],
+          outcome.describe())
 
     def gave_no_verdict(label, outcome, reason):
         lines = outcome.stderr.splitlines()
