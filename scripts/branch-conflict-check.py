@@ -590,8 +590,8 @@ def clearing_lines(pull_request, branch, head, base, runner=run):
         "Read each pull request a MAIN'S SIDE line names to learn what its change "
         "was for; %s's side is already reviewed, so leave its lines working." % base,
         "If you cannot tell what %s's change to a file meant, ask the agent-seat "
-        "its MAIN'S SIDE line names, with SendMessage, naming the file and both "
-        "pull requests." % base,
+        "its MAIN'S SIDE line names, with SendMessage, naming the file and the "
+        "pull request on that line." % base,
     ]
     if answer == rebase_or_replace.REPLACE_WITH_NEW_PULL_REQUEST:
         return [
@@ -604,19 +604,21 @@ def clearing_lines(pull_request, branch, head, base, runner=run):
         ] + understand + [
             "Cut a new nc-topic-branch from current %s and carry this branch's work "
             "onto it, rewriting this branch's lines so that both changes work." % base,
-            "Run the nc-test-suites for what the new branch changes.",
+            "Run python3 scripts/run-all-test-suites.py "
+            "--only-suites-whose-recorded-inputs-changed-since %s." % base,
             "Open a new pull request whose description has the line #replaces "
             "followed by pull request #%s's URL, then close pull request #%s with a "
             "comment naming the new one." % (pull_request, pull_request),
         ]
     return [
         "ANSWER: rebase -- the branch has no open pull request, so it is rebased "
-        "onto %s." % base,
+        "onto %s, even if it is already on origin." % base,
     ] + understand + [
         "Run git rebase %s, resolving each conflict so that both changes work." % base,
         "If the branch is built on another branch, run git rebase --onto %s "
         "<the other branch's head> instead." % base,
-        "Run the nc-test-suites for what the rebase touched.",
+        "Run python3 scripts/run-all-test-suites.py "
+        "--only-suites-whose-recorded-inputs-changed-since %s." % base,
         "If the branch is already on origin, push it with git push --force-with-lease; "
         "the pre-push hook saves the commit it replaces.",
     ]
