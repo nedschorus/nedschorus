@@ -15,10 +15,10 @@ one on `deep` (Claude Opus), each started through
 nc-systems/cold-read/cold-read-claude-cell.py from this checkout, at the same
 time. That launcher runs `claude -p` in the checkout with hooks off, so each
 fresh-agent has CLAUDE.md, the user's CLAUDE.md and the repository to read, as a
-real agent does, but only the tools Read, Grep, Glob, Write and WebFetch. A
+real agent does, but only the tools Read, Grep, Glob, Write, Edit and WebFetch. A
 fresh-agent is told not to act, only to write down what it would do next; this
 program prints both answers. It does not carry the answers out, but a
-fresh-agent can still write files with its Write tool: whatever the launcher
+fresh-agent can still write files with its Write and Edit tools: whatever the launcher
 prints on its error output, its line on files changed outside the report
 included, is printed under that fresh-agent's answer.
 

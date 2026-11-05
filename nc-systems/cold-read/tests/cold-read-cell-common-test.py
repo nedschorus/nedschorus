@@ -1369,10 +1369,10 @@ with tempfile.TemporaryDirectory() as scratch:
           and set(claude_argv[claude_argv.index("--disallowedTools") + 1].split(","))
           == {"Bash", "Monitor"},
           repr(claude_argv))
-    check("the Claude cell allows the five tools the reviewer needs, WebFetch for linked pages",
+    check("the Claude cell allows the six tools the reviewer needs, Edit to finish a report and WebFetch for linked pages",
           "--allowedTools" in claude_argv
           and claude_argv[claude_argv.index("--allowedTools") + 1]
-          == "Read,Grep,Glob,Write,WebFetch",
+          == "Read,Grep,Glob,Write,Edit,WebFetch",
           repr(claude_argv))
 
     # Every hook off, for the reviewer's session only (user-ruled
@@ -1388,6 +1388,75 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(claude_argv))
     check("the Claude cell keeps CLAUDE.md: no --setting-sources",
           "--setting-sources" not in claude_argv, repr(claude_argv))
+
+    # --- A fast-clarify report missing a required heading is a failed run ---
+    # The cell exits 1, names each missing heading and the file, removes the
+    # incomplete report, and prints the model's own words, which say why it
+    # stopped. The incomplete report holds what Sonnet run 3 of the fast-reader
+    # bake-off of 2026-11-05 left: the file list and Question 1, no 2 or 3.
+    question_1_heading = "## Question 1: What it says"
+    question_2_heading = "## Question 2: Where you struggled"
+    question_3_heading = "## Question 3: What it does not cover that it implies it should"
+    files_and_question_1 = (
+        "# Report\n\nFiles examined:\n- the target\n\n"
+        f"{question_1_heading}\n\n[s1]\n- a point\n")
+    model_explanation = "STUB MODEL: my Edit was refused, so the report is incomplete.\n"
+    for case_slug, report_text, missing_headings in (
+        ("missing-question-2-and-3", files_and_question_1,
+         (question_2_heading, question_3_heading)),
+        # A heading quoted inside another section is not the section.
+        ("question-3-only-quoted", files_and_question_1
+         + f"\n{question_2_heading}\n\n1. A bullet that quotes `{question_3_heading}`.\n",
+         (question_3_heading,)),
+    ):
+        shutil.rmtree(repository)
+        repository = build_scratch_repository(scratch)
+        report = report_path_for(repository, case_slug, "claude")
+        result = run_claude_cell(
+            repository, stubs,
+            {"*": {"report": report_text, "stdout": model_explanation}},
+            report, cell="fast-clarify",
+        )
+        check(f"{case_slug}: the cell fails a report missing a required heading",
+              result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
+        for heading in missing_headings:
+            check(f"{case_slug}: the failure names the missing heading {heading!r}",
+                  f"the line `{heading}`" in result.stderr, repr(result.stderr))
+        for heading in {question_1_heading, question_2_heading, question_3_heading} - set(
+                missing_headings):
+            check(f"{case_slug}: the failure does not name the present heading {heading!r}",
+                  f"the line `{heading}`" not in result.stderr, repr(result.stderr))
+        check(f"{case_slug}: the failure names the incomplete report's file",
+              f"wrote {report} without" in result.stderr, repr(result.stderr))
+        check(f"{case_slug}: the incomplete report is removed",
+              not report.exists(), "the incomplete report is still at its path")
+        check(f"{case_slug}: the model's own words are printed",
+              model_explanation.strip() in result.stderr, repr(result.stderr))
+        check(f"{case_slug}: the cell does not say a report was written",
+              "report written to" not in result.stderr, repr(result.stderr))
+
+    # Every heading present passes, with trailing spaces on a heading line,
+    # and a cell with no required headings is not held to fast-clarify's.
+    for case_slug, cell, report_text in (
+        ("all-three-questions", "fast-clarify", files_and_question_1
+         + f"\n{question_2_heading}  \n\n1. one\n\n{question_3_heading}\n\nNo issues\n"),
+        ("defect-hunt-without-question-headings", "defect-hunt",
+         "Report complete: no findings.\nExamined the target.\n"),
+    ):
+        shutil.rmtree(repository)
+        repository = build_scratch_repository(scratch)
+        report = report_path_for(repository, case_slug, "claude")
+        result = run_claude_cell(repository, stubs, {"*": {"report": report_text}},
+                                 report, cell=cell)
+        check(f"{case_slug}: the cell accepts the report",
+              result.returncode == 0 and report.is_file(),
+              f"exit {result.returncode}; stderr={result.stderr!r}")
+
+    # The required headings are the ones the prompt tells the reviewer to write.
+    fast_clarify_prompt = (PROMPTS_DIR / "fast-clarify-prompt.md").read_text(encoding="utf-8")
+    for heading in stamp_common.COLD_READ_CELL_TO_REQUIRED_REPORT_SECTION_HEADINGS["fast-clarify"]:
+        check(f"the fast-clarify prompt tells the reviewer to write {heading!r}",
+              f"`{heading}`" in fast_clarify_prompt, "the prompt does not quote this heading")
 
     # No credential file is readable (user-ruled 2026-09-28): Claude Code's
     # own deny rules, in the absolute `//` form -- a rule without it is
