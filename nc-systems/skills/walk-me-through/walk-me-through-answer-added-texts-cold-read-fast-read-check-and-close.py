@@ -1770,18 +1770,22 @@ def unshown_items_in_walk_order(items, placing):
     return ordered
 
 
-def unshown_items_gathered_behind_chosen(walk_finder, minutes, chosen, units, placing, parser, answered_numbers):
+def unshown_items_gathered_behind_chosen(walk_finder, minutes, chosen, units, placing, parser, answered_numbers,
+                                         total):
     """Rewrite the walk-document so that the unshown items placing holds stand together where the first of them
     stands, or right after the unit of the answered items, answered_numbers, when the first of them stands above
-    it, chosen first and the others in the order unshown_items_in_walk_order gives; return chosen's heading line
+    it, that unit chosen by total, the `#next_to_present` line's M, as waiting_item_units chooses between two
+    headings for one item, chosen first and the others in the order unshown_items_in_walk_order gives; return chosen's heading line
     and the units of the rewritten walk-document. A later close walks on from chosen, so the items still unshown
     come next, and items numbered later stand in the order they were shown."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     lines = document.read_text(encoding="utf-8").split("\n")
     spans = {unit[3]: (unit[3], unit[4]) for unit in units if unit[3] in placing}
     rest = unshown_items_in_walk_order([item for item in placing if item != chosen], placing)
-    answered_ends = [unit[4] for unit in units if set(unit[0]) & set(answered_numbers)]
-    start = max([min(spans)] + answered_ends)
+    # close's walk_document_items already ran waiting_item_units on the waiting items, which hold answered_numbers,
+    # with this total, so it cannot raise UnusableRange here.
+    _, answered_units = walk_finder.waiting_item_units(document, None, answered_numbers, total, parser, units)
+    start = max([min(spans)] + [unit[4] for unit in answered_units])
     kept = [(index, line) for index, line in enumerate(lines)
             if not any(first <= index < end for first, end in spans.values())]
     joined = []
@@ -2065,7 +2069,7 @@ def close(arguments):
         first = numbers[0]
         if first in placing:  # Not the summary item, which stays where it is.
             first, units = unshown_items_gathered_behind_chosen(walk_finder, minutes, first, units, placing, parser,
-                                                                answered_numbers)
+                                                                answered_numbers, total)
         numbers = [unnumbered_item_numbered(walk_finder, minutes, first, units)]
     named = items_named(numbers, count)
     append_to_minutes(minutes, [NEXT_MARKER_LINE.format(value=named if numbers else CLOSED_MARKER_VALUE)])

@@ -3253,6 +3253,45 @@ def test_gathering_puts_an_unshown_item_standing_above_answered_items_after_the_
           f"{shown}\n{text}")
 
 
+def test_gathering_places_unshown_items_after_the_answered_items_heading_the_minutes_total_picks():
+    """A walk-document renumbered before numbers were never reused keeps two headings for item 2, `of 3` and `of 4`,
+    as md-skills-seat-open-decisions-2026-10-13.md does for its items 22 to 27; the minutes' `of 3` picks the
+    first, so gathering must not move the unshown item past item 3 to below the other heading."""
+    document = ("# A walk in which code picks the order\n\n"
+                "## Item 1 of 3: one\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                "## Item 2 of 3: two\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                + unshown_item("added", f"{CATEGORY_TAG}must_fix_now")
+                + "## Item 3 of 3: three\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                "## Item 2 of 4: two, as an earlier count had it\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                "## Summary\n\nThe walk in short.\n")
+    case = Case(next_to_present="item 2 of 3", document=document)
+    shown = titles_shown_in_turn(case)
+    check("with two headings for the answered item, gathering keeps the unshown item after the heading the minutes' "
+          "total picks, so item 3 is shown before the summary item",
+          shown == ["added", "three", "Summary"], f"{shown}\n{walk_document(case)}")
+
+
+def test_close_hold_answer_numbers_a_new_item_that_waits_on_a_decided_or_the_answered_item():
+    """The hold path refuses a new item waiting on a numbered item still to come; one waiting on an item the minutes
+    already decide, or on the item whose answer it holds, has nothing to wait for and is numbered."""
+    for name, waits_on in (("an item the minutes already decide", "one"), ("the item whose answer it holds", "two")):
+        case = Case(next_to_present="item 2 of 4",
+                    document=UNNUMBERED_ITEMS_DOCUMENT.replace("## two", "## Item 2 of 4: two"))
+        case.minutes.write_text(case.minutes.read_text().replace(
+            "#next_to_present item 2 of 4", "item 1 of 4: approved; every text the change adds has had a fast read. "
+                                            "<accepted>\n#next_to_present item 2 of 4"))
+        case.run("check")
+        document = walk_document(case).replace("## three", f"## the change a finding raised\n\n{FIX_NEXT_LINE}\n\n"
+                                               f"#approval_walk_item_waits_on {waits_on}\n\n#case_against none.\n\n"
+                                               "## three", 1)
+        (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").write_text(document)
+        closed = case.run("close", "--hold-answer-until-new-item-answered")
+        check(f"close --hold-answer-until-new-item-answered numbers a new item that waits on {name}",
+              closed.returncode == 0 and marker(case).startswith("#next_to_present item 3 of ")
+              and re.search(r"^## Item 3 of \d+: the change a finding raised$", walk_document(case), re.M) is not None,
+              described(closed) + walk_document(case))
+
+
 def test_close_writes_no_walk_document_when_gathering_would_lose_an_item():
     """Gathering keeps blank lines at its joins, so it cannot lose an item; a stand-in walk finder that reads one
     item fewer after gathering is put into the program, run in this process."""
