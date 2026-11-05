@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Check branch conflicts using git and GitHub.
 
+The head checked is --head; with --pull-request and no --head it is the pull
+request's pushed head on GitHub, fetched by its hash from --fetch-remote when
+this checkout lacks it, under --no-fetch too, and with no --pull-request it is
+HEAD.
+
 GitHub can refuse a merge that git resolves cleanly, so a matching GitHub
 CONFLICTING verdict takes precedence. UNKNOWN is not evidence of a clean merge."""
 
@@ -475,10 +480,50 @@ def unresolved_lines(side, rev):
     ]
 
 
+def pull_request_frozen_head_gh_read_failure_report_lines(pull_request):
+    """Return the UNREAD message for a pull request whose pushed head gh could not give."""
+    return [
+        "UNREAD: gh could not give pull request %d's pushed head, so there is "
+        "no commit to check; do not act on any conflict answer until a run "
+        "succeeds." % pull_request,
+        "If gh is logged out or cannot reach GitHub, fix that, then rerun.",
+        "If you meant to check a commit of your own, rerun with --head "
+        "<commit>.",
+    ]
+
+
+def pull_request_frozen_head_fetch_failure_report_lines(pull_request, github_head, remote):
+    """Return the UNRESOLVED message for a pushed head this checkout lacks and cannot fetch."""
+    return [
+        "UNRESOLVED: pull request %d's pushed head %s is not in this checkout, "
+        "and git fetch %s %s did not bring it; do not act on any conflict "
+        "answer until a run succeeds."
+        % (pull_request, github_head, remote, github_head),
+        "If --fetch-remote %s is not the repository the pull request is in, "
+        "rerun with --fetch-remote naming that repository's remote." % remote,
+        "Otherwise fix the fetch, then rerun.",
+    ]
+
+
+def pull_request_head(pull_request, remote, runner=run):
+    """Return (pushed head hash, None), or (None, report lines) when it cannot be had."""
+    github_head = github_head_commit(pull_request, runner)
+    if github_head is None:
+        return None, pull_request_frozen_head_gh_read_failure_report_lines(pull_request)
+    if resolve_commit(github_head, runner) is None:
+        # The default fetch skips a fork's pull request and a deleted branch.
+        status, _ = runner(["git", "fetch", remote, github_head])
+        if status != 0 or resolve_commit(github_head, runner) is None:
+            return None, pull_request_frozen_head_fetch_failure_report_lines(
+                pull_request, github_head, remote)
+    return github_head, None
+
+
 def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
           reads=GITHUB_UNKNOWN_READS, sleep_seconds=GITHUB_UNKNOWN_SLEEP_SECONDS,
           fetch=True, remote=DEFAULT_FETCH_REMOTE):
-    """Return (exit status, report lines)."""
+    """Return (exit status, report lines); a head of None is chosen as the
+    module docstring says."""
     lines = []
 
     if fetch:
@@ -511,6 +556,14 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
     base_hash = resolve_commit(base, runner)
     if base_hash is None:
         return EXIT_BAD_INVOCATION, unresolved_lines("base", base)
+    github_head = None
+    if head is None and pull_request is None:
+        head = "HEAD"
+    elif head is None:
+        github_head, refusal = pull_request_head(pull_request, remote, runner)
+        if refusal:
+            return EXIT_BAD_INVOCATION, refusal
+        head = github_head
     head_hash = resolve_commit(head, runner)
     if head_hash is None:
         return EXIT_BAD_INVOCATION, unresolved_lines("head", head)
@@ -533,7 +586,8 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
     conflict = merge_status == MERGE_TREE_CONFLICT
 
     if pull_request is not None:
-        github_head = github_head_commit(pull_request, runner)
+        if github_head is None:
+            github_head = github_head_commit(pull_request, runner)
         if github_head is None:
             lines.append(
                 "GITHUB: could not be asked (gh failed) -- git's answer stands")
@@ -615,7 +669,10 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Report whether a branch conflicts with main.")
-    parser.add_argument("--head", default="HEAD")
+    parser.add_argument(
+        "--head", default=None,
+        help="the commit to check; default: the pull request's pushed head "
+             "with --pull-request, otherwise HEAD")
     parser.add_argument("--base", default=DEFAULT_BASE)
     parser.add_argument("--pull-request", type=int, default=None)
     parser.add_argument("--no-fetch", dest="fetch", action="store_false",
