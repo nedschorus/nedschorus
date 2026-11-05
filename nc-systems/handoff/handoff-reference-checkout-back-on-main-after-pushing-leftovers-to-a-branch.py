@@ -74,6 +74,8 @@ LEFTOVERS_BRANCH_PREFIX = "reference-checkout-leftovers-"
 LEFTOVERS_COMMIT_MESSAGE = "Leftovers found in the reference-checkout"
 StepFailed = reference_checkout_steps.ReferenceCheckoutGitStepFailed
 TREE_STEP_TIMEOUT_SECONDS = reference_checkout_steps.NETWORK_OR_TREE_GIT_STEP_TIMEOUT_SECONDS
+# The nc-shared-database service restart the hook runs takes seconds; a hung hook must not hold a handoff.
+POST_MERGE_HOOK_TIMEOUT_SECONDS = 120
 
 
 def git(checkout: Path, arguments, **options) -> str:
@@ -129,10 +131,11 @@ def post_merge_hook_run_as_after_a_merge(checkout: Path, head_before_the_switch:
         finished = subprocess.run(
             ["git", "-C", str(checkout), "hook", "run", "--ignore-missing", "post-merge", "--", "0"],
             stdin=subprocess.DEVNULL, capture_output=True, text=True,
-            timeout=TREE_STEP_TIMEOUT_SECONDS,
+            timeout=POST_MERGE_HOOK_TIMEOUT_SECONDS,
             env=reference_checkout_steps.git_redirecting_removal.environment_without_git_redirecting_variables())
     except (OSError, subprocess.TimeoutExpired) as error:
-        return f"`git hook run post-merge` could not be run: {error}"
+        return (f"`git hook run post-merge`, run after the reference-checkout was put on main, "
+                f"did not finish: {error}")
     if finished.returncode == 0:
         return ""
     return (f"`git hook run post-merge` exited {finished.returncode} after the reference-checkout "
