@@ -60,7 +60,7 @@ commit; each suite that fails there is run again in a scratch worktree of the fr
 checkout's own runner, recording nothing. It refuses when a suite fails at the checked commit and not
 at the frozen-head, which includes a suite the frozen-head does not have; a suite that fails at both is
 not the round's doing, so it passes, names the suite, and records it in
-SUITES_FAILING_AT_FROZEN_HEAD_TOO_RECORD_FILE_NAME in the git directory under the checked commit. Once
+PULL_REQUEST_FIX_ROUND_CHECK_TEST_SUITES_ALSO_FAILING_AT_FROZEN_HEAD_RECORD_FILE_NAME in the git directory under the checked commit. Once
 GitHub's head is the checked commit or the frozen-head, it prints the message for merge-lane-2, which
 the agent sends with SendMessage, since a program cannot, naming the suites that record holds for the
 checked commit; it runs no suite then. When the round has no commit, it first posts the round record,
@@ -168,7 +168,7 @@ GUARDED_FILE_CHANGE_CARRYING_OUT_USER_RULING_INSTRUCTION = (
     "dispatched you.")
 MOVE_STATE_FILE_NAME = "fix-round-move-to-own-pull-request.json"
 # Written by the run before the push and read by the run after it, which runs no suite.
-SUITES_FAILING_AT_FROZEN_HEAD_TOO_RECORD_FILE_NAME = "fix-round-suites-failing-at-frozen-head-too.json"
+PULL_REQUEST_FIX_ROUND_CHECK_TEST_SUITES_ALSO_FAILING_AT_FROZEN_HEAD_RECORD_FILE_NAME = "pull-request-fix-round-check-test-suites-also-failing-at-frozen-head-record.json"
 # The answers file waits in the git directory while the new topic branch is checked out, so no commit
 # or check made there can pick it up.
 ANSWERS_SET_ASIDE_DIRECTORY_NAME = "fix-round-answers-set-aside"
@@ -799,7 +799,7 @@ def suites_the_round_broke_and_suites_failing_at_frozen_head_too(frozen_head, co
 
 
 def suites_failing_at_frozen_head_too_record_path():
-    return Path(git(["rev-parse", "--absolute-git-dir"]).strip()) / SUITES_FAILING_AT_FROZEN_HEAD_TOO_RECORD_FILE_NAME
+    return Path(git(["rev-parse", "--absolute-git-dir"]).strip()) / PULL_REQUEST_FIX_ROUND_CHECK_TEST_SUITES_ALSO_FAILING_AT_FROZEN_HEAD_RECORD_FILE_NAME
 
 
 def suites_failing_at_frozen_head_too_recorded_for(commit):
