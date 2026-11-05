@@ -112,9 +112,10 @@ and judge what code cannot before running CLOSE, which records the item as
 another weak one, or a fix that matches its design from one that does not;
 the agent judges those.
 
-`--not-asked none` settles an item of none of the five kinds, only when its
-`#case_against` line rates the case against none. It needs touches, and refuses
-when a touched file is one the instruction-file guard,
+`--not-asked none` settles an item of none of those kinds, only when its
+`#case_against` line rates the case against none. It needs a touches line,
+which may be empty for a change that touches no file, such as doing nothing;
+it refuses a touched file that is not in the checkout, and one the instruction-file guard,
 .claude/guard-hooks/instruction-file-guard.py, protects, because an item that
 adds words the user has not approved to such a file is shown to him; the
 guard's own functions decide which files those are. The minutes write the
@@ -718,8 +719,7 @@ NOT_ASKED_RATING_PROBLEM = ("- its `#case_against` line rates the case against {
                             "or weak with a case against that names only cost, settles without the user.")
 NOT_ASKED_NO_LINE_PROBLEM = "- it has no `{marker}` line; {why}"
 NOT_ASKED_NOT_RATED_NONE_PROBLEM = ("- its `#case_against` line rates the case against {rating}; an item of none of "
-                                    "the five kinds settles without the user only when its case against is rated "
-                                    "none.")
+                                    "the kinds settles without the user only when its case against is rated none.")
 NOT_ASKED_GUARDED_FILE_PROBLEM = ("- `{marker}` names {path}, which the instruction-file guard protects; an item "
                                   "that adds words the user has not approved to such a file is shown to him, and "
                                   "one whose words a ruling of his gives settles as kind 1.")
@@ -1183,7 +1183,8 @@ def not_asked_kind(value):
         return NOT_ASKED_RATED_NONE
     if value.strip() in {str(kind) for kind in NOT_ASKED_KINDS}:
         return int(value)
-    raise argparse.ArgumentTypeError(f"`{value}` is not a kind: give 1, 2, 3, 4, 5, 6 or none")
+    kinds = ", ".join(str(kind) for kind in NOT_ASKED_KINDS)
+    raise argparse.ArgumentTypeError(f"`{value}` is not a kind: give {kinds} or none")
 
 
 def not_asked_label(kind):
@@ -1357,9 +1358,14 @@ def not_asked_problems(kind, rating, lines, marks, top, item):
     if kind == NOT_ASKED_RATED_NONE:
         if rating != NOT_ASKED_RATED_NONE:
             problems.append(NOT_ASKED_NOT_RATED_NONE_PROBLEM.format(rating=rating))
-        if not words(found[TOUCHES]):
+        # An empty touches line is a change that touches no file; only a missing line is refused.
+        if TOUCHES not in found:
             problems.append(NOT_ASKED_NO_LINE_PROBLEM.format(marker=TOUCHES, why=NOT_ASKED_WHY[TOUCHES]))
-        for path in guarded_paths(top, words(found[TOUCHES])):
+        touched = words(found[TOUCHES])
+        for path in touched:
+            if not (top / path).exists():
+                problems.append(NOT_ASKED_MISSING_PATH_PROBLEM.format(marker=TOUCHES, path=path, top=top))
+        for path in guarded_paths(top, touched):
             problems.append(NOT_ASKED_GUARDED_FILE_PROBLEM.format(marker=TOUCHES, path=path))
         return problems
     if rating not in NOT_ASKED_RATINGS:
