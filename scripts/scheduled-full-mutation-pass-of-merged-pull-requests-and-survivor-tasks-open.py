@@ -415,7 +415,7 @@ def agent_seat_task_list_new_pending_task_write(list_directory, subject, descrip
     return task_id
 
 
-def survivor_task_command(diff_files):
+def survivor_task_recorded_mutant_killed_check_command_line(diff_files):
     return (f"python3 scripts/{MUTATION_TESTING_PROGRAM.name} {RECORDED_MUTANT_KILLED_CHECK_FLAG} "
             + " ".join(shlex.quote(str(diff_file)) for diff_file in diff_files))
 
@@ -438,7 +438,7 @@ def survivor_task_description(opening, diffs_and_diff_files, record_citation):
         f"that reads the file still passes, so a defect there would go unnoticed. One test often "
         f"kills every mutant of a line.\n\n"
         f"{mutants}\n\n"
-        f"This task's command: {survivor_task_command(diff_file for _, diff_file in shown)}\n"
+        f"This task's command: {survivor_task_recorded_mutant_killed_check_command_line(diff_file for _, diff_file in shown)}\n"
         f"If a test can tell a mutant from the code: write that test, run this task's command on "
         f"your branch, and open a pull request with the test, putting the command's output in its "
         f"description.\n"
@@ -455,7 +455,7 @@ def survivor_task_description(opening, diffs_and_diff_files, record_citation):
 def survivor_task_is_current(description, diff_files):
     """True when the description gives the command for exactly these diff files and ends with
     the line that says to leave the task open."""
-    return (f"This task's command: {survivor_task_command(sorted(diff_files, key=str))}\n"
+    return (f"This task's command: {survivor_task_recorded_mutant_killed_check_command_line(sorted(diff_files, key=str))}\n"
             in description and description.endswith(
                 SURVIVOR_TASK_DESCRIPTION_LAST_LINE_LEAVE_TASK_OPEN_FOR_NIGHTLY_RECHECK))
 
