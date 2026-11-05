@@ -705,6 +705,7 @@ class ReviewerRunEndedByResultLine(subprocess.CompletedProcess):
 
 
 REPORT_WAIT_POLL_SECONDS = 0.1
+AGENT_BINARY_KILLED_AFTER_FINAL_RESULT_LINE_PHRASE = "printed its result line but had not exited"
 
 
 def report_is_written(report) -> bool:
@@ -884,7 +885,7 @@ def run_model_chain(
         if completed.stderr:
             print(completed.stderr, file=sys.stderr, end="")
         if isinstance(completed, ReviewerRunEndedByResultLine):
-            print(f"{program}: {model} printed its result line but had not exited, so "
+            print(f"{program}: {model} {AGENT_BINARY_KILLED_AFTER_FINAL_RESULT_LINE_PHRASE}, so "
                   "the cell took that line as the end of the run and killed it and every "
                   "process it started with SIGKILL.", file=sys.stderr)
         if completed.returncode is None:

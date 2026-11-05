@@ -128,7 +128,7 @@ REAL_AGY_STREAM_JSON_OUTPUT = (
 # The cell's deadline in these cases is agy's 30 minutes; a read ended by the
 # result line ends long before this.
 RESULT_LINE_ENDS_READ_WITHIN_SECONDS = 20
-KILLED_AFTER_RESULT_LINE_WORDS = "printed its result line but had not exited"
+KILLED_AFTER_RESULT_LINE_WORDS = cell_common.AGENT_BINARY_KILLED_AFTER_FINAL_RESULT_LINE_PHRASE
 
 
 def agy_result_line(status, response, error=""):
