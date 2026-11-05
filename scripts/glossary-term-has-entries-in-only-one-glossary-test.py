@@ -119,9 +119,6 @@ def duplicate_failure_detail(duplicates):
         "delete it from the others.",
         "If two entries name different things that happen to share a spelling, rename one; "
         "a new name for a term is put to the user before it is used.",
-        f"If the instruction-file guard refuses your edit to a glossary, whether the fix needs "
-        f"the user's approval is decided by {RULE_FAILURE_LINES.APPROVAL_PAGE_PATH}, and the "
-        f"guard's refusal gives the steps.",
         RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE]
     return "\n".join(lines)
 
