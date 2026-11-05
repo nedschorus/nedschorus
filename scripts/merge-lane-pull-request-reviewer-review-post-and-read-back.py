@@ -28,7 +28,9 @@ COMMENT, and merge-lane-2 records the verdict itself.
 With --github-account ned-review-merge, the file is merge-lane-2's own review,
 which restates every finding the round's reviewers raised, each comment with
 exactly "path", "line", "body" and "finding_category", one of FINDING_CATEGORIES, the
-four categories of the goals and philosophy page. It is posted with the merge
+four categories of the goals and philosophy page, and may carry "nit": true, which marks a
+fix-in-maintenance finding as a nit for the fix-round program to carry; "nit" with any other
+value, or on a comment of any other category, is refused. It is posted with the merge
 account's token, read as
 merge-lane-pull-request-helpers-common-options-paths-and-token.py reads it,
 and its event is always the verdict; GitHub refuses that review on a pull
@@ -36,13 +38,14 @@ request ned-review-merge opened, and the post fails. For this file, this
 program alone writes what the fix-round program,
 pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py,
 reads blocking findings by, using that program's BLOCKING_MARKER_PATTERN,
-and the category marks that
+and nits by, using its NIT_MARK, and the category marks that
 pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py
 reads non-blocking findings by:
 - each comment is posted opening with review_comment_opening_mark_for_finding_category() of its
   category: "**Blocks** " for must-fix-now, and the category in bold, as in
-  "**fix-next** ", for the other three; a comment whose body already opens
-  with a blocking mark or a category mark is refused;
+  "**fix-next** ", for the other three, and NIT_MARK,
+  "**fix-in-maintenance, nit** ", for a nit; a comment whose body already opens
+  with a blocking mark, a category mark or the nit mark is refused;
 - a comment with the same path, line and posted body as an earlier one is
   dropped, since the fix-round program counts such a repost once;
 - when N comments are must-fix-now, N at least 1, the body carries
@@ -105,6 +108,8 @@ POSTED_VERDICTS = ("APPROVE", "REQUEST_CHANGES")
 # The goals and philosophy page's four categories of a finding; only the first blocks.
 FINDING_CATEGORIES = ("must-fix-now", "fix-next", "fix-in-maintenance", "file-for-later")
 BLOCKING_CATEGORY = "must-fix-now"
+# The only category a finding marked "nit" may have; the fix-round program carries its nits.
+NIT_CATEGORY = "fix-in-maintenance"
 BLOCKING_MARK = "**Blocks** "
 NON_BLOCKING_CATEGORY_MARK_FORMAT = "**{category}** "
 BLOCKING_COUNT_FORMAT = "**Blocking: {count}**"
@@ -194,7 +199,7 @@ def read_review_file(path, account):
     categorized = account == MERGE_LANE_ACCOUNT
     keys = {"path", "line", "body", "finding_category"} if categorized else {"path", "line", "body"}
     if not isinstance(comments, list) or not all(
-            isinstance(comment, dict) and set(comment) == keys
+            isinstance(comment, dict) and (set(comment) == keys or categorized and set(comment) == keys | {"nit"})
             and isinstance(comment["path"], str)
             and isinstance(comment["line"], int) and not isinstance(comment["line"], bool)
             and isinstance(comment["body"], str)
@@ -202,7 +207,7 @@ def read_review_file(path, account):
         raise ReviewFileUnusable(
             "has a \"comments\" entry that is not exactly a text \"path\", a number \"line\" and "
             "a text \"body\"" + (", and a \"finding_category\"," if categorized else ",")
-            + " with no other keys")
+            + " with no other keys" + (" but \"nit\"" if categorized else ""))
     if not categorized:
         return verdict, body, comments
     for comment in comments:
@@ -211,6 +216,15 @@ def read_review_file(path, account):
             raise ReviewFileUnusable(
                 f"has a comment on {where} whose \"finding_category\" is {comment['finding_category']!r}, not one "
                 f"of {', '.join(FINDING_CATEGORIES)}")
+        if "nit" in comment and comment["nit"] is not True:
+            raise ReviewFileUnusable(
+                f"has a comment on {where} whose \"nit\" is {comment['nit']!r}; give \"nit\" only as "
+                f"true, and leave it out of a comment that is not a nit")
+        if "nit" in comment and comment["finding_category"] != NIT_CATEGORY:
+            raise ReviewFileUnusable(
+                f"has a comment on {where} with \"nit\": true whose \"finding_category\" is "
+                f"{comment['finding_category']!r}; only a {NIT_CATEGORY} finding can be a nit, so make its "
+                f"category {NIT_CATEGORY} or leave \"nit\" out")
         mark = fix_round.BLOCKING_MARKER_PATTERN.match(comment["body"].lstrip())
         if mark:
             raise ReviewFileUnusable(
@@ -221,8 +235,8 @@ def read_review_file(path, account):
         if marked:
             raise ReviewFileUnusable(
                 f"has a comment on {where} whose body already opens with the category mark "
-                f"{review_comment_opening_mark_for_finding_category(marked[0]).strip()}; this program writes each comment's "
-                f"category mark from its \"finding_category\", so leave it out of the body")
+                f"{review_comment_opening_mark_for_finding_category(marked[0], marked[2]).strip()}; this program writes "
+                f"each comment's category mark from its \"finding_category\" and \"nit\", so leave it out of the body")
     if verdict == "REQUEST_CHANGES" and not any(
             comment["finding_category"] == BLOCKING_CATEGORY for comment in comments):
         raise ReviewFileUnusable(
@@ -234,24 +248,29 @@ def read_review_file(path, account):
     return verdict, body, comments
 
 
-def review_comment_opening_mark_for_finding_category(category):
-    """The mark a comment of this finding_category opens with when posted."""
+def review_comment_opening_mark_for_finding_category(category, nit=False):
+    """The mark a comment of this finding_category opens with when posted, the nit mark for a nit."""
+    if nit:
+        return fix_round.NIT_MARK
     if category == BLOCKING_CATEGORY:
         return BLOCKING_MARK
     return NON_BLOCKING_CATEGORY_MARK_FORMAT.format(category=category)
 
 
 def finding_category_and_text_read_from_review_comment_opening_mark(body):
-    """(finding_category, text) of a posted merge-lane-2 comment, read by the mark it opens with,
-    or None when it opens with none. A blocking mark is read as the fix-round program reads it."""
+    """(finding_category, text, nit) of a posted merge-lane-2 comment, read by the mark it opens with,
+    nit True only for the nit mark, which reads as NIT_CATEGORY; or None when it opens with none.
+    A blocking mark is read as the fix-round program reads it."""
     stripped = body.lstrip()
     blocking = fix_round.BLOCKING_MARKER_PATTERN.match(stripped)
     if blocking:
-        return BLOCKING_CATEGORY, stripped[blocking.end():].strip()
+        return BLOCKING_CATEGORY, stripped[blocking.end():].strip(), False
+    if stripped.startswith(fix_round.NIT_MARK):
+        return NIT_CATEGORY, stripped[len(fix_round.NIT_MARK):].strip(), True
     for category in FINDING_CATEGORIES:
         mark = review_comment_opening_mark_for_finding_category(category)
         if category != BLOCKING_CATEGORY and stripped.startswith(mark):
-            return category, stripped[len(mark):].strip()
+            return category, stripped[len(mark):].strip(), False
     return None
 
 
@@ -289,7 +308,8 @@ def with_finding_category_marks(body, comments):
     count set by the must-fix-now ones left."""
     comments = fix_round.without_reposts([
         {"path": comment["path"], "line": comment["line"],
-         "body": review_comment_opening_mark_for_finding_category(comment["finding_category"]) + comment["body"]}
+         "body": review_comment_opening_mark_for_finding_category(comment["finding_category"], comment.get("nit", False))
+         + comment["body"]}
         for comment in comments])
     count = len(fix_round.marked(comments))
     verdict = "REQUEST_CHANGES" if count else "APPROVE"
