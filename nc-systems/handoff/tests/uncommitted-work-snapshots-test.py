@@ -831,7 +831,8 @@ def test_supervisor_appends_the_list():
         supervisor.supervise_sessions(settings)
     except StopIteration:
         pass
-    check(launched and launched[0].startswith("Founding prompt.\n\nLeftover work-snapshots: 1"),
+    check(launched and launched[0].startswith(supervisor.first_prompt_from_launch_command_marked_not_typed_by_the_user("Founding prompt.")
+        + "\n\nLeftover work-snapshots: 1"),
           "every launch's prompt carries the leftover list after the prompt",
           launched[:1] and launched[0][:120])
 

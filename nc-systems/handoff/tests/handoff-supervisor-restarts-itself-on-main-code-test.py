@@ -63,7 +63,8 @@ class ProcessReplaced(BaseException):
 
 
 class StubIgnitionPlan:
-    def compose(self, launch_time_git_sync_report, overview_refresh_due=(), memory_review_due=()):
+    def compose(self, launch_time_git_sync_report, overview_refresh_due=(), memory_review_due=(),
+                branch_state_instruction=""):
         return "SUCCESSOR PROMPT"
 
 
@@ -89,7 +90,7 @@ def supervise_one_handoff(workspace: Path, case: str, own_checkout_sync_report: 
         result.prompts.append(prompt)
         if len(result.prompts) == 1:
             settings.handoff_path.write_text(
-                f"restart-counter: 1\nnext-step: carry on\n{handoff_extra}", encoding="utf-8")
+                f"session-handoff-sequence-number: 1\nnext-step: carry on\n{handoff_extra}", encoding="utf-8")
             return StubLaunchedSession(-15, ended=False)
         return StubLaunchedSession(0)
 
@@ -256,7 +257,7 @@ def run_restarted_process_cases(workspace: Path):
         started_by_handoff_supervisor_restarting_itself_on_main_code=True)
     supervisor.write_supervisor_state(settings.state_path, {
         supervisor.LAUNCHED_SESSION_ID_STATE_KEY: "retiring-session", "generation": 3})
-    settings.handoff_path.write_text("restart-counter: 1\nnext-step: carry on\n", encoding="utf-8")
+    settings.handoff_path.write_text("session-handoff-sequence-number: 1\nnext-step: carry on\n", encoding="utf-8")
     events, prompts, states_at_launch = [], [], []
 
     def launch(agent_command, session_id, working_directory, prompt, **_):
@@ -266,7 +267,7 @@ def run_restarted_process_cases(workspace: Path):
         # A process that failed to restart launches again; that session ends without a handoff, so the case ends.
         if len(prompts) > 1:
             return StubLaunchedSession(0)
-        settings.handoff_path.write_text("restart-counter: 2\nnext-step: again\n", encoding="utf-8")
+        settings.handoff_path.write_text("session-handoff-sequence-number: 2\nnext-step: again\n", encoding="utf-8")
         return StubLaunchedSession(-15, ended=False)
 
     def sync(directory):
@@ -334,7 +335,7 @@ def run_missing_transcript_cases(workspace: Path):
         launched_session_ids.append(session_id)
         prompts.append(prompt)
         if len(prompts) == 1:
-            settings.handoff_path.write_text("restart-counter: 1\nnext-step: carry on\n",
+            settings.handoff_path.write_text("session-handoff-sequence-number: 1\nnext-step: carry on\n",
                                              encoding="utf-8")
             return StubLaunchedSession(-15, ended=False)
         return StubLaunchedSession(0)
@@ -378,7 +379,7 @@ def run_missing_transcript_cases(workspace: Path):
         retiring = f"0badbeef-0000-4000-8000-{os.getpid():012d}"
         supervisor.write_supervisor_state(settings.state_path, {
             supervisor.LAUNCHED_SESSION_ID_STATE_KEY: retiring, "generation": 3})
-        settings.handoff_path.write_text("restart-counter: 1\nnext-step: carry on\n",
+        settings.handoff_path.write_text("session-handoff-sequence-number: 1\nnext-step: carry on\n",
                                          encoding="utf-8")
         prompts = []
 

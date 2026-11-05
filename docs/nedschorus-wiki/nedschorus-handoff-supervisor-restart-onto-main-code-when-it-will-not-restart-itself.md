@@ -6,4 +6,6 @@ The restart program, `python3 ~/Projects/nedschorus/nc-systems/handoff/handoff-s
 
 When neither a handoff-supervisor nor an agent-session of the agent-seat runs, the restart program does not apply: `scripts/recover-crashed-seats.py`, which brings back an agent-seat whose handoff-supervisor is gone, is the tool for that agent-seat.
 
+When an agent-session of the agent-seat runs but no handoff-supervisor watches it, neither the restart program nor `scripts/recover-crashed-seats.py` applies: the agent-session writes its session-handoff at once, by the /handoff skill, and tells the user, who then runs, on the Mac, `python3 ~/Projects/nedschorus/scripts/resupervise-seat.py <seat> --machine <machine>`, with `ubuntu` for an agent-seat on ned-box and `mac` for one on the Mac. That program ends the agent-session, losing anything done after the session-handoff was written, and starts a successor from that session-handoff under a new handoff-supervisor.
+
 When the successor's initial-agent-instructions say the handoff-supervisor did not restart because the reference-checkout cannot be fast-forwarded to main, do not run the restart program, since its first step fails the same way: tell the user, and once that checkout is fixed, the next session-handoff that launches a successor without consulting the user restarts the handoff-supervisor.

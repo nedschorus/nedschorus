@@ -50,6 +50,8 @@ SCRIPT_PATH = SYSTEM_DIRECTORY / "handoff-supervisor-restart-onto-main-code-by-r
 _spec = importlib.util.spec_from_file_location("handoff_supervisor_restart", SCRIPT_PATH)
 program = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(program)
+# Every case runs as on ned-box, on either machine; the Mac's cases replace this with their own.
+program.on_the_mac = lambda: False
 
 SEAT = "restart-test-seat"
 AGENT_HOME = program.AGENTS_ROOT / SEAT
@@ -195,8 +197,12 @@ def start_fake_supervisor(under_shell=True, starts_claude=True, agent=SEAT, clau
     claude_id = None
     while starts_claude and time.monotonic() < deadline:
         table = program.process_table()
-        children = [process_id for process_id, (parent, _) in table.items() if parent == supervisor_id]
-        if children:
+        # Between fork and exec a child still shows the fake handoff-supervisor's command line;
+        # recorded then, step 4 takes the claude, once it has exec'd, for a reused process ID.
+        children = [process_id for process_id, (parent, command) in table.items()
+                    if parent == supervisor_id and command.split()
+                    and Path(command.split()[0]).name == "claude"]
+        if len(children) == claude_count:
             claude_id = children[0]
             started_process_ids.append(claude_id)
             break
@@ -205,11 +211,10 @@ def start_fake_supervisor(under_shell=True, starts_claude=True, agent=SEAT, clau
 
 
 def running(process_id):
-    try:
-        state = Path(f"/proc/{process_id}/stat").read_text().rsplit(")", 1)[1].split()[0]
-        return state != "Z"
-    except OSError:
-        return program.process_command_line(process_id) is not None
+    # A fake ended while its parent lives stays a zombie, which ps still lists by its command line.
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(process_id)], capture_output=True,
+                           text=True).stdout.strip()
+    return bool(state) and not state.startswith("Z")
 
 
 def stop_fake(process_id):

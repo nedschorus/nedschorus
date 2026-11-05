@@ -576,7 +576,7 @@ class SecondHalf:
                 f"{unfreeze(supervisor_id, supervisor_command)}.")
         self.record(f"step 4: the session-handoff of {self.seat} was written after the freeze")
         handoff_path = supervisor.handoff_file_path(HANDOFF_DIRECTORY, self.seat)
-        if supervisor.parse_handoff_file(handoff_path).get("dont-restart"):
+        if supervisor.parse_handoff_file(handoff_path).get(supervisor.DONT_RESTART_FIELD):
             # A new handoff-supervisor would wait for an answer on a terminal nobody watches.
             return self.fail(
                 f"the session-handoff {handoff_path} was written with --dont-restart, so a new "
