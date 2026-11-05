@@ -103,9 +103,6 @@ def exits(status, stderr=""):
     return lambda command: completed(command, status, "", stderr)
 
 
-SEND_TO_MERGE_LANE_LINE = (
-    f"Send merge-lane-2 the pull request's title, \"Adds a command\", and link, {URL}, with "
-    "SendMessage, unless you already have since it was marked ready for review")
 RETRY_LINE = ("Run this command again once. If it fails the same way, tell the user, in one "
               "sentence, that pull request 77 could not be marked ready for review")
 
@@ -118,8 +115,7 @@ def main():
           "the suites running before gh pr ready",
           status == program.EXIT_MARKED_READY and runner.calls == ["view", "rev-parse", "suites",
                                                                    "ready"]
-          and f"#77 ({URL}) is marked ready for review." in output
-          and SEND_TO_MERGE_LANE_LINE in output,
+          and f"#77 ({URL}) is marked ready for review." in output,
           (status, runner.calls, output, errors))
     check("the test suites run with the checkout's own runner, by the command CLAUDE.md gives "
           "for before a push",
@@ -134,30 +130,50 @@ def main():
     status, output, errors = run(runner)
     check("a pull request already ready for review is left as it is, with nothing run",
           status == program.EXIT_MARKED_READY and runner.calls == ["view"]
-          and "already ready for review, so it was left as it is." in output
-          and SEND_TO_MERGE_LANE_LINE in output, (status, output, errors))
+          and "already ready for review, so it was left as it is." in output,
+          (status, output, errors))
 
     # Refusals, each before gh pr ready.
     for label, runner, expected_calls, expected_lines in [
             ("a closed pull request", FakeRunner(view=answers(view_answer(state="CLOSED"))),
              ["view"], ["is closed, not open, so it cannot be marked ready for review.",
-                        "If you meant another pull request: run this again with its number."]),
+                        "If you meant another pull request: run this again with its number.",
+                        "If you meant this one and it is closed: read why with gh pr view 77 "
+                        "--comments; when that reason no longer holds, reopen it with gh pr "
+                        "reopen 77, then run this again; otherwise leave it closed."]),
+            ("a merged pull request", FakeRunner(view=answers(view_answer(state="MERGED"))),
+             ["view"], ["is merged, not open, so it cannot be marked ready for review.",
+                        "If you meant this one and it is merged: its review is over, so there "
+                        "is nothing to mark."]),
             ("a checkout whose HEAD is not the pushed head",
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{'b' * 40}\n")), ["view", "rev-parse"],
              [f"this checkout's HEAD, {'b' * 12}, is not #77 ({URL})'s pushed nc-head-commit, "
               f"{'a' * 12}", "If this checkout has commits the pull request lacks: push them, "
               "then run this again.", "If the pull request has commits this checkout lacks: run "
-              "git pull --ff-only, then run this again."]),
+              "git pull --ff-only, then run this again.", "If each has commits the other lacks: "
+              "run git pull --no-rebase, which merges the pull request's commits into this "
+              "checkout, then push, then run this again."]),
             ("a placeholder description with no defect line",
              FakeRunner(view=answers(view_answer(body="Work in progress.\n"))),
              ["view", "rev-parse"],
              ["description has no line beginning \"#root_cause\"",
-              "save it with gh pr edit 77 --body-file <that file>, which replaces the old description"]),
+              "Save the current description in a file with gh pr view 77 --json body -q .body > "
+              "<file>",
+              "#follow_up <full https://github.com/ link to the issue or pull request that will "
+              "fix it>",
+              "save the file with gh pr edit 77 --body-file <file>, which replaces the whole "
+              "description"]),
             ("an empty description", FakeRunner(view=answers(view_answer(body=None))),
              ["view", "rev-parse"], ["description has no line beginning \"#root_cause\""]),
             ("a failing test suite", FakeRunner(suites=exits(1)), ["view", "rev-parse", "suites"],
              ["the test suites exited with status 1, so #77",
-              "Fix them, commit and push the fix, then run this again."])]:
+              "The failing suites are named above.",
+              "Fix them, commit and push the fix, then run this again."]),
+            ("a test suite runner that stops before judging every suite",
+             FakeRunner(suites=exits(2)), ["view", "rev-parse", "suites"],
+             ["scripts/run-all-test-suites.py exited with status 2, before judging every suite, "
+              "so #77",
+              "Its error is above.", RETRY_LINE])]:
         status, output, errors = run(runner)
         check(f"{label} is refused before gh pr ready, saying why and what to do",
               status == program.EXIT_MARK_READY_REFUSED_OR_FAILED and runner.calls == expected_calls
@@ -181,12 +197,18 @@ def main():
              FakeRunner(view=raises(subprocess.TimeoutExpired(["gh"], 60))),
              ["gh pr view did not answer within 60 seconds."]),
             ("gh pr view prints what is not JSON", FakeRunner(view=answers("not json")),
-             ["gh pr view did not print a JSON object holding state, isDraft and headRefOid.", RETRY_LINE]),
+             ["gh pr view exited 0 but did not print a JSON object holding state, isDraft and "
+              "headRefOid; it printed 'not json'.", RETRY_LINE]),
             ("gh pr view leaves out headRefOid",
              FakeRunner(view=answers(json.dumps({"state": "OPEN", "isDraft": True}))),
-             ["gh pr view did not print a JSON object holding state, isDraft and headRefOid."]),
+             ["did not print a JSON object holding state, isDraft and headRefOid; it printed "
+              "'{\"state\": \"OPEN\", \"isDraft\": true}'."]),
             ("gh pr view prints a JSON list", FakeRunner(view=answers("[]")),
-             ["gh pr view did not print a JSON object holding state, isDraft and headRefOid."]),
+             ["did not print a JSON object holding state, isDraft and headRefOid; it printed "
+              "'[]'."]),
+            ("gh pr view prints more than the message shows",
+             FakeRunner(view=answers("x" * 1000)),
+             [f"it printed '{'x' * program.GH_PR_VIEW_NOT_JSON_OUTPUT_ERROR_EXCERPT_CHARACTERS}'."]),
             ("git rev-parse fails",
              FakeRunner(rev_parse=exits(128, "fatal: not a git repository")),
              ["reading this checkout's HEAD failed: git rev-parse --show-toplevel exited with "
