@@ -20,10 +20,12 @@ and the round's reviews, because nothing else on GitHub tells that round's revie
 of a later round on the same head. The round's number counts merge-lane-2's changes-requested
 reviews, taking as one those of the same commit that no round record tells apart. The blocking
 findings are the round's reviews' inline comments whose body starts with a match of
-BLOCKING_MARKER_PATTERN; the bodies' free text is never parsed for findings. When one of
-merge-lane-2's reviews of the round carries such a comment and states a **Blocking: N** count, as
-merge-lane-pull-request-reviewer-review-post-and-read-back.py posts it from categorized findings,
-only the marked comments of merge-lane-2's own reviews of the round block, a later addendum
+BLOCKING_MARKER_PATTERN; the bodies' free text is never parsed for findings. A review states a
+**Blocking: N** count only when merge-lane-2's account posted it and its body starts with the
+lines merge-lane-pull-request-reviewer-review-post-and-read-back.py writes, matched by
+BLOCKING_COUNT_PATTERN: the verdict REQUEST_CHANGES, a blank line, and the count alone on its
+line; the same words anywhere else, or in another account's review, state nothing. When one of
+merge-lane-2's reviews of the round carries such a comment and states a count, only the marked comments of merge-lane-2's own reviews of the round block, a later addendum
 without a count included, since that review grades every finding of the round and the
 commissioned reviewer's marks it leaves out were graded lower. A blocker re-posted
 with the same path, line and body counts once. A review's stated **Blocking: N** is checked against
@@ -96,7 +98,9 @@ MERGE_LANE_2_REVIEWER_LOGIN = "ned-review-merge"
 # Reviewers spell the mark several ways, such as "**Blocks.**", "**Blocks:**", "**Blocks**" or "**Blocks** (...)"; no instruction fixes one.
 BLOCKING_MARKER_PATTERN = re.compile(r"\*\*Blocks\b[^*\n]*\*\*")
 BLOCKING_MARKER_DESCRIPTION = "the bold word **Blocks**"
-BLOCKING_COUNT_PATTERN = re.compile(r"\*\*Blocking:\s*(\d+)\*\*")
+# merge-lane-pull-request-reviewer-review-post-and-read-back.py writes the count as a line of its own after
+# the verdict line and a blank line; the same words anywhere else, such as a reviewer quoting them, are prose.
+BLOCKING_COUNT_PATTERN = re.compile(r"\AREQUEST_CHANGES\n\n\*\*Blocking: (\d+)\*\*\n")
 ROUND_RECORD_FORMAT = ("Fix-round answered without a commit: frozen-head {frozen_head}, reviews {review_ids}.\n"
                        "Posted by {program} --check. A changes-requested review of the same head posted "
                        "after this comment starts a new fix-round.")
@@ -336,6 +340,14 @@ def latest_first(anchor, reviews):
     return [anchor, *(review for review in reviews if review is not anchor)]
 
 
+def stated_blocking_count(review, reviewer_login):
+    """Return the **Blocking: N** count of a review merge-lane-2's account posted, or None."""
+    if (review.get("user") or {}).get("login") != reviewer_login:
+        return None
+    stated = BLOCKING_COUNT_PATTERN.match(review.get("body") or "")
+    return int(stated.group(1)) if stated else None
+
+
 def blocking_findings(number, anchor, reviews, reviewer_login=MERGE_LANE_2_REVIEWER_LOGIN):
     comments_by_review = [gh_json_lines(["api", "--paginate",
                                          f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews/{review['id']}/comments",
@@ -348,8 +360,7 @@ def blocking_findings(number, anchor, reviews, reviewer_login=MERGE_LANE_2_REVIE
     # review may leave some blockers marked only in the commissioned reviewer's comments.
     lane_marks = [found for review, found in zip(reviews, marked_by_review)
                   if (review.get("user") or {}).get("login") == reviewer_login and found]
-    graded = any((review.get("user") or {}).get("login") == reviewer_login and found
-                 and BLOCKING_COUNT_PATTERN.search(review.get("body") or "")
+    graded = any(found and stated_blocking_count(review, reviewer_login) is not None
                  for review, found in zip(reviews, marked_by_review))
     deciding = lane_marks if graded else marked_by_review
     findings = without_reposts([comment for found in deciding for comment in found])
@@ -366,15 +377,15 @@ def blocking_findings(number, anchor, reviews, reviewer_login=MERGE_LANE_2_REVIE
                       "program reads blocking findings by.\n"
                       + ask + "; do not guess them from the reviews' text.")
     for index, review in enumerate(reviews):
-        stated = BLOCKING_COUNT_PATTERN.search(review.get("body") or "")
-        if not stated:
+        stated = stated_blocking_count(review, reviewer_login)
+        if stated is None:
             continue
         own = without_reposts(marked_by_review[index])
         counted = own or findings
-        if int(stated.group(1)) != len(counted):
+        if stated != len(counted):
             where = ("its own inline comments" if own or len(reviews) == 1
                      else "the inline comments of the round's other reviews")
-            raise Refused(f"The review {review.get('html_url')} says **Blocking: {stated.group(1)}**, "
+            raise Refused(f"The review {review.get('html_url')} says **Blocking: {stated}**, "
                           f"but {len(counted)} of {where} start with {BLOCKING_MARKER_DESCRIPTION}"
                           + (f" ({named})" if len(reviews) > 1 else "") + ".\n"
                           + ask + ", and both counts.")

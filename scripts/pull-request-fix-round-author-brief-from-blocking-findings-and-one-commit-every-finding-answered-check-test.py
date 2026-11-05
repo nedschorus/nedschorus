@@ -96,7 +96,7 @@ def scratch_repository(root):
 
 
 def review(state="CHANGES_REQUESTED", commit_id=None, login="ned-review-merge", review_id=11,
-           body="merge-lane-2: changes requested.\n\n**Blocking: 2**, both inline."):
+           body="REQUEST_CHANGES\n\n**Blocking: 2**\n\nBoth inline."):
     return {"id": review_id, "user": {"login": login}, "state": state, "commit_id": commit_id,
             "html_url": f"{URL}#pullrequestreview-{review_id}", "body": body}
 
@@ -364,7 +364,7 @@ def brief_cases(root, repository, base, frozen_head):
 
     reposted = dict(routes_for(frozen_head, [review(commit_id=frozen_head, body="Two blockers."),
                                              review(state="COMMENTED", commit_id=frozen_head, review_id=12,
-                                                    body="**Blocking: 2**, now inline.")],
+                                                    body="REQUEST_CHANGES\n\n**Blocking: 2**\n\nNow inline.")],
                                comments=[BLOCKING_COMMENTS[1]]),
                     **comments_route(12, [BLOCKING_COMMENTS[0], BLOCKING_COMMENTS[2]]))
     code, out, err = run(root, repository, reposted)
@@ -376,7 +376,7 @@ def brief_cases(root, repository, base, frozen_head):
 
     miscounted = dict(reposted, **{REVIEWS: {"stdout": lines([
         review(commit_id=frozen_head, body="Two blockers."),
-        review(state="COMMENTED", commit_id=frozen_head, review_id=12, body="**Blocking: 3**")])}})
+        review(state="COMMENTED", commit_id=frozen_head, review_id=12, body="REQUEST_CHANGES\n\n**Blocking: 3**\n")])}})
     code, out, err = run(root, repository, miscounted)
     check("brief: a later review's stated count is checked against its own marked comments",
           code == 1 and "says **Blocking: 3**" in err and "2 of its own inline comments" in err
@@ -385,7 +385,7 @@ def brief_cases(root, repository, base, frozen_head):
 
     added = dict(routes_for(frozen_head, [review(commit_id=frozen_head),
                                           review(state="COMMENTED", commit_id=frozen_head, review_id=12,
-                                                 body="**Blocking: 1**, one more.")]),
+                                                 body="REQUEST_CHANGES\n\n**Blocking: 1**\n\nOne more.")]),
                  **comments_route(12, [comment("run.py", "**Blocks.** run.py drops the exit code.",
                                                line=40, comment_id=4)]))
     code, out, err = run(root, repository, added)
@@ -494,7 +494,7 @@ def brief_cases(root, repository, base, frozen_head):
     for spelling in ["**Blocks.**", "**Blocks:**", "**Blocks**", "**Blocks** (fast-read hold)",
                      "**Blocks the merge.**", "  **Blocks.**"]:
         code, out, err = run(root, repository, routes_for(
-            frozen_head, [review(commit_id=frozen_head, body="**Blocking: 1**")],
+            frozen_head, [review(commit_id=frozen_head, body="REQUEST_CHANGES\n\n**Blocking: 1**\n")],
             comments=[comment("hook.py", f"{spelling} the spelling under test.")]))
         check(f"brief: a comment starting {spelling!r} is a blocking finding",
               code == 0 and "Blocking findings (1)" in out and "the spelling under test" in out, err + out)
@@ -505,7 +505,7 @@ def brief_cases(root, repository, base, frozen_head):
              comment("d.py", "**Blocks** (cold-read-fast-read hold on the progress line) fourth.", comment_id=24),
              comment("e.py", "Non-blocking. A note.", comment_id=25)]
     code, out, err = run(root, repository, routes_for(
-        frozen_head, [review(commit_id=frozen_head, body="Four findings block.\n\n**Blocking: 4**")],
+        frozen_head, [review(commit_id=frozen_head, body="REQUEST_CHANGES\n\n**Blocking: 4**\n\nFour findings block.")],
         comments=mixed))
     check("brief: a review mixing **Blocks.** and **Blocks** (...) counts all four, as pull request 2145's did",
           code == 0 and "Blocking findings (4)" in out
@@ -522,7 +522,7 @@ def brief_cases(root, repository, base, frozen_head):
               code == 1 and "none of its 1 inline comments starts with the bold word **Blocks**" in err, err)
 
     code, out, err = run(root, repository, routes_for(
-        frozen_head, [review(commit_id=frozen_head, body="**Blocking: 3**")]))
+        frozen_head, [review(commit_id=frozen_head, body="REQUEST_CHANGES\n\n**Blocking: 3**\n")]))
     check("brief: a stated blocking count that differs from the marked comments refuses",
           code == 1 and "says **Blocking: 3**" in err and "2 of its own inline comments" in err, err)
 
@@ -953,7 +953,7 @@ def rounds_on_one_head_cases(root, repository, base, frozen_head):
     then a second changes-requested review of the same head that re-posts its Block inline; ids,
     order and logins as GitHub returned them, the stated count written as this program reads it."""
     graded = review(review_id=5721453347, commit_id=frozen_head,
-                    body="merge-lane-2's graded review.\n\n**Blocking: 2**, the reviewer's inline Blocks.")
+                    body="REQUEST_CHANGES\n\n**Blocking: 2**\n\nmerge-lane-2's graded review; the reviewer's inline Blocks.")
     reposted = review(review_id=5721459882, commit_id=frozen_head,
                       body="merge-lane-2 reposts the 2 blocking finding(s) of its review 5721453347 as "
                            "comments of this review.")
@@ -967,7 +967,7 @@ def rounds_on_one_head_cases(root, repository, base, frozen_head):
     commissioned = review(state="COMMENTED", review_id=20, commit_id=frozen_head, login="mac-claude",
                           body="REQUEST_CHANGES")
     grading = review(review_id=21, commit_id=frozen_head,
-                     body="merge-lane-2's graded review.\n\n**Blocking: 1**, the reviewer's inline Block.")
+                     body="REQUEST_CHANGES\n\n**Blocking: 1**\n\nmerge-lane-2's graded review; the reviewer's inline Block.")
     graded = {**routes_for(frozen_head, [commissioned, grading], comments=[BLOCKING_COMMENTS[0]],
                            review_id=20), **comments_route(21, [])}
     code, out, err = run(root, repository, graded)
@@ -975,7 +975,7 @@ def rounds_on_one_head_cases(root, repository, base, frozen_head):
           "the Blocks of the commissioned reviewer's review posted before it",
           code == 0 and "Blocking findings (1)" in out and "hook.py swallows the error" in out, err + out)
     overstated = dict(graded, **{REVIEWS: {"stdout": lines([commissioned, dict(
-        grading, body="merge-lane-2's graded review.\n\n**Blocking: 2**")])}})
+        grading, body="REQUEST_CHANGES\n\n**Blocking: 2**\n\nmerge-lane-2's graded review.")])}})
     code, out, err = run(root, repository, overstated)
     check("a stated count that the round's other reviews' Blocks do not match is refused",
           code == 1 and "says **Blocking: 2**" in err
@@ -1029,6 +1029,184 @@ def rounds_on_one_head_cases(root, repository, base, frozen_head):
           code == 0 and f"New head {fix}" in out
           and not any("-f" in call for call in gh_calls(root)), err + out)
     git(repository, "reset", "-q", "--hard", frozen_head)
+    del base
+
+
+
+PULL_REQUEST_2620_MAC_CLAUDE_REVIEW = {
+    "id": 5779061216, "user": {"login": 'mac-claude'}, "state": 'COMMENTED',
+    "commit_id": 'dc0950712c83b79f47fecd3a2d7cf750dcb99b79',
+    "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#pullrequestreview-5779061216',
+    "body": ('APPROVE\n'
+            '\n'
+            'Reviewed the whole PR at head dc0950712 (first round). Merge base e7ab8b286 is the same as `git merge-base origin/main HEAD`. Environment: Python 3.14.4 at /usr/bin/python3, on ned-box.\n'
+            '\n'
+            'I have two findings, both non-blocking in my judgment, posted inline: a mutant on the moved-comment read-back that survives (posting :267), and a moved comment whose text holds a `- `path:N`: ` line is read back as extra comments (posting :263). In both cases the subcommand either drops text or refuses with nothing on stdout. Neither touches the blocking count.\n'
+            '\n'
+            '**Verified against the repository**\n'
+            '- **Blocking counting unchanged.**\n'
+            "  - The fix-round's `marked()` uses `BLOCKING_MARKER_PATTERN.match` (`\\*\\*Blocks\\b[^*\\n]*\\*\\*`), so `**fix-next** `, `**fix-in-maintenance** ` and `**file-for-later** ` cannot match it.\n"
+            '  - `with_finding_category_marks` still runs `fix_round.without_reposts` over the marked bodies, then counts with `fix_round.marked`. A duplicate gets the same mark, so it is still dropped.\n'
+            "  - The test's REQUEST_CHANGES case still posts `**Blocking: 2**` with non-blocking comments now marked.\n"
+            '  - The new case checks that no non-blocking mark matches `BLOCKING_MARKER_PATTERN`.\n'
+            "- **Mark round trip.** I probed the head commit's functions directly:\n"
+            '  - An inline comment and a moved comment whose path has spaces (`a b/c d.py`) and whose text has backticks, bold and a newline both read back with the right category and the full text.\n'
+            '  - A path containing a colon reads back correctly.\n'
+            '  - The one failure I found is the bullet-line case in finding 2.\n'
+            '- **Subcommand.**\n'
+            "  - It reads every page through `gh api --paginate --slurp` and flattens the pages. ned-box's gh is 2.102.0, which has `--slurp`.\n"
+            '  - It leaves out replies (`in_reply_to_id`) and reads only `ned-review-merge` reviews.\n'
+            '  - It prints a restated finding once; the key is (category, path, text).\n'
+            '  - Refusals and failures go to stderr only (main :1061-1071), and the tests assert `out == ""`.\n'
+            "- **Hook load.** The hook (`...user-prompt-submit-hook.py:52`) loads the follow-up program. That program's top level does not load the posting program: `load_script_beside_this_one(POSTING_PROGRAM_FILE_NAME)` runs only inside the subcommand function. Checked by reading.\n"
+            "- **Read-back through the hook's parser.** It checks the block against the hook's request-line pattern, its finding-line pattern and 1..n numbering, so it is not a tautology. But argparse supplies an int and the text is flattened with `str.split()`, which splits on every character `splitlines` breaks on. So today only a path holding a line-break character could trip it. Its value is catching drift in the parser.\n"
+            '- `#no_defect_fixed` is right: the change adds behaviour and fixes no defect on main.\n'
+            '\n'
+            '**Callers and readers** (each `git grep`ped at head):\n'
+            "- `with_blocking_marks`: no callers remain. Its only caller, the posting program's main :408, now calls `with_finding_category_marks`.\n"
+            "- Readers of merge-lane-2's inline comment bodies:\n"
+            "  - The fix-round program's `blocking_findings` (:339-355) still works, by reading and by the round-trip test cases that call it.\n"
+            '  - `scripts/merge-gate.sh:278` reads inline comments for timestamps and activity, not body marks. Still works, by reading.\n'
+            '  - `scripts/pull-request-review-plan.py:835` counts inline comments per review. Still works, by reading.\n'
+            '- The outside-the-diff body line format has the same text as before, and only the new reader parses it.\n'
+            '- The new subcommand has no callers yet; per the description, the seat-brief sentence is held for the user.\n'
+            '\n'
+            '**Tests** (env -u GIT_*; PYTHONDONTWRITEBYTECODE=1 python3 -B). Both files fake gh, and every git push goes to a local origin under a mkdtemp; neither writes to nedschorus-logs or a remote.\n'
+            '- Head, `scripts/merge-lane-pull-request-reviewer-review-post-and-read-back-test.py`: exit 0, 71 PASS, 0 failed, no SKIP lines.\n'
+            '- Head, `scripts/pull-request-follow-up-request-after-merge-finding-answers-and-next-step-test.py`: exit 0, 175 PASS, "PASSED: 0 failed", no SKIP lines.\n'
+            '- Merge base, posting test: exit 1, 24 PASS, 2 FAIL, then an AttributeError traceback (`review_comment_opening_mark_for_finding_category` is missing) stops the file.\n'
+            '  - The two failures are "posted ... each other comment opened with its category in bold" (the claim that non-blocking comments get a mark) and "a finding opening with a hand-written category mark exits 2" (the refusal claim).\n'
+            '  - The no-blocking-match case and the round-trip case never ran at the base.\n'
+            '- Merge base, follow-up test: exit 2, 17 PASS, 1 FAIL ("--help exits 0 and names every subcommand"; the subcommand exists). The file then stops on argparse\'s SystemExit(2) inside `test_print_block`, so no print-block case ran at the base. The evidence for those cases is mutation testing.\n'
+            '\n'
+            '**Mutation testing.** Each mutant ran in a detached worktree at head, with `__pycache__` cleared; `git diff HEAD` showed the one intended line, and `git status --porcelain --untracked-files=no` was empty after the restore.\n'
+            "- M1, posting :279, base line put back (non-blocking comments posted unmarked): killed by the posting test's post-shape case and round-trip case.\n"
+            "- M2, posting :250, condition set to `False` (the reader ignores non-blocking marks): killed by the posting test's hand-written-mark case and round trip, and by 3 follow-up print-block cases.\n"
+            '- M3, posting :218, `if marked:` set to `if False:`: killed by the hand-written-category-mark refusal case.\n'
+            '- M4, posting :267, continuation branch disabled: **SURVIVED** in both files. It is not equivalent; see finding 1.\n'
+            "- M5, follow-up :965, dedupe removed: killed by the posting test's round trip (restated finding).\n"
+            '- M6, follow-up :943, approving-review refusal disabled: killed by the "refuses when merge-lane-2 has no approving review" case.\n'
+            '- M7, follow-up :932, replies kept: killed by the "reads only merge-lane-2\'s reviews, leaves out replies" case.\n'
+            '- M8, follow-up :952, `continue` instead of the refusal: killed by both unmarked-comment refusal cases.\n'
+            '- M9, follow-up :929, account filter set to `True`: killed by 3 cases.\n'
+            '- M10, follow-up :977, read-back check disabled: killed by both read-back cases.\n'
+            '- M11, follow-up :965, must-fix-now kept: killed by the round trip and the "only must-fix-now prints nothing" case.\n'
+            '- M12, follow-up :939, moved comments not read: killed by the round trip and the moved-unmarked refusal case.\n'
+            '\n'
+            '**Questions (not findings):**\n'
+            '- The dedupe key leaves out the line, so two different findings with identical text on one file collapse into one.\n'
+            '- Non-blocking findings from earlier changes-requested reviews are printed even if a fix-round already settled them. The docstring says this, so it is a design choice for merge-lane-2.\n'
+            '\n'
+            '**Not checked:**\n'
+            '- Live gh against GitHub. Every run used a fake gh, so the real field shapes of `pulls/N/comments` (`pull_request_review_id`, `in_reply_to_id`, `line`/`original_line`) come from the API contract, not from observed data. A dry run of the subcommand on an already-merged PR would make this checkable.\n'
+            '- Multi-page pagination is not exercised by any test, only read.\n'
+            '- Hook timing was not measured; I checked the load order by reading.\n'
+            '- The full test run was not run; merge-lane-2 runs it.')}
+PULL_REQUEST_2620_MAC_CLAUDE_COMMENTS = [
+    {"id": 4475925026, "path": 'scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py', "line": None, "original_line": None,
+     "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#discussion_r4475925026',
+     "body": ('Surviving mutant: the line that joins a moved comment\'s continuation lines (`elif comments: comments[-1]["body"] += "\\n" + line`) has no test.\n'
+              '\n'
+              '- **Mutation:** I replaced it with `elif False: pass`. Both test files still pass: posting test exit 0, follow-up test exit 0.\n'
+              '- **Why it survives:** the round-trip test\'s only moved comment is the one-line `scripts/other.py:8` "Outside.". Its two-line finding is on line 2, which is inside the diff, so it is never moved into the body.\n'
+              '- **The mutant is not equivalent.** My probe at head reads a two-line moved comment back with its second line. Under the mutation, a fix-next, fix-in-maintenance or file-for-later comment on a line outside the diff whose text spans more than one line would come back as its first line only. The `#follow_up_request` block would then carry a truncated finding.\n'
+              '\n'
+              'A round-trip case with a multi-line comment on a line outside the diff would kill this mutant.')},
+    {"id": 4475925031, "path": 'scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py', "line": None, "original_line": None,
+     "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#discussion_r4475925031',
+     "body": ('A comment moved into the review body is read back as several comments when a continuation line of its text has the moved-comment form `- `<path>:<line>`: ...`. Reviewers often cite other places in exactly that form.\n'
+              '\n'
+              '**Reproduced at head:** I ran `with_finding_category_marks` then `with_outside_comments_in_body` (with no commentable lines) on one fix-in-maintenance comment on `x.py:5`, with this text:\n'
+              '\n'
+              '```\n'
+              'Same issue in two places:\n'
+              '- `y.py:12`: here too\n'
+              '- `z.py:3`: and here\n'
+              '```\n'
+              '\n'
+              '`outside_the_diff_comments_read_back_from_review_body` returns three comments:\n'
+              '- `x.py:5`, fix-in-maintenance, truncated to "Same issue in two places:"\n'
+              '- `y.py:12`, with no mark\n'
+              '- `z.py:3`, with no mark\n'
+              '\n'
+              '**Effect on the subcommand:**\n'
+              '- Usually it refuses, naming a comment on `y.py:12` that merge-lane-2 never wrote. stdout stays empty, so no bad block is saved.\n'
+              '- If such a continuation line itself starts with a category mark after the `: `, the subcommand prints an extra finding that merge-lane-2 never made.\n'
+              '\n'
+              "The moved-comment line format needs a delimiter that a comment's own text cannot reproduce, on the write side (`OUTSIDE_THE_DIFF_LINE_FORMAT`, :111) or the read side.")}]
+PULL_REQUEST_2620_MERGE_LANE_2_REVIEW = {
+    "id": 5779070233, "user": {"login": 'ned-review-merge'}, "state": 'CHANGES_REQUESTED',
+    "commit_id": 'dc0950712c83b79f47fecd3a2d7cf750dcb99b79',
+    "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#pullrequestreview-5779070233',
+    "body": ('REQUEST_CHANGES\n'
+            '\n'
+            '**Blocking: 1**\n'
+            '\n'
+            'merge-lane-2 review of head dc0950712c83b79f47fecd3a2d7cf750dcb99b79 (round 1), full tier. An independent fresh Claude reviewer (mac-claude, review above) and the Codex review cell (gpt-6.1-sol, built-in review from merge base e7ab8b28) both reviewed it; merge-lane-2 graded their findings and added none of its own.\n'
+            '\n'
+            '**Checked**\n'
+            '- Head test run on the merged tree 2ce6ced682f8: 59 passed, 0 failed.\n'
+            '- mac-claude verified, against the repository, that blocking counting is unchanged (no category mark matches BLOCKING_MARKER_PATTERN; without_reposts and marked still applied), that the hook does not load the posting program, and that refusals go to stderr only; it ran 12 mutants, 11 killed.\n'
+            '- Fast reads of the 7 changed messages (records under nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/, the 2026-11-04 and 2026-11-04-2 records of the ids in the review plan): no misreading, so no hold. Set aside as coming from reading a message apart from its output: every struggle with an unexpanded {placeholder}, and the whole read of the block-printing line (it is the block itself).\n'
+            '\n'
+            "**Blocking (1)**, inline at posting :263, raised by both Codex (P2) and mac-claude, reproduced by mac-claude at head: a comment moved into the review body whose text has a continuation line of the form `- `<path>:<line>`: ...` is read back as several comments. When those lines carry a category mark, the subcommand prints a block with a truncated finding and a finding merge-lane-2 never made, and reports success. Graded must-fix-now under question 2 of merge-lane-2's grading (a result someone relies on can be wrong while the code reports success; a constructed case is enough).\n"
+            '\n'
+            '**Non-blocking, sent as follow-ups after the merge**\n'
+            "1. fix-next, posting :267: the continuation-join line's mutant survives (inline).\n"
+            '2. Fast-read struggles: posting :220 "so leave it out of the body" ("it" can be read as the finding_category key); follow-up :920 "printed no list of pages" is opaque about what was expected; follow-up :944 "not final" does not say whether the review is still running or requested changes; follow-up :954 "the merge message" is not defined and "If they hold none" has two possible antecedents; follow-up :978 gives no next step when the read-back check fails.\n'
+            '\n'
+            '**Questions from mac-claude, for the author to answer**\n'
+            '- The dedupe key leaves out the line, so two different findings with identical text on one file collapse into one. Intended?\n'
+            '- Non-blocking findings of an earlier changes-requested review are printed even when a fix-round settled them (the docstring says so).\n'
+            '\n'
+            "For each finding you fix, say in the fix commit's message whether the finding is one case of a wider pattern; if it is, name the pattern. Fix the other cases in this pull request when they run the same test suites or a reviewer would check them the same way; list in the commit message any you leave for a follow-up pull request. After the merge, merge-lane-2 sends you that list, as it does non-blocking findings, and you open a follow-up pull request for them or tell merge-lane-2 why not.")}
+PULL_REQUEST_2620_MERGE_LANE_2_COMMENTS = [
+    {"id": 4475930572, "path": 'scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py', "line": None, "original_line": None,
+     "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#discussion_r4475930572',
+     "body": ('**Blocks** A comment moved into the review body is read back as several comments when a continuation line of its text has the moved-comment form `- `<path>:<line>`: ...` (reproduced by mac-claude at head, also Codex P2). When such a line carries a category mark after the `: `, `print-follow-up-request-block-from-merge-lane-2-reviews` prints a truncated finding plus one merge-lane-2 never made, and exits 0. Fix: make the read-back detect this, for example by having the posting program check that the moved comments read back exactly as posted and refuse otherwise, or by a line format the text cannot reproduce; add a round-trip case with such a continuation line.')},
+    {"id": 4475930574, "path": 'scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py', "line": None, "original_line": None,
+     "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#discussion_r4475930574',
+     "body": ('The continuation-join line `elif comments: comments[-1]["body"] += "\\n" + line` has no test: replacing it with `elif False: pass` leaves both test files passing (mac-claude, mutant M4). A round-trip case with a multi-line comment on a line outside the diff would kill it.')}]
+
+
+def stated_count_position_cases(root, repository, base, frozen_head):
+    """Pull request 2620's round 1, its reviews and their comments as GitHub returned them, in order.
+
+    mac-claude's COMMENTED review quotes "**Blocking: 2**" in a code span on its body's eleventh line;
+    merge-lane-2's review, posted by merge-lane-pull-request-reviewer-review-post-and-read-back.py,
+    states **Blocking: 1** on its third line and marks 1 inline comment. The scratch repository's
+    frozen-head stands in for the pull request's commit."""
+    reviewer = dict(PULL_REQUEST_2620_MAC_CLAUDE_REVIEW, commit_id=frozen_head)
+    grading = dict(PULL_REQUEST_2620_MERGE_LANE_2_REVIEW, commit_id=frozen_head)
+    routes = {PR_VIEW: {"stdout": json.dumps({"url": URL, "headRefOid": frozen_head, "headRefName": BRANCH})},
+              REVIEWS: {"stdout": lines([reviewer, grading])},
+              ISSUE_COMMENTS: {"stdout": ""}, ROUND_RECORD_POST + "*": {"stdout": "{}"},
+              **comments_route(reviewer["id"], PULL_REQUEST_2620_MAC_CLAUDE_COMMENTS),
+              **comments_route(grading["id"], PULL_REQUEST_2620_MERGE_LANE_2_COMMENTS)}
+    code, out, err = run(root, repository, routes)
+    check("2620: a Blocking count a reviewer quotes in a code span of its review's prose is not read, so "
+          "merge-lane-2's stated count, which matches its own Blocks, briefs the round",
+          code == 0 and "Blocking findings (1)" in out
+          and "is read back as several comments when a continuation" in out
+          and "Surviving mutant" not in out, err + out)
+
+    counted_reviewer = dict(reviewer, body="REQUEST_CHANGES\n\n**Blocking: 3**\n\nThree blockers.")
+    reviewer_blocks = [comment("hook.py", "**Blocks** A finding merge-lane-2 graded fix-next.", comment_id=41)]
+    lane_only = dict(routes, **{REVIEWS: {"stdout": lines([counted_reviewer, grading])},
+                                **comments_route(reviewer["id"], reviewer_blocks)})
+    code, out, err = run(root, repository, lane_only)
+    check("a count where the review poster writes it, in a commissioned reviewer's review, is not checked, "
+          "since only merge-lane-2's review grades the round",
+          code == 0 and "Blocking findings (1)" in out and "graded fix-next" not in out, err + out)
+
+    for body in ["REQUEST_CHANGES\n\nThe reviewer's test posts `**Blocking: 2**`; one finding blocks.",
+                 "REQUEST_CHANGES\n\n**Blocking: 2**, both inline.",
+                 "**Blocking: 2**\n\nREQUEST_CHANGES",
+                 "Changes requested.\n\n**Blocking: 2**\n\nBoth inline."]:
+        prose = dict(routes, **{REVIEWS: {"stdout": lines([dict(grading, body=body)])}})
+        code, out, err = run(root, repository, prose)
+        check(f"a Blocking count away from the line the review poster writes is not read: {body[:40]!r}",
+              code == 0 and "Blocking findings (1)" in out, err + out)
     del base
 
 
@@ -1401,5 +1579,6 @@ case("check", check_cases)
 case("commissioned reviewer", commissioned_reviewer_cases)
 case("split review", split_review_cases)
 case("rounds on one head", rounds_on_one_head_cases)
+case("stated count position", stated_count_position_cases)
 print(f"{'FAILED' if failures else 'PASSED'}: {len(failures)} failed")
 sys.exit(1 if failures else 0)
