@@ -234,7 +234,9 @@ written again, unchanged, as the minutes' last line. With
 right after the answered item's heading, as it numbers the next item, and
 holds the answer for it the same way, its `#next_to_present` line naming it;
 when the heading right after is not an unnumbered item's, or there is none,
-CLOSE refuses, writing nothing. When CLOSE later records
+or when that item waits on an item still to come, an unshown one, the summary
+item or a numbered item the minutes do not decide, CLOSE refuses, writing
+nothing. When CLOSE later records
 the new item approved, disapproved or already decided, it also writes the
 already-decided line, with the same outcome, for each item a held-answer line
 holds for it that no close line decides yet; after a deferral, a move on or
@@ -603,7 +605,7 @@ NO_UNNUMBERED_ITEM_AFTER = (
     "If no finding does, run close without " + HOLD_ANSWER_FLAG + ".")
 HELD_NEW_ITEM_WAITS_ON_UNSHOWN = (
     "nothing written: close was given " + HOLD_ANSWER_FLAG + ", but in {document} the new item right after "
-    "{item}, {new_item}, waits on {waited_on}, which the user has not been shown yet. The new item is shown "
+    "{item}, {new_item}, waits on {waited_on}, which the user has not ruled on yet. The new item is shown "
     "next, to settle {item}, so it cannot come after the item it waits on.\n"
     "Take the line `" + WALK_WAITS_ON_TAG + " <title>` that names {waited_on} out of {new_item}. If {new_item} "
     "depends on what {waited_on} would decide, add to {new_item} one sentence saying what {waited_on} proposes, "
@@ -1768,16 +1770,22 @@ def unshown_items_in_walk_order(items, placing):
     return ordered
 
 
-def unshown_items_gathered_behind_chosen(walk_finder, minutes, chosen, units, placing, parser):
+def unshown_items_gathered_behind_chosen(walk_finder, minutes, chosen, units, placing, parser, answered_numbers,
+                                         total):
     """Rewrite the walk-document so that the unshown items placing holds stand together where the first of them
-    stands, chosen first and the others in the order unshown_items_in_walk_order gives; return chosen's heading
-    line and the units of the rewritten walk-document. A later close walks on from chosen, so the items still
-    unshown come next, and items numbered later stand in the order they were shown."""
+    stands, or right after the unit of the answered items, answered_numbers, when the first of them stands above
+    it, that unit chosen by total, the `#next_to_present` line's M, as waiting_item_units chooses between two
+    headings for one item, chosen first and the others in the order unshown_items_in_walk_order gives; return chosen's heading line
+    and the units of the rewritten walk-document. A later close walks on from chosen, so the items still unshown
+    come next, and items numbered later stand in the order they were shown."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     lines = document.read_text(encoding="utf-8").split("\n")
     spans = {unit[3]: (unit[3], unit[4]) for unit in units if unit[3] in placing}
     rest = unshown_items_in_walk_order([item for item in placing if item != chosen], placing)
-    start = min(spans)
+    # close's walk_document_items already ran waiting_item_units on the waiting items, which hold answered_numbers,
+    # with this total, so it cannot raise UnusableRange here.
+    _, answered_units = walk_finder.waiting_item_units(document, None, answered_numbers, total, parser, units)
+    start = max([min(spans)] + [unit[4] for unit in answered_units])
     kept = [(index, line) for index, line in enumerate(lines)
             if not any(first <= index < end for first, end in spans.values())]
     joined = []
@@ -1829,11 +1837,13 @@ def unnumbered_item_text_once_numbered(walk_finder, minutes, first, units, numbe
     return "\n".join(lines[first:end]).strip()
 
 
-def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numbers, parser, placing):
+def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numbers, parser, placing, summary,
+                                      decided):
     """Number the unnumbered item right after the answered items' unit in the walk-document, as the close step's
     HOLD_ANSWER_FLAG asks, and return the `#next_to_present` value naming it; raise Failure, writing nothing, when
-    the unit right after is not unnumbered, or when it waits on an item still unshown, as placing, the walk-document's
-    placing of its unshown items, says."""
+    the unit right after is not unnumbered, or when it waits on an item still to come: an unshown item of placing,
+    the walk-document's placing of its unshown items, the summary item, or a numbered item that is neither answered
+    now nor among decided, the items the minutes decide."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     text = document.read_text(encoding="utf-8")
     units = walk_finder.item_unit_spans(text, parser)
@@ -1848,12 +1858,16 @@ def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numb
         raise Failure(NO_UNNUMBERED_ITEM_AFTER.format(document=document, item=" and ".join(answered_numbers),
                                                       found=found))
     lines = text.split(NEWLINE)
-    unshown_prerequisites = sorted(other for other in placing.get(units[after][3], (None, set()))[1]
-                                   if other in placing)
-    if unshown_prerequisites:
+    # An unnumbered item is keyed by its heading's line index, an int; a numbered one by its number, a str.
+    to_come = sorted((other for other in placing.get(units[after][3], (None, set()))[1]
+                      if other in placing or other == summary
+                      or (isinstance(other, str) and other not in decided and other not in answered_numbers)),
+                     key=str)
+    if to_come:
         raise Failure(HELD_NEW_ITEM_WAITS_ON_UNSHOWN.format(
             document=document, item=" and ".join(answered_numbers), new_item=f"`{lines[units[after][3]].strip()}`",
-            waited_on=", ".join(f"`{lines[other].strip()}`" for other in unshown_prerequisites)))
+            waited_on=", ".join(f"`{lines[other].strip()}`" if isinstance(other, int) else f"item {other}"
+                                for other in to_come)))
     number = unnumbered_item_numbered(walk_finder, minutes, units[after][3], units)
     return f"item {number} of {walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units)}"
 
@@ -1986,9 +2000,11 @@ def close(arguments):
     if arguments.hold_answer_until_new_item_answered:
         # Placed first, unstamped, so an unplaceable walk-document, or a new item that waits on one not yet shown,
         # numbers nothing and writes nothing.
-        _, _, _, _, placing = walk_document_items(walk_finder, minutes, value, waiting_numbers, total, parser,
-                                                  f"close {HOLD_ANSWER_FLAG}", top, stamp=False)
-        value = new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numbers, parser, placing)
+        _, _, summary, _, placing = walk_document_items(walk_finder, minutes, value, waiting_numbers, total, parser,
+                                                        f"close {HOLD_ANSWER_FLAG}", top, stamp=False)
+        decided, _ = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
+        value = new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numbers, parser, placing,
+                                                  summary, decided)
         waiting, waiting_numbers, total = waiting_items(walk_finder, value, minutes)
     if not set(answered_numbers) <= set(waiting_numbers):
         append_to_minutes(minutes, [CLOSE_HELD_MINUTES.format(item=item, new_item=waiting),
@@ -2052,7 +2068,8 @@ def close(arguments):
     if numbers and isinstance(numbers[0], int):
         first = numbers[0]
         if first in placing:  # Not the summary item, which stays where it is.
-            first, units = unshown_items_gathered_behind_chosen(walk_finder, minutes, first, units, placing, parser)
+            first, units = unshown_items_gathered_behind_chosen(walk_finder, minutes, first, units, placing, parser,
+                                                                answered_numbers, total)
         numbers = [unnumbered_item_numbered(walk_finder, minutes, first, units)]
     named = items_named(numbers, count)
     append_to_minutes(minutes, [NEXT_MARKER_LINE.format(value=named if numbers else CLOSED_MARKER_VALUE)])

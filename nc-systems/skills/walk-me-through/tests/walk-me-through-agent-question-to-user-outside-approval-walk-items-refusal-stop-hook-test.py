@@ -1245,6 +1245,8 @@ def test_a_message_ending_with_a_closing_line_blocks_when_the_checkout_holds_no_
         closed.reply(text)
         check_silent(case_name, closed.run())
     two = Case()
+    # The second walk has a readable waiting item, so a finder that took either walk alone would ask the model.
+    (two.walk / "a-second-walk.md").write_text("# A second walk\n\n## Item 4 of 9: the merge\n\nMerge it.\n")
     (two.walk / "a-second-walk-minutes.md").write_text("#next_to_present item 4 of 9\n")
     two.reply("The tests passed.\n\nShould I merge the pull request now?")
     check_silent("a question-like line passes when two approval-walks are open, since no waiting item is known",

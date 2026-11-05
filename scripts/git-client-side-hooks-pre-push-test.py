@@ -100,8 +100,10 @@ RERUN_VERDICT_LINE = ("If the hand conflict check also prints no VERDICT line, t
                       "this whole message and what that check printed.")
 NO_BRANCH_CHECKED = ("so none of this push's branches was checked for conflicts with "
                      "origin/main: %s.")
-PUSH_GOES_ON_LINE = ("pre-push: neither the conflict check nor the revert check refuses this "
-                     "push, so it goes through.")
+PUSH_GOES_ON_START = "pre-push: this push goes through without a clean verdict"
+PUSH_GOES_ON_LINE = (PUSH_GOES_ON_START + " for %s: scripts/branch-conflict-check.py or "
+                     "scripts/branch-reverts-a-file-to-an-older-main-version-check.py gave no "
+                     "verdict there, as the lines above say.")
 SHORT_COMMIT_LENGTH = 12
 
 
@@ -160,6 +162,11 @@ sys.exit(1)
 
 FAKE_CHECK_NO_VERDICT_FOR_CLEAN_CONFLICT_OTHERWISE = (
     FAKE_CHECK_NO_ANSWER_FOR_CLEAN_CONFLICT_OTHERWISE.replace("sys.exit(2)", "sys.exit(7)"))
+
+FAKE_CHECK_NO_VERDICT_FOR_CLEAN_CLEAN_OTHERWISE = (
+    FAKE_CHECK_NO_VERDICT_FOR_CLEAN_CONFLICT_OTHERWISE.replace(
+        'print("VERDICT: CONFLICT -- fake conflict for the test.")\nsys.exit(1)',
+        'print("VERDICT: CLEAN -- fake clean verdict for the test.")\nsys.exit(0)'))
 
 FAKE_CHECK_CRASHES = FAKE_CHECK_PREAMBLE + """\
 raise RuntimeError("fake crash inside the conflict check")
@@ -593,7 +600,8 @@ def run_unit_cases():
               hand_check_line("topic", sha),
               hand_check_line("renamed-on-push", other),
               *no_branch_revert_lines([("topic", sha), ("renamed-on-push", other)]),
-              PUSH_GOES_ON_LINE,
+              PUSH_GOES_ON_LINE % ", ".join(
+                  [branch_entry("topic", sha), branch_entry("renamed-on-push", other)]),
               TELL_USER_LINE],
           stream.getvalue())
     stream = io.StringIO()
@@ -612,7 +620,7 @@ def run_unit_cases():
               "once that conflict check prints VERDICT: CLEAN, also run: python3 "
               "scripts/branch-reverts-a-file-to-an-older-main-version-check.py "
               "--head <branch name>",
-              PUSH_GOES_ON_LINE,
+              PUSH_GOES_ON_LINE % "any of its branches",
               TELL_USER_LINE],
           stream.getvalue())
     stream = io.StringIO()
@@ -629,8 +637,9 @@ def run_unit_cases():
                             include_runner=False,
                             mutation_testing_worktree_check_text="import sys\nsys.exit(0)\n",
                             open_pull_request_branch_check_text="import sys\nsys.exit(0)\n")
-        expected_first_line_end = NO_BRANCH_CHECKED % ", ".join(
+        expected_branch_list = ", ".join(
             [branch_entry("topic", sha), branch_entry("renamed-on-push", other)])
+        expected_first_line_end = NO_BRANCH_CHECKED % expected_branch_list
         for shell in SHELLS_FOR_THE_HOOK:
             def run_hook(remote, refs_text):
                 return subprocess.run(
@@ -646,7 +655,7 @@ def run_unit_cases():
                                     hand_check_line("renamed-on-push", other),
                                     *no_branch_revert_lines(
                                         [("topic", sha), ("renamed-on-push", other)]),
-                                    PUSH_GOES_ON_LINE,
+                                    PUSH_GOES_ON_LINE % expected_branch_list,
                                     TELL_USER_LINE],
                   completed.stderr)
             for label, refs_text in (
@@ -668,10 +677,10 @@ def run_unit_cases():
 
     sha = "a" * 40
     stream = io.StringIO()
-    reverts, skipped = runner.check_reverts([("late", sha)], time.monotonic() - 1, 7, stream)
-    check("a branch left with no time budget is not sent to the revert check, is reported "
-          "as skipped, and gets a message",
-          reverts == [] and skipped and REVERT_NOT_CHECKED % (
+    reverts, unchecked = runner.check_reverts([("late", sha)], time.monotonic() - 1, 7, stream)
+    check("a branch left with no time budget is not sent to the revert check, is returned "
+          "as unchecked, and gets a message",
+          reverts == [] and unchecked == [("late", sha)] and REVERT_NOT_CHECKED % (
               "late", "the 7-second time budget was used up") in stream.getvalue()
           and revert_hand_check_line(sha) in stream.getvalue(), stream.getvalue())
 
@@ -872,7 +881,8 @@ def run_push_cases(scratch):
           lines.count(hand) == 1
           and lines[lines.index(hand):lines.index(hand) + 5]
           == [hand, *no_branch_revert_lines([("conflicting", conflicting_commit)]),
-              PUSH_GOES_ON_LINE, TELL_USER_LINE]
+              PUSH_GOES_ON_LINE % branch_entry("conflicting", conflicting_commit),
+              TELL_USER_LINE]
           and outcome.stderr.count("files set back") == 2, outcome.describe())
 
     # A push whose first branch is skipped and whose second conflicts is refused, and no
@@ -890,7 +900,7 @@ def run_push_cases(scratch):
           + BRANCH_NOT_CHECKED_END in outcome.stderr.splitlines()
           and REFUSAL_HEADER % "conflicting" in outcome.stderr, outcome.describe())
     check("mixed push: and no line says the push goes ahead or goes on",
-          PUSH_GOES_ON_LINE not in outcome.stderr and "goes ahead" not in outcome.stderr,
+          PUSH_GOES_ON_START not in outcome.stderr and "goes ahead" not in outcome.stderr,
           outcome.describe())
 
     mixed = make_layout(scratch, "layout-mixed-no-verdict",
@@ -903,7 +913,20 @@ def run_push_cases(scratch):
           "telling the user ends the message, after the refusal",
           was_refused(outcome) and hook_lines[-1:] == [TELL_USER_LINE]
           and outcome.stderr.count(TELL_USER_LINE) == 1
-          and PUSH_GOES_ON_LINE not in outcome.stderr, outcome.describe())
+          and PUSH_GOES_ON_START not in outcome.stderr, outcome.describe())
+
+    mixed_clean = make_layout(scratch, "layout-mixed-no-verdict-and-clean",
+                              conflict_check=FAKE_CHECK_NO_VERDICT_FOR_CLEAN_CLEAN_OTHERWISE)
+    half_checked = Scenario(scratch, "mixed-no-verdict-and-clean", mixed_clean)
+    outcome = half_checked.push("origin", "clean", "clean-second")
+    goes_on_lines = [line for line in outcome.stderr.splitlines()
+                     if line.startswith(PUSH_GOES_ON_START)]
+    check("mixed push, one branch with no verdict and one both checks find clean: it goes "
+          "through, and the push-goes-through line names only the unchecked branch",
+          went_through(outcome)
+          and goes_on_lines == [PUSH_GOES_ON_LINE % branch_entry(
+              "clean", half_checked.head("clean"))],
+          outcome.describe())
 
     def gave_no_verdict(label, outcome, reason):
         lines = outcome.stderr.splitlines()
@@ -920,7 +943,8 @@ def run_push_cases(scratch):
                   lines[index + 1:index + 6]
                   == [hand_check_line("conflicting", commit),
                       *revert_check_not_run_lines("conflicting", commit).splitlines(),
-                      PUSH_GOES_ON_LINE, TELL_USER_LINE],
+                      PUSH_GOES_ON_LINE % branch_entry("conflicting", commit),
+                      TELL_USER_LINE],
                   outcome.describe())
 
     outcome = failing_check_case("check-crashes", FAKE_CHECK_CRASHES,
@@ -1066,7 +1090,8 @@ def run_push_cases(scratch):
           "and the line telling the user",
           "\n".join([hand_check_line("conflicting", failing.head("conflicting")),
                      *no_branch_revert_lines([("conflicting", failing.head("conflicting"))]),
-                     PUSH_GOES_ON_LINE, TELL_USER_LINE]) in outcome.stderr, outcome.describe())
+                     PUSH_GOES_ON_LINE % branch_entry("conflicting", failing.head("conflicting")),
+                     TELL_USER_LINE]) in outcome.stderr, outcome.describe())
 
     hooks = make_layout(scratch, "layout-runner-missing",
                         conflict_check=FAKE_CHECK_ALWAYS_CONFLICT, include_runner=False)
@@ -1597,9 +1622,11 @@ def run_revert_check_cases(scratch):
         check("and says the branch was not checked, why, and the command to check it by hand",
               REVERT_NOT_CHECKED % ("squashed", reason) in result.stderr
               and revert_hand_check_line(commit) in result.stderr, result.describe())
-        check("and then, once, that the push goes through",
-              result.stderr.count(PUSH_GOES_ON_LINE) == 1
-              and result.stderr.index(PUSH_GOES_ON_LINE)
+        goes_on = PUSH_GOES_ON_LINE % branch_entry("squashed", commit)
+        check("and then, once, that the push goes through without a clean verdict for it",
+              result.stderr.count(PUSH_GOES_ON_START) == 1
+              and result.stderr.count(goes_on) == 1
+              and result.stderr.index(goes_on)
               > result.stderr.index(REVERT_NOT_CHECKED % ("squashed", reason)),
               result.describe())
 

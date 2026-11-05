@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """UserPromptSubmit hook, on ned-box only: on a prompt the user typed, claim the alerts programs wrote for him,
-and tell the agent to add them to his approval-walk as items right after the waiting item.
+and add them to his approval-walk as items right after the waiting item.
 
 Wired as a UserPromptSubmit hook in .claude/settings.json. Off Linux, that is on the Mac, it exits 0 at once:
 Mac agent-sessions take no alerts until a renaming test over /Volumes/nedhome says they can.
@@ -14,16 +14,20 @@ that opens as NOT_TYPED_PROMPT_OPENINGS lists is not his.
 ON A TYPED PROMPT the hook calls, from ALERTS_MODULE_FILE, user_alerts_claimed_delete_if_recorded_in_approval_walk_minutes_else_release_to_pending_after_30_minutes,
 then user_alerts_claim_every_pending_by_rename_into_claimed, whose docstrings say what each moves. When it claimed nothing it prints nothing.
 Otherwise it finds the open approval-walk of the checkout the payload's cwd names with WALK_FINDER_FILE, the
-module the other walk-me-through hooks use, and its additionalContext tells the agent:
-- with an approval-walk open: to run INSERT_PROGRAM with the claimed ids before acting on the prompt, so each
-  alert becomes the item right after the waiting item;
+module the other walk-me-through hooks use, and its additionalContext tells the agent what it did or what to do:
+- with an approval-walk open: the hook runs INSERT_PROGRAM with the claimed ids itself, so each alert becomes
+  an item right after the waiting item, and passes on what it printed; when it fails, its exit code and stderr,
+  and the command to run again once its cause is fixed;
 - with none open: to answer the prompt first, then open an approval-walk with the alerts as its only items and
   write each alert's `#user_alert <id>` line into its walk-minutes;
-- when the walk files cannot be read: both, each under its condition.
+- when the walk files cannot be read, or more than one approval-walk is open or paused, which the walk finder
+  raises as MoreThanOneUnclosedApprovalWalk naming each walk-minutes file: to run INSERT_PROGRAM if an
+  approval-walk is open, and the no-walk steps otherwise, each under its condition, with the finder's error.
 
-FAILURES. A payload that is not JSON: one line on stderr, exit 1. A failure claiming alerts: additionalContext
-says what failed and that alerts may be waiting unseen, and has the agent tell the user, since an alert is
-how a program reaches him.
+FAILURES. A payload that is not JSON: one line on stderr, exit 1. A failure claiming alerts: a systemMessage, which
+Claude Code shows the user, says that alerts may be waiting unseen, since an alert is how a program reaches
+him, and that an agent on ned-box should fix the cause; additionalContext tells the agent what failed and
+that the user has been told.
 
 Agent-facing messages follow
 docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
@@ -31,6 +35,8 @@ docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-h
 import importlib.util
 import json
 import os
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -41,6 +47,9 @@ INSERT_PROGRAM = HERE / "walk-me-through-user-alert-insert-as-unnumbered-item-af
 ALERTS_MODULE_FILE = (CHECKOUT / "nc-systems" / "general-tools"
                       / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
 TRANSCRIPT_READER_FILE = CHECKOUT / "scripts" / "claude-code-session-transcript-records-read-backward-common.py"
+# At most half this hook's timeout in .claude/settings.json, so a stalled insert is reported, not killed with
+# the hook after the alerts are claimed; a test checks.
+INSERT_TIMEOUT_SECONDS = 5
 USER_TURN_ORIGIN = "human"
 # How Claude Code opens a background-task notice, another agent-session's message and a subagent's hand-back.
 NOT_TYPED_PROMPT_OPENINGS = ("<task-notification>", "<cross-session-message", "<agent-message",
@@ -49,6 +58,20 @@ NOT_TYPED_PROMPT_OPENINGS = ("<task-notification>", "<cross-session-message", "<
 CLAIMED_OPENING = ("The user-alerts hook claimed {count} alert(s) that programs on ned-box wrote for the user, "
                    "each a problem he has not yet seen:")
 ALERT_LINE = "- {title} (alert {id}, file {path})"
+INSERTED_LINES = (
+    "The hook added these alerts to approval-walk {walk} as items right after its waiting item, by running "
+    "{command}, which printed:",
+    "{output}",
+    "Do what those lines say, then act on the user's prompt.",
+)
+INSERT_FAILED_LINES = (
+    "The hook tried to add these alerts to approval-walk {walk} as items right after its waiting item, but the "
+    "program it ran failed, so no item was added. The program exited {code}, and printed: {error}",
+    "Before you act on the user's prompt, fix the cause that message names, if you can, then run: {command}",
+    "Then do what that command prints, and act on the user's prompt.",
+    "If you cannot fix the cause now, act on the user's prompt: an alert no walk-minutes name is offered again "
+    "on the user's first prompt 30 minutes or more after this one.",
+)
 WALK_OPEN_LINES = (
     "Before you act on the user's prompt, add the alerts to approval-walk {walk} as items right after its "
     "waiting item, by running:",
@@ -74,11 +97,11 @@ IF_NO_WALK = "If no approval-walk is open:"
 CLAIM_FAILED_LINES = (
     "The user-alerts hook failed while claiming alerts, so an alert a program on ned-box wrote for the user may "
     "be waiting in {directory} where nobody sees it: {error}.",
-    "Tell the user in one line, after answering his prompt: \"The hook that brings program alerts into your "
-    "approval-walk failed on ned-box ({error}), so a program's alert may be waiting unseen in {directory}.\" "
-    "Recommend that an agent on ned-box fix the cause.",
-    "If you are a subagent, pass the same fact to the agent that dispatched you.",
+    "The hook has shown the user this sentence, so do not repeat it: \"{user_sentence}\"",
 )
+CLAIM_FAILED_USER_SENTENCE = ("The hook that brings program alerts into your approval-walk failed on ned-box "
+                              "({error}), so a program's alert may be waiting unseen in {directory}. An agent on ned-box "
+                              "should fix the cause.")
 
 
 def load_module(name, path):
@@ -136,7 +159,26 @@ def context_for(alerts, claimed_directory, cwd):
     except Exception as error:  # noqa: BLE001 - any failure reading the walk is reported with both branches
         return "\n".join(lines + [WALK_UNKNOWN_LINE.format(error=repr(error)), IF_WALK_OPEN]
                          + walk_lines("<its name>") + [IF_NO_WALK] + no_walk_lines)
-    return "\n".join(lines + (no_walk_lines if walk is None else walk_lines(walk)))
+    if walk is None:
+        return "\n".join(lines + no_walk_lines)
+    return "\n".join(lines + insert_lines(walk, cwd, [str(alert.get("id")) for alert in alerts]))
+
+
+def insert_lines(walk, cwd, alert_ids):
+    """Run INSERT_PROGRAM on alert_ids, and say what it did or how it failed."""
+    arguments = [sys.executable, str(INSERT_PROGRAM), "--cwd", str(cwd), *alert_ids]
+    command = " ".join(shlex.quote(argument) for argument in ["python3", *arguments[1:]])
+    try:
+        result = subprocess.run(arguments, capture_output=True, text=True, timeout=INSERT_TIMEOUT_SECONDS,
+                                check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        code, error_text = "no code", repr(error)
+    else:
+        if result.returncode == 0:
+            return [line.format(walk=walk, command=command, output=result.stdout.rstrip("\n"))
+                    for line in INSERTED_LINES]
+        code, error_text = result.returncode, (result.stderr or result.stdout).strip() or "nothing"
+    return [line.format(walk=walk, code=code, error=error_text, command=command) for line in INSERT_FAILED_LINES]
 
 
 def output_for(payload, user_alerts=None):
@@ -149,8 +191,12 @@ def output_for(payload, user_alerts=None):
     try:
         user_alerts.user_alerts_claimed_delete_if_recorded_in_approval_walk_minutes_else_release_to_pending_after_30_minutes()
         alerts = user_alerts.user_alerts_claim_every_pending_by_rename_into_claimed()
-    except Exception as error:  # noqa: BLE001 - a failed claim must reach the user through the agent
-        context = "\n".join(line.format(directory=directory, error=repr(error)) for line in CLAIM_FAILED_LINES)
+    except Exception as error:  # noqa: BLE001 - a failed claim must reach the user
+        user_sentence = CLAIM_FAILED_USER_SENTENCE.format(directory=directory, error=repr(error))
+        context = "\n".join(line.format(directory=directory, error=repr(error), user_sentence=user_sentence)
+                            for line in CLAIM_FAILED_LINES)
+        return {"systemMessage": user_sentence,
+                "hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}
     else:
         if not alerts:
             return None

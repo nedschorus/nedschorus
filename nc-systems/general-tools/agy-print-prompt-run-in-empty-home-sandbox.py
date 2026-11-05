@@ -4,24 +4,28 @@
 Usage:
   nc-systems/general-tools/agy-print-prompt-run-in-empty-home-sandbox.py --model MODEL PROMPT
 
+MODEL is a model name agy accepts, such as gemini-3.8-flash-medium.
+
 Runs `agy --model MODEL --output-format text --print PROMPT` with stdin closed,
 without --dangerously-skip-permissions, and passes agy's stdout, stderr and
 exit code through. GEMINI_API_KEY is removed from agy's environment, because a
 key is billed per call and agy's own Google login, in ~/.gemini, is not.
 
-On Linux the sandbox is `bwrap`: the home directory is an empty tmpfs with
-only ~/.gemini, where agy keeps its login, bound back read-write; /usr and
+On Linux the sandbox is `bwrap`: the home directory holds only ~/.gemini,
+where agy keeps its login, bound read-write; /usr and
 /etc are read-only; the network is shared; the working directory is a fresh
-empty directory in a tmpfs /tmp. The agy binary is bound read-only at
-/run/agy-bin/agy, outside the home and off PATH, so agy cannot start another
-agy. /run/systemd/resolve, which /etc/resolv.conf points into on ned-box, is
+empty directory in a tmpfs /tmp. On Linux only, the agy binary is bound
+read-only at /run/agy-bin/agy, outside the home and off PATH, so agy cannot
+start another agy. /run/systemd/resolve, which /etc/resolv.conf points into on ned-box, is
 bound when it exists; where it does not and DNS needs it, agy fails with its
 own network error.
 
-On macOS the sandbox is the Gemini launcher's, `credential_sandbox_prefix()`
-in nc-systems/cold-read/cold-read-agy-cell.py, which denies the credential
-paths but leaves the rest of the home readable; the working directory is a
-fresh empty temporary directory, removed afterwards.
+On macOS the sandbox is `sandbox-exec` with the Gemini launcher's profile,
+from `credential_sandbox_prefix()` in nc-systems/cold-read/cold-read-agy-cell.py,
+which denies reading and writing the credential paths but does not empty the
+home: the rest of it stays readable and writable, and agy stays on PATH, so
+it can start another agy. On macOS the working directory is a fresh empty
+temporary directory, removed afterwards.
 
 Fails, with a line on stderr and exit 1, when agy is not on PATH or the
 sandbox program is not. When the sandboxed run fails, this program prints a
@@ -31,6 +35,7 @@ that program's code. Nothing is retried.
 """
 
 import argparse
+import contextlib
 import importlib.util
 import os
 import pathlib
@@ -54,7 +59,7 @@ def empty_home_sandbox_prefix(home: pathlib.Path, agy_path: str) -> list:
         "--symlink", "usr/lib64", "/lib64", "--symlink", "usr/sbin", "/sbin",
         "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/run",
         "--ro-bind-try", "/run/systemd/resolve", "/run/systemd/resolve",
-        "--tmpfs", str(home), "--bind", str(home / ".gemini"), str(home / ".gemini"),
+        "--bind", str(home / ".gemini"), str(home / ".gemini"),
         "--ro-bind", agy_path, AGY_PATH_INSIDE_SANDBOX,
         "--dir", "/tmp/agy-working-directory", "--chdir", "/tmp/agy-working-directory",
         "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--die-with-parent",
@@ -85,7 +90,9 @@ def main() -> int:
             print(f"{PROGRAM}: refused: {needed} is not on PATH, so agy was not run.",
                   file=sys.stderr)
             return 1
-    with tempfile.TemporaryDirectory(prefix="agy-working-directory-") as working_directory:
+    working_directory_context = (tempfile.TemporaryDirectory(prefix="agy-working-directory-")
+                                 if sys.platform == "darwin" else contextlib.nullcontext())
+    with working_directory_context as working_directory:
         if sys.platform == "darwin":
             command = [*launcher_credential_sandbox_prefix(), agy_path, *agy_arguments]
         else:

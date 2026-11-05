@@ -171,6 +171,10 @@ def finding(line, category, body=None):
             "finding_category": category}
 
 
+def nit(line, body=None, value=True, category="fix-in-maintenance"):
+    return {**finding(line, category, body), "nit": value}
+
+
 MERGE_LANE_ARGUMENTS = ("--pull-request", "7", "--head-commit", HEAD,
                         "--github-account", "ned-review-merge")
 
@@ -286,13 +290,33 @@ def merge_lane_cases(scratch):
             ("a finding opening with a hand-written category mark",
              [finding(3, "fix-next", "**file-for-later** b")], "APPROVE",
              "comment on scripts/thing.py:3 whose body already opens with the category mark "
-             "**file-for-later**"),
+             "**file-for-later**, the bold opening that names the finding's category; this program writes that "
+             "mark from the comment's \"finding_category\" and \"nit\", so remove the mark from the start of "
+             "its \"body\""),
             ("a REQUEST_CHANGES verdict with nothing must-fix-now", [finding(2, "fix-next")],
              "REQUEST_CHANGES", "has the verdict 'REQUEST_CHANGES' but no comment whose "
                                 "\"finding_category\" is must-fix-now; this program posts "
                                 "REQUEST_CHANGES only for a must-fix-now comment, so it refuses"),
             ("a COULD_NOT_REVIEW verdict", [], "COULD_NOT_REVIEW",
-             "has the verdict 'COULD_NOT_REVIEW'")):
+             "has the verdict 'COULD_NOT_REVIEW'"),
+            ("a nit whose category is fix-next", [nit(2, category="fix-next")], "APPROVE",
+             "comment on scripts/thing.py:2 with \"nit\": true whose \"finding_category\" is 'fix-next'; "
+             "only a fix-in-maintenance finding can be a nit, so make its category fix-in-maintenance or omit the "
+             "\"nit\" key"),
+            ("a nit whose category is must-fix-now", [nit(2, category="must-fix-now")], "REQUEST_CHANGES",
+             "whose \"finding_category\" is 'must-fix-now'; only a fix-in-maintenance finding can be a nit"),
+            ("a \"nit\" of false", [nit(2, value=False)], "APPROVE",
+             "comment on scripts/thing.py:2 whose \"nit\" is False; give \"nit\" only as the JSON value true, "
+             "on a nit, a small fix that names no failure, such as a misspelt name, and omit the \"nit\" key "
+             "from any other comment"),
+            ("a \"nit\" of 1", [nit(2, value=1)], "APPROVE", "whose \"nit\" is 1; give \"nit\" only as the JSON value true"),
+            ("a \"nit\" of the text true", [nit(2, value="true")], "APPROVE",
+             "whose \"nit\" is 'true'; give \"nit\" only as the JSON value true"),
+            ("a nit opening with a hand-written nit mark", [nit(2, "**fix-in-maintenance, nit** b")], "APPROVE",
+             "comment on scripts/thing.py:2 whose body already opens with the category mark "
+             "**fix-in-maintenance, nit**"),
+            ("a comment with a key other than \"nit\" beside its category", [{**finding(2, "fix-next"), "note": "x"}],
+             "APPROVE", "and a \"finding_category\", with no other keys but an optional \"nit\": true")):
         result = run_program(scratch, review(verdict, comments=comments),
                              arguments=MERGE_LANE_ARGUMENTS)
         check(f"merge-lane-2's file with {name} exits 2, says why, calls no gh, and says to fix "
@@ -300,6 +324,11 @@ def merge_lane_cases(scratch):
               result.code == 2 and reason in result.stderr and "review not posted" in result.stderr
               and "fix it and run the same command again" in result.stderr
               and "headless-run" not in result.stderr and not result.calls, result.detail)
+    result = run_program(scratch, review("APPROVE", comments=[
+        {"path": "scripts/thing.py", "line": 2, "body": "b", "nit": True}]))
+    check("a mac-claude file whose comment carries \"nit\" is refused, since only merge-lane-2's file may",
+          result.code == 2 and "a text \"body\", with no other keys" in result.stderr
+          and not result.calls, result.detail)
     result = run_program(scratch, review("APPROVE", comments=[finding(2, "fix-next")]))
     check("a mac-claude file whose comments carry a category is refused, since the Claude "
           "reviewer's comments have exactly path, line and body",
@@ -418,10 +447,55 @@ def merge_lane_cases(scratch):
 
     marks = [load_posting_program().review_comment_opening_mark_for_finding_category(category)
              for category in ("fix-next", "fix-in-maintenance", "file-for-later")]
-    check("no non-blocking category's mark matches the fix-round program's blocking mark, so the "
-          "fix-round program never reads a non-blocking finding as blocking",
-          len(set(marks)) == 3 and not any(
+    marks.append(load_posting_program().review_comment_opening_mark_for_finding_category("fix-in-maintenance", True))
+    check("no non-blocking category's mark, nor the nit mark, matches the fix-round program's blocking mark, so "
+          "the fix-round program never reads a non-blocking finding or a nit as blocking",
+          len(set(marks)) == 4 and marks[3] == "**fix-in-maintenance, nit** " and not any(
               fix_round.BLOCKING_MARKER_PATTERN.search(mark + "A finding.") for mark in marks), str(marks))
+
+    with_nit = run_program(scratch, review("REQUEST_CHANGES", comments=[
+        finding(2, "must-fix-now"), nit(3, "A misspelt name."), finding(4, "fix-in-maintenance")]),
+        arguments=MERGE_LANE_ARGUMENTS)
+    check("a nit is posted opening with the nit mark and no nit key, a fix-in-maintenance finding without the "
+          "key keeps its plain mark, and the nit is not counted as blocking",
+          with_nit.code == 0 and with_nit.posted is not None
+          and with_nit.posted["body"].startswith("REQUEST_CHANGES\n\n**Blocking: 1**\n\n")
+          and with_nit.posted["comments"] == [
+              {"path": "scripts/thing.py", "line": 2, "body": "**Blocks** Finding on line 2."},
+              {"path": "scripts/thing.py", "line": 3, "body": "**fix-in-maintenance, nit** A misspelt name."},
+              {"path": "scripts/thing.py", "line": 4, "body": "**fix-in-maintenance** Finding on line 4."}],
+          with_nit.detail)
+    posting = load_posting_program()
+    read_back = [posting.finding_category_and_text_read_from_review_comment_opening_mark(comment["body"])
+                 for comment in with_nit.posted["comments"]]
+    check("the read-back reads the nit mark as fix-in-maintenance with nit set, and every other mark with nit unset",
+          read_back == [("must-fix-now", "Finding on line 2.", False),
+                        ("fix-in-maintenance", "A misspelt name.", True),
+                        ("fix-in-maintenance", "Finding on line 4.", False)], str(read_back))
+    found = fix_round_blocking_findings(fix_round, [with_nit.posted])
+    reviews = [{"id": 1, "user": {"login": "ned-review-merge"}, "body": with_nit.posted["body"]},
+               {"id": 2, "user": {"login": "mac-claude"}, "body": "COMMENT"}]
+    comments_by_id = {1: with_nit.posted["comments"],
+                      2: [{"path": "scripts/thing.py", "line": 5, "body": "**fix-in-maintenance, nit** Not lane's."}]}
+    fix_round.gh_json_lines = lambda arguments: comments_by_id[
+        int(next(argument for argument in arguments if "/reviews/" in argument).split("/")[-2])]
+    nits = fix_round.nit_findings_of_merge_lane_2_reviews_in_round(7, reviews + [reviews[0]])
+    check("round trip: the fix-round program's count check passes beside a nit, its blocking findings leave the "
+          "nit out, and it reads the nit from merge-lane-2's review once, not from another account's review",
+          isinstance(found, list) and [item["line"] for item in found] == [2]
+          and [item["line"] for item in nits] == [3], f"{found}\n{nits}")
+
+    approving_with_nit = run_program(scratch, review("APPROVE", comments=[
+        nit(3, "A misspelt name."), finding(2, "fix-next")]), arguments=MERGE_LANE_ARGUMENTS)
+    code, out, err = follow_up_block_from_posted_reviews([with_nit.posted, approving_with_nit.posted])
+    check("round trip: print-follow-up-request-block-from-merge-lane-2-reviews prints a nit as a "
+          "fix-in-maintenance finding, the same nit restated in a later review once",
+          code == 0 and err == "" and out == (
+              "#follow_up_request pull request 7\n"
+              "1. fix-in-maintenance: `scripts/thing.py:3`: A misspelt name.\n"
+              "2. fix-in-maintenance: `scripts/thing.py:4`: Finding on line 4.\n"
+              "3. fix-next: `scripts/thing.py:2`: Finding on line 2.\n"),
+          f"exit {code}\nstdout: {out}\nstderr: {err}\n{approving_with_nit.detail}")
 
     categorized = run_program(scratch, review("APPROVE", comments=[
         finding(2, "fix-next", "First line.\nSecond line."), finding(3, "must-fix-now"),
