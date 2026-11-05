@@ -188,6 +188,18 @@ def run_failure_cases(root):
           "could not tell whether an approval-walk is open" in context and "If an approval-walk is open:" in context
           and "If no approval-walk is open:" in context and "#user_alert alert-a" in context, context)
 
+    case = Case(root, "two-walks-unclosed", walk_open=True)
+    case.alert("alert-a")
+    second_minutes = case.checkout / "docs/walk" / "a-second-walk-minutes.md"
+    second_minutes.write_text("#next_to_present item 4 of 9\n", encoding="utf-8")
+    result, context = case.run("hello")
+    check("with two approval-walks unclosed, the agent gets both instructions and the error naming each "
+          "walk-minutes file",
+          result.returncode == 0 and "MoreThanOneUnclosedApprovalWalk" in context
+          and str(second_minutes.resolve()) in context and f"{WALK}-minutes.md" in context
+          and "If an approval-walk is open:" in context and "If no approval-walk is open:" in context
+          and "#user_alert alert-a" in context and case.names("claimed") == ["alert-a"], context + result.stderr)
+
     case = Case(root, "bad-payload")
     result, _ = case.run("", stdin="not json")
     check("a payload that is not JSON is reported on stderr with exit 1",

@@ -19,7 +19,9 @@ module the other walk-me-through hooks use, and its additionalContext tells the 
   alert becomes the item right after the waiting item;
 - with none open: to answer the prompt first, then open an approval-walk with the alerts as its only items and
   write each alert's `#user_alert <id>` line into its walk-minutes;
-- when the walk files cannot be read: both, each under its condition.
+- when the walk files cannot be read, or more than one approval-walk is open or paused, which the walk finder
+  raises as MoreThanOneUnclosedApprovalWalk naming each walk-minutes file: both, each under its condition, with
+  the finder's error.
 
 FAILURES. A payload that is not JSON: one line on stderr, exit 1. A failure claiming alerts: additionalContext
 says what failed and that alerts may be waiting unseen, and has the agent tell the user, since an alert is
