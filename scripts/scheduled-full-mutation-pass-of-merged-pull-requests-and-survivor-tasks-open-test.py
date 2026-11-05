@@ -373,9 +373,10 @@ def run_cases():
         (fixture.log_store / job.RECORDS_DIRECTORY_NAME).mkdir(parents=True)
         (fixture.log_store / job.RECORDS_DIRECTORY_NAME
          / job.SURVIVING_MUTANT_DIFFS_DIRECTORY_NAME).write_text("a file, not a directory")
-        completed = fixture.run({merge: {"json": verdict(survived=[survivor()])}})
+        completed = fixture.run({merge: {"json": verdict(
+            survived=[survivor(), survivor(2, "core/ReplaceBinaryOperator_Add_Sub")])}})
         check("a survivor's diff that cannot be written stops the run at that merge, exit 4, "
-              "naming the diff file, with no task opened",
+              "naming the first of the line's diff files, with no task opened",
               completed.returncode == job.EXIT_STEP_FAILED
               and f"merge {merge[:12]}: no task could be opened on alpha's task list"
               in completed.stderr
