@@ -1171,10 +1171,8 @@ class IgnitionPlanWithoutConversationTail:
         else:
             recovery_note = ("the previous session's conversation-tail is unavailable; "
                              "this next-step and the repository are your whole context.")
-        prompt = (
-            f"{self.next_step}\n\n(Recovered at {self.occasion}: {recovery_note}) "
-            + ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION
-        )
+        prompt = (f"(Recovered at {self.occasion}: {recovery_note}) "
+                  + ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION)
         if launch_time_git_sync_report:
             prompt += " " + launch_time_git_sync_report_in_prompt(launch_time_git_sync_report,
                                                                   branch_state_instruction)
@@ -1182,7 +1180,11 @@ class IgnitionPlanWithoutConversationTail:
             prompt += " " + line
         for line in memory_review_due:
             prompt += " " + line
-        return prompt
+        # The next step goes last, after NEXT_STEP_HEADING, as in build_ignition_prompt, so that
+        # launch_prompt_with_leftovers_before_the_next_step puts the leftovers before it.
+        if not self.next_step:
+            return prompt
+        return f"{prompt}{NEXT_STEP_HEADING}{self.next_step}"
 
 
 def numbered_files_by_generation(directory: Path, stem: str) -> dict:
@@ -2232,8 +2234,8 @@ def handoff_supervisor_restart_itself_on_main_code_or_return_failure_report(
 def successor_session_id_and_ignition_plan_without_conversation_tail(
         settings: SupervisorSettings, retiring_session_id: Optional[str],
         handoff_fields: dict, occasion: str):
-    """Return (successor_session_id, ignition_plan) for a successor whose prompt is the
-    handoff's next step followed by a recovery note and the launch's other lines,
+    """Return (successor_session_id, ignition_plan) for a successor whose prompt is a
+    recovery note and the launch's other lines followed by the handoff's next step,
     printing why there is no conversation-tail.
 
     retiring_session_id is the session whose extraction failed, or None when no

@@ -326,10 +326,12 @@ def run_missing_transcript_cases(workspace: Path):
           exit_code == 0 and len(prompts) == 2 and state.get("consumed_counter") == 1
           and "not relaunching" not in console.getvalue() + errors.getvalue(),
           f"{exit_code!r} {len(prompts)} {state} {errors.getvalue()[-400:]}")
-    check("MISSING TRANSCRIPT, NOT RESTARTED: the successor's prompt is the next step, says the "
-          "transcript is missing, and says why the supervisor did not restart",
+    check("MISSING TRANSCRIPT, NOT RESTARTED: the successor's prompt says the transcript is "
+          "missing and why the supervisor did not restart, then gives the next step",
           successor_prompt.startswith(
-              "carry on\n\n" + recovery_note_for_a_missing_transcript("a handoff", retiring, workspace))
+              recovery_note_for_a_missing_transcript("a handoff", retiring, workspace))
+          # The not-restarted line follows the next step, as it does in a prompt from a dialog.
+          and supervisor.NEXT_STEP_HEADING + "carry on " in successor_prompt
           and f'reason: "{cannot_fast_forward}"' in successor_prompt,
           successor_prompt[:900])
 
@@ -365,7 +367,8 @@ def run_missing_transcript_cases(workspace: Path):
               f"says it was recovered at {occasion} and that the transcript is missing",
               len(prompts) == 1 and state.get("consumed_counter") == 1
               and prompts[0].startswith(
-                  "carry on\n\n" + recovery_note_for_a_missing_transcript(occasion, retiring, workspace)),
+                  recovery_note_for_a_missing_transcript(occasion, retiring, workspace))
+              and prompts[0].endswith(supervisor.NEXT_STEP_HEADING + "carry on"),
               f"{state} {prompts[:1]!r}"[:900])
 
 
