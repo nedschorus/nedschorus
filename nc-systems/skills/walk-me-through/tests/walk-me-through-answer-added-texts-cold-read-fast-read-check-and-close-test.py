@@ -433,6 +433,10 @@ UNREADABLE_MARK_CASES = (
      '#new "Use\n`#new` to mark proposed text."\n',
      ["- line 5: the text of `#new` runs onto line 6 right below it, where it is not read. The mark's line with "
       'its text joined onto it: #new "Use `#new` to mark proposed text."']),
+    ("a mark whose text runs onto a line that opens with a hashtag this program does not read",
+     '#new "The rule asks for\n#root_cause lines in each description."\n',
+     ["- line 5: the text of `#new` runs onto line 6 right below it, where it is not read. The mark's line with "
+      'its text joined onto it: #new "The rule asks for #root_cause lines in each description."']),
 )
 
 
@@ -483,6 +487,15 @@ def test_marks_whose_texts_are_read_whole_are_not_refused():
     check("marks one under another with no blank line or list marker between them, and a marker line right below "
           "the last, are not refused, and each mark's line is read on its own",
           result.returncode == 0 and case.calls.read_text() == "Row one.\nRow three.\n", described(result))
+    case = Case(document=marks_document('#new "Row one."\n`#case_against weak`: the fix costs an hour.\n'))
+    result = case.run("check")
+    check("a mark with a backticked `#case_against` line right below it is not refused, and its own line is read",
+          result.returncode == 0 and case.calls.read_text() == "Row one.\n", described(result))
+    for body, read in (("#new > Keep the old logs.\n", "> Keep the old logs.\n"), ("#new >\n", ">\n")):
+        case = Case(document=marks_document(body))
+        result = case.run("check")
+        check(f"a mark whose text opens with `>` keeps the `>` in the text it reads: {body!r}",
+              result.returncode == 0 and case.calls.read_text() == read, described(result))
 
 
 def test_the_waiting_item_read_step_refuses_a_mark_whose_text_would_not_be_read_whole():
