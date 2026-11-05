@@ -80,9 +80,10 @@ READY_LOOKUP_FAILED_REFUSAL = (
     "this push is refused, because it forces an update to branch {branch} on origin, the head "
     "of draft pull request {pull_request}, and whether that pull request was ever ready for "
     "review could not be checked: {detail}.")
+# totalCount counts the whole timeline whatever itemTypes asks for; only filteredCount counts the events asked for.
 EVER_READY_QUERY = (
     "query($id: ID!) { node(id: $id) { ... on PullRequest { timelineItems(itemTypes: "
-    "[READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT]) { totalCount } } } }")
+    "[READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT]) { filteredCount } } } }")
 LOOKUP_FAILED_INSTRUCTION = (
     "Tell the user this whole message, and do not push {branch} again until he answers.")
 
@@ -187,7 +188,7 @@ def was_ever_ready_for_review(pull_request, runner):
             f"gh api graphql exited with status {completed.returncode}"
             + (f": {first_line}" if first_line else ""))
     try:
-        count = json.loads(completed.stdout)["data"]["node"]["timelineItems"]["totalCount"]
+        count = json.loads(completed.stdout)["data"]["node"]["timelineItems"]["filteredCount"]
     except (ValueError, KeyError, TypeError):
         raise ReadyHistoryLookupFailed(
             "gh api graphql printed no count of the pull request's ready and draft "

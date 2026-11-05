@@ -70,7 +70,7 @@ class FakeRunner:
             kind = "view"
         elif command[:2] == ["git", "rev-parse"]:
             kind = "rev-parse"
-        elif command == program.test_suites_command(CHECKOUT):
+        elif command == program.selective_test_run_command(CHECKOUT):
             kind = "suites"
         elif command[:3] == ["gh", "pr", "ready"]:
             kind = "ready"
@@ -123,11 +123,11 @@ def main():
           (status, runner.calls, output, errors))
     check("the test suites run with the checkout's own runner, by the command CLAUDE.md gives "
           "for before a push",
-          program.test_suites_command(CHECKOUT) == [
+          program.selective_test_run_command(CHECKOUT) == [
               "python3", CHECKOUT + "/scripts/run-all-test-suites.py",
               "--only-suites-whose-recorded-inputs-changed-since", "origin/main"]
           and f"running {CHECKOUT}/scripts/run-all-test-suites.py" in output,
-          repr(program.test_suites_command(CHECKOUT)))
+          repr(program.selective_test_run_command(CHECKOUT)))
 
     # Already ready: nothing to do, nothing run.
     runner = FakeRunner(view=answers(view_answer(isDraft=False)))
@@ -160,7 +160,7 @@ def main():
               "Fix them, commit and push the fix, then run this again."])]:
         status, output, errors = run(runner)
         check(f"{label} is refused before gh pr ready, saying why and what to do",
-              status == program.EXIT_REFUSED_OR_FAILED and runner.calls == expected_calls
+              status == program.EXIT_MARK_READY_REFUSED_OR_FAILED and runner.calls == expected_calls
               and all(line in errors for line in expected_lines), (status, runner.calls, errors))
 
     # Failures of gh, git and python3, each reported with its cause and what to do.
@@ -209,7 +209,7 @@ def main():
               "review. Running this command again finds out", RETRY_LINE])]:
         status, output, errors = run(runner)
         check(f"when {label}, the program exits 1 and says what failed and what to do",
-              status == program.EXIT_REFUSED_OR_FAILED
+              status == program.EXIT_MARK_READY_REFUSED_OR_FAILED
               and all(line in errors for line in expected_lines), (status, errors))
 
     # The program as a command: a bad argument exits 2, before any gh call.

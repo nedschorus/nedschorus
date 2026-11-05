@@ -38,7 +38,7 @@ defect_line_reader = importlib.util.module_from_spec(_defect_line_reader_spec)
 _defect_line_reader_spec.loader.exec_module(defect_line_reader)
 
 EXIT_MARKED_READY = 0
-EXIT_REFUSED_OR_FAILED = 1
+EXIT_MARK_READY_REFUSED_OR_FAILED = 1
 GH_TIMEOUT_SECONDS = 60.0
 GIT_TIMEOUT_SECONDS = 30.0
 MESSAGE_PREFIX = "pull request ready for review: "
@@ -54,7 +54,7 @@ class StepFailed(Exception):
     """A step refused the pull request, or could not run; the message says which and why."""
 
 
-def test_suites_command(checkout):
+def selective_test_run_command(checkout):
     """The test run CLAUDE.md asks for before a push, with checkout's own runner, which tests
     the checkout it sits in; the runner beside this program may sit in another checkout."""
     return ["python3", str(Path(checkout) / "scripts" / "run-all-test-suites.py"),
@@ -147,7 +147,7 @@ def check_and_mark_ready(number, runner, output):
             "Write the whole description, with one of those lines, in a file, save it with gh pr "
             f"edit {number} --body-file <that file>, which replaces the old description, then "
             "run this again.")
-    command = test_suites_command(checkout)
+    command = selective_test_run_command(checkout)
     output.write(MESSAGE_PREFIX + "running " + " ".join(command[1:]) + "\n")
     output.flush()
     try:
@@ -183,7 +183,7 @@ def main(argv=None, runner=subprocess.run, output=sys.stdout, errors=sys.stderr)
         check_and_mark_ready(arguments.pull_request_number, runner, output)
     except StepFailed as refusal:
         errors.write(MESSAGE_PREFIX + str(refusal) + "\n")
-        return EXIT_REFUSED_OR_FAILED
+        return EXIT_MARK_READY_REFUSED_OR_FAILED
     return EXIT_MARKED_READY
 
 

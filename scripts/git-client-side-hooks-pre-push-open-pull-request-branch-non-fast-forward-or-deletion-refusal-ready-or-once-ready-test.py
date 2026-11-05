@@ -49,8 +49,10 @@ def pull_request(**fields):
     return entry
 
 
-def graphql_answer(count):
-    return json.dumps({"data": {"node": {"timelineItems": {"totalCount": count}}}})
+def graphql_answer(count, whole_timeline_count=7):
+    """GitHub's answer: totalCount counts the whole timeline, filteredCount the events asked for."""
+    return json.dumps({"data": {"node": {"timelineItems": {
+        "totalCount": whole_timeline_count, "filteredCount": count}}}})
 
 
 def completed(command, status=0, stdout="", stderr=""):
@@ -113,6 +115,18 @@ def main():
           and "--json" in runner.gh_calls[0]
           and "isDraft" in runner.gh_calls[0][runner.gh_calls[0].index("--json") + 1],
           repr(runner.gh_calls))
+
+    # A never-ready draft whose whole timeline holds commits, as every draft's does, may still
+    # be rewritten: only the count of ready and convert-to-draft events decides.
+    runner = FakeRunner([pull_request(isDraft=True)], lambda command: completed(
+        command, 0, graphql_answer(0, whole_timeline_count=2)))
+    status, printed = run(REWRITE_REFS, runner)
+    calls = graphql_calls(runner)
+    check("a never-ready draft whose timeline holds other items, totalCount 2 and filteredCount "
+          "0, may be rewritten, and the lookup asks for filteredCount",
+          status == check_module.EXIT_ALLOW_PUSH and printed == ""
+          and len(calls) == 1 and any("filteredCount" in word for word in calls[0]),
+          (status, printed, calls))
 
     # A draft whose timeline holds a ready or convert-to-draft event was once ready: refused.
     runner = FakeRunner([pull_request(isDraft=True)], lambda command: completed(
