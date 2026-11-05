@@ -30,7 +30,7 @@ def expect(condition, label):
 def read_arguments(folder, **overrides):
     values = {"describe": "a script that ships cold-read records to the log-store",
               "full": "cold-read-record-to-log-store-ship", "medium": "cold-read-record-ship",
-              "short": "record-ship", "retry_of": None, "run_file": str(folder / "run.json")}
+              "short": "record-ship", "sent_name": None, "retry_of": None, "run_file": str(folder / "run.json")}
     values.update(overrides)
     return argparse.Namespace(**values)
 
@@ -73,6 +73,17 @@ def test_read_refuses_candidates_not_shorter():
         code, _, err = quiet(check.command_read, read_arguments(folder, medium="a-b-c-d-e-f-g"),
                              reader=lambda *a: called.append(a), log_path=str(folder / "log.jsonl"))
         expect(code == 2 and "REFUSED" in err and not called, "read refuses candidates that do not get shorter")
+
+
+def test_read_refuses_a_sent_name_left_out():
+    with tempfile.TemporaryDirectory() as folder:
+        folder = pathlib.Path(folder)
+        code, _, err = quiet(check.command_read, read_arguments(folder, sent_name="cold-read-ship"),
+                             reader=stub_reader(), log_path=str(folder / "log.jsonl"))
+        expect(code == 2 and "not one of the three" in err and "3 words" in err, "a sent name left out is refused")
+        code, _, _ = quiet(check.command_read, read_arguments(folder, sent_name="record-ship"),
+                           reader=stub_reader(), log_path=str(folder / "log.jsonl"))
+        expect(code == 0, "a sent name among the candidates runs")
 
 
 def test_read_runs_eighteen_fresh_readers_and_logs_each():
@@ -206,14 +217,20 @@ def test_retry_once_only():
         code, _, err = quiet(check.command_read, read_arguments(folder, retry_of=str(first)), reader=stub_reader(),
                              log_path=str(folder / "log.jsonl"))
         expect(code == 2 and "already a retry" in err, "a retry of a retry is refused")
-        first.write_text(json.dumps({"retry_number": 0}))
+        quiet(check.command_read, read_arguments(folder, run_file=str(first)), reader=stub_reader(),
+              log_path=str(folder / "log.jsonl"))
+        first_run = json.loads(first.read_text())
+        quiet(check.command_verdicts, verdict_arguments(first, all_verdicts(first_run, miss={"c1r1", "c2r1", "c3r1", "c3r2"})),
+              log_path=str(folder / "log.jsonl"))
         code, _, _ = quiet(check.command_read, read_arguments(folder, retry_of=str(first)), reader=stub_reader(),
                            log_path=str(folder / "log.jsonl"))
         run = json.loads((folder / "run.json").read_text())
         expect(code == 0 and run["retry_number"] == 1, "a first retry runs and is marked")
         code, out, _ = quiet(check.command_verdicts, verdict_arguments(folder / "run.json", all_verdicts(run, miss={
             "c1r1", "c2r1", "c3r1"})), log_path=str(folder / "log.jsonl"))
-        expect(code == 1 and "Bring the user" in out, "a retry that passes none says to bring the user the accounts")
+        expect(code == 1 and "bring the user" in out, "a retry that passes none says to bring the user the accounts")
+        expect("5 of 6: cold-read-record-to-log-store-ship" in out,
+               "a retry that passes none counts matches per candidate across both runs")
 
 
 def test_per_model_summary():

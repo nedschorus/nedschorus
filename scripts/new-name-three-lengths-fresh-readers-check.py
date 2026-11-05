@@ -3,14 +3,16 @@
 
 Usage:
   scripts/new-name-three-lengths-fresh-readers-check.py read --describe SENTENCE
-      --full NAME --medium NAME --short NAME [--retry-of RUN_FILE] [--run-file PATH]
+      --full NAME --medium NAME --short NAME [--sent-name NAME]
+      [--retry-of RUN_FILE] [--run-file PATH]
   scripts/new-name-three-lengths-fresh-readers-check.py verdicts RUN_FILE
       --verdicts JSON [--choose NAME --reason TEXT]
   scripts/new-name-three-lengths-fresh-readers-check.py per-model-summary
 
 `read` checks that the three candidates differ and get shorter, full to
 short, counting words in the last path part without its extension, split at
-hyphens, underscores, dots and lower-to-upper case changes. It then gives each
+hyphens, underscores, dots and lower-to-upper case changes, and, given
+--sent-name, that the name sent to be checked is one of the three. It then gives each
 candidate to six readers at once, eighteen calls in all, each a new process
 in its own empty temporary folder, given the name alone: Claude Sonnet 5.5 and
 Opus 5.5 (`claude -p`, no tools, no settings, so no CLAUDE.md), Gemini
@@ -32,8 +34,9 @@ passing candidates, the shortest wins, unless --choose names another passing
 one with --reason. The judgements and the outcome are appended to
 READER_RESULTS_LOG. When none passes, a first run says to build three new
 candidates once and run `read --retry-of` this run file; a retry that passes
-none says to bring the user the readers' accounts; a retry of a retry is
-refused.
+none prints each candidate of both runs with its number of matches, most
+first, and says to bring the user the readers' accounts; a retry of a retry
+is refused.
 
 `per-model-summary` reads READER_RESULTS_LOG and prints, per model, how often
 it answered, matched, was the only miss among a candidate's answering
@@ -212,6 +215,9 @@ def default_run_file(run_id: str) -> pathlib.Path:
 def command_read(arguments, reader=run_reader, log_path=None, ssh_host=None) -> int:
     candidates = {"full": arguments.full, "medium": arguments.medium, "short": arguments.short}
     problem = candidate_length_problem(candidates)
+    if not problem and arguments.sent_name and arguments.sent_name not in candidates.values():
+        problem = (f"the sent name {arguments.sent_name} is not one of the three candidates; it has "
+                   f"{len(name_words(arguments.sent_name))} words, so put it at the length that count fits")
     if problem:
         print(f"{PROGRAM}: REFUSED: {problem}. Nothing was run, so no model call was spent.\n"
               "Build three candidates that differ, each with fewer words than the one before, "
@@ -253,6 +259,18 @@ def command_read(arguments, reader=run_reader, log_path=None, ssh_host=None) -> 
               "with your judgements, so run it as usual.")
         return 1
     return 0
+
+
+def matches_per_candidate(runs: list) -> list:
+    """(name, matches, readers that answered) for every candidate of the runs, most matches first, then shortest."""
+    rows = []
+    for run in runs:
+        verdicts = run.get("verdicts", {})
+        for length in CANDIDATE_LENGTHS:
+            answered = [r for r in run["readers"] if r["length"] == length and not r["error"]]
+            rows.append((run["candidates"][length],
+                         sum(verdicts.get(r["reader_id"]) == "match" for r in answered), len(answered)))
+    return sorted(rows, key=lambda row: (-row[1], len(name_words(row[0]))))
 
 
 def reader_log_lines(run: dict) -> list:
@@ -322,8 +340,11 @@ def command_verdicts(arguments, log_path=None, ssh_host=None) -> int:
         print("No candidate passed. Build three new candidates once, from the misses, and run "
               f"`read ... --retry-of {run_file}`.")
     else:
-        print(f"No candidate passed on the retry either. Bring the user the readers' accounts in {run_file} "
-              f"and {run.get('retry_of')}.")
+        print("No candidate passed on the retry either. Matches per candidate, most first:")
+        for name, count, total in matches_per_candidate([run, json.loads(pathlib.Path(run["retry_of"]).read_text())]):
+            print(f"  {count} of {total}: {name}")
+        print(f"Report the first, with what its readers got wrong, and bring the user the readers' accounts in "
+              f"{run_file} and {run.get('retry_of')}.")
     if error:
         print(f"FAILED: the judgements were not added to the log-store: {error}. The outcome above stands. "
               "Run this same command again once ned-box answers; until then the per-model data lacks this run.")
@@ -393,6 +414,7 @@ def main(argv=None) -> int:
     read.add_argument("--describe", required=True)
     for length in CANDIDATE_LENGTHS:
         read.add_argument(f"--{length}", required=True)
+    read.add_argument("--sent-name")
     read.add_argument("--retry-of")
     read.add_argument("--run-file")
     verdict = sub.add_parser("verdicts")
