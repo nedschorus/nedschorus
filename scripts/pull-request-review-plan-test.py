@@ -92,8 +92,8 @@ BASELINE_FILE_CONTENTS = {
     "operative-note.md": "Old prose outside docs.\n",
     "scripts/example-program.py": '"""Old module documentation."""\n# Old comment\nVALUE = "old"\n\ndef show_value():\n    """Old function documentation."""\n    print(VALUE)\n    return 1\n',
     "scripts/example-program-test.py": 'EXPECTED = "old"\nassert EXPECTED\n',
-    ".claude/hooks/example-hook.py": 'print("old")\n',
-    ".claude/hooks/example-hook-test.py": 'print("old")\n',
+    ".claude/guard-hooks/example-hook.py": 'print("old")\n',
+    ".claude/guard-hooks/example-hook-test.py": 'print("old")\n',
     ".claude/guard-hooks/synthetic-keystroke-guard-hook.py": 'print("old")\n',
     "scripts/registered-example-hook.py": 'print("old")\n',
     ".claude/settings.json": json.dumps({"hooks": {"PreToolUse": [{"hooks": [
@@ -263,12 +263,12 @@ def run_classification_cases(fixture):
     check("fenced Markdown code changes get codex-review-and-head-tests-tier", plan["tier"] == "codex-review-and-head-tests-tier" and "fenced code blocks" in plan["tier_decided_by"], plan)
     full_reviewer_cases = [
         ("Python logic changes get claude-and-codex-review-and-head-tests-tier", "scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace("return 1", "return 2")),
-        ("every hook directory file gets claude-and-codex-review-and-head-tests-tier", ".claude/hooks/example-hook.py", 'print("new")\n'),
+        ("every hook directory file gets claude-and-codex-review-and-head-tests-tier", ".claude/guard-hooks/example-hook.py", 'print("new")\n'),
         ("settings gets claude-and-codex-review-and-head-tests-tier", ".claude/settings.json", '{"hooks": {}}\n'),
         ("a Bash guard string-only change gets claude-and-codex-review-and-head-tests-tier", ".claude/guard-hooks/synthetic-keystroke-guard-hook.py", 'print("new")\n'),
         ("a registered hook string-only change gets claude-and-codex-review-and-head-tests-tier", "scripts/registered-example-hook.py", 'print("new")\n'),
         ("a new Python program gets claude-and-codex-review-and-head-tests-tier", "scripts/new-example-program.py", 'print("new")\n'),
-        ("a test under the hook directory gets claude-and-codex-review-and-head-tests-tier", ".claude/hooks/example-hook-test.py", 'print("new")\n'),
+        ("a test under the hook directory gets claude-and-codex-review-and-head-tests-tier", ".claude/guard-hooks/example-hook-test.py", 'print("new")\n'),
     ]
     for case_name, path, content in full_reviewer_cases:
         plan = fixture.plan_for_changed_file(path, content)
@@ -281,14 +281,14 @@ def run_classification_cases(fixture):
     plan = fixture.read_review_plan()
     check("always-full hook wins the deciding line before path order", "scripts/registered-example-hook.py" in plan["tier_decided_by"], plan)
     fixture.reset_fixture_to_base()
-    fixture.write_fixture_file(".claude/hooks/example-hook.py", 'print("new")\n')
-    fixture.write_fixture_file(".claude/hooks/example-hook-test.py", 'print("new")\n')
+    fixture.write_fixture_file(".claude/guard-hooks/example-hook.py", 'print("new")\n')
+    fixture.write_fixture_file(".claude/guard-hooks/example-hook-test.py", 'print("new")\n')
     head = fixture.commit_fixture_changes("hook program priority over hook test")
     fixture.configure_github_answers(head)
     plan = fixture.read_review_plan()
     check("the deciding line prefers the hook program over its earlier-sorting test",
           plan["tier"] == "claude-and-codex-review-and-head-tests-tier"
-          and ".claude/hooks/example-hook.py" in plan["tier_decided_by"]
+          and ".claude/guard-hooks/example-hook.py" in plan["tier_decided_by"]
           and "example-hook-test.py" not in plan["tier_decided_by"], plan)
     plan = fixture.plan_for_changed_file("scripts/example-program.py", "def broken(:\n")
     check("unparseable Python gets claude-and-codex-review-and-head-tests-tier with side named", plan["tier"] == "claude-and-codex-review-and-head-tests-tier" and "does not parse at new side" in plan["tier_decided_by"], plan)
