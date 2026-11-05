@@ -270,9 +270,10 @@ def say_refusal(stream, stdout, budget=None, listing_error=None):
         suite_lines = suite_lines_with_logs(stdout, (FAILED_SUITE_LINE_PREFIX,
                                                      NOT_RUN_SUITE_LINE_PREFIX))
     else:
-        say(stream, MESSAGE_PREFIX + "an nc-test-suite failed in the selective test run before the "
-            "run's %d-second time budget ran out, so this push is refused; the run was stopped "
-            "when the budget ran out." % budget)
+        say(stream, MESSAGE_PREFIX + "an nc-test-suite failed in the selective test run, so this "
+            "push is refused. That run went on after the failure until its %d-second time budget "
+            "ran out, and was stopped there; the suites it had not finished by then were not "
+            "tested." % budget)
         suite_lines = stopped_run_failed_suite_lines(stdout)
     for line in suite_lines:
         say(stream, line)
@@ -284,9 +285,9 @@ def say_refusal(stream, stdout, budget=None, listing_error=None):
         "machine is busy.")
     say(stream, "If it fails a second time, tell the user which suite fails and where its log is.")
     if listing_error:
-        say(stream, MESSAGE_PREFIX + "the processes the run's suites started in their own sessions "
-            "could not be listed when the run was stopped, so some may still be running: %s"
-            % listing_error)
+        say(stream, MESSAGE_PREFIX + "the processes the run's suites started in their own process "
+            "sessions on this machine could not be listed when the run was stopped, so some may "
+            "still be running: %s" % listing_error)
         say(stream, "Tell the user this line and the error in it, since those processes may keep "
             "running on the machine.")
 
@@ -335,8 +336,9 @@ def main(stream, environment):
         if log_directory:
             cause += "; the logs of the suites it ran are in %s" % log_directory
         if listing_error:
-            cause += ("; the processes its suites started in their own sessions could not be "
-                      "listed, so some may still be running: %s" % listing_error)
+            cause += ("; the processes its suites started in their own process sessions on this "
+                      "machine could not be listed, so some may still be running: %s"
+                      % listing_error)
         say_runner_stderr(stream, stderr)
         say_not_run(stream, cause, tell_user=bool(listing_error))
         return EXIT_ALLOW_PUSH

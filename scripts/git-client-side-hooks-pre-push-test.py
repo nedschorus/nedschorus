@@ -238,8 +238,9 @@ SELECTIVE_TEST_RUN_PASSED = "pre-push: the selective test run passed. "
 SELECTIVE_TEST_RUN_REFUSED = ("pre-push: an nc-test-suite failed in the selective test run, so this "
                               "push is refused. ")
 SELECTIVE_TEST_RUN_REFUSED_BEFORE_BUDGET_RAN_OUT = (
-    "pre-push: an nc-test-suite failed in the selective test run before the run's 1-second time "
-    "budget ran out, so this push is refused; the run was stopped when the budget ran out.")
+    "pre-push: an nc-test-suite failed in the selective test run, so this push is refused. That "
+    "run went on after the failure until its 1-second time budget ran out, and was stopped there; "
+    "the suites it had not finished by then were not tested.")
 SELECTIVE_TEST_RUN_NOT_RUN_END = ", so this push goes ahead without the selective test run"
 SELECTIVE_TEST_RUN_HAND_RUN_LINE = (
     "Run it by hand from your worktree: python3 scripts/run-all-test-suites.py "
@@ -1602,9 +1603,10 @@ def run_selective_test_run_cases(scratch):
           was_refused(result) and unlisted_refusal.origin_ref("clean") is None, result.describe())
     check("a suite failed before the budget ran out and ps fails: the refusal says the suites' "
           "processes could not be listed, with ps's error, and tells the user",
-          "pre-push: the processes the run's suites started in their own sessions could not be "
-          "listed when the run was stopped, so some may still be running: ps -A -o pid=,ppid= "
-          "exited 1: ps: cannot read the process table" in result.stderr
+          "pre-push: the processes the run's suites started in their own process sessions on "
+          "this machine could not be listed when the run was stopped, so some may still be "
+          "running: ps -A -o pid=,ppid= exited 1: ps: cannot read the process table"
+          in result.stderr
           and "Tell the user this line and the error in it, since those processes may keep "
           "running on the machine." in result.stderr, result.describe())
 
@@ -1654,9 +1656,9 @@ def run_selective_test_run_cases(scratch):
         "overrun with ps failing", FAKE_TEST_SUITES_RUNNER_HANGS_WITH_CHILD,
         "the selective test run had not finished when the 1-second time budget ran out, and "
         "was stopped; the logs of the suites it ran are in " + FAKE_LOG_DIRECTORY
-        + "; the processes its suites started in their own sessions could not be listed, so "
-        "some may still be running: ps -A -o pid=,ppid= exited 1: ps: cannot read the process "
-        "table", tell_user=True, budget=HANGING_CHECK_BUDGET_SECONDS,
+        + "; the processes its suites started in their own process sessions on this machine "
+        "could not be listed, so some may still be running: ps -A -o pid=,ppid= exited 1: ps: "
+        "cannot read the process table", tell_user=True, budget=HANGING_CHECK_BUDGET_SECONDS,
         extra_environment={"PATH": "%s%s%s" % (failing_ps_bin, os.pathsep,
                                                os.environ.get("PATH", ""))})
     for suffix in (".child-pid", ".detached-child-pid"):
