@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Tests for .claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py.
+"""Tests for .claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py.
 
 Each case runs the hook as Claude Code runs it, a separate process fed a PostToolUse or
 PostToolUseFailure payload, in a throwaway repository, with a stand-in home and a stand-in
 store, so no real guarded file and no real log-store directory is touched.
 
-Run: python3 .claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook-test.py
+Run: python3 .claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook-test.py
 Prints one line per case and exits 1 if any case fails.
 """
 

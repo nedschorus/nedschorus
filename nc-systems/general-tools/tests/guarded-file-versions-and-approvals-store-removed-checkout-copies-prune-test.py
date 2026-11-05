@@ -30,7 +30,7 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 PROGRAM = (Path(__file__).resolve().parents[1]
            / "guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py")
-HOOK_PATH = (REPOSITORY_ROOT / ".claude" / "hooks"
+HOOK_PATH = (REPOSITORY_ROOT / ".claude" / "guard-hooks"
              / "guarded-file-unapproved-change-afterward-backup-and-ask-hook.py")
 _specification = importlib.util.spec_from_file_location("guarded_file_hook", HOOK_PATH)
 hook = importlib.util.module_from_spec(_specification)
