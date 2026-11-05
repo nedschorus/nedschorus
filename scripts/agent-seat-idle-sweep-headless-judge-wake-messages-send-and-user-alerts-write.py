@@ -60,8 +60,9 @@ import signal
 import socket
 import subprocess
 import sys
+import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -358,8 +359,11 @@ def claude_binary():
 def run_headless(prompt, schema, tools, working_directory, timeout_seconds):
     """Run one headless agent-session and read its SendMessage calls and its answer."""
     outcome = HeadlessOutcome()
+    # The user's settings bypass permissions and load every claude.ai connector, such as Gmail
+    # and Drive; a prompt that carries transcript text must reach neither.
     command = [claude_binary(), "-p", "--model", HEADLESS_MODEL, "--output-format", "stream-json",
-               "--verbose", "--json-schema", json.dumps(schema), "--tools", tools]
+               "--verbose", "--json-schema", json.dumps(schema), "--tools", tools,
+               "--strict-mcp-config", "--permission-mode", "dontAsk"]
     if tools:
         command += ["--allowedTools", tools]
     working_directory.mkdir(parents=True, exist_ok=True)
@@ -446,16 +450,23 @@ class Sweep:
         self.timeout_seconds = timeout_seconds
         self.machine = machine
         self.failed = False
+        self.started_monotonic = time.monotonic()
+
+    def current(self):
+        """The run's time plus the time the run has taken: headless agent-sessions run one after
+        another, so a step logged late in a run must not carry the run's start. Whole seconds, so
+        that a run that takes none logs the run's time itself."""
+        return self.now + timedelta(seconds=int(time.monotonic() - self.started_monotonic))
 
     def record(self, event):
-        return self.log.append(event, self.now)
+        return self.log.append(event, self.current())
 
     def alert(self, key, title, text, action, failure=True):
         """Write a user-alert once for each key, and log it."""
+        self.failed = self.failed or failure
         if self.log.alerted(key):
             return None
-        self.failed = self.failed or failure
-        alert_id = user_alerts.user_alert_write_to_pending(title, text, action, now=self.now)
+        alert_id = user_alerts.user_alert_write_to_pending(title, text, action, now=self.current())
         self.record({"event": "user_alert", "key": key, "alert_id": alert_id, "title": title})
         print(f"user-alert {alert_id}: {title}", flush=True)
         return alert_id
@@ -601,26 +612,34 @@ class Sweep:
                 self.end_wait(seat, "a usage limit")
             self.usage_limit(seat, verdict)
             return
+        if wait and TELL_USER in wait and stretch and parse_time(stretch) > parse_time(wait[TELL_USER]):
+            self.end_wait(seat, "it spent tokens after the user was told")
+            wait = None
+        promise_text = None
         if rule == 2:
-            outcome = self.sentences(seat, verdict, wait)
-            if outcome != "all backed":
-                return
+            outcome, promise_text = self.sentences(seat, verdict)
             fallback = verdict.get(fields.IF_EVERY_SENTENCE_BACKED)
-            if fallback is None:
-                return
-            rule, text = fallback[fields.RULE], fallback.get(fields.TEXT)
-        if rule == 4:
-            # Nothing to do settles the open tasks a rule 3 or 5 message was about, but not a
-            # promise a rule 2 message named, whatever message opened the wait it was sent on.
-            if wait and PROMISE in wait:
-                self.wait_step(seat, verdict, wait, stretch, rule, text)
-            elif wait:
-                self.end_wait(seat, "nothing to do")
-            return
+            if outcome == "all backed" and fallback is not None:
+                rule, text = fallback[fields.RULE], fallback.get(fields.TEXT)
+            elif not promise_text:
+                rule = None
+        # Nothing to do settles the open tasks a rule 3 or 5 message was about, but not a promise
+        # a rule 2 message named, whatever message opened the wait it was sent on.
+        if rule == 4 and wait and PROMISE not in wait:
+            self.end_wait(seat, "nothing to do")
+            wait = None
         if wait:
-            self.wait_step(seat, verdict, wait, stretch, rule, text)
-            return
-        self.nudge(seat, verdict, rule, text, stretch)
+            self.due_step(seat, verdict, wait)
+        if promise_text:
+            # A promise given in answer to a message goes on the open wait, so that repeated
+            # promises cannot put off its escalation and the user-alert.
+            if not wait:
+                self.start_wait(seat, verdict, stretch, promise_text, 2)
+            elif PROMISE not in wait:
+                self.record({"event": "wait_step", "agent_seat": seat, "step": PROMISE})
+            self.send(seat, verdict, promise_text, NUDGE)
+        elif not wait:
+            self.nudge(seat, verdict, rule, text, stretch)
 
     def end_wait(self, seat, why):
         self.record({"event": "wait_ended", "agent_seat": seat, "why": why})
@@ -630,11 +649,10 @@ class Sweep:
                      "session_id": verdict[fields.SESSION_ID], "first_idle_at": stretch,
                      "text": step_text})
 
-    def wait_step(self, seat, verdict, wait, stretch, rule, text):
+    def due_step(self, seat, verdict, wait):
+        """The step of an open wait that is due: the escalation 15 minutes after the nudge, then
+        the user-alert 15 minutes after the escalation; after that, none."""
         if TELL_USER in wait:
-            if stretch and parse_time(stretch) > parse_time(wait[TELL_USER]):
-                self.end_wait(seat, "it spent tokens after the user was told")
-                self.nudge(seat, verdict, rule, text, stretch)
             return
         minutes = int(seconds_between(wait["first_idle_at"] or wait[NUDGE], self.now) // 60)
         if ESCALATE in wait:
@@ -693,6 +711,8 @@ class Sweep:
                                self.timeout_seconds)
         sends = [send for send in outcome.sends if send["succeeded"]]
         problems = [outcome.error] if outcome.error else []
+        problems += [f"a SendMessage call to {send['to']!r} failed: {send['result']}"
+                     for send in outcome.sends if not send["succeeded"]]
         if sends:
             problems += send_problems(outcome, [seat], None)
         answer = outcome.answer or {}
@@ -710,15 +730,15 @@ class Sweep:
             self.start_wait(seat, verdict, stretch, text, 5)
             self.message_sent(seat, verdict, text, NUDGE)
 
-    def sentences(self, seat, verdict, wait):
-        """Rule 2: judge what code could not settle, then name every unbacked sentence to the
-        agent-seat in one message. Returns "sent", "failed" or "all backed"."""
+    def sentences(self, seat, verdict):
+        """Rule 2: judge what code could not settle, and word one message naming every unbacked
+        sentence. Returns ("unbacked", the message), ("failed", None) or ("all backed", None)."""
         checked = self.log.checked_sentences(seat)
         new = [item for item in verdict.get(fields.SENTENCES, [])
                if item["code_reading"] != fields.NOT_RAISED
                and (item["record_uuid"], item["sentence"]) not in checked]
         if not new:
-            return "all backed"
+            return "all backed", None
         judged = [item for item in new if item["code_reading"] == fields.JUDGE]
         backed = {}
         if judged:
@@ -738,7 +758,7 @@ class Sweep:
                              "record_uuid": item["record_uuid"], "sentence": item["sentence"]})
             if problem:
                 self.headless_failed(seat, "judge whether its promises are backed", problem)
-                return "failed"
+                return "failed", None
             for answer in outcome.answer["sentences"]:
                 backed[answer["index"]] = answer["backed"]
             self.record({"event": "judge_answer", "agent_seat": seat, "rule": 2,
@@ -750,20 +770,11 @@ class Sweep:
         unbacked = [item for item in new if item["code_reading"] == fields.UNBACKED]
         unbacked += [item for index, item in enumerate(judged) if not backed[index]]
         if not unbacked:
-            return "all backed"
-        text = "\n".join(UNBACKED_SENTENCE_LINES[item["kind"]].format(
+            return "all backed", None
+        return "unbacked", "\n".join(UNBACKED_SENTENCE_LINES[item["kind"]].format(
             sentence=item["sentence"],
             minutes=int(seconds_between(item["time"], self.now) // 60) if item["time"] else "some")
             for item in unbacked)
-        stretch = (verdict.get(fields.LAST_ACTIVITY) or {}).get("time")
-        # A promise given in answer to a message goes on the open wait, so that repeated promises
-        # cannot put off its escalation and the user-alert.
-        if not wait:
-            self.start_wait(seat, verdict, stretch, text, 2)
-        elif PROMISE not in wait:
-            self.record({"event": "wait_step", "agent_seat": seat, "step": PROMISE})
-        self.send(seat, verdict, text, NUDGE)
-        return "sent"
 
     def usage_limit(self, seat, verdict):
         limit = verdict[fields.USAGE_LIMIT]
@@ -797,12 +808,23 @@ def sentence_answer_problem(answer, count):
     return None
 
 
+def message_received(record):
+    """Whether the record is one by which the agent-seat's model received a message: a user turn,
+    or a message queued into a running turn. Claude Code's queue-operation record is written when
+    a message is queued, before the model has it, and the message is lost if the agent-session
+    ends first."""
+    attachment = record.get("attachment")
+    return record.get("type") == "user" or (
+        record.get("type") == "attachment" and isinstance(attachment, dict)
+        and attachment.get("type") == "queued_command")
+
+
 def message_in_transcript(path, text, sent_at):
-    """Whether a record Claude Code wrote at or after the send, other than the model's own, holds
-    the text, compared with all runs of whitespace made one space."""
+    """Whether a record by which the agent-seat received a message, written at or after the send,
+    holds the text, compared with all runs of whitespace made one space."""
     needle = " ".join(text.split())
     for record in verdicts_print.transcript_records(path):
-        if record.get("type") == "assistant":
+        if not message_received(record):
             continue
         moment = parse_time(record.get("timestamp"))
         if moment is None or (sent_at - moment).total_seconds() > DELIVERY_CLOCK_SLACK_SECONDS:

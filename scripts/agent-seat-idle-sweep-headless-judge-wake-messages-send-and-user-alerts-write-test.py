@@ -33,6 +33,9 @@ with open(calls_path, "a") as stream:
     stream.write(json.dumps({{"argv": sys.argv[1:], "prompt": prompt}}) + "\n")
 answers = json.load(open(os.environ["FAKE_CLAUDE_ANSWERS"]))
 answer = answers[len(calls)] if len(calls) < len(answers) else {{"exit": 3}}
+if answer.get("child"):
+    import subprocess
+    subprocess.Popen(["sleep", str(answer["child"])])
 time.sleep(answer.get("sleep", 0))
 def emit(event):
     print(json.dumps(event), flush=True)
@@ -744,6 +747,140 @@ check("a log whose whole last line has no newline: the line is kept, and the nex
       code == 0 and machine.log.read_text().splitlines()[0] == WHOLE_LAST_LINE
       and all(json.loads(line) for line in machine.log.read_text().splitlines()),
       machine.log.read_text())
+
+# --- the steps of a wait, worked out apart from the rule 2 send ------------------------------------
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.script(sent_ok())
+machine.run(0)
+machine.script(sent_ok())
+machine.run(16)
+machine.script()
+machine.run(32)
+(machine.handoffs / "s-1-handoff-deferred").unlink()
+machine.append("alpha", user("more", at(40)), assistant(PROMISE, at(41)), turn_end(at(41)))
+machine.script(sent_ok())
+machine.run(47)
+check("a promise after the user was told: the old wait ends and the promise message opens a new one",
+      len(machine.claude_calls()) == 1
+      and [event["why"] for event in machine.events("wait_ended")][-1:]
+      == ["it spent tokens after the user was told"]
+      and [event["step"] for event in machine.events("wait_step")]
+      == ["nudge", "escalate", "tell_user", "nudge"], machine.events("wait_step"))
+machine.script(sent_ok())
+machine.run(63)
+calls = machine.claude_calls()
+check("a promise after the user was told: still idle 15 minutes later, the escalation is sent",
+      len(calls) == 1 and "please check" in calls[0]["prompt"]
+      and [event["step"] for event in machine.events("wait_step")][-2:] == ["nudge", "escalate"],
+      (calls, machine.events("wait_step")))
+machine.script()
+machine.run(79)
+check("a promise after the user was told: 15 minutes after that escalation, the user is told again",
+      [event["step"] for event in machine.events("wait_step")][-3:]
+      == ["nudge", "escalate", "tell_user"]
+      and sum("after a nudge and an escalation" in alert["title"] for alert in machine.alerts()) == 2,
+      (machine.events("wait_step"), machine.alerts()))
+
+THIRD_PROMISE = "I'll push once the tests pass."
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.script(sent_ok())
+machine.run(0)
+machine.append("alpha", cross_session("You promised", at(0.5)), assistant(SECOND_PROMISE, at(1)),
+               turn_end(at(1)))
+machine.script(sent_ok())
+machine.run(7)
+machine.append("alpha", cross_session("You promised", at(7.5)), assistant(THIRD_PROMISE, at(8)),
+               turn_end(at(8)))
+machine.script(sent_ok(), sent_ok())
+machine.run(16)
+calls = machine.claude_calls()
+check("a fresh promise at every run does not put off the escalation 15 minutes after the nudge",
+      len(calls) == 2 and "please check" in calls[0]["prompt"] and THIRD_PROMISE in calls[1]["prompt"]
+      and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
+      (calls, machine.events("wait_step")))
+
+# --- delivery counts only a record that shows the agent-seat received the message -------------------
+for received, record_of in (
+        (False, lambda text, when: {"type": "queue-operation", "operation": "enqueue",
+                                    "timestamp": when, "content": text}),
+        (True, lambda text, when: {"type": "attachment", "timestamp": when, "attachment": {
+            "type": "queued_command", "prompt": f"<cross-session-message>\n{text}\n"}})):
+    machine = Machine()
+    machine.seat("alpha", DONE_TURN)
+    machine.handoff_put_off()
+    machine.script(sent_ok())
+    machine.run(0)
+    machine.append("alpha", record_of(machine.events("message_sent")[-1]["text"], at(0.2)))
+    machine.script()
+    code, _ = machine.run(2)
+    kind = "a queued_command attachment" if received else "only Claude Code's enqueue record"
+    check(f"the message in {kind}: delivery found {received}",
+          [event["found"] for event in machine.events("delivery_checked")] == [received]
+          and len(machine.alerts()) == (0 if received else 1), machine.events("delivery_checked"))
+
+# --- what a headless agent-session may use -------------------------------------------------------------
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(ANNOUNCED, when="2026-11-02T11:48:00Z"), turn_end()])
+machine.script({"answer": {"sentences": [{"index": 0, "backed": False, "reason": "no call"}]}},
+               sent_ok())
+machine.run(0)
+calls = machine.claude_calls()
+check("every headless agent-session loads no MCP server and asks no permission it was not given",
+      len(calls) == 2 and all("--strict-mcp-config" in call["argv"]
+                              and "--permission-mode" in call["argv"]
+                              and call["argv"][call["argv"].index("--permission-mode") + 1]
+                              == "dontAsk" for call in calls), calls)
+
+# --- a rule 5 judge whose send failed ------------------------------------------------------------------
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.task("alpha", "1")
+machine.script({"sends": [send_to("alpha", "What's going on?", is_error=True)],
+                "answer": {"sent": False, "reason": "the send failed"}})
+code, _ = machine.run(0)
+check("a rule 5 judge whose SendMessage failed, answering not sent: a user-alert, exit 1, no wait",
+      code == 1
+      and any("SendMessage" in event["problem"] for event in machine.events("headless_failed"))
+      and len(machine.alerts()) == 1 and not machine.events("wait_step"), machine.events())
+
+# --- each event carries the time it was written, not the time the run started ---------------------
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.seat("beta", DONE_TURN)
+machine.handoff_put_off()
+machine.script(dict(sent_ok(), sleep=2.5), sent_ok("beta"))
+machine.run(0)
+nudges = {event["agent_seat"]: event["at"] for event in machine.events("wait_step")}
+check("a nudge logged after an earlier headless agent-session carries the time it was logged",
+      set(nudges) == {"alpha", "beta"} and max(datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+                                               for stamp in nudges.values())
+      >= START + timedelta(seconds=2), nudges)
+
+# --- a read failure that persists keeps the run failing ---------------------------------------------
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+(machine.handoffs / "alpha-supervisor-state.json").write_text("{not json")
+machine.run(0)
+machine.run(3)
+code, _ = machine.run(5)
+check("a read failure still there after its user-alert: exit 1 again, no second user-alert",
+      code == 1 and len(machine.alerts()) == 1, (code, machine.alerts()))
+
+# --- a headless agent-session past its time is stopped with every process it started --------------
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.script({"child": 30, "sleep": 30, "answer": {"sent": True, "reason": "r"}})
+began = datetime.now(timezone.utc)
+code, _ = machine.run(0, "--headless-timeout-seconds", "1")
+took = (datetime.now(timezone.utc) - began).total_seconds()
+check("a sender past its time whose child holds its output open: stopped in seconds, not 30",
+      code == 1 and took < 15
+      and any("stopped after" in event["problem"] for event in machine.events("headless_failed")),
+      (code, took, machine.events("headless_failed")))
 
 if failures:
     print(f"{len(failures)} case(s) failed")
