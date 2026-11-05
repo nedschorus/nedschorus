@@ -410,10 +410,10 @@ UNREADABLE_MARK_CASES = (
      ["- line 5: `#new` has no text after it on its line. The mark's line with its text joined onto it: "
       '#new "The page lists one poem."']),
     ("a mark inside fenced code", 'Before.\n\n```\n#new "The page lists\none poem."\n```\n',
-     ["- line 8: `#new` is inside fenced or indented code, where no mark is read. The mark's line with its text joined onto "
+     ["- line 8: `#new` is inside fenced or indented code, where no mark's text is read. The mark's line with its text joined onto "
       'it: #new "The page lists one poem."']),
     ("a mark inside indented code", 'Before.\n\n    #new "The page lists one poem."\n',
-     ["- line 7: `#new` is inside fenced or indented code, where no mark is read. The mark's line with its text joined onto "
+     ["- line 7: `#new` is inside fenced or indented code, where no mark's text is read. The mark's line with its text joined onto "
       'it: #new "The page lists one poem."']),
     ("a mark whose text runs onto the lines below it", '#new "The page lists\none poem\nper job."\n',
      ["- line 5: the text of `#new` runs onto lines 6 to 7 right below it, where it is not read. The mark's line "
