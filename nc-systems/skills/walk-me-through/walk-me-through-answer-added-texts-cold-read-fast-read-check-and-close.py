@@ -125,8 +125,9 @@ since an agent-seat keeps at most one approval-walk open.
 CHECK finds the texts the answer adds: the item's lines whose first word,
 after any list or quotation marker, outside fenced code, is a mark the answer adds;
 the text is the rest of the line, without one pair of surrounding quotation
-marks. Before it reads them, CHECK refuses, writing nothing, when any `#new` or
-`#new_if_d` line of the item, whatever the answer, has no text after its mark,
+marks. Before it reads them, CHECK refuses, writing nothing, for every answer but
+--deferred, --moved-on-no-decision and --moved-on, which add no text, when
+any `#new` or `#new_if_d` line of the item has no text after its mark,
 is inside fenced or indented code, or opens a paragraph that runs onto the
 lines right below it, since those texts would miss their fast read; the
 refusal lists each such mark by its line number, gives the text joined into
@@ -672,19 +673,24 @@ NAVIGATION_WORD_REFUSED = (
     "If {item} asks for no decision, such as a summary item, run `python3 {program} check --moved-on-no-decision "
     "--user-reply-as-typed {quoted_words}`, then close.")
 UNREADABLE_NEW_MARKS = (
-    "nothing written: {item} in the walk-document {document} has a `#new` or `#new_if_d` mark whose text this "
-    "program would not read whole, so that text would reach the user's answer without its cold-read-fast-read. "
-    "This program reads a mark's text only from the rest of the mark's own line, outside fenced code:\n{problems}\n"
-    "For each mark listed, write its whole text on the mark's own line, after the mark, as one line, and delete the "
-    "lines it ran onto or the block below that held it.\n"
-    "Where a line above gives the mark's line with its text joined onto it, write that line in place of the mark's "
-    "line, unless that is not the text you meant.\n"
-    "If a mark inside fenced code is an example, not a text an answer adds, write it in backquotes inside a "
-    "sentence instead, outside the fence, so that no line opens with it.\n"
+    "nothing written: {item} in the walk-document {document} has `#new` or `#new_if_d` marks whose text this "
+    "program would not read whole, so an answer that adds such a text would be recorded without that text's "
+    "cold-read-fast-read. This program reads a mark's text only from the rest of the mark's own line, outside "
+    "fenced or indented code. The marks:\n{problems}\n"
+    "For each mark listed, write its whole text on the mark's own line, after the mark, as one line, and delete "
+    "the lines below the mark that held that text.\n"
+    "Where a mark's entry above gives the mark's line with its text joined onto it, write that line in place of "
+    "the mark's line, unless that is not the text you meant.\n"
+    "If a mark has no text and none was meant, delete the mark.\n"
+    "If a mark inside fenced or indented code marks a text an answer adds, move the mark, with its text on its "
+    "line, out of the code onto a line of its own.\n"
+    "If a mark inside fenced or indented code is an example, not a text an answer adds, write it in backquotes "
+    "inside a sentence outside the code instead, so that no line opens with it.\n"
     "Then run `{command}` again.\n"
-    "From now on, write every `#new` or `#new_if_d` text on one line, after its mark, outside fenced code.")
+    "From now on, write every `#new` or `#new_if_d` text on one line, after its mark, outside fenced or indented "
+    "code.")
 UNREADABLE_BARE = "- line {line}: `{mark}` has no text after it on its line."
-UNREADABLE_FENCED = "- line {line}: `{mark}` is inside fenced code, where no mark is read."
+UNREADABLE_FENCED = "- line {line}: `{mark}` is inside fenced or indented code, where no mark is read."
 UNREADABLE_RUN_ON = "- line {line}: the text of `{mark}` runs onto {below} right below it, where it is not read."
 UNREADABLE_JOINED = " The mark's line with its text joined onto it: {mark} {text}"
 NOT_ASKED_REFUSED = (
@@ -893,22 +899,24 @@ def item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_
     return document, text, tokens, ranges
 
 
-def item_lines(walk_finder, minutes, value, numbers, total, parser, item, command):
-    """Return (walk-document path, the lines of the items numbered, outside fenced code); a Failure when a mark's
-    text would not be read whole, so that no answer is recorded without the fast read of a text it adds."""
+def item_lines(walk_finder, minutes, value, numbers, total, parser):
+    """Return (walk-document path, the lines of the items numbered, outside fenced code, the problem line of each
+    mark whose text would not be read whole)."""
     document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
-    refuse_unreadable_new_marks(text, tokens, ranges, item, document, command)
     lines = walk_finder.prose_lines(text, parser, tokens)
-    return document, [line for first, end in ranges for line in lines[first:end]]
+    return (document, [line for first, end in ranges for line in lines[first:end]],
+            unreadable_new_marks(text, tokens, ranges))
 
 
 def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None, refused_unless_marks_read=None):
     """Return (walk-document path, the items' text as the user is shown it, heading and fenced code included).
     With refused_unless_marks_read, (item, command), a Failure when a mark's text would not be read whole."""
     document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_by)
-    if refused_unless_marks_read:
+    unreadable = unreadable_new_marks(text, tokens, ranges) if refused_unless_marks_read else []
+    if unreadable:
         item, command = refused_unless_marks_read
-        refuse_unreadable_new_marks(text, tokens, ranges, item, document, command)
+        raise Failure(UNREADABLE_NEW_MARKS.format(item=item, document=document, problems="\n".join(unreadable),
+                                                  command=command))
     lines = text.split("\n")
     return document, "\n".join(line for first, end in ranges for line in lines[first:end]).strip()
 
@@ -1006,11 +1014,6 @@ def unreadable_new_marks(text, tokens, ranges):
     return problems
 
 
-def refuse_unreadable_new_marks(text, tokens, ranges, item, document, command):
-    problems = unreadable_new_marks(text, tokens, ranges)
-    if problems:
-        raise Failure(UNREADABLE_NEW_MARKS.format(item=item, document=document, problems="\n".join(problems),
-                                                  command=command))
 
 
 def squeezed(text):
@@ -1397,8 +1400,7 @@ def check(arguments):
         raise Failure(NAVIGATION_WORD_REFUSED.format(words=words, item=item, answered=answered_word(arguments),
                                                      program=program, quoted_words=shlex.quote(words)))
     in_his_words = USER_WORDS.format(words=words) if words else ""
-    document, lines = item_lines(walk_finder, minutes, value, numbers, total, parser, item,
-                                 f"python3 {program} check{check_flags(arguments)}")
+    document, lines, unreadable = item_lines(walk_finder, minutes, value, numbers, total, parser)
     rating = case_against_rating(lines, item, document, arguments)
     rated = CASE_AGAINST_HASHTAG.format(rating=rating.replace(" ", "_")) if rating else ""
     if arguments.deferred or arguments.moved_on_no_decision or arguments.moved_on is not None:
@@ -1408,6 +1410,9 @@ def check(arguments):
                                                      words=in_his_words, date_and_time=f"{now:%Y-%m-%d %H:%M}")])
         print(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve(), top=shlex.quote(str(top))))
         return 0
+    if unreadable:
+        raise Failure(UNREADABLE_NEW_MARKS.format(item=item, document=document, problems="\n".join(unreadable),
+                                                  command=f"python3 {program} check{check_flags(arguments)}"))
     if arguments.not_asked is not None:
         problems = not_asked_problems(arguments.not_asked, rating, lines, top, item)
         if problems:

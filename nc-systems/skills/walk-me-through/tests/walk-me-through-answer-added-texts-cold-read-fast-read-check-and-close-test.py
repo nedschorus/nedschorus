@@ -410,10 +410,10 @@ UNREADABLE_MARK_CASES = (
      ["- line 5: `#new` has no text after it on its line. The mark's line with its text joined onto it: "
       '#new "The page lists one poem."']),
     ("a mark inside fenced code", 'Before.\n\n```\n#new "The page lists\none poem."\n```\n',
-     ["- line 8: `#new` is inside fenced code, where no mark is read. The mark's line with its text joined onto "
+     ["- line 8: `#new` is inside fenced or indented code, where no mark is read. The mark's line with its text joined onto "
       'it: #new "The page lists one poem."']),
     ("a mark inside indented code", 'Before.\n\n    #new "The page lists one poem."\n',
-     ["- line 7: `#new` is inside fenced code, where no mark is read. The mark's line with its text joined onto "
+     ["- line 7: `#new` is inside fenced or indented code, where no mark is read. The mark's line with its text joined onto "
       'it: #new "The page lists one poem."']),
     ("a mark whose text runs onto the lines below it", '#new "The page lists\none poem\nper job."\n',
      ["- line 5: the text of `#new` runs onto lines 6 to 7 right below it, where it is not read. The mark's line "
@@ -440,19 +440,24 @@ def test_a_mark_whose_text_would_not_be_read_whole_is_refused_by_check_writing_n
               and [line for line in lines if line.startswith("- line ")] == problem_lines
               and f"Then run `python3 {PROGRAM} check --obvious --user-reply-as-typed a` again." in lines
               and "For each mark listed, write its whole text on the mark's own line, after the mark, as one line, "
-                  "and delete the lines it ran onto or the block below that held it." in lines
+                  "and delete the lines below the mark that held that text." in lines
               and case.minutes.read_text() == before and case.calls.read_text() == ""
               and not case.counts_log.exists(), described(result))
 
 
-def test_a_mark_whose_text_would_not_be_read_whole_is_refused_for_every_answer():
-    for flags in (("--deferred",), ("--disapproved",), ("--moved-on", "no decision needed")):
-        case = Case(document=marks_document("#new\n"))
+def test_a_mark_whose_text_would_not_be_read_whole_is_refused_for_every_answer_that_adds_texts():
+    for flags in (("--disapproved",), ("--already-decided", "ruling of 2026-10-01"), ("--not-asked", "5")):
+        case = Case(document=marks_document("#new_if_d\n"))
         before = case.minutes.read_text()
         result = case.run("check", *flags)
         check(f"check {flags[0]} refuses an item with a mark that has no text, writing nothing",
-              result.returncode == 1 and "- line 5: `#new` has no text after it on its line." in result.stderr
+              result.returncode == 1 and "- line 5: `#new_if_d` has no text after it on its line." in result.stderr
               and case.minutes.read_text() == before, described(result))
+    for flags in (("--deferred",), ("--moved-on-no-decision",), ("--moved-on", "no decision needed")):
+        case = Case(document=marks_document("#new\n"))
+        result = case.run("check", *flags)
+        check(f"check {flags[0]}, which adds no text, records the answer to an item with a mark that has no text",
+              result.returncode == 0 and "item 3 of 9: " in case.minutes.read_text(), described(result))
 
 
 def test_marks_whose_texts_are_read_whole_are_not_refused():
