@@ -193,6 +193,10 @@ def failed_push_case():
 def leftovers_conflicting_with_origin_main_under_repository_hooks_case():
     fresh_reference_checkout()
     git("config", "core.hooksPath", str(REPOSITORY_HOOKS))
+    # The pre-commit hook refuses a commit made in a Claude session when the clone's own config
+    # lacks the unconfigured-agent identity, which the real reference-checkout holds.
+    git("config", "user.name", "unconfigured-agent")
+    git("config", "user.email", "unconfigured-agent@nedschorus.invalid")
     local = commit("local only")
     advance_origin()
     status, out, err = run_program()
