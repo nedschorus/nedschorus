@@ -1257,6 +1257,25 @@ def cases(scratch):
     check("declining a deletion puts back the newest approved content",
           result.returncode == 0 and claude.read_text() == "project v1\n", result.stderr)
     check("the put-back file is settled", world.run() == "", "")
+
+    # -- a guarded file deleted, then written again
+    world = fresh(scratch, "deleted-then-written-again")
+    claude = world.repo / "CLAUDE.md"
+    claude.unlink()
+    world.run()
+    claude.write_text("project v1\n")
+    check("a file written again as it was before its deletion is settled", world.run() == "", "")
+    claude.unlink()
+    world.run()
+    claude.write_text("project v2\n")
+    rewritten = world.key(claude)
+    message = world.run()
+    check("a file written again differently is asked about against the content it had before "
+          "its deletion",
+          "-project v1" in message and "+project v2" in message, message)
+    result = world.command("--restore", claude, rewritten)
+    check("declining it puts back the content it had before its deletion",
+          result.returncode == 0 and claude.read_text() == "project v1\n", result.stderr)
     claude.write_text("project v2, committed\n")
     declined = world.key(claude)
     world.git("commit", "-qam", "commit an unapproved version")

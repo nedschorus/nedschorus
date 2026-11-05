@@ -670,10 +670,12 @@ def copy_of(log, key):
 
 
 def newest_approved(store, path, log, excluded):
-    """(key, copy hash) of the version approved last, other than the excluded key, or None."""
+    """(key, copy hash) of the content approved last, other than the excluded key, or None.
+    A deletion is passed over, so a file deleted and written again is shown and restored
+    against the content it had."""
     for key in reversed(store.approved_in_order(path)):
-        if key != excluded:
-            return key, (DELETED if key == DELETED else copy_of(log, key))
+        if key not in (excluded, DELETED):
+            return key, copy_of(log, key)
     return None
 
 
@@ -991,7 +993,7 @@ def read_file(path):
 
 def ask_entry(store, check, log, reason=""):
     newest = newest_approved(store, check.path, log, check.key)
-    if newest is None or newest[1] == DELETED:
+    if newest is None:
         before = b""
     else:
         before = store.kept_version(check.path, newest[1]) or b""
@@ -1526,7 +1528,7 @@ def restore(pairs):
             log = store.log(path)
             newest = newest_approved(store, path, log, key)
             content = None
-            if newest is not None and newest[0] != DELETED:
+            if newest is not None:
                 content = store.kept_version(path, newest[1])
                 if content is None:
                     raise StoreUnreachable(f"the approved version {newest[1]} of {path} is in "
