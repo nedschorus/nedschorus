@@ -141,6 +141,93 @@ def test_verdicts_reports_failed_append():
         expect(code == 1 and "FAILED" in out and "Chosen" in out, "verdicts prints the outcome, then FAILED, and exits 1")
 
 
+def test_per_model_summary_reports_an_unreadable_log():
+    with tempfile.TemporaryDirectory() as folder:
+        folder = pathlib.Path(folder)
+        stub = folder / "ssh"
+        stub.write_text("#!/bin/sh\necho 'connect refused' >&2\nexit 255\n")
+        stub.chmod(0o755)
+        old_path = os.environ["PATH"]
+        os.environ["PATH"] = f"{folder}:{old_path}"
+        try:
+            code, out, _ = quiet(check.command_per_model_summary, None, log_path="/x/log.jsonl", ssh_host="host")
+        finally:
+            os.environ["PATH"] = old_path
+        expect(code == 1 and out.startswith("FAILED: could not read /x/log.jsonl") and "ssh exit 255" in out,
+               "per-model-summary exits 1 with FAILED when the log cannot be read")
+        code, out, _ = quiet(check.command_per_model_summary, None, log_path=str(folder / "none.jsonl"))
+        expect(code == 0 and out.strip() == "model\tanswered\tmatched\tonly miss\tfailed\tmean s",
+               "a log not yet written gives an empty summary")
+
+
+def test_run_reader_reports_a_runtime_not_on_path():
+    old_path = os.environ["PATH"]
+    with tempfile.TemporaryDirectory() as folder:
+        os.environ["PATH"] = folder
+        try:
+            result = check.run_reader("claude", "m", "low", "name")
+        finally:
+            os.environ["PATH"] = old_path
+    expect(result["account"] is None and result["error"].startswith("could not start claude"),
+           "a runtime missing from PATH is a failed reader")
+
+
+def with_stub_on_path(name, script, action):
+    with tempfile.TemporaryDirectory() as folder:
+        stub = pathlib.Path(folder) / name
+        stub.write_text(script)
+        stub.chmod(0o755)
+        old_path = os.environ["PATH"]
+        os.environ["PATH"] = f"{folder}:{old_path}"
+        try:
+            return action()
+        finally:
+            os.environ["PATH"] = old_path
+
+
+def test_last_line_keeps_the_last_line_with_text_cut_short():
+    expect(check.last_line("first\nsecond\n\n") == "second", "the last line with text is kept")
+    expect(check.last_line("x" * 400) == "x" * check.ERROR_LINE_CHARACTERS, "a long line is cut")
+    expect(check.last_line("  \n") == "", "no text gives an empty line")
+
+
+def test_ssh_append_and_read_succeed_and_fail():
+    ok = "#!/bin/sh\ncat > /dev/null\necho '{\"kind\": \"reader\"}'\nexit 0\n"
+    expect(with_stub_on_path("ssh", ok, lambda: check.append_to_log_store([{"kind": "x"}], "/x/l.jsonl", ssh_host="h")) is None,
+           "an ssh append that exits 0 is no error")
+    expect(with_stub_on_path("ssh", ok, lambda: check.read_log_lines("/x/l.jsonl", ssh_host="h")) == [{"kind": "reader"}],
+           "an ssh read returns the log's lines")
+    bad = "#!/bin/sh\necho 'first' >&2\necho 'no route' >&2\nexit 1\n"
+    try:
+        with_stub_on_path("ssh", bad, lambda: check.read_log_lines("/x/l.jsonl", ssh_host="h"))
+        expect(False, "an ssh read that exits 1 raises")
+    except OSError as error:
+        expect(str(error) == "ssh exit 1: no route", "an ssh read that exits 1 raises with its last stderr line")
+    old_path = os.environ["PATH"]
+    os.environ["PATH"] = "/nonexistent"
+    try:
+        error = check.append_to_log_store([{"kind": "x"}], "/x/l.jsonl", ssh_host="h")
+    finally:
+        os.environ["PATH"] = old_path
+    expect(error is not None and "ssh did not run" in error, "ssh missing from PATH is an append error")
+    slow = "#!/bin/sh\nsleep 5\n"
+    old_timeout = check.SSH_TIMEOUT_SECONDS
+    check.SSH_TIMEOUT_SECONDS = 1
+    try:
+        error = with_stub_on_path("ssh", slow, lambda: check.append_to_log_store([{"kind": "x"}], "/x/l.jsonl", ssh_host="h"))
+    finally:
+        check.SSH_TIMEOUT_SECONDS = old_timeout
+    expect(error is not None and "ssh did not run" in error, "an ssh call past its timeout is an append error")
+
+
+def test_run_reader_keeps_seconds_only_for_an_answer_and_reads_a_signal_exit():
+    answered = with_stub_on_path("claude", "#!/bin/sh\necho 'DOES: x'\n", lambda: check.run_reader("claude", "m", "low", "n"))
+    expect(answered["account"] == "DOES: x" and 0 <= answered["seconds"] < 30, "an answer keeps its seconds")
+    killed = with_stub_on_path("claude", "#!/bin/sh\nkill -TERM $$\n", lambda: check.run_reader("claude", "m", "low", "n"))
+    expect(killed["account"] is None and killed["error"].startswith("exit -15") and killed["seconds"] is None,
+           "a reader killed by a signal is a failed reader with no seconds")
+
+
 def test_append_over_ssh_reports_ssh_failure():
     with tempfile.TemporaryDirectory() as folder:
         folder = pathlib.Path(folder)

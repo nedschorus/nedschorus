@@ -81,6 +81,8 @@ READER_RESULTS_LOG = "/home/nedlern/nedschorus-logs/name-checks/new-name-fresh-r
 READER_TIMEOUT_SECONDS = 300
 CANDIDATE_LENGTHS = ("full", "medium", "short")
 MAX_FAILED_READERS_FOR_A_PASS = 1
+SSH_TIMEOUT_SECONDS = 60
+ERROR_LINE_CHARACTERS = 300
 
 # Each reader: (runtime, model, effort).
 READERS = (
@@ -139,6 +141,24 @@ def reader_command(runtime: str, model: str, effort, prompt: str, folder: pathli
             None, answer_file)
 
 
+def last_line(text: str) -> str:
+    """The last line of a program's output that has text, cut to ERROR_LINE_CHARACTERS."""
+    lines = [line for line in text.strip().splitlines() if line.strip()]
+    return lines[-1][:ERROR_LINE_CHARACTERS] if lines else ""
+
+
+def run_ssh(ssh_host: str, remote_command: str, input_text: str = None):
+    """(stdout, error text or None) of one batch-mode ssh call; never raises."""
+    try:
+        completed = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", ssh_host, remote_command],
+                                   input=input_text, capture_output=True, text=True, timeout=SSH_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return None, f"ssh did not run: {error}"
+    if completed.returncode:
+        return None, f"ssh exit {completed.returncode}: {last_line(completed.stderr)}"
+    return completed.stdout, None
+
+
 def run_reader(runtime: str, model: str, effort, name: str) -> dict:
     """Run one fresh reader on one name; never raises."""
     prompt = READER_PROMPT.format(name=name)
@@ -152,21 +172,18 @@ def run_reader(runtime: str, model: str, effort, name: str) -> dict:
                 stdin=None if stdin_text is not None else subprocess.DEVNULL,
                 capture_output=True, text=True, timeout=READER_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
-            return {"account": None, "error": f"timed out after {READER_TIMEOUT_SECONDS} s",
-                    "seconds": round(time.monotonic() - started, 1)}
+            return {"account": None, "error": f"timed out after {READER_TIMEOUT_SECONDS} s", "seconds": None}
         except OSError as error:
-            return {"account": None, "error": f"could not start {argv[0]}: {error}",
-                    "seconds": round(time.monotonic() - started, 1)}
+            return {"account": None, "error": f"could not start {argv[0]}: {error}", "seconds": None}
         account = completed.stdout
         if answer_file is not None and answer_file.exists():
             account = answer_file.read_text()
-    seconds = round(time.monotonic() - started, 1)
-    if completed.returncode != 0:
-        tail = (completed.stderr or completed.stdout).strip().splitlines()[-1:] or [""]
-        return {"account": None, "error": f"exit {completed.returncode}: {tail[0][:300]}", "seconds": seconds}
+    if completed.returncode:
+        return {"account": None, "error": f"exit {completed.returncode}: {last_line(completed.stderr or completed.stdout)}",
+                "seconds": None}
     if not account.strip():
-        return {"account": None, "error": "printed nothing", "seconds": seconds}
-    return {"account": account.strip(), "error": None, "seconds": seconds}
+        return {"account": None, "error": "printed nothing", "seconds": None}
+    return {"account": account.strip(), "error": None, "seconds": round(time.monotonic() - started, 1)}
 
 
 def run_all_readers(candidates: dict, reader=run_reader) -> list:
@@ -197,14 +214,8 @@ def append_to_log_store(lines: list, log_path: str = None, ssh_host: str = None)
             return f"could not append to {log_path}: {error}"
         return None
     remote = f"mkdir -p {shlex.quote(str(pathlib.PurePosixPath(log_path).parent))} && cat >> {shlex.quote(log_path)}"
-    try:
-        completed = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", ssh_host, remote],
-                                   input=text, capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        return f"could not append to {ssh_host}:{log_path}: {error}"
-    if completed.returncode != 0:
-        return f"could not append to {ssh_host}:{log_path}: ssh exit {completed.returncode}: {completed.stderr.strip()[:300]}"
-    return None
+    _, error = run_ssh(ssh_host, remote, text)
+    return f"could not append to {ssh_host}:{log_path}: {error}" if error else None
 
 
 def default_run_file(run_id: str) -> pathlib.Path:
@@ -358,12 +369,9 @@ def read_log_lines(log_path=None, ssh_host=None) -> list:
     if ssh_host is None:
         text = pathlib.Path(log_path).read_text() if pathlib.Path(log_path).exists() else ""
     else:
-        completed = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", ssh_host,
-                                    f"cat {shlex.quote(log_path)} 2>/dev/null || true"],
-                                   capture_output=True, text=True, timeout=60)
-        if completed.returncode != 0:
-            raise OSError(f"ssh exit {completed.returncode}: {completed.stderr.strip()[:300]}")
-        text = completed.stdout
+        text, error = run_ssh(ssh_host, f"cat {shlex.quote(log_path)} 2>/dev/null || true")
+        if error:
+            raise OSError(error)
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
@@ -397,8 +405,9 @@ def per_model_summary(lines: list) -> dict:
 def command_per_model_summary(arguments, log_path=None, ssh_host=None) -> int:
     try:
         lines = read_log_lines(log_path, ssh_host)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        print(f"FAILED: could not read {READER_RESULTS_LOG}: {error}")
+    except OSError as error:
+        print(f"FAILED: could not read {log_path or READER_RESULTS_LOG}: {error}. "
+              "Run this command again once ned-box answers.")
         return 1
     print("model\tanswered\tmatched\tonly miss\tfailed\tmean s")
     for model, row in sorted(per_model_summary(lines).items()):
