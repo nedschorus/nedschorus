@@ -46,9 +46,9 @@ reads non-blocking findings by:
 - a comment with the same path, line and posted body as an earlier one is
   dropped, since the fix-round program counts such a repost once;
 - when N comments are must-fix-now, N at least 1, the body carries
-  "**Blocking: N**". No count is written when N is 0, because the fix-round
-  program checks a stated count on every review of the frozen-head, a
-  COMMENTED one included, against the round's marked comments;
+  "**Blocking: N**" alone on its line, after the verdict line and a blank
+  line, the only place the fix-round program's BLOCKING_COUNT_PATTERN reads
+  it, and only on merge-lane-2's reviews. No count is written when N is 0;
 - the posted verdict is REQUEST_CHANGES when any comment is must-fix-now and
   APPROVE otherwise. A file whose verdict is REQUEST_CHANGES with no
   must-fix-now comment is refused rather than posted as an approval.
