@@ -166,7 +166,10 @@ shipment of the record refuse it under rule 2. So such a program takes the
 record's being-written lock right after it creates the directory, before its
 first write, and releases the lock just before it ships the record itself.
 The lock is flock(2) on the record directory, so the kernel releases it when
-the program exits, however it ends, and it leaves nothing to reclaim. While
+the program exits, however it ends, and it leaves nothing to reclaim. A child
+the program starts to write into the record, such as a cold-read-grid's cell,
+is passed the lock's descriptor, so the lock stays held until the program and
+every such child have exited, even when the program is interrupted first. While
 another process holds it, this program prints FAILED naming the record and
 copies nothing, so a caller that keeps a worktree on a failed shipment, such
 as scripts/clean-worktrees.py, keeps the one the program is writing in.
@@ -452,6 +455,14 @@ def record_directory_being_written_lock_release(record_dir: pathlib.Path) -> Non
     descriptor = _RECORD_DIRECTORY_BEING_WRITTEN_LOCK_DESCRIPTORS.pop(pathlib.Path(record_dir).resolve(), None)
     if descriptor is not None:
         os.close(descriptor)
+
+
+def record_directory_being_written_lock_descriptors_for_child_writers(record_dir: pathlib.Path) -> tuple:
+    """The pass_fds for subprocess.Popen of a child that writes into record_dir: the child then holds the
+    being-written lock too, so the lock stays held until this process and every such child have exited.
+    Empty when this process holds no lock on record_dir."""
+    descriptor = _RECORD_DIRECTORY_BEING_WRITTEN_LOCK_DESCRIPTORS.get(pathlib.Path(record_dir).resolve())
+    return () if descriptor is None else (descriptor,)
 
 
 def record_directory_being_written_lock_is_held_by_any_process(record_dir: pathlib.Path) -> bool:

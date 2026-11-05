@@ -808,9 +808,13 @@ def start_attempt(command: list, report_path: pathlib.Path, attempt: int,
     started_at = time.monotonic()
     with open(stderr_path, "w", encoding="utf-8") as err:
         try:
+            # The cell holds the record's being-written lock too, so an interrupted grid whose
+            # cells keep writing leaves the lock held, and the record unshipped, until they exit.
             process = subprocess.Popen(  # pylint: disable=consider-using-with
                 command, stdout=err, stderr=err, stdin=subprocess.DEVNULL,
                 start_new_session=True,
+                pass_fds=record_shipper.record_directory_being_written_lock_descriptors_for_child_writers(
+                    report_path.parent),
             )
         except OSError as error:
             err.write(f"cold-read-grid: could not start {command[0]}: {error}\n")

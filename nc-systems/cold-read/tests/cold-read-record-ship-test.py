@@ -837,6 +837,47 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           after_release.returncode == 0 and after_release.stdout.startswith("shipped:"),
           f"exit {after_release.returncode}: {after_release.stdout}")
 
+    # An interrupted cold-read-grid exits while its cells, started in sessions of their own, keep writing
+    # the record. Each cell is passed the lock's descriptor, so the record is still being written until the
+    # last cell exits. The coordinator here takes the lock, starts one such child, which holds on until its
+    # stdin closes, and exits at once.
+    orphaned = make_record(scratch_repo / "cold-read-records", "2026-09-04-cell-outlives-grid", {"r.md": REPORT_A})
+    coordinator = subprocess.Popen(
+        [sys.executable, "-c", """
+import importlib.util, pathlib, subprocess, sys
+spec = importlib.util.spec_from_file_location("shipper", sys.argv[1])
+shipper = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(shipper)
+record = pathlib.Path(sys.argv[2])
+shipper.record_directory_being_written_lock_take(record)
+subprocess.Popen([sys.executable, "-c", "import sys; print('cell', flush=True); sys.stdin.read()"],
+                 start_new_session=True,
+                 pass_fds=shipper.record_directory_being_written_lock_descriptors_for_child_writers(record))
+""", str(scratch_ship), str(orphaned)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        cell_line = coordinator.stdout.readline()
+        coordinator.wait(timeout=60)
+        while_cell_runs = ship(all_store, str(orphaned))
+        check("a record whose writer has exited while a cell it started still runs is FAILED as still being "
+              "written, and nothing reaches the store",
+              cell_line == "cell\n" and while_cell_runs.returncode == 1
+              and while_cell_runs.stdout.startswith("FAILED: 2026-09-04-cell-outlives-grid — still being written")
+              and not (pathlib.Path(all_store) / "2026-09-04-cell-outlives-grid").exists(),
+              f"{cell_line!r}; exit {while_cell_runs.returncode}: {while_cell_runs.stdout}")
+    finally:
+        coordinator.stdin.close()
+        coordinator.stdout.read()
+    deadline = time.monotonic() + 60
+    while True:
+        after_cell = ship(all_store, str(orphaned))
+        if after_cell.returncode == 0 or time.monotonic() > deadline:
+            break
+        time.sleep(0.2)
+    check("once the cell has exited too, the record ships",
+          after_cell.returncode == 0 and after_cell.stdout.startswith("shipped:"),
+          f"exit {after_cell.returncode}: {after_cell.stdout}")
+
     # --- The remote invocation, read from stubs ---------------------------------
     stubs = scratch / "stub-bin"
     stubs.mkdir()

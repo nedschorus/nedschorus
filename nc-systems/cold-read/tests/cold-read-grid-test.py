@@ -1591,6 +1591,25 @@ with tempfile.TemporaryDirectory() as scratch:
             grid_module.cell_common.stop_process_tree(attempt.process, grace_seconds=0.1)
     check("stopping a cell reaps its launcher", attempt.process.returncode is not None)
 
+    # An interrupted grid exits while its cells keep writing the record: each cell holds the record's
+    # being-written lock too, so the record is not shipped until the last cell has exited.
+    lock_record = scratch / "cell-holds-lock-record"
+    lock_record.mkdir()
+    grid_module.record_shipper.record_directory_being_written_lock_take(lock_record)
+    attempt = grid_module.start_attempt(
+        [sys.executable, "-c", "import time; time.sleep(120)"],
+        lock_record / "report.md", 1, lock_record / "cell.stderr.log")
+    try:
+        grid_module.record_shipper.record_directory_being_written_lock_release(lock_record)
+        check("a cell still running holds its record's being-written lock after the grid releases it",
+              attempt.process is not None
+              and grid_module.record_shipper.record_directory_being_written_lock_is_held_by_any_process(lock_record))
+    finally:
+        if attempt.process is not None:
+            grid_module.cell_common.stop_process_tree(attempt.process, grace_seconds=0.1)
+    check("once the cell has exited, the record is no longer being written",
+          not grid_module.record_shipper.record_directory_being_written_lock_is_held_by_any_process(lock_record))
+
     for result in (0, subprocess.TimeoutExpired("cell", 5.0)):
         with mock.patch.object(grid_module.cell_common.os, "killpg") as killed:
             process = mock.Mock(pid=12345)

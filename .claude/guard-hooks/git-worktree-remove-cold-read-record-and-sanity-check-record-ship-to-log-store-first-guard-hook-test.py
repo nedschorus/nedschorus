@@ -661,6 +661,26 @@ check("two paths given to one removal leave the hook unable to tell",
 check("a removal naming no worktree removes none",
       hook.worktrees_removed_or_unresolved_reason("git worktree remove /a/nowhere", "/", worktrees) == (set(), None))
 
+# A removal the shell or a wrapper resolves in another directory than the hook's cwd is unresolved, not let through.
+repository_worktrees = [Path("/r"), Path("/r/.claude/worktrees/A"), Path("/r/.claude/worktrees/B")]
+for label, command in (
+        ("a relative path in bash -c after cd", "cd .claude/worktrees && bash -c 'git worktree remove ./A'"),
+        ("a relative path climbing out in bash -c after cd", "cd docs && bash -c 'git worktree remove ../../writer'"),
+        ("env -C", "env -C /a git worktree remove writer"),
+        ("env -C with its directory attached", "env -C/a git worktree remove writer"),
+        ("env --chdir=", "env --chdir=/a git worktree remove writer"),
+        ("sudo -D", "sudo -D /a git worktree remove writer")):
+    removed, reason = hook.worktrees_removed_or_unresolved_reason(command, "/r", repository_worktrees)
+    check(f"{label} leaves the hook unable to tell which worktree is removed",
+          removed is None and reason is not None and "changes directory" in reason, (removed, reason))
+check("a bracket glob in the path leaves the hook unable to tell",
+      hook.worktrees_removed_or_unresolved_reason("git worktree remove /a/wri[t]er", "/", worktrees)
+      == (None, "the path /a/wri[t]er holds a variable, a glob or a substitution"))
+check("env without a directory option still resolves the path against the cwd",
+      hook.worktrees_removed_or_unresolved_reason("env -u X git worktree remove .claude/worktrees/A", "/r",
+                                                  repository_worktrees)
+      == ({Path("/r/.claude/worktrees/A")}, None))
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

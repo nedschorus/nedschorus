@@ -180,8 +180,10 @@ REMOVED_WORKTREE_UNRESOLVED_REFUSAL_TEMPLATE = (
     "Run the removal again as `git worktree remove <path>`, with the worktree's path written out "
     "in full, as an absolute path with no variable, in a command that does not change directory.")
 # A word the shell would still expand: a variable, a substitution or a glob.
-UNEXPANDED_WORD_PATTERN = re.compile(r"[$`*?]|\{\}")
+UNEXPANDED_WORD_PATTERN = re.compile(r"[$`*?[]|\{\}")
 DIRECTORY_CHANGING_PROGRAMS = ("cd", "pushd", "popd")
+# The wrapper options that run the program in another directory, as in `env -C /a git ...`.
+DIRECTORY_CHANGING_WRAPPER_OPTIONS = {"env": ("-C", "--chdir"), "sudo": ("-D", "--chdir")}
 WORKTREE_REMOVE_FORCE_OPTIONS = {"-f", "--force"}
 
 SHIP_RECORDS_YOURSELF_NEXT_STEP_LINES = (
@@ -290,18 +292,30 @@ def removal_path_argument_and_path_or_unresolved_reason(words, index):
     return argument, os.path.join(*directories, argument), None
 
 
-def worktrees_removed_or_unresolved_reason(command, cwd, worktrees):
+def simple_command_changes_directory(words):
+    """True for cd, pushd or popd, and for a command run by a wrapper option such as env -C."""
+    index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
+    if index is not None and any(is_program(words[index], name) for name in DIRECTORY_CHANGING_PROGRAMS):
+        return True
+    for wrapper, options in shell_reader.simple_command_wrapper_options_and_values_parsed_from_words(words):
+        changing = DIRECTORY_CHANGING_WRAPPER_OPTIONS.get(wrapper, ())
+        # A short option may carry its value attached, as in env -C/a.
+        if any(option in changing or (option[:2] in changing and not option.startswith("--"))
+               for option, _ in options):
+            return True
+    return False
+
+
+def worktrees_removed_or_unresolved_reason(command, cwd, worktrees, outer_command_changes_directory=False):
     """Return (the set of worktrees the command removes, None), or (None, why the hook cannot tell).
 
     A path that depends on the cwd is unresolved in a command that changes directory anywhere,
-    because the hook does not follow the directory changes.
+    because the hook does not follow the directory changes; a bash -c string inherits that
+    from the command that runs it.
     """
     commands = list(shell_reader.simple_commands(command))
-    changes_directory = False
-    for words in commands:
-        index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
-        if index is not None and any(is_program(words[index], name) for name in DIRECTORY_CHANGING_PROGRAMS):
-            changes_directory = True
+    changes_directory = outer_command_changes_directory or any(
+        simple_command_changes_directory(words) for words in commands)
     removed = set()
     for words in commands:
         index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
@@ -311,7 +325,8 @@ def worktrees_removed_or_unresolved_reason(command, cwd, worktrees):
             inner = shell_reader.shell_command_string(words[index + 1:])
             if inner is None:
                 continue
-            inner_removed, reason = worktrees_removed_or_unresolved_reason(inner, cwd, worktrees)
+            inner_removed, reason = worktrees_removed_or_unresolved_reason(
+                inner, cwd, worktrees, changes_directory)
             if reason is not None:
                 return None, reason
             removed |= inner_removed
