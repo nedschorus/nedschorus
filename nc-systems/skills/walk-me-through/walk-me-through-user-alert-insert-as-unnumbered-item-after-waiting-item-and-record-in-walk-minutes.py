@@ -4,7 +4,7 @@
 Usage:
   walk-me-through-user-alert-insert-as-unnumbered-item-after-waiting-item-and-record-in-walk-minutes.py [--cwd DIR] ALERT_ID...
 
-The walk-me-through UserPromptSubmit hook that claims alerts prints this command with the ids it claimed. For
+The walk-me-through UserPromptSubmit hook that claims alerts runs this command with the ids it claimed. For
 each alert, read from user-alerts/claimed/<id>.json under ALERTS_MODULE_FILE's directory, in the order given:
 - the walk-document gets a new unnumbered item, `## <the alert's title>`, right after the unit holding the last
   waiting item, which the walk-minutes' last `#next_to_present` line names, as the walk-me-through skill's
