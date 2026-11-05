@@ -272,7 +272,8 @@ def step_0_cases():
               "no failure")
     except program.RestartFailure as error:
         check("step 0: a reference-checkout that cannot fast-forward fails, quoting git",
-              "merge --ff-only origin/main` exited" in str(error), str(error))
+              "git merge --ff-only origin/main in" in str(error) and "failed (exit" in str(error),
+              str(error))
     git("reset", "-q", "--hard", "origin/main", cwd=checkout)
 
     git("remote", "set-url", "origin", str(SCRATCH_HOME / "no-such-origin.git"), cwd=checkout)
@@ -281,17 +282,18 @@ def step_0_cases():
         check("step 0: a failed fetch fails, quoting git", False, "no failure")
     except program.RestartFailure as error:
         check("step 0: a failed fetch fails, quoting git",
-              "fetch origin` exited" in str(error) and "no-such-origin" in str(error), str(error))
+              "git fetch origin in" in str(error) and "no-such-origin" in str(error), str(error))
     git("remote", "set-url", "origin", str(SCRATCH_HOME / "origin.git"), cwd=checkout)
 
-    real_run = program.run
+    steps = program.reference_checkout_steps
+    real_git = steps.reference_checkout_git_output_or_raise
 
-    def run_with_head_elsewhere(arguments, timeout=120):
-        if arguments[-2:] == ["rev-parse", "HEAD"]:
-            return 0, "0" * 40
-        return real_run(arguments, timeout)
+    def git_with_head_elsewhere(checkout, arguments, **options):
+        if list(arguments) == ["rev-parse", "HEAD"]:
+            return "0" * 40
+        return real_git(checkout, arguments, **options)
 
-    with replaced(program, "run", run_with_head_elsewhere):
+    with replaced(steps, "reference_checkout_git_output_or_raise", git_with_head_elsewhere):
         try:
             program.step_0_fast_forward_reference_checkout(checkout)
             check("step 0: a HEAD other than origin/main fails", False, "no failure")

@@ -205,6 +205,13 @@ _checkout_freshness_catch_up_spec = importlib.util.spec_from_file_location(
 checkout_freshness_catch_up = importlib.util.module_from_spec(_checkout_freshness_catch_up_spec)
 _checkout_freshness_catch_up_spec.loader.exec_module(checkout_freshness_catch_up)
 
+_reference_checkout_steps_spec = importlib.util.spec_from_file_location(
+    "handoff_reference_checkout_fetch_and_fast_forward_to_origin_main_check_common",
+    REPOSITORY_ROOT / "nc-systems" / "handoff"
+    / "handoff-reference-checkout-fetch-and-fast-forward-to-origin-main-check-common.py")
+reference_checkout_steps = importlib.util.module_from_spec(_reference_checkout_steps_spec)
+_reference_checkout_steps_spec.loader.exec_module(reference_checkout_steps)
+
 UNCOMMITTED_WORK_SNAPSHOTS_PATH = Path(__file__).resolve().with_name(
     "uncommitted-work-snapshots.py")
 _uncommitted_work_snapshots_spec = importlib.util.spec_from_file_location(
@@ -2116,9 +2123,60 @@ HANDOFF_SUPERVISOR_NOT_RESTARTED_ON_MAIN_CODE_TEMPLATE = (
     "gives each successor, reach this agent-seat only when the handoff-supervisor restarts. "
     "Its reason: \"{report}\". Tell the user now that the handoff-supervisor did not "
     "restart itself on main's code, quote its reason, and name the checkout {checkout}. "
-    "The handoff-supervisor restarts itself at a session-handoff only when that checkout "
-    "fast-forwards to main or is current with it."
 )
+HANDOFF_PROGRAMS_PATH_FROM_HOME = "~/Projects/nedschorus/nc-systems/handoff/"
+RESTART_PROGRAM_PATH_FROM_HOME = (
+    f"{HANDOFF_PROGRAMS_PATH_FROM_HOME}"
+    "handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout.py")
+REFERENCE_CHECKOUT_BACK_ON_MAIN_PROGRAM_PATH_FROM_HOME = (
+    f"{HANDOFF_PROGRAMS_PATH_FROM_HOME}"
+    "handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py")
+HANDOFF_SUPERVISOR_NOT_RESTARTED_BECAUSE_REFERENCE_CHECKOUT_WILL_NOT_FAST_FORWARD_TAIL = (
+    "The handoff-supervisor restarts itself at a session-handoff only when that checkout "
+    "fast-forwards to main or is current with it. No agent works in that checkout, so anything "
+    "that stops it is left over. Run `{command}`: it saves any leftovers to a pushed branch and "
+    "puts the checkout back on main. Name to the user the branch it prints, if any. If it fails, "
+    "work out why from what it printed, asking an advisor if you have one, and fix it without "
+    "losing anything the checkout holds, then run `{command}` again to check; tell the user "
+    "afterwards what you found and did. Once the checkout is on main, the handoff-supervisor "
+    "restarts itself at the next session-handoff at which it starts the successor without "
+    "stopping to ask the user."
+)
+HANDOFF_SUPERVISOR_NOT_RESTARTED_RESTART_PROGRAM_TAIL = (
+    "The restart program restarts it from the reference-checkout {reference_checkout}. Once "
+    "you have done what that program's docstring says the agent-seat does before running it, "
+    "run `{command}`, and then do what the docstring says the agent-seat does after."
+)
+REFERENCE_CHECKOUT = reference_checkout_steps.REFERENCE_CHECKOUT
+OS_EXECV_FAILURE_REPORT_PREFIX = "os.execv "
+
+
+def handoff_program_command_for_this_machine(path_from_home_and_arguments: str,
+                                             on_the_mac: bool) -> str:
+    """On ned-box the command goes through ssh, because the Bash sandbox can neither signal
+    the handoff-supervisor nor write to the reference-checkout."""
+    command = f"python3 {path_from_home_and_arguments}"
+    return command if on_the_mac else f"ssh nedlern@ned-box {shlex.quote(command)}"
+
+
+def handoff_supervisor_not_restarted_on_main_code_notice(
+        report: str, seat: str, checkout: Path = REPOSITORY_ROOT,
+        on_the_mac: bool = sys.platform == "darwin") -> str:
+    """The successor's notice that the handoff-supervisor did not restart itself, naming
+    the tool for its cause: the program that puts the reference-checkout back on main, when
+    that checkout will not fast-forward, since the restart program's step 0 would fail the
+    same way; else the restart program."""
+    notice = HANDOFF_SUPERVISOR_NOT_RESTARTED_ON_MAIN_CODE_TEMPLATE.format(
+        report=report, checkout=checkout)
+    if (not report.startswith(OS_EXECV_FAILURE_REPORT_PREFIX)
+            and Path(checkout) == REFERENCE_CHECKOUT):
+        return notice + HANDOFF_SUPERVISOR_NOT_RESTARTED_BECAUSE_REFERENCE_CHECKOUT_WILL_NOT_FAST_FORWARD_TAIL.format(
+            command=handoff_program_command_for_this_machine(
+                REFERENCE_CHECKOUT_BACK_ON_MAIN_PROGRAM_PATH_FROM_HOME, on_the_mac))
+    return notice + HANDOFF_SUPERVISOR_NOT_RESTARTED_RESTART_PROGRAM_TAIL.format(
+        reference_checkout=REFERENCE_CHECKOUT,
+        command=handoff_program_command_for_this_machine(
+            f"{RESTART_PROGRAM_PATH_FROM_HOME} {seat}", on_the_mac))
 
 
 def handoff_supervisor_restart_arguments_build(settings: SupervisorSettings) -> list:
@@ -2164,8 +2222,8 @@ def handoff_supervisor_restart_itself_on_main_code_or_return_failure_report(
     try:
         replace_this_process_with(arguments)
     except OSError as error:
-        return f"os.execv failed: {type(error).__name__}: {error}"
-    return "os.execv returned without replacing the process"
+        return f"{OS_EXECV_FAILURE_REPORT_PREFIX}failed: {type(error).__name__}: {error}"
+    return f"{OS_EXECV_FAILURE_REPORT_PREFIX}returned without replacing the process"
 
 
 def successor_session_id_and_ignition_plan_without_conversation_tail(
@@ -2354,8 +2412,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                     branch_state_instruction=branch_state_instruction)
                 ignition_plan = None
                 if not_restarted_on_main_code_report:
-                    prompt += " " + HANDOFF_SUPERVISOR_NOT_RESTARTED_ON_MAIN_CODE_TEMPLATE.format(
-                        report=not_restarted_on_main_code_report, checkout=REPOSITORY_ROOT)
+                    prompt += " " + handoff_supervisor_not_restarted_on_main_code_notice(
+                        not_restarted_on_main_code_report, settings.agent)
                     not_restarted_on_main_code_report = ""
             # Read after sync, which may have updated the prompt file.
             appended_system_prompt_file = appended_system_prompt_file_for_launch(
