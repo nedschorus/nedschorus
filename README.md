@@ -36,13 +36,7 @@ Two kinds of agent, each defined in the glossary, `docs/nedschorus-wiki/nedschor
 
 ## Working in a fresh clone
 
-A checkout carries its own git identity, and a clone arrives without one. Set it before the first commit, or git falls through to the machine's global identity — which on this project's Mac is the user's own account, so the commit is authored as him:
-
-    git config user.name  <the agent-seat or host doing the work, never the user>
-    git config user.email <that name>@nedschorus.invalid
-    git config user.useConfigOnly true
-
-The local `user.name` and `user.email` are what stop a commit being authored as the user: being local, they override the global identity. `user.useConfigOnly=true` does not block the global config — it stops git guessing an identity from the machine when no configuration carries one, so a missing identity fails loudly instead of being invented. Set all three, then confirm with `git var GIT_AUTHOR_IDENT`, which answers the identity your commits will carry: if it names the user, the local settings are not in place. `nc-systems/main-gatekeeper/tests/main-gatekeeper-test.py` checks all three against the enclosing checkout and fails with the value it found and the commands that fix it; it reads git's merged configuration, so the `git var` line above, not a green suite, is the proof.
+Each agent-seat's commits carry its own name: its launcher, `scripts/launch-claude-ubuntu` or `scripts/launch-claude-mac`, sets `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL`, which outrank any git config. Each clone's own config holds the identity `unconfigured-agent <unconfigured-agent@nedschorus.invalid>`, set by the user, which the pre-commit hook, `scripts/git-client-side-hooks/pre-commit`, refuses, so an agent-session started without its launcher cannot commit. Do not run `git config user.name` or `git config user.email`: every worktree of a clone shares one `.git/config`, so the change replaces that identity for every worktree, and an agent-session started without its launcher could then commit under the new one. If the pre-commit hook refuses a commit, do what its message says.
 
 ## Status
 

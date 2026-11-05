@@ -102,7 +102,6 @@ import signal
 import subprocess
 import sys
 import tempfile
-import time
 import traceback
 from pathlib import Path
 
@@ -4788,15 +4787,10 @@ def run_edit_landing_real_git_cases(scratch: Path):
 
 def run_push_time_limit_cases(scratch: Path):
     conflict = tool.pre_push_conflict_check
-    selective = tool.pre_push_selective_test_run
-    # The longest the hook can take: each stop_process_group waits its grace
-    # twice, and the selective run first lists descendants with `ps`, which
-    # descendant_process_ids gives 30 seconds.
+    # The longest the hook can take: its stop_process_group waits its grace
+    # twice.
     hook_seconds = (conflict.DEFAULT_TIME_BUDGET_SECONDS
-                    + 2 * conflict.TERMINATE_GRACE_SECONDS
-                    + 30
-                    + selective.DEFAULT_TIME_BUDGET_SECONDS
-                    + 2 * selective.TERMINATE_GRACE_SECONDS)
+                    + 2 * conflict.TERMINATE_GRACE_SECONDS)
     check("a push is given more time than the pre-push hook can take",
           tool.push_time_limit_seconds({}) > hook_seconds,
           f"{tool.push_time_limit_seconds({})} against {hook_seconds}")
@@ -4804,25 +4798,15 @@ def run_push_time_limit_cases(scratch: Path):
           "grace twice, once after SIGTERM and once after SIGKILL",
           tool.push_time_limit_seconds({}) - tool.PUSH_TIME_MARGIN_SECONDS
           == conflict.DEFAULT_TIME_BUDGET_SECONDS
-          + 2 * conflict.TERMINATE_GRACE_SECONDS
-          + selective.DEFAULT_TIME_BUDGET_SECONDS
-          + 2 * selective.TERMINATE_GRACE_SECONDS,
+          + 2 * conflict.TERMINATE_GRACE_SECONDS,
           str(tool.push_time_limit_seconds({})))
-    for module in (conflict, selective):
-        longer = {module.TIME_BUDGET_ENVIRONMENT_VARIABLE: "1000"}
-        check(f"a longer budget in {module.TIME_BUDGET_ENVIRONMENT_VARIABLE} "
-              "lengthens the push's time by as much",
-              tool.push_time_limit_seconds(longer)
-              == tool.push_time_limit_seconds({})
-              - module.DEFAULT_TIME_BUDGET_SECONDS + 1000,
-              str(tool.push_time_limit_seconds(longer)))
-    outer_hook_started = {
-        selective.HOOK_STARTED_AT_ENVIRONMENT_VARIABLE: str(time.time() - 200)}
-    check("a start time an outer pre-push hook exported does not shorten the "
-          "push's time, since the push starts its own hook",
-          tool.push_time_limit_seconds(outer_hook_started)
-          == tool.push_time_limit_seconds({}),
-          str(tool.push_time_limit_seconds(outer_hook_started)))
+    longer = {conflict.TIME_BUDGET_ENVIRONMENT_VARIABLE: "1000"}
+    check(f"a longer budget in {conflict.TIME_BUDGET_ENVIRONMENT_VARIABLE} "
+          "lengthens the push's time by as much",
+          tool.push_time_limit_seconds(longer)
+          == tool.push_time_limit_seconds({})
+          - conflict.DEFAULT_TIME_BUDGET_SECONDS + 1000,
+          str(tool.push_time_limit_seconds(longer)))
 
     stopped = subprocess.TimeoutExpired(["git", "push"], 1)
     case_name = ("a stopped push says how long it ran, that a rerun is safe "
@@ -4854,19 +4838,16 @@ def run_push_time_limit_cases(scratch: Path):
     check("a push that finishes asks origin nothing more",
           quick.ran("git push") and not quick.ran("git ls-remote"),
           str(quick.commands()))
-    longer = {selective.TIME_BUDGET_ENVIRONMENT_VARIABLE: "1000"}
     configured = Recorder()
     tool.push_branch(scratch, "b", configured, environment=longer)
     check("the push is given the time the hook reads from the same environment",
           configured.timeout_of("git push") == tool.push_time_limit_seconds(longer),
           str(configured.timeout_of("git push")))
-    # Both budget variables are set here, so one the outer process carries
+    # The budget variable is set here, so one the outer process carries
     # cannot change what this case compares.
-    variables = (conflict.TIME_BUDGET_ENVIRONMENT_VARIABLE,
-                 selective.TIME_BUDGET_ENVIRONMENT_VARIABLE)
+    variables = (conflict.TIME_BUDGET_ENVIRONMENT_VARIABLE,)
     saved = {name: os.environ.get(name) for name in variables}
-    os.environ.pop(conflict.TIME_BUDGET_ENVIRONMENT_VARIABLE, None)
-    os.environ[selective.TIME_BUDGET_ENVIRONMENT_VARIABLE] = "1000"
+    os.environ[conflict.TIME_BUDGET_ENVIRONMENT_VARIABLE] = "1000"
     try:
         from_process = Recorder()
         tool.push_branch(scratch, "b", from_process)

@@ -24,13 +24,10 @@ model connection; without it even Gemini's API is unreachable. No proxy
 separates model traffic from tool traffic. This launcher does not provision
 logins, recover reports from chat, retry models, or verify report content.
 
-Without GEMINI_API_KEY in the environment, the launcher reads the key from
-~/.config/nedschorus/gemini-api.key before starting agy, since the sandbox
-hides that file. A file that gives no key does not stop the launch: agy
-needs the key only when ~/.gemini/antigravity-cli/settings.json sets
-modelProvider to "gemini", and otherwise uses its own Antigravity login.
-When agy then exits nonzero, the error the launcher prints on stderr also
-says why the file gave no key.
+agy runs on its own Google login, never on a Gemini API key: the launcher
+removes GEMINI_API_KEY from agy's environment, because a key is billed per
+call. When agy has no login, its "Authentication required." message is in
+the log.
 
 Runs `agy models` inside the same sandbox before starting the task, refusing
 unknown names with the known names. The default is gemini-4-argon-high.
@@ -86,7 +83,7 @@ def _parser():
     return parser
 
 
-def _run(command, checkout, log, deadline, environment, key_file_problem):
+def _run(command, checkout, log, deadline, environment):
     process = subprocess.Popen(command, cwd=checkout, env=environment, stdin=subprocess.DEVNULL,
                                stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     try:
@@ -95,13 +92,6 @@ def _run(command, checkout, log, deadline, environment, key_file_problem):
         codex_task.stop_process_group(process)
         raise RuntimeError("deadline passed; agy and its children were stopped") from None
     if code != 0:
-        if key_file_problem:
-            raise RuntimeError(f"agy exited {code}; GEMINI_API_KEY is not set, and "
-                               f"{agy_cell.GEMINI_API_KEY_FILE} gave no key: {key_file_problem}.\n"
-                               "Do not read, write or repair that file yourself: it holds a credential.\n"
-                               "If you are a subagent, pass this whole message to the agent that dispatched you, and stop.\n"
-                               "Otherwise, tell the user the first line of this message, and ask them either to set GEMINI_API_KEY or to make "
-                               f"{agy_cell.GEMINI_API_KEY_FILE} readable and holding the key.")
         raise RuntimeError(f"agy exited {code}")
 
 
@@ -132,8 +122,7 @@ def main(argv=None):
         if not prompt.strip():
             raise RuntimeError("the brief is empty")
         stage = "preparing the sandbox"
-        # The sandbox masks the key file, so it is read here, before agy starts.
-        environment, key_file_problem = agy_cell.agy_environment_and_key_file_problem(os.environ)
+        environment = agy_cell.agy_environment_copy_without_gemini_api_key(os.environ)
         writable_folders = [checkout, *roots] if args.sandbox == "workspace-write" else []
         prefix = agy_cell.credential_sandbox_prefix(
             writable_paths=[(report, False), *((folder, True) for folder in writable_folders)],
@@ -146,7 +135,7 @@ def main(argv=None):
         with log_path.open("w+", encoding="utf-8") as log:
             deadline = time.monotonic() + args.deadline_minutes * 60
             stage = "listing models with agy models"
-            _run([*prefix, "agy", "models"], checkout, log, deadline, environment, key_file_problem)
+            _run([*prefix, "agy", "models"], checkout, log, deadline, environment)
             log.seek(0)
             listing = re.sub(r"\x1b\[[0-9;]*m", "", log.read())
             # IDs in agy's human-readable listing are whitespace-delimited hyphenated words.
@@ -164,7 +153,7 @@ def main(argv=None):
             command += ["--print", prompt + f"\n\nWrite the task's report to this exact file: {report}\n"]
             stage = "running the task"
             print(f"{PROGRAM}: running Gemini in {checkout}; log {log_path}", file=sys.stderr)
-            _run(command, checkout, log, deadline, environment, key_file_problem)
+            _run(command, checkout, log, deadline, environment)
         stage = f"reading report {report}"
         if not report.is_file() or not report.read_text(encoding="utf-8").strip():
             raise RuntimeError(f"agy exited 0 but wrote no report at {report}")

@@ -117,8 +117,11 @@ ned_box_home_path_constants = load_module(
     "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
     REPOSITORY / "nc-systems" / "general-tools"
     / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+reference_checkout_steps = load_module(
+    "handoff_reference_checkout_fetch_and_fast_forward_to_origin_main_check_common",
+    SYSTEM_DIRECTORY / "handoff-reference-checkout-fetch-and-fast-forward-to-origin-main-check-common.py")
 
-REFERENCE_CHECKOUT = Path("~/Projects/nedschorus").expanduser()
+REFERENCE_CHECKOUT = reference_checkout_steps.REFERENCE_CHECKOUT
 HANDOFF_DIRECTORY = Path("~/.claude/handoffs").expanduser()
 AGENTS_ROOT = Path("~/agents").expanduser()
 PROJECTS_ROOT = Path("~/.claude/projects").expanduser()
@@ -267,21 +270,11 @@ def end_process(process_id: int, command_line: str, sleep=time.sleep) -> str:
 
 
 def step_0_fast_forward_reference_checkout(checkout: Path) -> str:
-    for arguments in (["fetch", "origin"], ["merge", "--ff-only", "origin/main"]):
-        status, output = run(["git", "-C", str(checkout), *arguments], timeout=300)
-        if status != 0:
-            raise RestartFailure(f"step 0: `git -C {checkout} {' '.join(arguments)}` exited "
-                                 f"{status}, printing:\n{output}")
-    _, head = run(["git", "-C", str(checkout), "rev-parse", "HEAD"])
-    _, main = run(["git", "-C", str(checkout), "rev-parse", "origin/main"])
-    if not head or head != main:
-        raise RestartFailure(f"step 0: the reference-checkout {checkout} is at {head or 'nothing'}, "
-                             f"not at origin/main {main or '(unknown)'}")
-    status, changed = run(["git", "-C", str(checkout), "status", "--porcelain",
-                           "--untracked-files=no"])
-    if status != 0 or changed:
-        raise RestartFailure(f"step 0: the reference-checkout {checkout} has changed tracked files "
-                             f"or `git status` failed (exit {status}):\n{changed}")
+    try:
+        reference_checkout_steps.git_fetch_origin_or_raise(checkout)
+        main = reference_checkout_steps.fast_forward_to_origin_main_and_check_or_raise(checkout)
+    except reference_checkout_steps.ReferenceCheckoutGitStepFailed as error:
+        raise RestartFailure(f"step 0: {error}") from None
     return f"step 0: the reference-checkout {checkout} is at origin/main {main}"
 
 

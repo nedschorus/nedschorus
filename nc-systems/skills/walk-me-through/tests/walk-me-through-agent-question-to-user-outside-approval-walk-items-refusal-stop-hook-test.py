@@ -576,6 +576,12 @@ def test_a_failed_model_check_blocks():
         check("the prompt names one waiting item as `item N waits` and two as `items N and P wait`",
               "and item 2 waits for his answer" in one and "and items 2 and 2.1 wait for his answer" in two,
               (one[:600], two[:600]))
+        argv = case.model_calls()[-1]["argv"]
+        schema = json.loads(argv[argv.index("--json-schema") + 1])["properties"]["lines"]
+        fields = schema["items"]["properties"]
+        check("each field of the schema the model is sent holds its meaning, and the prompt names no field",
+              all(spec.get("description") for spec in [schema, *fields.values()])
+              and not any(name in two for name in fields), (schema, two))
     finally:
         os.environ["PATH"] = saved_path
         os.environ.pop("FAKE_CLAUDE_MODE", None)
@@ -1245,6 +1251,8 @@ def test_a_message_ending_with_a_closing_line_blocks_when_the_checkout_holds_no_
         closed.reply(text)
         check_silent(case_name, closed.run())
     two = Case()
+    # The second walk has a readable waiting item, so a finder that took either walk alone would ask the model.
+    (two.walk / "a-second-walk.md").write_text("# A second walk\n\n## Item 4 of 9: the merge\n\nMerge it.\n")
     (two.walk / "a-second-walk-minutes.md").write_text("#next_to_present item 4 of 9\n")
     two.reply("The tests passed.\n\nShould I merge the pull request now?")
     check_silent("a question-like line passes when two approval-walks are open, since no waiting item is known",

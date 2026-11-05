@@ -37,6 +37,14 @@ URL = f"https://github.com/o/r/pull/{NUMBER}"
 ADVISOR_SENTENCE = ("This is the pull request's third fix-round, its last before merge-lane-2 brings it to "
                     "the user: before you change anything, call the advisor with the blocking findings and "
                     "the fix you plan.")
+CARRYING_OUT_USER_RULING_PARAGRAPH = (
+    "When a finding asks you to change a file the instruction-file guard protects, and the fix only makes the "
+    "file do what a ruling of the user's already says, the change is a user-approved-change: before each edit, "
+    "write the ruling's words, quoted from the walk-minutes item or the agent-session where he gave it, with "
+    "its time, into the `.walk-approved` marker file at the root of your worktree, and cite the ruling in the "
+    "commit message. A change the guard's refusal lets through without a ruling, such as an obvious-error-fix, "
+    "goes as that refusal says. Leave out any other change to such a file, go on with the other findings, and "
+    "name that change in your report to the agent that dispatched you.")
 
 FAKE_GH = r'''#!/usr/bin/env python3
 import json, os, sys
@@ -228,6 +236,9 @@ def brief_cases(root, repository, base, frozen_head):
           and f"{NUMBER} --move-change-to-own-pull-request-finish --title <title> --body-file <description file>" in out
           and f"puts you back on fix-round-pull-request-{NUMBER}-review-11." in out
           and "git switch" not in out.split("3. Change nothing else")[1].split("4. Put every change")[0], out)
+    check("brief: rule 2 says a fix that carries out a user ruling in a guarded-file is a user-approved-change",
+          "\n   " + CARRYING_OUT_USER_RULING_PARAGRAPH + "\n3. Change nothing else" in out
+          and out.index("2. Check each finding") < out.index(CARRYING_OUT_USER_RULING_PARAGRAPH), out)
     check("brief: a conflict defers to the conflict check's report, and asks for no merge itself",
           "If it reports VERDICT: CONFLICT, do what its report says." in out
           and "merge origin/main as its report says" not in out and "merge nothing" not in out, out)
@@ -610,7 +621,7 @@ def check_cases(root, repository, base, frozen_head):
     code, out, err = run(root, repository, routes_for(amended, reviews), "--check", "--answers", answers)
     check("check: a changed file no finding names is listed for the reviewer",
           code == 0 and "  other.txt" in out and "Files the fix commit changes that no blocking finding "
-          "names: other.txt" in out, out + err)
+          "or nit names: other.txt" in out, out + err)
 
     second = commit_file(repository, "hook.py", "three\n", "second")
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
@@ -1568,7 +1579,57 @@ def move_pre_push_hook_output_cases(root, _repository, _base, _frozen_head):
           and "printed the lines below on stderr during the push" in err, out + err)
 
 
+def nit_cases(root, repository, base, frozen_head):
+    """merge-lane-2's nits, posted opening with the nit mark beside its blocking findings, ride in the fix-round."""
+    nit = comment("nit.txt", " **fix-in-maintenance, nit** nit.txt misspells the name.", line=20, comment_id=6)
+    lane_comments = [*BLOCKING_COMMENTS, nit, dict(nit, id=7, html_url=f"{URL}#discussion_r7")]
+    reviews = [review(commit_id=frozen_head),
+               review(state="COMMENTED", commit_id=frozen_head, login="mac-claude", review_id=12, body="COMMENT")]
+    routes = dict(routes_for(frozen_head, reviews, comments=lane_comments),
+                  **comments_route(12, [comment("other.txt", "**fix-in-maintenance, nit** Not merge-lane-2's.",
+                                                comment_id=8)]))
+    code, out, err = run(root, repository, routes)
+    check("nits: the brief lists merge-lane-2's nit once, numbered on from the blocking findings, and the "
+          "stated count of 2 still passes beside it",
+          code == 0 and "Blocking findings (2)" in out and "Nits to fix in this round too (1)" in out
+          and f"3. nit.txt:20 ({URL}#discussion_r6)\n**fix-in-maintenance, nit** nit.txt misspells the name." in out
+          and out.count("misspells the name") == 1
+          and out.index("2. test.py (") < out.index("Nits to fix in this round too"), err + out)
+    check("nits: the brief leaves out a nit-marked comment of another account's review",
+          "Not merge-lane-2's" not in out, out)
+    check("nits: step 3 makes the listed nits part of the round",
+          "are not part of this round, apart from the nits listed above" in out, out)
+    check("nits: step 2 says a nit needs no test",
+          "with a test that fails without the fix; a nit needs no test." in out, out)
+
+    code, out, err = run(root, repository, routes_for(frozen_head, [review(commit_id=frozen_head)]))
+    check("nits: a round with no nit prints no nit heading", code == 0 and "Nits to fix" not in out, err + out)
+
+    code, out, err = run(root, repository, routes_for(
+        frozen_head, [review(commit_id=frozen_head, body="One nit.")], comments=[nit]))
+    check("nits: a changes-requested review whose only marked comment is a nit gives no brief, as with no "
+          "blocking finding",
+          code == 1 and "none of its 1 inline comments starts with the bold word **Blocks**" in err
+          and "Nits to fix" not in out, err + out)
+
+    code, out, err = run(root, repository, routes, "--check", "--answers", answers_file(root, GOOD_ANSWERS))
+    check("nits: --check refuses answers with no entry for the nit",
+          code == 1 and "no entry for finding 3" in err and "the review has 2 blocking findings and 1 nit." in err,
+          err + out)
+
+    fix = commit_file(repository, "nit.txt", "the name\n", "fix the nit")
+    code, out, err = run(root, repository, dict(routes, **{PR_VIEW: {"stdout": json.dumps(
+        {"url": URL, "headRefOid": fix, "headRefName": BRANCH})}}),
+        "--check", "--answers", answers_file(root, GOOD_ANSWERS + "3. Spelt the name right.\n"))
+    check("nits: --check passes with an answer to the nit, lists no file the nit names, and marks the nit's "
+          "line in the message for merge-lane-2",
+          code == 0 and "3 findings answered" in out and "no blocking finding or nit names" not in out
+          and "2. test.py: Added the timeout case.\n" in out
+          and "3. nit.txt:20 (nit): Spelt the name right." in out, err + out)
+
+
 gh_timeout_case()
+case("nits", nit_cases)
 case("move", move_cases)
 case("move hand commit", move_hand_commit_cases)
 case("move failure after push", move_failure_after_push_cases)

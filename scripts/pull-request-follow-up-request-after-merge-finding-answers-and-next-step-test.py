@@ -615,18 +615,17 @@ def test_open_failures():
         pushes = []
         program.git_output.run_git = push_times_out
         try:
-            with case.in_process(worktree, **{program.pre_push_conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE: "7",
-                                              program.pre_push_selective_test_run.TIME_BUDGET_ENVIRONMENT_VARIABLE: "11.5"}), \
+            with case.in_process(worktree, **{program.pre_push_conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE: "7.5"}), \
                     contextlib.redirect_stderr(io.StringIO()) as stderr:
                 code = program.main([str(NUMBER), "open-pull-request", "--handled-finding-numbers", "1"])
         finally:
             program.git_output.run_git = original_run_git
-        check("a push that times out is given the hooks' budgets from the environment plus 120 s, rounded up to whole "
+        check("a push that times out is given the conflict check's budget from the environment plus 120 s, rounded up to whole "
               "seconds, and hands the agent the sentence for the user, not a run again",
-              code == 2 and pushes == [139] and stderr.getvalue() ==
-              "FAILED: git push -u origin topic-one failed (did not finish within 139 s), so no pull request was opened.\n"
+              code == 2 and pushes == [128] and stderr.getvalue() ==
+              "FAILED: git push -u origin topic-one failed (did not finish within 128 s), so no pull request was opened.\n"
               "open-pull-request stopped there; what it did before the failure stays done.\n"
-              + fails_line("open-pull-request") + "git push -u origin topic-one failed (did not finish within 139 s), so "
+              + fails_line("open-pull-request") + "git push -u origin topic-one failed (did not finish within 128 s), so "
               "no pull request was opened." + SUBAGENT_END,
               f"{code} {pushes} {stderr.getvalue()!r}")
 
@@ -806,20 +805,15 @@ def test_open_gh_pr_create_second_try_and_gh_pr_list():
         case.close()
 
 
-def test_push_time_limit_is_the_pre_push_hooks_budgets_plus_120_seconds():
-    hooks = []
-    for file_name in ("git-client-side-hooks-pre-push-conflict-check.py",
-                      "git-client-side-hooks-pre-push-selective-test-run.py"):
-        spec = importlib.util.spec_from_file_location(
-            file_name[:-3].replace("-", "_") + "_for_test", PROGRAM.with_name(file_name))
-        hooks.append(importlib.util.module_from_spec(spec))
-        spec.loader.exec_module(hooks[-1])
-    conflict_check, selective_test_run = hooks
-    for environment in ({}, {conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE: "7",
-                             selective_test_run.TIME_BUDGET_ENVIRONMENT_VARIABLE: "11.5"}):
-        expected = math.ceil(conflict_check.time_budget_seconds(environment)
-                             + selective_test_run.time_budget_seconds(environment) + 120)
-        check(f"the push time limit is the two pre-push hooks' budgets plus 120 s, rounded up, environment {environment}",
+def test_push_time_limit_is_the_pre_push_conflict_check_budget_plus_120_seconds():
+    file_name = "git-client-side-hooks-pre-push-conflict-check.py"
+    spec = importlib.util.spec_from_file_location(
+        file_name[:-3].replace("-", "_") + "_for_test", PROGRAM.with_name(file_name))
+    conflict_check = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(conflict_check)
+    for environment in ({}, {conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE: "7.5"}):
+        expected = math.ceil(conflict_check.time_budget_seconds(environment) + 120)
+        check(f"the push time limit is the pre-push conflict check's budget plus 120 s, rounded up, environment {environment}",
               program.push_time_limit_seconds(environment) == expected
               and isinstance(program.push_time_limit_seconds(environment), int),
               f"{program.push_time_limit_seconds(environment)} != {expected}")
@@ -1397,7 +1391,8 @@ def test_print_block():
     check(f"{PRINT_BLOCK} refuses when merge-lane-2 has no approving review, saying when to run it again",
           code == 1 and out == "" and err == (
               f"REFUSED: ned-review-merge, merge-lane-2's GitHub account, has no approving review of pull request "
-              f"{NUMBER}, so merge-lane-2's findings on it are not final and no #follow_up_request block was printed.\n"
+              f"{NUMBER}, so merge-lane-2 has not approved it yet: its review is still running or it requested changes. No "
+              "#follow_up_request block was printed.\n"
               "Once ned-review-merge's approving review is posted, run: "
               f"python3 {program.PROGRAM} {NUMBER} {PRINT_BLOCK}\n"), err)
     code, out, err = print_block([merge_lane_review(1)], [merge_lane_comment(10, 1, "Rename it.")])
@@ -1415,7 +1410,8 @@ def test_print_block():
           code == 2 and out == "" and err.startswith("FAILED: gh api exited 1: HTTP 502\n"), err)
     code, out, err = print_block("not json", [])
     check(f"{PRINT_BLOCK} reports gh output that is not a list of pages as FAILED with exit 2",
-          code == 2 and err.startswith(f"FAILED: gh api pulls/{NUMBER}/reviews printed no list of pages: "), err)
+          code == 2 and err.startswith(f"FAILED: gh api pulls/{NUMBER}/reviews printed output that is not the JSON list of result pages "
+                                       "--paginate --slurp prints: "), err)
     code, out, err = print_block([{"id": 1}], [])
     check(f"{PRINT_BLOCK} reports a review without its expected fields as FAILED with exit 2",
           code == 2 and err.startswith(f"FAILED: GitHub's reviews of pull request {NUMBER} were not in the "
@@ -1423,7 +1419,7 @@ def test_print_block():
     code, out, err = print_block([merge_lane_review(1)], [merge_lane_comment(10, 1, "**fix-next** Rename it.")],
                                  read_back=lambda text: [])
     check(f"{PRINT_BLOCK} prints nothing and fails with exit 2 when its block does not read back as itself",
-          code == 2 and out == "" and "does not read back as itself" in err, err)
+          code == 2 and out == "" and "does not read back as itself" in err and "Do not paste the block" in err, err)
     code, out, err = print_block([merge_lane_review(1)], [merge_lane_comment(10, 1, "**fix-next** Rename it.")],
                                  read_back=lambda text: (_ for _ in ()).throw(ValueError("unreadable")))
     check(f"{PRINT_BLOCK} fails with exit 2 when the parser refuses its block, quoting the parser",
@@ -1434,7 +1430,7 @@ for test in (test_help, test_block_parsing, test_print_block, test_brief_text, t
              test_open_refusals, test_open, test_open_pushes_the_checked_out_recorded_branch_not_the_last,
              test_open_failures, test_open_passes_on_what_a_push_that_succeeds_prints,
              test_open_gh_pr_create_second_try_and_gh_pr_list,
-             test_push_time_limit_is_the_pre_push_hooks_budgets_plus_120_seconds,
+             test_push_time_limit_is_the_pre_push_conflict_check_budget_plus_120_seconds,
              test_open_title_and_description_file_removal_failure,
              test_leave_out_and_finish, test_three_findings, test_waiting_for_user_ruling,
              test_state_failures, test_clean_up, test_clean_up_goes_on_past_each_worktree_and_branch,

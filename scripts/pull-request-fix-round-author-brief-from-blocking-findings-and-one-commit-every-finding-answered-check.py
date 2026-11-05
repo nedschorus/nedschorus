@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print a pull request author's fix-round brief from merge-lane-2's blocking findings, and check the round.
+"""Print a pull request author's fix-round brief from merge-lane-2's blocking findings and nits, and check the round.
 
 Usage:
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number>
@@ -31,17 +31,22 @@ commissioned reviewer's marks it leaves out were graded lower. A blocker re-post
 with the same path, line and body counts once. A review's stated **Blocking: N** is checked against
 its own marked comments, or, when it has none, against those of the round's other reviews, such as
 the commissioned reviewer's Blocks it grades or a later review that re-posts its blockers.
+The nits are the inline comments of merge-lane-2's own reviews of the round whose body starts with
+NIT_MARK, a re-posted nit counted once; a nit the posting program moved into a review's body is not
+read, since the bodies' text is never parsed for findings. A round with nits but no blocking
+finding is refused as a round with no blocking finding is, so nits alone produce no brief.
 
 Without --check, run in the author's checkout: refuse when the pull request's head has moved past
 the frozen-head, else print the brief: the frozen-head, ADVISOR_FIX_ROUND_INSTRUCTION when the
-round's number is ADVISOR_FIX_ROUND_NUMBER and on no other, each blocking finding word for word, how to
+round's number is ADVISOR_FIX_ROUND_NUMBER and on no other, each blocking finding word for word, then
+each nit word for word, numbered on from the blocking findings, to fix in the same round, how to
 dispatch the fix-round subagent in a git worktree of its own and push from it, the round's rules,
 and the --check command to finish with, which the subagent runs in its own worktree.
 
 With --check, run in the worktree or checkout that holds the round's commit: the commits from the frozen-head to --commit (default
 HEAD) must be none, or one non-merge commit, or with --after-conflict-merge a merge of origin/main
-followed by at most one non-merge commit. The answers file holds one entry per blocking finding,
-each starting "<n>. " on its own line; an entry that starts with MOVED_TO_PULL_REQUEST_PREFIX_PATTERN,
+followed by at most one non-merge commit. The answers file holds one entry per blocking finding
+and per nit, each starting "<n>. " on its own line; an entry that starts with MOVED_TO_PULL_REQUEST_PREFIX_PATTERN,
 in any case, must go on with MOVED_TO_PULL_REQUEST_PATTERN naming a pull request gh pr view finds, or --check refuses it;
 --check also refuses when, for any file of that pull request's gh pr diff, the file's whole patch reversed
 applies cleanly to the checked commit's tree, since the moved change is then still on this branch. A file
@@ -49,7 +54,7 @@ whose moved part was undone but whose patch context the kept part changed is not
 the worktree or checkout --check runs in, and --check refuses when the checked commit's tree holds
 an answers file the frozen-head's tree does not, since a branch cut before .gitignore named the file does not leave it out of
 commits. It prints the files the fix commit changes that no blocking
-finding names, and, once GitHub's head is the checked commit or the frozen-head, the message for
+finding or nit names, and, once GitHub's head is the checked commit or the frozen-head, the message for
 merge-lane-2, which the agent sends with SendMessage, since a program cannot. When the round has no
 commit, it first posts the round record, unless one already names the round's latest
 changes-requested review.
@@ -101,6 +106,9 @@ BLOCKING_MARKER_DESCRIPTION = "the bold word **Blocks**"
 # merge-lane-pull-request-reviewer-review-post-and-read-back.py writes the count as a line of its own after
 # the verdict line and a blank line; the same words anywhere else, such as a reviewer quoting them, are prose.
 BLOCKING_COUNT_PATTERN = re.compile(r"\AREQUEST_CHANGES\n\n\*\*Blocking: (\d+)\*\*\n")
+# merge-lane-pull-request-reviewer-review-post-and-read-back.py opens a nit's comment with this mark;
+# BLOCKING_MARKER_PATTERN must never match it, or a nit would block.
+NIT_MARK = "**fix-in-maintenance, nit** "
 ROUND_RECORD_FORMAT = ("Fix-round answered without a commit: frozen-head {frozen_head}, reviews {review_ids}.\n"
                        "Posted by {program} --check. A changes-requested review of the same head posted "
                        "after this comment starts a new fix-round.")
@@ -130,6 +138,15 @@ MOVE_CHANGE_TO_OWN_PULL_REQUEST_INSTRUCTION = (
     f"\"{MOVED_TO_PULL_REQUEST_PREFIX}\" followed by the URL --move-change-to-own-pull-request-finish prints; the check in "
     "step 7 refuses the entry when no such pull request exists, or when its change is still on this "
     "branch.")
+GUARDED_FILE_CHANGE_CARRYING_OUT_USER_RULING_INSTRUCTION = (
+    "   When a finding asks you to change a file the instruction-file guard protects, and the fix only "
+    "makes the file do what a ruling of the user's already says, the change is a user-approved-change: "
+    "before each edit, write the ruling's words, quoted from the walk-minutes item or the agent-session "
+    "where he gave it, with its time, into the `.walk-approved` marker file at the root of your worktree, "
+    "and cite the ruling in the commit message. A change the guard's refusal lets through without a "
+    "ruling, such as an obvious-error-fix, goes as that refusal says. Leave out any other change to such "
+    "a file, go on with the other findings, and name that change in your report to the agent that "
+    "dispatched you.")
 MOVE_STATE_FILE_NAME = "fix-round-move-to-own-pull-request.json"
 # The answers file waits in the git directory while the new topic branch is checked out, so no commit
 # or check made there can pick it up.
@@ -392,6 +409,19 @@ def blocking_findings(number, anchor, reviews, reviewer_login=MERGE_LANE_2_REVIE
     return findings
 
 
+def nit_findings_of_merge_lane_2_reviews_in_round(number, reviews, reviewer_login=MERGE_LANE_2_REVIEWER_LOGIN):
+    """The inline comments of merge-lane-2's reviews of the round that open with NIT_MARK, reposts dropped."""
+    nits = []
+    for review in reviews:
+        if (review.get("user") or {}).get("login") != reviewer_login:
+            continue
+        comments = gh_json_lines(["api", "--paginate",
+                                  f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews/{review['id']}/comments",
+                                  "--jq", ".[]"])
+        nits += [comment for comment in comments if (comment.get("body") or "").lstrip().startswith(NIT_MARK)]
+    return without_reposts(nits)
+
+
 def finding_place(comment):
     line = comment.get("line") or comment.get("original_line")
     return f"{comment.get('path')}:{line}" if line else str(comment.get("path"))
@@ -403,13 +433,16 @@ def round_facts(number, reviewer_login):
     frozen_head = anchor.get("commit_id")
     if not frozen_head:
         raise StepFailed(f"merge-lane-2's review {anchor.get('html_url')} carries no commit_id")
+    # blocking_findings refuses a round with no blocking finding, so nits are read only beside one.
+    findings = blocking_findings(number, anchor, reviews, reviewer_login)
+    nits = nit_findings_of_merge_lane_2_reviews_in_round(number, reviews, reviewer_login)
     return (url, head, branch, review_links(latest_first(anchor, reviews)), anchor.get("id"), frozen_head,
-            blocking_findings(number, anchor, reviews, reviewer_login), fix_round_number,
+            findings, nits, fix_round_number,
             None if recorded else [review.get("id") for review in reviews])
 
 
 def print_brief(number, reviewer_login):
-    (url, head, branch, review_link, review_id, frozen_head, findings,
+    (url, head, branch, review_link, review_id, frozen_head, findings, nits,
      fix_round_number, _unrecorded_review_ids) = round_facts(number, reviewer_login)
     if head != frozen_head:
         raise Refused(f"Pull request {url} has head {head}, but merge-lane-2 reviewed {frozen_head}; "
@@ -430,6 +463,11 @@ def print_brief(number, reviewer_login):
     for index, finding in enumerate(findings, 1):
         lines += ["", f"{index}. {finding_place(finding)} ({finding.get('html_url')})",
                   (finding.get("body") or "").strip()]
+    if nits:
+        lines += ["", f"Nits to fix in this round too ({len(nits)}), word for word, numbered on from the "
+                      "blocking findings:"]
+    for index, nit in enumerate(nits, len(findings) + 1):
+        lines += ["", f"{index}. {finding_place(nit)} ({nit.get('html_url')})", (nit.get("body") or "").strip()]
     answers_name = ANSWERS_FILE_NAME_FORMAT.format(number=number)
     local_branch = LOCAL_BRANCH_NAME_FORMAT.format(number=number, review_id=review_id)
     check_command = f"python3 {PROGRAM} {number} --check"
@@ -443,10 +481,11 @@ def print_brief(number, reviewer_login):
         f"1. Before changing anything, run: python3 scripts/branch-conflict-check.py --pull-request {number}",
         "   If it reports VERDICT: CONFLICT, do what its report says.",
         "2. Check each finding against the code. Fix each one that holds, root cause included, "
-        "with a test that fails without the fix.",
+        "with a test that fails without the fix; a nit needs no test.",
+        GUARDED_FILE_CHANGE_CARRYING_OUT_USER_RULING_INSTRUCTION,
         "3. Change nothing else, apart from the tests, callers, documents and citations that "
         "keep the pull request atomic. Findings that do not block, in this review or any other, "
-        "are not part of this round: merge-lane-2 sends them after the merge.",
+        "are not part of this round, apart from the nits listed above: merge-lane-2 sends them after the merge.",
         MOVE_CHANGE_TO_OWN_PULL_REQUEST_INSTRUCTION.format(program=PROGRAM, number=number,
                                                            local_branch=local_branch),
         "4. Put every change in one commit on top of the branch as step 1 left it. "
@@ -488,7 +527,7 @@ def default_answers_path(number):
     return str(Path(top_level) / ANSWERS_FILE_NAME_FORMAT.format(number=number))
 
 
-def read_answers(path, finding_count):
+def read_answers(path, blocking_count, nit_count):
     try:
         text = Path(path).read_text()
     except OSError as error:
@@ -505,6 +544,7 @@ def read_answers(path, finding_count):
             answers[current] = [match.group(2)]
         elif current is not None and line.strip():
             answers[current].append(line.strip())
+    finding_count = blocking_count + nit_count
     expected = set(range(1, finding_count + 1))
     missing = sorted(expected - answers.keys())
     extra = sorted(answers.keys() - expected)
@@ -514,8 +554,9 @@ def read_answers(path, finding_count):
             problems.append(f"no entry for finding {', '.join(map(str, missing))}")
         if extra:
             problems.append(f"an entry for finding {', '.join(map(str, extra))}, which does not exist")
+        nits = f" and {nit_count} nit{'' if nit_count == 1 else 's'}" if nit_count else ""
         raise Refused(f"The answers file {path} has {' and '.join(problems)}; the review has "
-                      f"{finding_count} blocking findings.\n"
+                      f"{blocking_count} blocking findings{nits}.\n"
                       "Give each finding, numbered as the brief numbers it, exactly one entry "
                       "starting \"<n>. \" on its own line.")
     return {number: " ".join(parts) for number, parts in sorted(answers.items())}
@@ -691,10 +732,11 @@ def unnamed_files(base, fix_commit, findings):
 
 
 def check_round(number, reviewer_login, answers_path, commit_name, after_conflict_merge):
-    (url, head, _branch, review_link, _review_id, frozen_head, findings,
+    (url, head, _branch, review_link, _review_id, frozen_head, blocking, nits,
      _fix_round_number, unrecorded_review_ids) = round_facts(number, reviewer_login)
+    findings = blocking + nits
     answers_path = answers_path or default_answers_path(number)
-    answers = read_answers(answers_path, len(findings))
+    answers = read_answers(answers_path, len(blocking), len(nits))
     refuse_moved_to_missing_pull_request(answers, answers_path)
     commit = git(["rev-parse", "--verify", f"{commit_name}^{{commit}}"]).strip()
     refuse_moved_change_still_here(answers, commit, answers_path)
@@ -704,7 +746,7 @@ def check_round(number, reviewer_login, answers_path, commit_name, after_conflic
     leftovers = unnamed_files(*(fix_range or (None, None)), findings)
     lines = [f"PASS: the fix-round on {url} keeps to its rules; {len(findings)} findings answered."]
     if leftovers:
-        lines += ["Files the fix commit changes that no blocking finding names; say in the message "
+        lines += ["Files the fix commit changes that no blocking finding or nit names; say in the message "
                   "why each belongs in this round, or take it out:"]
         lines += [f"  {path}" for path in leftovers]
     if head not in (commit, frozen_head):
@@ -722,10 +764,10 @@ def check_round(number, reviewer_login, answers_path, commit_name, after_conflic
               f"Nothing pushed; the head stays the frozen-head {frozen_head}.")
     message = [f"Fix-round on pull request {url}, answering the round's reviews "
                f"{review_link}. {pushed}"]
-    message += [f"{index}. {finding_place(findings[index - 1])}: {answers[index]}"
-                for index in answers]
+    message += [f"{index}. {finding_place(findings[index - 1])}{' (nit)' if index > len(blocking) else ''}: "
+                f"{answers[index]}" for index in answers]
     if leftovers:
-        message += ["Files the fix commit changes that no blocking finding names: "
+        message += ["Files the fix commit changes that no blocking finding or nit names: "
                     + ", ".join(leftovers) + ". Why each belongs: <fill in>"]
     if commit == frozen_head and unrecorded_review_ids:
         gh(["api", f"repos/{{owner}}/{{repo}}/issues/{number}/comments", "-f", "body=" + ROUND_RECORD_FORMAT.format(
@@ -764,7 +806,7 @@ def local_branch_exists(branch):
 
 
 def move_start(number, reviewer_login, new_branch, whole_file_paths):
-    (_url, _head, _branch, _review_link, review_id, frozen_head, _findings,
+    (_url, _head, _branch, _review_link, review_id, frozen_head, _findings, _nits,
      _fix_round_number, _unrecorded_review_ids) = round_facts(number, reviewer_login)
     local_branch = LOCAL_BRANCH_NAME_FORMAT.format(number=number, review_id=review_id)
     state_path = move_state_path()

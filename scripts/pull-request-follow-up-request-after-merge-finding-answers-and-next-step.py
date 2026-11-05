@@ -91,7 +91,7 @@ review of the pull request that merge-lane-2's GitHub account posted, with its i
 the comments the posting program, POSTING_PROGRAM_FILE_NAME, moved into its body; read each comment's category by the
 mark that program opened it with; then print the request line and one numbered line for each fix-next,
 fix-in-maintenance or file-for-later finding, "<n>. <category>: `<path>:<line>`: <text>", its text joined onto one
-line. A finding a later review restates, with the same category, path and text, is printed once. Before printing,
+line; a nit is a fix-in-maintenance finding, so it is printed as one, whether or not a fix-round fixed it. A finding a later review restates, with the same category, path and text, is printed once. Before printing,
 the block is parsed back with parse_follow_up_request_blocks_from_message_text(), as the hook parses it, and must
 read back as the same lines. With no such finding it prints nothing. It refuses when merge-lane-2 has no approving
 review of the pull request, and when one of merge-lane-2's comments opens with no mark, as a review posted before
@@ -147,7 +147,6 @@ def load_script_beside_this_one(file_name):
 defect_line_reader = load_script_beside_this_one(
     "pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
 pre_push_conflict_check = load_script_beside_this_one("git-client-side-hooks-pre-push-conflict-check.py")
-pre_push_selective_test_run = load_script_beside_this_one("git-client-side-hooks-pre-push-selective-test-run.py")
 
 PROGRAM = "scripts/" + Path(__file__).name
 REPOSITORY = "nedschorus/nedschorus"
@@ -183,9 +182,8 @@ SUBAGENT_LINE = "If you are a subagent, pass that sentence to the agent that dis
 
 
 def push_time_limit_seconds(environment):
-    # Sized from the time budgets the two pre-push hooks bound themselves to, plus the push itself.
-    return math.ceil(pre_push_conflict_check.time_budget_seconds(environment)
-                     + pre_push_selective_test_run.time_budget_seconds(environment) + PUSH_ITSELF_SECONDS)
+    # Sized from the time budget the pre-push conflict check bounds itself to, plus the push itself.
+    return math.ceil(pre_push_conflict_check.time_budget_seconds(environment) + PUSH_ITSELF_SECONDS)
 
 
 class Refused(Exception):
@@ -917,7 +915,8 @@ def gh_api_pages(path):
     try:
         return [item for page in json.loads(output) for item in page]
     except (ValueError, TypeError) as error:
-        raise StepFailed(f"gh api {path} printed no list of pages: {error}") from None
+        raise StepFailed(f"gh api {path} printed output that is not the JSON list of result pages --paginate --slurp prints: "
+                         f"{error}") from None
 
 
 def print_follow_up_request_block_from_merge_lane_2_reviews(number):
@@ -942,8 +941,8 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
                          f"{type(error).__name__}: {error}") from None
     if not any(review.get("state") == "APPROVED" for review in reviews):
         raise Refused(f"{account}, merge-lane-2's GitHub account, has no approving review of pull request {number}, so "
-                      f"merge-lane-2's findings on it are not final and no {FOLLOW_UP_REQUEST_LINE_START} block was "
-                      "printed.\n"
+                      f"merge-lane-2 has not approved it yet: its review is still running or it requested changes. No "
+                      f"{FOLLOW_UP_REQUEST_LINE_START} block was printed.\n"
                       f"Once {account}'s approving review is posted, run: "
                       f"{command(number, 'print-follow-up-request-block-from-merge-lane-2-reviews')}")
     findings = []
@@ -956,11 +955,12 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
                 f"{FOLLOW_UP_REQUEST_LINE_START} block was printed; reviews posted before "
                 f"scripts/{POSTING_PROGRAM_FILE_NAME} wrote category marks have none.\n"
                 "If merge-lane-2's reviews of the pull request hold a fix-next, fix-in-maintenance or file-for-later "
-                "finding, write the block by hand at the end of the merge message instead: the line "
+                "finding, write the block by hand at the end of the message that tells the author the pull request merged: "
+                "the line "
                 f"{FOLLOW_UP_REQUEST_LINE_START} pull request {number}, then one line for each such finding, numbered "
                 "from 1, such as: 1. fix-next: <path>:<line>: <the finding on one line>\n"
-                "If they hold none, write no block.")
-        category, text = marked
+                "If merge-lane-2's reviews hold no such finding, write no block.")
+        category, text, _nit = marked
         finding = (category, comment["path"], " ".join(text.split()))
         if category != posting.BLOCKING_CATEGORY and finding not in [found[:3] for found in findings]:
             findings.append((*finding, comment["line"]))
@@ -976,7 +976,10 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
         read_back = str(error)
     if read_back != [lines]:
         raise StepFailed(f"the block built from {account}'s reviews does not read back as itself, so the hook would "
-                         f"save something else: it reads back as {read_back!r}")
+                         f"save something else: it reads back as {read_back!r}.\n"
+                         "Do not paste the block; write it by hand at the end of the message that tells the author the "
+                         "pull request merged, and report this failure to the owner of "
+                         "scripts/pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py.")
     print(block, end="")
 
 

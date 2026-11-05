@@ -4,7 +4,7 @@
 Usage:
   walk-me-through-user-alert-insert-as-unnumbered-item-after-waiting-item-and-record-in-walk-minutes.py [--cwd DIR] ALERT_ID...
 
-The walk-me-through UserPromptSubmit hook that claims alerts prints this command with the ids it claimed. For
+The walk-me-through UserPromptSubmit hook that claims alerts runs this command with the ids it claimed. For
 each alert, read from user-alerts/claimed/<id>.json under ALERTS_MODULE_FILE's directory, in the order given:
 - the walk-document gets a new unnumbered item, `## <the alert's title>`, right after the unit holding the last
   waiting item, which the walk-minutes' last `#next_to_present` line names, as the walk-me-through skill's
@@ -48,9 +48,21 @@ NO_WALK_MESSAGE = (
     "its walk-minutes for each alert as soon as you create them.")
 MORE_THAN_ONE_WALK_MESSAGE = (
     "more than one approval-walk is open or paused in {walk_directory}, so this program cannot tell which one the "
-    "alerts belong in, and no file was changed. Their walk-minutes:\n"
+    "alerts belong in, and no file was changed. A paused approval-walk counts as unclosed, the same as an open one. "
+    "The walk-minutes of each unclosed approval-walk:\n"
     "{minutes}\n"
-    "Merge them into one approval-walk, as the walk-me-through skill says, then run again: {rerun}")
+    "Close each of them that has no item the user has yet to answer. To close one, add the line "
+    "`#next_to_present none, closed` as the last line of its walk-minutes, then run, from the checkout that holds "
+    "{walk_directory}: python3 scripts/walk-files-ship.py <name>, <name> being its walk-minutes file name without "
+    "-minutes.md.\n"
+    "If more than one still has items the user has yet to answer: keep the one your last message to him showed an "
+    "item of, or else the one whose walk-minutes changed last; move the others' unanswered items into its "
+    "walk-document as the walk-me-through skill's paragraph on more than one open approval-walk says, and close the "
+    "others.\n"
+    "If the approval-walk you keep is paused: resume it, by adding the line `#next_to_present item N of M`, naming "
+    "its waiting item, below its `#approval_walk_paused` line.\n"
+    "Then run again: {rerun}\n"
+    "If none is left unclosed, the run again tells you to open a new approval-walk for the alerts; do that.")
 UNUSABLE_WALK_MESSAGE = (
     "the open approval-walk's waiting item cannot be found, so no file was changed: {problem} Fix, as that problem "
     "says, the last `#next_to_present` line of the walk-minutes {minutes} or the item's heading in the "

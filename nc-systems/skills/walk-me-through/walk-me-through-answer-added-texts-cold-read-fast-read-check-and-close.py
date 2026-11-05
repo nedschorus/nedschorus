@@ -125,7 +125,17 @@ since an agent-seat keeps at most one approval-walk open.
 CHECK finds the texts the answer adds: the item's lines whose first word,
 after any list or quotation marker, outside fenced code, is a mark the answer adds;
 the text is the rest of the line, without one pair of surrounding quotation
-marks. For each text it looks for a cold-read-record holding a fast read's report and
+marks. Before it reads them, CHECK refuses, writing nothing, for every answer but
+--deferred, --moved-on-no-decision and --moved-on, which add no text, when
+any `#new` or `#new_if_d` line of the item has no text after its mark,
+is inside fenced or indented code, or opens a paragraph that runs onto the
+lines right below it, since those texts would miss their fast read; the
+refusal lists each such mark by its line number, gives the text joined into
+one line where it can find it, from the run-on lines, from the rest of the
+code block, or, for a mark with no text, from the lines running on right below
+it or else the one fenced block or quotation after the blank lines below it,
+and says how to rerun. A mark in an HTML comment is not refused, since the user
+is not shown it. For each text it looks for a cold-read-record holding a fast read's report and
 a file under target/ that contains the text, whitespace aside, in the
 checkout's cold-read-records/ and in the log-store's. The log-store's
 cold-read-records directory is the path in cold-read-record-ship.py's
@@ -234,7 +244,9 @@ written again, unchanged, as the minutes' last line. With
 right after the answered item's heading, as it numbers the next item, and
 holds the answer for it the same way, its `#next_to_present` line naming it;
 when the heading right after is not an unnumbered item's, or there is none,
-CLOSE refuses, writing nothing. When CLOSE later records
+or when that item waits on an item still to come, an unshown one, the summary
+item or a numbered item the minutes do not decide, CLOSE refuses, writing
+nothing. When CLOSE later records
 the new item approved, disapproved or already decided, it also writes the
 already-decided line, with the same outcome, for each item a held-answer line
 holds for it that no close line decides yet; after a deferral, a move on or
@@ -265,7 +277,9 @@ since no read ahead was started while item 1 was shown.
 APPROVAL-WALK-WAITING-ITEM-COLD-READ-FAST-READ gives the item the
 `#next_to_present` line names its cold-read-fast-read, as its text stands: the
 item's lines in the walk-document, heading and fenced code included, keyed by
-the sha256 of that text unchanged, whitespace included. A read of that key
+the sha256 of that text unchanged, whitespace included. It first refuses,
+as CHECK does and before it starts any read, an item with a `#new` or
+`#new_if_d` mark whose text would not be read whole. A read of that key
 that wrote its report is used, a read ahead included; one a read-ahead worker
 still runs is waited for, for as long as the worker's process lives, since the
 fast read ends its own run with timeouts of its own; otherwise the step runs the
@@ -346,6 +360,9 @@ PROGRAM = "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-clos
 NEW_MARK, NEW_IF_D_MARK = "#new", "#new_if_d"
 NEW_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*(#new(?:_if_d)?)\b[:\s]*(.*)$")
 QUOTE_PAIRS = (('"', '"'), ("“", "”"), ("'", "'"))
+FENCE_DELIMITER = re.compile(r"^\s*(?:>\s?)*\s*(?:`{3,}|~{3,})")
+QUOTATION_LINE = re.compile(r"^\s*>")
+QUOTATION_MARKERS = re.compile(r"^\s*(?:>\s?)*")
 ANSWER_LINE = re.compile(r"^(?P<item>items? .+?): (?:the user answered|settled without asking the user,) "
                          r"(?P<answered>.+?)(?: #approved_(?:obvious|after_advisor))?(?: #case_against_[a-z_]+)? "
                          r"\([^)]*\)(?: in his words \".*\")?, which makes (?:its change\. Fast reads:|no change\.)$",
@@ -559,8 +576,11 @@ WALK_CATEGORY_TAG = "#approval_walk_item_in_category_"
 WALK_WAITS_ON_TAG = "#approval_walk_item_waits_on"
 WALK_FIRST_ENTERED_TAG = "#approval_walk_item_first_entered"
 LINE_OPENING_MARKERS = r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*"
+# A hashtag opening a code span, as in "`#new` marks a text", is prose naming the marker, not a marker line.
+HASHTAG_MARKER_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_]*#[A-Za-z][A-Za-z0-9_]*" + MARKER_END)
 WALK_CATEGORY_LINE = re.compile(LINE_OPENING_MARKERS + re.escape(WALK_CATEGORY_TAG))
-WALK_CATEGORY_TAGS_IN_LINE = re.compile(re.escape(WALK_CATEGORY_TAG) + r"\w*")
+# Words joined by single underscores, so the closing `_` or `__` of underscore emphasis is not read into the tag.
+WALK_CATEGORY_TAGS_IN_LINE = re.compile(re.escape(WALK_CATEGORY_TAG) + r"(?:[^\W_]+(?:_[^\W_]+)*)?")
 WALK_WAITS_ON_LINE = re.compile(LINE_OPENING_MARKERS + re.escape(WALK_WAITS_ON_TAG) + MARKER_END
                                 + r"[*_`]*[:\s]*(.*?)[*_`\s]*$")
 WALK_FIRST_ENTERED_LINE = re.compile(LINE_OPENING_MARKERS + re.escape(WALK_FIRST_ENTERED_TAG) + MARKER_END
@@ -600,6 +620,21 @@ NO_UNNUMBERED_ITEM_AFTER = (
     "If a fast-read finding would change what {item} decides, write that change as a new item right after "
     "{item}, headed `## <the point>`, then run close with " + HOLD_ANSWER_FLAG + " again.\n"
     "If no finding does, run close without " + HOLD_ANSWER_FLAG + ".")
+HELD_NEW_ITEM_WAITS_ON_UNSHOWN = (
+    "nothing written: close was given " + HOLD_ANSWER_FLAG + ", but in {document} the new item right after "
+    "{item}, {new_item}, waits on {waited_on}, which the user has not ruled on yet. The new item is shown "
+    "next, to settle {item}, so it cannot come after the item it waits on.\n"
+    "Take the line `" + WALK_WAITS_ON_TAG + " <title>` that names {waited_on} out of {new_item}. If {new_item} "
+    "depends on what {waited_on} would decide, add to {new_item} one sentence saying what {waited_on} proposes, "
+    "as background, since the user rules on {new_item} first. "
+    "Then run close with " + HOLD_ANSWER_FLAG + " again.")
+GATHERING_WOULD_LOSE_AN_ITEM = (
+    "walk-document not changed: close recorded the answer in {minutes}, but moving the items not yet shown "
+    "together in {document} would have left fewer items than it found, so close wrote neither the walk-document "
+    "nor a new `#next_to_present` line. This is a defect in this program.\n"
+    "Tell the user this line, and send it to reboot-test with SendMessage, so that the program is fixed.\n"
+    "Until then, show the user the next item yourself, and write its `#next_to_present` line into the minutes "
+    "by hand.")
 CLOSE_HELD_NEXT = ("Then run `{command}`, which gives {new_item} its cold-read-fast-read, do what it prints, and "
                    "present {new_item}. When the close step records the user's approval or disapproval of "
                    "{new_item}, it records the same outcome for {item}; after a deferral, a move on or answers to "
@@ -639,6 +674,29 @@ NAVIGATION_WORD_REFUSED = (
     "walk-me-through skill lets a navigation word alone advance only when no recommendation is outstanding.\n"
     "If {item} asks for no decision, such as a summary item, run `python3 {program} check --moved-on-no-decision "
     "--user-reply-as-typed {quoted_words}`, then close.")
+UNREADABLE_NEW_MARKS = (
+    "nothing written: {item} in the walk-document {document} has `#new` or `#new_if_d` marks whose text this "
+    "program would not read whole, so an answer that adds such a text would be recorded without that text's "
+    "cold-read-fast-read. This program reads a mark's text only from the rest of the mark's own line, outside "
+    "fenced or indented code. The marks:\n{problems}\n"
+    "Fix the marks from the last listed to the first, so that the line numbers above stay right.\n"
+    "For a mark inside fenced or indented code that marks a text an answer adds: delete it, and any lines of its "
+    "text, from the code, and write on a line of its own just after the code the line its entry gives after "
+    "\"joined onto it:\", or the mark followed by the text you meant.\n"
+    "For a mark inside fenced or indented code that is only an example: rewrite that line of the code so that it "
+    "does not open with the mark, as in `Example: #new \"<text>\"`.\n"
+    "For a mark whose text runs onto the lines below it: write the line its entry gives after \"joined onto it:\" "
+    "in place of the mark's line, or the mark followed by the text you meant, and delete the lines its text ran "
+    "onto.\n"
+    "For a mark with no text after it: if a text was meant, write it after the mark, on the mark's line, and "
+    "delete any lines below that held it; if none was meant, delete the mark.\n"
+    "Then run `{command}` again.\n"
+    "From now on, write every `#new` or `#new_if_d` text on one line, after its mark, outside fenced or indented "
+    "code.")
+UNREADABLE_BARE = "- line {line}: `{mark}` has no text after it on its line."
+UNREADABLE_FENCED = "- line {line}: `{mark}` is inside fenced or indented code, where no mark's text is read."
+UNREADABLE_RUN_ON = "- line {line}: the text of `{mark}` runs onto {below} right below it, where it is not read."
+UNREADABLE_JOINED = " The mark's line with its text joined onto it: {mark} {text}"
 NOT_ASKED_REFUSED = (
     "nothing written: {item} cannot be settled without asking the user as kind {kind}, because:\n{problems}\n"
     "If the item does not fit kind {kind}, or the case against is more than cost, present {item} to the user as "
@@ -846,34 +904,143 @@ def item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_
 
 
 def item_lines(walk_finder, minutes, value, numbers, total, parser):
-    """Return (walk-document path, the lines of the items numbered, outside fenced code)."""
+    """Return (walk-document path, the lines of the items numbered, outside fenced code, the items' marks as
+    new_marks returns them, the problem line of each mark whose text would not be read whole)."""
     document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
     lines = walk_finder.prose_lines(text, parser, tokens)
-    return document, [line for first, end in ranges for line in lines[first:end]]
+    marks = new_marks(text, tokens, ranges)
+    return (document, [line for first, end in ranges for line in lines[first:end]], marks,
+            unreadable_new_marks(marks))
 
 
-def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None):
-    """Return (walk-document path, the items' text as the user is shown it, heading and fenced code included)."""
-    document, text, _, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_by)
+def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None, refused_unless_marks_read=None):
+    """Return (walk-document path, the items' text as the user is shown it, heading and fenced code included).
+    With refused_unless_marks_read, (item, command), a Failure when a mark's text would not be read whole."""
+    document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_by)
+    unreadable = unreadable_new_marks(new_marks(text, tokens, ranges)) if refused_unless_marks_read else []
+    if unreadable:
+        item, command = refused_unless_marks_read
+        raise Failure(UNREADABLE_NEW_MARKS.format(item=item, document=document, problems="\n".join(unreadable),
+                                                  command=command))
     lines = text.split("\n")
     return document, "\n".join(line for first, end in ranges for line in lines[first:end]).strip()
 
 
-def proposed_texts(lines, marks):
-    """Return (mark, text) for each line marked with one of marks, in the lines' order."""
+def proposed_texts(marks_found, marks):
+    """Return (mark, text) for each mark of new_marks' list that is one of marks, outside code and with a text,
+    in the document's order. The text is every line new_marks gives the mark, so it is the text that
+    unreadable_new_marks judged."""
     texts = []
-    for line in lines:
-        match = NEW_LINE.match(line)
-        if not match or match[1] not in marks:
+    for mark in marks_found:
+        if mark.mark not in marks or mark.in_code:
             continue
-        text = match[2].strip()
-        for opening, closing in QUOTE_PAIRS:
-            if len(text) >= 2 and text.startswith(opening) and text.endswith(closing):
-                text = text[1:-1].strip()
-                break
+        text = unquoted(lines_joined(mark.text_lines))
         if text:
-            texts.append((match[1], text))
+            texts.append((mark.mark, text))
     return texts
+
+
+def unquoted(text):
+    """Return text stripped, without one pair of surrounding quotation marks."""
+    text = text.strip()
+    for opening, closing in QUOTE_PAIRS:
+        if len(text) >= 2 and text.startswith(opening) and text.endswith(closing):
+            return text[1:-1].strip()
+    return text
+
+
+def lines_joined(lines):
+    """Return lines as one line, each without its quotation markers, whitespace runs squeezed."""
+    return squeezed(" ".join(QUOTATION_MARKERS.sub("", line) for line in lines))
+
+
+def lines_until_blank_or_fence(lines, first, end):
+    """Return the lines from first up to end, stopping before a blank line or a fence delimiter."""
+    taken = []
+    for line in lines[first:end]:
+        if not line.strip() or FENCE_DELIMITER.match(line):
+            break
+        taken.append(line)
+    return taken
+
+
+def block_right_below(lines, first, end):
+    """Return the lines a mark with no text on its line may have meant: the lines that run on right below it,
+    or else the one fenced block or quotation after the blank lines below it; [] when there is neither."""
+    if first < end and lines[first].strip() and not FENCE_DELIMITER.match(lines[first]):
+        return lines_until_blank_or_fence(lines, first, end)
+    while first < end and not lines[first].strip():
+        first += 1
+    if first < end and FENCE_DELIMITER.match(lines[first]):
+        return lines_until_blank_or_fence(lines, first + 1, end)
+    if first < end and QUOTATION_LINE.match(lines[first]):
+        return lines_until_blank_or_fence(lines, first, end)
+    return []
+
+
+NewMark = collections.namedtuple("NewMark", "mark number in_code text_lines below")
+NewMark.__doc__ = """One `#new` or `#new_if_d` mark: mark, its 0-based line number, whether it is inside fenced or
+indented code, text_lines, the mark's own text followed by every line its text runs onto, and below, for a mark
+in code or with no text, the lines it may have meant."""
+
+
+def new_marks(text, tokens, ranges):
+    """Return a NewMark for each `#new` or `#new_if_d` mark in the ranges outside an HTML comment, in order.
+    This is the one place that decides where a marked text ends, so that check reads the text
+    unreadable_new_marks judged: at the end of its Markdown paragraph, or before the first line below it that
+    opens with a hashtag marker, such as the next `#new` or `#case_against`, which is read on its own even when
+    Markdown keeps it in the same paragraph."""
+    lines = text.split("\n")
+    code, comments, paragraphs = {}, set(), []
+    for token in tokens:
+        if token.map is None:
+            continue
+        if token.type in ("fence", "code_block"):
+            code.update((number, token.map[1]) for number in range(*token.map))
+        elif token.type == "html_block" and token.content.lstrip().startswith("<!--"):
+            comments.update(range(*token.map))
+        elif token.type == "paragraph_open":
+            paragraphs.append(token.map)
+    marks = []
+    for first, end in ranges:
+        for number in range(first, end):
+            match = NEW_LINE.match(lines[number])
+            if not match or number in comments:
+                continue
+            if number in code:
+                below = lines_until_blank_or_fence(lines, number + 1, min(code[number], end))
+                marks.append(NewMark(match[1], number, True, [match[2]], below))
+                continue
+            if not unquoted(match[2]):
+                marks.append(NewMark(match[1], number, False, [match[2]], block_right_below(lines, number + 1, end)))
+                continue
+            paragraph_end = max((paragraph[1] for paragraph in paragraphs if paragraph[0] <= number < paragraph[1]),
+                                default=number + 1)
+            text_end = next((below for below in range(number + 1, paragraph_end)
+                             if HASHTAG_MARKER_LINE.match(lines[below])), paragraph_end)
+            marks.append(NewMark(match[1], number, False, [match[2]] + lines[number + 1:min(text_end, end)], []))
+    return marks
+
+
+def unreadable_new_marks(marks):
+    """Return one problem line for each of new_marks' marks whose text check would not read whole: one with no
+    text on its line, one inside fenced or indented code, and one whose text runs onto the lines right below it."""
+    problems = []
+    for found in marks:
+        mark, line = found.mark, found.number + 1
+        if found.in_code or not unquoted(found.text_lines[0]):
+            problem = UNREADABLE_FENCED if found.in_code else UNREADABLE_BARE
+            joined = lines_joined(([found.text_lines[0]] if found.in_code else []) + found.below)
+            problems.append(problem.format(line=line, mark=mark)
+                            + (UNREADABLE_JOINED.format(mark=mark, text=joined) if joined else ""))
+        elif len(found.text_lines) > 1:
+            last = found.number + len(found.text_lines)
+            below = f"line {line + 1}" if last == line + 1 else f"lines {line + 1} to {last}"
+            problems.append(UNREADABLE_RUN_ON.format(line=line, mark=mark, below=below)
+                            + UNREADABLE_JOINED.format(mark=mark, text=lines_joined(found.text_lines)))
+    return problems
+
+
 
 
 def squeezed(text):
@@ -1144,7 +1311,7 @@ def glossary_entry_files(top, name, item, kind):
     return files_matching(top, ["-i", "-E"], rf"^- \*\*{escaped}( \(aka [^)]*\))?\*\*", item, kind, GLOSSARY_FILES)
 
 
-def not_asked_problems(kind, rating, lines, top, item):
+def not_asked_problems(kind, rating, lines, marks, top, item):
     """Return the lines saying why the item cannot be settled as the kind given, from what code can check."""
     problems = []
     if rating not in NOT_ASKED_RATINGS:
@@ -1156,7 +1323,7 @@ def not_asked_problems(kind, rating, lines, top, item):
         if not words(found[marker]):
             problems.append(NOT_ASKED_NO_LINE_PROBLEM.format(marker=marker, why=NOT_ASKED_WHY[marker]))
     touched = words(found[TOUCHES])
-    if kind == 1 and not proposed_texts(lines, {NEW_MARK}):
+    if kind == 1 and not proposed_texts(marks, {NEW_MARK}):
         problems.append(NOT_ASKED_NO_NEW_TEXT_PROBLEM)
     tests = words(found[TEST])
     for path in touched if kind != 5 else []:
@@ -1260,7 +1427,7 @@ def check(arguments):
         raise Failure(NAVIGATION_WORD_REFUSED.format(words=words, item=item, answered=answered_word(arguments),
                                                      program=program, quoted_words=shlex.quote(words)))
     in_his_words = USER_WORDS.format(words=words) if words else ""
-    document, lines = item_lines(walk_finder, minutes, value, numbers, total, parser)
+    document, lines, marks, unreadable = item_lines(walk_finder, minutes, value, numbers, total, parser)
     rating = case_against_rating(lines, item, document, arguments)
     rated = CASE_AGAINST_HASHTAG.format(rating=rating.replace(" ", "_")) if rating else ""
     if arguments.deferred or arguments.moved_on_no_decision or arguments.moved_on is not None:
@@ -1270,12 +1437,15 @@ def check(arguments):
                                                      words=in_his_words, date_and_time=f"{now:%Y-%m-%d %H:%M}")])
         print(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve(), top=shlex.quote(str(top))))
         return 0
+    if unreadable:
+        raise Failure(UNREADABLE_NEW_MARKS.format(item=item, document=document, problems="\n".join(unreadable),
+                                                  command=f"python3 {program} check{check_flags(arguments)}"))
     if arguments.not_asked is not None:
-        problems = not_asked_problems(arguments.not_asked, rating, lines, top, item)
+        problems = not_asked_problems(arguments.not_asked, rating, lines, marks, top, item)
         if problems:
             raise Failure(NOT_ASKED_REFUSED.format(item=item, kind=arguments.not_asked, problems="\n".join(problems),
                                                    document=document, program=Path(__file__).resolve()))
-    texts = proposed_texts(lines, marks_the_answer_adds(arguments))
+    texts = proposed_texts(marks, marks_the_answer_adds(arguments))
     log_store_records, tried = (None, []) if arguments.cold_read_records and arguments.counts_log \
         else reachable_log_store_records()
     record_directories = arguments.cold_read_records or (
@@ -1505,14 +1675,15 @@ def waiting_item_read(arguments):
                                             WAITING_ITEM_READ_STEP, top)
     total = total or count
     item = items_named(numbers, total)
-    document, text = item_text(walk_finder, minutes, value, numbers, total, parser)
+    program = Path(__file__).resolve()
+    command = READ_STEP_COMMAND.format(program=program, flags=" " + AFTER_FIXES_FLAG, top=shlex.quote(str(top)))
+    document, text = item_text(walk_finder, minutes, value, numbers, total, parser,
+                               refused_unless_marks_read=(item, command))
     reads = item_reads_directory(walk_finder, minutes)
     not_started = start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, total,
                                                  arguments.fast_read_program)
     if not_started:
         print(not_started)
-    program = Path(__file__).resolve()
-    command = READ_STEP_COMMAND.format(program=program, flags=" " + AFTER_FIXES_FLAG, top=shlex.quote(str(top)))
     key = text_key(text)
     while read_outcome(reads, key) is None and worker_alive(reads, key):
         time.sleep(READ_POLL_SECONDS)
@@ -1573,14 +1744,15 @@ def last_answer(walk_finder, minutes, parser):
                   f"`--help` lists it.")
 
 
-def walk_document_items(walk_finder, minutes, value, numbers, total, parser, step, top):
+def walk_document_items(walk_finder, minutes, value, numbers, total, parser, step, top, stamp=True):
     """Return (M as the walk finder counts it, the walk-document's items in order, the summary item or None, its
     units, the placing of the items not yet shown), an item being its number, or, for an unnumbered item, its
     heading's line index, an int, which unnumbered_item_numbered numbers when it is shown.
 
     The placing maps each unnumbered item but the summary item to (its sort key, the items it waits on), as
-    unshown_items_placing reads them; first it writes the `#approval_walk_item_first_entered` line, with today's date,
-    into each such item that has none. Raise Failure, writing nothing, when an item's lines do not let it be placed."""
+    unshown_items_placing reads them; first, with stamp, it writes the `#approval_walk_item_first_entered` line, with
+    today's date, into each such item that has none. Raise Failure, writing nothing, when an item's lines do not let
+    it be placed."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     text = document.read_text(encoding="utf-8") if document.is_file() else ""
     units = walk_finder.item_unit_spans(text, parser) if document.is_file() else None
@@ -1591,7 +1763,7 @@ def walk_document_items(walk_finder, minutes, value, numbers, total, parser, ste
     today = datetime.date.today().isoformat()
     try:
         order, summary, placing = walk_document_order(walk_finder, text, units, parser, document, today)
-        stamped = unshown_items_first_entered_stamped(walk_finder, text, units, parser, today)
+        stamped = unshown_items_first_entered_stamped(walk_finder, text, units, parser, today) if stamp else text
         if stamped != text:
             # Placed before the write, so a stamped document that no longer places writes nothing.
             units = walk_finder.item_unit_spans(stamped, parser)
@@ -1633,9 +1805,11 @@ def unshown_units(walk_finder, units, lines):
 
 
 def heading_title(walk_finder, line):
-    """The title of an item heading: its text after the `##` marks and any running count, deferred note left out,
-    with its spaces squeezed, in lower case; a `#approval_walk_item_waits_on` line's title is read the same way."""
-    heading = walk_finder.approval_walk_item_heading_with_deferred_note_removed(line)
+    """The title of an item heading: its text after the `##` marks and any running count, deferred note and
+    backticks left out, with its spaces squeezed, in lower case; a `#approval_walk_item_waits_on` line's title is
+    read the same way."""
+    # Without backticks, since the waits-on line's reading drops a closing one along with closing emphasis marks.
+    heading = walk_finder.approval_walk_item_heading_with_deferred_note_removed(line).replace("`", "")
     parts = UNNUMBERED_HEADING_PARTS.match(heading)
     title = parts[2] if parts else heading.lstrip("#")
     title = re.sub(r"^[*_\s]*items?\s+[\d.]+(?:\s*(?:,|&|\band\b|\bto\b|-|–)\s*[\d.]+)*\s+of\s+\d+\b"
@@ -1749,6 +1923,45 @@ def unshown_items_in_walk_order(items, placing):
     return ordered
 
 
+def unshown_items_gathered_behind_chosen(walk_finder, minutes, chosen, units, placing, parser, answered_numbers,
+                                         total):
+    """Rewrite the walk-document so that the unshown items placing holds stand together where the first of them
+    stands, or right after the unit of the answered items, answered_numbers, when the first of them stands above
+    it, that unit chosen by total, the `#next_to_present` line's M, as waiting_item_units chooses between two
+    headings for one item, chosen first and the others in the order unshown_items_in_walk_order gives; return chosen's heading line
+    and the units of the rewritten walk-document. A later close walks on from chosen, so the items still unshown
+    come next, and items numbered later stand in the order they were shown."""
+    document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
+    lines = document.read_text(encoding="utf-8").split("\n")
+    spans = {unit[3]: (unit[3], unit[4]) for unit in units if unit[3] in placing}
+    rest = unshown_items_in_walk_order([item for item in placing if item != chosen], placing)
+    # close's walk_document_items already ran waiting_item_units on the waiting items, which hold answered_numbers,
+    # with this total, so it cannot raise UnusableRange here.
+    _, answered_units = walk_finder.waiting_item_units(document, None, answered_numbers, total, parser, units)
+    start = max([min(spans)] + [unit[4] for unit in answered_units])
+    kept = [(index, line) for index, line in enumerate(lines)
+            if not any(first <= index < end for first, end in spans.values())]
+    joined = []
+    chosen_line = None
+    # An item whose last line is not blank, moved above a `**Item N of M**` paragraph, would make that
+    # paragraph a continuation of its own and so hide the numbered item; a blank line at every join keeps
+    # each block a paragraph of its own.
+    for item, block in ([(None, [line for index, line in kept if index < start])]
+                        + [(item, lines[spans[item][0]:spans[item][1]]) for item in [chosen] + rest]
+                        + [(None, [line for index, line in kept if index >= start])]):
+        if joined and block and joined[-1].strip() and block[0].strip():
+            joined.append("")
+        if item == chosen:
+            chosen_line = len(joined)
+        joined.extend(block)
+    text = "\n".join(joined)
+    gathered_units = walk_finder.item_unit_spans(text, parser)
+    if sorted(unit[0] for unit in gathered_units) != sorted(unit[0] for unit in units):
+        raise Failure(GATHERING_WOULD_LOSE_AN_ITEM.format(document=document, minutes=minutes))
+    document.write_text(text, encoding="utf-8")
+    return chosen_line, gathered_units
+
+
 def numbered_heading(heading, number, total):
     """The unnumbered item heading `## <title>` with the running count `Item number of total: ` before its title."""
     marks, title = UNNUMBERED_HEADING_PARTS.match(heading).groups()
@@ -1777,10 +1990,13 @@ def unnumbered_item_text_once_numbered(walk_finder, minutes, first, units, numbe
     return "\n".join(lines[first:end]).strip()
 
 
-def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numbers, parser):
+def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numbers, parser, placing, summary,
+                                      decided):
     """Number the unnumbered item right after the answered items' unit in the walk-document, as the close step's
     HOLD_ANSWER_FLAG asks, and return the `#next_to_present` value naming it; raise Failure, writing nothing, when
-    the unit right after is not unnumbered."""
+    the unit right after is not unnumbered, or when it waits on an item still to come: an unshown item of placing,
+    the walk-document's placing of its unshown items, the summary item, or a numbered item that is neither answered
+    now nor among decided, the items the minutes decide."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     text = document.read_text(encoding="utf-8")
     units = walk_finder.item_unit_spans(text, parser)
@@ -1794,6 +2010,17 @@ def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numb
                  else "none, since it is the last item")
         raise Failure(NO_UNNUMBERED_ITEM_AFTER.format(document=document, item=" and ".join(answered_numbers),
                                                       found=found))
+    lines = text.split(NEWLINE)
+    # An unnumbered item is keyed by its heading's line index, an int; a numbered one by its number, a str.
+    to_come = sorted((other for other in placing.get(units[after][3], (None, set()))[1]
+                      if other in placing or other == summary
+                      or (isinstance(other, str) and other not in decided and other not in answered_numbers)),
+                     key=str)
+    if to_come:
+        raise Failure(HELD_NEW_ITEM_WAITS_ON_UNSHOWN.format(
+            document=document, item=" and ".join(answered_numbers), new_item=f"`{lines[units[after][3]].strip()}`",
+            waited_on=", ".join(f"`{lines[other].strip()}`" if isinstance(other, int) else f"item {other}"
+                                for other in to_come)))
     number = unnumbered_item_numbered(walk_finder, minutes, units[after][3], units)
     return f"item {number} of {walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units)}"
 
@@ -1924,7 +2151,13 @@ def close(arguments):
     except walk_finder.UnusableRange as problem:
         raise Failure(f"the last answer line in {minutes}, `{item}`, {problem}.")
     if arguments.hold_answer_until_new_item_answered:
-        value = new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numbers, parser)
+        # Placed first, unstamped, so an unplaceable walk-document, or a new item that waits on one not yet shown,
+        # numbers nothing and writes nothing.
+        _, _, summary, _, placing = walk_document_items(walk_finder, minutes, value, waiting_numbers, total, parser,
+                                                        f"close {HOLD_ANSWER_FLAG}", top, stamp=False)
+        decided, _ = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
+        value = new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numbers, parser, placing,
+                                                  summary, decided)
         waiting, waiting_numbers, total = waiting_items(walk_finder, value, minutes)
     if not set(answered_numbers) <= set(waiting_numbers):
         append_to_minutes(minutes, [CLOSE_HELD_MINUTES.format(item=item, new_item=waiting),
@@ -1986,7 +2219,11 @@ def close(arguments):
     decided, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
     numbers = next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals, placing)
     if numbers and isinstance(numbers[0], int):
-        numbers = [unnumbered_item_numbered(walk_finder, minutes, numbers[0], units)]
+        first = numbers[0]
+        if first in placing:  # Not the summary item, which stays where it is.
+            first, units = unshown_items_gathered_behind_chosen(walk_finder, minutes, first, units, placing, parser,
+                                                                answered_numbers, total)
+        numbers = [unnumbered_item_numbered(walk_finder, minutes, first, units)]
     named = items_named(numbers, count)
     append_to_minutes(minutes, [NEXT_MARKER_LINE.format(value=named if numbers else CLOSED_MARKER_VALUE)])
     if numbers:
