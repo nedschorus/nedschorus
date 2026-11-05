@@ -278,6 +278,57 @@ def post_merge_hook_failure_case():
           and origin_branch(LEFTOVERS) and on_main_at_origin_main_and_clean(), out + err)
 
 
+def post_merge_hook_kills_git_case():
+    fresh_reference_checkout()
+    # git itself then dies of the signal, so its exit status is negative.
+    post_merge_hook("#!/bin/sh\nkill -TERM $PPID\nsleep 1\n")
+    commit("local only")
+    status, out, err = run_program()
+    check("git killed by a signal while running the post-merge hook: exits 1, the checkout on main",
+          status == 1 and "post-merge" in err and on_main_at_origin_main_and_clean(), out + err)
+
+
+@contextlib.contextmanager
+def step_failing(name, fail):
+    """Make the program's git step, or the shared fast-forward step, raise when fail says so."""
+    if name == "git":
+        real = program.git
+
+        def stub(checkout, arguments, **options):
+            if fail(arguments):
+                raise program.StepFailed(f"injected failure of git {' '.join(arguments)}")
+            return real(checkout, arguments, **options)
+        target, attribute = program, "git"
+    else:
+        real = program.reference_checkout_steps.fast_forward_to_origin_main_and_check_or_raise
+
+        def stub(checkout):
+            raise program.StepFailed("injected failure of the fast-forward and check")
+        target, attribute = program.reference_checkout_steps, name
+    setattr(target, attribute, stub)
+    try:
+        yield
+    finally:
+        setattr(target, attribute, real)
+
+
+def failed_push_then_failed_later_step_cases():
+    for case, name, fail, injected in (
+            ("the switch to main", "git", lambda arguments: arguments[:2] == ["switch", "-C"],
+             "injected failure of git switch -C main origin/main"),
+            ("the fast-forward and check", "fast_forward_to_origin_main_and_check_or_raise",
+             None, "injected failure of the fast-forward and check")):
+        fresh_reference_checkout()
+        commit("local only")
+        hook = refuse_every_push()
+        with step_failing(name, fail):
+            status, out, err = run_program()
+        hook.unlink()
+        check(f"failed push, then a failure of {case}: exits 1 reporting both",
+              status == 1 and "refused by the test hook" in err and injected in err
+              and f"The leftovers branch {LEFTOVERS}" in err, out + err)
+
+
 def post_merge_hook_timeout_case():
     fresh_reference_checkout()
     post_merge_hook("#!/bin/sh\nsleep 30\n")
@@ -417,6 +468,8 @@ ignored_file_at_a_path_origin_main_tracks_case()
 post_merge_hook_run_after_the_switch_case()
 post_merge_hook_failure_case()
 post_merge_hook_timeout_case()
+post_merge_hook_kills_git_case()
+failed_push_then_failed_later_step_cases()
 leftovers_conflicting_with_origin_main_under_repository_hooks_case()
 branch_name_taken_case()
 head_off_main_case()
