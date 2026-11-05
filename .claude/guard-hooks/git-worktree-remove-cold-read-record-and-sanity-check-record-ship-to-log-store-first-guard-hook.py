@@ -38,10 +38,13 @@ deadline of SHIPPING_BUDGET_SECONDS counted from before the listing. A record
 or worktree that vanishes while it is read, because another agent-session
 removes it, has nothing left to ship and is skipped. Any other error checking
 or shipping a record refuses the removal, naming the record and the error.
-When the deadline passes with the worker still running, as when an ssh to
-ned-box stalls, the hook refuses the removal, naming each record not yet
-shipped; the stalled ssh is left to end on its own, which is harmless because
-it only reads the store.
+At the deadline the hook refuses the removal, naming each record the worker
+has not confirmed shipped, the worker's own line for each it found unshipped,
+and the budget line for the rest. A worker still running, as when an ssh to
+ned-box stalls, is left to end on its own: its store check only reads the
+store, and a shipper it started may go on writing to the store, which harms
+no record, because a shipper only adds files and checks them by reading them
+back.
 
 How it can fail: when `git worktree list` fails or runs past
 GIT_TIMEOUT_SECONDS, as in a cwd outside any repository, or when the shell
@@ -292,8 +295,8 @@ def unshipped_line_for(record, kind, runner, clock, deadline):
 
 def ship_every_record(worktrees, runner, clock, deadline, progress):
     """The worker: read every worktree's records into progress["records"], then ship each, adding to
-    progress["finished"] each record dealt with and to progress["unshipped"] (shipper, worktree, record, line)
-    for each that did not ship. An error before every worktree's records are read goes in progress["error"]."""
+    progress["shipped"] each record that shipped or needed no shipping, and to progress["lines"] the reason
+    line of each that did not ship. An error before every worktree's records are read goes in progress["error"]."""
     try:
         kinds = record_kinds()
         progress["records"] = [(worktree, kind, record) for worktree in dict.fromkeys(worktrees)
@@ -308,9 +311,10 @@ def ship_every_record(worktrees, runner, clock, deadline, progress):
             # A record another agent-session removed mid-check has nothing left to ship.
             line = None if not os.path.lexists(record) else RECORD_CHECK_FAILED_LINE_TEMPLATE.format(
                 error=f"{type(error).__name__}: {error}")
-        if line is not None:
-            progress["unshipped"].append((kind[1], worktree, record, line))
-        progress["finished"].add(record)
+        if line is None:
+            progress["shipped"].add(record)
+        else:
+            progress["lines"][record] = line
 
 
 def shipment_failed_refusal(unshipped):
@@ -362,7 +366,7 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
     if worktrees is None:
         note_unchecked(WORKTREE_LISTING_FAILED_NOTICE.format(reason=reason))
         return 0
-    progress = {"finished": set(), "unshipped": []}
+    progress = {"shipped": set(), "lines": {}}
     worker = threading.Thread(target=ship_every_record, args=(worktrees, runner, clock, deadline, progress),
                               daemon=True)
     worker.start()
@@ -375,11 +379,12 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
         note_unchecked(RECORDS_NOT_READ_NOTICE.format(
             reason=f"reading them ran past {SHIPPING_BUDGET_SECONDS} seconds"))
         return 0
-    unshipped = list(progress["unshipped"])
-    if worker.is_alive():
-        reported = {record for _, _, record, _ in unshipped} | set(progress["finished"])
-        unshipped += [(kind[1], worktree, record, budget_spent_line())
-                      for worktree, kind, record in records if record not in reported]
+    # No lock: CPython copies a set or a dict in one step, and a worker still running only adds to them,
+    # so a record it ships after this copy is refused, never let through unshipped.
+    shipped = set(progress["shipped"])
+    lines = dict(progress["lines"])
+    unshipped = [(kind[1], worktree, record, lines.get(record) or budget_spent_line())
+                 for worktree, kind, record in records if record not in shipped]
     if unshipped:
         deny(shipment_failed_refusal(unshipped))
     return 0

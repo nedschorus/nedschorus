@@ -8,7 +8,9 @@ as the shippers' own tests do. A failed shipment is a stub ssh and rsync that
 exit 255 first on PATH, with the destination given a host, so the shippers
 take ned-box to be unreachable. The cases for a shipper that prints nothing,
 a shipment past the hook's time limit, and a failing worktree listing inject
-those failures in-process through main's runner and clock. The command
+those failures in-process through main's runner and clock; the case for a
+shipment that fails while main reads the worker's results also holds main's
+copy of them until the worker has written. The command
 reading cases call command_runs_git_worktree_remove in-process.
 
 Run: python3 .claude/guard-hooks/git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook-test.py
@@ -26,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -410,6 +413,42 @@ try:
               ": not shipped: this hook's limit of 1 seconds for shipping ran out first\n") == 2, (took, output))
 finally:
     hook.SHIPPING_BUDGET_SECONDS = budget_as_written
+
+# A shipment that fails just after the deadline, while the main thread is reading what the worker wrote,
+# still refuses: the main thread's copy is held until the worker has written that record's failure.
+late_checkout, late_worktree = checkout_with_worktree("late-failure")
+shutil.rmtree(late_worktree / "sanity-check-records")
+late_record = late_worktree / "cold-read-records" / "late-failure-doc-2026-11-03"
+main_thread_reading = threading.Event()
+
+
+def shipper_failing_once_the_main_thread_reads(argv, **keywords):
+    main_thread_reading.wait(10)
+    return subprocess.CompletedProcess(argv, 1, "FAILED: ned-box could not be reached", "")
+
+
+def set_copied_after_the_worker_writes(*arguments):
+    if arguments:
+        main_thread_reading.set()
+        time.sleep(0.5)
+    return set(*arguments)
+
+
+hook.SHIPPING_BUDGET_SECONDS = 1
+hook.store_holds_every_file_of = lambda kind, record: False
+hook.set = set_copied_after_the_worker_writes
+try:
+    code, output = run_hook(payload_for(f"git worktree remove {late_worktree}", late_checkout),
+                            shippers_only(shipper_failing_once_the_main_thread_reads))
+finally:
+    hook.SHIPPING_BUDGET_SECONDS = budget_as_written
+    hook.store_holds_every_file_of = store_check_as_written
+    del hook.set
+    main_thread_reading.set()
+check("a shipment that fails while the main thread reads the worker's results at the deadline refuses the removal",
+      "and 1 record(s) did not reach it" in (refusal(output) or "")
+      and f"Record {late_record} (worktree {late_worktree}): FAILED: ned-box could not be reached\n"
+      in refusal(output), output)
 
 # The worker failing before it has read the records lets the command through with the not-checked notice.
 record_kinds_as_written = hook.record_kinds
