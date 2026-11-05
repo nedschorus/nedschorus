@@ -969,6 +969,7 @@ def cases(scratch):
           and state.get("first_run_versions") == {}, (message, state))
     # Exit 1 with nothing on stderr is git's missing-object answer; each other failure is not.
     for name, failure in [("with an error", None),
+                          ("with exit 1 and an error", "echo 'error: injected' >&2; exit 1"),
                           ("silently with exit 2", "exit 2"),
                           ("by a signal", "kill -9 $$")]:
         world = fresh(scratch, "old-state-first-run-commit-lookup-fails-" + name.replace(" ", "-"))
@@ -1007,6 +1008,42 @@ def cases(scratch):
           and f"Do not run --restore on {claude}" in message, message)
     check("and stays recorded, so the next change reports it again",
           state.get("first_run_versions") == {str(claude): rebased_away}, state)
+
+    # -- once the path has an approved version, a lost first-run version is dropped, not
+    # reported again, and not approved over it should git hold it again
+    for held_again in (False, True):
+        name = "first-run-version-pruned-then-approved" + ("-and-held-again" if held_again else "")
+        world = World(Path(scratch) / name)
+        claude = world.repo / "CLAUDE.md"
+        claude.write_text("project rebased away\n")
+        world.git("commit", "-qam", "dropped by the rebase")
+        rebased_away = world.key(claude)
+        world.run()
+        world.git("reset", "-q", "--hard", "HEAD~1")
+        (world.repo / ".git" / "ORIG_HEAD").unlink(missing_ok=True)
+        world.git("reflog", "expire", "--expire=now", "--expire-unreachable=now", "--all")
+        world.git("gc", "-q", "--prune=now")
+        world.run()
+        approved_version = world.key(claude)
+        world.marker('The user said "y"')
+        result = world.command("--approve", claude, approved_version)
+        check(f"{name}: the version after the lost one is approved", result.returncode == 0,
+              result.stderr)
+        if held_again:
+            again = world.scratch / "held-again"
+            again.write_text("project rebased away\n")
+            world.git("hash-object", "-w", str(again))
+            check(f"{name}: the fixture made git hold the lost version again",
+                  world.git_holds(rebased_away))
+        claude.write_text("project v3\n")
+        message = world.run()
+        state = json.loads(next((world.repo / ".git").glob("*-state.json")).read_text())
+        check(f"{name}: the next change does not report the lost version again",
+              "git no longer holds it" not in message, message)
+        check(f"{name}: and drops its entry", state.get("first_run_versions") == {}, state)
+        check(f"{name}: and does not approve it",
+              rebased_away not in world.store_file(claude, "approved").split(),
+              world.store_file(claude, "approved"))
 
     # -- a version a run saw unapproved is not approved by a rename after the file went back to it
     world = fresh(scratch, "rename-after-revert-to-unapproved-base")

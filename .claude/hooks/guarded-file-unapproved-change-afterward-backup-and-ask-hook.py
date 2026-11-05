@@ -1237,11 +1237,14 @@ def run_hook(payload):
             # it, and --restore and the diff go back to the newest of them, not to this one.
             first, unreadable = [], []
             for path, blob in base_versions.items():
+                # A path approved since its first-run version was reported lost has a newer
+                # version for --restore, and its entry is dropped below; approving the old one,
+                # should git hold it again, would make it the newest.
+                if store.approved(path):
+                    continue
                 data = version_from_git(path, blob)
                 if data is None:
-                    # With another approved version, --restore has one to go back to.
-                    if not store.approved(path):
-                        unreadable.append((path, blob))
+                    unreadable.append((path, blob))
                     continue
                 store.copy(path, blob, data)
                 first.append((path, blob, HOW_STOCK, UNLESS_SEEN))
