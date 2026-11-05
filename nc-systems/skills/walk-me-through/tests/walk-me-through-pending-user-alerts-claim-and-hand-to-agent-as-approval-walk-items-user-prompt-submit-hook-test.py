@@ -24,7 +24,7 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 HERE = Path(__file__).resolve().parents[1]
 HOOK = HERE / "walk-me-through-pending-user-alerts-claim-and-hand-to-agent-as-approval-walk-items-user-prompt-submit-hook.py"
-INSERT_PROGRAM = HERE / "walk-me-through-user-alert-insert-after-waiting-item-raise-item-count-and-record-in-walk-minutes.py"
+INSERT_PROGRAM = HERE / "walk-me-through-user-alert-insert-as-unnumbered-item-after-waiting-item-and-record-in-walk-minutes.py"
 WALK = "alerts-hook-test-walk-2026-10-27"
 failures = []
 

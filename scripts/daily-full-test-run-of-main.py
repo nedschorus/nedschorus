@@ -21,8 +21,10 @@ Usage:
                 worktree, the run's logs, the record's local copies and this
                 program's lock; default, the system temp directory
   --recorded-inputs-directory
-                passed through to the runner; default, not passed, so the
-                runner uses the machine's own recordings store
+                passed through to the runner, as its --recorded-inputs-directory
+                and its --suite-files-only-strace-saw-lists-directory; default,
+                not passed, so the runner uses the machine's own recordings
+                store
 
 Every option is a seam for scripts/daily-full-test-run-of-main-test.py, and
 for a run made by hand that must not write to the real log-store or the real
@@ -51,8 +53,11 @@ WHAT ONE RUN DOES, in order.
      first.
   3. Runs `<the Python running this program>
      <worktree>/scripts/run-all-test-suites.py --log-dir <logs>
-     --wait-for-lock-seconds 3600` from the worktree, with no selection
-     option and no -j, so the runner chooses how many suites run at once. On
+     --record-inputs-with-strace --wait-for-lock-seconds 3600` from the
+     worktree, with no selection option and no -j, so the runner chooses how
+     many suites run at once. --record-inputs-with-strace makes this the one
+     run on ned-box whose recordings strace adds to, because strace costs
+     too much CPU to run on every test run there. On
      Linux the runner's environment gains XDG_RUNTIME_DIR=/run/user/<uid>
      when it has none and /run/user/<uid>/bus exists, because cron gives no
      user session bus. The
@@ -531,9 +536,11 @@ def daily_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, machin
                     sys.executable,
                     arguments.test_suite_runner_program
                     or str(worktree / DAILY_FULL_TEST_RUN_RUNNER_PATH_IN_WORKTREE),
-                    "--log-dir", str(logs)]
+                    "--log-dir", str(logs), "--record-inputs-with-strace"]
                 if arguments.recorded_inputs_directory:
                     command += ["--recorded-inputs-directory",
+                                arguments.recorded_inputs_directory,
+                                "--suite-files-only-strace-saw-lists-directory",
                                 arguments.recorded_inputs_directory]
                 completed, seconds_waiting_for_lock, lock_never_released = (
                     run_test_suite_runner_waiting_for_the_machine_lock(

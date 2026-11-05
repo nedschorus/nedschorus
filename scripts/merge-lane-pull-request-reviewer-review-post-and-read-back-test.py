@@ -177,11 +177,14 @@ def load_fix_round_program():
     return module
 
 
-def fix_round_blocking_findings(fix_round, posted_reviews):
-    """Run the fix-round program's blocking_findings on posted reviews, the first the anchor;
-    return its findings, or the text of its refusal."""
-    reviews = [{"id": index + 1, "html_url": f"review-{index + 1}", "body": posted["body"]}
-               for index, posted in enumerate(posted_reviews)]
+def fix_round_blocking_findings(fix_round, posted_reviews, logins=None):
+    """Run the fix-round program's blocking_findings on posted reviews, the first the anchor and
+    each posted by the account logins names at its place, merge-lane-2's by default; return its
+    findings, or the text of its refusal."""
+    logins = logins or ["ned-review-merge"] * len(posted_reviews)
+    reviews = [{"id": index + 1, "html_url": f"review-{index + 1}", "body": posted["body"],
+                "user": {"login": login}}
+               for index, (posted, login) in enumerate(zip(posted_reviews, logins))]
     comments_by_id = {review["id"]: posted["comments"]
                       for review, posted in zip(reviews, posted_reviews)}
     fix_round.gh_json_lines = lambda arguments: comments_by_id[
@@ -247,14 +250,17 @@ def merge_lane_cases(scratch):
              "already opens with the blocking mark **Blocks:**"),
             ("a REQUEST_CHANGES verdict with nothing must-fix-now", [finding(2, "fix-next")],
              "REQUEST_CHANGES", "has the verdict 'REQUEST_CHANGES' but no comment whose "
-                                "\"finding_category\" is must-fix-now"),
+                                "\"finding_category\" is must-fix-now; this program posts "
+                                "REQUEST_CHANGES only for a must-fix-now comment, so it refuses"),
             ("a COULD_NOT_REVIEW verdict", [], "COULD_NOT_REVIEW",
              "has the verdict 'COULD_NOT_REVIEW'")):
         result = run_program(scratch, review(verdict, comments=comments),
                              arguments=MERGE_LANE_ARGUMENTS)
-        check(f"merge-lane-2's file with {name} exits 2, says why, and calls no gh",
+        check(f"merge-lane-2's file with {name} exits 2, says why, calls no gh, and says to fix "
+              "the file rather than blame a reviewer's run",
               result.code == 2 and reason in result.stderr and "review not posted" in result.stderr
-              and not result.calls, result.detail)
+              and "fix it and run the same command again" in result.stderr
+              and "headless-run" not in result.stderr and not result.calls, result.detail)
     result = run_program(scratch, review("APPROVE", comments=[finding(2, "fix-next")]))
     check("a mac-claude file whose comments carry a category is refused, since the Claude "
           "reviewer's comments have exactly path, line and body",
@@ -303,6 +309,54 @@ def merge_lane_cases(scratch):
           isinstance(found, list) and [item["line"] for item in found] == [2, 4]
           and fix_round.BLOCKING_COUNT_PATTERN.search(approving.posted["body"]) is None,
           f"{found}\n{approving.detail}")
+    graded = run_program(scratch, review("REQUEST_CHANGES", comments=[
+        finding(2, "must-fix-now"), finding(3, "fix-next", "A Blocks finding graded down.")]),
+        arguments=MERGE_LANE_ARGUMENTS)
+    reviewer_blocks = {"body": "COMMENT", "comments": [
+        {"path": "scripts/thing.py", "line": 3, "body": "**Blocks** A Blocks finding graded down."}]}
+    found = fix_round_blocking_findings(fix_round, [graded.posted, reviewer_blocks],
+                                        ["ned-review-merge", "mac-claude"])
+    check("round trip: a commissioned reviewer's Blocks finding that merge-lane-2's categorized "
+          "review grades fix-next does not block; only merge-lane-2's must-fix-now one does",
+          isinstance(found, list) and [item["line"] for item in found] == [2],
+          f"{found}\n{graded.detail}")
+    second_part = run_program(scratch, review("REQUEST_CHANGES", comments=[
+        finding(1, "must-fix-now")]), arguments=MERGE_LANE_ARGUMENTS)
+    found = fix_round_blocking_findings(fix_round, [merge_lane_posted, second_part.posted,
+                                                    reviewer_blocks],
+                                        ["ned-review-merge", "ned-review-merge", "mac-claude"])
+    check("round trip: the must-fix-now comments of both parts of a split merge-lane-2 review "
+          "block, and the commissioned reviewer's Blocks finding they leave out does not",
+          isinstance(found, list) and [item["line"] for item in found] == [2, 4, 1],
+          f"{found}\n{second_part.detail}")
+    addendum = {"body": "COMMENT\n\nOne more blocker on the same head.", "comments": [
+        {"path": "scripts/thing.py", "line": 5, "body": "**Blocks** A blocker added later."}]}
+    found = fix_round_blocking_findings(fix_round, [graded.posted, addendum, reviewer_blocks],
+                                        ["ned-review-merge", "ned-review-merge", "mac-claude"])
+    check("round trip: a later merge-lane-2 review of the same head with a Blocks comment and no "
+          "count still blocks beside the counted review, while the commissioned reviewer's "
+          "graded-down Blocks finding does not",
+          isinstance(found, list) and [item["line"] for item in found] == [2, 5],
+          f"{found}\n{graded.detail}")
+    count_only = {"body": "REQUEST_CHANGES\n\n**Blocking: 1**\n\nSee the reviewer's Blocks.",
+                  "comments": []}
+    found = fix_round_blocking_findings(fix_round, [count_only, reviewer_blocks],
+                                        ["ned-review-merge", "mac-claude"])
+    check("round trip: a merge-lane-2 review that marks nothing of its own leaves the "
+          "commissioned reviewer's Blocks finding blocking",
+          isinstance(found, list) and [item["line"] for item in found] == [3], str(found))
+    duplicated = run_program(scratch, review("REQUEST_CHANGES", comments=[
+        finding(2, "must-fix-now"), finding(2, "must-fix-now"), finding(3, "fix-next"),
+        finding(3, "fix-next")]), arguments=MERGE_LANE_ARGUMENTS)
+    check("two must-fix-now comments with the same path, line and body are posted once and "
+          "counted once, as are two equal fix-next ones",
+          duplicated.code == 0 and duplicated.posted is not None
+          and duplicated.posted["body"].startswith("REQUEST_CHANGES\n\n**Blocking: 1**\n\n")
+          and [comment["line"] for comment in duplicated.posted["comments"]] == [2, 3],
+          duplicated.detail)
+    found = fix_round_blocking_findings(fix_round, [duplicated.posted])
+    check("round trip: the fix-round program's count check passes on that review",
+          isinstance(found, list) and [item["line"] for item in found] == [2], str(found))
     moved = run_program(scratch, review("REQUEST_CHANGES", comments=[
         finding(2, "must-fix-now"),
         {"path": "scripts/other.py", "line": 1, "body": "Outside.", "finding_category": "must-fix-now"}]),

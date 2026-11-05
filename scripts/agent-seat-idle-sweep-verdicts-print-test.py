@@ -605,6 +605,15 @@ code, verdicts, _ = machine.run()
 check("an unbacked promise beside a sentence for the judge: rule 2, no task list read",
       code == 0 and verdicts["alpha"]["rule"] == 2 and verdicts["alpha"]["decision"] == "judge"
       and "if_every_sentence_backed" not in verdicts["alpha"], (code, verdicts["alpha"]))
+machine = Machine()
+machine.seat("alpha", IDLE_TURN)
+machine.task("alpha", "1")
+(machine.tasks / "nedschorus-alpha-tasks" / "2.json").write_text("{not json")
+code, verdicts, _ = machine.run()
+check("a sentence for the judge whose rules 3 to 5 read fails: an error, rule null, no decision",
+      code == 1 and verdicts["alpha"]["rule"] is None and "decision" not in verdicts["alpha"]
+      and "2.json could not be read as a task" in verdicts["alpha"]["errors"][0],
+      (code, verdicts["alpha"]))
 
 # --- the turn start keeps its fraction of a second -----------------------------------------
 machine = Machine()

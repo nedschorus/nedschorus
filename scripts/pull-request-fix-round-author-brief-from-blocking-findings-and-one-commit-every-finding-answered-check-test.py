@@ -1359,7 +1359,8 @@ def move_pre_push_hook_output_cases(root, _repository, _base, _frozen_head):
     check("move-finish: when the pre-push hook checks the push and prints its start and pass lines, exit 0 with "
           "the success line, naming the answers file the entry goes in, and the hook's lines labelled after it",
           code == 0 and "Moved to https://github.com/o/r/pull/41" in out
-          and "Answer the finding in the answers file, /" in out
+          and f"in the answers file, {(checked_root / 'move-repository').resolve() / ANSWERS_NAME}, with an entry" in out
+          and "<n>. Moved to pull request https://github.com/o/r/pull/41" in out
           and "printed the lines below on stderr during the push" in out
           and all(line in out for line in PRE_PUSH_CHECKED_LINES), out + err)
     for name, lines in (("selective-run-skip", (PRE_PUSH_SKIP_LINE,)),
