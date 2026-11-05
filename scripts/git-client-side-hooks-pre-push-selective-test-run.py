@@ -340,12 +340,16 @@ def main(stream, environment):
         "seconds. If your git push command times out before this hook finishes, run git push "
         "again and give that command a timeout of 10 minutes, such as Claude Code's Bash tool's "
         "timeout of 600000 milliseconds." % (top, budget))
+    # The suites must not see the hook's start time: code under test that reads its budget from
+    # the environment would get one that shrinks as the clock runs.
+    suites_environment = {name: value for name, value in environment.items()
+                          if name != HOOK_STARTED_AT_ENVIRONMENT_VARIABLE}
     try:
         process = subprocess.Popen(
             [sys.executable, str(runner), "--checkout", top, SELECTION_OPTION, BASE,
              LOCK_WAIT_OPTION, str(LOCK_WAIT_SECONDS)],
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            encoding="utf-8", errors="replace", start_new_session=True)
+            encoding="utf-8", errors="replace", start_new_session=True, env=suites_environment)
     except (OSError, ValueError) as error:
         say_not_run(stream, "the selective test run could not be started: %s" % error,
                     tell_user=True)
