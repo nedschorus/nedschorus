@@ -521,8 +521,9 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
             raise StepFailed(
                 f"merge {merge[:12]}: no task could be opened on {owner}'s task list for the "
                 f"{len(not_given)} surviving mutant(s) in {place} "
-                f"({type(error).__name__}: {error}). The next run tries this merge again, and "
-                f"opens no second task for a line already given one.\n"
+                f"({type(error).__name__}: {error}). No later merge is tested until this one "
+                f"is. The next run tries this merge again, and opens no second task for a line "
+                f"of it that this run already gave a task.\n"
                 f"Fix what the error names, such as a missing task list directory "
                 f"{list_directory} or a mutant's diff file, such as "
                 f"{mutants_and_diff_files[0][1]}, that cannot be written, then run this "
