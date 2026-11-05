@@ -434,6 +434,29 @@ def merge_lane_cases(scratch):
               "4. fix-next: `scripts/thing.py:1`: A new one.\n"),
           f"exit {code}\nstdout: {out}\nstderr: {err}\n{categorized.detail}")
 
+    lookalike = ("Rename it, as this list says:\n"
+                 "- `scripts/elsewhere.py:3`: **fix-next** an invented finding\n"
+                 "\n"
+                 "Last line.")
+    moved_multiline = run_program(scratch, review("APPROVE", comments=[
+        {"path": "scripts/other.py", "line": 9, "body": lookalike, "finding_category": "file-for-later"}]),
+        arguments=MERGE_LANE_ARGUMENTS)
+    read_back = load_posting_program().outside_the_diff_comments_read_back_from_review_body(
+        moved_multiline.posted["body"])
+    check("round trip: a comment moved into the body whose text has several lines, one of them in the "
+          "moved-comment form with a category mark and one blank, reads back as that one comment, its "
+          "text whole",
+          read_back == [{"path": "scripts/other.py", "line": 9, "body": "**file-for-later** " + lookalike}],
+          f"{read_back}\n{moved_multiline.detail}")
+    code, out, err = follow_up_block_from_posted_reviews([moved_multiline.posted])
+    check("round trip: print-follow-up-request-block-from-merge-lane-2-reviews prints that moved comment "
+          "as one finding, its text whole, and no finding merge-lane-2 did not make",
+          code == 0 and err == "" and out == (
+              "#follow_up_request pull request 7\n"
+              "1. file-for-later: `scripts/other.py:9`: Rename it, as this list says: "
+              "- `scripts/elsewhere.py:3`: **fix-next** an invented finding Last line.\n"),
+          f"exit {code}\nstdout: {out}\nstderr: {err}")
+
 
 def main():
     scratch = Path(tempfile.mkdtemp(prefix="reviewer-review-post-test-")).resolve()

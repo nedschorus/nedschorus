@@ -56,8 +56,9 @@ reads non-blocking findings by:
 GitHub refuses a whole review when one inline comment is on a line outside the
 pull request's diff, so each comment whose path and line are not on the new
 side of the diff GitHub reports for the pull request is moved into the body,
-under a heading, as `path:line: comment`, and the success line ends with how
-many were moved. A file whose diff GitHub does not show, such as a binary
+under a heading, as `path:line: comment`, each line of the comment after its
+first indented, so that no line of a comment's text can be read back as the
+start of another; the success line ends with how many were moved. A file whose diff GitHub does not show, such as a binary
 file, takes no inline comments. A must-fix-now comment moved into the body
 still counts in N but carries no inline mark, so the fix-round program's count
 check refuses that round instead of missing the finding.
@@ -110,6 +111,8 @@ BLOCKING_COUNT_FORMAT = "**Blocking: {count}**"
 OUTSIDE_THE_DIFF_HEADING = "Comments on lines outside this pull request's diff:"
 OUTSIDE_THE_DIFF_LINE_FORMAT = "- `{path}:{line}`: {body}"
 OUTSIDE_THE_DIFF_LINE_PATTERN = re.compile(r"^- `(?P<path>[^`]+):(?P<line>\d+)`: (?P<body>.*)$")
+# Two spaces also keep a continuation line inside its list item when GitHub renders the body.
+OUTSIDE_THE_DIFF_CONTINUATION_INDENT = "  "
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 # The state GitHub gives a review posted with each event.
 EVENT_STATES = {"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED",
@@ -254,7 +257,8 @@ def finding_category_and_text_read_from_review_comment_opening_mark(body):
 
 def outside_the_diff_comments_read_back_from_review_body(body):
     """The comments with_outside_comments_in_body() moved into a posted body, each a dict of path,
-    line and body; a line after the heading that does not start a comment continues the one before."""
+    line and body. A comment starts at a line in OUTSIDE_THE_DIFF_LINE_FORMAT at the line's start;
+    each indented line after it continues it, with OUTSIDE_THE_DIFF_CONTINUATION_INDENT removed."""
     lines = body.split("\n")
     if OUTSIDE_THE_DIFF_HEADING not in lines:
         return []
@@ -264,9 +268,18 @@ def outside_the_diff_comments_read_back_from_review_body(body):
         if match:
             comments.append({"path": match.group("path"), "line": int(match.group("line")),
                              "body": match.group("body")})
-        elif comments:
-            comments[-1]["body"] += "\n" + line
+        elif comments and line.startswith(OUTSIDE_THE_DIFF_CONTINUATION_INDENT):
+            comments[-1]["body"] += "\n" + line[len(OUTSIDE_THE_DIFF_CONTINUATION_INDENT):]
     return comments
+
+
+def outside_the_diff_line(comment):
+    """A moved comment as written into the body: each line after its first indented, so no line of
+    its text can start another comment when outside_the_diff_comments_read_back_from_review_body()
+    reads it back."""
+    first, *rest = comment["body"].split("\n")
+    return "\n".join([OUTSIDE_THE_DIFF_LINE_FORMAT.format(path=comment["path"], line=comment["line"], body=first),
+                      *(OUTSIDE_THE_DIFF_CONTINUATION_INDENT + line for line in rest)])
 
 
 def with_finding_category_marks(body, comments):
@@ -307,7 +320,7 @@ def with_outside_comments_in_body(body, comments, lines):
     outside = [comment for comment in comments if comment not in inside]
     if outside:
         body = (body.rstrip("\n") + "\n\n" + OUTSIDE_THE_DIFF_HEADING + "\n"
-                + "\n".join(OUTSIDE_THE_DIFF_LINE_FORMAT.format(**comment) for comment in outside))
+                + "\n".join(outside_the_diff_line(comment) for comment in outside))
     return body, inside
 
 
