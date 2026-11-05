@@ -159,7 +159,13 @@ AGENT_SESSION_ID_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 FIXED_RECORD_CLOCK_FOR_TESTS = "2026-09-16T10:42"
 FIXED_RECORD_STAMP_FOR_TESTS = "2026-09-16"
 STDOUT_RECOVERY_PHRASE = cell_common.STDOUT_RECOVERY_PHRASE
-LONG_CHAT_REVIEW = " ".join(f"word{index}" for index in range(150)) + "\n"
+# The headings a fast-clarify report must hold, which every stub report and chat answer here
+# carries after its own text, so a case fails or passes on what it plans, not on the heading check.
+FAST_CLARIFY_REQUIRED_HEADINGS_TEXT = "".join(
+    f"\n{heading}\n"
+    for heading in cell_common.COLD_READ_CELL_TO_REQUIRED_REPORT_SECTION_HEADINGS["fast-clarify"])
+LONG_CHAT_REVIEW = (" ".join(f"word{index}" for index in range(150)) + "\n"
+                    + FAST_CLARIFY_REQUIRED_HEADINGS_TEXT)
 
 # The script under test, imported so the cases below read the constants it
 # actually carries instead of restating them. A fixed phrase was used until
@@ -224,11 +230,11 @@ report_path = pathlib.Path(named.group(1) if named
                            else os.environ["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"])
 if "report" in step:
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(step["report"], encoding="utf-8")
+    report_path.write_text(step["report"] + FAST_CLARIFY_REQUIRED_HEADINGS_TEXT, encoding="utf-8")
 if "stdout" in step:
     sys.stdout.write(step["stdout"])
 sys.exit(step.get("exit", 0))
-"""
+""".replace("FAST_CLARIFY_REQUIRED_HEADINGS_TEXT", repr(FAST_CLARIFY_REQUIRED_HEADINGS_TEXT))
 
 # The stub `claude`, which the claude cell launcher runs for the Sonnet
 # backup and for Question 4. It is on PATH in every case, so no case reaches
@@ -287,8 +293,10 @@ report_path = (own_report if asks_question_4
                else pathlib.Path(named.group(1) if named
                                  else os.environ["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"]))
 report_path.parent.mkdir(parents=True, exist_ok=True)
-report_path.write_text(plan["report"], encoding="utf-8")
-""".replace("QUESTION_4_MODEL", script_under_test_module().WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID)
+report_path.write_text(plan["report"] + ("" if asks_question_4 else FAST_CLARIFY_REQUIRED_HEADINGS_TEXT),
+                       encoding="utf-8")
+""".replace("QUESTION_4_MODEL", script_under_test_module().WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID
+).replace("FAST_CLARIFY_REQUIRED_HEADINGS_TEXT", repr(FAST_CLARIFY_REQUIRED_HEADINGS_TEXT))
 # What the stub answers to Question 4 when a case plans nothing else.
 QUESTION_4_STUB_ANSWER = "STUB OPUS QUESTION 4: No issues\n"
 # The words Gemini's agy prints when the project's monthly spending cap is
