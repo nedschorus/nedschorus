@@ -15,6 +15,7 @@ import importlib.util
 import io
 import json
 import os
+import pickle
 import re
 import signal
 import subprocess
@@ -584,6 +585,25 @@ try:
                                (None, ("passed", None))):
         reading = replay.read_ghi_md_whole_file_replacement(GhiMdGuardNaming(replaced), "cp a b", "/c", None)
         check(f"the GHI-MD soft-block's reading when its guard names {replaced}", reading == expected, reading)
+
+    class WorktreeRemoveGuardReading:
+        def __init__(self, removes):
+            self.removes = removes
+
+        def command_runs_git_worktree_remove(self, command):
+            return self.removes
+
+    for removes, expected in ((True, ("ships every worktree's records first", None)), (False, ("passed", None))):
+        reading = replay.read_git_worktree_remove_records_ship_first(
+            WorktreeRemoveGuardReading(removes), "git worktree remove wt", "/c", None)
+        check(f"the worktree-removal guard's reading when its guard answers {removes}", reading == expected, reading)
+    # The real guard's answer crosses the replay's process pool, so it must pickle.
+    real_guard_spec = importlib.util.spec_from_file_location("worktree_remove_guard", REPOSITORY_ROOT / ".claude" / "guard-hooks" / "git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py")
+    real_guard = importlib.util.module_from_spec(real_guard_spec)
+    real_guard_spec.loader.exec_module(real_guard)
+    for command in ("git worktree remove ~/$X", "git --git-dir ~/r/.git worktree remove wt"):
+        reading = replay.read_git_worktree_remove_records_ship_first(real_guard, command, "/c", None)
+        check(f"the real worktree-removal guard's reading of {command!r} pickles", pickle.loads(pickle.dumps(reading)) == reading, reading)
 
     def add_bash_hook(worktree):
         path = worktree / ".claude" / "settings.json"

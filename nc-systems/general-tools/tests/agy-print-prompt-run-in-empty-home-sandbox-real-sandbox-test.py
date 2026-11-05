@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The cases of agy-print-prompt-run-in-empty-home-sandbox-test.py that need
-the real bwrap: the home holds nothing but .gemini, and agy starts in an empty
-working directory.
+the real bwrap: the home holds nothing but .gemini, /usr, /etc and
+/run/systemd/resolve are mounted read-only, and agy starts in an empty working
+directory.
 
 The real bwrap cannot start inside the nc-test-sandbox, so this suite is
 listed in scripts/run-all-test-suites.py's SUITES_RUN_WITHOUT_ANY_SANDBOX and

@@ -1662,6 +1662,34 @@ def test_close_hold_answer_refuses_when_no_new_item_follows_the_answered_one():
           and case.minutes.read_text() == minutes and walk_document(case) == document, described(closed))
 
 
+def test_close_hold_answer_refuses_a_new_item_it_cannot_place_before_numbering_it():
+    for name, new_item, expected in (
+            ("has no category line, and the refusal's command keeps the hold flag",
+             "## the change a finding raised\n\n#case_against none.\n\n",
+             " close --hold-answer-until-new-item-answered --cwd "),
+            ("waits on an item not yet shown",
+             f"## the change a finding raised\n\n{FIX_NEXT_LINE}\n\n#approval_walk_item_waits_on two\n\n"
+             "#case_against none.\n\n", "waits on `## two`, which the user has not ruled on yet"),
+            ("waits on a numbered item the user has not answered",
+             f"## the change a finding raised\n\n{FIX_NEXT_LINE}\n\n#approval_walk_item_waits_on three\n\n"
+             "#case_against none.\n\n", "waits on item 3, which the user has not ruled on yet"),
+            ("waits on the summary item",
+             f"## the change a finding raised\n\n{FIX_NEXT_LINE}\n\n#approval_walk_item_waits_on summary\n\n"
+             "#case_against none.\n\n", "waits on `## Summary`, which the user has not ruled on yet")):
+        case = Case(next_to_present="item 1 of 4",
+                    document=UNNUMBERED_ITEMS_DOCUMENT.replace("## three", "## Item 3 of 4: three"))
+        case.run("check")
+        document = walk_document(case).replace("## two", new_item + "## two", 1)
+        (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").write_text(document)
+        minutes = case.minutes.read_text()
+        closed = case.run("close", "--hold-answer-until-new-item-answered")
+        check(f"close --hold-answer-until-new-item-answered refuses, writing nothing to the walk-document or the "
+              f"minutes, when the new item {name}",
+              closed.returncode == 1 and expected in closed.stderr and "nothing written" in closed.stderr
+              and "Traceback" not in closed.stderr and walk_document(case) == document
+              and case.minutes.read_text() == minutes, described(closed) + walk_document(case))
+
+
 def test_a_deferred_last_item_hands_on_to_the_first_unrecorded_item():
     case = Case(next_to_present="item 5 of 9")
     case.run("check", "--deferred")
@@ -3151,6 +3179,169 @@ def test_an_unshown_item_waiting_on_a_deferred_item_comes_after_it():
           shown == ["two", "four", "two", "three", "Summary"]
           and re.search(r"^## Item 2 of \d+: two$", walk_document(case), re.M) is not None,
           f"{shown}\n{walk_document(case)}")
+
+
+def numbered_item(number, title):
+    """A numbered walk-document item `## Item number of 9: title`, not yet answered."""
+    return f"## Item {number} of 9: {title}\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+
+
+def test_repeated_closes_keep_the_unshown_items_together_and_numbered_items_in_order():
+    case = Case(next_to_present="item 1 of 9", document=ordered_walk(
+        unshown_item("next", f"{CATEGORY_TAG}fix_next"), numbered_item(3, "three"),
+        unshown_item("urgent", f"{CATEGORY_TAG}must_fix_now"), numbered_item(4, "four")))
+    shown = titles_shown_in_turn(case)
+    check("once an unshown item is shown, the other unshown items come next, and numbered items keep their order, "
+          "even when a numbered item stands between unshown ones in the walk-document",
+          shown == ["urgent", "next", "three", "four", "Summary"], f"{shown}\n{walk_document(case)}")
+    case = Case(next_to_present="item 1 of 9", document=ordered_walk(
+        numbered_item(2, "two"), unshown_item("first", f"{CATEGORY_TAG}must_fix_now"), numbered_item(3, "three"),
+        unshown_item("second", f"{CATEGORY_TAG}must_fix_now")))
+    shown = titles_shown_in_turn(case)
+    check("a numbered item that stands between two unshown items in the walk-document comes after both",
+          shown == ["two", "first", "second", "three", "Summary"], f"{shown}\n{walk_document(case)}")
+
+
+def test_an_item_can_wait_on_an_item_whose_title_ends_in_inline_code():
+    case = Case(next_to_present="item 1 of 9", document=ordered_walk(
+        unshown_item("the waiting one", f"{CATEGORY_TAG}must_fix_now",
+                     "#approval_walk_item_waits_on run `close`"),
+        unshown_item("run `close`", f"{CATEGORY_TAG}fix_next")))
+    shown = titles_shown_in_turn(case)
+    check("a waits-on line naming a title that ends in inline code finds that item, and the item waiting comes after",
+          shown == ["run `close`", "the waiting one", "Summary"], f"{shown}\n{walk_document(case)}")
+
+
+def test_a_category_tag_in_underscore_emphasis_is_read_without_the_closing_underscores():
+    for tag in (f"_{CATEGORY_TAG}must_fix_now_", f"__{CATEGORY_TAG}must_fix_now__"):
+        case = Case(next_to_present="item 1 of 9", document=ordered_walk(
+            unshown_item("later", f"{CATEGORY_TAG}fix_next"), unshown_item("emphasised", tag)))
+        shown = titles_shown_in_turn(case)
+        check(f"the category tag in `{tag}` is read as must_fix_now, not refused with the emphasis's underscores",
+              shown == ["emphasised", "later", "Summary"], f"{shown}\n{walk_document(case)}")
+
+
+def test_gathering_unshown_items_keeps_a_numbered_item_written_as_a_bold_paragraph():
+    """The last unshown item ends the file with no blank line after it, and gathering moves it just above a
+    numbered item written as a `**Item N of M: ...**` paragraph."""
+    document = ("# A walk in which code picks the order\n\n## Item 1 of 9: one\n\n#case_against none.\n\n"
+                "Recommendation: approve.\n\n" + unshown_item("urgent", f"{CATEGORY_TAG}must_fix_now")
+                + "**Item 2 of 9: two**\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                + unshown_item("later", f"{CATEGORY_TAG}fix_next").rstrip("\n"))
+    case = Case(next_to_present="item 1 of 9", document=document)
+    case.run("check")
+    closed = case.run("close")
+    text = walk_document(case)
+    check("close shows urgent as a new number and keeps item 2, written as a bold paragraph, as an item of its own",
+          closed.returncode == 0 and text.count("**Item 2 of 9: two**") == 1
+          and re.search(r"^## Item 3 of \d+: urgent$", text, re.M) is not None
+          and re.search(r"Recommendation: approve\.\n\n\*\*Item 2 of 9: two\*\*", text) is not None,
+          f"exit {closed.returncode}, stderr {closed.stderr!r}\n{text}")
+
+
+def test_gathering_puts_an_unshown_item_standing_above_answered_items_after_the_last_answered_one():
+    document = ("# A walk in which code picks the order\n\n" + numbered_item(1, "one")
+                + unshown_item("above", f"{CATEGORY_TAG}must_fix_now") + numbered_item(2, "two")
+                + numbered_item(3, "three") + "## Summary\n\nThe walk in short.\n")
+    case = Case(next_to_present="item 2 of 9", document=document)
+    shown = titles_shown_in_turn(case)
+    text = walk_document(case)
+    check("an unshown item that stands above the answered items is shown after them, and moved below the last "
+          "answered one, so items stand in the order they were shown",
+          shown[:2] == ["three", "above"] and re.search(r"^## Item 4 of \d+: above$", text, re.M) is not None
+          and text.index("## Item 2 of 9: two") < text.index("## Item 3 of 9: three") < text.index(": above\n"),
+          f"{shown}\n{text}")
+
+
+def test_gathering_places_unshown_items_after_the_answered_items_heading_the_minutes_total_picks():
+    """A walk-document renumbered before numbers were never reused keeps two headings for item 2, `of 3` and `of 4`,
+    as md-skills-seat-open-decisions-2026-10-13.md does for its items 22 to 27; the minutes' `of 3` picks the
+    first, so gathering must not move the unshown item past item 3 to below the other heading."""
+    document = ("# A walk in which code picks the order\n\n"
+                "## Item 1 of 3: one\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                "## Item 2 of 3: two\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                + unshown_item("added", f"{CATEGORY_TAG}must_fix_now")
+                + "## Item 3 of 3: three\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                "## Item 2 of 4: two, as an earlier count had it\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                "## Summary\n\nThe walk in short.\n")
+    case = Case(next_to_present="item 2 of 3", document=document)
+    shown = titles_shown_in_turn(case)
+    check("with two headings for the answered item, gathering keeps the unshown item after the heading the minutes' "
+          "total picks, so item 3 is shown before the summary item",
+          shown == ["added", "three", "Summary"], f"{shown}\n{walk_document(case)}")
+
+
+def test_close_hold_answer_numbers_a_new_item_that_waits_on_a_decided_or_the_answered_item():
+    """The hold path refuses a new item waiting on a numbered item still to come; one waiting on an item the minutes
+    already decide, or on the item whose answer it holds, has nothing to wait for and is numbered."""
+    for name, waits_on in (("an item the minutes already decide", "one"), ("the item whose answer it holds", "two")):
+        case = Case(next_to_present="item 2 of 4",
+                    document=UNNUMBERED_ITEMS_DOCUMENT.replace("## two", "## Item 2 of 4: two"))
+        case.minutes.write_text(case.minutes.read_text().replace(
+            "#next_to_present item 2 of 4", "item 1 of 4: approved; every text the change adds has had a fast read. "
+                                            "<accepted>\n#next_to_present item 2 of 4"))
+        case.run("check")
+        document = walk_document(case).replace("## three", f"## the change a finding raised\n\n{FIX_NEXT_LINE}\n\n"
+                                               f"#approval_walk_item_waits_on {waits_on}\n\n#case_against none.\n\n"
+                                               "## three", 1)
+        (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").write_text(document)
+        closed = case.run("close", "--hold-answer-until-new-item-answered")
+        check(f"close --hold-answer-until-new-item-answered numbers a new item that waits on {name}",
+              closed.returncode == 0 and marker(case).startswith("#next_to_present item 3 of ")
+              and re.search(r"^## Item 3 of \d+: the change a finding raised$", walk_document(case), re.M) is not None,
+              described(closed) + walk_document(case))
+
+
+def test_close_writes_no_walk_document_when_gathering_would_lose_an_item():
+    """Gathering keeps blank lines at its joins, so it cannot lose an item; a stand-in walk finder that reads one
+    item fewer after gathering is put into the program, run in this process."""
+    case = Case(next_to_present="item 1 of 9", document=ordered_walk(
+        unshown_item("next", f"{CATEGORY_TAG}fix_next"), numbered_item(3, "three"),
+        unshown_item("urgent", f"{CATEGORY_TAG}must_fix_now")))
+    case.run("check")
+    program = load_program()
+    original = program.unshown_items_gathered_behind_chosen
+
+    def gathered_with_an_item_lost(walk_finder, *rest):
+        class Finder:
+            def __getattr__(self, name):
+                return getattr(walk_finder, name)
+
+            def item_unit_spans(self, text, parser):
+                return walk_finder.item_unit_spans(text, parser)[:-1]
+        return original(Finder(), *rest)
+
+    program.unshown_items_gathered_behind_chosen = gathered_with_an_item_lost
+    markers = case.minutes.read_text().count("#next_to_present")
+    errors = io.StringIO()
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+        exit_code = program.main(["close", *case_paths(case)])
+    text = walk_document(case)
+    check("close exits 1, names the defect, neither moves nor numbers an item and adds no `#next_to_present` line "
+          "when gathering would lose an item",
+          exit_code == 1 and "would have left fewer items than it found" in errors.getvalue()
+          and text.index("## next") < text.index("## Item 3 of 9: three") < text.index("## urgent")
+          and case.minutes.read_text().count("#next_to_present") == markers,
+          f"exit {exit_code}, stderr {errors.getvalue()!r}\n{text}")
+
+
+def test_close_writes_nothing_when_the_stamped_walk_document_no_longer_places():
+    """The first-entered stamp is written so that it cannot make a document unplaceable, so a stand-in stamp that
+    does so is put into the program, run in this process."""
+    case = Case(next_to_present="item 1 of 9", document=ordered_walk(unshown_item("two", f"{CATEGORY_TAG}fix_next")))
+    case.run("check")
+    document, minutes = walk_document(case), case.minutes.read_text()
+    program = load_program()
+    program.unshown_items_first_entered_stamped = lambda walk_finder, text, *_: text.replace(
+        f"{CATEGORY_TAG}fix_next", f"{CATEGORY_TAG}fix_next {CATEGORY_TAG}must_fix_now")
+    errors = io.StringIO()
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+        exit_code = program.main(["close", *case_paths(case)])
+    check("close exits 1 and leaves the walk-document and the minutes as they were when the stamped walk-document "
+          "cannot be placed",
+          exit_code == 1 and "more than one category tag" in errors.getvalue()
+          and walk_document(case) == document and case.minutes.read_text() == minutes,
+          f"exit {exit_code}, stderr {errors.getvalue()!r}\n{walk_document(case)}")
 
 
 def test_close_writes_the_first_entered_day_once_into_each_unshown_item_that_has_none():

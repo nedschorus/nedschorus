@@ -259,7 +259,7 @@ def run_refusal_cases(root):
           and "more than one approval-walk is open or paused" in result.stderr
           and str(resolved / f"{WALK}-minutes.md") in result.stderr
           and str(resolved / "second-walk-minutes.md") in result.stderr
-          and f"then run again: python3 {PROGRAM.resolve()} --cwd {checkout} alert-a" in result.stderr
+          and f"Then run again: python3 {PROGRAM.resolve()} --cwd {checkout} alert-a" in result.stderr
           and after == before, result.stderr)
 
 with tempfile.TemporaryDirectory() as temporary_directory:

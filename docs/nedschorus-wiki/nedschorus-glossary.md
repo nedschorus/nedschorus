@@ -10,10 +10,14 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 
 - **/cold-read** — a skill used to improve the readability of prose.
 - **/explain** — a skill that re-explains a message the user could not follow, so he can understand the message without the agent-session's context.
+- **/find-info** — the skill an agent uses to find a stored file, record, transcript or walk-minutes file, or a past discussion, decision or approval, such as an earlier user-ruling.
+- **/find-missing-file** — the skill an agent uses before it reports that a file, record, transcript or backup is missing, to search for copies of it first.
 - **/ghi-write** — a skill used before any write to a GitHub issue.
 - **/handoff** — a skill that writes the session-handoff a successor agent-session starts from, used when a system message says the agent-session has used the share of its context window set as the reincarnation threshold, or the user asks for a handoff.
+- **/overview-write** — the skill used to write, refresh or fix an nc-architecture-overview, and to run the program that checks its claims against the code.
 - **/pull-request-review-write** — a skill used before writing or revising a review on a pull request.
 - **/sanity-check** — a skill used to improve designs.
+- **/start-agent-seat** — the skill used to start a new named agent-seat on ned-box, which covers choosing its name, the seat-brief the user approves, and its launch command.
 - **/walk-me-through** — a skill that presents complex material to the user one item or step at a time.
 - **-common** — a filename suffix for a module whose functions several programs import; the module is not run on its own.
 - **-draft** — the filename suffix of a document still being written and not yet put to review, such as `docs/drafts/<subject>-draft.md`.
@@ -26,6 +30,7 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 - **agent-instructions** — prompts or Markdown files that instruct agents, wherever an agent reads them, such as CLAUDE.md, a skill, a seat-brief or AGENTS.md.
 - **agent-seat** — a named, long-lived agent identity with its own worktree, seat-branch and seat-brief, held by a series of agent-sessions joined by session-handoffs.
 - **agent-session** — one running conversation occupying an agent-seat. Agent-sessions end and are replaced; the agent-seat persists.
+- **AO** — the answer to an approval-walk item that approves it and records that the user found it obvious.
 - **approval-walk** — presenting material to the user one item at a time, under /walk-me-through, for a decision on each item; its outcomes are recorded in walk-minutes.
 - **approved-by-walk** — approved by the user item by item in an approval-walk, not by one yes to a bundle.
 - **build-slice** — one numbered increment of a build plan, built and merged on its own.

@@ -49,7 +49,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/walk-me-through/walk-me-through-pending-user-alerts-claim-and-hand-to-agent-as-approval-walk-items-user-prompt-submit-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/walk-me-through/walk-me-through-pending-user-alerts-claim-and-insert-as-approval-walk-items-user-prompt-submit-hook.py",
             "timeout": 10
           },
           {
@@ -158,6 +158,11 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py",
+            "timeout": 300
           }
         ]
       },
