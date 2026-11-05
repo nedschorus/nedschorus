@@ -39,7 +39,8 @@ merge-lane-pull-request-claude-reviewer-review-schema.json, the one place the
 answer's fields are defined, and never taken on claude's exit code; Claude's
 structured outputs do not enforce minLength or minimum, and this check does. A
 schema that uses a keyword or type this check does not know is refused before
-the reviewer runs, so no rule of the schema goes unchecked. A COULD_NOT_REVIEW verdict is a review that did not
+the reviewer runs, so no rule of the schema goes unchecked. A COULD_NOT_REVIEW
+verdict is a review that did not
 finish. After the run, the head worktree must still be at the nc-head-commit:
 the project's freshness hook fast-forwards a detached checkout with no commits
 of its own, and a review of a moved checkout is not of this head.
@@ -157,15 +158,18 @@ def read_text(path):
         raise Refused(f"could not read {path}: {error}")
 
 
-def schema_keywords_not_checked(schema, where="the schema"):
+def review_schema_keywords_and_types_the_answer_check_does_not_enforce(schema, where="the schema"):
     """Return each keyword or type in schema that answer_problems does not check."""
     found = [f"{where}: {keyword}" for keyword in schema if keyword not in CHECKED_SCHEMA_KEYWORDS]
     if "type" in schema and schema["type"] not in JSON_TYPES:
         found.append(f"{where}: type {schema['type']}")
-    for name, property_schema in schema.get("properties", {}).items():
-        found += schema_keywords_not_checked(property_schema, f"{where}.{name}")
+    nested = [(property_schema, f"{where}.{name}")
+              for name, property_schema in schema.get("properties", {}).items()]
     if "items" in schema:
-        found += schema_keywords_not_checked(schema["items"], f"{where}[]")
+        nested.append((schema["items"], f"{where}[]"))
+    for nested_schema, nested_where in nested:
+        found += review_schema_keywords_and_types_the_answer_check_does_not_enforce(
+            nested_schema, nested_where)
     return found
 
 
@@ -310,11 +314,12 @@ def main(argv=None):
         if not isinstance(schema, dict):
             raise Refused(f"the review schema {schema_file} is not a JSON object, so the "
                           f"reviewer's answer could not be checked against it")
-        if schema_keywords_not_checked(schema):
+        not_enforced = review_schema_keywords_and_types_the_answer_check_does_not_enforce(schema)
+        if not_enforced:
             raise Refused(
                 f"the review schema {schema_file} uses JSON-schema keywords or types that this "
                 f"program's answer check does not enforce, so an answer could break those rules "
-                f"unnoticed: {'; '.join(schema_keywords_not_checked(schema))}. Either remove each "
+                f"unnoticed: {'; '.join(not_enforced)}. Either remove each "
                 f"from the schema, or add it to CHECKED_SCHEMA_KEYWORDS or JSON_TYPES and to "
                 f"answer_problems in {Path(__file__).resolve()}")
         if not (here / POST_SCRIPT_NAME).is_file():

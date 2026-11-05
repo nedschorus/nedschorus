@@ -9,7 +9,8 @@ no case runs a model or reaches GitHub. The stand-in claude logs its
 arguments, standard input, directory and environment, and answers as
 FAKE_CLAUDE_MODE says: valid, null, invalid, no-note, note-not-text,
 not-object, extra-key, line-below-minimum, line-not-integer,
-comment-body-empty, could-not-review, nonzero, not-json, hang (it writes its pid, starts a child that also sleeps, and
+comment-body-empty, could-not-review, nonzero, not-json, hang (it writes its
+pid, starts a child that also sleeps, and
 writes the child's pid), leave-child (it starts a sleeping child whose output
 goes to /dev/null, writes the child's pid, and answers validly), or move-head
 (it checks the head worktree out at another commit). Every
@@ -360,15 +361,16 @@ def schema_driven_cases(scratch):
     check("a field the schema adds as required is required of the answer, with no code change",
           lambda: program.answer_problems(answer, with_summary) == ["the answer has no summary"])
 
+    not_enforced = program.review_schema_keywords_and_types_the_answer_check_does_not_enforce
     check("the schema file uses only keywords and types the answer check enforces",
-          lambda: program.schema_keywords_not_checked(schema) == [])
+          lambda: not_enforced(schema) == [])
     unchecked = json.loads(SCHEMA.read_text())
     unchecked["properties"]["comments"]["items"]["properties"]["path"]["pattern"] = r"\S"
     unchecked["properties"]["note"]["type"] = "number"
     check("a keyword or type the answer check does not enforce is named, at any depth",
-          lambda: program.schema_keywords_not_checked(unchecked)
+          lambda: not_enforced(unchecked)
           == ["the schema.comments[].path: pattern", "the schema.note: type number"],
-          str(program.schema_keywords_not_checked(unchecked)))
+          str(not_enforced(unchecked)))
 
     for name, text, expected in (
             ("not JSON", "{", "is not JSON ("),
@@ -392,7 +394,8 @@ def schema_driven_cases(scratch):
         case.read_calls()
         check(f"a review schema file that is {name} refuses with exit 2 before the reviewer runs",
               lambda: code == 2 and not case.claude_calls
-              and f"PR 7: Claude review not run: the review schema {schema_file} " in printed.getvalue()
+              and f"PR 7: Claude review not run: the review schema {schema_file} "
+              in printed.getvalue()
               and expected in printed.getvalue(), f"exit {code}\n{printed.getvalue()}")
 
 
