@@ -808,14 +808,17 @@ def run_reviewer_program_until_its_result_line(
         # SIGKILL, because agy ignores SIGTERM; also ends children left behind by an exited leader.
         # Repeated until the pipes close: a child whose fork was under way
         # when the first SIGKILL landed survives it on macOS and holds them.
-        while any(reader.is_alive() for reader in readers):
+        # Once the group is empty, a holder outside it makes killpg fail.
+        while True:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
                 pass
+            process.wait()
             for reader in readers:
                 reader.join(REPORT_WAIT_POLL_SECONDS)
-        process.wait()
+            if not any(reader.is_alive() for reader in readers):
+                break
         if exited_by_itself:
             return completed(subprocess.CompletedProcess, process.returncode, response_text)
         return completed(ReviewerRunEndedByResultLine, exit_code, response_text)

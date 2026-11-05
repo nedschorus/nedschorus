@@ -158,6 +158,9 @@ SHORT_CHAT_REMARK = "I have written the report to the path you gave me.\n"
 # "ignore_sigterm" makes the stub and its child ignore SIGTERM as agy does,
 # "late_report" is report text written half a second after stdout and stderr,
 # "child_before_output" starts the hang's child before anything is printed,
+# "pipe_holder_outside_group_seconds" starts a child in a session of its own,
+# outside the stub's process group, that holds the stub's stdout and stderr
+# open for that many seconds,
 # and "exit" is the code to exit with. The report path arrives by
 # environment, as in the other cell tests, so a reworded template cannot
 # unhook the stub.
@@ -179,6 +182,10 @@ def start_child_writing_pid_to(path):
         handle.write("%d\\n" % child.pid)
 if step.get("child_before_output"):
     start_child_writing_pid_to(step["hang_writing_child_pid_to"])
+if "pipe_holder_outside_group_seconds" in step:
+    import subprocess
+    subprocess.Popen([sys.executable, "-c", "import time; time.sleep(%s)"
+                      % step["pipe_holder_outside_group_seconds"]], start_new_session=True)
 if "dump_argv" in step:
     pathlib.Path(step["dump_argv"]).write_text(json.dumps(argv), encoding="utf-8")
 if "dump_prompt" in step:
@@ -765,6 +772,28 @@ with tempfile.TemporaryDirectory() as scratch:
           len(child_pids) == 1 and all(process_gone_within(pid, 10) for pid in child_pids),
           repr(child_pids))
     kill_left_over_processes(child_pids)
+
+    # A process outside agy's group holding agy's pipes: once the group is
+    # empty, killing it fails, and the cell waits for the pipes to close.
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "pipe-holder-outside-group")
+    pid_file = scratch / "pipe-holder-outside-group-child-pids"
+    started = time.monotonic()
+    result = run_agy_cell(repository, stubs,
+                          {"*": {"report": "STUB AGY REVIEW: pipes held outside the group\n",
+                                 "pipe_holder_outside_group_seconds": 3,
+                                 "stdout_file": str(REAL_AGY_STREAM_JSON_OUTPUT),
+                                 "ignore_sigterm": True, "child_before_output": True,
+                                 "hang_writing_child_pid_to": str(pid_file)}}, report)
+    elapsed = time.monotonic() - started
+    check("a process outside agy's group that holds agy's pipes for 3 s delays the read "
+          "only until it lets go, and the report is accepted",
+          result.returncode == 0 and elapsed < RESULT_LINE_ENDS_READ_WITHIN_SECONDS
+          and "pipes held outside the group" in (
+              report.read_text(encoding="utf-8") if report.is_file() else "")
+          and "Traceback" not in result.stderr,
+          f"exit {result.returncode}; {elapsed:.0f} s; stderr={result.stderr!r}")
+    kill_left_over_processes(pids_written_to(pid_file))
 
     # A report written just after the result line is waited for.
     repository = build_scratch_repository(scratch)
