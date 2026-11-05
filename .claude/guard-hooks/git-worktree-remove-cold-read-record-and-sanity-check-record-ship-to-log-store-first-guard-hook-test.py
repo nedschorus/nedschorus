@@ -19,12 +19,14 @@ import atexit
 import contextlib
 import importlib.util
 import io
+import itertools
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 HOOK_SCRIPT = Path(__file__).with_name(
@@ -295,7 +297,8 @@ budget_line = f"not shipped: this hook's limit of {hook.SHIPPING_BUDGET_SECONDS}
 code, output = run_hook(payload, shippers_only(runner_timing_out))
 check("a shipper past the time limit refuses the removal",
       (refusal(output) or "").count(f": {budget_line}\n") == 2, output)
-times = iter([0, 0, hook.SHIPPING_BUDGET_SECONDS])
+# Clock reads: the deadline; the first record before and after its store check; the second record.
+times = itertools.chain([0, 0, 0], itertools.repeat(hook.SHIPPING_BUDGET_SECONDS))
 timeouts_given = []
 
 
@@ -309,6 +312,124 @@ check("a record reached after the time limit ran out is not shipped and refuses 
       timeouts_given == [hook.SHIPPING_BUDGET_SECONDS]
       and (refusal(output) or "").count(f": {budget_line}\n") == 1
       and "and 1 record(s) did not reach it" in refusal(output), (timeouts_given, output))
+
+shipped_runner = shippers_only(runner_answering(0, "shipped: x — 1 file added"))
+store_check_as_written = hook.store_holds_every_file_of
+
+
+def run_with_store_check(store_check, hook_payload):
+    hook.store_holds_every_file_of = store_check
+    try:
+        return run_hook(hook_payload, shipped_runner)
+    finally:
+        hook.store_holds_every_file_of = store_check_as_written
+
+
+# A record that another agent-session removes while the hook checks it has nothing left to ship.
+def store_check_after_the_record_vanishes(kind, record):
+    shutil.rmtree(record)
+    raise FileNotFoundError(2, "No such file or directory", str(record / "fast-read.md"))
+
+
+vanishing_checkout, vanishing_worktree = checkout_with_worktree("vanishing")
+code, output = run_with_store_check(
+    store_check_after_the_record_vanishes,
+    payload_for(f"git worktree remove {vanishing_worktree}", vanishing_checkout))
+check("a record that vanishes while the hook checks it is skipped, and the removal is let through silently",
+      code == 0 and output is None, output)
+check("records_in leaves out a worktree that has vanished",
+      hook.records_in(_scratch / "gone", hook.record_kinds()) == [])
+all_kinds = hook.record_kinds()
+not_a_folder_worktree = _scratch / "records-folder-is-a-file"
+not_a_folder_worktree.mkdir()
+(not_a_folder_worktree / all_kinds[0][0]).write_text("not a folder\n")
+(not_a_folder_worktree / all_kinds[1][0] / "kept-record").mkdir(parents=True)
+(not_a_folder_worktree / all_kinds[1][0] / "kept-record" / "report.md").write_text("kept\n")
+check("records_in leaves out a records folder that is a file, and still reads the other records folder",
+      [record.name for _, record in hook.records_in(not_a_folder_worktree, all_kinds)] == ["kept-record"])
+
+
+class ListedRecord:
+    """A record directory as listed; one that vanished raises when its contents are read."""
+
+    def __init__(self, name, vanished):
+        self.name, self.vanished = name, vanished
+
+    def is_dir(self):
+        return True
+
+    def is_symlink(self):
+        return False
+
+    def iterdir(self):
+        if self.vanished:
+            raise FileNotFoundError(2, "No such file or directory", self.name)
+        return iter(["report.md"])
+
+    def __lt__(self, other):
+        return self.name < other.name
+
+
+class WorktreeListingAVanishingRecord:
+    def __truediv__(self, name):
+        return self
+
+    def iterdir(self):
+        return iter([ListedRecord("a-vanished-record", True), ListedRecord("b-kept-record", False)])
+
+
+check("records_in leaves out a record that vanishes between its listing and its reading, and reads the next",
+      [record.name for _, record in hook.records_in(WorktreeListingAVanishingRecord(), all_kinds[:1])]
+      == ["b-kept-record"])
+
+
+def store_check_failing(kind, record):
+    raise PermissionError(13, "Permission denied", str(record))
+
+
+code, output = run_with_store_check(store_check_failing, payload)
+check("an error checking a record that is still there refuses the removal, naming the error",
+      (refusal(output) or "").count(": not shipped: this hook could not check or ship it: PermissionError: ") == 2,
+      output)
+
+
+# A stalled store check, as an ssh to ned-box that never answers, is cut off by the one deadline.
+def store_check_stalling(kind, record):
+    time.sleep(60)
+    return True
+
+
+budget_as_written = hook.SHIPPING_BUDGET_SECONDS
+hook.SHIPPING_BUDGET_SECONDS = 1
+try:
+    started = time.monotonic()
+    code, output = run_with_store_check(store_check_stalling, payload)
+    took = time.monotonic() - started
+    check("a stalled store check refuses the removal at the deadline, naming every record not yet shipped",
+          took < 10 and (refusal(output) or "").count(
+              ": not shipped: this hook's limit of 1 seconds for shipping ran out first\n") == 2, (took, output))
+finally:
+    hook.SHIPPING_BUDGET_SECONDS = budget_as_written
+
+# The worker failing before it has read the records lets the command through with the not-checked notice.
+record_kinds_as_written = hook.record_kinds
+
+
+def record_kinds_failing():
+    raise ImportError("shipper module missing")
+
+
+hook.record_kinds = record_kinds_failing
+try:
+    code, output = run_hook(payload, shipped_runner)
+finally:
+    hook.record_kinds = record_kinds_as_written
+specific = (output or {}).get("hookSpecificOutput", {})
+check("records that cannot be read let the command through with the not-checked notice and its reason",
+      code == 0 and "permissionDecision" not in specific
+      and specific.get("additionalContext", "").startswith(
+          hook.RECORDS_NOT_READ_NOTICE.split("({reason})")[0] + "(ImportError: shipper module missing)"),
+      output)
 
 # A worktree listing that fails, cannot run or runs out of time lets the command through with a notice.
 not_checked_opening = ("Not checked: the hook that ships every worktree's cold-read-records and sanity-check "

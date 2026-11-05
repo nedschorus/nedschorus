@@ -32,10 +32,25 @@ commands run by eval or a script file, removals a program makes itself, and
 removals typed in a terminal or by a Codex agent. Walk files under docs/walk/,
 which scripts/clean-worktrees.py also ships, are not shipped here.
 
+Everything after the worktree listing, reading the records, checking them
+against the store and shipping them, runs in one worker thread, under one
+deadline of SHIPPING_BUDGET_SECONDS counted from before the listing. A record
+or worktree that vanishes while it is read, because another agent-session
+removes it, has nothing left to ship and is skipped. Any other error checking
+or shipping a record refuses the removal, naming the record and the error.
+When the deadline passes with the worker still running, as when an ssh to
+ned-box stalls, the hook refuses the removal, naming each record not yet
+shipped; the stalled ssh is left to end on its own, which is harmless because
+it only reads the store.
+
 How it can fail: when `git worktree list` fails or runs past
 GIT_TIMEOUT_SECONDS, as in a cwd outside any repository, or when the shell
 reader cannot run, the command is let through and the agent is told in
-additionalContext that no records were shipped. A removal in another
+additionalContext that no records were shipped. When the worker fails before
+it has read every worktree's records, as when a shipper module cannot be
+loaded, or has not read them when the deadline passes, the command is let
+through and the agent is told, the same way, that records may not have
+shipped. A removal in another
 repository, given by git's -C or --git-dir, ships the records of the
 repository the hook's cwd is in, not of that one. On the Mac each record is
 checked against the store over ssh, one record at a time, so with many
@@ -53,6 +68,7 @@ import pathlib
 import shlex
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -117,6 +133,7 @@ UNSHIPPED_RECORD_LINE_TEMPLATE = (
 SHIPPER_PRINTED_NOTHING_LINE_TEMPLATE = "the shipper printed nothing (exit {code}){stderr}"
 SHIPPING_BUDGET_SPENT_LINE_TEMPLATE = (
     "not shipped: this hook's limit of {budget} seconds for shipping ran out first")
+RECORD_CHECK_FAILED_LINE_TEMPLATE = "not shipped: this hook could not check or ship it: {error}"
 
 SHIP_RECORDS_YOURSELF_NEXT_STEP_LINES = (
     "Before you remove another worktree, ship its records yourself, from that worktree's root, "
@@ -131,6 +148,14 @@ WORKTREE_LISTING_FAILED_NOTICE = (
     "to the log-store before `git worktree remove` could not list this repository's worktrees "
     "({reason}), so it shipped no records and let the command run. If the removed worktree held "
     "a record that had not shipped, that record is gone; nothing can bring it back.\n"
+    + SHIP_RECORDS_YOURSELF_NEXT_STEP_LINES)
+
+RECORDS_NOT_READ_NOTICE = (
+    "Not checked: the hook that ships every worktree's cold-read-records and sanity-check records "
+    "to the log-store before `git worktree remove` could not read every worktree's records "
+    "({reason}), so it let the command run without knowing that every record had shipped. If the "
+    "removed worktree held a record that had not shipped, that record is gone; nothing can bring "
+    "it back.\n"
     + SHIP_RECORDS_YOURSELF_NEXT_STEP_LINES)
 
 PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
@@ -202,13 +227,22 @@ def record_kinds():
 
 
 def records_in(worktree, kinds):
-    """Return (kind, record directory) for each non-empty record directory in the worktree."""
+    """Return (kind, record directory) for each non-empty record directory in the worktree.
+
+    A records folder or record that vanishes while it is read has nothing left to ship and is left out.
+    """
     records = []
     for kind in kinds:
-        records_directory = worktree / kind[0]
-        if records_directory.is_dir():
-            records.extend((kind, record) for record in sorted(records_directory.iterdir())
-                           if record.is_dir() and not record.is_symlink() and any(record.iterdir()))
+        try:
+            entries = sorted((worktree / kind[0]).iterdir())
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        for record in entries:
+            try:
+                if record.is_dir() and not record.is_symlink() and any(record.iterdir()):
+                    records.append((kind, record))
+            except FileNotFoundError:
+                continue
     return records
 
 
@@ -232,27 +266,51 @@ def shipper_line(shipment):
         code=shipment.returncode, stderr=f": {error_lines[-1]}" if error_lines else "")
 
 
-def unshipped_records(records, runner, clock, deadline):
-    """Ship each record the store lacks; return (shipper, worktree, record, line) for each that did not ship."""
-    budget_spent_line = SHIPPING_BUDGET_SPENT_LINE_TEMPLATE.format(budget=SHIPPING_BUDGET_SECONDS)
-    unshipped = []
-    for worktree, kind, record in records:
-        shipper = kind[1]
-        remaining = deadline - clock()
-        if remaining <= 0:
-            unshipped.append((shipper, worktree, record, budget_spent_line))
-            continue
-        if store_holds_every_file_of(kind, record):
-            continue
+def budget_spent_line():
+    return SHIPPING_BUDGET_SPENT_LINE_TEMPLATE.format(budget=SHIPPING_BUDGET_SECONDS)
+
+
+def unshipped_line_for(record, kind, runner, clock, deadline):
+    """Ship the record if the store lacks it; return None when it shipped or needed not, else the reason line."""
+    if deadline - clock() <= 0:
+        return budget_spent_line()
+    if store_holds_every_file_of(kind, record):
+        return None
+    # Recomputed after the store check, which on the Mac is an ssh round trip.
+    remaining = deadline - clock()
+    if remaining <= 0:
+        return budget_spent_line()
+    try:
+        shipment = runner([sys.executable, str(kind[1]), str(record)],
+                          capture_output=True, text=True, timeout=remaining, check=False)
+    except subprocess.TimeoutExpired:
+        return budget_spent_line()
+    if shipment.returncode != 0 or not shipment.stdout.strip():
+        return shipper_line(shipment)
+    return None
+
+
+def ship_every_record(worktrees, runner, clock, deadline, progress):
+    """The worker: read every worktree's records into progress["records"], then ship each, adding to
+    progress["finished"] each record dealt with and to progress["unshipped"] (shipper, worktree, record, line)
+    for each that did not ship. An error before every worktree's records are read goes in progress["error"]."""
+    try:
+        kinds = record_kinds()
+        progress["records"] = [(worktree, kind, record) for worktree in dict.fromkeys(worktrees)
+                               for kind, record in records_in(worktree, kinds)]
+    except Exception as error:
+        progress["error"] = f"{type(error).__name__}: {error}"
+        return
+    for worktree, kind, record in progress["records"]:
         try:
-            shipment = runner([sys.executable, str(shipper), str(record)],
-                              capture_output=True, text=True, timeout=remaining, check=False)
-        except subprocess.TimeoutExpired:
-            unshipped.append((shipper, worktree, record, budget_spent_line))
-            continue
-        if shipment.returncode != 0 or not shipment.stdout.strip():
-            unshipped.append((shipper, worktree, record, shipper_line(shipment)))
-    return unshipped
+            line = unshipped_line_for(record, kind, runner, clock, deadline)
+        except Exception as error:
+            # A record another agent-session removed mid-check has nothing left to ship.
+            line = None if not os.path.lexists(record) else RECORD_CHECK_FAILED_LINE_TEMPLATE.format(
+                error=f"{type(error).__name__}: {error}")
+        if line is not None:
+            progress["unshipped"].append((kind[1], worktree, record, line))
+        progress["finished"].add(record)
 
 
 def shipment_failed_refusal(unshipped):
@@ -298,14 +356,30 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
     if not removes:
         return 0
     deadline = clock() + SHIPPING_BUDGET_SECONDS
+    # The same deadline in real seconds, for the worker: an injected clock cannot bound a stalled call.
+    wall_deadline = time.monotonic() + SHIPPING_BUDGET_SECONDS
     worktrees, reason = worktrees_listed_or_failure_reason(payload.get("cwd") or os.getcwd(), runner)
     if worktrees is None:
         note_unchecked(WORKTREE_LISTING_FAILED_NOTICE.format(reason=reason))
         return 0
-    kinds = record_kinds()
-    records = [(worktree, kind, record) for worktree in dict.fromkeys(worktrees)
-               for kind, record in records_in(worktree, kinds)]
-    unshipped = unshipped_records(records, runner, clock, deadline)
+    progress = {"finished": set(), "unshipped": []}
+    worker = threading.Thread(target=ship_every_record, args=(worktrees, runner, clock, deadline, progress),
+                              daemon=True)
+    worker.start()
+    worker.join(max(0.0, wall_deadline - time.monotonic()))
+    if "error" in progress:
+        note_unchecked(RECORDS_NOT_READ_NOTICE.format(reason=progress["error"]))
+        return 0
+    records = progress.get("records")
+    if records is None:
+        note_unchecked(RECORDS_NOT_READ_NOTICE.format(
+            reason=f"reading them ran past {SHIPPING_BUDGET_SECONDS} seconds"))
+        return 0
+    unshipped = list(progress["unshipped"])
+    if worker.is_alive():
+        reported = {record for _, _, record, _ in unshipped} | set(progress["finished"])
+        unshipped += [(kind[1], worktree, record, budget_spent_line())
+                      for worktree, kind, record in records if record not in reported]
     if unshipped:
         deny(shipment_failed_refusal(unshipped))
     return 0
