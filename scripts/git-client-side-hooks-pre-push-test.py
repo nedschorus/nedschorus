@@ -1450,6 +1450,23 @@ def run_selective_test_run_cases(scratch):
                      "--only-suites-whose-recorded-inputs-changed-since", "origin/main",
                      "--wait-for-lock-seconds", "0"]], repr(calls))
 
+    # A suite run under the hook must not see the hook's start time: code under test that reads
+    # the budget from its environment would then get one that shrinks as the clock runs.
+    hooks = make_layout(
+        scratch, "layout-selective-start-time-hidden",
+        test_suites_runner_text=FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+if %r in os.environ:
+    print("FAIL scripts/fake-failing-test.py exit 1 (0.1s)")
+    print(%r)
+    sys.exit(1)
+print(%r)
+""" % ("NEDSCHORUS_PRE_PUSH_HOOK_STARTED_AT_EPOCH_SECONDS", FAKE_FAILED_SUMMARY,
+         FAKE_PASSED_SUMMARY))
+    hidden = Scenario(scratch, "selective-start-time-hidden", hooks)
+    result = hidden.push("origin", "clean")
+    check("the selective test run starts the suites without the hook's start time",
+          went_through(result), result.describe())
+
     help_text = subprocess.run([sys.executable, str(REAL_TEST_SUITES_RUNNER), "--help"],
                                capture_output=True, text=True, timeout=60).stdout
     check("every option the check passes is one the real run-all-test-suites.py offers",
