@@ -35,8 +35,10 @@ not exited RUNNER_STOP_GRACE_SECONDS later, and every process it started that is
 such as one a suite started in a session of its own, is then killed.
 
 The time budget is DEFAULT_TIME_BUDGET_SECONDS or the number of seconds in
-TIME_BUDGET_ENVIRONMENT_VARIABLE. With the conflict check's 60 seconds before it and the stop's
-graces after it, the hook ends within the 600 seconds a Claude Code agent can give one command.
+TIME_BUDGET_ENVIRONMENT_VARIABLE. With the default budgets, the hook ends within
+HOOK_WORST_CASE_SECONDS: the conflict check's 60 seconds before the run, then the run's budget,
+then the stop's PROCESS_LISTING_TIMEOUT_SECONDS, RUNNER_STOP_GRACE_SECONDS and two
+TERMINATE_GRACE_SECONDS. That stays under the 600 seconds a Claude Code agent can give one command.
 """
 
 import os
@@ -67,6 +69,11 @@ TIME_BUDGET_ENVIRONMENT_VARIABLE = "NEDSCHORUS_PRE_PUSH_SELECTIVE_TEST_RUN_SECON
 # The runner acts on a stop within half a second, then kills its suites and writes its report.
 RUNNER_STOP_GRACE_SECONDS = 30.0
 TERMINATE_GRACE_SECONDS = 5.0
+PROCESS_LISTING_TIMEOUT_SECONDS = 10.0
+CONFLICT_CHECK_DEFAULT_TIME_BUDGET_SECONDS = 60.0
+HOOK_WORST_CASE_SECONDS = (CONFLICT_CHECK_DEFAULT_TIME_BUDGET_SECONDS + DEFAULT_TIME_BUDGET_SECONDS
+                           + PROCESS_LISTING_TIMEOUT_SECONDS + RUNNER_STOP_GRACE_SECONDS
+                           + 2 * TERMINATE_GRACE_SECONDS)
 
 LOG_DIRECTORY_PATTERN = re.compile(r"; logs in (.+)$")
 REPORT_FILE_NAME = "test-run-report.txt"
@@ -107,7 +114,7 @@ def descendant_process_ids(root_pid):
     process group, so stopping the group alone would leave the child running.
     """
     listing = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True,
-                             check=False, timeout=30)
+                             check=False, timeout=PROCESS_LISTING_TIMEOUT_SECONDS)
     if listing.returncode != 0:
         raise RuntimeError("ps -A -o pid=,ppid= exited %d: %s"
                            % (listing.returncode, last_line(listing.stderr)))
@@ -248,11 +255,11 @@ def say_suites_not_run(stream, stdout):
     say_whole_report(stream, stdout)
 
 
-def stopped_run_failed_suite_lines(stdout):
-    """The lines of a stopped run naming a suite that failed before the stop, not one it killed."""
+def stopped_run_suite_lines(stdout, killed_by_the_stop):
+    """The lines of a stopped run naming a suite the stop killed, or one that failed before it."""
     return [line for line in stdout.splitlines()
             if line.startswith(FAILED_SUITE_LINE_PREFIX)
-            and FAILED_SUITE_LINE_KILLED_WHEN_RUN_STOPPED_MARK not in line]
+            and (FAILED_SUITE_LINE_KILLED_WHEN_RUN_STOPPED_MARK in line) == killed_by_the_stop]
 
 
 def say_refusal(stream, stdout, budget=None, listing_error=None):
@@ -273,10 +280,18 @@ def say_refusal(stream, stdout, budget=None, listing_error=None):
         say(stream, MESSAGE_PREFIX + "an nc-test-suite failed in the selective test run, so this "
             "push is refused. That run went on after the failure until its %d-second time budget "
             "ran out, and was stopped there; the suites it had not finished by then were not "
-            "tested." % budget)
-        suite_lines = stopped_run_failed_suite_lines(stdout)
+            "tested. The failing suites:" % budget)
+        suite_lines = stopped_run_suite_lines(stdout, killed_by_the_stop=False)
     for line in suite_lines:
         say(stream, line)
+    if budget is not None:
+        killed_lines = stopped_run_suite_lines(stdout, killed_by_the_stop=True)
+        if killed_lines:
+            say(stream, MESSAGE_PREFIX + "these suites were still running when the run was stopped, "
+                "so they were not tested; each is marked FAIL but did not fail, so it needs no fix. "
+                "Suites the run had not started yet are not listed:")
+            for line in killed_lines:
+                say(stream, line)
     say_whole_report(stream, stdout)
     say(stream, "Fix what each failing suite's log shows, commit the fix and push again; the "
         "next push runs the selective test run again.")
@@ -287,7 +302,7 @@ def say_refusal(stream, stdout, budget=None, listing_error=None):
     if listing_error:
         say(stream, MESSAGE_PREFIX + "the processes the run's suites started in their own process "
             "sessions on this machine could not be listed when the run was stopped, so some may "
-            "still be running: %s" % listing_error)
+            "still be running. The listing's error: %s" % listing_error)
         say(stream, "Tell the user this line and the error in it, since those processes may keep "
             "running on the machine.")
 
@@ -337,8 +352,8 @@ def main(stream, environment):
             cause += "; the logs of the suites it ran are in %s" % log_directory
         if listing_error:
             cause += ("; the processes its suites started in their own process sessions on this "
-                      "machine could not be listed, so some may still be running: %s"
-                      % listing_error)
+                      "machine could not be listed, so some may still be running. The listing's "
+                      "error: %s" % listing_error)
         say_runner_stderr(stream, stderr)
         say_not_run(stream, cause, tell_user=bool(listing_error))
         return EXIT_ALLOW_PUSH

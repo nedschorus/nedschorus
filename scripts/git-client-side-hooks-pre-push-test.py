@@ -240,7 +240,11 @@ SELECTIVE_TEST_RUN_REFUSED = ("pre-push: an nc-test-suite failed in the selectiv
 SELECTIVE_TEST_RUN_REFUSED_BEFORE_BUDGET_RAN_OUT = (
     "pre-push: an nc-test-suite failed in the selective test run, so this push is refused. That "
     "run went on after the failure until its 1-second time budget ran out, and was stopped there; "
-    "the suites it had not finished by then were not tested.")
+    "the suites it had not finished by then were not tested. The failing suites:")
+SELECTIVE_TEST_RUN_STOP_KILLED_SUITES_LINE = (
+    "pre-push: these suites were still running when the run was stopped, so they were not "
+    "tested; each is marked FAIL but did not fail, so it needs no fix. Suites the run had not "
+    "started yet are not listed:")
 SELECTIVE_TEST_RUN_NOT_RUN_END = ", so this push goes ahead without the selective test run"
 SELECTIVE_TEST_RUN_HAND_RUN_LINE = (
     "Run it by hand from your worktree: python3 scripts/run-all-test-suites.py "
@@ -1354,6 +1358,18 @@ def run_selective_test_run_copies_of_runner_constants_cases():
              hook.FAILED_SUITE_LINE_KILLED_WHEN_RUN_STOPPED_MARK.strip() + " {")):
         check(f"the selective test run's {hook_name} is what the runner prints",
               in_runner in runner_source, f"{hook_value!r} not found as {in_runner!r}")
+    conflict_check = load_module_from_path("conflict_check", CONFLICT_CHECK_RUNNER)
+    check("the selective test run's CONFLICT_CHECK_DEFAULT_TIME_BUDGET_SECONDS equals the "
+          "conflict check's DEFAULT_TIME_BUDGET_SECONDS",
+          hook.CONFLICT_CHECK_DEFAULT_TIME_BUDGET_SECONDS
+          == conflict_check.DEFAULT_TIME_BUDGET_SECONDS,
+          f"hook {hook.CONFLICT_CHECK_DEFAULT_TIME_BUDGET_SECONDS!r}, conflict check "
+          f"{conflict_check.DEFAULT_TIME_BUDGET_SECONDS!r}")
+    # A Claude Code agent can give one command at most 600 seconds; the hook's own start-up and
+    # the shell hook around it need a few of those.
+    check("with the default budgets, the pre-push hook's worst case ends at least 5 seconds "
+          "before the 600 seconds a Claude Code agent can give one command",
+          hook.HOOK_WORST_CASE_SECONDS <= 595, f"{hook.HOOK_WORST_CASE_SECONDS!r} seconds")
     first_line = (f"{runner.PROGRAM}: /fake at abc (clean); -j 4"
                   f"{runner.FIRST_REPORT_LINE_LOG_DIRECTORY_MARK}/fake/logs")
     found = hook.log_directory_named_in(first_line)
@@ -1580,11 +1596,12 @@ def run_selective_test_run_cases(scratch):
     check("a suite failed before the budget ran out: the push is refused and the branch never "
           "reaches origin", was_refused(result) and failed_early.origin_ref("clean") is None,
           result.describe())
-    check("a suite failed before the budget ran out: the refusal names that suite, not the one "
-          "the stop killed, then the whole report's path",
-          refusal[1:3] == [FAKE_FAILED_BEFORE_STOP_SUITE_LINE,
-                           "The whole report: %s/test-run-report.txt" % FAKE_LOG_DIRECTORY]
-          and FAKE_STOPPED_SUITE_LINE not in refusal, result.describe())
+    check("a suite failed before the budget ran out: the refusal names that suite as failing, "
+          "then the one the stop killed as not tested, then the whole report's path",
+          refusal[1:5] == [FAKE_FAILED_BEFORE_STOP_SUITE_LINE,
+                           SELECTIVE_TEST_RUN_STOP_KILLED_SUITES_LINE, FAKE_STOPPED_SUITE_LINE,
+                           "The whole report: %s/test-run-report.txt" % FAKE_LOG_DIRECTORY],
+          result.describe())
 
     failing_stop_ps_bin = scratch / "failed-before-overrun-failing-ps-bin"
     failing_stop_ps_bin.mkdir()
@@ -1605,7 +1622,8 @@ def run_selective_test_run_cases(scratch):
           "processes could not be listed, with ps's error, and tells the user",
           "pre-push: the processes the run's suites started in their own process sessions on "
           "this machine could not be listed when the run was stopped, so some may still be "
-          "running: ps -A -o pid=,ppid= exited 1: ps: cannot read the process table"
+          "running. The listing's error: ps -A -o pid=,ppid= exited 1: ps: cannot read the "
+          "process table"
           in result.stderr
           and "Tell the user this line and the error in it, since those processes may keep "
           "running on the machine." in result.stderr, result.describe())
@@ -1657,8 +1675,8 @@ def run_selective_test_run_cases(scratch):
         "the selective test run had not finished when the 1-second time budget ran out, and "
         "was stopped; the logs of the suites it ran are in " + FAKE_LOG_DIRECTORY
         + "; the processes its suites started in their own process sessions on this machine "
-        "could not be listed, so some may still be running: ps -A -o pid=,ppid= exited 1: ps: "
-        "cannot read the process table", tell_user=True, budget=HANGING_CHECK_BUDGET_SECONDS,
+        "could not be listed, so some may still be running. The listing's error: ps -A -o "
+        "pid=,ppid= exited 1: ps: cannot read the process table", tell_user=True, budget=HANGING_CHECK_BUDGET_SECONDS,
         extra_environment={"PATH": "%s%s%s" % (failing_ps_bin, os.pathsep,
                                                os.environ.get("PATH", ""))})
     for suffix in (".child-pid", ".detached-child-pid"):
