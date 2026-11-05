@@ -189,7 +189,30 @@ one, CLOSE first writes its running count into that heading, `## Item K of M:
 <title>`, K one more than the highest whole number any item heading holds and
 M the walk finder's count of the items shown and waiting, and names it with
 the same K and M. The line naming the next item gives that counted M,
-whatever M the walk-document's headings give. Only a line CLOSE
+whatever M the walk-document's headings give.
+
+WALK ORDER. The unnumbered items, the summary item left out, are the items
+not yet shown, and only they are sorted; a numbered item keeps its number and
+its place. They come together, where the first of them comes on the round
+above, or just before the summary item or a once-deferred item when one of
+those comes sooner, in this order: an item after every item it waits on;
+otherwise by category, the four of section 2 of
+docs/nedschorus-wiki/queue/nedschorus-goals-and-philosophy-founding-statement-and-agent-working-principles.md
+in the order WALK_CATEGORIES gives them, then by the day the item first
+entered an approval-walk, then in walk-document order; an item waited on takes
+the place the item waiting on it would take, when that is earlier. Any item
+waiting on an item still to come, a deferred one included, is passed over.
+Each such item gives its category on a line opening with
+`#approval_walk_item_in_category_<category>`, each item it waits on on a line
+`#approval_walk_item_waits_on <that item's heading title>`, the title after any
+running count, in any case, and its day on a line
+`#approval_walk_item_first_entered YYYY-MM-DD`, which CLOSE and the
+APPROVAL-WALK-WAITING-ITEM-COLD-READ-FAST-READ step write right under the
+heading, with today's date, into each such item that has none. Both steps
+refuse, writing nothing, when such an item has no category tag on a line that
+opens with one, more than one, or one not in WALK_CATEGORIES; a waits-on title
+no other item heading has; a first-entered date not written YYYY-MM-DD; or
+when such items wait on each other in a circle. Only a line CLOSE
 writes records anything: a line for an answer that took effect, for answers to
 parts, for --moved-on-no-decision, for --already-decided or for --moved-on
 decides its items; a line for a
@@ -505,6 +528,48 @@ CLOSE_DEFERRED_HEADING_NOT_NOTED = ("Its heading in {document} names other items
 SUMMARY_HEADING = re.compile(r"\bof\s+\d+\b[*_\s:.\-\u2013\u2014]*summary\b|^\s*##\s+[*_\s]*summary\b", re.I)
 NEWLINE = "\n"
 UNNUMBERED_HEADING_PARTS = re.compile(r"^(\s*##[ \t]+)(.*?)(?:[ \t]+#+)?[ \t]*$")
+# The four categories of section 2 of
+# docs/nedschorus-wiki/queue/nedschorus-goals-and-philosophy-founding-statement-and-agent-working-principles.md,
+# in the order their items are shown.
+WALK_CATEGORIES = ("must_fix_now", "fix_next", "fix_during_maintenance", "file_an_improvement_feature_or_change")
+WALK_CATEGORY_TAG = "#approval_walk_item_in_category_"
+WALK_WAITS_ON_TAG = "#approval_walk_item_waits_on"
+WALK_FIRST_ENTERED_TAG = "#approval_walk_item_first_entered"
+LINE_OPENING_MARKERS = r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*"
+WALK_CATEGORY_LINE = re.compile(LINE_OPENING_MARKERS + re.escape(WALK_CATEGORY_TAG))
+WALK_CATEGORY_TAGS_IN_LINE = re.compile(re.escape(WALK_CATEGORY_TAG) + r"\w*")
+WALK_WAITS_ON_LINE = re.compile(LINE_OPENING_MARKERS + re.escape(WALK_WAITS_ON_TAG) + MARKER_END
+                                + r"[*_`]*[:\s]*(.*?)[*_`\s]*$")
+WALK_FIRST_ENTERED_LINE = re.compile(LINE_OPENING_MARKERS + re.escape(WALK_FIRST_ENTERED_TAG) + MARKER_END
+                                     + r"[*_`]*[:\s]*(.*?)[*_`\s]*$")
+WALK_ORDER_REFUSED = (
+    "nothing written: {problem}\n"
+    "Every item of the walk-document not yet shown to the user, headed `## <the point>` with no number, needs "
+    "exactly one category line, so that this program can choose which of them he sees next: the items each "
+    "waits on first, then by category, then by the day each first entered a walk, earlier first, then in "
+    "walk-document order. "
+    "The categories are the four of section 2 of "
+    "docs/nedschorus-wiki/queue/nedschorus-goals-and-philosophy-founding-statement-and-agent-working-principles.md, "
+    "shown in this order:\n"
+    + "\n".join(f"  `{WALK_CATEGORY_TAG}{category}`" for category in WALK_CATEGORIES) + "\n"
+    "If an item has no category line, more than one category tag, or a tag not in this list: leave it exactly one "
+    "tag from this list, the one for how soon its work must happen, on a line of its own under its heading.\n"
+    f"If an item must not be shown before another item: give it a line `{WALK_WAITS_ON_TAG} <the other item's "
+    "title>`, the other item's heading without its `##` and any `Item N of M: `, one line for each item it waits "
+    "on; an item already decided counts as done. If items wait on each other in a circle, take out the waits-on "
+    "line that is not a real prerequisite.\n"
+    "Then run `python3 {program} {step} --cwd {top}` again.\n"
+    "From now on, write the category line, and a waits-on line for each item it waits on, into every item when you "
+    "add it to a walk-document.")
+CATEGORY_MISSING = "{item} has no `" + WALK_CATEGORY_TAG + "<category>` line."
+CATEGORY_DOUBLED = "{item} has more than one category tag: {tags}."
+CATEGORY_UNKNOWN = "{item} has the category tag `{tag}`, which is not one of the four categories."
+WAITS_ON_UNKNOWN = "{item} waits on `{title}`, which is the title of no other item heading."
+WAITS_ON_CIRCLE = "the items {items} wait on each other in a circle, so none of them can come first."
+FIRST_ENTERED_UNREADABLE = (
+    "{item} has the line `{line}`, whose date is not a date written YYYY-MM-DD. This program writes a line "
+    f"`{WALK_FIRST_ENTERED_TAG} YYYY-MM-DD` on the day it first finds the item; write in it the day the item first "
+    "entered an approval-walk, or delete the line, and this program writes today's date.")
 NUMBERED_HEADING = "{marks}Item {number} of {total}: {title}"
 NO_UNNUMBERED_ITEM_AFTER = (
     "nothing written: close was given " + HOLD_ANSWER_FLAG + ", but in {document} the heading right after "
@@ -1329,9 +1394,10 @@ def start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, t
     failure never stops close or the read step."""
     named = items_named(numbers, total)
     try:
-        count, order, summary, units = walk_document_items(walk_finder, minutes, named, numbers, total, parser)
+        count, order, summary, units, placing = walk_document_items(walk_finder, minutes, named, numbers, total,
+                                                                    parser, WAITING_ITEM_READ_STEP, top)
         decided, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
-        after = next_item(order, summary, numbers, numbers, decided | set(numbers), deferrals)
+        after = next_item(order, summary, numbers, numbers, decided | set(numbers), deferrals, placing)
         if not after:
             return None
         if isinstance(after[0], int):
@@ -1408,7 +1474,8 @@ def waiting_item_read(arguments):
     walk_finder = load_walk_finder()
     top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
     _, numbers, total = waiting_items(walk_finder, value, minutes)
-    count, _, _, _ = walk_document_items(walk_finder, minutes, value, numbers, total, parser)
+    count, _, _, _, _ = walk_document_items(walk_finder, minutes, value, numbers, total, parser,
+                                            WAITING_ITEM_READ_STEP, top)
     total = total or count
     item = items_named(numbers, total)
     document, text = item_text(walk_finder, minutes, value, numbers, total, parser)
@@ -1479,10 +1546,14 @@ def last_answer(walk_finder, minutes, parser):
                   f"`--help` lists it.")
 
 
-def walk_document_items(walk_finder, minutes, value, numbers, total, parser):
+def walk_document_items(walk_finder, minutes, value, numbers, total, parser, step, top):
     """Return (M as the walk finder counts it, the walk-document's items in order, the summary item or None, its
-    units), an item being its number, or, for an unnumbered item, its heading's line index, an int, which
-    unnumbered_item_numbered numbers when it is shown."""
+    units, the placing of the items not yet shown), an item being its number, or, for an unnumbered item, its
+    heading's line index, an int, which unnumbered_item_numbered numbers when it is shown.
+
+    The placing maps each unnumbered item but the summary item to (its sort key, the items it waits on), as
+    unshown_items_placing reads them; first it writes the `#approval_walk_item_first_entered` line, with today's date,
+    into each such item that has none. Raise Failure, writing nothing, when an item's lines do not let it be placed."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     text = document.read_text(encoding="utf-8") if document.is_file() else ""
     units = walk_finder.item_unit_spans(text, parser) if document.is_file() else None
@@ -1490,6 +1561,26 @@ def walk_document_items(walk_finder, minutes, value, numbers, total, parser):
         walk_finder.waiting_item_units(document, value, numbers, total, parser, units)
     except walk_finder.UnusableRange as problem:
         raise Failure(f"the last `#next_to_present` line in {minutes}, `{value}`: {problem}")
+    today = datetime.date.today().isoformat()
+    try:
+        order, summary, placing = walk_document_order(walk_finder, text, units, parser, document, today)
+        stamped = unshown_items_first_entered_stamped(walk_finder, text, units, parser, today)
+        if stamped != text:
+            # Placed before the write, so a stamped document that no longer places writes nothing.
+            units = walk_finder.item_unit_spans(stamped, parser)
+            order, summary, placing = walk_document_order(walk_finder, stamped, units, parser, document, today)
+    except WalkOrderUnusable as problem:
+        raise Failure(WALK_ORDER_REFUSED.format(problem=problem, program=Path(__file__).resolve(), step=step,
+                                                top=shlex.quote(str(top))))
+    if stamped != text:
+        document.write_text(stamped, encoding="utf-8")
+    count = walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units)
+    return count, order, summary, units, placing
+
+
+def walk_document_order(walk_finder, text, units, parser, document, today):
+    """Return (the items of units in walk-document order, the summary item or None, the placing of the unshown
+    items), as walk_document_items' docstring says."""
     lines = text.split("\n")
     order, summary = [], None
     for unit in units:
@@ -1499,7 +1590,136 @@ def walk_document_items(walk_finder, minutes, value, numbers, total, parser):
         if keys and SUMMARY_HEADING.search(
                 walk_finder.approval_walk_item_heading_with_deferred_note_removed(lines[first])):
             summary = keys[0]
-    return walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units), order, summary, units
+    return order, summary, unshown_items_placing(walk_finder, text, units, parser, document, today)
+
+
+class WalkOrderUnusable(Exception):
+    """An unshown item's category, waits-on or first-entered lines that do not let it be placed; its argument says
+    which."""
+
+
+def unshown_units(walk_finder, units, lines):
+    """The unnumbered units of units, the summary item's left out."""
+    return [unit for unit in units if walk_finder.approval_walk_unit_is_unnumbered_item(unit)
+            and not SUMMARY_HEADING.search(walk_finder.approval_walk_item_heading_with_deferred_note_removed(
+                lines[unit[3]]))]
+
+
+def heading_title(walk_finder, line):
+    """The title of an item heading: its text after the `##` marks and any running count, deferred note left out,
+    with its spaces squeezed, in lower case; a `#approval_walk_item_waits_on` line's title is read the same way."""
+    heading = walk_finder.approval_walk_item_heading_with_deferred_note_removed(line)
+    parts = UNNUMBERED_HEADING_PARTS.match(heading)
+    title = parts[2] if parts else heading.lstrip("#")
+    title = re.sub(r"^[*_\s]*items?\s+[\d.]+(?:\s*(?:,|&|\band\b|\bto\b|-|–)\s*[\d.]+)*\s+of\s+\d+\b"
+                   r"[*_\s:.\-–—]*", "", title, flags=re.I)
+    return squeezed(title.strip(" *_")).lower()
+
+
+def unshown_items_first_entered_stamped(walk_finder, text, units, parser, today):
+    """text with a line `#approval_walk_item_first_entered today` written right under the heading of each unshown item
+    that has no such line."""
+    lines = text.split("\n")
+    prose = walk_finder.prose_lines(text, parser)
+    unstamped = [unit[3] for unit in unshown_units(walk_finder, units, lines)
+                 if not any(WALK_FIRST_ENTERED_LINE.match(line) for line in prose[unit[3] + 1:unit[4]])]
+    for first in reversed(unstamped):
+        # The blank line after it keeps a next line, such as indented code, from joining the tag's paragraph.
+        after = [""] if first + 1 < len(lines) and lines[first + 1].strip() else []
+        lines[first + 1:first + 1] = ["", f"{WALK_FIRST_ENTERED_TAG} {today}"] + after
+    return "\n".join(lines)
+
+
+def unshown_items_placing(walk_finder, text, units, parser, document, today):
+    """Return {heading line of an unshown item: ((category rank, first-entered date, heading line), {items it waits
+    on})}, an item it waits on given as walk_document_items gives items; raise WalkOrderUnusable when an unshown
+    item has no category tag, more than one, or one not in WALK_CATEGORIES, an unreadable first-entered date, or a
+    `#approval_walk_item_waits_on` title that no other item heading has, or when unshown items wait on each other in
+    a circle."""
+    lines = text.split("\n")
+    prose = walk_finder.prose_lines(text, parser)
+    titles = {}
+    for unit in units:
+        key = unit[3] if walk_finder.approval_walk_unit_is_unnumbered_item(unit) else None
+        for item in [key] if key is not None else unit[0]:
+            titles.setdefault(heading_title(walk_finder, lines[unit[3]]), []).append(item)
+    placing = {}
+    for unit in unshown_units(walk_finder, units, lines):
+        first, end = unit[3], unit[4]
+        item = f"the item `{lines[first].strip()}` in {document}"
+        tags = [tag for line in prose[first + 1:end] if WALK_CATEGORY_LINE.match(line)
+                for tag in WALK_CATEGORY_TAGS_IN_LINE.findall(line)]
+        if not tags:
+            raise WalkOrderUnusable(CATEGORY_MISSING.format(item=item))
+        if len(tags) > 1:
+            raise WalkOrderUnusable(CATEGORY_DOUBLED.format(item=item, tags=", ".join(f"`{tag}`" for tag in tags)))
+        category = tags[0][len(WALK_CATEGORY_TAG):]
+        if category not in WALK_CATEGORIES:
+            raise WalkOrderUnusable(CATEGORY_UNKNOWN.format(item=item, tag=tags[0]))
+        entered = next((match for match in map(WALK_FIRST_ENTERED_LINE.match, prose[first + 1:end]) if match), None)
+        try:
+            date = datetime.date.fromisoformat(entered[1]).isoformat() if entered else today
+        except ValueError:
+            raise WalkOrderUnusable(FIRST_ENTERED_UNREADABLE.format(item=item, line=entered[0].strip()))
+        waits_on = set()
+        for match in filter(None, map(WALK_WAITS_ON_LINE.match, prose[first + 1:end])):
+            title = heading_title(walk_finder, "## " + match[1].lstrip("# "))
+            named = [other for other in titles.get(title, []) if other != first]
+            if not named:
+                raise WalkOrderUnusable(WAITS_ON_UNKNOWN.format(item=item, title=match[1]))
+            waits_on.update(named)
+        placing[first] = ((WALK_CATEGORIES.index(category), date, first), waits_on)
+    circle = waiting_circle(placing)
+    if circle:
+        raise WalkOrderUnusable(WAITS_ON_CIRCLE.format(
+            items=", ".join(f"`{lines[item].strip()}`" for item in circle) + f" in {document}"))
+    return placing
+
+
+def waiting_circle(placing):
+    """The items of a circle of unshown items each waiting on the next, in walk-document order, or []."""
+    state = {}
+
+    def visit(item, path):
+        state[item] = "visiting"
+        for other in sorted(other for other in placing[item][1] if other in placing):
+            if state.get(other) == "visiting":
+                return path[path.index(other):]
+            if other not in state:
+                found = visit(other, path + [other])
+                if found:
+                    return found
+        state[item] = "done"
+        return []
+
+    for item in sorted(placing):
+        if item not in state:
+            found = visit(item, [item])
+            if found:
+                return sorted(found)
+    return []
+
+
+def unshown_items_in_walk_order(items, placing):
+    """items, unshown items of placing, in the order the walk shows them: an item after every one of items it
+    waits on, and otherwise the item whose own sort key, or the key of an item waiting on it directly or through
+    others, is lowest first, so an item that unblocks another comes as early as that other item would."""
+    waiting_on = {item: placing[item][1] & set(items) for item in items}
+    effective = {}
+
+    def lowest_key(item, seen=()):
+        if item not in effective:
+            dependents = [other for other in items if item in waiting_on[other] and other not in seen]
+            effective[item] = min([placing[item][0]] + [lowest_key(other, seen + (item,)) for other in dependents])
+        return effective[item]
+
+    ordered, remaining = [], list(items)
+    while remaining:
+        ready = [item for item in remaining if not waiting_on[item] & set(remaining)]
+        chosen = min(ready, key=lambda item: (lowest_key(item), placing[item][0]))
+        ordered.append(chosen)
+        remaining.remove(chosen)
+    return ordered
 
 
 def numbered_heading(heading, number, total):
@@ -1599,7 +1819,7 @@ def minutes_record(walk_finder, minutes_text, parser):
     return decided, deferrals
 
 
-def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals):
+def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals, placing=None):
     """Return the item numbers the `#next_to_present` line must name next, or [] when the minutes record
     every item.
 
@@ -1608,8 +1828,12 @@ def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferr
     included, an item deferred once and not decided moved to just
     before the summary item, or to the end when there is none, and names the first item the minutes do
     not record. It starts at the last answered item, or, when that item was just deferred, at the first
-    item after it in the walk-document that is not deferred, and goes round once.
+    item after it in the walk-document that is not deferred, and goes round once. The unshown items placing
+    holds come together, in the order unshown_items_in_walk_order gives, where the first of them comes on that
+    round, or just before the summary item or a deferred item when one of those comes sooner; an item is passed
+    over while an item it waits on is still to come.
     """
+    placing = placing or {}
     recorded = {item for item in order if item in decided or deferrals[item] > 1}
     still_waiting = [item for item in waiting_numbers if item not in recorded and item not in answered_numbers]
     if still_waiting:
@@ -1621,7 +1845,15 @@ def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferr
     answered = [index for index, item in enumerate(order) if item in answered_numbers]
     anchors = [item for item in order[answered[-1]:] if item in in_place] if answered else []
     start = walk.index(anchors[0]) if anchors else 0
-    return [item for item in walk[start:] + walk[:start] if item not in recorded][:1]
+    to_come = [item for item in walk[start:] + walk[:start] if item not in recorded]
+    unshown = [item for item in to_come if item in placing]
+    if unshown:
+        late = [index for index, item in enumerate(to_come) if item == summary or item in waiting_deferred]
+        cut = min([to_come.index(unshown[0])] + late)
+        shown = [item for item in to_come if item not in placing]
+        before = len([item for item in to_come[:cut] if item not in placing])
+        to_come = shown[:before] + unshown_items_in_walk_order(unshown, placing) + shown[before:]
+    return [item for item in to_come if not placing.get(item, (None, set()))[1] & set(to_come)][:1]
 
 
 def held_items_decided_with(walk_finder, minutes, parser, answered_numbers, item, outcome):
@@ -1675,7 +1907,8 @@ def close(arguments):
                       program=Path(__file__).resolve(), flags="", top=shlex.quote(str(top))))])
         print("\n".join(output))
         return 0
-    count, order, summary, units = walk_document_items(walk_finder, minutes, value, waiting_numbers, total, parser)
+    count, order, summary, units, placing = walk_document_items(walk_finder, minutes, value, waiting_numbers, total,
+                                                                parser, "close", top)
     # Only a plain decision passes to the items held for this one; after a deferral, a move on or answers to parts
     # they stay waiting, so the walk shows them to the user.
     held_outcome = None
@@ -1724,7 +1957,7 @@ def close(arguments):
                                         parser, noted=False)
         output += [CLOSE_HELD_DECIDED.format(item=item, held=line.split(": ")[0]) for line in held]
     decided, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
-    numbers = next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals)
+    numbers = next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals, placing)
     if numbers and isinstance(numbers[0], int):
         numbers = [unnumbered_item_numbered(walk_finder, minutes, numbers[0], units)]
     named = items_named(numbers, count)
