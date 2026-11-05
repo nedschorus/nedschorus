@@ -178,11 +178,13 @@ def test_a_session_that_finds_itself_passes():
     check("record: " in completed.stdout, "the run prints the record's citation", completed.stdout)
     seen = json.loads(FAKE_CLAUDE_ARGUMENTS_FILE.read_text())
     arguments = seen["arguments"]
-    check(arguments[:2] == ["-p", weekly_owner_check.LIVE_CHECK_PROMPT]
+    check(arguments[:5] == ["-p", "--strict-mcp-config", "--permission-mode", "dontAsk",
+                            weekly_owner_check.LIVE_CHECK_PROMPT]
           and arguments[arguments.index("--model") + 1] == "haiku"
           and arguments[arguments.index("--allowedTools") + 1] == "Bash"
           and "--no-session-persistence" in arguments,
-          "claude runs print mode on Haiku with Bash allowed and no saved session", arguments)
+          "claude runs print mode on Haiku, with no claude.ai connectors, in dontAsk mode, with Bash "
+          "allowed and no saved session", arguments)
     entries = seen["settings"]["hooks"]["PostToolUse"]
     # The fake claude's cwd is resolved; on macOS the check's temporary path is not (/var is a
     # symlink to /private/var), so compare both resolved.

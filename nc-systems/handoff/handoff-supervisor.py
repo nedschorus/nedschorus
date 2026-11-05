@@ -68,6 +68,12 @@ The handoff file the agent writes (simple `key: value` lines):
                         similar agents. Subagents that completed, failed, or
                         were stopped are not recorded at all (user-ruled
                         2026-08-29)
+  background-task-started-during-handoff-deferral-<n>: optional, one per
+                        background Bash task launched after the handoff-deferral
+                        began and still running when the handoff was written
+  cold-read-full-run-command-refused-during-handoff-deferral-<n>: optional, one
+                        per cold-read-full-run the deferral's hook refused and
+                        saved for the successor
 
 How much dialog to carry is not among them: the extractor takes the tail that
 clears its word floor, so the retiring agent exercises no judgment over what
@@ -359,6 +365,10 @@ WRITTEN_BY_SESSION_FIELD = session_handoff_field_names.WRITTEN_BY_SESSION_FIELD
 SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD = session_handoff_field_names.SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD
 LEGACY_RESTART_COUNTER_FIELD = session_handoff_field_names.LEGACY_RESTART_COUNTER_FIELD
 DONT_RESTART_FIELD = session_handoff_field_names.DONT_RESTART_FIELD
+BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
+    "background-task-started-during-handoff-deferral-")
+COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
+    "cold-read-full-run-command-refused-during-handoff-deferral-")
 WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 
 # The prompt goes on to the next step; a stop must hold that back too.
@@ -538,6 +548,21 @@ ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE = (
     "{joined_roster}. You may need to re-commission similar agents. If you need more "
     "context, the dead agents' full transcripts are at "
     "{transcript_directory}/subagents/agent-<id>.jsonl."
+)
+
+
+BACKGROUND_TASKS_STARTED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE = (
+    "The session you are replacing started {task_count} background Bash task(s) during its "
+    "handoff-deferral that were still running when it ended, so they were stopped: "
+    "{joined_tasks}. Run again any whose result you still need."
+)
+
+COLD_READ_FULL_RUN_COMMANDS_REFUSED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE = (
+    "During the handoff-deferral of the session you are replacing, a hook refused "
+    "{command_count} cold-read-full-run(s), because each would have outlasted that session, and "
+    "saved them for you: {joined_commands}. Run each command from the directory listed with it, unless the "
+    "dialog you read first shows it is no longer needed, and tell whoever asked for it, as that "
+    "dialog shows, that it now runs."
 )
 
 
@@ -1068,16 +1093,21 @@ def next_step_from(handoff_fields: dict) -> str:
     return handoff_fields.get(session_handoff_field_names.NEXT_STEP_FIELD, "").strip()
 
 
-def spawned_subagent_roster_from(handoff_fields: dict) -> list:
-    """Return the unfinished subagent roster in writer order."""
+def numbered_field_values_from(handoff_fields: dict, prefix: str) -> list:
+    """Return the values of the fields <prefix><n>, in the order of n."""
     numbered = []
     for key, value in handoff_fields.items():
-        if not key.startswith(SPAWNED_SUBAGENT_FIELD_PREFIX):
+        if not key.startswith(prefix):
             continue
-        ordinal = key[len(SPAWNED_SUBAGENT_FIELD_PREFIX):]
+        ordinal = key[len(prefix):]
         if ordinal.isdigit() and value:
             numbered.append((int(ordinal), value))
     return [value for _, value in sorted(numbered)]
+
+
+def spawned_subagent_roster_from(handoff_fields: dict) -> list:
+    """Return the unfinished subagent roster in writer order."""
+    return numbered_field_values_from(handoff_fields, SPAWNED_SUBAGENT_FIELD_PREFIX)
 
 
 def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
@@ -1107,6 +1137,16 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
             joined_roster="; ".join(roster),
             transcript_directory=transcript_directory,
         ))
+    late_tasks = numbered_field_values_from(
+        handoff_fields, BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
+    if late_tasks:
+        lines.append(BACKGROUND_TASKS_STARTED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE.format(
+            task_count=len(late_tasks), joined_tasks="; ".join(late_tasks)))
+    refused_commands = numbered_field_values_from(
+        handoff_fields, COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
+    if refused_commands:
+        lines.append(COLD_READ_FULL_RUN_COMMANDS_REFUSED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE.format(
+            command_count=len(refused_commands), joined_commands="; ".join(refused_commands)))
     preamble = " ".join(lines)
     if handoff_fields.get(NEXT_STEP_BLOCK_UNTERMINATED_FIELD):
         preamble += UNTERMINATED_NEXT_STEP_BLOCK_NOTE
