@@ -35,10 +35,13 @@ not exited RUNNER_STOP_GRACE_SECONDS later, and every process it started that is
 such as one a suite started in a session of its own, is then killed.
 
 The time budget is DEFAULT_TIME_BUDGET_SECONDS or the number of seconds in
-TIME_BUDGET_ENVIRONMENT_VARIABLE. With the default budgets, the hook ends within
-HOOK_WORST_CASE_SECONDS: the conflict check's 60 seconds before the run, then the run's budget,
-then the stop's PROCESS_LISTING_TIMEOUT_SECONDS, RUNNER_STOP_GRACE_SECONDS and two
-TERMINATE_GRACE_SECONDS. That stays under the 600 seconds a Claude Code agent can give one command.
+TIME_BUDGET_ENVIRONMENT_VARIABLE, cut so that the whole pre-push hook ends within
+PRE_PUSH_HOOK_TIME_LIMIT_SECONDS, under the 600 seconds a Claude Code agent can give one command:
+the shell hook puts the time it started in HOOK_STARTED_AT_ENVIRONMENT_VARIABLE, and the budget
+leaves out the seconds spent since then by the checks before the run, and
+STOP_AFTER_TIME_BUDGET_WORST_CASE_SECONDS for stopping the run. The checks before the run take
+longer for each branch pushed, so their time is measured, not added up from their time limits.
+A hook started without that variable, such as by hand, uses the uncut budget.
 """
 
 import os
@@ -46,6 +49,7 @@ import re
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 EXIT_ALLOW_PUSH = 0
@@ -70,10 +74,12 @@ TIME_BUDGET_ENVIRONMENT_VARIABLE = "NEDSCHORUS_PRE_PUSH_SELECTIVE_TEST_RUN_SECON
 RUNNER_STOP_GRACE_SECONDS = 30.0
 TERMINATE_GRACE_SECONDS = 5.0
 PROCESS_LISTING_TIMEOUT_SECONDS = 10.0
-CONFLICT_CHECK_DEFAULT_TIME_BUDGET_SECONDS = 60.0
-HOOK_WORST_CASE_SECONDS = (CONFLICT_CHECK_DEFAULT_TIME_BUDGET_SECONDS + DEFAULT_TIME_BUDGET_SECONDS
-                           + PROCESS_LISTING_TIMEOUT_SECONDS + RUNNER_STOP_GRACE_SECONDS
-                           + 2 * TERMINATE_GRACE_SECONDS)
+STOP_AFTER_TIME_BUDGET_WORST_CASE_SECONDS = (PROCESS_LISTING_TIMEOUT_SECONDS
+                                             + RUNNER_STOP_GRACE_SECONDS
+                                             + 2 * TERMINATE_GRACE_SECONDS)
+# A Claude Code agent can give one command at most 600 seconds; git and the shell hook need a few.
+PRE_PUSH_HOOK_TIME_LIMIT_SECONDS = 595.0
+HOOK_STARTED_AT_ENVIRONMENT_VARIABLE = "NEDSCHORUS_PRE_PUSH_HOOK_STARTED_AT_EPOCH_SECONDS"
 
 LOG_DIRECTORY_PATTERN = re.compile(r"; logs in (.+)$")
 REPORT_FILE_NAME = "test-run-report.txt"
@@ -99,12 +105,20 @@ def say(stream, text):
     stream.flush()
 
 
-def time_budget_seconds(environment):
+def time_budget_seconds(environment, now=None):
     try:
         seconds = float(environment.get(TIME_BUDGET_ENVIRONMENT_VARIABLE, ""))
     except ValueError:
-        return DEFAULT_TIME_BUDGET_SECONDS
-    return seconds if seconds > 0 else DEFAULT_TIME_BUDGET_SECONDS
+        seconds = 0.0
+    if not seconds > 0:
+        seconds = DEFAULT_TIME_BUDGET_SECONDS
+    try:
+        started_at = float(environment.get(HOOK_STARTED_AT_ENVIRONMENT_VARIABLE, ""))
+    except ValueError:
+        return seconds
+    spent = max((time.time() if now is None else now) - started_at, 0.0)
+    left = PRE_PUSH_HOOK_TIME_LIMIT_SECONDS - spent - STOP_AFTER_TIME_BUDGET_WORST_CASE_SECONDS
+    return max(min(seconds, left), 0.0)
 
 
 def descendant_process_ids(root_pid):

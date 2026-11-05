@@ -1329,6 +1329,65 @@ def load_module_from_path(name, path):
     return loaded
 
 
+def run_selective_test_run_time_budget_cases(hook):
+    check("the pre-push hook's time limit is under the 600 seconds a Claude Code agent can give "
+          "one command", hook.PRE_PUSH_HOOK_TIME_LIMIT_SECONDS < 600,
+          repr(hook.PRE_PUSH_HOOK_TIME_LIMIT_SECONDS))
+    # Each wait after the budget runs out must be one of the summed constants, or the sum lies.
+    stop_waits = {"PROCESS_LISTING_TIMEOUT_SECONDS", "RUNNER_STOP_GRACE_SECONDS",
+                  "TERMINATE_GRACE_SECONDS", "budget"}
+    source = SELECTIVE_TEST_RUN_CHECK.read_text()
+    timeouts = re.findall(r"\btimeout=([^,)]+)", source)
+    check("every timeout= in the selective test run is the budget or a wait its stop sum counts",
+          bool(timeouts) and set(timeouts) <= stop_waits, repr(timeouts))
+    check("the selective test run's stop sum counts the listing, the runner's grace and two "
+          "terminate graces", hook.STOP_AFTER_TIME_BUDGET_WORST_CASE_SECONDS
+          == hook.PROCESS_LISTING_TIMEOUT_SECONDS + hook.RUNNER_STOP_GRACE_SECONDS
+          + 2 * hook.TERMINATE_GRACE_SECONDS, repr(hook.STOP_AFTER_TIME_BUDGET_WORST_CASE_SECONDS))
+    started = {hook.HOOK_STARTED_AT_ENVIRONMENT_VARIABLE: "1000"}
+    for label, environment, now, expected in (
+            ("no start time: the default budget", {}, 2000.0, hook.DEFAULT_TIME_BUDGET_SECONDS),
+            ("an unreadable start time: the default budget",
+             {hook.HOOK_STARTED_AT_ENVIRONMENT_VARIABLE: ""}, 2000.0,
+             hook.DEFAULT_TIME_BUDGET_SECONDS),
+            ("a hook that spent 1 second before the run keeps the default budget", started,
+             1001.0, hook.DEFAULT_TIME_BUDGET_SECONDS),
+            ("a hook that spent 100 seconds before the run gets what is left of its time limit",
+             started, 1100.0, hook.PRE_PUSH_HOOK_TIME_LIMIT_SECONDS - 100
+             - hook.STOP_AFTER_TIME_BUDGET_WORST_CASE_SECONDS),
+            ("a hook that spent its whole time limit gets no budget", started, 1700.0, 0.0),
+            ("a start time later than now counts as no time spent", started, 900.0,
+             hook.DEFAULT_TIME_BUDGET_SECONDS),
+            ("a set budget is cut too",
+             {**started, hook.TIME_BUDGET_ENVIRONMENT_VARIABLE: "590"}, 1000.0,
+             hook.PRE_PUSH_HOOK_TIME_LIMIT_SECONDS
+             - hook.STOP_AFTER_TIME_BUDGET_WORST_CASE_SECONDS)):
+        got = hook.time_budget_seconds(environment, now=now)
+        check(f"time budget: {label}", got == expected, f"got {got!r}, expected {expected!r}")
+    # The shell hook must hand its start time to the selective test run, or no budget is cut.
+    layout_parent = Path(tempfile.mkdtemp(prefix="pre-push-started-at-")).resolve()
+    try:
+        hooks = make_layout(
+            layout_parent, "started-at", conflict_check=None, include_runner=False,
+            mutation_testing_worktree_check_text="import sys\nsys.exit(0)\n",
+            selective_test_run_check_text=(
+                "import os, sys\nsys.stderr.write('STARTED_AT=%%s\\n' %% os.environ.get(%r, ''))\n"
+                % hook.HOOK_STARTED_AT_ENVIRONMENT_VARIABLE),
+            open_pull_request_branch_check_text="import sys\nsys.exit(0)\n")
+        before = int(time.time())
+        refs_text = "refs/heads/topic %s refs/heads/topic %s\n" % ("a" * 40, "0" * 40)
+        for shell in SHELLS_FOR_THE_HOOK:
+            completed = subprocess.run([shell, str(hooks / "pre-push"), "origin", "url"],
+                                       input=refs_text, capture_output=True, text=True,
+                                       timeout=30)
+            found = re.findall(r"^STARTED_AT=(\d+)$", completed.stderr, re.MULTILINE)
+            check("%s: the shell hook hands the selective test run the time it started" % shell,
+                  len(found) == 1 and before <= int(found[0]) <= int(time.time()),
+                  completed.stderr)
+    finally:
+        shutil.rmtree(layout_parent, ignore_errors=True)
+
+
 def run_selective_test_run_copies_of_runner_constants_cases():
     # The hook keeps its own copies of the runner's output format, so nothing but this ties them.
     hook = load_module_from_path("selective_test_run_check", SELECTIVE_TEST_RUN_CHECK)
@@ -1358,18 +1417,7 @@ def run_selective_test_run_copies_of_runner_constants_cases():
              hook.FAILED_SUITE_LINE_KILLED_WHEN_RUN_STOPPED_MARK.strip() + " {")):
         check(f"the selective test run's {hook_name} is what the runner prints",
               in_runner in runner_source, f"{hook_value!r} not found as {in_runner!r}")
-    conflict_check = load_module_from_path("conflict_check", CONFLICT_CHECK_RUNNER)
-    check("the selective test run's CONFLICT_CHECK_DEFAULT_TIME_BUDGET_SECONDS equals the "
-          "conflict check's DEFAULT_TIME_BUDGET_SECONDS",
-          hook.CONFLICT_CHECK_DEFAULT_TIME_BUDGET_SECONDS
-          == conflict_check.DEFAULT_TIME_BUDGET_SECONDS,
-          f"hook {hook.CONFLICT_CHECK_DEFAULT_TIME_BUDGET_SECONDS!r}, conflict check "
-          f"{conflict_check.DEFAULT_TIME_BUDGET_SECONDS!r}")
-    # A Claude Code agent can give one command at most 600 seconds; the hook's own start-up and
-    # the shell hook around it need a few of those.
-    check("with the default budgets, the pre-push hook's worst case ends at least 5 seconds "
-          "before the 600 seconds a Claude Code agent can give one command",
-          hook.HOOK_WORST_CASE_SECONDS <= 595, f"{hook.HOOK_WORST_CASE_SECONDS!r} seconds")
+    run_selective_test_run_time_budget_cases(hook)
     first_line = (f"{runner.PROGRAM}: /fake at abc (clean); -j 4"
                   f"{runner.FIRST_REPORT_LINE_LOG_DIRECTORY_MARK}/fake/logs")
     found = hook.log_directory_named_in(first_line)
