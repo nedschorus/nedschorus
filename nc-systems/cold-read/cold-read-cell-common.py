@@ -387,11 +387,13 @@ LEADING_TRACING_LOGGER_TIMESTAMP = re.compile(
 
 
 class RecognisedFailureText(typing.NamedTuple):
-    """A runtime failure prefix, cause class, and rule for extracting the detail."""
+    """A runtime failure prefix, cause class, rule for extracting the detail, and an
+    optional pattern the rest of the line after the prefix must start with."""
 
     cause_class: str
     line_prefix: str
     detail: str
+    rest_of_line_pattern: typing.Optional[re.Pattern] = None
 
 
 def classify_failed_attempt(
@@ -403,7 +405,9 @@ def classify_failed_attempt(
         timestamp = LEADING_TRACING_LOGGER_TIMESTAMP.match(stripped)
         untimestamped = stripped[timestamp.end():] if timestamp else stripped
         for text in recognised_texts or ():
-            if untimestamped.startswith(text.line_prefix):
+            if untimestamped.startswith(text.line_prefix) and (
+                    text.rest_of_line_pattern is None
+                    or text.rest_of_line_pattern.match(untimestamped[len(text.line_prefix):])):
                 if text.detail == DETAIL_IS_REST_OF_LINE:
                     detail = untimestamped[len(text.line_prefix):].lstrip(" \t·")
                 elif text.detail == DETAIL_IS_WHOLE_LINE:

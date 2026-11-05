@@ -41,6 +41,7 @@ it up with no change here.
 import importlib.util
 import json
 import pathlib
+import re
 import sys
 
 _common_spec = importlib.util.spec_from_file_location(
@@ -120,8 +121,8 @@ def recognised_failure_texts_for_model(model: str) -> list:
     family = model_family_name(model)
     return [
         common.RecognisedFailureText(
-            "account-limit", "You've hit your session limit",
-            common.DETAIL_IS_REST_OF_LINE),
+            "account-limit", "You've hit your ", common.DETAIL_IS_REST_OF_LINE,
+            re.compile(r"(?:\S+ )*?limit\b")),
         common.RecognisedFailureText(
             "model-limit", f"You've reached your {family} limit", family),
         common.RecognisedFailureText(

@@ -805,9 +805,9 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- Every failure case below, in the design's terms ---------------------
     # nc-systems/cold-read/cold-read-grid-cell-failure-handling-design.md, section
-    # 8. The real limit texts (section 4) are the fixtures: line 2 of the two
+    # 8. The real limit texts (section 4) are the fixtures: the lines of the
     # kept logs it cites, and the 2026-09-18 logged-out capture on ned-box.
-    SESSION_LIMIT_LINE = "You've hit your session limit · resets 8:50pm (America/Los_Angeles)"
+    WEEKLY_LIMIT_LINE = "You've hit your weekly limit · resets Nov 7, 3am (America/Los_Angeles)"
     MODEL_LIMIT_LINE = ("You've reached your {family} limit. Switch to another model, or "
                         "manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, "
                         "to continue.")
@@ -915,30 +915,30 @@ with tempfile.TemporaryDirectory() as scratch:
     # The 2026-09-10 outage, eight records of three unrelated FAILED lines.
     repository = build_scratch_repository(scratch, "checkout-claude-down")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "claude-", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
+        [{"fragment": "claude-", "attempts": 2, "stdout": WEEKLY_LIMIT_LINE}])})
     down_lines = lines_opening(result, "AGENT-BINARY DOWN:")
     check("one AGENT-BINARY DOWN line, naming claude, the class and the reset text",
-          down_lines == ["AGENT-BINARY DOWN: claude — account-limit — resets 8:50pm "
-                         "(America/Los_Angeles); 3 reports absent"],
+          down_lines == ["AGENT-BINARY DOWN: claude — account-limit — weekly limit · resets "
+                         "Nov 7, 3am (America/Los_Angeles); 3 reports absent"],
           f"down lines were {down_lines!r}; stdout={result.stdout!r}")
     failed_lines = lines_opening(result, "FAILED")
     check("an account limit is not retried: no RETRYING line, three FAILED lines naming it",
           lines_opening(result, "RETRYING:") == [] and len(failed_lines) == 3
-          and all("account-limit — resets 8:50pm (America/Los_Angeles)" in line
+          and all("account-limit — weekly limit · resets Nov 7, 3am (America/Los_Angeles)" in line
                   for line in failed_lines),
           repr(result.stdout))
     check("the first FAILED line alone tells the user, naming the attempt's log",
           [line for line in failed_lines if "Tell the user:" in line] == failed_lines[:1]
           and failed_lines[0].endswith(".md.stderr.log).")
-          and ". Tell the user: claude account-limit — resets 8:50pm (America/Los_Angeles) (log: "
+          and ". Tell the user: claude account-limit — weekly limit · resets Nov 7, 3am (America/Los_Angeles) (log: "
           in failed_lines[0], repr(failed_lines))
     check("the closing text restates the down line without the prefix, once",
-          result.stdout.count("- claude is down: account-limit — resets 8:50pm "
-                              "(America/Los_Angeles); 3 reports absent") == 1
+          result.stdout.count("- claude is down: account-limit — weekly limit · resets "
+                              "Nov 7, 3am (America/Los_Angeles); 3 reports absent") == 1
           and result.stdout.count("AGENT-BINARY DOWN:") == 1, repr(result.stdout))
     check("the closing text ends by telling the user the cause, with the log to check",
           result.stdout.rstrip().splitlines()[-1].startswith(
-              "Tell the user: claude account-limit — resets 8:50pm (America/Los_Angeles) (log: ")
+              "Tell the user: claude account-limit — weekly limit · resets Nov 7, 3am (America/Los_Angeles) (log: ")
           and result.stdout.rstrip().endswith(".md.stderr.log)."),
           repr(result.stdout.rstrip().splitlines()[-1]))
     check("four land, the some-landed text, exit 1",
@@ -946,26 +946,17 @@ with tempfile.TemporaryDirectory() as scratch:
           and "4 of 7 reports landed in" in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}")
 
-    # --- The account limit printed bare: an empty detail still names the class
-    # The agent-binary printed "You've hit your session limit" with nothing after
-    # it, so the cell's cause line ends `account-limit — ` and the grid's
-    # strip() took the separator's trailing space with it; partitioning on
-    # the full separator then found none, and the class "account-limit —"
-    # matched no class the grid knows, losing the AGENT-BINARY DOWN line and
-    # the Tell-the-user sentence. Found by the same review as the marker
-    # case above:
-    # https://github.com/nedschorus/nedschorus/pull/508#pullrequestreview-5252230189
+    # --- The account limit printed bare: the limit's own words are the detail
     repository = build_scratch_repository(scratch, "checkout-claude-down-bare-limit")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "claude-", "attempts": 2, "stdout": "You've hit your session limit"}])})
+        [{"fragment": "claude-", "attempts": 2, "stdout": "You've hit your weekly limit"}])})
     down_lines = lines_opening(result, "AGENT-BINARY DOWN:")
-    check("a bare limit text is still one AGENT-BINARY DOWN line naming account-limit",
-          len(down_lines) == 1 and result.stdout.count("AGENT-BINARY DOWN:") == 1
-          and down_lines[0].startswith("AGENT-BINARY DOWN: claude — account-limit — ")
-          and down_lines[0].endswith("; 3 reports absent"),
+    check("a bare limit text is one AGENT-BINARY DOWN line naming account-limit and the limit",
+          down_lines == ["AGENT-BINARY DOWN: claude — account-limit — weekly limit; 3 reports absent"],
           f"down lines were {down_lines!r}; stdout={result.stdout!r}")
-    check("the user is still told the bare cause",
-          "Tell the user: claude account-limit — " in result.stdout, repr(result.stdout))
+    check("the user is told the bare cause",
+          "Tell the user: claude account-limit — weekly limit (log: " in result.stdout,
+          repr(result.stdout))
 
     # --- Two Claude cells hit the account limit after the third landed -------
     # The rule as the user revised it at item 3 of the design's walk
@@ -976,12 +967,12 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch, "checkout-claude-down-after-one-landed")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
         [{"fragment": "claude-hunt-second-strongest-model.md", "attempts": 0},
-         {"fragment": "claude-", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
+         {"fragment": "claude-", "attempts": 2, "stdout": WEEKLY_LIMIT_LINE}])})
     check("one landed Claude cell and two absent with the account limit is still claude down",
           lines_opening(result, "AGENT-BINARY DOWN:")
-          == ["AGENT-BINARY DOWN: claude — account-limit — resets 8:50pm "
-              "(America/Los_Angeles); 2 reports absent"]
-          and "- claude is down: account-limit — resets 8:50pm (America/Los_Angeles); 2 reports absent"
+          == ["AGENT-BINARY DOWN: claude — account-limit — weekly limit · resets "
+              "Nov 7, 3am (America/Los_Angeles); 2 reports absent"]
+          and "- claude is down: account-limit — weekly limit · resets Nov 7, 3am (America/Los_Angeles); 2 reports absent"
           in result.stdout
           and result.returncode == 1 and len(reviews_saved_lines(result)) == 5,
           f"exit {result.returncode}; stdout={result.stdout!r}")
@@ -1009,7 +1000,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch, "checkout-mixed-causes")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
         [{"fragment": "claude-hunt-second-strongest-model.md", "attempts": 2},
-         {"fragment": "claude-", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
+         {"fragment": "claude-", "attempts": 2, "stdout": WEEKLY_LIMIT_LINE}])})
     retrying_lines = lines_opening(result, "RETRYING:")
     check("only the exit-1 cell is retried",
           len(retrying_lines) == 1
@@ -1213,7 +1204,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # line: the cause changes what is reported, never what is decided.
     repository = build_scratch_repository(scratch, "checkout-codex-quotes-limit")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "codex-terminology-deep.md", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
+        [{"fragment": "codex-terminology-deep.md", "attempts": 2, "stdout": WEEKLY_LIMIT_LINE}])})
     repository_plain = build_scratch_repository(scratch, "checkout-codex-plain-failure")
     result_plain = run_grid(repository_plain, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
         [{"fragment": "codex-terminology-deep.md", "attempts": 2}])})
@@ -1434,7 +1425,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # its FAILED line nor the closing text tells the user: nothing waits on it.
     repository = build_scratch_repository(scratch, "checkout-question-4-account-limit")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": QUESTION_4_REPORT_NAME, "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
+        [{"fragment": QUESTION_4_REPORT_NAME, "attempts": 2, "stdout": WEEKLY_LIMIT_LINE}])})
     record_directory = record_directory_of(repository)
     failed_lines = lines_opening(result, "FAILED")
     check("a Question 4 cell at its account limit is FAILED at once, not retried",
@@ -1448,8 +1439,8 @@ with tempfile.TemporaryDirectory() as scratch:
           and markers_in(record_directory, "<!-- INCOMPLETE SET:") == [],
           f"exit {result.returncode}; stdout={result.stdout!r}")
     check("the closing text gives the account limit as why Question 4 was not answered",
-          "Question 4, What should be code, was not answered: account-limit — resets 8:50pm "
-          f"(America/Los_Angeles) (log: " in result.stdout
+          "Question 4, What should be code, was not answered: account-limit — weekly limit · resets "
+          f"Nov 7, 3am (America/Los_Angeles) (log: " in result.stdout
           and f"{QUESTION_4_REPORT_NAME}.stderr.log). The other reports do not depend on it: "
           "go on without its answer." in result.stdout, repr(result.stdout))
 
