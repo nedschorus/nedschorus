@@ -474,7 +474,7 @@ def work_in_flight_from_background_tasks(background_tasks: list, transcript_path
         return age is None or age <= background_task_wait_seconds
 
     subagent_ids = ids_of(SUBAGENT_TASK_TYPE)
-    launched_at_by_id = subagent_launch_times(transcript_path, subagent_ids)
+    launched_at_by_id = subagent_launched_at_by_id_from_transcript_spawn_records(transcript_path, subagent_ids)
     launched_at_by_id.update({task_id: now - timedelta(seconds=age)
                               for task_id, age in launch_ages.items() if age is not None})
     return WorkInFlight(
@@ -487,7 +487,7 @@ def work_in_flight_from_background_tasks(background_tasks: list, transcript_path
     )
 
 
-def subagent_launch_times(transcript_path: str, subagent_ids: list) -> dict:
+def subagent_launched_at_by_id_from_transcript_spawn_records(transcript_path: str, subagent_ids: list) -> dict:
     """Return {subagent id: launch time, or None if undated} for the ids whose spawn record the
     session transcript holds. A missing transcript holds none."""
     launched_at_by_id = {}
