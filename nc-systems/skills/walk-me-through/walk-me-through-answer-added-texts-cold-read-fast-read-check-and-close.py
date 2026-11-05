@@ -117,7 +117,10 @@ walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py,
 beside this program and loaded by path, the module the walk-me-through Stop
 hook uses too, so the
 `#next_to_present` line and the walk-document's item headings are read exactly
-as that hook reads them.
+as that hook reads them. When the checkout's docs/walk/ holds more than one
+approval-walk that is open or paused, every step refuses, writing nothing,
+names each one's walk-minutes and says which to close and how to merge them,
+since an agent-seat keeps at most one approval-walk open.
 
 CHECK finds the texts the answer adds: the item's lines whose first word,
 after any list or quotation marker, outside fenced code, is a mark the answer adds;
@@ -440,6 +443,26 @@ CLOSE_MOVED_ON_MINUTES = ("{item}: moved on, no decision: {reason}; the walk doe
                           "<moved on, no decision>")
 CLOSE_MOVED_ON_NO_DECISION_MINUTES = "{item}: moved on; the item asked for no decision. <moved on, no decision>"
 CLOSE_DEFERRED_AGAIN_MINUTES = "{item}: deferred a second time, so it leaves the walk and stays open. <open>"
+MORE_THAN_ONE_UNCLOSED_APPROVAL_WALK = (
+    "nothing written: more than one approval-walk is open or paused in {directory}, so this program cannot tell "
+    "which approval-walk the user's answer belongs to, and records it in none. A paused approval-walk is one "
+    "whose walk-minutes hold an `#approval_walk_paused` line after their last `#next_to_present` line. Their "
+    "walk-minutes:\n"
+    "{minutes}\n"
+    "An agent-seat keeps at most one approval-walk open: a new subject that needs the user's rulings joins the open "
+    "approval-walk as one item just after the item waiting for his answer, with sub-items when it needs them.\n"
+    "For each of these approval-walks that has no item the user has yet to answer: add the line "
+    "`#next_to_present none, closed` as the last line of its walk-minutes.\n"
+    "If after that more than one of them still has items the user has yet to answer: keep the approval-walk whose "
+    "item your last message to him showed; in its walk-document, move each other approval-walk's unanswered items "
+    "into it as items of their own, just after the kept approval-walk's waiting item: first the items that block "
+    "work, each prerequisite before the item it blocks; related items next to each other; and older items before "
+    "newer ones; and renumber the items after it that he has not yet seen; then close each other approval-walk: add "
+    "the line `#next_to_present none, closed` as the last line of its walk-minutes, and run "
+    "`scripts/walk-files-ship.py <its name>`.\n"
+    "Then run the command you just ran again.\n"
+    "From now on, add a new subject that needs the user's rulings to the open approval-walk instead of opening a "
+    "second one.")
 CHECK_SEVERAL_WAITING = (
     "nothing written: the `#next_to_present` line in {minutes} names more than one item waiting, {item}, "
     "and one check run records one answer for all of them.\n"
@@ -768,8 +791,12 @@ def the_open_walk(walk_finder, cwd):
         raise Failure(f"{cwd} is not in a git checkout, so no approval-walk can be open there.")
     parser = walk_finder.markdown_parser()
     walk_directory = top / walk_finder.WALK_DIRECTORY
-    walk = (walk_finder.newest_unclosed_approval_walk_including_paused(walk_directory, parser)
-            if walk_directory.is_dir() else None)
+    try:
+        walk = (walk_finder.the_one_unclosed_approval_walk_including_paused(walk_directory, parser)
+                if walk_directory.is_dir() else None)
+    except walk_finder.MoreThanOneUnclosedApprovalWalk as several:
+        raise Failure(MORE_THAN_ONE_UNCLOSED_APPROVAL_WALK.format(
+            directory=walk_directory, minutes="\n".join(f"  {path}" for path in several.minutes_paths)))
     if walk is None:
         raise Failure(f"no approval-walk is open in {walk_directory}.")
     minutes, value, _, paused = walk

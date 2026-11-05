@@ -1135,6 +1135,29 @@ def test_no_open_walk_or_no_item_fails():
           result.returncode == 1 and result.stderr.startswith(FAILURE_PREFIX + "check: ") and "runs backwards" in result.stderr, described(result))
 
 
+def test_two_unclosed_approval_walks_are_refused_naming_both_and_writing_nothing():
+    for second_marker, kind in (("item 5 of 9", "open"), ("item 5 of 9\n#approval_walk_paused stop order", "paused")):
+        case = Case()
+        second = case.minutes.with_name("an-older-walk-minutes.md")
+        second.write_text(f"# Minutes\n\n#next_to_present {second_marker}\n")
+        # The older modification time is the one the program used to pass over; no walk is guessed now.
+        os.utime(second, (1_000, 1_000))
+        before = {path: path.read_bytes() for path in (case.minutes, second)}
+        for step in ("check", "close", "approval-walk-waiting-item-cold-read-fast-read"):
+            result = case.run(step)
+            check(f"{step} with a second, {kind} approval-walk fails, naming both walk-minutes, and writes nothing",
+                  result.returncode == 1 and result.stderr.startswith(FAILURE_PREFIX + step + ": nothing written: ")
+                  and f"  {case.minutes}\n" in result.stderr and f"  {second}\n" in result.stderr
+                  and "#next_to_present none, closed" in result.stderr
+                  and {path: path.read_bytes() for path in before} == before
+                  and case.calls.read_text() == "", described(result))
+    case = Case()
+    case.minutes.with_name("a-closed-walk-minutes.md").write_text("#next_to_present none, closed.\n")
+    result = case.run("check")
+    check("a closed approval-walk beside the open one is not counted",
+          "more than one approval-walk" not in result.stderr and result.returncode == 0, described(result))
+
+
 SUMMARY_DOCUMENT = """# A walk with a summary
 
 ## Item 1 of 5: one

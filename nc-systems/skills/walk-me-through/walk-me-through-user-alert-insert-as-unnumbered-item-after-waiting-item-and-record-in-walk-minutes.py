@@ -46,6 +46,11 @@ NO_WALK_MESSAGE = (
     "no approval-walk is open in {walk_directory}, so the alerts were not added. Open an approval-walk whose "
     "items are these alerts alone, as the walk-me-through skill says, and write a line `#user_alert <id>` into "
     "its walk-minutes for each alert as soon as you create them.")
+MORE_THAN_ONE_WALK_MESSAGE = (
+    "more than one approval-walk is open or paused in {walk_directory}, so this program cannot tell which one the "
+    "alerts belong in, and no file was changed. Their walk-minutes:\n"
+    "{minutes}\n"
+    "Merge them into one approval-walk, as the walk-me-through skill says, then run again: {rerun}")
 UNUSABLE_WALK_MESSAGE = (
     "the open approval-walk's waiting item cannot be found, so no file was changed: {problem} Fix, as that problem "
     "says, the last `#next_to_present` line of the walk-minutes {minutes} or the item's heading in the "
@@ -126,7 +131,12 @@ def insert(cwd, alert_ids, now=None):
     parser = walk_finder.markdown_parser()
     top = walk_finder.checkout_top(Path(cwd))
     walk_directory = (top or Path(cwd)) / walk_finder.WALK_DIRECTORY
-    walk = walk_finder.open_walk(walk_directory, parser) if walk_directory.is_dir() else None
+    try:
+        walk = walk_finder.open_walk(walk_directory, parser) if walk_directory.is_dir() else None
+    except walk_finder.MoreThanOneUnclosedApprovalWalk as several:
+        raise Refused(MORE_THAN_ONE_WALK_MESSAGE.format(
+            walk_directory=walk_directory, minutes="\n".join(f"  {path}" for path in several.minutes_paths),
+            rerun=rerun_command(cwd, alert_ids)))
     if walk is None:
         raise Refused(NO_WALK_MESSAGE.format(walk_directory=walk_directory))
     minutes, value, _ = walk
