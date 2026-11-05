@@ -537,7 +537,8 @@ WALK_WAITS_ON_TAG = "#approval_walk_item_waits_on"
 WALK_FIRST_ENTERED_TAG = "#approval_walk_item_first_entered"
 LINE_OPENING_MARKERS = r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*"
 WALK_CATEGORY_LINE = re.compile(LINE_OPENING_MARKERS + re.escape(WALK_CATEGORY_TAG))
-WALK_CATEGORY_TAGS_IN_LINE = re.compile(re.escape(WALK_CATEGORY_TAG) + r"\w*")
+# Words joined by single underscores, so the closing `_` or `__` of underscore emphasis is not read into the tag.
+WALK_CATEGORY_TAGS_IN_LINE = re.compile(re.escape(WALK_CATEGORY_TAG) + r"(?:[^\W_]+(?:_[^\W_]+)*)?")
 WALK_WAITS_ON_LINE = re.compile(LINE_OPENING_MARKERS + re.escape(WALK_WAITS_ON_TAG) + MARKER_END
                                 + r"[*_`]*[:\s]*(.*?)[*_`\s]*$")
 WALK_FIRST_ENTERED_LINE = re.compile(LINE_OPENING_MARKERS + re.escape(WALK_FIRST_ENTERED_TAG) + MARKER_END
@@ -577,6 +578,14 @@ NO_UNNUMBERED_ITEM_AFTER = (
     "If a fast-read finding would change what {item} decides, write that change as a new item right after "
     "{item}, headed `## <the point>`, then run close with " + HOLD_ANSWER_FLAG + " again.\n"
     "If no finding does, run close without " + HOLD_ANSWER_FLAG + ".")
+HELD_NEW_ITEM_WAITS_ON_UNSHOWN = (
+    "nothing written: close was given " + HOLD_ANSWER_FLAG + ", but in {document} the new item right after "
+    "{item}, {new_item}, waits on {waited_on}, which the user has not been shown yet. The new item is shown "
+    "next, to settle {item}, so it cannot come after the item it waits on.\n"
+    "Take the line `" + WALK_WAITS_ON_TAG + " <title>` that names {waited_on} out of {new_item}. If {new_item} "
+    "depends on what {waited_on} would decide, add to {new_item} one sentence saying what {waited_on} proposes, "
+    "as background, since the user rules on {new_item} first. "
+    "Then run close with " + HOLD_ANSWER_FLAG + " again.")
 CLOSE_HELD_NEXT = ("Then run `{command}`, which gives {new_item} its cold-read-fast-read, do what it prints, and "
                    "present {new_item}. When the close step records the user's approval or disapproval of "
                    "{new_item}, it records the same outcome for {item}; after a deferral, a move on or answers to "
@@ -1546,14 +1555,15 @@ def last_answer(walk_finder, minutes, parser):
                   f"`--help` lists it.")
 
 
-def walk_document_items(walk_finder, minutes, value, numbers, total, parser, step, top):
+def walk_document_items(walk_finder, minutes, value, numbers, total, parser, step, top, stamp=True):
     """Return (M as the walk finder counts it, the walk-document's items in order, the summary item or None, its
     units, the placing of the items not yet shown), an item being its number, or, for an unnumbered item, its
     heading's line index, an int, which unnumbered_item_numbered numbers when it is shown.
 
     The placing maps each unnumbered item but the summary item to (its sort key, the items it waits on), as
-    unshown_items_placing reads them; first it writes the `#approval_walk_item_first_entered` line, with today's date,
-    into each such item that has none. Raise Failure, writing nothing, when an item's lines do not let it be placed."""
+    unshown_items_placing reads them; first, with stamp, it writes the `#approval_walk_item_first_entered` line, with
+    today's date, into each such item that has none. Raise Failure, writing nothing, when an item's lines do not let
+    it be placed."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     text = document.read_text(encoding="utf-8") if document.is_file() else ""
     units = walk_finder.item_unit_spans(text, parser) if document.is_file() else None
@@ -1564,7 +1574,7 @@ def walk_document_items(walk_finder, minutes, value, numbers, total, parser, ste
     today = datetime.date.today().isoformat()
     try:
         order, summary, placing = walk_document_order(walk_finder, text, units, parser, document, today)
-        stamped = unshown_items_first_entered_stamped(walk_finder, text, units, parser, today)
+        stamped = unshown_items_first_entered_stamped(walk_finder, text, units, parser, today) if stamp else text
         if stamped != text:
             # Placed before the write, so a stamped document that no longer places writes nothing.
             units = walk_finder.item_unit_spans(stamped, parser)
@@ -1606,9 +1616,11 @@ def unshown_units(walk_finder, units, lines):
 
 
 def heading_title(walk_finder, line):
-    """The title of an item heading: its text after the `##` marks and any running count, deferred note left out,
-    with its spaces squeezed, in lower case; a `#approval_walk_item_waits_on` line's title is read the same way."""
-    heading = walk_finder.approval_walk_item_heading_with_deferred_note_removed(line)
+    """The title of an item heading: its text after the `##` marks and any running count, deferred note and
+    backticks left out, with its spaces squeezed, in lower case; a `#approval_walk_item_waits_on` line's title is
+    read the same way."""
+    # Without backticks, since the waits-on line's reading drops a closing one along with closing emphasis marks.
+    heading = walk_finder.approval_walk_item_heading_with_deferred_note_removed(line).replace("`", "")
     parts = UNNUMBERED_HEADING_PARTS.match(heading)
     title = parts[2] if parts else heading.lstrip("#")
     title = re.sub(r"^[*_\s]*items?\s+[\d.]+(?:\s*(?:,|&|\band\b|\bto\b|-|–)\s*[\d.]+)*\s+of\s+\d+\b"
@@ -1722,6 +1734,26 @@ def unshown_items_in_walk_order(items, placing):
     return ordered
 
 
+def unshown_items_gathered_behind_chosen(walk_finder, minutes, chosen, units, placing, parser):
+    """Rewrite the walk-document so that the unshown items placing holds stand together where the first of them
+    stands, chosen first and the others in the order unshown_items_in_walk_order gives; return chosen's heading
+    line and the units of the rewritten walk-document. A later close walks on from chosen, so the items still
+    unshown come next, and items numbered later stand in the order they were shown."""
+    document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
+    lines = document.read_text(encoding="utf-8").split("\n")
+    spans = {unit[3]: (unit[3], unit[4]) for unit in units if unit[3] in placing}
+    rest = unshown_items_in_walk_order([item for item in placing if item != chosen], placing)
+    gathered = [line for item in [chosen] + rest for line in lines[spans[item][0]:spans[item][1]]]
+    start = min(spans)
+    kept = [(index, line) for index, line in enumerate(lines)
+            if not any(first <= index < end for first, end in spans.values())]
+    before = [line for index, line in kept if index < start]
+    after = [line for index, line in kept if index >= start]
+    text = "\n".join(before + gathered + after)
+    document.write_text(text, encoding="utf-8")
+    return len(before), walk_finder.item_unit_spans(text, parser)
+
+
 def numbered_heading(heading, number, total):
     """The unnumbered item heading `## <title>` with the running count `Item number of total: ` before its title."""
     marks, title = UNNUMBERED_HEADING_PARTS.match(heading).groups()
@@ -1750,10 +1782,11 @@ def unnumbered_item_text_once_numbered(walk_finder, minutes, first, units, numbe
     return "\n".join(lines[first:end]).strip()
 
 
-def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numbers, parser):
+def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numbers, parser, placing):
     """Number the unnumbered item right after the answered items' unit in the walk-document, as the close step's
     HOLD_ANSWER_FLAG asks, and return the `#next_to_present` value naming it; raise Failure, writing nothing, when
-    the unit right after is not unnumbered."""
+    the unit right after is not unnumbered, or when it waits on an item still unshown, as placing, the walk-document's
+    placing of its unshown items, says."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     text = document.read_text(encoding="utf-8")
     units = walk_finder.item_unit_spans(text, parser)
@@ -1767,6 +1800,13 @@ def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numb
                  else "none, since it is the last item")
         raise Failure(NO_UNNUMBERED_ITEM_AFTER.format(document=document, item=" and ".join(answered_numbers),
                                                       found=found))
+    lines = text.split(NEWLINE)
+    unshown_prerequisites = sorted(other for other in placing.get(units[after][3], (None, set()))[1]
+                                   if other in placing)
+    if unshown_prerequisites:
+        raise Failure(HELD_NEW_ITEM_WAITS_ON_UNSHOWN.format(
+            document=document, item=" and ".join(answered_numbers), new_item=f"`{lines[units[after][3]].strip()}`",
+            waited_on=", ".join(f"`{lines[other].strip()}`" for other in unshown_prerequisites)))
     number = unnumbered_item_numbered(walk_finder, minutes, units[after][3], units)
     return f"item {number} of {walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units)}"
 
@@ -1897,7 +1937,11 @@ def close(arguments):
     except walk_finder.UnusableRange as problem:
         raise Failure(f"the last answer line in {minutes}, `{item}`, {problem}.")
     if arguments.hold_answer_until_new_item_answered:
-        value = new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numbers, parser)
+        # Placed first, unstamped, so an unplaceable walk-document, or a new item that waits on one not yet shown,
+        # numbers nothing and writes nothing.
+        _, _, _, _, placing = walk_document_items(walk_finder, minutes, value, waiting_numbers, total, parser,
+                                                  f"close {HOLD_ANSWER_FLAG}", top, stamp=False)
+        value = new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numbers, parser, placing)
         waiting, waiting_numbers, total = waiting_items(walk_finder, value, minutes)
     if not set(answered_numbers) <= set(waiting_numbers):
         append_to_minutes(minutes, [CLOSE_HELD_MINUTES.format(item=item, new_item=waiting),
@@ -1959,7 +2003,10 @@ def close(arguments):
     decided, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
     numbers = next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals, placing)
     if numbers and isinstance(numbers[0], int):
-        numbers = [unnumbered_item_numbered(walk_finder, minutes, numbers[0], units)]
+        first = numbers[0]
+        if first in placing:  # Not the summary item, which stays where it is.
+            first, units = unshown_items_gathered_behind_chosen(walk_finder, minutes, first, units, placing, parser)
+        numbers = [unnumbered_item_numbered(walk_finder, minutes, first, units)]
     named = items_named(numbers, count)
     append_to_minutes(minutes, [NEXT_MARKER_LINE.format(value=named if numbers else CLOSED_MARKER_VALUE)])
     if numbers:
