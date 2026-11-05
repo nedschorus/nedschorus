@@ -21,7 +21,7 @@ Each invocation, under a lock that keeps two from overlapping:
    the agent-seat's turn has ended, and writes a user-alert when it is not there.
 5. For each idle agent-seat, applies the verdict's rule: rule 1 wakes it once its limit has ended;
    rule 2 has unbacked promises and announced actions judged and named to it; rule 3 sends the
-   handoff text; rule 4 ends a wait that a rule 3 or rule 5 message started; rule 5 has the judge
+   handoff text; rule 4 ends a wait no rule 2 message was sent on; rule 5 has the judge
    decide whether to message it. A message starts a wait, unless a wait is already open: 15 minutes
    later, if the agent-seat is idle, code sends the escalation, and 15 minutes after that writes the
    user a user-alert, once.
@@ -36,8 +36,8 @@ What it does not handle: it runs only on ned-box and reads only ned-box's agent-
 invocation runs its headless agent-sessions one after another, so a slow judge delays every other
 agent-seat's step, and the lock makes the next minute's invocation skip, until it ends. A wait
 does not end when the agent-seat answers a message; it ends when the agent-seat has nothing to do
-(rule 4), stops at a usage limit (rule 1), starts a new agent-session, or spends tokens after the
-user was told.
+(rule 4) and no rule 2 message was sent on the wait, stops at a usage limit (rule 1), starts a new
+agent-session, or spends tokens after the user was told.
 
 How it fails, and what the user sees: a headless agent-session that fails, is stopped, answers
 JSON code cannot use, or sends to the wrong entry or the wrong text; a message missing from the
@@ -101,6 +101,8 @@ SENDING_TOOLS = "SendMessage,ListAgents,ToolSearch"
 JUDGED_TEXT_CHARACTERS = 4000
 
 NUDGE, ESCALATE, TELL_USER = "nudge", "escalate", "tell_user"
+# A wait step recording that the wait carries a rule 2 message, which rule 4 does not settle.
+PROMISE = "promise"
 LIMIT_WAKE, ACCOUNT_NOTICE = "limit_wake", "account_notice"
 
 ESCALATION_TEXT = "You've given this {minutes} minutes, please check; if not sure, hand off"
@@ -229,6 +231,7 @@ class SweepLog:
     def __init__(self, path):
         self.path = path
         self.events = []
+        self.cut_short_last_line = False
         if path.exists():
             data = path.read_bytes()
             lines = data.split(b"\n")
@@ -240,6 +243,7 @@ class SweepLog:
                 except (UnicodeDecodeError, ValueError) as error:
                     # A last line with no newline is one an invocation was stopped while writing.
                     if number == len(lines):
+                        self.cut_short_last_line = True
                         continue
                     raise IdleSweepLogLineNotUtf8Json(
                         f"{path} line {number} is not UTF-8 JSON: {error}") from error
@@ -252,9 +256,15 @@ class SweepLog:
         if self.path.exists():
             data = self.path.read_bytes()
             if data and not data.endswith(b"\n"):
-                # The read skipped this cut-short last line; an event written after it would
-                # join it into a line that, no longer last, would stop every later read.
-                os.truncate(self.path, data.rfind(b"\n") + 1)
+                # An event written after a last line with no newline would join it into a line
+                # that, no longer last, would stop every later read. A cut-short line the read
+                # skipped is dropped; a whole one the read accepted only gets its newline.
+                if self.cut_short_last_line:
+                    os.truncate(self.path, data.rfind(b"\n") + 1)
+                else:
+                    with self.path.open("ab") as stream:
+                        stream.write(b"\n")
+        self.cut_short_last_line = False
         with self.path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
         self.events.append(event)
@@ -275,7 +285,9 @@ class SweepLog:
                 wait = None
             elif event["step"] == NUDGE:
                 wait = {"session_id": event["session_id"], "first_idle_at": event["first_idle_at"],
-                        "rule": event.get("rule"), NUDGE: event["at"]}
+                        NUDGE: event["at"]}
+                if event.get("rule") == 2:
+                    wait[PROMISE] = event["at"]
             elif wait is not None:
                 wait[event["step"]] = event["at"]
         return wait
@@ -599,8 +611,8 @@ class Sweep:
             rule, text = fallback[fields.RULE], fallback.get(fields.TEXT)
         if rule == 4:
             # Nothing to do settles the open tasks a rule 3 or 5 message was about, but not a
-            # promise a rule 2 message named, whose wait goes on while the agent-seat stays idle.
-            if wait and wait["rule"] == 2:
+            # promise a rule 2 message named, whatever message opened the wait it was sent on.
+            if wait and PROMISE in wait:
                 self.wait_step(seat, verdict, wait, stretch, rule, text)
             elif wait:
                 self.end_wait(seat, "nothing to do")
@@ -748,6 +760,8 @@ class Sweep:
         # cannot put off its escalation and the user-alert.
         if not wait:
             self.start_wait(seat, verdict, stretch, text, 2)
+        elif PROMISE not in wait:
+            self.record({"event": "wait_step", "agent_seat": seat, "step": PROMISE})
         self.send(seat, verdict, text, NUDGE)
         return "sent"
 

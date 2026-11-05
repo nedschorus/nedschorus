@@ -393,6 +393,42 @@ check("rule 2: the second promise did not put off the escalation",
       [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
       machine.events("wait_step"))
 
+# A promise sent on a wait a rule 5 or rule 3 message opened keeps that wait going through rule 4.
+for opener in ("rule 5", "rule 3"):
+    machine = Machine()
+    machine.seat("alpha", DONE_TURN)
+    if opener == "rule 5":
+        machine.task("alpha", "1")
+        machine.script({"sends": [send_to("alpha", "What's going on?")],
+                        "answer": {"sent": True, "reason": "nothing runs"}})
+    else:
+        machine.handoff_put_off()
+        machine.script(sent_ok())
+    machine.run(0)
+    if opener == "rule 5":
+        (machine.tasks / "nedschorus-alpha-tasks" / "1.json").unlink()
+    else:
+        (machine.handoffs / "s-1-handoff-deferred").unlink()
+    machine.append("alpha", cross_session(machine.events("message_sent")[-1]["text"], at(0.5)),
+                   assistant(PROMISE, at(1)), turn_end(at(1)))
+    machine.script(sent_ok())
+    machine.run(7)
+    machine.script()
+    machine.run(8)
+    check(f"a promise sent on a {opener} wait: nothing to do does not end the wait",
+          not machine.events("wait_ended")
+          and [event["step"] for event in machine.events("wait_step")] == ["nudge", "promise"],
+          machine.events())
+    machine.script(sent_ok())
+    machine.run(16)
+    machine.script()
+    machine.run(32)
+    check(f"a promise sent on a {opener} wait: the escalation, then the user is told",
+          [event["step"] for event in machine.events("wait_step")]
+          == ["nudge", "promise", "escalate", "tell_user"]
+          and any("after a nudge and an escalation" in alert["title"] for alert in machine.alerts()),
+          (machine.events("wait_step"), machine.alerts()))
+
 ANNOUNCED = "I'm starting the PR 1633 work now."
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant(ANNOUNCED), turn_end()])
@@ -696,6 +732,16 @@ check("a log whose last line was cut short: later runs still read the log, exit 
       code == 0 and "IdleSweepLogLineNotUtf8Json" not in output, (code, output))
 check("a log whose last line was cut short: the skipped line is dropped before the next event",
       '{"event": "acc' not in machine.log.read_text().splitlines()
+      and all(json.loads(line) for line in machine.log.read_text().splitlines()),
+      machine.log.read_text())
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.log.parent.mkdir(parents=True)
+WHOLE_LAST_LINE = '{"event": "account_seen", "account": "account-1", "at": "' + at(-5) + '"}'
+machine.log.write_text(WHOLE_LAST_LINE)
+code, output = machine.run(0)
+check("a log whose whole last line has no newline: the line is kept, and the next event follows it",
+      code == 0 and machine.log.read_text().splitlines()[0] == WHOLE_LAST_LINE
       and all(json.loads(line) for line in machine.log.read_text().splitlines()),
       machine.log.read_text())
 
