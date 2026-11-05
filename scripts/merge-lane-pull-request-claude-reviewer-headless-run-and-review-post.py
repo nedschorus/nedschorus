@@ -20,8 +20,8 @@ under the worktrees and outputs directory, given on stdin, because
 --allowedTools takes several values and would swallow a prompt after it. The
 reviewer runs as
 
-  claude -p --strict-mcp-config --permission-mode dontAsk --json-schema <schema>
-      --output-format json --allowedTools Read Grep Glob Bash WebFetch WebSearch
+  claude -p --strict-mcp-config --permission-mode dontAsk --settings '{"advisorModel": ""}'
+      --json-schema <schema> --output-format json --allowedTools Read Grep Glob Bash WebFetch WebSearch
 
 in pr<n>-head, which step 1 built detached at the nc-head-commit; a refused
 tool call does not wait for anyone, and is listed in the output's

@@ -447,10 +447,10 @@ def recheck_reports_for_must_fix_claims(worktree, overview_path, commit, writer_
 
 
 def run_fresh_agent(worktree, prompt):
-    command = [*command_line_prefix.claude_code_headless_run_command_line_prefix_build("dontAsk"),
+    command = [*command_line_prefix.claude_code_headless_run_command_line_prefix_build(
+                   "dontAsk", own_settings=cold_read_claude_cell.SETTINGS),
                "--model", FRESH_AGENT_MODEL, "--effort", FRESH_AGENT_EFFORT,
-               "--output-format", "text", "--tools", FRESH_AGENT_TOOLS, "--allowedTools", FRESH_AGENT_TOOLS,
-               "--settings", cold_read_claude_cell.SETTINGS]
+               "--output-format", "text", "--tools", FRESH_AGENT_TOOLS, "--allowedTools", FRESH_AGENT_TOOLS]
     try:
         # The prompt goes on stdin: variadic --allowedTools can swallow a trailing positional argument.
         result = subprocess.run(command, input=prompt, cwd=worktree, capture_output=True, text=True,

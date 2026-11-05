@@ -533,10 +533,11 @@ def model_judgement(message_lines, question_like_lines, total, waiting, waiting_
         waiting_phrase=f"items {waiting} wait" if " and " in waiting else f"item {waiting} waits",
         message="\n".join(message_lines),
         lines="\n".join(f"{number}. {line}" for number, line in enumerate(question_like_lines, 1)))
-    command = [*command_line_prefix.claude_code_headless_run_command_line_prefix_build("dontAsk"),
+    command = [*command_line_prefix.claude_code_headless_run_command_line_prefix_build(
+                   "dontAsk", own_settings={"disableAllHooks": True}),
                "--model", MODEL, "--output-format", "json",
                "--json-schema", json.dumps(MODEL_SCHEMA), "--system-prompt", MODEL_SYSTEM_PROMPT,
-               "--tools", "", "--settings", json.dumps({"disableAllHooks": True}),
+               "--tools", "",
                # Without this every check would leave a session file behind.
                "--no-session-persistence"]
     try:

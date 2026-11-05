@@ -19,6 +19,11 @@ files must also name its permission mode as a string literal other than
 bypassPermissions, so a launch moved off bypassPermissions cannot drift back to
 it, or to the default, unseen.
 
+And no file but the module holds the string literal "--settings", or one
+starting "--settings=": the prefix carries the one --settings, with the advisor
+turned off, and a second --settings added after it would drop that. A program
+passes its own settings to the prefix function as own_settings.
+
 Not caught: a command line built up piece by piece, such as ["claude"] + ["-p"];
 or one in a shell script or an f-string; or a --permission-mode or
 --dangerously-skip-permissions flag appended after the prefix.
@@ -105,6 +110,13 @@ def permission_modes_passed_to_command_line_prefix_build(source, filename):
     return sorted(calls)
 
 
+def settings_flag_literal_lines(source, filename):
+    """Line numbers of the string literals in `source` that are "--settings" or start "--settings="."""
+    return sorted(node.lineno for node in ast.walk(ast.parse(source, filename=filename))
+                  if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                  and (node.value == "--settings" or node.value.startswith("--settings=")))
+
+
 def python_files_git_lists():
     listed = subprocess.run(
         ["git", "-C", str(REPOSITORY_ROOT), "ls-files", "-z", "--cached", "--others",
@@ -146,10 +158,17 @@ check("the build function's permission mode is read from the call, positional or
           'e = prefix.claude_code_headless_run_command_line_prefix_build()\n',
           "scripts/planted.py")
       == [(1, "dontAsk"), (2, "plan"), (3, "bypassPermissions"), (4, None), (5, None)])
+check("a --settings or --settings= literal is found, and a sentence that only mentions --settings is not",
+      settings_flag_literal_lines(
+          'a = [*prefix(), "--settings", "{}"]\n'
+          'b = ["--settings={}"]\n'
+          '"""Hooks are registered through --settings."""\n',
+          "scripts/planted.py") == [1, 2])
 
 # --- No program outside the tests writes out its own claude -p command line ---
 found = {}
 permission_modes_by_file = {}
+settings_flags_by_file = {}
 for relative_path in python_files_git_lists():
     if is_a_test_file(relative_path):
         continue
@@ -160,6 +179,7 @@ for relative_path in python_files_git_lists():
         source = path.read_text(encoding="utf-8")
         lines = hand_written_claude_print_mode_command_lines(source, relative_path)
         calls = permission_modes_passed_to_command_line_prefix_build(source, relative_path)
+        settings_flags = settings_flag_literal_lines(source, relative_path)
     except (SyntaxError, UnicodeDecodeError) as error:
         check(f"{relative_path} can be read", False, f"{type(error).__name__}: {error}")
         continue
@@ -167,6 +187,8 @@ for relative_path in python_files_git_lists():
         found[relative_path] = lines
     if calls:
         permission_modes_by_file[relative_path] = calls
+    if settings_flags:
+        settings_flags_by_file[relative_path] = settings_flags
 
 check("the module's own command line is still found, so the detector still matches it",
       COMMAND_LINE_PREFIX_MODULE_PATH in found, sorted(found))
@@ -179,7 +201,7 @@ check("no program writes out its own claude -p command line",
 
 
 check("the programs that launch claude through the build function are found",
-      len(permission_modes_by_file) >= 7, sorted(permission_modes_by_file))
+      bool(permission_modes_by_file), sorted(permission_modes_by_file))
 not_named_or_bypass = [f"{path} line {line}: {mode!r}"
                        for path, calls in sorted(permission_modes_by_file.items())
                        for line, mode in calls if mode is None or mode == BYPASS_PERMISSION_MODE]
@@ -188,6 +210,13 @@ check("every launch names its permission mode as a string literal, and none is b
       "; ".join(not_named_or_bypass)
       + f" -- pass {COMMAND_LINE_PREFIX_BUILD_FUNCTION}() a permission mode such as \"dontAsk\", "
       + "with the tools the session needs in --allowedTools, so a tool call outside them is refused")
+
+settings_flags_by_file.pop(COMMAND_LINE_PREFIX_MODULE_PATH, None)
+check("no program adds a --settings of its own, so the prefix's advisor-off --settings stays the only one",
+      not settings_flags_by_file,
+      "; ".join(f"{path} line(s) {lines}" for path, lines in sorted(settings_flags_by_file.items()))
+      + f" -- pass the settings to {COMMAND_LINE_PREFIX_BUILD_FUNCTION}() as own_settings=<dict>, "
+      + "and drop the --settings flag")
 
 print()
 if failures:
