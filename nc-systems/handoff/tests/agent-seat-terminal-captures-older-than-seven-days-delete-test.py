@@ -108,7 +108,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
     locked_store = scratch / "locked-store"
     undeletable = capture_file(locked_store, "a-locked-seat", "20261001T000000Z-a-locked-seat-terminal-capture.log", 30)
     deletable = capture_file(locked_store, "an-open-seat", "20261001T000000Z-an-open-seat-terminal-capture.log", 30)
-    unlistable_seat = locked_store / "an-unlistable-seat"
+    # Sorted first, so the agent-seat directories after it show the run went on past it.
+    unlistable_seat = locked_store / "a-0-unlistable-seat"
     unlistable_seat.mkdir()
     (locked_store / "a-locked-seat").chmod(0o555)
     unlistable_seat.chmod(0o000)
@@ -136,7 +137,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
     check("a captures directory that cannot be listed is a FAILED line, the next directory is still "
           "done, exit 1",
           exit_code == 1 and f"FAILED: could not list {unlistable_store} (" in output
-          and str(store) in output.splitlines()[-1], output)
+          and str(store) in output.splitlines()[-1] and output.splitlines()[-1].endswith("; 1 FAILED"),
+          output)
 
     emptied_store = scratch / "emptied-store"
     capture_file(emptied_store, "a-seat", "20261001T000000Z-a-seat-terminal-capture.log", 30)
@@ -144,7 +146,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
         exit_code, output = run(["--captures-directory", str(emptied_store)])
     check("an emptied agent-seat directory that cannot be removed is a FAILED line naming it, exit 1",
           exit_code == 1
-          and f"FAILED: could not remove the emptied directory {emptied_store / 'a-seat'} (" in output,
+          and f"FAILED: could not remove the emptied directory {emptied_store / 'a-seat'} (" in output
+          and output.splitlines()[-1].endswith("; 1 FAILED"),
           output)
 
 print()

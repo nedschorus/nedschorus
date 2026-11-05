@@ -114,6 +114,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
             ("exits nonzero with an error", "sys.stderr.write('no such pane: %7\\n'); sys.exit(1)\n",
              "tmux pipe-pane exited 1: no such pane: %7."),
             ("exits nonzero saying nothing", "sys.exit(3)\n", "tmux pipe-pane exited 3, saying nothing."),
+            ("is killed by a signal", "import os, signal; os.kill(os.getpid(), signal.SIGKILL)\n",
+             "tmux pipe-pane exited -9, saying nothing."),
     ):
         failing = stub_tmux(scratch / f"tmux-that-{label.replace(' ', '-')}", body)
         line = start_with(dict(in_pane_environment,
@@ -140,13 +142,16 @@ with tempfile.TemporaryDirectory() as scratch_name:
 
     a_file_not_a_directory = scratch / "a-file"
     a_file_not_a_directory.write_text("", encoding="utf-8")
-    line = start_with(dict(in_pane_environment, **{OVERRIDE: str(a_file_not_a_directory)},
-                           PATH=f"{succeeding}{os.pathsep}{base_environment.get('PATH', '')}"))
-    check("a captures directory that cannot be made: nothing is captured, and the line names it",
-          line.startswith(f"this agent-seat's terminal output is not being captured to a file: the directory "
-                          f"{a_file_not_a_directory}/MD-skills could not be made (")
-          and f"run `ls -ld {a_file_not_a_directory}/MD-skills`" in line
-          and "tell the user which directory" in line, line)
+    for hostname, machine in (("ned-box", "ned-box"), ("els-MacBook-Pro", "the Mac")):
+        with mock.patch.object(captures.socket, "gethostname", return_value=hostname):
+            line = start_with(dict(in_pane_environment, **{OVERRIDE: str(a_file_not_a_directory)},
+                                   PATH=f"{succeeding}{os.pathsep}{base_environment.get('PATH', '')}"))
+        check(f"a captures directory that cannot be made, on {machine}: nothing is captured, and the "
+              f"line names the directory and says to check it on {machine}",
+              line.startswith(f"this agent-seat's terminal output is not being captured to a file: the directory "
+                              f"{a_file_not_a_directory}/MD-skills could not be made (")
+              and f"on {machine}, run `ls -ld {a_file_not_a_directory}/MD-skills`" in line
+              and "tell the user which directory" in line, line)
 
 print()
 if failures:
