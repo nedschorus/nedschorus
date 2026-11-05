@@ -208,7 +208,7 @@ def main():
     try:
         output = output_for(json.loads(sys.stdin.read()))
     except Exception as error:  # noqa: BLE001
-        print(f"walk-me-through-pending-user-alerts-claim-and-hand-to-agent-as-approval-walk-items-user-prompt-submit-hook: the "
+        print(f"walk-me-through-pending-user-alerts-claim-and-insert-as-approval-walk-items-user-prompt-submit-hook: the "
               f"hook failed, so no alert was claimed or offered on this prompt: {error!r}", file=sys.stderr)
         return 1
     if output is not None:
