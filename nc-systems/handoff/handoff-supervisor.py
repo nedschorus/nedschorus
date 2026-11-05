@@ -425,8 +425,10 @@ BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE = (
     "so the new agent-session's initial-agent-instructions tell it neither to rebase that branch onto "
     "origin/main nor to leave the branch's head as it is.\n"
     "handoff-supervisor: why: {cause}\n"
-    "handoff-supervisor: if this message comes back at the next launch, fix the git error on the why "
-    "line; until then nobody needs to act on it, and this launch goes ahead without either instruction."
+    "handoff-supervisor: this launch goes ahead without either instruction.\n"
+    "handoff-supervisor: if this console shows the same why line when the handoff-supervisor next "
+    "launches this agent-seat, fix the git error it names; if the cause was passing, such as a remote "
+    "that could not be reached, nobody needs to act."
 )
 
 
