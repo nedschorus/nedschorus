@@ -131,7 +131,7 @@ say_no_branch_checked() {
     printf '%s' "$unchecked_lines" >&2
     echo "Nor was any of them checked for files set back to a version that origin/main has replaced, because that check runs only on a branch the conflict check finds clean." >&2
     printf '%s' "$revert_lines" >&2
-    echo "pre-push: neither the conflict check nor the revert check refuses this push, so it goes through." >&2
+    echo "pre-push: this push goes through without a clean verdict for $branch_list: scripts/branch-conflict-check.py or scripts/branch-reverts-a-file-to-an-older-main-version-check.py gave no verdict there, as the lines above say." >&2
     echo "$tell_user_line" >&2
 }
 
