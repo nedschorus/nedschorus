@@ -375,10 +375,23 @@ def schema_driven_cases(scratch):
           lambda: not_enforced(unchecked)
           == ["the schema.comments[].path: pattern", "the schema.note: type number"],
           str(not_enforced(unchecked)))
+    loose = json.loads(SCHEMA.read_text())
+    loose["additionalProperties"] = {"type": "string"}
+    loose["properties"]["comments"]["items"] = [{"type": "object"}]
+    check("additionalProperties given as a schema and items given as a list are named as unenforced",
+          lambda: not_enforced(loose)
+          == ["the schema: additionalProperties given as a schema",
+              "the schema.comments: items given as a list"],
+          str(not_enforced(loose)))
+    comments_not_required = json.loads(SCHEMA.read_text())
+    comments_not_required["required"].remove("comments")
 
     for name, text, expected in (
+            ("missing a key the program reads from its required list",
+             json.dumps(comments_not_required),
+             "does not require comments, which this program reads from every answer"),
             ("not JSON", "{", "is not JSON ("),
-            ("not an object", "[]", "is not a JSON object"),
+            ("not an object", "[]", "is JSON but not a JSON object"),
             ("unchecked keyword", json.dumps(unchecked),
              "uses JSON-schema keywords or types that this program's answer check does not "
              "enforce, so an answer could break those rules unnoticed: "

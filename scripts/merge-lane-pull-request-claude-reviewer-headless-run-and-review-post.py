@@ -39,8 +39,10 @@ but this program does not rely on claude, whose checks it cannot see: the
 answer is checked here against every rule of
 merge-lane-pull-request-claude-reviewer-review-schema.json, the one place the
 answer's fields are defined, minLength and minimum included. A
-schema that uses a keyword or type this check does not know is refused before
-the reviewer runs, so no rule of the schema goes unchecked. A COULD_NOT_REVIEW
+schema that uses a keyword, type or keyword value this check does not know,
+such as additionalProperties given as a schema or items given as a list, or
+that does not require every key this program reads from the answer, is refused
+before the reviewer runs, so no rule of the schema goes unchecked. A COULD_NOT_REVIEW
 verdict is a review that did not
 finish. After the run, the head worktree must still be at the nc-head-commit:
 the project's freshness hook fast-forwards a detached checkout with no commits
@@ -93,6 +95,7 @@ POST_SCRIPT_NAME = "merge-lane-pull-request-reviewer-review-post-and-read-back.p
 CHECKED_SCHEMA_KEYWORDS = {"description", "type", "enum", "minLength", "minimum", "required",
                            "additionalProperties", "properties", "items"}
 JSON_TYPES = {"object": dict, "array": list, "string": str, "integer": int}
+ANSWER_KEYS_READ = ("verdict", "body", "comments", "note")
 DEFAULT_TIME_LIMIT_SECONDS = 5400
 ALLOWED_TOOLS = ("Read", "Grep", "Glob", "Bash", "WebFetch", "WebSearch")
 REMOVED_ENVIRONMENT_VARIABLES = ("GH_TOKEN", "GITHUB_TOKEN")
@@ -160,13 +163,17 @@ def read_text(path):
 
 
 def review_schema_keywords_and_types_the_answer_check_does_not_enforce(schema, where="the schema"):
-    """Return each keyword or type in schema that answer_problems does not check."""
+    """Return each keyword, type or keyword value in schema that answer_problems does not check."""
     found = [f"{where}: {keyword}" for keyword in schema if keyword not in CHECKED_SCHEMA_KEYWORDS]
     if "type" in schema and schema["type"] not in JSON_TYPES:
         found.append(f"{where}: type {schema['type']}")
+    if "additionalProperties" in schema and not isinstance(schema["additionalProperties"], bool):
+        found.append(f"{where}: additionalProperties given as a schema")
+    if "items" in schema and not isinstance(schema["items"], dict):
+        found.append(f"{where}: items given as a list")
     nested = [(property_schema, f"{where}.{name}")
               for name, property_schema in schema.get("properties", {}).items()]
-    if "items" in schema:
+    if isinstance(schema.get("items"), dict):
         nested.append((schema["items"], f"{where}[]"))
     for nested_schema, nested_where in nested:
         found += review_schema_keywords_and_types_the_answer_check_does_not_enforce(
@@ -313,7 +320,7 @@ def main(argv=None):
             raise Refused(f"the review schema {schema_file} is not JSON ({error}), so the "
                           f"reviewer's answer could not be checked against it")
         if not isinstance(schema, dict):
-            raise Refused(f"the review schema {schema_file} is not a JSON object, so the "
+            raise Refused(f"the review schema {schema_file} is JSON but not a JSON object, so the "
                           f"reviewer's answer could not be checked against it")
         not_enforced = review_schema_keywords_and_types_the_answer_check_does_not_enforce(schema)
         if not_enforced:
@@ -321,9 +328,16 @@ def main(argv=None):
                 f"the review schema {schema_file} uses JSON-schema keywords or types that this "
                 f"program's answer check does not enforce, so an answer could break those rules "
                 f"unnoticed: {'; '.join(not_enforced)}. Remove each from the schema, unless "
-                f"the reviewer's answer must keep to it; to keep one, add a keyword to "
+                f"the reviewer's answer must keep to it; to keep a rule, add a keyword to "
                 f"CHECKED_SCHEMA_KEYWORDS, or a type to JSON_TYPES, and enforce it in "
                 f"answer_problems, both in {Path(__file__).resolve()}")
+        not_required = [key for key in ANSWER_KEYS_READ if key not in schema.get("required", [])]
+        if not_required:
+            raise Refused(
+                f"the review schema {schema_file} does not require {', '.join(not_required)}, "
+                f"which this program reads from every answer, so an answer missing any of them "
+                f"would fail after the reviewer ran.\nAdd each key named above to the schema's "
+                f"top-level \"required\" list, making the list if the schema has none")
         if not (here / POST_SCRIPT_NAME).is_file():
             raise Refused(f"the posting script {here / POST_SCRIPT_NAME} is missing")
         at = git(head_worktree, "rev-parse", "HEAD")
