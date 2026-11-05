@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Refuse a push that rewrites or deletes the head branch of an open pull request on origin.
+"""Refuse a push that rewrites the head branch of an open pull request on origin that is, or
+once was, ready for review, or that deletes the head branch of any open pull request on origin.
 
 Run by scripts/git-client-side-hooks/pre-push with git's pre-push arguments and the pushed refs
 on standard input. Exit 10 refuses the push; exit 0 lets it through. Exit 2, when git cannot say
@@ -7,14 +8,20 @@ whether an update is a fast-forward, or any other exit, makes the hook say the p
 unchecked and to tell the user.
 
 Reviews are of a pull request's pushed head, so an update that does not build on that head
-replaces the commits under review, and deleting the head branch closes the pull request.
+replaces the commits under review, and deleting the head branch closes the pull request. A
+draft pull request is not under review until it is marked ready, so its head may be rewritten
+while it has never been ready. It has been ready when GitHub's timeline for it holds a
+ready_for_review event, or a convert_to_draft event, which is the only record left by a pull
+request opened ready and later turned back into a draft.
 git rejects an unforced non-fast-forward update before this hook runs, so the updates this
 check refuses are forced ones, whatever command spelling sent them.
 
 Only branches on origin are checked. A new branch and a fast-forward are let through without
-asking GitHub. Every other update to a branch, or deletion of one, is let through only when
-`gh pr list` answers that the branch has no open pull request: when gh cannot answer, the push
-is refused, because a forced update cannot be undone by the agent that sent it. A remote commit
+asking GitHub. Every other update to a branch is let through only when `gh pr list` answers
+that the branch has no open pull request, or that the open pull request is a draft and `gh api
+graphql` answers that its timeline has neither event. A deletion is let through only when the
+branch has no open pull request. When gh cannot answer either question, the push is refused,
+because a forced update cannot be undone by the agent that sent it. A remote commit
 missing from the local repository cannot be shown to be an ancestor, so the update counts as
 not a fast-forward.
 
@@ -41,8 +48,10 @@ ESCAPE_HATCH_ASSIGNMENT = ESCAPE_HATCH_VARIABLE + "=1"
 
 REWRITE_REFUSAL = (
     "this push is refused, because its update to branch {branch} does not build on the "
-    "commits origin holds, and {branch} is the head of open pull request {pull_request}: the "
-    "update would replace the commits under review.")
+    "commits origin holds, and {branch} is the head of open pull request {pull_request}, which "
+    "{ready_state}: the update would replace the commits under review.")
+READY_NOW = "is ready for review"
+DRAFT_ONCE_READY = "is a draft now but was once ready for review"
 DELETION_REFUSAL = (
     "this push is refused, because it deletes branch {branch}, the head of open pull request "
     "{pull_request}: deleting the head branch closes the pull request.")
@@ -67,12 +76,24 @@ ESCAPE_HATCH_INSTRUCTION = (
 LOOKUP_FAILED_REFUSAL = (
     "this push is refused, because it {action} branch {branch} on origin, and whether {branch} "
     "has an open pull request could not be checked: {detail}.")
+READY_LOOKUP_FAILED_REFUSAL = (
+    "this push is refused, because it forces an update to branch {branch} on origin, the head "
+    "of draft pull request {pull_request}, and whether that pull request was ever ready for "
+    "review could not be checked: {detail}.")
+# totalCount counts the whole timeline whatever itemTypes asks for; only filteredCount counts the events asked for.
+EVER_READY_QUERY = (
+    "query($id: ID!) { node(id: $id) { ... on PullRequest { timelineItems(itemTypes: "
+    "[READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT]) { filteredCount } } } }")
 LOOKUP_FAILED_INSTRUCTION = (
     "Tell the user this whole message, and do not push {branch} again until he answers.")
 
 
 class OpenPullRequestLookupFailed(Exception):
     """gh could not say whether a branch has an open pull request."""
+
+
+class ReadyHistoryLookupFailed(Exception):
+    """gh could not say whether a draft pull request was ever ready for review."""
 
 
 class FastForwardCheckFailed(Exception):
@@ -127,7 +148,8 @@ def is_fast_forward(remote_object_id, local_object_id, runner):
 
 def open_pull_request(branch, runner):
     """Return the open pull request whose head is branch, as gh's JSON, or None."""
-    argv = ["gh", "pr", "list", "--state", "open", "--head", branch, "--json", "number,title,url"]
+    argv = ["gh", "pr", "list", "--state", "open", "--head", branch, "--json",
+            "number,title,url,id,isDraft"]
     try:
         completed = runner(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                            timeout=GH_TIMEOUT_SECONDS, check=False)
@@ -148,6 +170,36 @@ def open_pull_request(branch, runner):
     return entries[0] if entries else None
 
 
+def was_ever_ready_for_review(pull_request, runner):
+    """True when GitHub's timeline for the draft pull_request holds a ready or draft event."""
+    argv = ["gh", "api", "graphql", "-f", "query=" + EVER_READY_QUERY,
+            "-f", f"id={pull_request.get('id')}"]
+    try:
+        completed = runner(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                           timeout=GH_TIMEOUT_SECONDS, check=False)
+    except subprocess.TimeoutExpired:
+        raise ReadyHistoryLookupFailed(
+            f"gh api graphql did not answer within {GH_TIMEOUT_SECONDS:.0f} seconds") from None
+    except OSError as error:
+        raise ReadyHistoryLookupFailed(f"gh could not be run ({error})") from None
+    if completed.returncode != 0:
+        first_line = ((completed.stderr or "").strip().splitlines() or [""])[0]
+        raise ReadyHistoryLookupFailed(
+            f"gh api graphql exited with status {completed.returncode}"
+            + (f": {first_line}" if first_line else ""))
+    try:
+        count = json.loads(completed.stdout)["data"]["node"]["timelineItems"]["filteredCount"]
+    except (ValueError, KeyError, TypeError):
+        raise ReadyHistoryLookupFailed(
+            "gh api graphql printed no count of the pull request's ready and draft "
+            "events") from None
+    if not isinstance(count, int):
+        raise ReadyHistoryLookupFailed(
+            f"gh api graphql printed {count!r} as the count of the pull request's ready and "
+            "draft events")
+    return count > 0
+
+
 def pull_request_name(pull_request):
     return f"#{pull_request.get('number')} ({pull_request.get('url')})"
 
@@ -156,6 +208,7 @@ def refusal_lines(pushed_refs_text, runner):
     """Return the lines that refuse this push, or [] to let it through, and one detail for
     (branch, detail) for each update git could not say is a fast-forward."""
     lookup_failures = []
+    ready_lookup_failures = []
     fast_forward_check_failures = []
     for branch, local_object_id, remote_object_id in updates_to_check(pushed_refs_text):
         deletes = set(local_object_id) == {"0"}
@@ -173,9 +226,19 @@ def refusal_lines(pushed_refs_text, runner):
             continue
         if pull_request is None:
             continue
+        ready_state = READY_NOW
+        if not deletes and pull_request.get("isDraft") is True:
+            try:
+                if not was_ever_ready_for_review(pull_request, runner):
+                    continue
+            except ReadyHistoryLookupFailed as error:
+                ready_lookup_failures.append((branch, pull_request, str(error)))
+                continue
+            ready_state = DRAFT_ONCE_READY
         refusal = DELETION_REFUSAL if deletes else REWRITE_REFUSAL
         instructions = DELETION_INSTRUCTIONS if deletes else REWRITE_INSTRUCTIONS
-        return [refusal.format(branch=branch, pull_request=pull_request_name(pull_request)),
+        return [refusal.format(branch=branch, pull_request=pull_request_name(pull_request),
+                               ready_state=ready_state),
                 *(line.format(branch=branch, number=pull_request.get("number"))
                   for line in instructions),
                 ESCAPE_HATCH_INSTRUCTION], fast_forward_check_failures
@@ -183,6 +246,12 @@ def refusal_lines(pushed_refs_text, runner):
         branch, deletes, detail = lookup_failures[0]
         return [LOOKUP_FAILED_REFUSAL.format(action="deletes" if deletes else "forces an update to",
                                              branch=branch, detail=detail),
+                LOOKUP_FAILED_INSTRUCTION.format(branch=branch),
+                ESCAPE_HATCH_INSTRUCTION], fast_forward_check_failures
+    if ready_lookup_failures:
+        branch, pull_request, detail = ready_lookup_failures[0]
+        return [READY_LOOKUP_FAILED_REFUSAL.format(
+                    branch=branch, pull_request=pull_request_name(pull_request), detail=detail),
                 LOOKUP_FAILED_INSTRUCTION.format(branch=branch),
                 ESCAPE_HATCH_INSTRUCTION], fast_forward_check_failures
     return [], fast_forward_check_failures

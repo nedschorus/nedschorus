@@ -1,6 +1,7 @@
 #!/bin/sh
-# Refuses a push from a mutation-testing worktree, a push that rewrites or
-# deletes the head branch of an open pull request, and a push of a branch that
+# Refuses a push from a mutation-testing worktree, a push that rewrites the head
+# branch of an open pull request that is or once was ready for review, a push
+# that deletes the head branch of an open pull request, and a push of a branch that
 # conflicts with main or sets a file back to a version main has replaced; lets
 # every other push through. It runs no test suites: the author runs them before
 # pushing, and merge-lane-2 runs them at the pull request's head. The work is
