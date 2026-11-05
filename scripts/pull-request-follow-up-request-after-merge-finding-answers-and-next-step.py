@@ -147,7 +147,6 @@ def load_script_beside_this_one(file_name):
 defect_line_reader = load_script_beside_this_one(
     "pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
 pre_push_conflict_check = load_script_beside_this_one("git-client-side-hooks-pre-push-conflict-check.py")
-pre_push_selective_test_run = load_script_beside_this_one("git-client-side-hooks-pre-push-selective-test-run.py")
 
 PROGRAM = "scripts/" + Path(__file__).name
 REPOSITORY = "nedschorus/nedschorus"
@@ -183,9 +182,8 @@ SUBAGENT_LINE = "If you are a subagent, pass that sentence to the agent that dis
 
 
 def push_time_limit_seconds(environment):
-    # Sized from the time budgets the two pre-push hooks bound themselves to, plus the push itself.
-    return math.ceil(pre_push_conflict_check.time_budget_seconds(environment)
-                     + pre_push_selective_test_run.time_budget_seconds(environment) + PUSH_ITSELF_SECONDS)
+    # Sized from the time budget the pre-push conflict check bounds itself to, plus the push itself.
+    return math.ceil(pre_push_conflict_check.time_budget_seconds(environment) + PUSH_ITSELF_SECONDS)
 
 
 class Refused(Exception):
