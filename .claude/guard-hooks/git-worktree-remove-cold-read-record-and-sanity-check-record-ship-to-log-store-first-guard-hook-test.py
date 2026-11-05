@@ -420,6 +420,8 @@ late_checkout, late_worktree = checkout_with_worktree("late-failure")
 shutil.rmtree(late_worktree / "sanity-check-records")
 late_record = late_worktree / "cold-read-records" / "late-failure-doc-2026-11-03"
 main_thread_reading = threading.Event()
+worker_finished = threading.Event()
+ship_every_record_as_written = hook.ship_every_record
 
 
 def shipper_failing_once_the_main_thread_reads(argv, **keywords):
@@ -427,15 +429,23 @@ def shipper_failing_once_the_main_thread_reads(argv, **keywords):
     return subprocess.CompletedProcess(argv, 1, "FAILED: ned-box could not be reached", "")
 
 
+def ship_every_record_then_say_so(*arguments):
+    try:
+        ship_every_record_as_written(*arguments)
+    finally:
+        worker_finished.set()
+
+
 def set_copied_after_the_worker_writes(*arguments):
     if arguments:
         main_thread_reading.set()
-        time.sleep(0.5)
+        worker_finished.wait(10)
     return set(*arguments)
 
 
 hook.SHIPPING_BUDGET_SECONDS = 1
 hook.store_holds_every_file_of = lambda kind, record: False
+hook.ship_every_record = ship_every_record_then_say_so
 hook.set = set_copied_after_the_worker_writes
 try:
     code, output = run_hook(payload_for(f"git worktree remove {late_worktree}", late_checkout),
@@ -443,6 +453,7 @@ try:
 finally:
     hook.SHIPPING_BUDGET_SECONDS = budget_as_written
     hook.store_holds_every_file_of = store_check_as_written
+    hook.ship_every_record = ship_every_record_as_written
     del hook.set
     main_thread_reading.set()
 check("a shipment that fails while the main thread reads the worker's results at the deadline refuses the removal",
