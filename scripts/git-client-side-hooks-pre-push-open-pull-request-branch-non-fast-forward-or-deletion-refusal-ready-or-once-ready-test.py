@@ -202,6 +202,9 @@ def main():
               f"on origin, the head of draft pull request #4242 ({PULL_REQUEST_URL}), and "
               "whether that pull request was ever ready for review could not be checked: "
               + detail in printed
+              and "A draft's head may be rewritten only while it has never been ready for "
+              "review, because until then nobody reviews it; once it has been ready, a review "
+              "may hold its pushed commits, and the update would replace them." in printed
               and "Tell the user this whole message, and do not push clean again until he "
               "answers." in printed
               and check_module.ESCAPE_HATCH_ASSIGNMENT in printed, (status, printed))

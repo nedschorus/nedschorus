@@ -47,8 +47,8 @@ ESCAPE_HATCH_VARIABLE = "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE"
 ESCAPE_HATCH_ASSIGNMENT = ESCAPE_HATCH_VARIABLE + "=1"
 
 REWRITE_REFUSAL = (
-    "this push is refused, because its update to branch {branch} does not build on the "
-    "commits origin holds, and {branch} is the head of open pull request {pull_request}, which "
+    "this push is refused, because its update to branch {branch} does not build on "
+    "origin/{branch}, the commits already pushed, and {branch} is the head of open pull request {pull_request}, which "
     "{ready_state}: the update would replace the commits under review.")
 READY_NOW = "is ready for review"
 DRAFT_ONCE_READY = "is a draft now but was once ready for review"
@@ -79,7 +79,9 @@ LOOKUP_FAILED_REFUSAL = (
 READY_LOOKUP_FAILED_REFUSAL = (
     "this push is refused, because it forces an update to branch {branch} on origin, the head "
     "of draft pull request {pull_request}, and whether that pull request was ever ready for "
-    "review could not be checked: {detail}.")
+    "review could not be checked: {detail}. A draft's head may be rewritten only while it has "
+    "never been ready for review, because until then nobody reviews it; once it has been ready, "
+    "a review may hold its pushed commits, and the update would replace them.")
 # totalCount counts the whole timeline whatever itemTypes asks for; only filteredCount counts the events asked for.
 EVER_READY_QUERY = (
     "query($id: ID!) { node(id: $id) { ... on PullRequest { timelineItems(itemTypes: "

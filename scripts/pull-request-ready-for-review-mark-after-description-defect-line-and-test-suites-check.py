@@ -41,6 +41,8 @@ EXIT_MARKED_READY = 0
 EXIT_MARK_READY_REFUSED_OR_FAILED = 1
 GH_TIMEOUT_SECONDS = 60.0
 GIT_TIMEOUT_SECONDS = 30.0
+GH_PR_VIEW_NOT_JSON_OUTPUT_ERROR_EXCERPT_CHARACTERS = 300
+TEST_RUNNER_EXIT_SOME_SUITE_FAILED = 1
 MESSAGE_PREFIX = "pull request ready for review: "
 # Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 NOTHING_CHANGED_LINE = "Nothing was changed on GitHub."
@@ -94,26 +96,27 @@ def read_pull_request(number, runner):
         if not all(field in pull_request for field in ("state", "isDraft", "headRefOid")):
             raise KeyError("state, isDraft or headRefOid")
     except (ValueError, KeyError, TypeError):
-        raise StepFailed(f"reading pull request {number} failed: gh pr view did not print a JSON "
-                         f"object holding state, isDraft and headRefOid.\n{retry}") from None
+        raise StepFailed(f"reading pull request {number} failed: gh pr view exited 0 but did not "
+                         "print a JSON object holding state, isDraft and headRefOid; it printed "
+                         f"{text[:GH_PR_VIEW_NOT_JSON_OUTPUT_ERROR_EXCERPT_CHARACTERS]!r}.\n{retry}") from None
     return pull_request
 
 
 def check_and_mark_ready(number, runner, output):
     pull_request = read_pull_request(number, runner)
     name = f"#{number} ({pull_request.get('url')})"
-    send_to_merge_lane = (f"Send merge-lane-2 the pull request's title, \"{pull_request.get('title')}\", "
-                          f"and link, {pull_request.get('url')}, with SendMessage, unless you "
-                          "already have since it was marked ready for review: its watcher of "
-                          "open pull requests reports a new head commit, not a draft marked ready "
-                          "for review.")
     if pull_request["state"] != "OPEN":
         raise StepFailed(f"{name} is {str(pull_request['state']).lower()}, not open, so it cannot "
                          f"be marked ready for review. {NOTHING_CHANGED_LINE}\n"
-                         "If you meant another pull request: run this again with its number.")
+                         "If you meant another pull request: run this again with its number.\n"
+                         "If you meant this one and it is merged: its review is over, so there is "
+                         "nothing to mark.\n"
+                         "If you meant this one and it is closed: read why with gh pr view "
+                         f"{number} --comments; when that reason no longer holds, reopen it with "
+                         f"gh pr reopen {number}, then run this again; otherwise leave it closed.")
     if pull_request["isDraft"] is not True:
         output.write(MESSAGE_PREFIX + f"{name} is already ready for review, so it was left as "
-                     f"it is.\n{send_to_merge_lane}\n")
+                     "it is.\n")
         return
     rev_parse_failed = (
         NOTHING_CHANGED_LINE + "\n"
@@ -136,6 +139,8 @@ def check_and_mark_ready(number, runner, output):
             "again.\n"
             "If the pull request has commits this checkout lacks: run git pull --ff-only, then "
             "run this again.\n"
+            "If each has commits the other lacks: run git pull --no-rebase, which merges the "
+            "pull request's commits into this checkout, then push, then run this again.\n"
             "If you are in another checkout: run this again from the pull request's own "
             "checkout.")
     if not defect_line_reader.pull_request_description_defect_lines(pull_request.get("body") or ""):
@@ -144,9 +149,13 @@ def check_and_mark_ready(number, runner, output):
             "\"#root_cause_not_fixed\" or \"#no_defect_fixed\", so it is still a placeholder, "
             "or does not say whether the pull request fixes a defect, and scripts/merge-gate.sh "
             f"would refuse to merge it. {NOTHING_CHANGED_LINE}\n"
-            "Write the whole description, with one of those lines, in a file, save it with gh pr "
-            f"edit {number} --body-file <that file>, which replaces the old description, then "
-            "run this again.")
+            f"Save the current description in a file with gh pr view {number} --json body -q "
+            ".body > <file>, and add to that file, for each defect the pull request fixes, a "
+            "line \"#root_cause <the cause the change removes>\" or \"#root_cause_not_fixed "
+            "<the cause that stays, and why> #follow_up <full https://github.com/ link to the "
+            "issue or pull request that will fix it>\", or, when it fixes none, the line "
+            f"\"#no_defect_fixed\". Then save the file with gh pr edit {number} --body-file <file>, which replaces the whole "
+            "description, and run this again.")
     command = selective_test_run_command(checkout)
     output.write(MESSAGE_PREFIX + "running " + " ".join(command[1:]) + "\n")
     output.flush()
@@ -156,12 +165,19 @@ def check_and_mark_ready(number, runner, output):
         raise StepFailed(f"running the test suites failed: python3 could not be run ({error}). "
                          f"{NOTHING_CHANGED_LINE}\n"
                          + RETRY_THEN_USER_INSTRUCTION.format(number=number)) from None
+    stays_a_draft = (f"so {name} stays a draft pull request: its pushed commits must pass the "
+                     "test suites before it is marked ready for review, which starts their review.")
+    if status == TEST_RUNNER_EXIT_SOME_SUITE_FAILED:
+        raise StepFailed(
+            f"the test suites exited with status {status}, {stays_a_draft} The failing suites "
+            "are named above.\n"
+            "Fix them, commit and push the fix, then run this again.")
     if status != 0:
         raise StepFailed(
-            f"the test suites exited with status {status}, so {name} stays a draft pull "
-            "request, because a pull request marked ready for review is reviewed as it stands. "
-            "The failing suites are named above.\n"
-            "Fix them, commit and push the fix, then run this again.")
+            f"scripts/run-all-test-suites.py exited with status {status}, before judging every "
+            "suite, "
+            f"{stays_a_draft} Its error is above.\n"
+            + RETRY_THEN_USER_INSTRUCTION.format(number=number))
     run_command(
         ["gh", "pr", "ready", str(number)], runner, GH_TIMEOUT_SECONDS,
         f"marking {name} ready for review",
@@ -169,7 +185,7 @@ def check_and_mark_ready(number, runner, output):
         "Running this command again finds out: it says so when the pull request is already "
         "ready for review, and otherwise runs the test suites again before gh pr ready.\n"
         + RETRY_THEN_USER_INSTRUCTION.format(number=number))
-    output.write(MESSAGE_PREFIX + f"{name} is marked ready for review.\n{send_to_merge_lane}\n")
+    output.write(MESSAGE_PREFIX + f"{name} is marked ready for review.\n")
 
 
 def main(argv=None, runner=subprocess.run, output=sys.stdout, errors=sys.stderr):

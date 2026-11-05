@@ -1217,7 +1217,8 @@ def run_open_pull_request_branch_cases(scratch):
                     "url": "https://github.com/example/example/pull/4242"}
     open_on_clean = json.dumps({"clean": pull_request, "clean-second": pull_request})
     refused_header = ("pre-push: this push is refused, because its update to branch clean does not "
-                      "build on the commits origin holds, and clean is the head of open pull "
+                      "build on origin/clean, the commits already pushed, and clean is the head "
+                      "of open pull "
                       "request #4242 (https://github.com/example/example/pull/4242)")
     lookup_failed = "whether clean has an open pull request could not be checked: "
 
