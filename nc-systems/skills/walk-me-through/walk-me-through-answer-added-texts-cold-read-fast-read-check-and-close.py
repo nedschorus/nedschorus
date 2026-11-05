@@ -576,7 +576,8 @@ WALK_CATEGORY_TAG = "#approval_walk_item_in_category_"
 WALK_WAITS_ON_TAG = "#approval_walk_item_waits_on"
 WALK_FIRST_ENTERED_TAG = "#approval_walk_item_first_entered"
 LINE_OPENING_MARKERS = r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*"
-HASHTAG_MARKER_LINE = re.compile(LINE_OPENING_MARKERS + r"#[A-Za-z][A-Za-z0-9_]*" + MARKER_END)
+# A hashtag opening a code span, as in "`#new` marks a text", is prose naming the marker, not a marker line.
+HASHTAG_MARKER_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_]*#[A-Za-z][A-Za-z0-9_]*" + MARKER_END)
 WALK_CATEGORY_LINE = re.compile(LINE_OPENING_MARKERS + re.escape(WALK_CATEGORY_TAG))
 # Words joined by single underscores, so the closing `_` or `__` of underscore emphasis is not read into the tag.
 WALK_CATEGORY_TAGS_IN_LINE = re.compile(re.escape(WALK_CATEGORY_TAG) + r"(?:[^\W_]+(?:_[^\W_]+)*)?")
@@ -903,19 +904,20 @@ def item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_
 
 
 def item_lines(walk_finder, minutes, value, numbers, total, parser):
-    """Return (walk-document path, the lines of the items numbered, outside fenced code, the problem line of each
-    mark whose text would not be read whole)."""
+    """Return (walk-document path, the lines of the items numbered, outside fenced code, the items' marks as
+    new_marks returns them, the problem line of each mark whose text would not be read whole)."""
     document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
     lines = walk_finder.prose_lines(text, parser, tokens)
-    return (document, [line for first, end in ranges for line in lines[first:end]],
-            unreadable_new_marks(text, tokens, ranges))
+    marks = new_marks(text, tokens, ranges)
+    return (document, [line for first, end in ranges for line in lines[first:end]], marks,
+            unreadable_new_marks(marks))
 
 
 def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None, refused_unless_marks_read=None):
     """Return (walk-document path, the items' text as the user is shown it, heading and fenced code included).
     With refused_unless_marks_read, (item, command), a Failure when a mark's text would not be read whole."""
     document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_by)
-    unreadable = unreadable_new_marks(text, tokens, ranges) if refused_unless_marks_read else []
+    unreadable = unreadable_new_marks(new_marks(text, tokens, ranges)) if refused_unless_marks_read else []
     if unreadable:
         item, command = refused_unless_marks_read
         raise Failure(UNREADABLE_NEW_MARKS.format(item=item, document=document, problems="\n".join(unreadable),
@@ -924,16 +926,17 @@ def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None
     return document, "\n".join(line for first, end in ranges for line in lines[first:end]).strip()
 
 
-def proposed_texts(lines, marks):
-    """Return (mark, text) for each line marked with one of marks, in the lines' order."""
+def proposed_texts(marks_found, marks):
+    """Return (mark, text) for each mark of new_marks' list that is one of marks, outside code and with a text,
+    in the document's order. The text is every line new_marks gives the mark, so it is the text that
+    unreadable_new_marks judged."""
     texts = []
-    for line in lines:
-        match = NEW_LINE.match(line)
-        if not match or match[1] not in marks:
+    for mark in marks_found:
+        if mark.mark not in marks or mark.in_code:
             continue
-        text = unquoted(match[2])
+        text = unquoted(lines_joined(mark.text_lines))
         if text:
-            texts.append((match[1], text))
+            texts.append((mark.mark, text))
     return texts
 
 
@@ -975,10 +978,18 @@ def block_right_below(lines, first, end):
     return []
 
 
-def unreadable_new_marks(text, tokens, ranges):
-    """Return one problem line for each `#new` or `#new_if_d` mark in the ranges whose text check would not read
-    whole: one with no text on its line, one inside fenced or indented code, and one whose paragraph runs onto
-    the lines right below it."""
+NewMark = collections.namedtuple("NewMark", "mark number in_code text_lines below")
+NewMark.__doc__ = """One `#new` or `#new_if_d` mark: mark, its 0-based line number, whether it is inside fenced or
+indented code, text_lines, the mark's own text followed by every line its text runs onto, and below, for a mark
+in code or with no text, the lines it may have meant."""
+
+
+def new_marks(text, tokens, ranges):
+    """Return a NewMark for each `#new` or `#new_if_d` mark in the ranges outside an HTML comment, in order.
+    This is the one place that decides where a marked text ends, so that check reads the text
+    unreadable_new_marks judged: at the end of its Markdown paragraph, or before the first line below it that
+    opens with a hashtag marker, such as the next `#new` or `#case_against`, which is read on its own even when
+    Markdown keeps it in the same paragraph."""
     lines = text.split("\n")
     code, comments, paragraphs = {}, set(), []
     for token in tokens:
@@ -990,34 +1001,43 @@ def unreadable_new_marks(text, tokens, ranges):
             comments.update(range(*token.map))
         elif token.type == "paragraph_open":
             paragraphs.append(token.map)
-    problems = []
+    marks = []
     for first, end in ranges:
         for number in range(first, end):
             match = NEW_LINE.match(lines[number])
             if not match or number in comments:
                 continue
-            mark, line = match[1], number + 1
             if number in code:
-                joined = lines_joined([match[2]] + lines_until_blank_or_fence(lines, number + 1, min(code[number], end)))
-                problems.append(UNREADABLE_FENCED.format(line=line, mark=mark)
-                                + (UNREADABLE_JOINED.format(mark=mark, text=joined) if joined else ""))
+                below = lines_until_blank_or_fence(lines, number + 1, min(code[number], end))
+                marks.append(NewMark(match[1], number, True, [match[2]], below))
                 continue
             if not unquoted(match[2]):
-                joined = lines_joined(block_right_below(lines, number + 1, end))
-                problems.append(UNREADABLE_BARE.format(line=line, mark=mark)
-                                + (UNREADABLE_JOINED.format(mark=mark, text=joined) if joined else ""))
+                marks.append(NewMark(match[1], number, False, [match[2]], block_right_below(lines, number + 1, end)))
                 continue
             paragraph_end = max((paragraph[1] for paragraph in paragraphs if paragraph[0] <= number < paragraph[1]),
                                 default=number + 1)
-            # A marker line right below, such as the next `#new` or `#case_against`, is read on its own: it ends
-            # the run-on even though Markdown keeps it in the same paragraph.
-            run_on_end = next((below for below in range(number + 1, paragraph_end)
-                               if HASHTAG_MARKER_LINE.match(lines[below])), paragraph_end)
-            if run_on_end > number + 1:
-                last = min(run_on_end, end)
-                below = f"line {number + 2}" if last == number + 2 else f"lines {number + 2} to {last}"
-                problems.append(UNREADABLE_RUN_ON.format(line=line, mark=mark, below=below)
-                                + UNREADABLE_JOINED.format(mark=mark, text=lines_joined([match[2]] + lines[number + 1:last])))
+            text_end = next((below for below in range(number + 1, paragraph_end)
+                             if HASHTAG_MARKER_LINE.match(lines[below])), paragraph_end)
+            marks.append(NewMark(match[1], number, False, [match[2]] + lines[number + 1:min(text_end, end)], []))
+    return marks
+
+
+def unreadable_new_marks(marks):
+    """Return one problem line for each of new_marks' marks whose text check would not read whole: one with no
+    text on its line, one inside fenced or indented code, and one whose text runs onto the lines right below it."""
+    problems = []
+    for found in marks:
+        mark, line = found.mark, found.number + 1
+        if found.in_code or not unquoted(found.text_lines[0]):
+            problem = UNREADABLE_FENCED if found.in_code else UNREADABLE_BARE
+            joined = lines_joined(([found.text_lines[0]] if found.in_code else []) + found.below)
+            problems.append(problem.format(line=line, mark=mark)
+                            + (UNREADABLE_JOINED.format(mark=mark, text=joined) if joined else ""))
+        elif len(found.text_lines) > 1:
+            last = found.number + len(found.text_lines)
+            below = f"line {line + 1}" if last == line + 1 else f"lines {line + 1} to {last}"
+            problems.append(UNREADABLE_RUN_ON.format(line=line, mark=mark, below=below)
+                            + UNREADABLE_JOINED.format(mark=mark, text=lines_joined(found.text_lines)))
     return problems
 
 
@@ -1291,7 +1311,7 @@ def glossary_entry_files(top, name, item, kind):
     return files_matching(top, ["-i", "-E"], rf"^- \*\*{escaped}( \(aka [^)]*\))?\*\*", item, kind, GLOSSARY_FILES)
 
 
-def not_asked_problems(kind, rating, lines, top, item):
+def not_asked_problems(kind, rating, lines, marks, top, item):
     """Return the lines saying why the item cannot be settled as the kind given, from what code can check."""
     problems = []
     if rating not in NOT_ASKED_RATINGS:
@@ -1303,7 +1323,7 @@ def not_asked_problems(kind, rating, lines, top, item):
         if not words(found[marker]):
             problems.append(NOT_ASKED_NO_LINE_PROBLEM.format(marker=marker, why=NOT_ASKED_WHY[marker]))
     touched = words(found[TOUCHES])
-    if kind == 1 and not proposed_texts(lines, {NEW_MARK}):
+    if kind == 1 and not proposed_texts(marks, {NEW_MARK}):
         problems.append(NOT_ASKED_NO_NEW_TEXT_PROBLEM)
     tests = words(found[TEST])
     for path in touched if kind != 5 else []:
@@ -1407,7 +1427,7 @@ def check(arguments):
         raise Failure(NAVIGATION_WORD_REFUSED.format(words=words, item=item, answered=answered_word(arguments),
                                                      program=program, quoted_words=shlex.quote(words)))
     in_his_words = USER_WORDS.format(words=words) if words else ""
-    document, lines, unreadable = item_lines(walk_finder, minutes, value, numbers, total, parser)
+    document, lines, marks, unreadable = item_lines(walk_finder, minutes, value, numbers, total, parser)
     rating = case_against_rating(lines, item, document, arguments)
     rated = CASE_AGAINST_HASHTAG.format(rating=rating.replace(" ", "_")) if rating else ""
     if arguments.deferred or arguments.moved_on_no_decision or arguments.moved_on is not None:
@@ -1421,11 +1441,11 @@ def check(arguments):
         raise Failure(UNREADABLE_NEW_MARKS.format(item=item, document=document, problems="\n".join(unreadable),
                                                   command=f"python3 {program} check{check_flags(arguments)}"))
     if arguments.not_asked is not None:
-        problems = not_asked_problems(arguments.not_asked, rating, lines, top, item)
+        problems = not_asked_problems(arguments.not_asked, rating, lines, marks, top, item)
         if problems:
             raise Failure(NOT_ASKED_REFUSED.format(item=item, kind=arguments.not_asked, problems="\n".join(problems),
                                                    document=document, program=Path(__file__).resolve()))
-    texts = proposed_texts(lines, marks_the_answer_adds(arguments))
+    texts = proposed_texts(marks, marks_the_answer_adds(arguments))
     log_store_records, tried = (None, []) if arguments.cold_read_records and arguments.counts_log \
         else reachable_log_store_records()
     record_directories = arguments.cold_read_records or (

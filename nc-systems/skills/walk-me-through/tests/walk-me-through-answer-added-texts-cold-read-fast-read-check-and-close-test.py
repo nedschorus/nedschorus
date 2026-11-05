@@ -429,6 +429,10 @@ UNREADABLE_MARK_CASES = (
      '#new "The page lists\none poem."\n#new "Row two."\n',
      ["- line 5: the text of `#new` runs onto line 6 right below it, where it is not read. The mark's line with "
       'its text joined onto it: #new "The page lists one poem."']),
+    ("a mark whose text runs onto a line that opens with a hashtag in a code span",
+     '#new "Use\n`#new` to mark proposed text."\n',
+     ["- line 5: the text of `#new` runs onto line 6 right below it, where it is not read. The mark's line with "
+      'its text joined onto it: #new "Use `#new` to mark proposed text."']),
 )
 
 
