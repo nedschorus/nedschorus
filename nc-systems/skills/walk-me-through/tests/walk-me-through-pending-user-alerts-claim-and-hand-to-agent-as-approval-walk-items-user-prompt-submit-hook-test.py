@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Cases for the UserPromptSubmit hook that claims the user's pending alerts and tells the agent to add them to
-his approval-walk.
+"""Cases for the UserPromptSubmit hook that claims the user's pending alerts and adds them to his approval-walk.
 
 Each case runs the hook as a subprocess, its real stdin-to-stdout path, with HOME pointed at a scratch directory
 holding the alerts, in a scratch checkout. The hook claims alerts only on Linux, so each case sets the hook's
@@ -38,7 +37,7 @@ def check(case_name, condition, detail=""):
 
 
 class Case:
-    def __init__(self, root, name, walk_open=False):
+    def __init__(self, root, name, walk_open=False, waiting="item 1 of 2"):
         self.home = root / name / "home"
         self.alerts = self.home / ".local/state/nedschorus/user-alerts"
         (self.alerts / "pending").mkdir(parents=True)
@@ -48,7 +47,9 @@ class Case:
         subprocess.run(["git", "init", "-q", str(self.checkout)], check=True)
         (walk / f"{WALK}.md").write_text("# A walk\n\n## Item 1 of 2: one\n\n## Item 2 of 2: summary\n",
                                          encoding="utf-8")
-        marker = "item 1 of 2" if walk_open else "none, closed"
+        marker = waiting if walk_open else "none, closed"
+        self.document = walk / f"{WALK}.md"
+        self.minutes = walk / f"{WALK}-minutes.md"
         (walk / f"{WALK}-minutes.md").write_text(f"#next_to_present {marker}\n", encoding="utf-8")
         self.transcript = root / name / "transcript.jsonl"
 
@@ -64,16 +65,23 @@ class Case:
             stream.write(json.dumps({"type": "user", "turnOrigin": origin,
                                      "message": {"role": "user", "content": text}}) + "\n")
 
-    def run(self, prompt, stdin=None, platform="linux"):
+    def run(self, prompt, stdin=None, platform="linux", insert_run=""):
+        """insert_run, when given, is a Python expression of the arguments a and k that takes the place of the
+        hook's subprocess.run of the insert program, so a case can make that program time out, fail to start or
+        die by a signal, which a real run cannot be made to; every other subprocess.run, such as git's, runs."""
         payload = {"hook_event_name": "UserPromptSubmit", "prompt": prompt, "cwd": str(self.checkout),
                    "transcript_path": str(self.transcript)}
-        run_hook_as_platform = ("import runpy, sys; sys.platform = sys.argv[1]; "
-                                "runpy.run_path(sys.argv[2], run_name='__main__')")
+        run_hook_as_platform = ("import runpy, subprocess, sys; sys.platform = sys.argv[1]; "
+                                + ("subprocess.run = (lambda real: lambda *a, **k: "
+                                   f"({insert_run}) if 'user-alert-insert' in str(a[0]) else real(*a, **k))"
+                                   "(subprocess.run); " if insert_run else "")
+                                + "runpy.run_path(sys.argv[2], run_name='__main__')")
         result = subprocess.run([sys.executable, "-c", run_hook_as_platform, platform, str(HOOK)],
                                 input=stdin or json.dumps(payload),
                                 capture_output=True, text=True, env={**os.environ, "HOME": str(self.home)},
                                 check=False)
-        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"] if result.stdout else ""
+        self.output = json.loads(result.stdout) if result.stdout else {}
+        context = self.output["hookSpecificOutput"]["additionalContext"] if result.stdout else ""
         return result, context
 
     def names(self, directory):
@@ -101,12 +109,45 @@ def run_typed_prompt_cases(root):
     case.alert("alert-a")
     case.alert("alert-b", title="the crash watcher failed")
     result, context = case.run("A")
-    check("with an approval-walk open, the agent is told to run the insert program with every claimed id "
-          "before acting on the prompt",
-          f"approval-walk {WALK}" in context
-          and f"python3 {INSERT_PROGRAM} --cwd {case.checkout} alert-a alert-b" in context
-          and "Before you act on the user's prompt" in context and "No approval-walk is open" not in context,
-          context)
+    document = case.document.read_text(encoding="utf-8")
+    minutes = case.minutes.read_text(encoding="utf-8")
+    headings = ("## Item 1 of 2: one", "## merge-lane-2 is down", "## the crash watcher failed",
+                "## Item 2 of 2: summary")
+    check("with an approval-walk open, the hook runs the insert program itself: both alerts become items right "
+          "after the waiting item, and the walk-minutes name both",
+          all(heading in document for heading in headings)
+          and [document.index(heading) for heading in headings]
+          == sorted(document.index(heading) for heading in headings)
+          and "#user_alert alert-a" in minutes and "#user_alert alert-b" in minutes, document + minutes)
+    check("with an approval-walk open, the agent is told what the hook added, with the insert program's output, "
+          "and is not told to run the program",
+          result.returncode == 0 and f"approval-walk {WALK}" in context
+          and "The hook added these alerts" in context
+          and "Added the unnumbered item `## merge-lane-2 is down`" in context
+          and "Before you act on the user's prompt, add the alerts" not in context
+          and "No approval-walk is open" not in context, context)
+
+    case = Case(root, "insert-fails", walk_open=True, waiting="item 5 of 9")
+    case.alert("alert-a")
+    before = case.document.read_text(encoding="utf-8")
+    result, context = case.run("A")
+    check("when the insert program fails, the agent gets its exit code, its message and the command to run "
+          "again, and no item is added",
+          result.returncode == 0 and "failed, so no item was added. The program exited 1" in context
+          and "waiting item cannot be found" in context
+          and f"{INSERT_PROGRAM} --cwd {case.checkout} alert-a" in context
+          and case.document.read_text(encoding="utf-8") == before, context)
+
+    for name, insert_run, code in (
+            ("killed by a signal", "subprocess.CompletedProcess(a[0], -9, '', '')", "exited -9"),
+            ("timed out", "(_ for _ in ()).throw(subprocess.TimeoutExpired(a[0], 60))", "exited no code"),
+            ("could not start", "(_ for _ in ()).throw(OSError('no python3'))", "exited no code")):
+        case = Case(root, f"insert-{name.replace(' ', '-')}", walk_open=True)
+        case.alert("alert-a")
+        result, context = case.run("A", insert_run=insert_run)
+        check(f"when the insert program {name}, the agent is told it failed, with the command to run again",
+              result.returncode == 0 and f"failed, so no item was added. The program {code}" in context
+              and f"{INSERT_PROGRAM} --cwd {case.checkout} alert-a" in context, context + result.stderr)
 
     case = Case(root, "recorded-typed")
     case.alert("alert-a")
@@ -176,9 +217,13 @@ def run_failure_cases(root):
     case = Case(root, "claim-fails")
     (case.alerts / "pending" / "alert-bad.json").write_text("[not an object]", encoding="utf-8")
     result, context = case.run("hello")
-    check("a failure while claiming tells the agent what failed and to tell the user alerts may wait unseen",
-          result.returncode == 0 and "failed while claiming alerts" in context and "Tell the user" in context
-          and str(case.alerts) in context, context + result.stderr)
+    system_message = case.output.get("systemMessage", "")
+    check("a failure while claiming shows the user, as a systemMessage, that alerts may wait unseen",
+          result.returncode == 0 and "may be waiting unseen" in system_message
+          and str(case.alerts) in system_message, json.dumps(case.output) + result.stderr)
+    check("a failure while claiming tells the agent what failed and that the user has been shown it",
+          "failed while claiming alerts" in context and "has shown the user this sentence" in context
+          and system_message in context, context)
 
     case = Case(root, "walk-unreadable")
     case.alert("alert-a")
