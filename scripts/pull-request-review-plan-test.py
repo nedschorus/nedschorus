@@ -975,7 +975,7 @@ FIXTURE_HOW_TO_PAGE_PATH = "docs/nedschorus-wiki/nedschorus-how-to-write-an-arch
 
 
 def run_architecture_overview_claim_check_cases(fixture):
-    """Rule 4: an overview the pull request adds or changes needs a report showing every claim supported."""
+    """Rule 4: an overview the pull request adds or changes needs a report showing no must-fix claim remains."""
     claim_check = review_plan_module.overview_claim_check
     report_directory = fixture.repository.parent / "claim-check-reports"
     flag = ["--overview-write-architecture-overview-claim-check-report-directory", str(report_directory)]
@@ -1004,10 +1004,18 @@ def run_architecture_overview_claim_check_cases(fixture):
     check("a report for another text of the overview does not clear the refusal",
           refusal_has_expected_prefix(result) and "newest report found: none" in result.stderr, result.stderr)
     write_report(blob, claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED, "2026-01-01T00-00-00-000000Z")
-    write_report(blob, "not all claims supported: 1 contradicted, 0 unsupported, 3 supported", "2026-01-02T00-00-00-000000Z")
+    write_report(blob, "must-fix claims remain: 1 must-fix, 0 fix-later, 0 nit", "2026-01-02T00-00-00-000000Z")
     result = fixture.run_review_plan(*flag)
-    check("the newest report decides, so a later report that falls short is refused and named",
-          refusal_has_expected_prefix(result) and "whose result is: not all claims supported: 1 contradicted" in result.stderr, result.stderr)
+    check("the newest report decides, so a later report with a must-fix claim remaining is refused and named",
+          refusal_has_expected_prefix(result) and "whose result is: must-fix claims remain: 1 must-fix" in result.stderr, result.stderr)
+    write_report(blob, claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_NO_MUST_FIX_CLAIM_REMAINS, "2026-01-02T12-00-00-000000Z")
+    result = fixture.run_review_plan(*flag)
+    check("a newest report showing no must-fix claim remains lets the plan through",
+          result.returncode == 0 and json.loads(result.stdout)["head"] == head, result.stderr)
+    write_report(blob, "malformed: no VERDICT line", "2026-01-02T18-00-00-000000Z")
+    result = fixture.run_review_plan(*flag)
+    check("a newest report that is malformed is refused",
+          refusal_has_expected_prefix(result) and "whose result is: malformed" in result.stderr, result.stderr)
     write_report(blob, claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED, "2026-01-03T00-00-00-000000Z")
     result = fixture.run_review_plan(*flag)
     check("a newest report showing every claim supported lets the plan through",

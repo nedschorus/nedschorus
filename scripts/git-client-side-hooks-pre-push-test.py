@@ -237,6 +237,14 @@ SELECTIVE_TEST_RUN_STARTING = "pre-push: starting the selective test run on "
 SELECTIVE_TEST_RUN_PASSED = "pre-push: the selective test run passed. "
 SELECTIVE_TEST_RUN_REFUSED = ("pre-push: an nc-test-suite failed in the selective test run, so this "
                               "push is refused. ")
+SELECTIVE_TEST_RUN_REFUSED_BEFORE_BUDGET_RAN_OUT = (
+    "pre-push: an nc-test-suite failed in the selective test run, so this push is refused. That "
+    "run went on after the failure until its 1-second time budget ran out, and was stopped there; "
+    "the suites it had not finished by then were not tested. The failing suites:")
+SELECTIVE_TEST_RUN_STOP_KILLED_SUITES_LINE = (
+    "pre-push: these suites were still running when the run was stopped, so they were not "
+    "tested; each is marked FAIL but did not fail, so it needs no fix. Suites the run had not "
+    "started yet are not listed:")
 SELECTIVE_TEST_RUN_NOT_RUN_END = ", so this push goes ahead without the selective test run"
 SELECTIVE_TEST_RUN_HAND_RUN_LINE = (
     "Run it by hand from your worktree: python3 scripts/run-all-test-suites.py "
@@ -344,6 +352,76 @@ with open(_log + ".detached-child-pid", "w") as _handle:
     _handle.write(str(_detached.pid))
 time.sleep(FAKE_HANG_SECONDS)
 """
+
+# The real runner's lines when a stop signal reaches it: a suite it killed is reported as killed
+# by the stop, then the stop itself, and it exits 1 when a suite had already failed, otherwise 2.
+FAKE_STOPPED_SUITE_LINE = ("FAIL scripts/fake-slow-test.py killed when the run was stopped by "
+                           "SIGTERM (3.0s, test sandbox, waited 0.0s to start)")
+FAKE_FAILED_BEFORE_STOP_SUITE_LINE = ("FAIL scripts/fake-failing-test.py exit 1 (2.0s, test "
+                                      "sandbox, waited 0.0s to start)")
+FAKE_RUNNER_STOPPED_LINE = ("run-all-test-suites: not run to the end — stopped by SIGTERM. The "
+                            "suites not yet started were not run.")
+
+# A suite failed, then the budget ran out while another still ran.
+FAKE_TEST_SUITES_RUNNER_STOPPED_AFTER_A_FAILURE = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+import signal, time
+def _on_stop(_signal_number, _frame):
+    print(%r, flush=True)
+    print(%r, flush=True)
+    sys.exit(1)
+signal.signal(signal.SIGTERM, _on_stop)
+print(%r, flush=True)
+time.sleep(FAKE_HANG_SECONDS)
+""" % (FAKE_STOPPED_SUITE_LINE, FAKE_RUNNER_STOPPED_LINE, FAKE_FAILED_BEFORE_STOP_SUITE_LINE)
+
+# A suite still running when the budget runs out, in a session of its own as the real runner's
+# suites are. The runner, as the real one does, acts on the stop a moment later, kills the suite
+# itself and reports it as killed by the stop. The suite writes a marker file if a SIGTERM reaches
+# it before that, which only the hook can send.
+FAKE_TEST_SUITES_RUNNER_STOPS_ITS_OWN_SUITE = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+import signal, subprocess, time
+_suite = subprocess.Popen(
+    [sys.executable, "-c",
+     "import signal, sys, time\\n"
+     "def _hit(_n, _f):\\n"
+     "    open(sys.argv[1], 'w').write('SIGTERM reached the suite')\\n"
+     "    sys.exit(143)\\n"
+     "signal.signal(signal.SIGTERM, _hit)\\n"
+     "time.sleep(%%d)\\n" %% FAKE_HANG_SECONDS, _log + ".suite-got-sigterm"],
+    start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+with open(_log + ".suite-pid", "w") as _handle:
+    _handle.write(str(_suite.pid))
+def _on_stop(_signal_number, _frame):
+    time.sleep(1)
+    _suite.kill()
+    _suite.wait()
+    print(%r, flush=True)
+    print(%r, flush=True)
+    sys.exit(2)
+signal.signal(signal.SIGTERM, _on_stop)
+time.sleep(FAKE_HANG_SECONDS)
+""" % (FAKE_STOPPED_SUITE_LINE, FAKE_RUNNER_STOPPED_LINE)
+
+# A run that dies of an uncaught exception when the stop reaches it: it exits 1, as a run stopped
+# after a failure does, but prints no stop line, so no suite is known to have failed.
+FAKE_TEST_SUITES_RUNNER_CRASHES_ON_STOP = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+import signal, time
+def _on_stop(_signal_number, _frame):
+    raise OSError(28, "No space left on device", "/fake/logs")
+signal.signal(signal.SIGTERM, _on_stop)
+time.sleep(FAKE_HANG_SECONDS)
+"""
+
+# A run killed while it reports its stop: it printed the stop line but never its exit status.
+FAKE_TEST_SUITES_RUNNER_KILLED_WHILE_STOPPING = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+import signal, time
+def _on_stop(_signal_number, _frame):
+    print(%r, flush=True)
+    os.kill(os.getpid(), signal.SIGKILL)
+signal.signal(signal.SIGTERM, _on_stop)
+print(%r, flush=True)
+time.sleep(FAKE_HANG_SECONDS)
+""" % (FAKE_RUNNER_STOPPED_LINE, FAKE_FAILED_BEFORE_STOP_SUITE_LINE)
 
 # An uncaught exception after the run has started: Python exits 1, as a failed
 # suite does, but the run prints no SUMMARY line.
@@ -1251,6 +1329,65 @@ def load_module_from_path(name, path):
     return loaded
 
 
+def run_selective_test_run_time_budget_cases(hook):
+    check("the pre-push hook's time limit is under the 600 seconds a Claude Code agent can give "
+          "one command", hook.PRE_PUSH_HOOK_TIME_LIMIT_SECONDS < 600,
+          repr(hook.PRE_PUSH_HOOK_TIME_LIMIT_SECONDS))
+    # Each wait after the budget runs out must be one of the summed constants, or the sum lies.
+    stop_waits = {"PROCESS_LISTING_TIMEOUT_SECONDS", "RUNNER_STOP_GRACE_SECONDS",
+                  "TERMINATE_GRACE_SECONDS", "budget"}
+    source = SELECTIVE_TEST_RUN_CHECK.read_text()
+    timeouts = re.findall(r"\btimeout=([^,)]+)", source)
+    check("every timeout= in the selective test run is the budget or a wait its stop sum counts",
+          bool(timeouts) and set(timeouts) <= stop_waits, repr(timeouts))
+    check("the selective test run's stop sum counts the listing, the runner's grace and two "
+          "terminate graces", hook.STOP_AFTER_TIME_BUDGET_WORST_CASE_SECONDS
+          == hook.PROCESS_LISTING_TIMEOUT_SECONDS + hook.RUNNER_STOP_GRACE_SECONDS
+          + 2 * hook.TERMINATE_GRACE_SECONDS, repr(hook.STOP_AFTER_TIME_BUDGET_WORST_CASE_SECONDS))
+    started = {hook.HOOK_STARTED_AT_ENVIRONMENT_VARIABLE: "1000"}
+    for label, environment, now, expected in (
+            ("no start time: the default budget", {}, 2000.0, hook.DEFAULT_TIME_BUDGET_SECONDS),
+            ("an unreadable start time: the default budget",
+             {hook.HOOK_STARTED_AT_ENVIRONMENT_VARIABLE: ""}, 2000.0,
+             hook.DEFAULT_TIME_BUDGET_SECONDS),
+            ("a hook that spent 1 second before the run keeps the default budget", started,
+             1001.0, hook.DEFAULT_TIME_BUDGET_SECONDS),
+            ("a hook that spent 100 seconds before the run gets what is left of its time limit",
+             started, 1100.0, hook.PRE_PUSH_HOOK_TIME_LIMIT_SECONDS - 100
+             - hook.STOP_AFTER_TIME_BUDGET_WORST_CASE_SECONDS),
+            ("a hook that spent its whole time limit gets no budget", started, 1700.0, 0.0),
+            ("a start time later than now counts as no time spent", started, 900.0,
+             hook.DEFAULT_TIME_BUDGET_SECONDS),
+            ("a set budget is cut too",
+             {**started, hook.TIME_BUDGET_ENVIRONMENT_VARIABLE: "590"}, 1000.0,
+             hook.PRE_PUSH_HOOK_TIME_LIMIT_SECONDS
+             - hook.STOP_AFTER_TIME_BUDGET_WORST_CASE_SECONDS)):
+        got = hook.time_budget_seconds(environment, now=now)
+        check(f"time budget: {label}", got == expected, f"got {got!r}, expected {expected!r}")
+    # The shell hook must hand its start time to the selective test run, or no budget is cut.
+    layout_parent = Path(tempfile.mkdtemp(prefix="pre-push-started-at-")).resolve()
+    try:
+        hooks = make_layout(
+            layout_parent, "started-at", conflict_check=None, include_runner=False,
+            mutation_testing_worktree_check_text="import sys\nsys.exit(0)\n",
+            selective_test_run_check_text=(
+                "import os, sys\nsys.stderr.write('STARTED_AT=%%s\\n' %% os.environ.get(%r, ''))\n"
+                % hook.HOOK_STARTED_AT_ENVIRONMENT_VARIABLE),
+            open_pull_request_branch_check_text="import sys\nsys.exit(0)\n")
+        before = int(time.time())
+        refs_text = "refs/heads/topic %s refs/heads/topic %s\n" % ("a" * 40, "0" * 40)
+        for shell in SHELLS_FOR_THE_HOOK:
+            completed = subprocess.run([shell, str(hooks / "pre-push"), "origin", "url"],
+                                       input=refs_text, capture_output=True, text=True,
+                                       timeout=30)
+            found = re.findall(r"^STARTED_AT=(\d+)$", completed.stderr, re.MULTILINE)
+            check("%s: the shell hook hands the selective test run the time it started" % shell,
+                  len(found) == 1 and before <= int(found[0]) <= int(time.time()),
+                  completed.stderr)
+    finally:
+        shutil.rmtree(layout_parent, ignore_errors=True)
+
+
 def run_selective_test_run_copies_of_runner_constants_cases():
     # The hook keeps its own copies of the runner's output format, so nothing but this ties them.
     hook = load_module_from_path("selective_test_run_check", SELECTIVE_TEST_RUN_CHECK)
@@ -1271,6 +1408,16 @@ def run_selective_test_run_copies_of_runner_constants_cases():
              f"{runner.PROGRAM}: not run")):
         check(f"the selective test run's {hook_name} equals the runner's",
               hook_value == runner_value, f"hook {hook_value!r}, runner {runner_value!r}")
+    runner_source = REAL_TEST_SUITES_RUNNER.read_text()
+    for hook_name, hook_value, in_runner in (
+            ("RUNNER_STOPPED_LINE_PREFIX", hook.RUNNER_STOPPED_LINE_PREFIX,
+             hook.RUNNER_STOPPED_LINE_PREFIX.replace(f"{runner.PROGRAM}: ", "{PROGRAM}: ")),
+            ("FAILED_SUITE_LINE_KILLED_WHEN_RUN_STOPPED_MARK",
+             hook.FAILED_SUITE_LINE_KILLED_WHEN_RUN_STOPPED_MARK,
+             hook.FAILED_SUITE_LINE_KILLED_WHEN_RUN_STOPPED_MARK.strip() + " {")):
+        check(f"the selective test run's {hook_name} is what the runner prints",
+              in_runner in runner_source, f"{hook_value!r} not found as {in_runner!r}")
+    run_selective_test_run_time_budget_cases(hook)
     first_line = (f"{runner.PROGRAM}: /fake at abc (clean); -j 4"
                   f"{runner.FIRST_REPORT_LINE_LOG_DIRECTORY_MARK}/fake/logs")
     found = hook.log_directory_named_in(first_line)
@@ -1302,6 +1449,23 @@ def run_selective_test_run_cases(scratch):
           calls == [["--checkout", str(scenario.clone),
                      "--only-suites-whose-recorded-inputs-changed-since", "origin/main",
                      "--wait-for-lock-seconds", "0"]], repr(calls))
+
+    # A suite run under the hook must not see the hook's start time: code under test that reads
+    # the budget from its environment would then get one that shrinks as the clock runs.
+    hooks = make_layout(
+        scratch, "layout-selective-start-time-hidden",
+        test_suites_runner_text=FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+if %r in os.environ:
+    print("FAIL scripts/fake-failing-test.py exit 1 (0.1s)")
+    print(%r)
+    sys.exit(1)
+print(%r)
+""" % ("NEDSCHORUS_PRE_PUSH_HOOK_STARTED_AT_EPOCH_SECONDS", FAKE_FAILED_SUMMARY,
+         FAKE_PASSED_SUMMARY))
+    hidden = Scenario(scratch, "selective-start-time-hidden", hooks)
+    result = hidden.push("origin", "clean")
+    check("the selective test run starts the suites without the hook's start time",
+          went_through(result), result.describe())
 
     help_text = subprocess.run([sys.executable, str(REAL_TEST_SUITES_RUNNER), "--help"],
                                capture_output=True, text=True, timeout=60).stdout
@@ -1488,6 +1652,82 @@ def run_selective_test_run_cases(scratch):
               "pid %d still running" % detached_pid)
         stop_leftover_process(detached_pid)
 
+    hooks = make_layout(scratch, "layout-selective-failed-before-overrun",
+                        test_suites_runner_text=FAKE_TEST_SUITES_RUNNER_STOPPED_AFTER_A_FAILURE)
+    failed_early = Scenario(scratch, "selective-failed-before-overrun", hooks)
+    failed_early.extra_environment[SELECTIVE_TEST_RUN_BUDGET_VARIABLE] = HANGING_CHECK_BUDGET_SECONDS
+    result = failed_early.push("origin", "clean")
+    refusal = lines_from(result.stderr, SELECTIVE_TEST_RUN_REFUSED_BEFORE_BUDGET_RAN_OUT)
+    check("a suite failed before the budget ran out: the push is refused and the branch never "
+          "reaches origin", was_refused(result) and failed_early.origin_ref("clean") is None,
+          result.describe())
+    check("a suite failed before the budget ran out: the refusal names that suite as failing, "
+          "then the one the stop killed as not tested, then the whole report's path",
+          refusal[1:5] == [FAKE_FAILED_BEFORE_STOP_SUITE_LINE,
+                           SELECTIVE_TEST_RUN_STOP_KILLED_SUITES_LINE, FAKE_STOPPED_SUITE_LINE,
+                           "The whole report: %s/test-run-report.txt" % FAKE_LOG_DIRECTORY],
+          result.describe())
+
+    failing_stop_ps_bin = scratch / "failed-before-overrun-failing-ps-bin"
+    failing_stop_ps_bin.mkdir()
+    (failing_stop_ps_bin / "ps").write_text(
+        "#!/bin/sh\necho 'ps: cannot read the process table' >&2\nexit 1\n")
+    (failing_stop_ps_bin / "ps").chmod(0o755)
+    hooks = make_layout(scratch, "layout-selective-failed-before-overrun-ps-fails",
+                        test_suites_runner_text=FAKE_TEST_SUITES_RUNNER_STOPPED_AFTER_A_FAILURE)
+    unlisted_refusal = Scenario(scratch, "selective-failed-before-overrun-ps-fails", hooks)
+    unlisted_refusal.extra_environment[SELECTIVE_TEST_RUN_BUDGET_VARIABLE] = (
+        HANGING_CHECK_BUDGET_SECONDS)
+    unlisted_refusal.extra_environment["PATH"] = "%s%s%s" % (
+        failing_stop_ps_bin, os.pathsep, os.environ.get("PATH", ""))
+    result = unlisted_refusal.push("origin", "clean")
+    check("a suite failed before the budget ran out and ps fails: the push is still refused",
+          was_refused(result) and unlisted_refusal.origin_ref("clean") is None, result.describe())
+    check("a suite failed before the budget ran out and ps fails: the refusal says the suites' "
+          "processes could not be listed, with ps's error, and tells the user",
+          "pre-push: the processes the run's suites started in their own process sessions on "
+          "this machine could not be listed when the run was stopped, so some may still be "
+          "running. The listing's error: ps -A -o pid=,ppid= exited 1: ps: cannot read the "
+          "process table"
+          in result.stderr
+          and "Tell the user this line and the error in it, since those processes may keep "
+          "running on the machine." in result.stderr, result.describe())
+
+    _, outcome = not_run_case(
+        "crashed when the stop reached it", FAKE_TEST_SUITES_RUNNER_CRASHES_ON_STOP,
+        "the selective test run had not finished when the 1-second time budget ran out, and "
+        "was stopped; the logs of the suites it ran are in " + FAKE_LOG_DIRECTORY,
+        tell_user=False, budget=HANGING_CHECK_BUDGET_SECONDS)
+    check("crashed when the stop reached it: an exit 1 with no stop line refuses nothing",
+          SELECTIVE_TEST_RUN_REFUSED_BEFORE_BUDGET_RAN_OUT not in outcome.stderr,
+          outcome.describe())
+
+    _, outcome = not_run_case(
+        "killed while it reported its stop", FAKE_TEST_SUITES_RUNNER_KILLED_WHILE_STOPPING,
+        "the selective test run had not finished when the 1-second time budget ran out, and "
+        "was stopped; the logs of the suites it ran are in " + FAKE_LOG_DIRECTORY,
+        tell_user=False, budget=HANGING_CHECK_BUDGET_SECONDS)
+    check("killed while it reported its stop: with no exit status from the run, nothing refuses "
+          "the push", SELECTIVE_TEST_RUN_REFUSED_BEFORE_BUDGET_RAN_OUT not in outcome.stderr,
+          outcome.describe())
+
+    stopping, outcome = not_run_case(
+        "overrun with a suite in its own session", FAKE_TEST_SUITES_RUNNER_STOPS_ITS_OWN_SUITE,
+        "the selective test run had not finished when the 1-second time budget ran out, and "
+        "was stopped; the logs of the suites it ran are in " + FAKE_LOG_DIRECTORY,
+        tell_user=False, budget=HANGING_CHECK_BUDGET_SECONDS)
+    marker = Path(str(stopping.fake_test_suites_runner_log) + ".suite-got-sigterm")
+    check("overrun with a suite in its own session: the hook leaves the suite for the run to "
+          "stop, so no SIGTERM from the hook reaches it",
+          not marker.exists(), marker.read_text() if marker.exists() else "")
+    suite_pid_file = Path(str(stopping.fake_test_suites_runner_log) + ".suite-pid")
+    if suite_pid_file.exists():
+        check("overrun with a suite in its own session: the suite was stopped",
+              process_gone_within(int(suite_pid_file.read_text()), seconds=5))
+        stop_leftover_process(int(suite_pid_file.read_text()))
+    else:
+        check("(setup) the run's suite recorded its pid", False)
+
     # An overrun where ps fails: the run's descendants cannot be listed, so the message says
     # some may still be running, and tells the user.
     failing_ps_bin = scratch / "overrun-failing-ps-bin"
@@ -1499,9 +1739,9 @@ def run_selective_test_run_cases(scratch):
         "overrun with ps failing", FAKE_TEST_SUITES_RUNNER_HANGS_WITH_CHILD,
         "the selective test run had not finished when the 1-second time budget ran out, and "
         "was stopped; the logs of the suites it ran are in " + FAKE_LOG_DIRECTORY
-        + "; the processes its suites started in their own sessions could not be listed, so "
-        "some may still be running: ps -A -o pid=,ppid= exited 1: ps: cannot read the process "
-        "table", tell_user=True, budget=HANGING_CHECK_BUDGET_SECONDS,
+        + "; the processes its suites started in their own process sessions on this machine "
+        "could not be listed, so some may still be running. The listing's error: ps -A -o "
+        "pid=,ppid= exited 1: ps: cannot read the process table", tell_user=True, budget=HANGING_CHECK_BUDGET_SECONDS,
         extra_environment={"PATH": "%s%s%s" % (failing_ps_bin, os.pathsep,
                                                os.environ.get("PATH", ""))})
     for suffix in (".child-pid", ".detached-child-pid"):
@@ -1596,6 +1836,29 @@ def run_selective_test_run_cases(scratch):
     check("a ps that fails: the run is still stopped, and the stop returns the listing error",
           sleeper.returncode is not None and stop_error is not None
           and "cannot read the process table" in stop_error, repr((sleeper.returncode, stop_error)))
+
+    # A run that does not exit within its grace after the stop is killed, with its output kept.
+    stubborn = subprocess.Popen(
+        [sys.executable, "-c", "import signal, time\n"
+         "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+         "print('ignoring the stop', flush=True)\n"
+         "time.sleep(60)\n"],
+        start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    saved_graces = selective.RUNNER_STOP_GRACE_SECONDS, selective.TERMINATE_GRACE_SECONDS
+    selective.RUNNER_STOP_GRACE_SECONDS = selective.TERMINATE_GRACE_SECONDS = 1.0
+    try:
+        stubborn.stdout.readline()
+        try:
+            stubborn_stdout, _stderr, _error = selective.stop_process_group(stubborn)
+            stop_raised = None
+        except Exception as error:
+            stubborn_stdout, stop_raised = "", repr(error)
+    finally:
+        selective.RUNNER_STOP_GRACE_SECONDS, selective.TERMINATE_GRACE_SECONDS = saved_graces
+        stop_leftover_process(stubborn.pid)
+    check("a run that ignores the stop past its grace is killed, and the stop returns",
+          stop_raised is None and stubborn.returncode == -signal.SIGKILL,
+          repr((stop_raised, stubborn.returncode, stubborn_stdout)))
 
 
 # --- Pushes from a mutation-testing worktree ------------------------------

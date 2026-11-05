@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Tests for nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py.
 
-Replays a small fixture of commands, never the real transcripts, at this checkout's HEAD and at
-commits made for the test from HEAD with one guard changed: a changed verdict exits 1, a changed
+Replays a small fixture of commands, never the real transcripts, in a repository of the test's own whose
+HEAD holds this checkout's copy of every file a replay reads, and at commits made for the test from that
+HEAD with one guard changed: a changed verdict exits 1, a changed
 message alone exits 0, and every way the replay can fail to get a verdict exits 2.
 
 Run: python3 nc-systems/general-tools/tests/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check-test.py
@@ -23,6 +24,14 @@ import time
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    REPOSITORY_ROOT / "scripts" / "git-redirecting-environment-removal-test-fixture.py")
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py"
 TMUX_KILL_GUARD = ".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py"
 ISSUE_WRITE_GUARD = ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py"
@@ -147,6 +156,17 @@ def check_scratch_directory_removed(directory, record=None):
     record = check if record is None else record
     could_not_remove = scratch_directory_removal_failures(directory)
     record("the scratch directory is removed after the run", not could_not_remove, "\n".join(could_not_remove))
+
+
+def remove_scratch_directory_ignoring_stop_signals(directory, record=None):
+    """Ignore stop signals from here on, then remove directory as check_scratch_directory_removed does.
+
+    A first stop's SystemExit is what brings a stopped run here; a second, such as the SIGTERM that `timeout` also
+    sends to the process group, would raise again inside the removal and leave the directory half removed in /tmp.
+    """
+    for number in replay.STOP_SIGNALS:
+        signal.signal(number, signal.SIG_IGN)
+    check_scratch_directory_removed(directory, record)
 
 
 def worktrees_registered_under(directory):
@@ -275,21 +295,81 @@ def stopped_by_sigterm(*_):
     raise SystemExit(1)  # So the temporary directory and its worktrees are removed below.
 
 
+def files_the_replay_reads_in_a_checkout():
+    """Return the paths, relative to REPOSITORY_ROOT, of the files of this checkout that a replay of the fixture
+    pairs reads: .claude/settings.json; every file the guards open while they load and read each fixture pair,
+    in-process and through the search-file guard's main(); and every file a loaded module names in a
+    module-level Path, such as the shell reader's pinned requirements, which only a machine missing a library
+    reads."""
+    root = str(REPOSITORY_ROOT)
+    opened, recording = set(), [True]
+
+    def record(event, arguments):
+        if recording[0] and event == "open" and arguments and isinstance(arguments[0], (str, os.PathLike)):
+            opened.add(os.path.abspath(os.fspath(arguments[0])))
+    # An audit hook cannot be removed, so it stops recording through the flag instead.
+    sys.addaudithook(record)
+    alarm_handler = signal.signal(signal.SIGALRM, replay.raise_pair_timed_out)
+    worker_as_found = dict(replay.WORKER)
+    try:
+        guards, _, _, _ = replay.guards_loaded(REPOSITORY_ROOT, False)
+        replay.WORKER["checkout"] = root
+        with tempfile.TemporaryDirectory() as search_file_directory:
+            for command, working_directory in FIXTURE_PAIRS:
+                replay.guard_readings(guards, command, working_directory, search_file_directory)
+                replay.search_file_main_outcome(guards[replay.SEARCH_FILE_GUARD], command, working_directory)
+    finally:
+        recording[0] = False
+        signal.signal(signal.SIGALRM, alarm_handler)
+        replay.WORKER.clear()
+        replay.WORKER.update(worker_as_found)
+    named, seen, modules = set(), set(), list(guards.values())
+    while modules:
+        module = modules.pop()
+        if id(module) in seen:
+            continue
+        seen.add(id(module))
+        for value in vars(module).values():
+            if type(value).__name__ == "module" and str(getattr(value, "__file__", "")).startswith(root + os.sep):
+                modules.append(value)
+            elif isinstance(value, Path) and value.is_absolute():
+                named.add(str(value))
+    # An import that finds a valid cache opens the .pyc and never the source, so a .pyc stands for its source.
+    sources = {importlib.util.source_from_cache(path) if path.endswith(".pyc") else path for path in opened | named}
+    return sorted({os.path.relpath(path, root) for path in sources
+                   if path.startswith(root + os.sep) and os.path.isfile(path)} | {".claude/settings.json"})
+
+
+def make_test_repository(directory):
+    """Make directory a repository of its own whose one commit holds this checkout's copy of every file a replay
+    reads, so the suite runs no git on this checkout: git on the checkout selects the suite in every change's
+    test run, where the files it copies select it only when one of them changes."""
+    files = files_the_replay_reads_in_a_checkout()
+    for relative in files:
+        (directory / relative).parent.mkdir(parents=True, exist_ok=True)
+        (directory / relative).write_bytes((REPOSITORY_ROOT / relative).read_bytes())
+    git("init", "--quiet", cwd=directory)
+    git("add", "--", *files, cwd=directory)
+    git("-c", "core.hooksPath=/dev/null", "-c", "user.name=replay test", "-c", "user.email=replay@test.invalid",
+        "commit", "--quiet", "-m", "replay test: the files a replay reads", cwd=directory)
+
+
 # The hung-child case takes about 23 s on an idle machine: one 20 s timeout, then the reading again. A sender
 # that kept the hung child would time out each later pair on that guard and each reading again, at least
 # 9 more timeouts (180 s), so this deadline fails it by name with room for a loaded machine's slower readings.
 HUNG_CHILD_CASE_DEADLINE_SECONDS = 150
 # Long enough for a stopped replay to stop its steps and remove its checkouts.
 REPLAY_STOP_SECONDS = 60
-signal.signal(signal.SIGTERM, stopped_by_sigterm)
+for stop_signal_number in replay.STOP_SIGNALS:
+    signal.signal(stop_signal_number, stopped_by_sigterm)
 scratch = tempfile.mkdtemp(prefix="bash-guards-replay-test-")
-# The test's checkouts are registered in a clone of its own inside the scratch directory, never in the
+# The test's checkouts are registered in a repository of its own inside the scratch directory, never in the
 # clone this checkout belongs to, whose worktree list other agent-seats and concurrent runs share; a run
 # that is killed leaves its registrations in the scratch directory alone.
 TEST_REPOSITORY = Path(scratch) / "repository"
 try:
-    git("clone", "--quiet", "--shared", "--no-checkout", str(REPOSITORY_ROOT), str(TEST_REPOSITORY), cwd=scratch)
-    git("update-ref", "--no-deref", "HEAD", git("rev-parse", "HEAD", cwd=REPOSITORY_ROOT))
+    TEST_REPOSITORY.mkdir()
+    make_test_repository(TEST_REPOSITORY)
     status, out, err = run_replay("HEAD", scratch)
     check("the same commit at base and head: exit 0 and no verdict changed",
           status == 0 and "NO VERDICT CHANGED" in out, f"status {status}\n{out}\n{err}")
@@ -298,8 +378,9 @@ try:
               for mode in ("in-process", "search-file main()", "new-process")), out)
     check("the same commit: no message differs, though the codex exec refusal names a file in each checkout",
           "in-process: rows whose message differs and verdict does not: 0" in out, out)
-    check("a replay that returns puts back the SIGTERM handler its caller had",
-          signal.getsignal(signal.SIGTERM) is stopped_by_sigterm, signal.getsignal(signal.SIGTERM))
+    check("a replay that returns puts back the SIGTERM and SIGHUP handlers its caller had",
+          all(signal.getsignal(number) is stopped_by_sigterm for number in replay.STOP_SIGNALS),
+          [signal.getsignal(number) for number in replay.STOP_SIGNALS])
     check("the same commit: new-process mode reads every pair by default",
           f"new-process pairs: {len(FIXTURE_PAIRS)}" in out, out)
     check("the same commit: new-process mode reads through a new process at both refs, in-process mode does not",
@@ -330,6 +411,19 @@ try:
     check("a head that rewords the end of a refusal only: exit 0, and the message difference is printed",
           status == 0 and "in-process: rows whose message differs and verdict does not: 1" in out
           and "Reworded at the end." in out, f"status {status}\n{out}\n{err}")
+
+    # The shell reader is loaded by file path, so its classes cannot be pickled by name between processes.
+    verdict_of_path_loaded_class = commit_with_guard_changed(
+        ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py", (
+            "_analyze_command_text_as_written = analyze_command_text\n"
+            "def analyze_command_text(command, payload_cwd, guard):\n"
+            "    if command == 'ls -la':\n"
+            "        return shell_reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand('~/refused'), None\n"
+            "    return _analyze_command_text_as_written(command, payload_cwd, guard)"), scratch)
+    status, out, err = run_replay(verdict_of_path_loaded_class, scratch, "--new-process-pairs", "none")
+    check("a verdict holding a value of a class from a path-loaded module crosses from the pool worker: exit 1",
+          status == 1 and "in-process: rows whose verdict differs: 1" in out and "~/refused" in out
+          and "PicklingError" not in out + err, f"status {status}\n{out}\n{err}")
 
     main_refusing_all = commit_with_guard_changed(SEARCH_FILE_GUARD, (
         "def main(stdin=sys.stdin, clock=time.monotonic):\n"
@@ -1094,7 +1188,7 @@ try:
     gap_directory = Path(scratch) / "gap"
     gap_directory.mkdir()
     (gap_directory / "stand-in-step.py").write_text("import time\ntime.sleep(1000)\n")
-    for gap_call, gap_extra in (("step", []), ("git", [str(REPOSITORY_ROOT)])):
+    for gap_call, gap_extra in (("step", []), ("git", [str(TEST_REPOSITORY)])):
         try:
             gap = subprocess.run([sys.executable, "-c", gap_script, str(SCRIPT_PATH),
                                   str(gap_directory / "stand-in-step.py"), gap_call.split()[0], *gap_extra],
@@ -1337,11 +1431,8 @@ try:
     locked = Path(scratch) / "locked-checkout"
     git("worktree", "add", "--detach", str(locked), "HEAD")
     git("worktree", "lock", str(locked))
-    shared_registrations = [line for line in git("worktree", "list", "--porcelain", cwd=REPOSITORY_ROOT).splitlines()
-                            if line.startswith("worktree ") and os.path.realpath(scratch) in line]
-    check("a checkout the test made is registered in the test's own clone, not in the clone this checkout belongs to",
-          worktrees_registered_under(locked) and not shared_registrations,
-          f"own clone {worktrees_registered_under(locked)}; shared clone {shared_registrations}")
+    check("a checkout the test made is registered in the test's own repository",
+          worktrees_registered_under(locked), worktrees_registered_under(locked))
     not_removed = replay.remove_checkouts(str(TEST_REPOSITORY), [locked])
     git("worktree", "unlock", str(locked))
     check("a checkout git cannot remove is reported, with git's reason",
@@ -1567,9 +1658,36 @@ try:
     check("a failure that a stop signal replaces with exit 2 is printed first",
           outcome == "SystemExit(2)" and "REPLAY FAILED: the test's leftover directory /tmp/pymp-test"
           in printed.getvalue(), f"{outcome}; stderr {printed.getvalue()!r}")
+    for second_stop in replay.STOP_SIGNALS:
+        stopped_twice = Path(scratch) / f"second-{second_stop.name}-during-removal"
+        for run in range(5):
+            (stopped_twice / f"run-{run}").mkdir(parents=True)
+            (stopped_twice / f"run-{run}" / "file").write_text("x")
+        # Not os.rmdir: rmtree compares the os.rmdir it queued with the current one, so swapping it breaks rmtree.
+        real_unlink = os.unlink
+
+        def unlink_after_a_second_stop(path, *arguments, second_stop=second_stop, **keywords):
+            os.unlink = real_unlink
+            os.kill(os.getpid(), second_stop)
+            return real_unlink(path, *arguments, **keywords)
+
+        recorded = []
+        outcome = "no exception"
+        os.unlink = unlink_after_a_second_stop
+        try:
+            remove_scratch_directory_ignoring_stop_signals(stopped_twice, lambda *result: recorded.append(result))
+        except SystemExit as stopped:
+            outcome = f"SystemExit({stopped.code})"
+        finally:
+            os.unlink = real_unlink
+            for number in replay.STOP_SIGNALS:
+                signal.signal(number, stopped_by_sigterm)
+        check(f"a {second_stop.name} landing during the final removal does not stop it, so nothing is left",
+              outcome == "no exception" and not stopped_twice.exists() and len(recorded) == 1
+              and recorded[0][1] is True, f"{outcome}; left: {stopped_twice.exists()}; recorded {recorded}")
 finally:
-    # The test's checkouts are registered only in its own clone, which goes with the scratch directory.
-    check_scratch_directory_removed(scratch)
+    # The test's checkouts are registered only in its own repository, which goes with the scratch directory.
+    remove_scratch_directory_ignoring_stop_signals(scratch)
 
 check("the default transcript folders are this machine's and the three copies the mirror keeps on ned-box",
       replay.DEFAULT_TRANSCRIPT_DIRECTORIES == [

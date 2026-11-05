@@ -88,6 +88,12 @@ _supervisor_spec = importlib.util.spec_from_file_location(
 supervisor = importlib.util.module_from_spec(_supervisor_spec)
 _supervisor_spec.loader.exec_module(supervisor)
 
+_session_handoff_field_names_spec = importlib.util.spec_from_file_location(
+    "session_handoff_field_names", Path(__file__).with_name("session-handoff-field-names-common.py")
+)
+field_names = importlib.util.module_from_spec(_session_handoff_field_names_spec)
+_session_handoff_field_names_spec.loader.exec_module(field_names)
+
 _transcript_mirror_spec = importlib.util.spec_from_file_location(
     "transcript_mirror_to_log_store", REPOSITORY_ROOT / "scripts" / "transcript-mirror-to-log-store.py"
 )
@@ -102,9 +108,9 @@ interim_recognizer = importlib.util.module_from_spec(_interim_recognizer_spec)
 _interim_recognizer_spec.loader.exec_module(interim_recognizer)
 
 
-NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
-NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
-NEXT_STEP_BLOCK_TERMINATOR = "END-OF-NEXT-STEP"
+NEXT_STEP_VERBATIM_FIELD = field_names.NEXT_STEP_VERBATIM_FIELD
+NEXT_STEP_BLOCK_OPENING_MARKER = field_names.NEXT_STEP_BLOCK_OPENING_MARKER
+NEXT_STEP_BLOCK_TERMINATOR = field_names.NEXT_STEP_BLOCK_TERMINATOR
 
 PROJECTS_ROOT = supervisor.PROJECTS_ROOT
 project_directory_for_working_directory = supervisor.project_directory_for_working_directory
@@ -124,8 +130,7 @@ DEFAULT_AGENT_NAME_RULE_TEXT = (
     f"({HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE}), else the working directory's name"
 )
 
-# Number each subagent field: the reader takes only the first occurrence of a key.
-SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
+SPAWNED_SUBAGENT_FIELD_PREFIX = field_names.SPAWNED_SUBAGENT_FIELD_PREFIX
 
 # An interim task-notification carries <status>completed</status>, so it gets an event of its own.
 WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT = "waiting on its own background work"
@@ -200,7 +205,7 @@ def claiming_directory(handoff_path: Path) -> str:
     """Return the directory that last wrote the handoff, or an empty string."""
     if not handoff_path.is_file():
         return ""
-    return supervisor.parse_handoff_file(handoff_path).get("written-in", "")
+    return supervisor.parse_handoff_file(handoff_path).get(field_names.WRITTEN_IN_FIELD, "")
 
 
 def supervised_name_for_this_directory(handoff_directory: Path, agent: str,
@@ -363,15 +368,17 @@ def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_re
                        seat_directory: Path, spawned_subagent_lines=(), verbatim_lines=()) -> None:
     """Write the handoff atomically so readers cannot see a partial file."""
     lines = [
-        f"written-at: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
-        f"next-step: {next_step}",
-        f"restart-counter: {counter}",
+        f"{field_names.WRITTEN_AT_FIELD}: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+        f"{field_names.NEXT_STEP_FIELD}: {next_step}",
+        f"{field_names.SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD}: {counter}",
+        # A handoff-supervisor still running pre-rename code reads only this name, and would never take over without it.
+        f"{field_names.LEGACY_RESTART_COUNTER_FIELD}: {counter}",
         # Compare directories, not session IDs: reincarnations share a directory but have distinct sessions.
-        f"written-in: {seat_directory}",
-        f"written-by-session: {os.environ.get('CLAUDE_CODE_SESSION_ID', 'unknown')}",
+        f"{field_names.WRITTEN_IN_FIELD}: {seat_directory}",
+        f"{field_names.WRITTEN_BY_SESSION_FIELD}: {os.environ.get('CLAUDE_CODE_SESSION_ID', 'unknown')}",
     ]
     if dont_restart:
-        lines.append("dont-restart: the user asked to be consulted before a relaunch")
+        lines.append(f"{field_names.DONT_RESTART_FIELD}: the user asked to be consulted before a relaunch")
 
     lines.extend(spawned_subagent_lines)
 
@@ -752,7 +759,7 @@ def main(argv=None) -> int:
                        spawned_subagent_lines=spawned_subagent_lines,
                        verbatim_lines=verbatim_lines)
     # Flushed at once: the supervisor may end this session soon after the handoff file appears.
-    print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (restart-counter {counter})", flush=True)
+    print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (session-handoff-sequence-number {counter})", flush=True)
     print(f"handoff-write-and-check-supervisor: {roster_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {prune_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {run_branch_protection_audit()}")

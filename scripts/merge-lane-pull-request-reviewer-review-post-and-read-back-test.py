@@ -2,7 +2,8 @@
 """Tests for merge-lane-pull-request-reviewer-review-post-and-read-back.py.
 
 Runs the program with HOME set to a scratch directory holding a mac-claude
-token file, and a stand-in gh first on PATH, so no case reaches GitHub. The
+token file and a ned-review-merge token file, and a stand-in gh first on PATH,
+so no case reaches GitHub. The
 stand-in gh logs each call, with the GH_TOKEN it was given and its standard
 input, answers the author lookup with FAKE_GH_AUTHOR, answers the pull
 request's files with FAKE_GH_FILES or one page holding scripts/thing.py with
@@ -15,9 +16,16 @@ author, files, post or read-back. FAKE_GH_KILLED names the call whose gh prints 
 usual reply and is then killed by a signal. FAKE_GH_HANGS names the call whose gh
 writes its pid to gh-hanging and sleeps, for a case that signals the program then.
 
+The round-trip cases load the fix-round program, which reads blocking findings,
+and hand its blocking_findings the posted body and comments in place of what
+its gh would read from GitHub; and load the follow-up program, which reads
+non-blocking findings, with a gh that answers with the posted reviews.
+
 Run: python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back-test.py
 """
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -25,12 +33,19 @@ import signal
 import subprocess
 import sys
 import tempfile
+import importlib.util
 import time
 from pathlib import Path
 
 PROGRAM = Path(__file__).with_name("merge-lane-pull-request-reviewer-review-post-and-read-back.py")
 HEAD = "0123456789abcdef0123456789abcdef01234567"
 TOKEN = "stand-in-mac-claude-token-value"
+MERGE_TOKEN = "stand-in-ned-review-merge-token-value"
+FIX_ROUND_PROGRAM = Path(__file__).with_name(
+    "pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-"
+    "answered-check.py")
+FOLLOW_UP_PROGRAM = Path(__file__).with_name(
+    "pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py")
 FAKE_GH = """#!/usr/bin/env python3
 import json, os, signal, sys, time
 from pathlib import Path
@@ -100,7 +115,7 @@ def running(pid):
 
 
 def run_program(scratch, review_text, token=TOKEN, arguments=("--pull-request", "7", "--head-commit", HEAD),
-                interrupt=None, **fake_gh_environment):
+                interrupt=None, merge_token=MERGE_TOKEN, **fake_gh_environment):
     """Run the program; with interrupt, a signal, send it once the stand-in gh is hanging."""
     case = Path(tempfile.mkdtemp(dir=scratch))
     home, state, fake_gh_directory = case / "home", case / "state", case / "fake-gh"
@@ -109,6 +124,9 @@ def run_program(scratch, review_text, token=TOKEN, arguments=("--pull-request", 
     if token is not None:
         (home / ".config" / "nedschorus").mkdir(parents=True)
         (home / ".config" / "nedschorus" / "mac-claude.token").write_text(token + "\n")
+    if merge_token is not None:
+        (home / ".config" / "nedschorus").mkdir(parents=True, exist_ok=True)
+        (home / ".config" / "nedschorus" / "ned-review-merge.token").write_text(merge_token + "\n")
     (fake_gh_directory / "gh").write_text(FAKE_GH)
     (fake_gh_directory / "gh").chmod(0o755)
     review_file = case / "review-to-post.txt"
@@ -148,9 +166,312 @@ def review(verdict, body="The review body.", comments=None):
     return json.dumps({"verdict": verdict, "body": body, "comments": comments or []})
 
 
+def finding(line, category, body=None):
+    return {"path": "scripts/thing.py", "line": line, "body": body or f"Finding on line {line}.",
+            "finding_category": category}
+
+
+MERGE_LANE_ARGUMENTS = ("--pull-request", "7", "--head-commit", HEAD,
+                        "--github-account", "ned-review-merge")
+
+
+def load_fix_round_program():
+    spec = importlib.util.spec_from_file_location("fix_round_program", FIX_ROUND_PROGRAM)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def fix_round_blocking_findings(fix_round, posted_reviews, logins=None):
+    """Run the fix-round program's blocking_findings on posted reviews, the first the anchor and
+    each posted by the account logins names at its place, merge-lane-2's by default; return its
+    findings, or the text of its refusal."""
+    logins = logins or ["ned-review-merge"] * len(posted_reviews)
+    reviews = [{"id": index + 1, "html_url": f"review-{index + 1}", "body": posted["body"],
+                "user": {"login": login}}
+               for index, (posted, login) in enumerate(zip(posted_reviews, logins))]
+    comments_by_id = {review["id"]: posted["comments"]
+                      for review, posted in zip(reviews, posted_reviews)}
+    fix_round.gh_json_lines = lambda arguments: comments_by_id[
+        int(next(argument for argument in arguments if "/reviews/" in argument).split("/")[-2])]
+    try:
+        return fix_round.blocking_findings(7, reviews[0], reviews)
+    except fix_round.Refused as refusal:
+        return str(refusal)
+
+
+def load_posting_program():
+    spec = importlib.util.spec_from_file_location("posting_program", PROGRAM)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def follow_up_block_from_posted_reviews(posted_reviews):
+    """Run the follow-up program's print-follow-up-request-block-from-merge-lane-2-reviews on posted
+    merge-lane-2 reviews, its gh answering with them as GitHub would; return (exit code, stdout, stderr)."""
+    spec = importlib.util.spec_from_file_location("follow_up_program", FOLLOW_UP_PROGRAM)
+    follow_up = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(follow_up)
+    reviews, comments = [], []
+    for review_id, posted in enumerate(posted_reviews, 1):
+        reviews.append({"id": review_id, "user": {"login": "ned-review-merge"},
+                        "state": {"APPROVE": "APPROVED"}.get(posted["event"], "CHANGES_REQUESTED"),
+                        "body": posted["body"]})
+        comments += [{**comment, "id": len(comments) + index, "pull_request_review_id": review_id,
+                      "user": {"login": "ned-review-merge"}}
+                     for index, comment in enumerate(posted["comments"])]
+    follow_up.gh = lambda arguments: json.dumps(
+        [reviews] if any(argument.endswith("/reviews?per_page=100") for argument in arguments) else [comments])
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = follow_up.main(["7", "print-follow-up-request-block-from-merge-lane-2-reviews"])
+    return code, out.getvalue(), err.getvalue()
+
+
+def merge_lane_cases(scratch):
+    """merge-lane-2's categorized review file, posted as ned-review-merge."""
+    must, nxt, maintenance, later = (finding(2, "must-fix-now"), finding(3, "fix-next"),
+                                     finding(4, "must-fix-now"), finding(1, "fix-in-maintenance"))
+    result = run_program(scratch, review("REQUEST_CHANGES", comments=[must, nxt, maintenance, later]),
+                         arguments=MERGE_LANE_ARGUMENTS)
+    check("merge-lane-2's file is posted as REQUEST_CHANGES with the merge account's token, the "
+          "must-fix-now count in the body, each must-fix-now comment opened with the blocking mark, "
+          "each other comment opened with its category in bold, and no finding_category key sent",
+          result.code == 0 and result.posted == {
+              "commit_id": HEAD, "event": "REQUEST_CHANGES",
+              "body": "REQUEST_CHANGES\n\n**Blocking: 2**\n\nThe review body.",
+              "comments": [
+                  {"path": "scripts/thing.py", "line": 2, "body": "**Blocks** Finding on line 2."},
+                  {"path": "scripts/thing.py", "line": 3, "body": "**fix-next** Finding on line 3."},
+                  {"path": "scripts/thing.py", "line": 4, "body": "**Blocks** Finding on line 4."},
+                  {"path": "scripts/thing.py", "line": 1,
+                   "body": "**fix-in-maintenance** Finding on line 1."}]}
+          and len(result.calls) == 4 and all(call["token"] == MERGE_TOKEN for call in result.calls)
+          and "by ned-review-merge as REQUEST_CHANGES" in result.stdout
+          and MERGE_TOKEN not in result.stdout + result.stderr, result.detail)
+    merge_lane_posted = result.posted
+
+    result = run_program(scratch, review("APPROVE", comments=[finding(2, "fix-next"),
+                                                              finding(3, "file-for-later")]),
+                         arguments=MERGE_LANE_ARGUMENTS, FAKE_GH_AUTHOR="an author")
+    check("merge-lane-2's file with no must-fix-now comment is posted as an approval with event "
+          "APPROVE on another author's pull request, and states no blocking count",
+          result.code == 0 and result.posted is not None and result.posted["event"] == "APPROVE"
+          and result.posted["body"] == "APPROVE\n\nThe review body."
+          and "Blocks" not in json.dumps(result.posted["comments"]), result.detail)
+    result = run_program(scratch, review("APPROVE", comments=[finding(2, "must-fix-now")]),
+                         arguments=MERGE_LANE_ARGUMENTS)
+    check("merge-lane-2's APPROVE file with a must-fix-now comment is posted as REQUEST_CHANGES",
+          result.code == 0 and result.posted is not None
+          and result.posted["event"] == "REQUEST_CHANGES"
+          and result.posted["body"].startswith("REQUEST_CHANGES\n\n**Blocking: 1**\n\n"),
+          result.detail)
+
+    for name, comments, verdict, reason in (
+            ("a finding without a category", [{"path": "p", "line": 1, "body": "b"}], "APPROVE",
+             "and a \"finding_category\", with no other keys"),
+            ("a finding whose category is not one of the four", [finding(2, "blocking")],
+             "APPROVE", "whose \"finding_category\" is 'blocking', not one of must-fix-now, fix-next, "
+                        "fix-in-maintenance, file-for-later"),
+            ("a finding whose category is not text", [finding(2, ["must-fix-now"])],
+             "REQUEST_CHANGES", "whose \"finding_category\" is ['must-fix-now'], not one of"),
+            ("a finding opening with a hand-written blocking mark",
+             [finding(2, "must-fix-now", "**Blocks** b")], "REQUEST_CHANGES",
+             "comment on scripts/thing.py:2 whose body already opens with the blocking mark "
+             "**Blocks**"),
+            ("a fix-next finding opening, after spaces, with a hand-written mark",
+             [finding(3, "fix-next", "  **Blocks:** b")], "APPROVE",
+             "already opens with the blocking mark **Blocks:**"),
+            ("a finding opening with a hand-written category mark",
+             [finding(3, "fix-next", "**file-for-later** b")], "APPROVE",
+             "comment on scripts/thing.py:3 whose body already opens with the category mark "
+             "**file-for-later**"),
+            ("a REQUEST_CHANGES verdict with nothing must-fix-now", [finding(2, "fix-next")],
+             "REQUEST_CHANGES", "has the verdict 'REQUEST_CHANGES' but no comment whose "
+                                "\"finding_category\" is must-fix-now; this program posts "
+                                "REQUEST_CHANGES only for a must-fix-now comment, so it refuses"),
+            ("a COULD_NOT_REVIEW verdict", [], "COULD_NOT_REVIEW",
+             "has the verdict 'COULD_NOT_REVIEW'")):
+        result = run_program(scratch, review(verdict, comments=comments),
+                             arguments=MERGE_LANE_ARGUMENTS)
+        check(f"merge-lane-2's file with {name} exits 2, says why, calls no gh, and says to fix "
+              "the file rather than blame a reviewer's run",
+              result.code == 2 and reason in result.stderr and "review not posted" in result.stderr
+              and "fix it and run the same command again" in result.stderr
+              and "headless-run" not in result.stderr and not result.calls, result.detail)
+    result = run_program(scratch, review("APPROVE", comments=[finding(2, "fix-next")]))
+    check("a mac-claude file whose comments carry a category is refused, since the Claude "
+          "reviewer's comments have exactly path, line and body",
+          result.code == 2 and "a text \"body\", with no other keys" in result.stderr
+          and not result.calls, result.detail)
+
+    result = run_program(scratch, review("APPROVE"), arguments=MERGE_LANE_ARGUMENTS,
+                         merge_token=None)
+    check("--github-account ned-review-merge with no merge account token file exits 2 before any "
+          "gh call", result.code == 2 and "could not read the merge account's token"
+          in result.stderr and "review not posted" in result.stderr and not result.calls,
+          result.detail)
+    result = run_program(scratch, review("APPROVE"), arguments=MERGE_LANE_ARGUMENTS,
+                         merge_token="")
+    check("--github-account ned-review-merge with an empty merge account token file exits 2 "
+          "before any gh call", result.code == 2 and "is empty" in result.stderr
+          and not result.calls, result.detail)
+    result = run_program(scratch, review("APPROVE"), arguments=MERGE_LANE_ARGUMENTS,
+                         FAKE_GH_FAILS="post")
+    check("a failed post as ned-review-merge gives the command that lists ned-review-merge's "
+          "reviews on the nc-head-commit",
+          result.code == 2 and "list ned-review-merge's reviews" in result.stderr
+          and '.user.login == "ned-review-merge"' in result.stderr, result.detail)
+    result = run_program(scratch, review("APPROVE"), arguments=(
+        "--pull-request", "7", "--head-commit", HEAD, "--github-account", "someone-else"))
+    check("a --github-account other than mac-claude and ned-review-merge exits 2 and calls no gh",
+          result.code == 2 and "--github-account" in result.stderr and not result.calls,
+          result.detail)
+
+    fix_round = load_fix_round_program()
+    found = fix_round_blocking_findings(fix_round, [merge_lane_posted])
+    check("round trip: the fix-round program reads the two posted must-fix-now comments, and "
+          "the posted count agrees with them",
+          isinstance(found, list) and [item["line"] for item in found] == [2, 4], str(found))
+    mac_claude = run_program(scratch, review("APPROVE", comments=[
+        {"path": "scripts/thing.py", "line": 3, "body": "A remark."}]))
+    found = fix_round_blocking_findings(fix_round, [merge_lane_posted, mac_claude.posted])
+    check("round trip: a mac-claude review of the same head with no count beside it leaves the "
+          "fix-round program's count check passing",
+          isinstance(found, list) and [item["line"] for item in found] == [2, 4], str(found))
+    approving = run_program(scratch, review("APPROVE", comments=[finding(3, "fix-next")]),
+                            arguments=MERGE_LANE_ARGUMENTS)
+    found = fix_round_blocking_findings(fix_round, [merge_lane_posted, approving.posted])
+    check("round trip: a merge-lane-2 review of the same head with nothing must-fix-now states "
+          "no count, so the fix-round program's count check still passes",
+          isinstance(found, list) and [item["line"] for item in found] == [2, 4]
+          and fix_round.BLOCKING_COUNT_PATTERN.search(approving.posted["body"]) is None,
+          f"{found}\n{approving.detail}")
+    graded = run_program(scratch, review("REQUEST_CHANGES", comments=[
+        finding(2, "must-fix-now"), finding(3, "fix-next", "A Blocks finding graded down.")]),
+        arguments=MERGE_LANE_ARGUMENTS)
+    reviewer_blocks = {"body": "COMMENT", "comments": [
+        {"path": "scripts/thing.py", "line": 3, "body": "**Blocks** A Blocks finding graded down."}]}
+    found = fix_round_blocking_findings(fix_round, [graded.posted, reviewer_blocks],
+                                        ["ned-review-merge", "mac-claude"])
+    check("round trip: a commissioned reviewer's Blocks finding that merge-lane-2's categorized "
+          "review grades fix-next does not block; only merge-lane-2's must-fix-now one does",
+          isinstance(found, list) and [item["line"] for item in found] == [2],
+          f"{found}\n{graded.detail}")
+    second_part = run_program(scratch, review("REQUEST_CHANGES", comments=[
+        finding(1, "must-fix-now")]), arguments=MERGE_LANE_ARGUMENTS)
+    found = fix_round_blocking_findings(fix_round, [merge_lane_posted, second_part.posted,
+                                                    reviewer_blocks],
+                                        ["ned-review-merge", "ned-review-merge", "mac-claude"])
+    check("round trip: the must-fix-now comments of both parts of a split merge-lane-2 review "
+          "block, and the commissioned reviewer's Blocks finding they leave out does not",
+          isinstance(found, list) and [item["line"] for item in found] == [2, 4, 1],
+          f"{found}\n{second_part.detail}")
+    addendum = {"body": "COMMENT\n\nOne more blocker on the same head.", "comments": [
+        {"path": "scripts/thing.py", "line": 5, "body": "**Blocks** A blocker added later."}]}
+    found = fix_round_blocking_findings(fix_round, [graded.posted, addendum, reviewer_blocks],
+                                        ["ned-review-merge", "ned-review-merge", "mac-claude"])
+    check("round trip: a later merge-lane-2 review of the same head with a Blocks comment and no "
+          "count still blocks beside the counted review, while the commissioned reviewer's "
+          "graded-down Blocks finding does not",
+          isinstance(found, list) and [item["line"] for item in found] == [2, 5],
+          f"{found}\n{graded.detail}")
+    count_only = {"body": "REQUEST_CHANGES\n\n**Blocking: 1**\n\nSee the reviewer's Blocks.",
+                  "comments": []}
+    found = fix_round_blocking_findings(fix_round, [count_only, reviewer_blocks],
+                                        ["ned-review-merge", "mac-claude"])
+    check("round trip: a merge-lane-2 review that marks nothing of its own leaves the "
+          "commissioned reviewer's Blocks finding blocking",
+          isinstance(found, list) and [item["line"] for item in found] == [3], str(found))
+    lane_uncounted = {"body": "REQUEST_CHANGES\n\nA blocker of merge-lane-2's own.", "comments": [
+        {"path": "scripts/thing.py", "line": 6, "body": "**Blocks** A blocker of merge-lane-2's own."}]}
+    reviewer_counted = {"body": "COMMENT\n\n**Blocking: 1**\n\nOne blocker.", "comments": [
+        {"path": "scripts/thing.py", "line": 3, "body": "**Blocks** A Blocks finding graded down."}]}
+    found = fix_round_blocking_findings(fix_round, [lane_uncounted, reviewer_counted],
+                                        ["ned-review-merge", "mac-claude"])
+    check("round trip: a Blocking count in a commissioned reviewer's review does not make the "
+          "round graded, so that reviewer's Blocks finding still blocks beside merge-lane-2's "
+          "uncounted one",
+          isinstance(found, list) and sorted(item["line"] for item in found) == [3, 6], str(found))
+    duplicated = run_program(scratch, review("REQUEST_CHANGES", comments=[
+        finding(2, "must-fix-now"), finding(2, "must-fix-now"), finding(3, "fix-next"),
+        finding(3, "fix-next")]), arguments=MERGE_LANE_ARGUMENTS)
+    check("two must-fix-now comments with the same path, line and body are posted once and "
+          "counted once, as are two equal fix-next ones",
+          duplicated.code == 0 and duplicated.posted is not None
+          and duplicated.posted["body"].startswith("REQUEST_CHANGES\n\n**Blocking: 1**\n\n")
+          and [comment["line"] for comment in duplicated.posted["comments"]] == [2, 3],
+          duplicated.detail)
+    found = fix_round_blocking_findings(fix_round, [duplicated.posted])
+    check("round trip: the fix-round program's count check passes on that review",
+          isinstance(found, list) and [item["line"] for item in found] == [2], str(found))
+    moved = run_program(scratch, review("REQUEST_CHANGES", comments=[
+        finding(2, "must-fix-now"),
+        {"path": "scripts/other.py", "line": 1, "body": "Outside.", "finding_category": "must-fix-now"}]),
+        arguments=MERGE_LANE_ARGUMENTS)
+    found = fix_round_blocking_findings(fix_round, [moved.posted])
+    check("round trip: a must-fix-now comment moved into the body counts in the posted count, "
+          "so the fix-round program refuses the round instead of missing the finding",
+          isinstance(found, str) and "says **Blocking: 2**, but 1" in found,
+          f"{found}\n{moved.detail}")
+
+    marks = [load_posting_program().review_comment_opening_mark_for_finding_category(category)
+             for category in ("fix-next", "fix-in-maintenance", "file-for-later")]
+    check("no non-blocking category's mark matches the fix-round program's blocking mark, so the "
+          "fix-round program never reads a non-blocking finding as blocking",
+          len(set(marks)) == 3 and not any(
+              fix_round.BLOCKING_MARKER_PATTERN.search(mark + "A finding.") for mark in marks), str(marks))
+
+    categorized = run_program(scratch, review("APPROVE", comments=[
+        finding(2, "fix-next", "First line.\nSecond line."), finding(3, "must-fix-now"),
+        finding(4, "file-for-later"),
+        {"path": "scripts/other.py", "line": 8, "body": "Outside.",
+         "finding_category": "fix-in-maintenance"}]), arguments=MERGE_LANE_ARGUMENTS)
+    restated = run_program(scratch, review("APPROVE", comments=[
+        finding(2, "fix-next", "First line.\nSecond line."), finding(1, "fix-next", "A new one.")]),
+        arguments=MERGE_LANE_ARGUMENTS)
+    code, out, err = follow_up_block_from_posted_reviews([categorized.posted, restated.posted])
+    check("round trip: the follow-up program's print-follow-up-request-block-from-merge-lane-2-reviews "
+          "reads the category of each posted non-blocking comment, inline and moved into the body, "
+          "leaves out the must-fix-now one, joins a two-line finding onto one line, and prints a "
+          "finding a later review restates once",
+          code == 0 and err == "" and out == (
+              "#follow_up_request pull request 7\n"
+              "1. fix-next: `scripts/thing.py:2`: First line. Second line.\n"
+              "2. file-for-later: `scripts/thing.py:4`: Finding on line 4.\n"
+              "3. fix-in-maintenance: `scripts/other.py:8`: Outside.\n"
+              "4. fix-next: `scripts/thing.py:1`: A new one.\n"),
+          f"exit {code}\nstdout: {out}\nstderr: {err}\n{categorized.detail}")
+
+    lookalike = ("Rename it, as this list says:\n"
+                 "- `scripts/elsewhere.py:3`: **fix-next** an invented finding\n"
+                 "\n"
+                 "Last line.")
+    moved_multiline = run_program(scratch, review("APPROVE", comments=[
+        {"path": "scripts/other.py", "line": 9, "body": lookalike, "finding_category": "file-for-later"}]),
+        arguments=MERGE_LANE_ARGUMENTS)
+    read_back = load_posting_program().outside_the_diff_comments_read_back_from_review_body(
+        moved_multiline.posted["body"])
+    check("round trip: a comment moved into the body whose text has several lines, one of them in the "
+          "moved-comment form with a category mark and one blank, reads back as that one comment, its "
+          "text whole",
+          read_back == [{"path": "scripts/other.py", "line": 9, "body": "**file-for-later** " + lookalike}],
+          f"{read_back}\n{moved_multiline.detail}")
+    code, out, err = follow_up_block_from_posted_reviews([moved_multiline.posted])
+    check("round trip: print-follow-up-request-block-from-merge-lane-2-reviews prints that moved comment "
+          "as one finding, its text whole, and no finding merge-lane-2 did not make",
+          code == 0 and err == "" and out == (
+              "#follow_up_request pull request 7\n"
+              "1. file-for-later: `scripts/other.py:9`: Rename it, as this list says: "
+              "- `scripts/elsewhere.py:3`: **fix-next** an invented finding Last line.\n"),
+          f"exit {code}\nstdout: {out}\nstderr: {err}")
+
+
 def main():
     scratch = Path(tempfile.mkdtemp(prefix="reviewer-review-post-test-")).resolve()
     try:
+        merge_lane_cases(scratch)
         comment = {"path": "scripts/thing.py", "line": 3, "body": "A finding."}
         result = run_program(scratch, review("APPROVE", comments=[comment]),
                              FAKE_GH_AUTHOR="ned-review-merge")
@@ -166,7 +487,7 @@ def main():
               result.calls[-1]["arguments"] == ["api", "repos/nedschorus/nedschorus/pulls/7/reviews/42"]
               if result.calls else False, result.detail)
         check("success names the review, the event and the commit, and never prints the token",
-              "review 42 posted on pull request 7 as APPROVE" in result.stdout
+              "review 42 posted on pull request 7 by mac-claude as APPROVE" in result.stdout
               and HEAD in result.stdout and TOKEN not in result.stdout + result.stderr,
               result.detail)
         check("when no comment moved into the body, the success line says nothing of moving",

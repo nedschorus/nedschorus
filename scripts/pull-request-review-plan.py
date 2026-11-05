@@ -62,7 +62,7 @@ Rule 4: a pull request that adds or changes an nc-architecture-overview, a
 file at the path scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py
 gives for a directory under nc-systems/ at the head, is refused, with exit 1
 and no plan, until the newest claim-check report for the overview's text at
-the head says every claim is supported.
+the head says every claim is supported, or that no must-fix claim remains.
 nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py
 writes the reports, keyed by the overview's blob, under
 --overview-write-architecture-overview-claim-check-report-directory, the log-store's
@@ -766,7 +766,7 @@ def architecture_overview_checked_against_commit_refusal_message(number, head, p
     lines.extend(f"  2. Run the claim check again: python3 nc-systems/skills/overview-write/"
                  f"overview-write-architecture-overview-claim-check-by-fresh-agent.py --overview {shlex.quote(problem['path'])}"
                  for problem in problems)
-    lines.append("  3. Do what the claim check prints, and push once its report shows every claim supported.")
+    lines.append("  3. Do what the claim check prints, and push once its report shows no must-fix claim remains.")
     lines.append(f"Once the author says this is done: run scripts/pull-request-review-plan.py --pull-request {number} again.")
     return "\n".join(lines)
 
@@ -774,20 +774,23 @@ def architecture_overview_checked_against_commit_refusal_message(number, head, p
 def architecture_overview_claim_check_shortfalls(repository, head, changed_files, report_directory):
     """For each nc-architecture-overview the pull request adds or changes, the
     newest claim-check report for the overview's text at head, when that report
-    does not show every claim supported; an empty list lets the plan go on."""
+    shows a must-fix claim remaining, or is missing or malformed; an empty list
+    lets the plan go on."""
     shortfalls = []
     for path, _system in changed_architecture_overview_paths_and_systems(repository, head, changed_files):
         blob = required_git_output(repository, "rev-parse", f"{head}:{path}")
         newest = overview_claim_check.find_newest_architecture_overview_claim_check_report_path_and_result_for_overview_git_blob(report_directory, path, blob)
-        if newest is None or newest[1] != overview_claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED:
+        if newest is None or newest[1] not in (
+                overview_claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED,
+                overview_claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_NO_MUST_FIX_CLAIM_REMAINS):
             shortfalls.append({"path": path, "blob": blob, "newest_report": newest})
     return shortfalls
 
 
 def architecture_overview_claim_check_refusal_message(number, head, shortfalls, report_directory):
     lines = [f"pull request {number} adds or changes {len(shortfalls)} nc-architecture-overview(s), and for each one "
-             f"listed below no claim-check report on the overview's text at head {head[:12]} shows every claim "
-             "supported, so no plan was computed."]
+             f"listed below no claim-check report on the overview's text at head {head[:12]} shows that no "
+             "must-fix claim remains, so no plan was computed."]
     for shortfall in shortfalls:
         looked_for = overview_claim_check.overview_write_architecture_overview_claim_check_report_directory_for_overview(report_directory, shortfall["path"]) / f"{shortfall['blob']}-*.md"
         newest = shortfall["newest_report"]
@@ -799,10 +802,10 @@ def architecture_overview_claim_check_refusal_message(number, head, shortfalls, 
     lines.extend(f"     python3 nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py "
                  f"--overview {shlex.quote(shortfall['path'])}" for shortfall in shortfalls)
     lines.append("If the command fails to run, the author does what it prints.")
-    lines.append("If its report shows a claim contradicted or unsupported, the author fixes the overview as the section "
+    lines.append("If its report shows a must-fix claim remaining, the author fixes the overview as the section "
                  "\"Checking an overview\" of docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md "
-                 "says, commits, runs the command again, and pushes once the report shows every claim supported.")
-    lines.append(f"Once the author says each listed overview's newest report shows every claim supported: run "
+                 "says, commits, runs the command again, and pushes once the report shows no must-fix claim remains.")
+    lines.append(f"Once the author says each listed overview's newest report shows no must-fix claim remains: run "
                  f"scripts/pull-request-review-plan.py --pull-request {number} again.")
     return "\n".join(lines)
 

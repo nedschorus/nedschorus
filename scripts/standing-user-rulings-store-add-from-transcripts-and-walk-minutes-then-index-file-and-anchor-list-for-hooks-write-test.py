@@ -640,6 +640,26 @@ with tempfile.TemporaryDirectory() as directory:
           and [line["text"] for line in case.index()[1]] == ["my own words"],
           case.query("SELECT text, state FROM entries ORDER BY entry_id"))
 
+# A prompt passed with --first-prompt-file reaches the transcript as a turn a person typed; the line the
+# handoff-supervisor ends it with keeps it out of his words, and his answer to the agent stays his.
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    founding_prompt = recover.supervisor.first_prompt_from_launch_command_marked_not_typed_by_the_user(
+        "You are the git-infra seat. Read docs/agents/seat-first-prompt.md and ask what to work on.")
+    case.transcript("ned-box", [human(founding_prompt, "2026-10-27T00:00:00Z", promptSource="typed"),
+                                agent("What shall I work on?", "2026-10-27T00:00:30Z"),
+                                human("the GHI 2118 store", "2026-10-27T00:01:00Z")])
+    result = case.run()
+    check("a first prompt passed with --first-prompt-file is stored with the status not-the-user's-words, the index "
+          "leaves it out, and his answer keeps the agent's question",
+          result.returncode == 0
+          and case.query("SELECT text, state FROM entries ORDER BY entry_id")
+              == [(founding_prompt, "not-the-user's-words"), ("the GHI 2118 store", "standing")]
+          and [line["text"] for line in case.index()[1]] == ["the GHI 2118 store"]
+          and case.query("SELECT agent_message_answered FROM entries WHERE text = 'the GHI 2118 store'")
+              == [("What shall I work on?",)],
+          described(result) + f" {case.query('SELECT text, state FROM entries ORDER BY entry_id')}")
+
 # A turn of his that the reader takes for a program's prompt when the transcript is first read is stored, marked
 # not-the-user's-words; once the reader no longer takes it for one, a later run sets it back to standing, though the
 # transcript is not read again.
@@ -664,6 +684,22 @@ with tempfile.TemporaryDirectory() as directory:
           and [line["text"] for line in case.index()[1]] == [quoting],
           described(first) + f" {marked_first} exit {exit_code} {stderr.getvalue()} "
           f"{case.query('SELECT text, state FROM entries')}")
+
+# The agent asks, Claude Code compacts the session, and he answers: the stored summary answers nothing, and his
+# answer keeps the agent's question and its tag.
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    summary = program.transcript_reader.COMPACTION_SUMMARY_OPENING + " that ran out of context. Summary: ..."
+    case.transcript("ned-box", [agent("Shall I close GHI 46?", "2026-10-30T00:00:00Z"),
+                                human(summary, "2026-10-30T00:01:00Z"),
+                                human("yes, close it", "2026-10-30T00:02:00Z")])
+    result = case.run()
+    stored = {entry[1]: entry[5] for entry in case.entries()}
+    check("an answer given right after a compaction summary keeps the agent's question and its tag, and the "
+          "summary answers nothing",
+          result.returncode == 0 and stored.get("yes, close it") == "Shall I close GHI 46?"
+          and stored.get(summary.strip(), "missing") is None and case.tags("yes, close it") == {"GHI 46"},
+          described(result) + f" {stored} {case.tags('yes, close it')}")
 
 # A prompt stored before the reader knew it: the handoff-supervisor's own no-handoff prompt, put in the store as
 # an earlier run did, with a tag, gets the status not-the-user's-words; it stays in the store, tag and full-text row
@@ -714,6 +750,28 @@ with tempfile.TemporaryDirectory() as directory:
     check("a later run leaves a marked entry marked and counts nothing new",
           states(case)[1] == (prompt, "not-the-user's-words")
           and "set the status not-the-user's-words on 0 user-words entries" in again.stdout, again.stdout)
+
+# A first prompt passed with --first-prompt-file before the handoff-supervisor marked it has no mark the reader
+# can tell; one the program lists by its duplicate_key gets the status not-the-user's-words, and keeps it.
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    store_with_an_earlier_runs_entries(case, ["You are the git-infra seat, launched by launch-claude-mac."])
+    listed_key = sorted(program.FIRST_PROMPTS_FROM_LAUNCH_COMMANDS_STORED_WITHOUT_THE_SUPERVISORS_LINE)[0]
+    connection = sqlite3.connect(str(case.store_directory / program.STORE_FILE_NAME))
+    with connection:
+        connection.execute("UPDATE entries SET duplicate_key = ? WHERE text LIKE 'You are the git-infra seat%'",
+                           (listed_key,))
+    connection.close()
+    result = case.run()
+    again = case.run()
+    check("a stored first prompt the program lists gets the status not-the-user's-words, the index leaves it out, "
+          "and a later run does not set it back to standing",
+          result.returncode == 0 and again.returncode == 0
+          and states(case) == [("kept words", "standing"),
+                               ("You are the git-infra seat, launched by launch-claude-mac.", "not-the-user's-words")]
+          and [line["text"] for line in case.index()[1]] == ["kept words"]
+          and "and set 0 back to standing" in again.stdout,
+          described(result) + described(again) + f" {states(case)}")
 
 # A reader that recognized too much: an entry marked by an earlier run whose text the reader no longer tells is a
 # program's prompt goes back to standing, and the index file holds it again.

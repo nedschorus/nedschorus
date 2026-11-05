@@ -152,6 +152,16 @@ def raises_could_not_read(transcript_path):
     return False
 
 
+def raises_list_could_not_read(entries, transcript_path):
+    """True when the list reader refuses rather than answering for the transcripts."""
+    try:
+        hook.work_in_flight_from_background_tasks(
+            entries, str(transcript_path), hook.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60)
+    except hook.TranscriptCouldNotBeFullyRead:
+        return True
+    return False
+
+
 def usage_record(input_tokens, cache_read=0, cache_creation=0, model="claude-fable-5"):
     return {"type": "assistant", "message": {
         "model": model,
@@ -863,7 +873,7 @@ with tempfile.TemporaryDirectory() as workspace:
               "65% ceiling" in result.stderr, result.stderr[:500])
         # A reader could not tell whether the time limit bounds subagents too.
         check("the deferral says the time limit bounds background tasks, not subagents",
-              "once every subagent has finished, and every background task has "
+              "once every subagent and workflow has finished, and every background task has "
               "either finished or run for" in result.stderr, result.stderr[:600])
         # The notice used to promise the handoff waits until the subagents
         # finish, full stop. The ceiling overrides that, and an agent reading
@@ -1205,6 +1215,8 @@ with tempfile.TemporaryDirectory() as workspace:
                   result.stderr[:250])
             check("the deferral tells the agent to start no new background tasks",
                   "start no new background tasks" in result.stderr, result.stderr[:250])
+            check("the deferral tells the agent to start no new workflows",
+                  "start no new workflows" in result.stderr, result.stderr[-300:])
             check("the deferral names the wait as a way the handoff fires",
                   "75 minute" in result.stderr, result.stderr[:300])
             check("a background-task deferral writes the deferral marker and not the fired one",
@@ -1281,6 +1293,159 @@ with tempfile.TemporaryDirectory() as workspace:
         finally:
             background_marker_file.unlink(missing_ok=True)
             background_deferred_marker_file.unlink(missing_ok=True)
+
+        # --- Claude Code's background_tasks list decides what runs ----------
+        # The entry shapes are trimmed from real Stop hook input; the list shows a
+        # Monitor as a shell task, and a subagent waiting on its own shell task
+        # leaves the list while that task stays on it.
+        LIST_PROBE_SESSION_ID = "handoff-threshold-hook-test-background-tasks-list-session"
+        list_fired_marker_file = hook.fired_marker_path(LIST_PROBE_SESSION_ID)
+        list_deferred_marker_file = hook.deferred_marker_path(LIST_PROBE_SESSION_ID)
+
+        def list_entry(task_id, task_type, status="running"):
+            return {"id": task_id, "type": task_type, "status": status,
+                    "description": f"a {task_type}"}
+
+        def clear_list_markers():
+            list_fired_marker_file.unlink(missing_ok=True)
+            list_deferred_marker_file.unlink(missing_ok=True)
+
+        clock = datetime.now(timezone.utc)
+        ten_minutes_ago = utc_iso(clock - timedelta(minutes=10))
+        two_hours_ago = utc_iso(clock - timedelta(hours=2))
+        wait_seconds = hook.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60
+        # The transcript shows a subagent spawned and never finished, so a hook
+        # that read the transcript instead of the list would defer.
+        list_session = transcript_of(workspace, "background-tasks-list-session.jsonl", [
+            usage_record(100_000, cache_read=450_000),  # 55%
+            subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool"),
+            background_task_launch_record("bshellyoung", launched_at=ten_minutes_ago),
+            background_task_launch_record("bshellold", launched_at=two_hours_ago),
+            monitor_start_record("bmonitor01"),
+        ])
+        list_subagents = list_session.with_suffix("") / "subagents"
+        list_subagents.mkdir(parents=True, exist_ok=True)
+        transcript_of(list_subagents, "agent-a2573a7737ae643dc.jsonl", [
+            background_task_launch_record("bsubyoung", launched_at=ten_minutes_ago),
+            background_task_launch_record("bsubold", launched_at=two_hours_ago),
+        ])
+
+        def flight_of(entries, transcript=list_session):
+            return hook.work_in_flight_from_background_tasks(
+                entries, str(transcript), wait_seconds, now=clock)
+
+        flight = flight_of([])
+        check("an empty list holds nothing, whatever the transcript's notices say", not flight,
+              f"{flight.subagent_ids} {flight.background_task_ids} {flight.workflow_ids}")
+        flight = flight_of([list_entry("a1", "subagent")])
+        check("a listed running subagent holds the handoff", flight.subagent_ids == ["a1"],
+              str(flight.subagent_ids))
+        flight = flight_of([list_entry("w1", "workflow")])
+        check("a listed running workflow holds the handoff", flight.workflow_ids == ["w1"],
+              str(flight.workflow_ids))
+        check("a list holding only a running workflow counts as work in flight", bool(flight),
+              f"{flight.subagent_ids} {flight.background_task_ids} {flight.workflow_ids}")
+        flight = flight_of([list_entry("bshellyoung", "shell")])
+        check("a shell task launched within the wait holds the handoff",
+              flight.background_task_ids == ["bshellyoung"], str(flight.background_task_ids))
+        flight = flight_of([list_entry("bshellold", "shell")])
+        check("a shell task launched longer ago than the wait holds nothing", not flight,
+              str(flight.background_task_ids))
+        flight = flight_of([list_entry("bsubyoung", "shell")])
+        check("a subagent's own shell task within the wait holds the handoff, dated from the"
+              " subagent's transcript", flight.background_task_ids == ["bsubyoung"],
+              str(flight.background_task_ids))
+        flight = flight_of([list_entry("bsubold", "shell")])
+        check("a subagent's own shell task past the wait holds nothing", not flight,
+              str(flight.background_task_ids))
+        flight = flight_of([list_entry("bmonitor01", "shell")])
+        check("a Monitor, which the list shows as a shell task, holds nothing", not flight,
+              str(flight.background_task_ids))
+        flight = flight_of([list_entry("bunrecorded", "shell")])
+        check("a shell task no transcript records counts as within its wait",
+              flight.background_task_ids == ["bunrecorded"], str(flight.background_task_ids))
+        flight = flight_of([list_entry("a1", "subagent", status="completed"),
+                            list_entry("x1", "some-later-kind"), "not an entry",
+                            {"type": "subagent", "status": "running"}])
+        check("a finished entry, an unknown kind and a malformed entry hold nothing", not flight,
+              f"{flight.subagent_ids} {flight.background_task_ids} {flight.workflow_ids}")
+        flight = flight_of([list_entry("a1", "subagent")],
+                           transcript=Path(workspace) / "no-such-transcript.jsonl")
+        check("with no shell task listed the transcript is not read at all",
+              flight.subagent_ids == ["a1"], str(flight.subagent_ids))
+        check("a missing session transcript cannot date a listed shell task",
+              raises_list_could_not_read([list_entry("bshellyoung", "shell")],
+                                         Path(workspace) / "no-such-transcript.jsonl"))
+        torn = transcript_of(workspace, "background-tasks-list-torn.jsonl", [
+            usage_record(100_000, cache_read=450_000)])
+        with torn.open("a", encoding="utf-8") as handle:
+            handle.write('{"toolUseResult": {"backgroundTaskId": "bshellyoung"\n')
+        check("a line naming a listed shell task that does not parse cannot be read past",
+              raises_list_could_not_read([list_entry("bshellyoung", "shell")], torn))
+        try:
+            hook.work_in_flight_from_background_tasks(
+                [list_entry("bshellyoung", "shell")], str(torn),
+                hook.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60)
+            torn_message = ""
+        except hook.TranscriptCouldNotBeFullyRead as problem:
+            torn_message = str(problem)
+        check("the unparsable line is named by its number and text",
+              ", line 2:" in torn_message and '"bshellyoung"' in torn_message, torn_message)
+        long_torn = transcript_of(workspace, "background-tasks-list-long-torn.jsonl", [
+            usage_record(100_000, cache_read=450_000)])
+        long_line = '{"toolUseResult": {"backgroundTaskId": "bshellyoung", "x": "' + "a" * 300
+        with long_torn.open("a", encoding="utf-8") as handle:
+            handle.write(long_line + "\n")
+        try:
+            hook.work_in_flight_from_background_tasks(
+                [list_entry("bshellyoung", "shell")], str(long_torn),
+                hook.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60)
+            long_message = ""
+        except hook.TranscriptCouldNotBeFullyRead as problem:
+            long_message = str(problem)
+        check("the unparsable line's text is cut at exactly its first 200 characters",
+              repr(long_line[:200]) in long_message, long_message[-260:])
+        unreadable_subagents = transcript_of(
+            workspace, "background-tasks-list-unreadable-subagent.jsonl",
+            [usage_record(100_000, cache_read=450_000)])
+        unreadable_directory = unreadable_subagents.with_suffix("") / "subagents"
+        unreadable_directory.mkdir(parents=True, exist_ok=True)
+        (unreadable_directory / "agent-a9.jsonl").mkdir()  # opening a directory raises
+        check("a subagent transcript that cannot be opened cannot be read past",
+              raises_list_could_not_read([list_entry("bshellyoung", "shell")],
+                                         unreadable_subagents))
+
+        try:
+            clear_list_markers()
+            result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
+                               "transcript_path": str(list_session),
+                               "background_tasks": [list_entry("w1", "workflow"),
+                                                    list_entry("bshellyoung", "shell")]})
+            check("the hook defers behind a listed workflow and names it",
+                  result.returncode == 2
+                  and "1 workflow(s) and 1 background task(s) run" in result.stderr,
+                  f"code {result.returncode}, stderr {result.stderr[:250]}")
+            clear_list_markers()
+            result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
+                               "transcript_path": str(list_session), "background_tasks": []})
+            check("the hook fires on an empty list though the transcript shows an unfinished"
+                  " subagent", result.returncode == 2 and is_handoff_instruction(result.stderr),
+                  f"code {result.returncode}, stderr {result.stderr[:250]}")
+            clear_list_markers()
+            result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
+                               "transcript_path": str(list_session)})
+            check("without the list the hook reads the transcript, and defers behind its subagent",
+                  result.returncode == 2 and "1 subagent(s)" in result.stderr,
+                  f"code {result.returncode}, stderr {result.stderr[:250]}")
+            clear_list_markers()
+            result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
+                               "transcript_path": str(torn),
+                               "background_tasks": [list_entry("bshellyoung", "shell")]})
+            check("a listed shell task the transcripts cannot date defers as unknown work",
+                  result.returncode == 2 and "could not be fully read" in result.stderr,
+                  f"code {result.returncode}, stderr {result.stderr[:250]}")
+        finally:
+            clear_list_markers()
 
         # --- Below the threshold, nothing fires ------------------------------
         SHARE_PROBE_SESSION_ID = "handoff-threshold-hook-test-share-session"
