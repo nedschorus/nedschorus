@@ -124,6 +124,18 @@ def ship(destination, *args, extra_env=None, script=SHIP, current_directory=None
                           cwd=current_directory)
 
 
+# A writer: loads the shipper given as argv[1], takes the being-written lock on
+# the record argv[2], prints "held", and holds it until its stdin closes.
+RECORD_WRITER_HOLDING_LOCK_PROGRAM = """
+import importlib.util, pathlib, sys
+spec = importlib.util.spec_from_file_location("shipper", sys.argv[1])
+shipper = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(shipper)
+shipper.record_directory_being_written_lock_take(pathlib.Path(sys.argv[2]))
+print("held", flush=True)
+sys.stdin.read()
+"""
+
 REPORT_A = "<!-- provenance: runtime=claude model=opus -->\n# A\n\nfinding one\n"
 REPORT_B = "<!-- provenance: runtime=codex model=gpt -->\n# B\n\nfinding two\n"
 
@@ -790,6 +802,40 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     check("an empty directory alone does not make --all exit non-zero",
           result.returncode == 0 and "1 skipped" in result.stdout.splitlines()[-1],
           f"exit {result.returncode}: {result.stdout}")
+
+    # --- A record whose writer still holds its being-written lock -------------
+    # A program writing a record over minutes, such as the cold-read-grid,
+    # rewrites files it has written, so a shipment made mid-write makes its
+    # own shipment refuse the record. The writer is a second process here,
+    # taking the lock through the shipper's own function, as the grid does.
+    being_written = make_record(scratch_repo / "cold-read-records", "2026-09-03-being-written",
+                                {"r.md": REPORT_A})
+    holder = subprocess.Popen(
+        [sys.executable, "-c", RECORD_WRITER_HOLDING_LOCK_PROGRAM, str(scratch_ship), str(being_written)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        held_line = holder.stdout.readline()
+        alone = ship(all_store, str(being_written))
+        check("a record whose writer holds its being-written lock is FAILED as still being written, "
+              "exit 1, and nothing reaches the store",
+              held_line == "held\n" and alone.returncode == 1
+              and alone.stdout.startswith("FAILED: 2026-09-03-being-written — still being written")
+              and not (pathlib.Path(all_store) / "2026-09-03-being-written").exists(),
+              f"{held_line!r}; exit {alone.returncode}: {alone.stdout}")
+        result = ship(all_store, "--all", script=scratch_ship)
+        lines = result.stdout.splitlines()
+        check("--all counts a record still being written as failed, ships the others, and exits 1",
+              result.returncode == 1
+              and any(line.startswith("FAILED: 2026-09-03-being-written — still being written")
+                      for line in lines)
+              and "1 failed (2026-09-03-being-written)" in lines[-1],
+              f"exit {result.returncode}: {result.stdout}")
+    finally:
+        holder.communicate("")
+    after_release = ship(all_store, str(being_written))
+    check("once its writer has exited, the record ships",
+          after_release.returncode == 0 and after_release.stdout.startswith("shipped:"),
+          f"exit {after_release.returncode}: {after_release.stdout}")
 
     # --- The remote invocation, read from stubs ---------------------------------
     stubs = scratch / "stub-bin"

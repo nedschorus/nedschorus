@@ -666,6 +666,8 @@ def main() -> int:
     else:
         record_dir = make_record_directory_for(
             args.restater, datetime.date.today().strftime("%Y-%m-%d"))
+    # Held until this program exits: it ships nothing itself.
+    record_shipper.record_directory_being_written_lock_take(record_dir)
 
     print(f"{PROGRAM}: judging restater {args.restater} on {len(cases)} case(s), "
           f"{JUDGE_RUNS} runs, into {record_dir}", file=sys.stderr)

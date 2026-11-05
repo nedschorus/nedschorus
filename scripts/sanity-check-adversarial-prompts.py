@@ -1473,6 +1473,7 @@ def fresh_record_dir(target_stem: str) -> pathlib.Path:
             out_dir.mkdir(parents=True)
         except FileExistsError:
             continue
+        record_ship.shipper.record_directory_being_written_lock_take(out_dir)
         if unlisted:
             print(record_ship.shipper.log_store_listing_failed_record_name_may_collide_warning_line(
                 "sanity-check-adversarial-prompts.py", out_dir, unlisted), file=sys.stderr)
@@ -1756,6 +1757,7 @@ def ship_record(record_dir: pathlib.Path) -> str:
     found it, and the record stays on disk for a later run; the run's exit
     code says the record did not arrive.
     """
+    record_ship.shipper.record_directory_being_written_lock_release(record_dir)
     try:
         completed = subprocess.run(
             [sys.executable, str(RECORD_SHIPPER), str(record_dir)],
