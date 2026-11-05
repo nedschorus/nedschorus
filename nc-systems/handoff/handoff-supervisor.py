@@ -50,7 +50,10 @@ The cycle, per reincarnation:
      with the steps to restore them
      (uncommitted_work_snapshot_text), and the agent-seat's worktrees and
      its branches with no pull request, with the steps to keep or delete each
-     (agent_seat_worktrees_and_branches_text).
+     (agent_seat_worktrees_and_branches_text). These leftovers go between the
+     prompt's opening and its next step, each entry opened by how many first
+     prompts have listed it
+     (launch_prompt_with_leftovers_before_the_next_step).
   7. Keep the current and previous handoff and conversation-tail; delete older ones.
 
 The handoff file the agent writes (simple `key: value` lines):
@@ -717,6 +720,10 @@ def supervisor_state_paths(handoff_directory: Path) -> list:
     return sorted(directory.glob(f"*{SUPERVISOR_STATE_FILE_SUFFIX}"))
 
 
+def leftover_prompt_listing_counts_path(handoff_directory: Path, agent: str) -> Path:
+    return Path(handoff_directory) / f"{agent}{LEFTOVER_PROMPT_LISTING_COUNTS_FILE_SUFFIX}"
+
+
 def handoff_file_path(handoff_directory: Path, agent: str) -> Path:
     return Path(handoff_directory) / f"{agent}{HANDOFF_FILE_SUFFIX}"
 
@@ -1099,7 +1106,7 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
     if not next_step:
         return preamble + NO_NEXT_STEP_TAIL_SENTENCE
     # Keep line breaks: the next step is one argv element and may contain Markdown formatting.
-    return f"{preamble}\n\nThen take the next step:\n{next_step}"
+    return f"{preamble}{NEXT_STEP_HEADING}{next_step}"
 
 
 @dataclass
@@ -1561,6 +1568,60 @@ def uncommitted_work_snapshot_text(agent: str, working_directory: Path,
     if text:
         print(f"handoff-supervisor: {text.splitlines()[0]}")
     return text
+
+
+NEXT_STEP_HEADING = "\n\nThen take the next step:\n"
+LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE = (
+    "Before you take the next step, keep, delete or hand on each leftover listed below, which "
+    "an earlier agent-session of this agent-seat left, as its list says; you may instead hand "
+    "that work to a background subagent and take the next step while it runs. Each leftover's "
+    "entry opens with how many first prompts have listed it, this one included.")
+LEFTOVER_PROMPT_LISTING_COUNTS_FILE_SUFFIX = "-leftovers-prompt-listing-counts.json"
+# The entries whose count is kept: a branch, a worktree or a work-snapshot, by what opens the entry.
+LEFTOVER_ENTRY_PREFIXES = ("- branch ", "- worktree ", "- refs/work-snapshots/")
+
+
+def leftover_entry_key(line: str) -> str:
+    """The part of a leftover entry that names it: its text up to the first "; " or ": "."""
+    text = line[2:]
+    ends = [index for index in (text.find("; "), text.find(": ")) if index != -1]
+    return text[:min(ends)] if ends else text
+
+
+def leftovers_with_prompt_listing_counts(leftovers: str, counts_path: Path) -> str:
+    """The leftovers text with each entry opened by how many first prompts have listed it; the
+    counts file keeps only the entries listed this time."""
+    lines = leftovers.split("\n")
+    keys = [leftover_entry_key(line) if line.startswith(LEFTOVER_ENTRY_PREFIXES) else None
+            for line in lines]
+    try:
+        earlier = (json.loads(counts_path.read_text(encoding="utf-8"))
+                   if counts_path.exists() else {})
+        counts = {key: earlier.get(key, 0) + 1 for key in keys if key is not None}
+        temporary = counts_path.with_name(counts_path.name + ".tmp")
+        temporary.write_text(json.dumps(counts, indent=1, sort_keys=True), encoding="utf-8")
+        os.replace(temporary, counts_path)
+    except (OSError, ValueError, AttributeError) as error:
+        return (leftovers + f"\n(How many first prompts have listed each entry could not be "
+                f"counted, because {counts_path} could not be read or written: "
+                f"{type(error).__name__}: {error}.)")
+    return "\n".join(f"- (listed in {counts[key]} first prompt(s)) {line[2:]}" if key is not None
+                     else line for line, key in zip(lines, keys))
+
+
+def launch_prompt_with_leftovers_before_the_next_step(prompt: str, leftover_parts: tuple,
+                                                      counts_path: Path) -> str:
+    """The prompt with the leftovers between its opening and its next step, or after it when it
+    has no next step."""
+    leftovers = "\n\n".join(part for part in leftover_parts if part)
+    if not leftovers:
+        return prompt
+    leftovers = (LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE + "\n\n"
+                 + leftovers_with_prompt_listing_counts(leftovers, counts_path))
+    opening, heading, next_step = prompt.partition(NEXT_STEP_HEADING)
+    if not heading:
+        return f"{prompt}\n\n{leftovers}"
+    return f"{opening}\n\n{leftovers}{heading}{next_step}"
 
 
 def agent_seat_worktrees_and_branches_text(agent: str, working_directory: Path) -> str:
@@ -2382,8 +2443,9 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 settings.agent, settings.working_directory, settings.handoff_directory)
             worktrees_and_branches = agent_seat_worktrees_and_branches_text(
                 settings.agent, settings.working_directory)
-            launch_prompt = "\n\n".join(
-                part for part in (prompt, leftover_work_snapshots, worktrees_and_branches) if part)
+            launch_prompt = launch_prompt_with_leftovers_before_the_next_step(
+                prompt, (leftover_work_snapshots, worktrees_and_branches),
+                leftover_prompt_listing_counts_path(settings.handoff_directory, settings.agent))
             process = launch_agent_session(
                 settings.agent_command, session_id, settings.working_directory, launch_prompt,
                 resume=next_launch_resumes_the_session, remote_control_name=settings.agent,
