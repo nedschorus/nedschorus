@@ -146,15 +146,15 @@ def run_resupervise(workspace: Path, name: str, *flags):
     )
 
 
-def write_handoff(workspace: Path, name: str, counter: int, dont_restart: bool = False):
+def write_handoff(workspace: Path, name: str, counter: int, ask_user_before_restart: bool = False):
     lines = [
         f"# handoff for {name}",
         "written-at: 2026-08-19T00:00:00+00:00",
         f"session-handoff-sequence-number: {counter}",
         "next-step: Continue the walk.",
     ]
-    if dont_restart:
-        lines.append("dont-restart: the user asked to be consulted")
+    if ask_user_before_restart:
+        lines.append("ask-user-before-restart: the user asked to be consulted")
     (workspace / f"{name}-handoff.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -288,18 +288,18 @@ def run_stale_heartbeat_case(workspace: Path):
           "DRY RUN" in result.stdout, result.stdout)
 
 
-def run_dont_restart_case(workspace: Path):
-    """dont-restart is the agent asking to be consulted, not a refusal.
+def run_ask_user_before_restart_case(workspace: Path):
+    """ask-user-before-restart is the agent asking to be consulted, not a refusal.
 
     The supervisor honors it on its own terminal, so this script proceeds and
     warns rather than deciding on the agent's behalf.
     """
-    write_handoff(workspace, "consult", counter=1, dont_restart=True)
+    write_handoff(workspace, "consult", counter=1, ask_user_before_restart=True)
     result = run_resupervise(workspace, "consult", "--dry-run")
-    check("a dont-restart handoff still proceeds",
+    check("an ask-user-before-restart handoff still proceeds",
           result.returncode == 0, result.stdout + result.stderr)
-    check("the dont-restart note reaches the operator",
-          "dont-restart" in result.stdout, result.stdout)
+    check("the ask-user-before-restart note reaches the operator",
+          "ask-user-before-restart" in result.stdout, result.stdout)
 
 
 def run_missing_launcher_case(workspace: Path):
@@ -1151,7 +1151,7 @@ def run_all_cases() -> int:
         run_already_consumed_case(workspace)
         run_live_supervisor_case(workspace)
         run_stale_heartbeat_case(workspace)
-        run_dont_restart_case(workspace)
+        run_ask_user_before_restart_case(workspace)
         run_missing_launcher_case(workspace)
         run_prepare_only_case(workspace)
         run_end_to_end_case(workspace)

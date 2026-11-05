@@ -13,7 +13,7 @@ for it.
 
 Usage:
   handoff-write-and-check-supervisor.py --agent <name> --next-step-file <path>
-                                        [--dont-restart] [--claim]
+                                        [--ask-user-before-restart] [--claim]
 
 `--claim` is for two situations, and both are worth knowing before you meet
 them: this seat's FIRST handoff under a name that a handoff file already holds
@@ -545,7 +545,8 @@ def handoff_deferral_fields_for_this_session(handoff_directory: Path, working_di
     return lines, "handoff-deferral: " + ("; ".join(parts) or "nothing to record")
 
 
-def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_restart: bool,
+def write_handoff_file(handoff_path: Path, next_step: str, counter: int,
+                       ask_user_before_restart: bool,
                        seat_directory: Path, spawned_subagent_lines=(), verbatim_lines=(),
                        handoff_deferral_lines=(), background_task_lines=()) -> None:
     """Write the handoff atomically so readers cannot see a partial file."""
@@ -559,8 +560,11 @@ def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_re
         f"{field_names.WRITTEN_IN_FIELD}: {seat_directory}",
         f"{field_names.WRITTEN_BY_SESSION_FIELD}: {os.environ.get('CLAUDE_CODE_SESSION_ID', 'unknown')}",
     ]
-    if dont_restart:
-        lines.append(f"{field_names.DONT_RESTART_FIELD}: the user asked to be consulted before a relaunch")
+    if ask_user_before_restart:
+        reason = "the user asked to be consulted before a relaunch"
+        lines.append(f"{field_names.ASK_USER_BEFORE_RESTART_FIELD}: {reason}")
+        # A handoff-supervisor still running pre-rename code reads only this name, and would relaunch without asking.
+        lines.append(f"{field_names.LEGACY_DONT_RESTART_FIELD}: {reason}")
 
     lines.extend(spawned_subagent_lines)
     lines.extend(background_task_lines)
@@ -848,7 +852,7 @@ def main(argv=None) -> int:
              "also verbatim when it spans several lines",
     )
     parser.add_argument(
-        "--dont-restart", action="store_true",
+        "--ask-user-before-restart", action="store_true",
         help="ask the supervisor to confirm before relaunching, instead of relaunching automatically",
     )
     parser.add_argument("--handoff-dir", default="~/.claude/handoffs", help="handoff directory on this machine only, not committed")
@@ -943,7 +947,7 @@ def main(argv=None) -> int:
     handoff_deferral_lines, handoff_deferral_report = handoff_deferral_fields_for_this_session(
         handoff_directory, seat_directory)
     prune_report = prune_completed_tasks(next_step_text)
-    write_handoff_file(handoff_path, next_step, counter, arguments.dont_restart, seat_directory,
+    write_handoff_file(handoff_path, next_step, counter, arguments.ask_user_before_restart, seat_directory,
                        spawned_subagent_lines=spawned_subagent_lines,
                        verbatim_lines=verbatim_lines,
                        handoff_deferral_lines=handoff_deferral_lines,

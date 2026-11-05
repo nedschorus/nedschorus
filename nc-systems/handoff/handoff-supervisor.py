@@ -10,7 +10,7 @@ trips the safety classifier.
 The cycle, per reincarnation:
   1. Watch the handoff file for a session-handoff-sequence-number above the last consumed.
   2. Kill the running session, and remove the agent-seat's finished worktrees.
-  2a. Unless the handoff carries dont-restart, fast-forward the checkout this
+  2a. Unless the handoff carries ask-user-before-restart, fast-forward the checkout this
      program runs from to origin/main, and, when the checkout is then on
      main's commit, whether it moved or was already there, replace this
      process with a fresh start of this program from that checkout
@@ -61,7 +61,9 @@ The handoff file the agent writes (simple `key: value` lines):
   next-step:            the first action the successor takes
   session-handoff-sequence-number: predecessor's number plus one (a session-handoff
                         written before the rename carries it as restart-counter)
-  dont-restart:         optional; any value makes the supervisor ask before relaunching
+  ask-user-before-restart: optional; any value makes the supervisor ask before
+                        relaunching (a session-handoff written before the rename
+                        carries it as dont-restart)
   spawned-subagent-<n>: optional, one per subagent still working when the
                         handoff was written; the reincarnation kills them, so the
                         successor is told it may need to re-commission
@@ -365,7 +367,8 @@ BACKGROUND_TASK_FIELD_PREFIX = session_handoff_field_names.BACKGROUND_TASK_FIELD
 WRITTEN_BY_SESSION_FIELD = session_handoff_field_names.WRITTEN_BY_SESSION_FIELD
 SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD = session_handoff_field_names.SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD
 LEGACY_RESTART_COUNTER_FIELD = session_handoff_field_names.LEGACY_RESTART_COUNTER_FIELD
-DONT_RESTART_FIELD = session_handoff_field_names.DONT_RESTART_FIELD
+ASK_USER_BEFORE_RESTART_FIELD = session_handoff_field_names.ASK_USER_BEFORE_RESTART_FIELD
+LEGACY_DONT_RESTART_FIELD = session_handoff_field_names.LEGACY_DONT_RESTART_FIELD
 BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
     "background-task-started-during-handoff-deferral-")
 COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
@@ -426,8 +429,10 @@ BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE = (
     "so the new agent-session's initial-agent-instructions tell it neither to rebase that branch onto "
     "origin/main nor to leave the branch's head as it is.\n"
     "handoff-supervisor: why: {cause}\n"
-    "handoff-supervisor: if this message comes back at the next launch, fix the git error on the why "
-    "line; until then nobody needs to act on it, and this launch goes ahead without either instruction."
+    "handoff-supervisor: this launch goes ahead without either instruction.\n"
+    "handoff-supervisor: if this console shows the same why line when the handoff-supervisor next "
+    "launches this agent-seat, fix the git error it names; if the cause was passing, such as a remote "
+    "that could not be reached, nobody needs to act."
 )
 
 
@@ -660,10 +665,18 @@ def stamp_heartbeat(state_path: Path, state: dict) -> None:
 # Record presence distinguishes a supervised exit from a crash, even when the exit code is unknown.
 AGENT_EXIT_CODE_STATE_KEY = "agent_exit_code"
 AGENT_EXIT_RECORDED_AT_STATE_KEY = "agent_exit_recorded_at"
-# Set only when the supervisor stood the seat down at a dont-restart handoff, so a reader
-# can tell that stop from a later session's failure; the handoff file outlives both.
+# Set only when the supervisor stood the seat down at an ask-user-before-restart handoff, so a
+# reader can tell that stop from a later session's failure; the handoff file outlives both.
 AGENT_EXIT_REASON_STATE_KEY = "agent_exit_reason"
-AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF = "dont-restart"
+AGENT_EXIT_REASON_STOPPED_AT_AN_ASK_USER_BEFORE_RESTART_HANDOFF = "ask-user-before-restart"
+# A handoff-supervisor running code from before the rename records this value instead.
+LEGACY_AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF = "dont-restart"
+
+
+def read_ask_user_before_restart_reason_from_session_handoff_fields(fields: dict) -> str:
+    """The reason a session-handoff asks the user before a relaunch, or "" when it does not ask."""
+    return (fields.get(ASK_USER_BEFORE_RESTART_FIELD)
+            or fields.get(LEGACY_DONT_RESTART_FIELD) or "")
 
 
 def record_agent_exit_in_supervisor_state(state_path: Path, state: dict, exit_code,
@@ -685,8 +698,10 @@ def clear_agent_exit_record_from_supervisor_state(state: dict) -> None:
     state.pop(AGENT_EXIT_REASON_STATE_KEY, None)
 
 
-def agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state: dict) -> bool:
-    return state.get(AGENT_EXIT_REASON_STATE_KEY) == AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF
+def agent_exit_record_is_a_stop_at_an_ask_user_before_restart_handoff(state: dict) -> bool:
+    return state.get(AGENT_EXIT_REASON_STATE_KEY) in (
+        AGENT_EXIT_REASON_STOPPED_AT_AN_ASK_USER_BEFORE_RESTART_HANDOFF,
+        LEGACY_AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF)
 
 
 def agent_exit_record_from_supervisor_state(state: dict):
@@ -2422,19 +2437,19 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         boot_counter = counter_from(boot_fields)
         consumed = state.get("consumed_counter")
         if boot_counter is not None and (consumed is None or boot_counter > consumed):
-            if boot_fields.get(DONT_RESTART_FIELD):
-                # Boot recovery must honor dont-restart too; a deliberate stand-down needs an exit record.
+            if read_ask_user_before_restart_reason_from_session_handoff_fields(boot_fields):
+                # Boot recovery must honor ask-user-before-restart too; a deliberate stand-down needs an exit record.
                 if not sys.stdin.isatty():
-                    print("handoff-supervisor: dont-restart, and no terminal to ask on; stopping")
+                    print("handoff-supervisor: ask-user-before-restart, and no terminal to ask on; stopping")
                     state["consumed_counter"] = boot_counter
                     record_agent_exit_in_supervisor_state(
-                        settings.state_path, state, None, reason=AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF)
+                        settings.state_path, state, None, reason=AGENT_EXIT_REASON_STOPPED_AT_AN_ASK_USER_BEFORE_RESTART_HANDOFF)
                     return 0
                 if input("handoff-supervisor: restart? y/n ").strip().lower() != "y":
                     print("handoff-supervisor: stopping at the agent's request")
                     state["consumed_counter"] = boot_counter
                     record_agent_exit_in_supervisor_state(
-                        settings.state_path, state, None, reason=AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF)
+                        settings.state_path, state, None, reason=AGENT_EXIT_REASON_STOPPED_AT_AN_ASK_USER_BEFORE_RESTART_HANDOFF)
                     return 0
             generation += 1
             tracked_session_id = state.get(LAUNCHED_SESSION_ID_STATE_KEY)
@@ -2608,8 +2623,9 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             return 0
 
         # Check before killing or consuming: without a terminal a successor reads EOF; leave the handoff recoverable.
-        # dont-restart needs no terminal because no successor launches.
-        if not sys.stdin.isatty() and not handoff_fields.get(DONT_RESTART_FIELD):
+        # ask-user-before-restart needs no terminal because no successor launches.
+        if (not sys.stdin.isatty()
+                and not read_ask_user_before_restart_reason_from_session_handoff_fields(handoff_fields)):
             print(
                 "handoff-supervisor: a handoff arrived, but this supervisor has no terminal to "
                 "seat a successor on — not reincarnating. The session stays up and the handoff stays "
@@ -2621,10 +2637,10 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         stop_session(process)
         generation += 1
 
-        if handoff_fields.get(DONT_RESTART_FIELD):
+        if read_ask_user_before_restart_reason_from_session_handoff_fields(handoff_fields):
             if not sys.stdin.isatty():
                 # Without a terminal, asking would raise EOFError before consuming the handoff and trigger it again next time.
-                print("handoff-supervisor: dont-restart, and no terminal to ask on; stopping")
+                print("handoff-supervisor: ask-user-before-restart, and no terminal to ask on; stopping")
                 answer = "n"
             else:
                 answer = input("handoff-supervisor: restart? y/n ").strip().lower()
@@ -2633,16 +2649,16 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 state["consumed_counter"] = counter_from(handoff_fields)
                 record_agent_exit_in_supervisor_state(settings.state_path, state,
                                                       process.returncode,
-                                                      reason=AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF)
+                                                      reason=AGENT_EXIT_REASON_STOPPED_AT_AN_ASK_USER_BEFORE_RESTART_HANDOFF)
                 return 0
 
         print(f"handoff-supervisor: "
               f"{remove_finished_worktrees_at_handoff(settings.working_directory)}")
 
         # The handoff is still unconsumed, so the restarted process starts the successor from it at startup.
-        # A dont-restart handoff is not restarted on, or the startup path would ask restart? y/n again.
+        # An ask-user-before-restart handoff is not restarted on, or the startup path would ask restart? y/n again.
         if (settings.restarts_itself_on_main_code_at_each_session_handoff
-                and not handoff_fields.get(DONT_RESTART_FIELD)):
+                and not read_ask_user_before_restart_reason_from_session_handoff_fields(handoff_fields)):
             not_restarted_on_main_code_report = (
                 handoff_supervisor_restart_itself_on_main_code_or_return_failure_report(settings))
             print("handoff-supervisor: not restarted on main's code, carrying on with the code "

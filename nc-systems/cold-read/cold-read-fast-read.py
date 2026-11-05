@@ -300,6 +300,8 @@ The text explains something or tells its reader what to do. Find the gaps within
 
 Number the items in sections 2 and 3 separately, ORDERED MOST IMPORTANT FIRST — the issue most likely to stop a fresh-reader leads its section. If there are no issues, say "No issues".
 
+Lay out your report as follows, and do not look for an example report: first the list of the files you were told to examine; then `## Question 1: What it says`, with each sentence id on a line of its own and its bullets under it; then `## Question 2: Where you struggled` and `## Question 3: What it does not cover that it implies it should`, each a numbered list in which every item quotes a phrase and then says in one sentence what is wrong.
+
 Write your report to {REPORT_PATH}, once, when your analysis is complete. That file is your entire deliverable: what you say in conversation is discarded. Start your report with a list of the files you were told to examine. Note if you were unable to read any of them. {REPORT_PATH} is the only file to create; write nothing anywhere else.
 """
 

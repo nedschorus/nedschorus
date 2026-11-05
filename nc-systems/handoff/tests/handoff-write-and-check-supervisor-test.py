@@ -235,7 +235,7 @@ def run_session_handoff_round_trip_cases(workspace: Path):
     check("round trip: written-at, written-in and written-by-session come back",
           all(fields.get(name) for name in (names.WRITTEN_AT_FIELD, names.WRITTEN_IN_FIELD,
                                             names.WRITTEN_BY_SESSION_FIELD)), str(fields))
-    check("round trip: dont-restart comes back when asked", bool(fields.get(names.DONT_RESTART_FIELD)), str(fields))
+    check("round trip: ask-user-before-restart comes back when asked", bool(fields.get(names.ASK_USER_BEFORE_RESTART_FIELD)), str(fields))
     check("round trip: a spawned-subagent line comes back",
           fields.get(f"{names.SPAWNED_SUBAGENT_FIELD_PREFIX}1") == "a123 (still working)", str(fields))
     check("round trip: the verbatim next step comes back with its line break",
@@ -263,15 +263,17 @@ def run_invocation_cases(workspace: Path):
     check("the timestamp is UTC ISO 8601",
           fields["written-at"].endswith("Z") and fields["written-at"][4] == "-",
           fields["written-at"])
-    check("dont-restart is absent unless asked", "dont-restart" not in fields, str(fields))
+    check("ask-user-before-restart is absent unless asked", "ask-user-before-restart" not in fields, str(fields))
 
     result = run_writer(workspace, "Continue from the trial.")
     fields = writer.supervisor.parse_handoff_file(handoff_path)
     check("a second write increments the counter", fields["session-handoff-sequence-number"] == "2", result.stdout)
 
-    result = run_writer(workspace, "Stop and ask first.", "--dont-restart")
+    result = run_writer(workspace, "Stop and ask first.", "--ask-user-before-restart")
     fields = writer.supervisor.parse_handoff_file(handoff_path)
-    check("dont-restart is written when asked", "dont-restart" in fields, str(fields))
+    check("ask-user-before-restart is written when asked", "ask-user-before-restart" in fields, str(fields))
+    check("the old name dont-restart is written beside it, for a handoff-supervisor that reads "
+          "only the old name", "dont-restart" in fields, str(fields))
 
     result = run_writer(workspace, "   \n\t  ")
     check("an empty next step is refused", result.returncode == 2, result.stdout)
