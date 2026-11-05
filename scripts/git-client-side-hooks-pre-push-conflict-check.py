@@ -50,7 +50,7 @@ TELL_USER_LINE = ("Tell the user this whole message, including any error printed
 REVERT_AFTER_HAND_CONFLICT_CHECK_LINE = ("Once the hand conflict check of %s prints VERDICT: "
                                          "CLEAN, check it for files set back too: %s")
 PUSH_GOES_ON_LINE = ("pre-push: neither the conflict check nor the revert check refuses this "
-                     "push, so it goes on to the selective test run, which can still refuse it.")
+                     "push, so it goes through.")
 RERUN_VERDICT_LINE = ("If the hand conflict check also prints no VERDICT line, tell the user "
                       "this whole message and what that check printed.")
 
