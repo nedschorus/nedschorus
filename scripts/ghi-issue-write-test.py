@@ -4817,7 +4817,7 @@ def run_push_time_limit_cases(scratch: Path):
               - module.DEFAULT_TIME_BUDGET_SECONDS + 1000,
               str(tool.push_time_limit_seconds(longer)))
     outer_hook_started = {
-        selective.HOOK_STARTED_AT_ENVIRONMENT_VARIABLE: str(time.time() - 200)}
+        selective.PRE_PUSH_HOOK_STARTED_AT_ENVIRONMENT_VARIABLE: str(time.time() - 200)}
     check("a start time an outer pre-push hook exported does not shorten the "
           "push's time, since the push starts its own hook",
           tool.push_time_limit_seconds(outer_hook_started)

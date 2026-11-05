@@ -639,7 +639,7 @@ def push_time_limit_seconds(environment):
     starts its own hook, whose clock starts with it."""
     environment = {
         name: value for name, value in environment.items()
-        if name != pre_push_selective_test_run.HOOK_STARTED_AT_ENVIRONMENT_VARIABLE}
+        if name != pre_push_selective_test_run.PRE_PUSH_HOOK_STARTED_AT_ENVIRONMENT_VARIABLE}
     return (pre_push_conflict_check.time_budget_seconds(environment)
             + 2 * pre_push_conflict_check.TERMINATE_GRACE_SECONDS
             + pre_push_selective_test_run.time_budget_seconds(environment)

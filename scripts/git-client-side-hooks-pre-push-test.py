@@ -38,6 +38,7 @@ Every push runs under an outer timeout in its own process group, so a hook
 that hangs fails its case instead of wedging the suite.
 """
 
+import ast
 import contextlib
 import importlib.util
 import io
@@ -1329,6 +1330,23 @@ def load_module_from_path(name, path):
     return loaded
 
 
+def waits_in_source(text):
+    """Each wait the Python text makes, as source: a timeout keyword, a positional
+    wait(t) or communicate(input, t) timeout, or a sleep(t)."""
+    positional_timeout_index = {"wait": 0, "communicate": 1, "sleep": 0}
+    waits = []
+    for node in ast.walk(ast.parse(text)):
+        if not isinstance(node, ast.Call):
+            continue
+        waits.extend(ast.unparse(keyword.value) for keyword in node.keywords
+                     if keyword.arg == "timeout")
+        name = getattr(node.func, "attr", getattr(node.func, "id", None))
+        index = positional_timeout_index.get(name)
+        if index is not None and len(node.args) > index:
+            waits.append(ast.unparse(node.args[index]))
+    return waits
+
+
 def run_selective_test_run_time_budget_cases(hook):
     check("the pre-push hook's time limit is under the 600 seconds a Claude Code agent can give "
           "one command", hook.PRE_PUSH_HOOK_TIME_LIMIT_SECONDS < 600,
@@ -1336,32 +1354,43 @@ def run_selective_test_run_time_budget_cases(hook):
     # Each wait after the budget runs out must be one of the summed constants, or the sum lies.
     stop_waits = {"PROCESS_LISTING_TIMEOUT_SECONDS", "RUNNER_STOP_GRACE_SECONDS",
                   "TERMINATE_GRACE_SECONDS", "budget"}
-    source = SELECTIVE_TEST_RUN_CHECK.read_text()
-    timeouts = re.findall(r"\btimeout=([^,)]+)", source)
-    check("every timeout= in the selective test run is the budget or a wait its stop sum counts",
+    timeouts = waits_in_source(SELECTIVE_TEST_RUN_CHECK.read_text())
+    check("every wait in the selective test run is the budget or a wait its stop sum counts",
           bool(timeouts) and set(timeouts) <= stop_waits, repr(timeouts))
+    for label, text, expected in (
+            ("a spaced timeout keyword", "p.communicate(timeout = 30)\n", ["30"]),
+            ("a positional wait", "p.wait(30)\n", ["30"]),
+            ("a positional communicate timeout", "p.communicate(None, 30)\n", ["30"]),
+            ("a sleep", "time.sleep(budget)\n", ["budget"]),
+            ("no wait", "print(1)\n", [])):
+        got = waits_in_source(text)
+        check(f"the wait reader finds {label}", got == expected, repr(got))
     check("the selective test run's stop sum counts the listing, the runner's grace and two "
-          "terminate graces", hook.STOP_AFTER_TIME_BUDGET_WORST_CASE_SECONDS
+          "terminate graces", hook.SELECTIVE_TEST_RUN_STOPPING_WORST_CASE_SECONDS
           == hook.PROCESS_LISTING_TIMEOUT_SECONDS + hook.RUNNER_STOP_GRACE_SECONDS
-          + 2 * hook.TERMINATE_GRACE_SECONDS, repr(hook.STOP_AFTER_TIME_BUDGET_WORST_CASE_SECONDS))
-    started = {hook.HOOK_STARTED_AT_ENVIRONMENT_VARIABLE: "1000"}
+          + 2 * hook.TERMINATE_GRACE_SECONDS, repr(hook.SELECTIVE_TEST_RUN_STOPPING_WORST_CASE_SECONDS))
+    started = {hook.PRE_PUSH_HOOK_STARTED_AT_ENVIRONMENT_VARIABLE: "1000"}
     for label, environment, now, expected in (
             ("no start time: the default budget", {}, 2000.0, hook.DEFAULT_TIME_BUDGET_SECONDS),
             ("an unreadable start time: the default budget",
-             {hook.HOOK_STARTED_AT_ENVIRONMENT_VARIABLE: ""}, 2000.0,
+             {hook.PRE_PUSH_HOOK_STARTED_AT_ENVIRONMENT_VARIABLE: ""}, 2000.0,
              hook.DEFAULT_TIME_BUDGET_SECONDS),
             ("a hook that spent 1 second before the run keeps the default budget", started,
              1001.0, hook.DEFAULT_TIME_BUDGET_SECONDS),
             ("a hook that spent 100 seconds before the run gets what is left of its time limit",
              started, 1100.0, hook.PRE_PUSH_HOOK_TIME_LIMIT_SECONDS - 100
-             - hook.STOP_AFTER_TIME_BUDGET_WORST_CASE_SECONDS),
+             - hook.SELECTIVE_TEST_RUN_STOPPING_WORST_CASE_SECONDS),
             ("a hook that spent its whole time limit gets no budget", started, 1700.0, 0.0),
             ("a start time later than now counts as no time spent", started, 900.0,
              hook.DEFAULT_TIME_BUDGET_SECONDS),
+            ("a start time later than now does not lengthen a set budget past the time limit",
+             {**started, hook.TIME_BUDGET_ENVIRONMENT_VARIABLE: "590"}, 900.0,
+             hook.PRE_PUSH_HOOK_TIME_LIMIT_SECONDS
+             - hook.SELECTIVE_TEST_RUN_STOPPING_WORST_CASE_SECONDS),
             ("a set budget is cut too",
              {**started, hook.TIME_BUDGET_ENVIRONMENT_VARIABLE: "590"}, 1000.0,
              hook.PRE_PUSH_HOOK_TIME_LIMIT_SECONDS
-             - hook.STOP_AFTER_TIME_BUDGET_WORST_CASE_SECONDS)):
+             - hook.SELECTIVE_TEST_RUN_STOPPING_WORST_CASE_SECONDS)):
         got = hook.time_budget_seconds(environment, now=now)
         check(f"time budget: {label}", got == expected, f"got {got!r}, expected {expected!r}")
     # The shell hook must hand its start time to the selective test run, or no budget is cut.
@@ -1372,7 +1401,7 @@ def run_selective_test_run_time_budget_cases(hook):
             mutation_testing_worktree_check_text="import sys\nsys.exit(0)\n",
             selective_test_run_check_text=(
                 "import os, sys\nsys.stderr.write('STARTED_AT=%%s\\n' %% os.environ.get(%r, ''))\n"
-                % hook.HOOK_STARTED_AT_ENVIRONMENT_VARIABLE),
+                % hook.PRE_PUSH_HOOK_STARTED_AT_ENVIRONMENT_VARIABLE),
             open_pull_request_branch_check_text="import sys\nsys.exit(0)\n")
         before = int(time.time())
         refs_text = "refs/heads/topic %s refs/heads/topic %s\n" % ("a" * 40, "0" * 40)
