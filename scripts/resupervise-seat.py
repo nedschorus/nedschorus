@@ -147,9 +147,9 @@ def handoff_is_waiting(handoff_path: Path, state_path: Path):
             "hand off again if it needs reincarnating."
         )
 
-    if fields.get(supervisor.DONT_RESTART_FIELD):
+    if supervisor.read_ask_user_before_restart_reason_from_session_handoff_fields(fields):
         return True, counter, (
-            "the handoff carries dont-restart: the supervisor will ask on the seat's terminal "
+            "the handoff carries ask-user-before-restart: the supervisor will ask on the seat's terminal "
             "before starting a successor"
         )
     return True, counter, ""

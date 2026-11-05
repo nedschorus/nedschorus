@@ -2416,6 +2416,98 @@ def refused(case, kind, *problems):
             and case.minutes.read_text() == before and case.calls.read_text() == "", described(result))
 
 
+RATED_NONE_DOCUMENT = """# A walk
+
+## Item 1 of 3: print the poem count after the list
+
+#not_asked_touches tools/counter.py
+
+#case_against none.
+
+Recommendation: print it.
+
+## Item 2 of 3: a new option for the counter
+
+#not_asked_touches tools/counter.py
+
+#case_against weak: the option costs a few lines of code.
+
+Recommendation: add it.
+
+## Item 3 of 3: summary
+
+#case_against none.
+
+Nothing to decide.
+"""
+
+
+def rated_none_case(next_to_present="item 1 of 3", touches=None):
+    document = RATED_NONE_DOCUMENT
+    if touches is not None:
+        document = document.replace("#not_asked_touches tools/counter.py\n\n#case_against none.",
+                                    f"{touches}#case_against none.", 1)
+    case = Case(next_to_present=next_to_present, document=document)
+    (case.checkout / "tools").mkdir()
+    (case.checkout / "tools" / "counter.py").write_text("count = 0\n")
+    return case
+
+
+def test_an_item_of_no_kind_rated_none_settles_without_the_user_and_close_records_it_accepted():
+    case = rated_none_case()
+    result = case.run("check", "--not-asked", "none")
+    minutes = case.minutes.read_text()
+    check("an item of no kind rated none is settled: the minutes say not asked, case against none, and its rating",
+          result.returncode == 0
+          and re.search(r"\nitem 1 of 3: settled without asking the user, not asked, case against none "
+                        r"#case_against_none \(\d{4}-\d\d-\d\d \d\d:\d\d\), which makes its change\. Fast reads:\n",
+                        minutes) is not None
+          and "item 1 of 3 is recorded as settled without asking the user, case against none;" in result.stdout
+          and "Before you run close, ask the advisor whether a later ruling or another open item overtakes item 1 of 3"
+              in result.stdout, described(result) + minutes)
+    closed = case.run("close")
+    check("close records the item settled as rated none as accepted, and moves on",
+          closed.returncode == 0
+          and "\nitem 1 of 3: not asked, case against none; every text the change adds has had a fast read. "
+              "<accepted>\n" in case.minutes.read_text()
+          and int(re.search(r"#next_to_present item (\d+) of 3$", case.minutes.read_text().rstrip())[1]) > 1,
+          described(closed))
+    case = rated_none_case()
+    result = case.run("check", "--not-asked", "NONE")
+    check("`--not-asked` reads none in any case", result.returncode == 0, described(result))
+
+
+def refused_as_rated_none(case, *problems):
+    before = case.minutes.read_text()
+    result = case.run("check", "--not-asked", "none")
+    return (result.returncode == 1 and "cannot be settled without asking the user as case against none, because:"
+            in result.stderr and all(problem in result.stderr for problem in problems)
+            and "check --not-asked none` again" in result.stderr
+            and case.minutes.read_text() == before and case.calls.read_text() == "", described(result))
+
+
+def test_an_item_of_no_kind_settles_only_when_rated_none_and_touching_no_guarded_file():
+    check("an item of no kind rated weak is refused",
+          *refused_as_rated_none(rated_none_case("item 2 of 3"), "rates the case against weak; an item of none of "
+                                 "the five kinds settles without the user only when its case against is rated none"))
+    check("an item of no kind with no touches line is refused",
+          *refused_as_rated_none(rated_none_case(touches=""), "it has no `#not_asked_touches` line"))
+    for path in ("CLAUDE.md", ".claude/skills/poems/SKILL.md", "docs/nedschorus-wiki/poems.md",
+                 "docs/poems-instructions.md"):
+        check(f"an item of no kind that touches {path}, which the instruction-file guard protects, is refused",
+              *refused_as_rated_none(rated_none_case(touches=f"#not_asked_touches tools/counter.py {path}\n\n"),
+                                     f"`#not_asked_touches` names {path}, which the instruction-file guard protects"))
+
+
+def test_a_not_asked_value_other_than_a_kind_or_none_is_refused_as_usage():
+    for value in ("7", "0", "weak"):
+        case = rated_none_case()
+        result = case.run("check", "--not-asked", value)
+        check(f"`--not-asked {value}` is refused as usage, writing nothing",
+              result.returncode == 2 and f"`{value}` is not a kind: give 1, 2, 3, 4, 5, 6 or none" in result.stderr
+              and case.minutes.read_text().rstrip().endswith("#next_to_present item 1 of 3"), described(result))
+
+
 def test_a_case_against_rated_above_weak_is_never_settled():
     check("an item rated strong is refused, whatever its kind",
           *refused(not_asked_case("item 6 of 7"), 1, "rates the case against strong",

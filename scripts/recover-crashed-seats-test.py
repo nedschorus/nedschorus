@@ -1576,7 +1576,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # restart the seat had declined.
     consulted_handoff_text = (
         "# Handoff\nsession-handoff-sequence-number: 11\nnext-step: wait for the user\n"
-        "dont-restart: the user asked to be consulted before a relaunch\n")
+        "ask-user-before-restart: the user asked to be consulted before a relaunch\n")
     workspace = Workspace(root / "w3-consulted", name="seat-consulted")
     all_dead()
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(

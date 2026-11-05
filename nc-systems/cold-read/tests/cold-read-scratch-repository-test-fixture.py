@@ -67,6 +67,10 @@ GIT_REDIRECTING_ENVIRONMENT_VARIABLES = git_redirecting_removal.GIT_REDIRECTING_
 # cold-read-grid.py reads ned-box's home and the Mac's mount of it from this module.
 NED_BOX_HOME_MODULE = (
     SYSTEM_DIRECTORY.parent / "general-tools" / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+# cold-read-claude-cell.py starts its claude command line from this module.
+CLAUDE_CODE_COMMAND_LINE_PREFIX_MODULE = (
+    SYSTEM_DIRECTORY.parent / "general-tools"
+    / "claude-code-headless-print-mode-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 
 
 def git(repository, *arguments):
@@ -99,6 +103,7 @@ def commit_seeded_cold_read_scratch_repository(repository):
     shutil.copy2(GIT_OUTPUT_MODULE, repository / "nc-systems" / "general-tools")
     shutil.copy2(GIT_REDIRECTING_REMOVAL_MODULE, repository / "nc-systems" / "general-tools")
     shutil.copy2(NED_BOX_HOME_MODULE, repository / "nc-systems" / "general-tools")
+    shutil.copy2(CLAUDE_CODE_COMMAND_LINE_PREFIX_MODULE, repository / "nc-systems" / "general-tools")
     # The records tree is gitignored in the real repository, which is what
     # keeps a reviewer's own report out of the detector's sight.
     (repository / ".gitignore").write_text("cold-read-records/\n", encoding="utf-8")

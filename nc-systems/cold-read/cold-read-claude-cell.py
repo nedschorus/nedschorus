@@ -48,6 +48,12 @@ _common_spec = importlib.util.spec_from_file_location(
 )
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
+_command_line_prefix_spec = importlib.util.spec_from_file_location(
+    "claude_code_headless_print_mode_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
+    pathlib.Path(__file__).resolve().parent.parent / "general-tools"
+    / "claude-code-headless-print-mode-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+command_line_prefix = importlib.util.module_from_spec(_command_line_prefix_spec)
+_command_line_prefix_spec.loader.exec_module(command_line_prefix)
 
 PROGRAM = "cold-read-claude-cell"
 
@@ -69,8 +75,8 @@ TIER_TO_REASONING_EFFORT = {
 # Write is needed for the report; WebFetch lets the reviewer inspect linked pages.
 ALLOWED_TOOLS = "Read,Grep,Glob,Write,WebFetch"
 
-# --allowedTools adds permissions under auto mode; explicitly deny both Bash and Monitor
-# to remove shell access, including access to keychain credentials.
+# --allowedTools adds to the user's own allow rules, which may allow some Bash commands; explicitly
+# deny both Bash and Monitor to remove shell access, including access to keychain credentials.
 DISALLOWED_TOOLS = "Bash,Monitor"
 
 # Disable hooks without disabling CLAUDE.md: hooks can block reports or rebase the reviewed checkout.
@@ -89,8 +95,9 @@ def invocation_builder(effort: str):
     """Return a callback yielding model argv and prompt input for the shared runner."""
     # Pass the prompt on stdin: variadic --allowedTools can swallow a trailing positional argument.
     def build_invocation(model: str, prompt: str):
+        # dontAsk: a tool call ALLOWED_TOOLS does not allow is refused, with no one to ask.
         command = [
-            "claude", "-p",
+            *command_line_prefix.claude_code_headless_print_mode_command_line_prefix_build("dontAsk"),
             "--model", model,
             "--effort", effort,
             "--output-format", "text",

@@ -3,7 +3,7 @@
 fast-forwards its own checkout to origin/main and replaces its process with a
 fresh start of itself from there, by os.execv.
 
-Covered: where the restart sits in the cycle; that a dont-restart handoff is
+Covered: where the restart sits in the cycle; that an ask-user-before-restart handoff is
 not restarted on; that a checkout which cannot fast-forward, or an os.execv
 that raises or returns, leaves the supervisor running its loaded code and tells the
 successor why; that a reference-checkout which cannot fast-forward is put back on
@@ -172,11 +172,11 @@ def run_restart_placement_cases(workspace: Path):
           "restarted on main's code" not in run.console, run.console[-400:])
 
 
-def run_dont_restart_case(workspace: Path):
+def run_ask_user_before_restart_case(workspace: Path):
     run = supervise_one_handoff(workspace, "dontrestart",
                                 "launch-time-git-sync: main fast-forwarded to main (abc1234)",
-                                handoff_extra="dont-restart: ask first\n", answer="y")
-    check("DONT-RESTART: a dont-restart handoff answered y starts the successor in this "
+                                handoff_extra="ask-user-before-restart: ask first\n", answer="y")
+    check("ASK-USER-BEFORE-RESTART: an ask-user-before-restart handoff answered y starts the successor in this "
           "process, with no git sync of its own checkout and no exec",
           not run.replaced and "sync own checkout" not in run.events
           and run.events == ["launch", "stop", "cleanup", "carry over", "launch"],
@@ -876,7 +876,7 @@ def run_real_exec_cases(workspace: Path):
 
 with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_restart_placement_cases(workspace)
-    run_dont_restart_case(workspace)
+    run_ask_user_before_restart_case(workspace)
     run_restart_failure_cases(workspace)
     run_not_restarted_notice_names_the_tool_cases(workspace)
     run_reference_checkout_back_on_main_program_cases(workspace)
