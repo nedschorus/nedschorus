@@ -576,6 +576,7 @@ WALK_CATEGORY_TAG = "#approval_walk_item_in_category_"
 WALK_WAITS_ON_TAG = "#approval_walk_item_waits_on"
 WALK_FIRST_ENTERED_TAG = "#approval_walk_item_first_entered"
 LINE_OPENING_MARKERS = r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*"
+HASHTAG_MARKER_LINE = re.compile(LINE_OPENING_MARKERS + r"#[A-Za-z][A-Za-z0-9_]*" + MARKER_END)
 WALK_CATEGORY_LINE = re.compile(LINE_OPENING_MARKERS + re.escape(WALK_CATEGORY_TAG))
 # Words joined by single underscores, so the closing `_` or `__` of underscore emphasis is not read into the tag.
 WALK_CATEGORY_TAGS_IN_LINE = re.compile(re.escape(WALK_CATEGORY_TAG) + r"(?:[^\W_]+(?:_[^\W_]+)*)?")
@@ -1008,8 +1009,12 @@ def unreadable_new_marks(text, tokens, ranges):
                 continue
             paragraph_end = max((paragraph[1] for paragraph in paragraphs if paragraph[0] <= number < paragraph[1]),
                                 default=number + 1)
-            if paragraph_end > number + 1:
-                last = min(paragraph_end, end)
+            # A marker line right below, such as the next `#new` or `#case_against`, is read on its own: it ends
+            # the run-on even though Markdown keeps it in the same paragraph.
+            run_on_end = next((below for below in range(number + 1, paragraph_end)
+                               if HASHTAG_MARKER_LINE.match(lines[below])), paragraph_end)
+            if run_on_end > number + 1:
+                last = min(run_on_end, end)
                 below = f"line {number + 2}" if last == number + 2 else f"lines {number + 2} to {last}"
                 problems.append(UNREADABLE_RUN_ON.format(line=line, mark=mark, below=below)
                                 + UNREADABLE_JOINED.format(mark=mark, text=lines_joined([match[2]] + lines[number + 1:last])))

@@ -425,6 +425,10 @@ UNREADABLE_MARK_CASES = (
      ["- line 5: `#new` has no text after it on its line.",
       "- line 7: the text of `#new` runs onto line 8 right below it, where it is not read. The mark's line with "
       'its text joined onto it: #new "The page lists one poem."']),
+    ("a mark whose text runs onto prose, with another mark right below that",
+     '#new "The page lists\none poem."\n#new "Row two."\n',
+     ["- line 5: the text of `#new` runs onto line 6 right below it, where it is not read. The mark's line with "
+      'its text joined onto it: #new "The page lists one poem."']),
 )
 
 
@@ -469,6 +473,12 @@ def test_marks_whose_texts_are_read_whole_are_not_refused():
           "are not refused, and each text is read",
           result.returncode == 0
           and case.calls.read_text() == "Row one.\nRow two.\nA quoted row.\nThe last row.\n", described(result))
+    case = Case(document=marks_document('#new "Row one."\n#new_if_d "Row two."\n#new "Row three."\n'
+                                        '**#case_against none.**\n'))
+    result = case.run("check")
+    check("marks one under another with no blank line or list marker between them, and a marker line right below "
+          "the last, are not refused, and each mark's line is read on its own",
+          result.returncode == 0 and case.calls.read_text() == "Row one.\nRow three.\n", described(result))
 
 
 def test_the_waiting_item_read_step_refuses_a_mark_whose_text_would_not_be_read_whole():
@@ -989,7 +999,7 @@ def test_only_the_units_own_openings_of_its_total_bound_an_item_under_a_shared_h
 def test_an_item_with_no_opening_of_its_own_reads_to_the_units_last_line():
     document = WALK_DOCUMENT.replace(
         "## Item 5 of 9: a new item a finding raised",
-        "## Items 8 and 9 of 9: two rows\n\n#new \"Row eight.\"\n\n#new \"Row nine.\"\n\n#case_against none.\n## Item 5 of 9: a new item a finding raised")
+        "## Items 8 and 9 of 9: two rows\n\n#new \"Row eight.\"\n#new \"Row nine.\"\n#case_against none.\n## Item 5 of 9: a new item a finding raised")
     case = Case(next_to_present="item 9 of 9", document=document)
     result = case.run("check")
     check("an item under a shared heading with no opening of its own reads the unit up to its last line",
