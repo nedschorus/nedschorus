@@ -8,30 +8,49 @@ MODEL is a model name agy accepts, such as gemini-3.8-flash-medium.
 
 Runs `agy --model MODEL --output-format text --print PROMPT` with stdin closed,
 without --dangerously-skip-permissions, and passes agy's stdout, stderr and
-exit code through. GEMINI_API_KEY is removed from agy's environment, because a
+exit code through; when the sandboxed run exits nonzero, this program adds one line of its own
+to stderr, after agy's or the sandbox program's own messages. GEMINI_API_KEY is removed from agy's environment, because a
 key is billed per call and agy's own Google login, in ~/.gemini, is not.
+
+The program's name describes the Linux sandbox; on macOS the home is not
+emptied, as the macOS paragraph below says.
 
 On Linux the sandbox is `bwrap`: the home directory holds only ~/.gemini,
 where agy keeps its login, bound read-write; /usr and
 /etc are read-only; the network is shared; the working directory is a fresh
 empty directory in a tmpfs /tmp. On Linux only, the agy binary is bound
-read-only at /run/agy-bin/agy, outside the home and off PATH, so agy cannot
-start another agy. /run/systemd/resolve, which /etc/resolv.conf points into on ned-box, is
-bound when it exists; where it does not and DNS needs it, agy fails with its
+read-only at /run/agy-bin/agy, outside the home and off PATH, so a plain `agy` command inside the sandbox
+finds nothing; agy could still start another agy by that full path. /run is an empty tmpfs, so /run/systemd/resolve is bound
+in when it exists: on ned-box /etc/resolv.conf is a link to
+/run/systemd/resolve/stub-resolv.conf, and without the bind agy could not
+look up any host name. On a Linux machine whose /etc/resolv.conf links into
+/run/systemd/resolve while that directory does not exist, agy fails with its
 own network error.
 
-On macOS the sandbox is `sandbox-exec` with the Gemini launcher's profile,
-from `credential_sandbox_prefix()` in nc-systems/cold-read/cold-read-agy-cell.py,
-which denies reading and writing the credential paths but does not empty the
-home: the rest of it stays readable and writable, and agy stays on PATH, so
-it can start another agy. On macOS the working directory is a fresh empty
+On macOS the sandbox is `sandbox-exec`, started by the command prefix that
+`credential_sandbox_prefix()` returns in nc-systems/cold-read/cold-read-agy-cell.py,
+the program that runs agy for cold reads. The sandbox-exec profile, built by
+`sandbox_exec_profile()` in the same file, denies reading and writing the
+credential paths, which that function assembles from the lists in
+nc-systems/cold-read/cold-read-cell-common.py, such as ~/.ssh, ~/.config/gh, Claude's and Codex's login files, and files
+named *.token or .env, and nothing else: the rest of the
+home stays readable and writable, and agy stays on PATH, so a plain `agy`
+command starts another agy. On macOS this program blocks neither that home access nor that
+nested agy; there it
+is only as
+tight as the cold reads' own agy runs. On macOS the working directory is a fresh empty
 temporary directory, removed afterwards.
 
-Fails, with a line on stderr and exit 1, when agy is not on PATH or the
-sandbox program is not. When the sandboxed run fails, this program prints a
-line on stderr and exits with the sandbox program's code, which is agy's own code
-when agy ran; when bwrap or sandbox-exec fails before agy starts, it is
-that program's code. Nothing is retried.
+Exit codes: 2, from argument parsing, when --model or PROMPT is missing;
+1, with a line on stderr, when agy or the sandbox program is not
+on PATH, so nothing was run. Otherwise this program exits with the code
+bwrap or sandbox-exec exited with, which is agy's own code when agy ran,
+and bwrap's or sandbox-exec's own code, often 1, when that program failed
+before agy started. So a nonzero code can come from this program, the sandbox
+program or agy, and the same code from more than one of them: a 1 can mean
+a program missing from PATH, a sandbox that could not start, or a failure
+inside agy, and a 2 can come from agy as well as from argument parsing.
+Only stderr tells them apart. Nothing is retried.
 """
 
 import argparse
