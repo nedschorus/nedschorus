@@ -239,8 +239,13 @@ def brief_cases(root, repository, base, frozen_head):
     check("brief: rule 2 says a fix that carries out a user ruling in a guarded-file is a user-approved-change",
           "\n   " + CARRYING_OUT_USER_RULING_PARAGRAPH + "\n3. Change nothing else" in out
           and out.index("2. Check each finding") < out.index(CARRYING_OUT_USER_RULING_PARAGRAPH), out)
+    check("brief: a conflict whose answer replaces the pull request stops the round before the steps that "
+          "check and push this pull request, and has merge-lane-2 told",
+          "If it reports VERDICT: CONFLICT with ANSWER: replace, stop the round and take none of steps 2 to 9" in out
+          and "tell merge-lane-2 with SendMessage that this round stopped on a conflict with main" in out
+          and out.index("ANSWER: replace") < out.index("2. Check each finding"), out)
     check("brief: a conflict defers to the conflict check's report, and asks for no merge itself",
-          "If it reports VERDICT: CONFLICT, do what its report says." in out
+          "If it reports VERDICT: CONFLICT with any other answer, do what its report says." in out
           and "merge origin/main as its report says" not in out and "merge nothing" not in out
           and "had you merge origin/main" not in out and "--after-conflict-merge" not in out, out)
     check("brief: says what to do when a suite fails and when the push itself fails",

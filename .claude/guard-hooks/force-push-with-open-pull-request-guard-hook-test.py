@@ -200,8 +200,8 @@ check("the refusal teaches the remedy: a new commit on top, pushed without --for
 # it to the report of scripts/branch-conflict-check.py on a line of its own.
 # Pinned by equality on the line.
 check("the refusal sends a conflict with main to scripts/branch-conflict-check.py's report, as a line of its own",
-      "If the branch conflicts with main, do what scripts/branch-conflict-check.py reports."
-      in lines, reason)
+      "If the branch conflicts with main, run python3 scripts/branch-conflict-check.py "
+      "--head origin/the-pr-branch --branch the-pr-branch and do what it reports." in lines, reason)
 check("the refusal no longer sends a fix for a conflict to a new commit on top",
       reason and "including any fix for a conflict with main" not in reason, reason)
 check("the refusal names the escape hatch",
