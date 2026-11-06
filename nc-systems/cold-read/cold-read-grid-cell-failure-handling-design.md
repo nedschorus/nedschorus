@@ -74,7 +74,7 @@ The classes, tested in this order; the first that matches names the cause. The f
 
 | class | recognised by | detail | what clears it | agent-binary-wide |
 |---|---|---|---|---|
-| `account-limit` | `claude` only: an output line starting "You've hit your session limit" | the rest of the line, as in "resets 8:50pm (America/Los_Angeles)" | the reset time passing | yes |
+| `account-limit` | `claude` only: an output line starting "You've hit your " whose next words end in "limit", as in "You've hit your weekly limit · resets Nov 7, 3am (America/Los_Angeles)" | the line after "You've hit your ", as in "weekly limit · resets Nov 7, 3am (America/Los_Angeles)" | the weekly reset, or an account change | yes |
 | `model-limit` | `claude` only: an output line starting "You've reached your " followed by the attempt's model family name and " limit", as in "You've reached your Fable limit." for `claude-fable-5-1` | the model family name | the reset, or the user's usage settings | no, that model only |
 | `logged-out` | `claude` and `codex`: the line each agent-binary prints when it has no credentials, captured before this class is built (below); the `codex` line after its leading tracing-logger timestamp | the matched line | the user logs in | yes |
 | `agent-binary-missing` | the program's `OSError` handler ran when it started the agent-binary (`run_model_chain` in `nc-systems/cold-read/cold-read-cell-common.py`) | the error text, which says whether the binary was not found or would not run | the user installs or repairs the agent-binary | yes |
@@ -84,7 +84,7 @@ The classes, tested in this order; the first that matches names the cause. The f
 
 Agent-binary-wide means that this cause on one cold-read-cell predicts the same failure for every cold-read-cell of that agent-binary.
 
-No recognised text is guessed. Every text the table recognises must be a real one, captured from an agent-binary, because the tests in section 8 are built from them. The two limit texts were found in the log-store's kept cold-read-cell logs on 2026-09-16. Each is line 2 of its log, on the `claude` agent-binary's standard output.
+No recognised text is guessed. Every text the table recognises must be a real one, captured from an agent-binary, because the tests in section 8 are built from them. The two limit texts come from the log-store's kept cold-read-cell logs, each from the `claude` agent-binary's output; section 8 names each log and line.
 
 No logged-out text exists in the log-store, so the agent building this captures one before writing that class. It runs each agent-binary once on ned-box, with an empty configuration directory, so the run fails for want of credentials without touching the real login: `CLAUDE_CONFIG_DIR=$(mktemp -d) claude -p "say hi"` and `CODEX_HOME=$(mktemp -d) codex exec "say hi"`. It records the command, the machine and the output beside the fixture, as the fixture rule requires. If either command does anything but exit non-zero with a message, the builder stops for that agent-binary rather than inventing a text, and that agent-binary's logged-out failure lands as `exit-N` until a real one is captured from a run's log. Today's bare substring test for "401" and "Not logged in" is removed, not carried forward. Codex has no recognised texts either, because none has been captured, so a Codex quota failure lands as `exit-N` until a real one is captured and added. On 2026-09-18 the Codex logged-out line was captured, and it is recognised after the leading timestamp the Codex tracing logger puts on every line, the one exception to column-0 matching the user ruled on 2026-09-18 (walk skill-sentences-and-shipper-questions-2026-09-18, item 4); a Codex quota failure still lands as `exit-N`.
 
@@ -94,7 +94,7 @@ The user's direction of 2026-09-14: "If opus is down, claude is down, so that sh
 
 When a cold-read-cell becomes absent with an agent-binary-wide class, and every other cold-read-cell of its agent-binary has either landed or is absent with the same class, the cold-read-grid prints one line:
 
-`AGENT-BINARY DOWN: claude — account-limit — resets 8:50pm (America/Los_Angeles); 3 reports absent`
+`AGENT-BINARY DOWN: claude — account-limit — weekly limit · resets Nov 7, 3am (America/Los_Angeles); 3 reports absent`
 
 The detail is that of the last of them to become absent. Each agent-binary's line prints once, when its condition is met, so when both agent-binaries are down the lines appear in the order the agent-binaries went down. The closing text restates the line in a form that does not start with `AGENT-BINARY DOWN:` (section 6), so the skill's Monitor sees each one once.
 
@@ -120,7 +120,7 @@ Every run that finishes closes with one closing text, in one of four variants. A
 
 `{n}` is the number of cold-read-cells launched, seven today. Valid, in the user's word, means the reports that landed are triaged as the review that was asked for. It is the opposite of today's Opus-absent text, "this is not the review that was asked for", and only a changed frozen-copy of the cold-read-target makes a set not valid.
 
-Each absent report is one line: `- <cold-read-cell name>: <class> — <detail> (log: <attempt-2 log path>)`. An agent-binary-down line reads `- claude is down: account-limit — resets 8:50pm (America/Los_Angeles); 3 reports absent`.
+Each absent report is one line: `- <cold-read-cell name>: <class> — <detail> (log: <attempt-2 log path>)`. An agent-binary-down line reads `- claude is down: account-limit — weekly limit · resets Nov 7, 3am (America/Los_Angeles); 3 reports absent`.
 
 When any absent report's class is `logged-out`, `agent-binary-missing`, `account-limit` or `model-limit`, the closing text ends with one sentence: "Tell the user: <causes>." It is the last sentence, after "Start a new cold-read-full-run …" when that prints, and it is omitted when no absent report has one of those classes. One cause reads `<agent-binary> <class> — <detail> (log: <path>)`. Absent reports with the same agent-binary and class share one cause, which takes the detail and log of the last of them to become absent. Causes are joined by semicolons. A Codex quota failure, which lands as `exit-N` (section 4), is not among them.
 
@@ -134,7 +134,7 @@ The user-ruling of 2026-09-11, point 5: "a marker line naming the absent cells a
 
 When a report is absent, the cold-read-grid writes one marker line into every `.md` file in the cold-read-record: the reports that landed, and the reference-check file. It uses the mechanism that writes the target-changed marker (`mark_reports_target_changed` in `nc-systems/cold-read/cold-read-grid.py`). That mechanism puts the line after the provenance stamp when there is one, so the stamp stays the first line, and at the top otherwise; this is the top the ruling means.
 
-`<!-- INCOMPLETE SET: 2 of 7 reports absent — claude-hunt-good (account-limit — resets 8:50pm (America/Los_Angeles)), claude-terminology-good (account-limit — resets 8:50pm (America/Los_Angeles)) -->`
+`<!-- INCOMPLETE SET: 2 of 7 reports absent — claude-hunt-good (account-limit — weekly limit · resets Nov 7, 3am (America/Los_Angeles)), claude-terminology-good (account-limit — weekly limit · resets Nov 7, 3am (America/Los_Angeles)) -->`
 
 When the cold-read-target also changed, both markers are written, the target-changed marker first.
 
@@ -160,11 +160,11 @@ The stub agent-binary the tests use (`STUB_MODEL_RUNTIME` in `nc-systems/cold-re
 - All seven fail both attempts. Expect the none-landed variant and exit 1.
 - One copied cold-read-cell program has its execute permission removed, so the cold-read-grid cannot start it. Expect `RETRYING:` and then `FAILED` naming `program-unstartable`, the other programs' cold-read-cells unaffected, the some-landed variant and exit 1, rather than the run ending.
 - The cold-read-target changes during a run that has an absent report. Expect the target-changed variant, then the absent report, both markers with the target-changed marker first, and exit 3.
-- **A Codex attempt's output holds "You've hit your session limit" at the start of a line, and the attempt fails with exit 1.** Expect the class `exit-1`, since no Codex text matches that phrase (the one Codex text recognised is its own logged-out line). Also expect a run otherwise the same as that failure without the line: the same retry, closing text and exit code.
+- **A Codex attempt's output holds "You've hit your weekly limit" at the start of a line, and the attempt fails with exit 1.** Expect the class `exit-1`, since no Codex text matches that phrase (the one Codex text recognised is its own logged-out line). Also expect a run otherwise the same as that failure without the line: the same retry, closing text and exit code.
 
 The classifier gets its own cases in `nc-systems/cold-read/tests/cold-read-cell-common-test.py`. The inputs for the two limit classes are the real lines from the log-store. Each fixture records the log file and line, the command that produced it, which is the cold-read-grid's launch of `nc-systems/cold-read/cold-read-claude-cell.py`, and the machine the run was on:
 
-- the session limit: line 2 of `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-10-design-to-main-test-writing-agent-instructions/2026-09-10-design-to-main-test-writing-agent-instructions--claude-hunt-good.md.stderr.log`, run on the Mac;
+- the weekly limit: line 1 of `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2384-each-round-of-a-pull-request-runs-its-2026-11-02-2/claude-hunt-deep.md.attempt-1.stderr.log`, run on ned-box;
 - the Fable limit: line 2 of `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-11-SKILL-2/2026-09-11-SKILL-2--claude-hunt-floor.md.stderr.log`, run on the Mac.
 
 The `logged-out` input is the capture of section 4. `agent-binary-missing`, `no-report` and `exit-N` come from the program's own branches and need no captured text.

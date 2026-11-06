@@ -656,11 +656,11 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- Every failed attempt names its cause (nedschorus#413) ---------------
     # The classifier's fixtures are real lines (the fixture rule,
-    # nedschorus#18): the session limit is line 2 of
-    # nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-10-design-to-main-test-writing-agent-instructions/2026-09-10-design-to-main-test-writing-agent-instructions--claude-hunt-good.md.stderr.log
-    # and the Fable limit line 2 of
+    # nedschorus#18): the weekly limit is line 1 of
+    # nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2384-each-round-of-a-pull-request-runs-its-2026-11-02-2/claude-hunt-deep.md.attempt-1.stderr.log,
+    # from the grid launching the Claude cell on ned-box; the Fable limit is line 2 of
     # nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-11-SKILL-2/2026-09-11-SKILL-2--claude-hunt-floor.md.stderr.log,
-    # both from the grid launching the Claude cell on the Mac; the logged-out
+    # from the grid launching the Claude cell on the Mac; the logged-out
     # line is the 2026-09-18 capture on ned-box, Claude Code 2.1.272,
     # `CLAUDE_CONFIG_DIR=$(mktemp -d) claude -p "say hi"` from a scratch
     # directory, exit 1, that line on stdout; and the Codex logged-out line
@@ -738,7 +738,7 @@ with tempfile.TemporaryDirectory() as scratch:
         "cold_read_codex_cell_under_test", SYSTEM_DIRECTORY / "cold-read-codex-cell.py")
     codex_module = importlib.util.module_from_spec(codex_spec)
     codex_spec.loader.exec_module(codex_module)
-    SESSION_LIMIT_LINE = "You've hit your session limit · resets 8:50pm (America/Los_Angeles)"
+    WEEKLY_LIMIT_LINE = "You've hit your weekly limit · resets Nov 7, 3am (America/Los_Angeles)"
     FABLE_LIMIT_LINE = ("You've reached your Fable limit. Switch to another model, or manage "
                         "usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, "
                         "to continue.")
@@ -757,10 +757,13 @@ with tempfile.TemporaryDirectory() as scratch:
             recognised_texts=claude_module.recognised_failure_texts_for_model(model),
             start_error=start_error)
 
-    check("the session limit line is account-limit with the reset as its detail",
-          classify(stdout=PERMISSION_NOISE + SESSION_LIMIT_LINE + "\n")
-          == ("account-limit", "resets 8:50pm (America/Los_Angeles)"),
-          repr(classify(stdout=PERMISSION_NOISE + SESSION_LIMIT_LINE + "\n")))
+    check("the weekly limit line is account-limit, the limit and its reset as detail",
+          classify(stdout=PERMISSION_NOISE + WEEKLY_LIMIT_LINE + "\n")
+          == ("account-limit", "weekly limit · resets Nov 7, 3am (America/Los_Angeles)"),
+          repr(classify(stdout=PERMISSION_NOISE + WEEKLY_LIMIT_LINE + "\n")))
+    check("a line starting \"You've hit your \" whose next words do not end in limit is exit-N",
+          classify(stdout="You've hit your limitless quota · resets Nov 7\n")[0] == "exit-1",
+          repr(classify(stdout="You've hit your limitless quota · resets Nov 7\n")))
     check("the Fable limit line is model-limit for a Fable attempt, the family as detail",
           classify(stdout=PERMISSION_NOISE + FABLE_LIMIT_LINE + "\n") == ("model-limit", "Fable"),
           repr(classify(stdout=PERMISSION_NOISE + FABLE_LIMIT_LINE + "\n")))
@@ -771,8 +774,8 @@ with tempfile.TemporaryDirectory() as scratch:
           classify(stdout=LOGGED_OUT_LINE + "\n") == ("logged-out", LOGGED_OUT_LINE),
           repr(classify(stdout=LOGGED_OUT_LINE + "\n")))
     check("a limit text inside a line, not at its start, is not recognised",
-          classify(stdout=f"The document quotes: {SESSION_LIMIT_LINE}\n")[0] == "exit-1",
-          repr(classify(stdout=f"The document quotes: {SESSION_LIMIT_LINE}\n")))
+          classify(stdout=f"The document quotes: {WEEKLY_LIMIT_LINE}\n")[0] == "exit-1",
+          repr(classify(stdout=f"The document quotes: {WEEKLY_LIMIT_LINE}\n")))
     check("an agent-binary that could not be started is agent-binary-missing with the error",
           classify(exit_code=None, start_error="[Errno 2] No such file or directory: 'claude'")
           == ("agent-binary-missing", "[Errno 2] No such file or directory: 'claude'"))
@@ -794,8 +797,8 @@ with tempfile.TemporaryDirectory() as scratch:
           and classify(exit_code=-9) == ("exit--9", "no output"))
     check("a Codex attempt recognises no text, so the Claude limit line is exit-1 there",
           common_module.classify_failed_attempt(
-              stdout=SESSION_LIMIT_LINE + "\n", stderr="", exit_code=1, recognised_texts=[])
-          == ("exit-1", SESSION_LIMIT_LINE))
+              stdout=WEEKLY_LIMIT_LINE + "\n", stderr="", exit_code=1, recognised_texts=[])
+          == ("exit-1", WEEKLY_LIMIT_LINE))
 
     # The Codex logged-out line carries the tracing logger's timestamp, which
     # the classifier skips before matching by how the line starts; the
@@ -819,9 +822,9 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(classify_codex(
               stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} the doc says: {CODEX_LOGGED_OUT_TEXT}\n")))
     check("a timestamp then an unrecognised text falls through to exit-N, detail untouched",
-          classify_codex(stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} {SESSION_LIMIT_LINE}\n")
-          == ("exit-1", f"{CODEX_LOGGED_OUT_TIMESTAMP} {SESSION_LIMIT_LINE}"),
-          repr(classify_codex(stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} {SESSION_LIMIT_LINE}\n")))
+          classify_codex(stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} {WEEKLY_LIMIT_LINE}\n")
+          == ("exit-1", f"{CODEX_LOGGED_OUT_TIMESTAMP} {WEEKLY_LIMIT_LINE}"),
+          repr(classify_codex(stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} {WEEKLY_LIMIT_LINE}\n")))
     check("the Claude logged-out line still matches at column 0 with no timestamp",
           classify(stdout=LOGGED_OUT_LINE + "\n") == ("logged-out", LOGGED_OUT_LINE))
     check("the family name is the model id's second word, capitalised",
@@ -853,11 +856,11 @@ with tempfile.TemporaryDirectory() as scratch:
     report = repository / "cold-read-records" / "run-cause-b" / "codex-defect-hunt-second-strongest-model.md"
     result = run_codex_cell(
         repository, stubs,
-        {"*": {"exit": 1, "stdout": SESSION_LIMIT_LINE + "\n"}},
+        {"*": {"exit": 1, "stdout": WEEKLY_LIMIT_LINE + "\n"}},
         report,
     )
     check("a Codex cell printing the Claude limit text names exit-1, the line as detail",
-          f"cold-read-codex-cell: cause: exit-1 — {SESSION_LIMIT_LINE}" in result.stderr,
+          f"cold-read-codex-cell: cause: exit-1 — {WEEKLY_LIMIT_LINE}" in result.stderr,
           repr(result.stderr))
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
