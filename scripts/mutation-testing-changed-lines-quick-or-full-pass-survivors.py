@@ -860,10 +860,13 @@ def recorded_mutant_not_applied_verdict(checkout, path, hunks, head, diff_file, 
             f"command again.")
     return "could not be judged", (
         f"it does not apply to {path} at head {head[:12]}: {why_not_applied}, and whether "
-        f"origin/main still has the lines it replaces cannot be told.\n"
-        f"If {diff_file} names a line your branch did not change, make sure your branch's head "
-        f"has {path} as origin/main has it, commit your test in another file, and run this "
-        f"command again.")
+        f"origin/main still has the lines it replaces cannot be told: there is no local "
+        f"origin/main, git could not read {path} there, or the lines appear there more than "
+        f"once.\n"
+        f"If your branch changed those lines on purpose, the mutant is gone from your branch: "
+        f"once your branch is merged, the nightly mutation pass drops it from its task.\n"
+        f"Otherwise, make sure your branch's head has {path} as origin/main has it, commit your "
+        f"test in another file, and run this command again.")
 
 
 def recorded_mutant_killed_check(arguments, checkout, environment, runner):
@@ -903,8 +906,8 @@ def recorded_mutant_killed_check(arguments, checkout, environment, runner):
         suites = suites_for_file(path, suites_at, recordings_directory, runner)
         if not suites:
             verdicts[diff_file] = ("could not be judged", (
-                f"at head {head[:12]} no recorded suite reads {path} and it has no sibling suite, "
-                f"so no suite can kill the mutant.\n"
+                f"at head {head[:12]} no recorded suite reads {path} and it has no sibling suite "
+                f"(a {path[:-len('.py')]}-test.py or -test.sh), so no suite can kill the mutant.\n"
                 f"If your new test is in a suite whose recording does not yet read {path}, such "
                 f"as a new suite, run that suite once with python3 "
                 f"scripts/run-all-test-suites.py --only-suites-named <the suite's path>, which "
@@ -1024,7 +1027,8 @@ def recorded_mutants_judged_in_one_worktree(to_run, head, arguments, checkout, e
                         f"with the mutant applied at head {head[:12]}, {why}, so the mutant "
                         f"could not be judged.\n"
                         f"Run this command again once. If the mutant still cannot be judged, put "
-                        f"that second output in the pull request's description."))
+                        f"that second output in the description of the pull request with your "
+                        f"test."))
         finally:
             remove_worktree(checkout, worktree, environment)
     return verdicts

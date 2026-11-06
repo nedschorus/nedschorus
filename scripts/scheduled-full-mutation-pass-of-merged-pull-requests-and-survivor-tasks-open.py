@@ -875,7 +875,7 @@ def main_under_lock(arguments):
               + "".join(f"  {line}\n" for line in not_rechecked)
               + "The next run checks them again.\n"
               "If the next run names a task again, run that task's command, given in the task, "
-              "on ned-box with --head origin/main, and fix what it prints.",
+              "on ned-box with --head origin/main added at its end, and fix what it prints.",
               file=sys.stderr)
     try:
         record_write(record_path, record)
