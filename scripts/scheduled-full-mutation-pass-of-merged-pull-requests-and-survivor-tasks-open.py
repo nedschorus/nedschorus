@@ -42,7 +42,10 @@ WHAT ONE RUN DOES, in order.
      description still names each mutant's diff file. A task marked completed
      is finished: the state stops naming its mutants. Each mutant whose task
      is not completed and no longer lists it, because the task's file is
-     gone, cannot be read or no longer names the diff file, is reported once:
+     gone, cannot be read or no longer names the diff file, is moved to the
+     task on the same list when exactly one other task not marked completed
+     names its diff file, as a fold of tasks leaves it; otherwise it is
+     reported once:
      the record naming it is written at once, and only then does the state
      stop naming it, so a run killed later has still reported it; standard
      error names it at the end, and the run goes on and exits
@@ -347,15 +350,32 @@ def task_on_list_open_for_line(list_directory, place):
     return None
 
 
-def lost_tasks_reported(state, arguments, record):
-    """Drop from the state in memory each task that is completed or no longer holds its mutant.
+def task_ids_on_list_open_naming_mutant(list_directory, key):
+    """Ids of the tasks on the list, not marked completed, whose description names the
+    mutant's diff file. Raises OSError."""
+    if not list_directory.is_dir():
+        return []
+    ids = []
+    for path in sorted(list_directory.iterdir(), key=lambda path: path.name):
+        if not TASK_FILE_NAME_PATTERN.fullmatch(path.name):
+            continue
+        task = task_file_read(path)
+        if task_names_mutant(task, key) and task.get("status") != "completed":
+            ids.append(int(path.stem))
+    return ids
 
-    Return one line per task that no longer holds its mutant and is not completed; the caller
-    writes the state."""
+
+def lost_tasks_reported(state, arguments, record):
+    """Drop from the state in memory each task that is completed or no longer holds its mutant,
+    and re-point a mutant to the one other open task on its owner's list that names it.
+
+    Return one line per task that no longer holds its mutant, is not completed, and has no
+    single open task on the list naming the mutant; the caller writes the state. Raises
+    OSError when another task file on the list cannot be read."""
     lost = []
     for key, given in list(state["tasks_opened"].items()):
-        task_file = (arguments.task_lists_directory / f"nedschorus-{given['agent_seat']}-tasks"
-                     / f"{given['task_id']}.json")
+        list_directory = arguments.task_lists_directory / f"nedschorus-{given['agent_seat']}-tasks"
+        task_file = list_directory / f"{given['task_id']}.json"
         try:
             task = task_file_read(task_file)
         except OSError as error:
@@ -367,6 +387,16 @@ def lost_tasks_reported(state, arguments, record):
             if task_names_mutant(task, key):
                 continue
             why = "its description no longer names the mutant's diff file"
+        # A task fold moves mutants into another task; the handoff prune later deletes the
+        # completed task they left.
+        naming = task_ids_on_list_open_naming_mutant(list_directory, key)
+        if len(naming) == 1:
+            record.append(f"TASK MOVED: the surviving mutant "
+                          f"{mutant_diff_file_path(arguments.log_store_root, key)} is now held by "
+                          f"task #{naming[0]} on {given['agent_seat']}'s task list, not task "
+                          f"#{given['task_id']} ({why})")
+            state["tasks_opened"][key] = dict(given, task_id=naming[0])
+            continue
         lost.append(f"task #{given['task_id']} on {given['agent_seat']}'s task list "
                     f"({task_file}) no longer holds the surviving mutant "
                     f"{mutant_diff_file_path(arguments.log_store_root, key)}: {why}")
@@ -812,7 +842,7 @@ def main_under_lock(arguments):
         else:
             last = state["last_tested_main_commit"]
             record.append(f"after: {last}")
-            tasks_before = len(state["tasks_opened"])
+            tasks_before = dict(state["tasks_opened"])
             lost = lost_tasks_reported(state, arguments, record)
             # A run killed later writes no record, so the lost tasks reach one before the
             # state stops naming them.
@@ -827,7 +857,7 @@ def main_under_lock(arguments):
                         f"Nothing was tested.\n"
                         f"Fix what the error names, then run this program again on ned-box: "
                         f"{RUN_BY_HAND}") from error
-            if len(state["tasks_opened"]) != tasks_before:
+            if state["tasks_opened"] != tasks_before:
                 write_state(state_file, state)
             lost_tasks = lost
             with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as scratch:
