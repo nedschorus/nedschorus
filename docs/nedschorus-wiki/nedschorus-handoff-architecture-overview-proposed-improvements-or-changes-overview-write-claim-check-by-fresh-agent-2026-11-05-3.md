@@ -30,16 +30,6 @@ The claim check's evidence:
 > - The idle sweep keeps its own copy of the suffix, so renaming the marker from this list alone would break it.
 State: open
 
-## E4 — possible problem: an assertion of the overview is contradicted
-
-Claim: `<seat>-leftovers-prompt-listing-counts.json`: written and read by the supervisor at each launch, keeping only the entries listed that time.
-Goes wrong when: a reader takes the assertion as exact.
-The claim check's evidence:
-> - handoff-supervisor.py:1625-1627 `leftovers = "\n\n".join(part for part in leftover_parts if part)` / `if not leftovers: return prompt`.
-> - That return comes before `leftovers_with_prompt_listing_counts` (:1629), so a launch with no leftovers neither reads nor rewrites the file.
-> - Earlier entries stay, and :1609 `counts = {key: earlier.get(key, 0) + 1 ...}` counts on from them at the next launch that lists that entry. The file is not touched at every launch and does not always hold only the last launch's entries.
-State: open
-
 ## E5 — possible problem: an assertion of the overview is contradicted
 
 Claim: The reference-checkout, `~/Projects/nedschorus` on each machine: fast-forwarded to main by `launch-claude-ubuntu` on ned-box, by `launch-claude-mac` on the Mac, at each non-consulting handoff by every supervisor running from it, and by the restart program; put back on main by the leftovers program.
