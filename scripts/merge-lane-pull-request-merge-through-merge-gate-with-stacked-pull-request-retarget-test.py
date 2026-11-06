@@ -9,13 +9,20 @@ merge account's token file. The fake
 gate answers each run from a numbered output file and exit code the case
 writes. The fake `gh` logs every call with the GH_TOKEN it saw and answers
 from a routes file the case writes; it does not filter `gh pr list` by base
-branch, so the program's own filter is what each stacked case tests. The
+branch, so the program's own filter is what each stacked case tests; a route
+may remove a directory, such as origin, when it is called. The
 waits between gate runs go to a list instead of sleeping. A case may make the
 pull request's review worktrees in a scratch review worktrees directory, as
 worktrees of the review tools clone; a pr10-head that is a plain directory
 instead makes git worktree remove fail. A route may kill the fake `gh` with
 SIGKILL, and a case may put a `git` first on PATH that kills itself on
-`git worktree remove` and runs the real git otherwise.
+`git worktree remove`, of any path or of one path, or that fails, by a
+signal or exit 1, on any git command holding a given text once the fake
+`gh` has run the merge, and runs the real git otherwise. Origin's one commit holds a fake scripts/run-all-test-suites.py,
+the runner the after-merge test run starts in its worktree at that commit,
+which the fake `gh` reports as the merge commit; the fake runner logs its
+arguments and directory and answers from an output file and exit code the
+case writes, or passes when the case writes none.
 
 Run: python3 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget-test.py
 """
@@ -87,10 +94,39 @@ if route is None:
     sys.exit(97)
 if route.get("killed"):
     os.kill(os.getpid(), 9)
+if key == "pr merge":
+    open(os.path.join(directory, "merge-ran"), "w").close()
+if route.get("remove_directory"):
+    import shutil
+    shutil.rmtree(route["remove_directory"])
 sys.stdout.write(route.get("stdout", ""))
 sys.stderr.write(route.get("stderr", ""))
 sys.exit(route.get("exit", 0))
 '''
+
+FAKE_RUNNER = r'''#!/usr/bin/env python3
+import json, os, sys
+directory = os.environ["MERGE_LANE_MERGE_TEST_DIRECTORY"]
+with open(os.path.join(directory, "runner-calls.log"), "a") as log:
+    log.write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd()}) + "\n")
+answer = os.path.join(directory, "runner")
+if os.path.exists(answer + ".out"):
+    sys.stdout.write(open(answer + ".out").read())
+    sys.stdout.flush()
+    code = int(open(answer + ".exit").read())
+    if code < 0:
+        os.kill(os.getpid(), -code)
+    sys.exit(code)
+print("PASS scripts/some-test.py (1s)")
+print("SUMMARY: 1 passed, 0 failed, 1 total; fake runner")
+'''
+RUNNER_PASSED_SUMMARY = "SUMMARY: 1 passed, 0 failed, 1 total; fake runner"
+RUNNER_FAILED = ("PASS scripts/some-test.py (1s)\n"
+                 "FAIL scripts/broken-test.py exit 1 (2s)\n"
+                 "\n1 failed:\n"
+                 "FAIL scripts/broken-test.py exit 1 — log /logs/broken-test.py.log\n"
+                 "SUMMARY: 1 passed, 1 failed, 2 total; fake runner\n")
+RUNNER_COULD_NOT_RUN = "run-all-test-suites.py: git cannot resolve the COMMIT given\n"
 
 failures = []
 GIT_ENVIRONMENT = dict(os.environ)
@@ -108,7 +144,9 @@ def origin_with_one_commit(scratch):
     seed = scratch / "origin-seed"
     git("init", "-q", "-b", "main", str(seed))
     (seed / "README").write_text("seed\n")
-    git("add", "README", cwd=seed)
+    (seed / "scripts").mkdir()
+    (seed / "scripts" / "run-all-test-suites.py").write_text(FAKE_RUNNER)
+    git("add", "README", "scripts", cwd=seed)
     git("commit", "-q", "-m", "seed", cwd=seed)
     git("clone", "-q", "--bare", str(seed), str(origin))
     return origin
@@ -128,7 +166,7 @@ def default_routes(open_pull_requests, edit_exit=0, merge_exit=0):
         "pr list": {"stdout": json.dumps(open_pull_requests)},
         "pr edit": {"exit": edit_exit, "stderr": "" if edit_exit == 0 else "edit refused\n"},
         "pr merge": {"exit": merge_exit},
-        "view-state": {"stdout": '{"state":"MERGED"}\n'},
+        "view-state": {"stdout": '{"state":"MERGED","mc":"MERGE_COMMIT"}\n'},
     }
 
 
@@ -138,8 +176,18 @@ STACKED_AND_NOT = [{"number": 20, "baseRefName": BRANCH},
 
 
 def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_state="at-main",
-             review_worktrees_state="none", git_killed_on_worktree_remove=False):
+             review_worktrees_state="none", git_killed_on_worktree_remove=None,
+             git_fails_after_merge_on=None, runner_answer=None):
     """Run main() once; return (exit code, output, gh calls, gate calls, waits).
+
+    Each "MERGE_COMMIT" in routes becomes origin's commit, and each "ORIGIN"
+    the path of origin.
+    git_killed_on_worktree_remove: None, or the text a git worktree remove
+    command must hold for the fake git to kill itself; "" kills on every one.
+    git_fails_after_merge_on: None, or (text, "kill" or "exit 1"): once the
+    merge has run, a git command holding text is killed by SIGKILL or exits 1.
+    runner_answer: None, for a fake runner that passes, or (output, exit code);
+    a negative exit code -N makes the fake runner kill itself with signal N.
 
     review_tools_state: "at-main", "behind-main" (origin/main moved on after the
     clone), "no-origin" (the clone's origin is gone) or "no-gate".
@@ -154,9 +202,19 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
     bin_directory.mkdir()
     (bin_directory / "gh").write_text(FAKE_GH)
     (bin_directory / "gh").chmod(0o755)
-    if git_killed_on_worktree_remove:
+    if git_killed_on_worktree_remove is not None:
         (bin_directory / "git").write_text(
-            '#!/bin/bash\ncase " $* " in *" worktree remove "*) kill -9 $$;; esac\n'
+            '#!/bin/bash\ncase " $* " in *" worktree remove "*'
+            f'{git_killed_on_worktree_remove}*) kill -9 $$;; esac\n'
+            f'exec {shutil.which("git")} "$@"\n')
+        (bin_directory / "git").chmod(0o755)
+    if git_fails_after_merge_on is not None:
+        text, failure = git_fails_after_merge_on
+        (bin_directory / "git").write_text(
+            '#!/bin/bash\n'
+            f'if [ -e "{directory}/merge-ran" ]; then case " $* " in *"{text}"*) '
+            f'{"kill -9 $$" if failure == "kill" else "echo fake git failed >&2; exit 1"};; '
+            'esac; fi\n'
             f'exec {shutil.which("git")} "$@"\n')
         (bin_directory / "git").chmod(0o755)
     origin = origin_with_one_commit(directory)
@@ -164,7 +222,7 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
     git("clone", "-q", str(origin), str(review_tools))
     git("checkout", "-q", "--detach", "origin/main", cwd=review_tools)
     if review_tools_state != "no-gate":
-        (review_tools / "scripts").mkdir(parents=True)
+        (review_tools / "scripts").mkdir(parents=True, exist_ok=True)
         (review_tools / "scripts" / "merge-gate.sh").write_text(FAKE_GATE)
     if review_tools_state == "behind-main":
         seed = directory / "origin-seed"
@@ -189,7 +247,14 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
         (directory / f"gate-{number}.exit").write_text(str(exit_code))
     (directory / "gate-last.out").write_text(gate_answers[-1][0])
     (directory / "gate-last.exit").write_text(str(gate_answers[-1][1]))
-    (directory / "gh-routes.json").write_text(json.dumps(routes))
+    merge_commit = subprocess.run(["git", "-C", str(directory / "origin-seed"), "rev-parse",
+                                   "HEAD"], capture_output=True, text=True, env=GIT_ENVIRONMENT,
+                                  check=True).stdout.strip()
+    (directory / "gh-routes.json").write_text(
+        json.dumps(routes).replace("MERGE_COMMIT", merge_commit).replace("ORIGIN", str(origin)))
+    if runner_answer is not None:
+        (directory / "runner.out").write_text(runner_answer[0])
+        (directory / "runner.exit").write_text(str(runner_answer[1]))
     home = directory / "home"
     (home / ".config" / "nedschorus").mkdir(parents=True)
     if token is not None:
@@ -205,7 +270,9 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
         with contextlib.redirect_stdout(output):
             exit_code = program.main([PULL_REQUEST, HEAD, SINCE, "--review-tools-worktree-at-main",
                                       str(review_tools), "--merge-lane-review-worktrees-directory",
-                                      str(review_worktrees)], wait=waits.append)
+                                      str(review_worktrees),
+                                      "--merge-lane-worktrees-and-outputs-directory",
+                                      str(directory / "outputs")], wait=waits.append)
     finally:
         os.environ["PATH"] = saved_path
         if saved_home is None:
@@ -238,6 +305,17 @@ def index_of(calls, prefix):
     return None
 
 
+def runner_calls(scratch, name):
+    log = scratch / name / "runner-calls.log"
+    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+
+def origin_commit(scratch, name):
+    return subprocess.run(["git", "-C", str(scratch / name / "origin-seed"), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, env=GIT_ENVIRONMENT,
+                          check=True).stdout.strip()
+
+
 def main():
     # Resolved, because macOS's mkdtemp path is a symlink and the program resolves its paths.
     scratch = Path(tempfile.mkdtemp(prefix="merge-lane-merge-test-")).resolve()
@@ -267,7 +345,7 @@ def main():
               f"retargeted pull request #20 from {BRANCH} to main" in output
               and f"--base {BRANCH}" in output, output)
         check("a merged pull request exits 0 and prints its state after the merge",
-              exit_code == 0 and '{"state":"MERGED"}' in output, f"exit {exit_code}\n{output}")
+              exit_code == 0 and '"state":"MERGED"' in output, f"exit {exit_code}\n{output}")
         review_worktrees = scratch / "stacked" / "review-worktrees"
         left = registered_worktrees(scratch / "stacked" / "review-tools")
         check("a merged pull request's two review worktrees are removed, an untracked file "
@@ -295,7 +373,7 @@ def main():
         check("a review worktree that git cannot remove exits 3 after the merge is reported, "
               "naming the worktree, git's error as text and the command to remove it",
               exit_code == 3 and index_of(argvs(gh_calls), ["pr", "merge"]) is not None
-              and '{"state":"MERGED"}' in output
+              and '"state":"MERGED"' in output
               and f"STOP: merged, but the review worktree {not_removable} was not removed"
               in output and "exited 128: fatal: " in output and "is not a working tree" in output
               and f"git -C {review_tools} worktree remove --force {not_removable}" in output,
@@ -305,7 +383,7 @@ def main():
 
         exit_code, output, _, _, _ = run_case(
             scratch, "git-killed", [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
-            review_worktrees_state="both", git_killed_on_worktree_remove=True)
+            review_worktrees_state="both", git_killed_on_worktree_remove="")
         check("a git worktree remove killed by a signal exits 3 after the merge",
               exit_code == 3 and "STOP: merged, but the review worktree" in output
               and "exited -9" in output, f"exit {exit_code}\n{output}")
@@ -466,6 +544,131 @@ def main():
               and index_of(calls, ["pr", "edit"]) is None
               and "STOP: not merged: could not read pull request 10's branch" in output
               and "HTTP 503" in output, f"exit {exit_code}\n{output}")
+
+        exit_code, output, _, _, _ = run_case(
+            scratch, "after-merge-passes", [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT))
+        merge_commit = origin_commit(scratch, "after-merge-passes")
+        merge_commit_worktree = scratch / "after-merge-passes" / "review-worktrees" / "pr10-merge-commit-on-main-worktree"
+        log_dir = (scratch / "after-merge-passes" / "outputs"
+                   / f"pr10-after-merge-test-run-logs-{merge_commit[:12]}")
+        calls = runner_calls(scratch, "after-merge-passes")
+        check("after the merge, the runner in a worktree at the merge commit runs the suites "
+              "whose recorded inputs changed since the reviewed head, its logs in the outputs "
+              "directory",
+              len(calls) == 1 and calls[0]["cwd"] == str(merge_commit_worktree)
+              and calls[0]["argv"] == ["--only-suites-whose-recorded-inputs-changed-since", HEAD,
+                                       "--log-dir", str(log_dir)], json.dumps(calls))
+        check("a passing after-merge test run prints its SUMMARY and log directory, removes "
+              "its worktree and exits 0",
+              exit_code == 0 and RUNNER_PASSED_SUMMARY in output
+              and f"test-run-report.txt: {log_dir}" in output
+              and "PASS scripts/some-test.py" not in output
+              and f"removed the worktree {merge_commit_worktree}" in output
+              and not merge_commit_worktree.exists()
+              and not any("pr10-merge-commit-on-main-worktree" in path for path in registered_worktrees(
+                  scratch / "after-merge-passes" / "review-tools")),
+              f"exit {exit_code}\n{output}")
+
+        exit_code, output, _, _, _ = run_case(
+            scratch, "after-merge-fails", [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            runner_answer=(RUNNER_FAILED, 1))
+        merge_commit_worktree = scratch / "after-merge-fails" / "review-worktrees" / "pr10-merge-commit-on-main-worktree"
+        check("a failing after-merge test run exits 3, naming each failed suite with its log, "
+              "with its SUMMARY, and still removes its worktree",
+              exit_code == 3
+              and "FAIL scripts/broken-test.py exit 1 — log /logs/broken-test.py.log" in output
+              and "SUMMARY: 1 passed, 1 failed" in output
+              and "STOP: merged, but the test run of main at" in output and "exited 1" in output
+              and not merge_commit_worktree.exists(), f"exit {exit_code}\n{output}")
+
+        exit_code, output, _, _, _ = run_case(
+            scratch, "after-merge-could-not-run", [(GATE_PASSED, 0)],
+            default_routes(STACKED_AND_NOT), runner_answer=(RUNNER_COULD_NOT_RUN, 2))
+        check("an after-merge test run with no SUMMARY line exits 3 and prints its whole output",
+              exit_code == 3 and "printed no SUMMARY: line" in output
+              and RUNNER_COULD_NOT_RUN.strip() in output and "exited 2" in output,
+              f"exit {exit_code}\n{output}")
+
+        routes = default_routes(STACKED_AND_NOT)
+        routes["view-state"] = {"exit": 1, "stderr": "HTTP 502\n"}
+        exit_code, output, _, _, _ = run_case(
+            scratch, "merge-commit-unread", [(GATE_PASSED, 0)], routes)
+        check("a merge commit that cannot be read after the merge exits 3 without a test run, "
+              "saying how to run it by hand",
+              exit_code == 3 and runner_calls(scratch, "merge-commit-unread") == []
+              and "the merge commit could not be read" in output
+              and f"--only-suites-whose-recorded-inputs-changed-since {HEAD}" in output,
+              f"exit {exit_code}\n{output}")
+
+        routes = default_routes(STACKED_AND_NOT)
+        routes["view-state"] = {"stdout": "not json\n"}
+        exit_code, output, _, _, _ = run_case(
+            scratch, "merge-commit-not-json", [(GATE_PASSED, 0)], routes)
+        check("a pull request state that is not JSON exits 3 without a test run",
+              exit_code == 3 and runner_calls(scratch, "merge-commit-not-json") == []
+              and "the merge commit could not be read" in output, f"exit {exit_code}\n{output}")
+
+        routes = default_routes(STACKED_AND_NOT)
+        routes["view-state"] = {"stdout": json.dumps({"state": "MERGED", "mc": "b" * 40})}
+        exit_code, output, _, _, _ = run_case(
+            scratch, "merge-commit-unknown", [(GATE_PASSED, 0)], routes)
+        check("a merge commit git cannot make a worktree at exits 3 without a test run, "
+              "naming git's error",
+              exit_code == 3 and runner_calls(scratch, "merge-commit-unknown") == []
+              and "could not make a worktree at the merge commit " + "b" * 40 in output
+              and "fatal: " in output, f"exit {exit_code}\n{output}")
+
+        routes = default_routes(STACKED_AND_NOT)
+        routes["pr merge"] = {"remove_directory": "ORIGIN"}
+        exit_code, output, _, _, _ = run_case(
+            scratch, "fetch-fails-after-merge", [(GATE_PASSED, 0)], routes)
+        check("a fetch that fails after the merge exits 3 without a test run",
+              exit_code == 3 and runner_calls(scratch, "fetch-fails-after-merge") == []
+              and "could not make a worktree at the merge commit" in output,
+              f"exit {exit_code}\n{output}")
+
+        exit_code, output, _, _, _ = run_case(
+            scratch, "merge-commit-worktree-kept", [(GATE_PASSED, 0)],
+            default_routes(STACKED_AND_NOT), git_killed_on_worktree_remove="pr10-merge-commit-on-main-worktree")
+        merge_commit_worktree = (scratch / "merge-commit-worktree-kept" / "review-worktrees"
+                                 / "pr10-merge-commit-on-main-worktree")
+        check("an after-merge worktree that cannot be removed after a passing run exits 3, "
+              "naming it and the command to remove it",
+              exit_code == 3 and RUNNER_PASSED_SUMMARY in output
+              and f"STOP: merged, but the worktree {merge_commit_worktree} was not removed" in output
+              and f"worktree remove --force {merge_commit_worktree}" in output,
+              f"exit {exit_code}\n{output}")
+
+        exit_code, output, _, _, _ = run_case(
+            scratch, "fetch-killed-after-merge", [(GATE_PASSED, 0)],
+            default_routes(STACKED_AND_NOT), git_fails_after_merge_on=(" fetch ", "kill"))
+        check("a fetch killed by a signal after the merge exits 3 without a test run",
+              exit_code == 3 and runner_calls(scratch, "fetch-killed-after-merge") == []
+              and "could not make a worktree at the merge commit" in output,
+              f"exit {exit_code}\n{output}")
+
+        exit_code, output, _, _, _ = run_case(
+            scratch, "worktree-add-killed", [(GATE_PASSED, 0)],
+            default_routes(STACKED_AND_NOT), git_fails_after_merge_on=(" worktree add ", "kill"))
+        check("a git worktree add killed by a signal exits 3 without a test run",
+              exit_code == 3 and runner_calls(scratch, "worktree-add-killed") == []
+              and "could not make a worktree at the merge commit" in output,
+              f"exit {exit_code}\n{output}")
+
+        exit_code, output, _, _, _ = run_case(
+            scratch, "runner-killed", [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            runner_answer=("PASS scripts/some-test.py (1s)\n", -9))
+        check("an after-merge test run killed by a signal exits 3",
+              exit_code == 3 and "STOP: merged, but the test run of main at" in output
+              and "exited -9" in output, f"exit {exit_code}\n{output}")
+
+        exit_code, output, _, _, _ = run_case(
+            scratch, "merge-commit-worktree-remove-exits-1", [(GATE_PASSED, 0)],
+            default_routes(STACKED_AND_NOT),
+            git_fails_after_merge_on=(" worktree remove ", "exit 1"))
+        check("an after-merge worktree whose removal exits 1 exits 3, with git's error",
+              exit_code == 3 and "was not removed: git worktree remove exited 1: fake git failed"
+              in output, f"exit {exit_code}\n{output}")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
