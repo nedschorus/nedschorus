@@ -100,7 +100,8 @@ def build_scratch_repository(scratch):
     repository = scratch / "scratch-checkout"
     scratch_prompts = repository / ".claude" / "skills" / "cold-read" / "prompts"
     scratch_prompts.mkdir(parents=True)
-    for prompt_path in PROMPTS_DIR.glob("*.md"):
+    # The terminology cell's answer schema is a .json file beside the prompts.
+    for prompt_path in PROMPTS_DIR.glob("*"):
         shutil.copy2(prompt_path, scratch_prompts / prompt_path.name)
     return scratch_repository_fixture.commit_seeded_cold_read_scratch_repository(repository)
 
@@ -462,7 +463,10 @@ with tempfile.TemporaryDirectory() as scratch:
             "nc-systems/cold-read/cold-read-cell-common.py",
             "nc-systems/cold-read/cold-read-record-names-common.py",
             "nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py",
-            "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py"):
+            "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
+            "nc-systems/cold-read/cold-read-terminology-answer-rules-check-glossary-lookups-and-report-render-common.py",
+            "nc-systems/general-tools/json-schema-keyword-subset-answer-check-common.py",
+            "nc-systems/general-tools/glossary-entries-of-project-and-system-glossaries-read-common.py"):
         (copied_checkout / relative_path).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO_ROOT / relative_path, copied_checkout / relative_path)
     copied_temporary_directory = scratch / "a-temporary-directory"

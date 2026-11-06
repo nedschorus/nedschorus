@@ -300,6 +300,15 @@ report_candidates = [
     found for found in re.findall(r"[^\s\"']+cold-read-records/[^\s\"']+\.md", prompt)
     if "/target/" not in found
 ]
+# A terminology cell asks for a JSON answer and names no report: the runner
+# writes the report. Its report name is rebuilt from the frozen copy's record
+# directory, so the plans below that pick a cell by report name still work.
+answers_in_json = "--json-schema" in sys.argv or "--output-schema" in sys.argv
+if answers_in_json:
+    frozen = re.search(r"[^\s\"']+cold-read-records/[^\s\"']+?/target/", prompt)
+    if frozen:
+        report_candidates = [frozen.group(0)[:-len("target/")]
+                             + os.path.basename(sys.argv[0]) + "-terminology-deep.md"]
 if not report_candidates:
     sys.stderr.write("stub runtime: no report path found in the prompt\n")
     sys.exit(3)
@@ -349,12 +358,21 @@ fast_fragment = os.environ.get("COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGME
 if sleep_seconds and not (fast_fragment and fast_fragment in given.name):
     time.sleep(sleep_seconds)
 near_miss_character = os.environ.get("COLD_READ_GRID_TEST_STUB_NEAR_MISS_CHARACTER")
-if near_miss_character:
+if near_miss_character and not answers_in_json:
     given = (given.parent.parent / (given.parent.name[:-1] + near_miss_character)
              / given.name)
     given.parent.mkdir(parents=True, exist_ok=True)
-with open(given, "w", encoding="utf-8") as handle:
-    handle.write("STUB REVIEW: one restatement\n")
+STUB_ANSWER = {"document_kind": "a stub's test document", "key_terms": [], "flags": [],
+               "proposed_definitions": [], "terms_kept": []}
+if "--json-schema" in sys.argv:
+    sys.stdout.write(json.dumps({"type": "result", "subtype": "success", "is_error": False,
+                                 "structured_output": STUB_ANSWER}) + "\n")
+    sys.stdout.flush()
+elif "--output-schema" in sys.argv:
+    pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_text(json.dumps(STUB_ANSWER))
+else:
+    with open(given, "w", encoding="utf-8") as handle:
+        handle.write("STUB REVIEW: one restatement\n")
 if not (fast_fragment and fast_fragment in given.name):
     time.sleep(float(os.environ.get("COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS") or 0))
 edited_path = os.environ.get("COLD_READ_GRID_TEST_STUB_EDIT_PATH")
@@ -405,11 +423,16 @@ def build_scratch_repository(scratch, name):
     repository = scratch / name
     scratch_prompts = repository / ".claude" / "skills" / "cold-read" / "prompts"
     scratch_prompts.mkdir(parents=True)
-    for prompt_path in PROMPTS_DIR.glob("*.md"):
+    # The terminology cell's answer schema is a .json file beside the prompts.
+    for prompt_path in PROMPTS_DIR.glob("*"):
         shutil.copy2(prompt_path, scratch_prompts / prompt_path.name)
     target = repository / TARGET_RELATIVE_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("# Target\n\nOne committed line.\n", encoding="utf-8")
+    # The terminology cell looks terms up in the project glossary, and refuses to run without one.
+    scratch_glossary = repository / "docs" / "nedschorus-wiki" / "nedschorus-glossary.md"
+    scratch_glossary.parent.mkdir(parents=True, exist_ok=True)
+    scratch_glossary.write_text("# Glossary\n", encoding="utf-8")
     return scratch_repository_fixture.commit_seeded_cold_read_scratch_repository(
         repository)
 
@@ -737,8 +760,9 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch, "checkout-target-moves-mid-report")
     hung_stubs = scratch / "stub-bin-target-moves-mid-report"
     hang_seconds = 120
-    hung_cells = ("claude-hunt-deep", "claude-hunt-second-strongest-model",
-                  "claude-terminology-deep", "codex-hunt-deep", "codex-terminology-deep")
+    # The terminology cells hang too, but their runner writes the report only
+    # after the model exits, so they leave no unfinished report.
+    hung_cells = ("claude-hunt-deep", "claude-hunt-second-strongest-model", "codex-hunt-deep")
     started = time.monotonic()
     result = run_grid(repository, hung_stubs, {
         "COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS": str(hang_seconds),
@@ -1109,12 +1133,16 @@ with tempfile.TemporaryDirectory() as scratch:
         "COLD_READ_GRID_CELL_ATTEMPT_TIMEOUT_SECONDS": "3"})
     elapsed = time.monotonic() - started
     failed_lines = lines_opening(result, "FAILED")
+    # A terminology cell's runner writes the report after the model exits, so
+    # a hung terminology model has written none.
+    report_writing_lines = [line for line in failed_lines if "-terminology-" not in line]
     check("a timed-out cell that had written its report: FAILED says the unfinished report is deleted",
           elapsed < hang_seconds and lines_opening(result, "saved:") == []
-          and len(failed_lines) == 8
+          and len(failed_lines) == 8 and len(report_writing_lines) == 6
           and all(" — timed-out — timed out after 4 hours (stderr kept: " in line
-                  and line.endswith(".stderr.log); the unfinished report it had written is deleted")
-                  for line in failed_lines),
+                  for line in failed_lines)
+          and all(line.endswith(".stderr.log); the unfinished report it had written is deleted")
+                  for line in report_writing_lines),
           f"elapsed {elapsed:.1f}s; stdout={result.stdout!r}")
     record_directory = record_directory_of(repository)
     check("the hung cells' unfinished reports are not left in the record",
@@ -1488,8 +1516,9 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a run whose cells recovered a near-miss still succeeds",
           result.returncode == 0 and len(saved_lines) == 7,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
+    # The two terminology cells write no report to misplace: their runner writes it.
     check("the grid prints RECOVERED: for each cell that recovered a report, the Question 4 cell's included",
-          len(recovered_lines) == 8, f"lifted lines were {recovered_lines!r}")
+          len(recovered_lines) == 6, f"lifted lines were {recovered_lines!r}")
     # Two directories now: the one the grid made and the one the stubs
     # invented. The grid's is the one holding the reference-integrity
     # pre-pass, which no stub ever writes — the invented one's name differs by

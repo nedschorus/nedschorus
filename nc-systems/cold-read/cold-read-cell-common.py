@@ -33,8 +33,31 @@ _git_machine_readable_output_spec = importlib.util.spec_from_file_location(
 git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
 _git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
 
+_terminology_answer_spec = importlib.util.spec_from_file_location(
+    "cold_read_terminology_answer_rules_check_glossary_lookups_and_report_render_common",
+    pathlib.Path(__file__).with_name(
+        "cold-read-terminology-answer-rules-check-glossary-lookups-and-report-render-common.py"))
+terminology_answer = importlib.util.module_from_spec(_terminology_answer_spec)
+_terminology_answer_spec.loader.exec_module(terminology_answer)
+
+_glossary_entries_spec = importlib.util.spec_from_file_location(
+    "glossary_entries_of_project_and_system_glossaries_read_common",
+    pathlib.Path(__file__).resolve().parents[1] / "general-tools"
+    / "glossary-entries-of-project-and-system-glossaries-read-common.py")
+glossary_entries = importlib.util.module_from_spec(_glossary_entries_spec)
+_glossary_entries_spec.loader.exec_module(glossary_entries)
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
+
+# A cell named here answers in JSON, to the schema <cell>-answer-schema.json
+# beside its prompt; the runner, not the model, writes its report from the
+# answer, with the function named here.
+STRUCTURED_ANSWER_CELL_TO_REPORT_BUILDER = {
+    "terminology": terminology_answer.terminology_report_from_answer,
+}
+STRUCTURED_ANSWER_SCHEMA_SUFFIX = "-answer-schema.json"
+INVALID_ANSWER_CAUSE_CLASS = "invalid-answer"
 
 
 # Built from the prompt files, so deleting a prompt also removes its --cell choice.
@@ -48,6 +71,23 @@ PROMPT_FILE_CELL_LABEL_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 # EX_USAGE distinguishes launcher refusals from runtime command-line errors (Codex exits 2).
 EXIT_BAD_INVOCATION = 64
+
+
+class StructuredAnswerRejected(Exception):
+    """A run exited 0 without an answer the runner accepts; the message says why."""
+
+
+class StructuredAnswerSupport(typing.NamedTuple):
+    """How one launcher asks its agent-binary for a JSON answer and reads it back.
+
+    invocation_builder(effort, schema_path, answer_file) returns the
+    build_invocation callback run_model_chain calls for each model;
+    answer_from_run(completed, answer_file) returns the parsed answer, or
+    raises StructuredAnswerRejected naming what the run left instead.
+    """
+
+    invocation_builder: typing.Callable
+    answer_from_run: typing.Callable
 
 
 class CellRefusal(Exception):
@@ -231,7 +271,10 @@ def build_argument_parser(
     parser.add_argument(
         "--report", required=True,
         help="file the reviewer writes its findings to; the caller names it, "
-             "and a run that leaves it absent or empty fails",
+             "and a run that leaves it absent or empty fails. For a cell that "
+             "answers in JSON, such as terminology, the cell writes this file "
+             "from the answer, and an answer that breaks its schema or its "
+             "rules fails the run",
     )
     parser.add_argument("--model", help=model_help)
     parser.add_argument(
@@ -254,7 +297,9 @@ def build_argument_parser(
              "still names the report. This is how a draft prompt is trialled "
              "through the ordinary launcher: on 2026-09-04, 24 trial cells "
              "exited 64 because the only template a cell would read was the "
-             "one under prompts/. The stamp records the file's path.",
+             "one under prompts/. The stamp records the file's path. A "
+             "--cell that answers in JSON, such as terminology, still answers "
+             "to the schema beside the cell's own prompt.",
     )
     return parser
 
@@ -341,6 +386,55 @@ def target_origin_paragraph(target: pathlib.Path, target_origin: pathlib.Path) -
         f"not exist there, from {target_origin.parent}, the original's "
         f"directory. Never resolve one from the copy's directory.\n"
     )
+
+
+def structured_answer_schema_path(cell: str) -> typing.Optional[pathlib.Path]:
+    """The JSON Schema the cell's answer follows, or None for a cell whose reviewer writes its report."""
+    if cell not in STRUCTURED_ANSWER_CELL_TO_REPORT_BUILDER:
+        return None
+    return PROMPTS_DIR / f"{cell}{STRUCTURED_ANSWER_SCHEMA_SUFFIX}"
+
+
+def structured_answer_to_report_function(
+    program: str, cell: str, schema_path: pathlib.Path, target: pathlib.Path,
+    structured_answer_support,
+):
+    """Return answer_to_report(completed, answer_file), after reading everything
+    it needs; raise CellRefusal when the cell cannot run."""
+    if structured_answer_support is None:
+        raise CellRefusal(
+            f"the {cell} cell answers in JSON, to {schema_path}, and {program} cannot ask "
+            f"its agent-binary for a JSON answer, so no model was started.\n"
+            f"Run the {cell} cell with nc-systems/cold-read/cold-read-claude-cell.py or "
+            f"nc-systems/cold-read/cold-read-codex-cell.py instead.")
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as error:
+        raise CellRefusal(
+            f"the {cell} cell's answer schema {schema_path} could not be read as JSON "
+            f"({error}), so no model was started.\n"
+            f"If the file is missing or damaged, restore it from main with `git -C {REPO_ROOT} "
+            f"restore --source=origin/main --worktree {schema_path.relative_to(REPO_ROOT)}`, "
+            f"then rerun this command.")
+    try:
+        entries = glossary_entries.glossary_entries_of_checkout(REPO_ROOT)
+    except glossary_entries.GlossaryFilesUnreadable as error:
+        raise CellRefusal(
+            f"the {cell} cell looks terms up in the glossaries, and they could not be read: "
+            f"{error}. No model was started.\n"
+            f"Fix what that says, then rerun this command.")
+    document = target.read_text(encoding="utf-8", errors="replace")
+    build_report = STRUCTURED_ANSWER_CELL_TO_REPORT_BUILDER[cell]
+
+    def answer_to_report(completed, answer_file):
+        answer = structured_answer_support.answer_from_run(completed, answer_file)
+        try:
+            return build_report(answer, schema, document, entries)
+        except terminology_answer.TerminologyAnswerRejected as rejected:
+            raise StructuredAnswerRejected(
+                f"the answer breaks {len(rejected.problems)} rule(s) of its schema or of "
+                f"{terminology_answer.RULES_PAGE}: " + "; ".join(rejected.problems)) from None
+    return answer_to_report
 
 
 def prompt_template_path(cell: str, prompt_file=None) -> pathlib.Path:
@@ -735,9 +829,12 @@ def run_model_chain(
     baseline, cell_started_at: float, prompt_file_argument: str = "",
     recover_report_from_stdout=None, model_to_effort=None,
     recognised_failure_texts_for_model=None, child_environment=None,
-    per_model_run_timeout_seconds=None,
+    per_model_run_timeout_seconds=None, answer_to_report=None,
 ) -> int:
-    """Try models until one produces a report, then stamp the report."""
+    """Try models until one produces a report, then stamp the report.
+
+    With answer_to_report, an attempt that exits 0 produces a report only when
+    answer_to_report(completed) returns its text, which the runner writes."""
     # build_invocation must apply the same per-model effort mapping used by the stamp.
     failed_attempts: list[str] = []
     produced_by = ""
@@ -801,6 +898,18 @@ def run_model_chain(
                 exit_code=completed.returncode, recognised_texts=recognised_texts)),
                 file=sys.stderr)
             continue
+        if answer_to_report is not None:
+            try:
+                report_text = answer_to_report(completed)
+            except StructuredAnswerRejected as rejected:
+                failed_attempts.append(f"{model}({INVALID_ANSWER_CAUSE_CLASS})")
+                print(f"{program}: {model} exited 0, but no report was written, because "
+                      f"{rejected}", file=sys.stderr)
+                print(cause_line(program, INVALID_ANSWER_CAUSE_CLASS,
+                                 str(rejected)[:CAUSE_DETAIL_MAX_CHARACTERS]), file=sys.stderr)
+                continue
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(report_text, encoding="utf-8")
         # Recover only after exit 0; a failed model's leftover file is not an accepted review.
         if not report.is_file():
             recover_near_miss_report(program, report, attempt_started_at)
@@ -867,7 +976,7 @@ def run_cell(
     tier_to_model_chain: dict, tier_to_effort: dict, invocation_builder,
     recover_report_from_stdout=None, recognised_failure_texts_for_model=None,
     stage_report_outside_checkout: bool = False, child_environment=None,
-    per_model_run_timeout_seconds=None,
+    per_model_run_timeout_seconds=None, structured_answer_support=None,
 ) -> int:
     # Include failed attempts in the cell's total cost.
     cell_started_at = time.time()
@@ -884,6 +993,7 @@ def run_cell(
               "stray writes will not be checked for this run.", file=sys.stderr)
 
     report = None
+    answer_to_report_from_file = schema_path = None
     try:
         validate_cell(args.cell, args.prompt_file)
         target = resolve_target(args.target)
@@ -892,12 +1002,16 @@ def run_cell(
             resolve_prompt_file(args.prompt_file) if args.prompt_file else None)
         target_origin = resolve_target_origin(args.target_origin)
         template_path = prompt_template_path(args.cell, prompt_file)
+        schema_path = structured_answer_schema_path(args.cell)
+        if schema_path is not None:
+            answer_to_report_from_file = structured_answer_to_report_function(
+                program, args.cell, schema_path, target, structured_answer_support)
     except CellRefusal as refusal:
         print(f"{program}: {refusal}", file=sys.stderr)
         report_stray_writes(program, baseline, report)
         return refusal.exit_code
 
-    # The staging directory is made after every refusal, so no refusal leaves one behind.
+    # The answer and staging directories are made after every refusal, so no refusal leaves one behind.
     # The Codex reviewer can write only inside the checkout, the temporary directories on
     # macOS, and a directory added with --add-dir, which stays writable under the profile's
     # read-only /tmp on Linux; granting a report's own directory elsewhere would also make
@@ -905,8 +1019,18 @@ def run_cell(
     # The near-miss recovery searches the report directory's parent, so the
     # report directory sits inside a fresh root rather than in the temporary
     # directory itself.
+    answer_directory = answer_file = answer_to_report = None
+    if answer_to_report_from_file is not None:
+        # Outside the checkout, so the agent-binary's answer file is no stray write.
+        answer_directory = pathlib.Path(tempfile.mkdtemp(prefix="cold-read-answer-"))
+        answer_file = answer_directory / "answer.json"
+
+        def answer_to_report(completed):
+            return answer_to_report_from_file(completed, answer_file)
     staging_root = staging_directory = None
-    if stage_report_outside_checkout and REPO_ROOT not in report.resolve().parents:
+    # The runner writes a JSON-answer cell's report itself, so that report needs no staging.
+    if (stage_report_outside_checkout and answer_to_report is None
+            and REPO_ROOT not in report.resolve().parents):
         staging_root = pathlib.Path(tempfile.mkdtemp(prefix="cold-read-report-"))
         staging_directory = staging_root / "report"
         staging_directory.mkdir()
@@ -917,8 +1041,13 @@ def run_cell(
     # An explicit model must not silently fall back to a different model.
     chain = (args.model,) if args.model else tier_to_model_chain[args.tier]
     effort = args.effort or tier_to_effort[args.tier]
-    build_invocation = (invocation_builder(effort, staging_directory)
-                        if stage_report_outside_checkout else invocation_builder(effort))
+    if answer_to_report is not None:
+        build_invocation = structured_answer_support.invocation_builder(
+            effort, schema_path, answer_file)
+    elif stage_report_outside_checkout:
+        build_invocation = invocation_builder(effort, staging_directory)
+    else:
+        build_invocation = invocation_builder(effort)
 
     try:
         exit_code = run_model_chain(
@@ -928,9 +1057,11 @@ def run_cell(
             target_argument=args.target, baseline=baseline,
             cell_started_at=cell_started_at,
             prompt_file_argument=args.prompt_file or "",
-            recover_report_from_stdout=recover_report_from_stdout,
+            recover_report_from_stdout=(recover_report_from_stdout
+                                        if answer_to_report is None else None),
             recognised_failure_texts_for_model=recognised_failure_texts_for_model,
             child_environment=child_environment,
+            answer_to_report=answer_to_report,
             per_model_run_timeout_seconds=per_model_run_timeout_seconds,
         )
         if exit_code == 0 and staging_directory is not None:
@@ -940,6 +1071,8 @@ def run_cell(
         # A report that could not be moved stays where the failure message says it is.
         if staging_root is not None and not reviewer_report.exists():
             shutil.rmtree(staging_root, ignore_errors=True)
+        if answer_directory is not None:
+            shutil.rmtree(answer_directory, ignore_errors=True)
 
 
 def move_staged_report(program: str, staged: pathlib.Path, report: pathlib.Path) -> int:

@@ -212,8 +212,12 @@ CONCURRENT_RUN_REVIEW_TEXT = (
 # runtime's own words on each stream, "dump_prompt" is a path to write the
 # prompt the stub received to -- the whole of stdin on the Claude leg, which
 # is how a case reads what the cell composed -- "dump_argv" is a path to
-# write the argv the cell built, as JSON, and "exit" is the code to
-# exit with.
+# write the argv the cell built, as JSON, "answer" is a JSON answer to return
+# the way the runtime returns one when the cell asks for it -- on the Claude
+# leg as a successful result object's structured_output on stdout, on the
+# Codex leg written to the file after -o -- "claude_result" is a whole result
+# object for the Claude leg to print instead, "codex_last_message" is text the
+# Codex leg writes after -o instead, and "exit" is the code to exit with.
 # The report path arrives by environment rather than by parsing the prompt,
 # so a change to the prompt templates cannot silently unhook the stub.
 STUB_MODEL_RUNTIME = """#!/usr/bin/env python3
@@ -239,6 +243,18 @@ step = plan.get(model, plan.get("*", {}))
 report_path = pathlib.Path(os.environ["COLD_READ_CELL_TEST_STUB_REPORT_PATH"])
 if "report" in step:
     report_path.write_text(step["report"], encoding="utf-8")
+if "answer" in step:
+    if "-o" in argv:
+        pathlib.Path(argv[argv.index("-o") + 1]).write_text(
+            json.dumps(step["answer"]), encoding="utf-8")
+    else:
+        sys.stdout.write(json.dumps({"type": "result", "subtype": "success",
+                                     "is_error": False, "structured_output": step["answer"]}))
+if "claude_result" in step:
+    sys.stdout.write(json.dumps(step["claude_result"]))
+if "codex_last_message" in step:
+    pathlib.Path(argv[argv.index("-o") + 1]).write_text(step["codex_last_message"],
+                                                        encoding="utf-8")
 # The 2026-08-25 near-miss, reproduced: the model writes its whole review into
 # a record directory one character from the one it was given, having created
 # that directory itself. Each entry is the character it puts in place of the
@@ -302,6 +318,10 @@ sys.exit(step.get("exit", 0))
 ).replace("RECORDS_ROOT_REVIEW_TEXT", repr(RECORDS_ROOT_REVIEW_TEXT)
 ).replace("CONCURRENT_RUN_REVIEW_TEXT", repr(CONCURRENT_RUN_REVIEW_TEXT))
 
+# The smallest answer the terminology schema and its rules accept.
+MINIMAL_TERMINOLOGY_ANSWER = {"document_kind": "a test document", "key_terms": [],
+                              "flags": [], "proposed_definitions": [], "terms_kept": []}
+
 failures = []
 
 
@@ -337,11 +357,16 @@ def build_scratch_repository(scratch):
     repository = scratch / "scratch-checkout"
     scratch_prompts = repository / ".claude" / "skills" / "cold-read" / "prompts"
     scratch_prompts.mkdir(parents=True)
-    for prompt_path in PROMPTS_DIR.glob("*.md"):
+    # The terminology cell's answer schema is a .json file beside the prompts.
+    for prompt_path in PROMPTS_DIR.glob("*"):
         shutil.copy2(prompt_path, scratch_prompts / prompt_path.name)
     target = repository / TARGET_RELATIVE_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("# Target\n\nOne committed line.\n", encoding="utf-8")
+    # The terminology cell looks terms up in the project glossary, and refuses to run without one.
+    scratch_glossary = repository / "docs" / "nedschorus-wiki" / "nedschorus-glossary.md"
+    scratch_glossary.parent.mkdir(parents=True, exist_ok=True)
+    scratch_glossary.write_text("# Glossary\n", encoding="utf-8")
     return scratch_repository_fixture.commit_seeded_cold_read_scratch_repository(
         repository)
 
@@ -1864,7 +1889,7 @@ with tempfile.TemporaryDirectory() as scratch:
     received_argv_path = scratch / "sibling-copy-codex-argv.json"
     result = run_codex_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one term\n",
+        {"*": {"answer": MINIMAL_TERMINOLOGY_ANSWER,
                "dump_argv": str(received_argv_path)}},
         report, cell="terminology",
     )
@@ -1872,7 +1897,8 @@ with tempfile.TemporaryDirectory() as scratch:
                      if received_argv_path.is_file() else "")
     check("a sibling terminology.codex.md is ignored: the Codex cell reads the shared file",
           result.returncode == 0 and "CODEX COPY MARKER" not in received_argv
-          and str(report) in received_argv and "{REPORT_PATH}" not in received_argv,
+          and "Answer with one JSON object" in received_argv
+          and "{REPORT_PATH}" not in received_argv,
           f"exit {result.returncode}; prompt={received_argv[:200]!r}")
     stamp = provenance_stamp_of(report)
     check("no prompt= field names a per-runtime copy any more",
@@ -1884,7 +1910,7 @@ with tempfile.TemporaryDirectory() as scratch:
     received_prompt_path = scratch / "sibling-copy-claude-received.txt"
     result = run_claude_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one term\n",
+        {"*": {"answer": MINIMAL_TERMINOLOGY_ANSWER,
                "dump_prompt": str(received_prompt_path)}},
         report, cell="terminology",
     )
@@ -1918,7 +1944,7 @@ with tempfile.TemporaryDirectory() as scratch:
     received_argv_path = scratch / "draft-under-prompt-file-argv.json"
     result = run_codex_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one term\n",
+        {"*": {"answer": MINIMAL_TERMINOLOGY_ANSWER,
                "dump_argv": str(received_argv_path)}},
         report, "--prompt-file", draft_prompt_relative_path, cell="terminology",
     )
@@ -2057,6 +2083,138 @@ with tempfile.TemporaryDirectory() as scratch:
           TARGET_RELATIVE_PATH in stray_write_warning(result.stderr), repr(result.stderr))
     check("the Codex cell still succeeds — writes are detected, not blocked",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+
+    # --- The terminology cell answers in JSON, and the runner writes its report
+    # One scratch repository with a glossary, so the lookups have an entry to find.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    glossary = repository / "docs" / "nedschorus-wiki" / "nedschorus-glossary.md"
+    glossary.parent.mkdir(parents=True, exist_ok=True)
+    glossary.write_text("# Glossary\n\n- **agent-seat** — a named, long-lived agent.\n",
+                        encoding="utf-8")
+    (repository / TARGET_RELATIVE_PATH).write_text(
+        "# Target\n\nEach agent seat runs a slot.\n", encoding="utf-8")
+    scratch_repository_fixture.git(repository, "add", "-A")
+    scratch_repository_fixture.git(repository, "commit", "-m", "glossary and target")
+    flagged_answer = {
+        "document_kind": "a test document", "key_terms": ["slot"],
+        "flags": [{"term": "slot", "passage": "runs a slot", "clashes_with": "",
+                   "clashes_with_location": "", "second_definition": "",
+                   "meaning_compared": "", "restatement": "a turn to run",
+                   "tests_failed": [4],
+                   "fixes": [{"fix": "question", "words": "What runs?", "uses": []}]}],
+        "proposed_definitions": [], "terms_kept": []}
+    for runtime in ("claude", "codex"):
+        report = report_path_for(repository, f"json-answer-{runtime}", runtime)
+        argv_path = scratch / f"json-answer-{runtime}-argv.json"
+        result = run_cell_launcher(
+            repository, stubs, {"*": {"answer": flagged_answer, "dump_argv": str(argv_path)}},
+            report, runtime=runtime, cell="terminology")
+        text = report.read_text(encoding="utf-8") if report.is_file() else ""
+        argv = json.loads(argv_path.read_text(encoding="utf-8")) if argv_path.is_file() else []
+        check(f"the {runtime} terminology cell writes the report from the JSON answer",
+              result.returncode == 0 and text.startswith("<!-- provenance:")
+              and '"slot", first on line 3; tests failed: (4)' in text
+              and "Question for the author: What runs?" in text,
+              f"exit {result.returncode}; stderr={result.stderr[-600:]!r}; report={text!r}")
+        check(f"the {runtime} report adds the runner's test (5) flag for \"agent seat\"",
+              '"agent seat", first on line 3; tests failed: (5)' in text
+              and "Fix (a): agent-seat" in text, repr(text))
+        check(f"the {runtime} report closes with a counts line",
+              text.rstrip().splitlines()[-1].startswith("Counts: 1 key-terms, 1 of them in no "
+                                                        "glossary; 2 flagged terms"), repr(text))
+        schema_flag = "--json-schema" if runtime == "claude" else "--output-schema"
+        check(f"the {runtime} cell passes the schema to its agent-binary",
+              schema_flag in argv, repr(argv))
+        check(f"the {runtime} cell names no stray write for the answer file",
+              stray_write_warning(result.stderr) == "", repr(result.stderr))
+    check("the Claude terminology reviewer is given no Write tool",
+          "Read,Grep,Glob,WebFetch" in json.loads(
+              (scratch / "json-answer-claude-argv.json").read_text(encoding="utf-8")),
+          (scratch / "json-answer-claude-argv.json").read_text(encoding="utf-8"))
+
+    broken_answer = dict(flagged_answer, document_kind="two\nlines")
+    for runtime, plan, expected in (
+        ("claude", {"claude_result": {"type": "result", "subtype": "error_max_turns",
+                                      "is_error": True, "stop_reason": "max_tokens"}},
+         "subtype 'error_max_turns', stop_reason 'max_tokens'"),
+        ("claude", {"claude_result": {"type": "result", "subtype": "success",
+                                      "is_error": False}},
+         "claude's result has no answer"),
+        ("claude", {"stdout": "not json"}, "claude printed no JSON result object"),
+        ("codex", {}, "codex wrote no readable last message"),
+        ("codex", {"codex_last_message": "{not json"}, "codex's last message is not JSON"),
+        # The message quotes the first 200 characters of a last message that is not JSON.
+        ("codex", {"codex_last_message": "{" + "x" * 198 + "YZ"}, "x" * 198 + "Y\n"),
+        ("claude", {"answer": {"document_kind": "a test document"}},
+         "the answer has no key_terms"),
+        ("codex", {"answer": broken_answer}, "document_kind holds a line break"),
+    ):
+        report = report_path_for(repository, f"json-answer-broken-{runtime}", runtime)
+        result = run_cell_launcher(repository, stubs, {"*": plan}, report,
+                                   runtime=runtime, cell="terminology")
+        check(f"a {runtime} run whose answer is refused ({expected}) fails with no report",
+              result.returncode == 1 and not report.exists()
+              and expected in result.stderr
+              and f"cause: {'invalid-answer'} — " in result.stderr,
+              f"exit {result.returncode}; stderr={result.stderr[-800:]!r}")
+
+    # A missing project glossary stops the cell before any model runs.
+    report = report_path_for(repository, "json-answer-no-glossary", "claude")
+    stub_log = scratch / "json-answer-no-glossary-argv.json"
+    glossary.rename(glossary.with_name("moved-aside.md"))
+    try:
+        result = run_claude_cell(repository, stubs,
+                                 {"*": {"answer": flagged_answer, "dump_argv": str(stub_log)}},
+                                 report, cell="terminology")
+    finally:
+        glossary.with_name("moved-aside.md").rename(glossary)
+    check("a missing project glossary refuses the terminology cell, exit 64, no model run",
+          result.returncode == 64 and not stub_log.exists()
+          and "could not read the project glossary" in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr[-600:]!r}")
+
+    # An answer schema that is not JSON stops the cell before any model runs.
+    schema_file = (repository / ".claude" / "skills" / "cold-read" / "prompts"
+                   / "terminology-answer-schema.json")
+    schema_file.write_text("{broken", encoding="utf-8")
+    report = report_path_for(repository, "json-answer-bad-schema", "codex")
+    stub_log = scratch / "json-answer-bad-schema-argv.json"
+    result = run_codex_cell(repository, stubs,
+                            {"*": {"answer": flagged_answer, "dump_argv": str(stub_log)}},
+                            report, cell="terminology")
+    check("an answer schema that is not JSON refuses the cell, exit 64, no model run",
+          result.returncode == 64 and not stub_log.exists()
+          and "could not be read as JSON" in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr[-600:]!r}")
+
+
+# --- An invalid answer from one model leaves the next model in the chain to answer
+# No launcher pins a chain of two models, so run_model_chain is called directly.
+_chain_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common_chain_under_test", SYSTEM_DIRECTORY / "cold-read-cell-common.py")
+_chain_common = importlib.util.module_from_spec(_chain_common_spec)
+_chain_common_spec.loader.exec_module(_chain_common)
+with tempfile.TemporaryDirectory() as scratch:
+    chain_report = Path(scratch) / "records" / "chain-report.md"
+    answered_models = []
+
+    def answer_from_the_second_model_only(completed):
+        answered_models.append(len(answered_models) + 1)
+        if len(answered_models) == 1:
+            raise _chain_common.StructuredAnswerRejected("the first model's answer is refused")
+        return "STUB REPORT from the second model\n"
+
+    chain_exit = _chain_common.run_model_chain(
+        program="chain-test", runtime="claude", chain=("first-model", "second-model"),
+        effort="high", build_invocation=lambda model, prompt: ([sys.executable, "-c", "pass"], ""),
+        prompt="", report=chain_report, cell="terminology", tier="deep",
+        target_argument="target.md", baseline=None, cell_started_at=time.time(),
+        answer_to_report=answer_from_the_second_model_only)
+    check("an invalid answer from the first model leaves the second model to write the report",
+          chain_exit == 0 and answered_models == [1, 2] and chain_report.is_file()
+          and "STUB REPORT from the second model" in chain_report.read_text(encoding="utf-8"),
+          f"exit {chain_exit}; answered {answered_models}")
 
 
 # --- What the cell docstrings promise about the detector -------------------

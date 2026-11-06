@@ -143,6 +143,7 @@ nothing else in the cold-read-cell depends on it.
 """
 
 import importlib.util
+import json
 import pathlib
 import sys
 
@@ -197,6 +198,37 @@ def invocation_builder(effort: str, report_staging_directory: pathlib.Path = Non
     return build_invocation
 
 
+def structured_answer_invocation_builder(effort: str, schema_path: pathlib.Path,
+                                         answer_file: pathlib.Path):
+    """Return a callback producing (argv, None) that ask codex for an answer to schema_path,
+    written by codex to answer_file."""
+    plain = invocation_builder(effort)
+
+    def build_invocation(model: str, prompt: str):
+        # The last attempt's answer must not be read as this attempt's.
+        answer_file.unlink(missing_ok=True)
+        command, stdin_text = plain(model, prompt)
+        prompt_argument = command.pop()
+        command += ["--output-schema", str(schema_path), "-o", str(answer_file), prompt_argument]
+        return command, stdin_text
+    return build_invocation
+
+
+def structured_answer_from_run(completed, answer_file: pathlib.Path):
+    """Return the JSON object codex wrote to answer_file; raise StructuredAnswerRejected when it wrote none."""
+    del completed
+    try:
+        text = answer_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise common.StructuredAnswerRejected(
+            f"codex wrote no readable last message to {answer_file} ({error})")
+    try:
+        return json.loads(text)
+    except ValueError as error:
+        raise common.StructuredAnswerRejected(
+            f"codex's last message is not JSON ({error}): {text.strip()[:200]}")
+
+
 # The tracing logger may prefix a timestamp; the URL suffix varies.
 # Unrecognized quota failures remain exit-N until a captured CLI message defines a signature.
 def recognised_failure_texts_for_model(model: str) -> list:
@@ -219,6 +251,8 @@ def main() -> int:
         invocation_builder=invocation_builder,
         recognised_failure_texts_for_model=recognised_failure_texts_for_model,
         stage_report_outside_checkout=True,
+        structured_answer_support=common.StructuredAnswerSupport(
+            structured_answer_invocation_builder, structured_answer_from_run),
     )
 
 

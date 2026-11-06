@@ -218,7 +218,8 @@ def build_scratch_repository(scratch):
         shutil.rmtree(repository)
     scratch_prompts = repository / ".claude" / "skills" / "cold-read" / "prompts"
     scratch_prompts.mkdir(parents=True)
-    for prompt_path in PROMPTS_DIR.glob("*.md"):
+    # The terminology cell's answer schema is a .json file beside the prompts.
+    for prompt_path in PROMPTS_DIR.glob("*"):
         shutil.copy2(prompt_path, scratch_prompts / prompt_path.name)
     target = repository / TARGET_RELATIVE_PATH
     target.parent.mkdir(parents=True, exist_ok=True)

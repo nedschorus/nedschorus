@@ -71,6 +71,13 @@ NED_BOX_HOME_MODULE = (
 CLAUDE_CODE_COMMAND_LINE_PREFIX_MODULE = (
     SYSTEM_DIRECTORY.parent / "general-tools"
     / "claude-code-headless-print-mode-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+# cold-read-cell-common.py checks a JSON answer and looks its terms up in the
+# glossaries through these two modules.
+JSON_SCHEMA_CHECK_MODULE = (
+    SYSTEM_DIRECTORY.parent / "general-tools" / "json-schema-keyword-subset-answer-check-common.py")
+GLOSSARY_ENTRIES_MODULE = (
+    SYSTEM_DIRECTORY.parent / "general-tools"
+    / "glossary-entries-of-project-and-system-glossaries-read-common.py")
 
 
 def git(repository, *arguments):
@@ -104,6 +111,8 @@ def commit_seeded_cold_read_scratch_repository(repository):
     shutil.copy2(GIT_REDIRECTING_REMOVAL_MODULE, repository / "nc-systems" / "general-tools")
     shutil.copy2(NED_BOX_HOME_MODULE, repository / "nc-systems" / "general-tools")
     shutil.copy2(CLAUDE_CODE_COMMAND_LINE_PREFIX_MODULE, repository / "nc-systems" / "general-tools")
+    shutil.copy2(JSON_SCHEMA_CHECK_MODULE, repository / "nc-systems" / "general-tools")
+    shutil.copy2(GLOSSARY_ENTRIES_MODULE, repository / "nc-systems" / "general-tools")
     # The records tree is gitignored in the real repository, which is what
     # keeps a reviewer's own report out of the detector's sight.
     (repository / ".gitignore").write_text("cold-read-records/\n", encoding="utf-8")
