@@ -14,7 +14,7 @@ import os
 import re
 import socket
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Every Stop hook obeys this rule first: see the module's docstring.
@@ -90,10 +90,11 @@ HANDOFF_INSTRUCTION = (
 # The approved ban on new work; the wait no longer counts work started after the deferral began.
 NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION = (
     "Carry on, open approval-walks included. Short work, which usually ends "
-    "within 10 minutes, such as a cold-read-fast-read, may start; if it is "
-    "still running when the session-handoff ends this agent-session, it stops, "
-    "and the handoff writer adds it to your session-handoff for your successor, "
-    "so you need not. Do not start long "
+    "within 10 minutes, such as a cold-read-fast-read, may start; if that work "
+    "is still running when the session-handoff ends this agent-session, the work "
+    "stops, and the handoff writer script, "
+    "nc-systems/handoff/handoff-write-and-check-supervisor.py, adds it to your "
+    "session-handoff for your successor, so you need not. Do not start long "
     "work, such as a cold-read-full-run or a pull-request review: add it to "
     "your task list for your successor."
 )
@@ -449,9 +450,11 @@ def work_in_flight_from_background_tasks(background_tasks: list, transcript_path
     The list gives no start time and shows a Monitor as a shell task, so each listed shell task's
     launch record is looked up in the session's transcript and its subagents' transcripts: a shell
     task launched by the Monitor tool holds nothing, nor does one launched longer ago than the wait;
-    one whose launch no transcript records counts as within its wait. An entry that is not a running
-    subagent, workflow or shell task holds nothing. Raises TranscriptCouldNotBeFullyRead when a
-    transcript cannot be read, or a line naming a listed shell task does not parse.
+    one whose launch no transcript records counts as within its wait. Each listed subagent and shell
+    task is dated by its launch record, for a deferral that saved no list; a workflow, or work whose
+    launch no transcript records, has no date. An entry that is not a running subagent, workflow or
+    shell task holds nothing. Raises TranscriptCouldNotBeFullyRead when a transcript cannot be read,
+    or a line naming a listed shell task or subagent does not parse.
     """
     if now is None:
         now = datetime.now(timezone.utc)
@@ -470,13 +473,49 @@ def work_in_flight_from_background_tasks(background_tasks: list, transcript_path
         age = launch_ages.get(task_id)
         return age is None or age <= background_task_wait_seconds
 
+    subagent_ids = ids_of(SUBAGENT_TASK_TYPE)
+    launched_at_by_id = subagent_launched_at_by_id_from_transcript_spawn_records(transcript_path, subagent_ids)
+    launched_at_by_id.update({task_id: now - timedelta(seconds=age)
+                              for task_id, age in launch_ages.items() if age is not None})
     return WorkInFlight(
-        ids_of(SUBAGENT_TASK_TYPE),
+        subagent_ids,
         [task_id for task_id in shell_ids
          if task_id not in monitor_ids and still_within_wait(task_id)],
         ids_of(WORKFLOW_TASK_TYPE),
+        launched_at_by_id=launched_at_by_id,
         launching_subagent_id_by_task_id=launching_subagent_id_by_task_id,
     )
+
+
+def subagent_launched_at_by_id_from_transcript_spawn_records(transcript_path: str, subagent_ids: list) -> dict:
+    """Return {subagent id: launch time, or None if undated} for the ids whose spawn record the
+    session transcript holds. A missing transcript holds none."""
+    launched_at_by_id = {}
+    if not subagent_ids or not transcript_path:
+        return launched_at_by_id
+    path = Path(transcript_path).expanduser()
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                if SPAWNED_SUBAGENT_STATUS not in line or not any(
+                        agent_id in line for agent_id in subagent_ids):
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as problem:
+                    raise TranscriptCouldNotBeFullyRead(
+                        f"{path}, line {line_number}: this line names a subagent on Claude Code's "
+                        f"background_tasks list but is not valid JSON ({problem})") from problem
+                tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
+                if isinstance(tool_result, dict) \
+                        and tool_result.get("status") == SPAWNED_SUBAGENT_STATUS \
+                        and tool_result.get("agentId") in subagent_ids:
+                    launched_at_by_id.setdefault(tool_result["agentId"], record_time(record))
+    except FileNotFoundError:
+        return launched_at_by_id
+    except OSError as problem:
+        raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
+    return launched_at_by_id
 
 
 def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list, now):
